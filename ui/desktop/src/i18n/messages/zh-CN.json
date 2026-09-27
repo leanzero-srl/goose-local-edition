@@ -3819,7 +3819,7 @@
     "defaultMessage": "拆分"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "拆分正在占用这台 Mac：在拆分停止之前，这里不会单独运行任何模型（在下方“运行”中停止）。"
+    "defaultMessage": "拆分正在占用这台 Mac。下方“运行”中的“在这台 Mac 上运行”会先停止拆分。"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "引擎详情"
@@ -4353,7 +4353,7 @@
     "defaultMessage": "这台 Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {# 个请求不是来自本应用的对话或 /v1}}"
+    "defaultMessage": "{count, plural, other {# 个请求来自其他应用}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {个请求在等待}}"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "设置、预检、检查、事件"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "拆分正在占用这台 Mac — 停止它才能在这里单独运行模型。"
   },
   "placementCard.estimated": {
     "defaultMessage": "估算"

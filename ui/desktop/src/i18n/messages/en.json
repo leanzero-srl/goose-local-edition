@@ -3819,7 +3819,7 @@
     "defaultMessage": "Split"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "The split owns this Mac: no model runs here alone until the split is stopped (Stop, under Run it below)."
+    "defaultMessage": "The split owns this Mac. Run on this Mac, under Run it below, stops the split first."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Engine details"
@@ -4353,7 +4353,7 @@
     "defaultMessage": "this Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count,plural,one{# request not from this app's chats or /v1} other{# requests not from this app's chats or /v1}}"
+    "defaultMessage": "{count,plural,one{# request from another app} other{# requests from another app}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count,plural,one{request waiting} other{requests waiting}}"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "set up, preflight, checks, events"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "The split owns this Mac — stop it to run a model here alone."
   },
   "placementCard.estimated": {
     "defaultMessage": "estimated"

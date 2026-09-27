@@ -641,6 +641,49 @@ describe('LeanZeroLinkSection — the persisted intent and the launch reconnect'
     ).toBeInTheDocument();
   });
 
+  it('Q-38: a supervisor restart in flight shows the fault it recovers from', async () => {
+    const fault =
+      "LeanZero Link's mesh daemon stopped (exit status: 1) — restarting it with no user action";
+    currentState = {
+      auth: { state: 'connecting', email: 'user@example.com' },
+      nodeCount: 0,
+      lastError: fault,
+      reconnect: { state: 'reconnecting', startedAt: 'x' },
+    };
+    render();
+    expect(await screen.findByTestId('link-reconnect-cause')).toHaveTextContent(fault);
+    expect(screen.getByText('Reconnecting')).toBeInTheDocument();
+  });
+
+  it('Q-38: a plain Connecting card shows no stale error', async () => {
+    currentState = {
+      auth: { state: 'connecting', email: 'user@example.com' },
+      nodeCount: 0,
+      lastError: 'mesh join failed: an older attempt',
+      reconnect: { state: 'idle' },
+    };
+    render();
+    expect(await screen.findByText(/joining your private mesh/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('link-reconnect-cause')).not.toBeInTheDocument();
+  });
+
+  it('Q-37: a supervisor restart that failed shows its own reason, not the launch-reconnect prefix', async () => {
+    const reason =
+      "LeanZero Link's mesh daemon stopped (exit status: 1), and the automatic restart failed: mesh join failed";
+    currentState = {
+      ...LOGGED_IN,
+      intent: CONNECTED_INTENT,
+      lastError: reason,
+      reconnect: { state: 'failed', reason, at: '2026-09-25T10:00:05Z' },
+    };
+    render();
+    const banner = await screen.findByTestId('link-reconnect-failed');
+    expect(banner).toHaveTextContent(reason);
+    expect(banner).not.toHaveTextContent(/did not come back/);
+    expect(banner).toHaveTextContent('Restart failed');
+    expect(screen.getByTestId('link-mesh-state')).toHaveTextContent('restart failed');
+  });
+
   it('Disconnect keeps the account signed in and the card says the Mac stays off', async () => {
     currentState = CONNECTED;
     mockNodes.mockResolvedValue(NODES_WITH_PEERS);

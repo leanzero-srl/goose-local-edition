@@ -3819,7 +3819,7 @@
     "defaultMessage": "Pembahagian"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Pembahagian menguasai Mac ini: tiada model berjalan di sini secara bersendirian sehingga pembahagian dihentikan (Hentikan, di bawah Jalankan)."
+    "defaultMessage": "Pembahagian menguasai Mac ini. «Jalankan pada Mac ini», di bawah Jalankan, menghentikan pembahagian dahulu."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Butiran enjin"
@@ -4353,7 +4353,7 @@
     "defaultMessage": "Mac ini"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {# permintaan bukan daripada sembang aplikasi ini atau /v1}}"
+    "defaultMessage": "{count, plural, other {# permintaan daripada aplikasi lain}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {permintaan menunggu}}"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "persediaan, pra-semakan, semakan, peristiwa"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "Pembahagian sedang menggunakan Mac ini — hentikannya untuk menjalankan model di sini secara bersendirian."
   },
   "placementCard.estimated": {
     "defaultMessage": "anggaran"

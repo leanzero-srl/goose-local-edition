@@ -169,8 +169,7 @@ const i18n = defineMessages({
   clientTimes: { id: 'mlxStateTile.client.times', defaultMessage: '{count} requests' },
   unattributed: {
     id: 'mlxStateTile.unattributed',
-    defaultMessage:
-      "{count, plural, one {# request} other {# requests}} not from this app's chats or /v1",
+    defaultMessage: '{count, plural, one {# request} other {# requests}} from another app',
   },
   swarmLive: { id: 'mlxStateTile.swarmLive', defaultMessage: 'Swarm run live: {runs}' },
   servingUnknown: {

@@ -93,9 +93,11 @@ import { MlxStateTile, servingEngine } from './MlxStateTile';
 import { MlxRestoreBanner } from './MlxRestoreLine';
 import { settleRestoreLine } from './mlxRestore';
 import type { MlxServing } from '../../utils/mlxServing';
+import type { MlxEngineKind } from '../../utils/mlxInFlight';
 import {
   advanceMountWatch,
   liveDecodeTps,
+  mlxActivity,
   mountCostOf,
   mountFill,
   MLX_STATUS_POLL_MS,
@@ -142,7 +144,7 @@ const i18n = defineMessages({
   distributedOwnsText: {
     id: 'mlxEngineView.distributedOwnsText',
     defaultMessage:
-      'The split owns this Mac: no model runs here alone until the split is stopped (Stop, under Run it below).',
+      'The split owns this Mac. Run on this Mac, under Run it below, stops the split first.',
   },
   servingDistributed: {
     id: 'mlxEngineView.servingDistributed',
@@ -760,6 +762,8 @@ interface EngineSectionProps {
   onRemount: () => void;
   /** The tile's live instrument while running — the last Rapid-MLX /v1/status read. */
   live: MlxLiveRead | null;
+  /** The engine `live` was read from; null before the first read. */
+  liveEngine: MlxEngineKind | null;
   tpsHistory: readonly TpsSample[];
   /** Who the engine is serving (main's read of goose's in-flight list). */
   serving: MlxServing | null;
@@ -812,6 +816,7 @@ function EngineSection(props: EngineSectionProps) {
     onUnmount,
     onRemount,
     live,
+    liveEngine,
     tpsHistory,
     serving,
     mountWatch,
@@ -1161,7 +1166,15 @@ function EngineSection(props: EngineSectionProps) {
           distributed={distributed}
           onMountHere={onMount}
           onStopHere={onUnmount}
-          mountBusy={engineBusy || state === 'mounting' || distributedOwns}
+          // The split owning this Mac is not a mount in flight: Run on this Mac stops it first (Q-28).
+          mountBusy={engineBusy || state === 'mounting'}
+          // The tile's own read, tagged with its engine: the running way's chip is the tile's
+          // colour — green while it writes, never the idle grey (Q-26).
+          liveActivity={
+            live?.ok && liveEngine
+              ? { engine: liveEngine, activity: mlxActivity(live.stats) }
+              : null
+          }
           distributedCapability={distributedCapability}
           splitDetails={splitDetails}
         />
@@ -2428,8 +2441,21 @@ function MlxEngineViewBody() {
   // Per-model sampling, per Mac: ONLY profiles the user actually edited live here, keyed by Mac and
   // model — two models keep separate unsaved drafts and both survive tab/model/Mac switches.
   const [profileDrafts, setProfileDrafts] = useState<Record<string, NumericDrafts>>({});
-  const [samplingMac, setSamplingMac] = useState<string>(SELF_KEY);
-  const [samplingModelId, setSamplingModelId] = useState<string | null>(null);
+  // The Mac whose profiles the Sampling tab edits: the user's pick, else the Mac whose engine serves
+  // this Mac's chat while a route is up — the profiles that shape the answers (Q-20) — else this Mac.
+  const [pickedSamplingMac, setPickedSamplingMac] = useState<string | null>(null);
+  const routeMac = remote?.peer ? macsCtx.macByKey(remote.peer) : null;
+  const samplingMac =
+    pickedSamplingMac ??
+    (routeMac && routeMac.online && !peerRefuses(routeMac, 'manage') ? routeMac.key : SELF_KEY);
+  // The model is the one picked ON that Mac: when the default Mac changes under a route, the other
+  // Mac's model is never carried over to one that may not hold it.
+  const [samplingPick, setSamplingPick] = useState<{ mac: string; id: string } | null>(null);
+  const samplingModelId = samplingPick?.mac === samplingMac ? samplingPick.id : null;
+  const setSamplingModelId = useCallback(
+    (id: string | null) => setSamplingPick(id == null ? null : { mac: samplingMac, id }),
+    [samplingMac]
+  );
   const [peerSettings, setPeerSettings] = useState<Record<string, MlxEngineSettings>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -2446,6 +2472,7 @@ function MlxEngineViewBody() {
   // decode-rate history for the sparkline, and the memory watch across a mount. All of it rides the
   // SAME 2-second status poll below — no second clock.
   const [live, setLive] = useState<MlxLiveRead | null>(null);
+  const [liveEngine, setLiveEngine] = useState<MlxEngineKind | null>(null);
   const [tpsHistory, setTpsHistory] = useState<TpsSample[]>([]);
   const [serving, setServing] = useState<MlxServing | null>(null);
   const [mountWatch, setMountWatch] = useState<MountWatch | null>(null);
@@ -2514,6 +2541,7 @@ function MlxEngineViewBody() {
     try {
       const [read, main] = await Promise.all([readMlxLiveStatus(baseUrl), readMainEngine()]);
       setLive(read);
+      setLiveEngine(distUp ? 'distributed' : remoteUp ? 'remote' : 'single');
       setServing(main?.serving ?? null);
       if (read.ok) {
         const stats = read.stats;
@@ -2675,7 +2703,13 @@ function MlxEngineViewBody() {
       samplingModels.find((m) => m.complete)?.id ||
       null;
     if (candidate) setSamplingModelId(candidate);
-  }, [samplingModelId, samplingStatus, samplingSettings?.modelId, samplingModels]);
+  }, [
+    samplingModelId,
+    samplingStatus,
+    samplingSettings?.modelId,
+    samplingModels,
+    setSamplingModelId,
+  ]);
 
   const onMount = useCallback(() => {
     if (!mountModelId) return;
@@ -2845,8 +2879,8 @@ function MlxEngineViewBody() {
   }, [samplingSettings, samplingModelId, samplingMac, profileDrafts, saveSettingsOn]);
 
   const openSamplingFor = useCallback((macKey: string, modelId: string) => {
-    setSamplingMac(macKey);
-    setSamplingModelId(modelId);
+    setPickedSamplingMac(macKey);
+    setSamplingPick({ mac: macKey, id: modelId });
     setTab('sampling');
   }, []);
 
@@ -2861,8 +2895,8 @@ function MlxEngineViewBody() {
           options={managed.map((m) => ({ value: m.key, label: m.name }))}
           value={samplingMac}
           onChange={(key) => {
-            setSamplingMac(key);
-            setSamplingModelId(null);
+            setPickedSamplingMac(key);
+            setSamplingPick(null);
           }}
         />
       </div>
@@ -2947,6 +2981,7 @@ function MlxEngineViewBody() {
           onUnmount={onUnmount}
           onRemount={onRemount}
           live={live}
+          liveEngine={liveEngine}
           tpsHistory={tpsHistory}
           serving={serving}
           mountWatch={mountWatch}

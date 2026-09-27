@@ -3819,7 +3819,7 @@
     "defaultMessage": "Répartition"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "La répartition occupe ce Mac : aucun modèle ne tourne ici seul tant que la répartition n’est pas arrêtée (Arrêter, sous Exécuter plus bas)."
+    "defaultMessage": "La répartition occupe ce Mac. « Exécuter sur ce Mac », sous Exécuter plus bas, arrête d’abord la répartition."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Détails du moteur"
@@ -4353,7 +4353,7 @@
     "defaultMessage": "ce Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, one {# requête ne venant ni des chats de cette app ni de /v1} other {# requêtes ne venant ni des chats de cette app ni de /v1}}"
+    "defaultMessage": "{count, plural, one {# requête d’une autre app} other {# requêtes d’une autre app}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {requête en attente} other {requêtes en attente}}"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "configuration, prévol, vérifications, événements"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "La répartition occupe ce Mac — arrêtez-la pour exécuter un modèle ici seul."
   },
   "placementCard.estimated": {
     "defaultMessage": "estimé"

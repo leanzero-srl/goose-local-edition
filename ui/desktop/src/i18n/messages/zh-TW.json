@@ -3819,7 +3819,7 @@
     "defaultMessage": "分割"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "分割正在佔用這台 Mac：在分割停止之前，這裡不會單獨執行任何模型（在下方「執行」中停止）。"
+    "defaultMessage": "分割正在佔用這台 Mac。下方「執行」中的「在這台 Mac 上執行」會先停止分割。"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "引擎詳細資料"
@@ -4353,7 +4353,7 @@
     "defaultMessage": "這台 Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {# 個請求不是來自本應用程式的對話或 /v1}}"
+    "defaultMessage": "{count, plural, other {# 個請求來自其他應用程式}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {個請求在等待}}"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "設定、預檢、檢查、事件"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "分割正在佔用這台 Mac — 停止它才能在這裡單獨執行模型。"
   },
   "placementCard.estimated": {
     "defaultMessage": "估算"

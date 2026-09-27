@@ -59,7 +59,7 @@ import {
   splitPlan,
   type SplitBlocker,
 } from './mlxDistributed';
-import { MLX_STATUS_POLL_MS } from './mlxLiveStats';
+import { MLX_STATUS_POLL_MS, type MlxActivity } from './mlxLiveStats';
 import { touchLocalNetwork } from './LocalNetworkNotice';
 import { distributedStateWord } from './mlxModeLabel';
 import { remotePhase, runPhase, singlePhase } from './mlxPhase';
@@ -176,10 +176,6 @@ const i18n = defineMessages({
   splitNoPeers: {
     id: 'placementCard.splitNoPeers',
     defaultMessage: 'goose planned this split without another Mac — open Details › Set up.',
-  },
-  distributedOwns: {
-    id: 'placementCard.distributedOwns',
-    defaultMessage: 'The split owns this Mac — stop it to run a model here alone.',
   },
   refresh: { id: 'placementCard.refresh', defaultMessage: 'Plan again' },
   others: {
@@ -790,19 +786,32 @@ export function waysOf(
   return { ways, otherSplits: [] };
 }
 
-/** The engine a way IS right now — whichever model it holds — in the engine-phase palette. */
+/** The live read of the engine that answers chat (the state tile's read), and which engine it is. */
+export interface WayActivity {
+  engine: MlxEngineKind;
+  activity: MlxActivity;
+}
+
+/**
+ * The engine a way IS right now — whichever model it holds — in the engine-phase palette. The way
+ * whose engine the live read came from takes its activity, exactly as the state tile does: a
+ * writing engine is green here too, never the idle grey (Q-26).
+ */
 export function wayServing(
   way: Way,
   single: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null
+  distributed: MlxDistributedStatus | null,
+  liveActivity: WayActivity | null = null
 ): { phase: EnginePhase; state: string; modelId: string } | null {
+  const activity =
+    liveActivity && liveActivity.engine === engineOfWay(way) ? liveActivity.activity : null;
   if (way.kind === 'local') {
     if (!single?.modelId) return null;
     if (single.state !== 'mounting' && single.state !== 'running' && single.state !== 'failed') {
       return null;
     }
     return {
-      phase: singlePhase(single.state, false, null),
+      phase: singlePhase(single.state, false, activity),
       state: single.state,
       modelId: single.modelId,
     };
@@ -812,7 +821,7 @@ export function wayServing(
     if (!way.peerNodeId || remote?.peer !== way.peerNodeId || !remote.modelId) return null;
     if (remote.state === 'off') return null;
     return {
-      phase: remotePhase(remote.state, null),
+      phase: remotePhase(remote.state, activity),
       state: remote.state === 'ready' ? 'running' : remote.state,
       modelId: remote.modelId,
     };
@@ -820,7 +829,7 @@ export function wayServing(
   if (!distributed?.modelId) return null;
   if (!ownsTheMac(distributed) && distributed.state !== 'failed') return null;
   return {
-    phase: runPhase(distributed.state, distributed.admissionOpen),
+    phase: runPhase(distributed.state, distributed.admissionOpen, activity),
     state: distributed.state,
     modelId: distributed.modelId,
   };
@@ -831,9 +840,10 @@ export function wayLive(
   way: Way,
   modelId: string,
   single: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null
+  distributed: MlxDistributedStatus | null,
+  liveActivity: WayActivity | null = null
 ): { phase: EnginePhase; state: string } | null {
-  const serving = wayServing(way, single, distributed);
+  const serving = wayServing(way, single, distributed, liveActivity);
   if (!serving || serving.modelId !== modelId) return null;
   return { phase: serving.phase, state: serving.state };
 }
@@ -909,6 +919,32 @@ export function tooSmallForLive(
   return candidate.fit.context < liveContextTokens;
 }
 
+/** The splits beside the offered one, each with why goose will not run it — under its Details. */
+function OtherSplits({ splits }: { splits: readonly PlacementCandidate[] }) {
+  const intl = useIntl();
+  return (
+    <div className="flex flex-col gap-2" data-testid="placement-others">
+      <span className={cx(TYPE.meta, WEIGHT.semibold)}>
+        {intl.formatMessage(i18n.others, { count: splits.length })}
+      </span>
+      <ul className="flex flex-col gap-2">
+        {splits.map((c) => (
+          <li key={c.id} className="flex flex-col gap-0.5" data-testid={`placement-other-${c.id}`}>
+            <span className={cx(TYPE.body, WEIGHT.semibold)}>
+              {intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
+                link: linkWord(c),
+              })}
+            </span>
+            <span className={cx('break-words', TYPE.meta)} title={c.fit.detail}>
+              {outcomeText(intl, c)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function LiveChip({ live }: { live: { phase: EnginePhase; state: string } }) {
   const intl = useIntl();
   const word =
@@ -943,6 +979,8 @@ interface PlacementCardProps {
   distributedCapability?: boolean;
   /** The split's own controls — set up, preflight, checks, events — folded under its Details. */
   splitDetails?: ReactNode;
+  /** The state tile's live read and the engine it came from: the running way's chip colour. */
+  liveActivity?: WayActivity | null;
 }
 
 function PlacementCardBody({
@@ -954,6 +992,7 @@ function PlacementCardBody({
   mountBusy,
   distributedCapability = false,
   splitDetails,
+  liveActivity = null,
 }: PlacementCardProps) {
   const intl = useIntl();
   const macs = useMacs();
@@ -972,7 +1011,6 @@ function PlacementCardBody({
     follows?: string;
     detail?: string | null;
   } | null>(null);
-  const [othersOpen, setOthersOpen] = useState(false);
   const [detailsOpen, setDetailsOpenState] = useState(splitDetailsOpenAtFirst);
   const setDetailsOpen = useCallback((open: boolean) => {
     sessionStorage.setItem(SPLIT_DETAILS_KEY, open ? 'open' : 'folded');
@@ -1391,7 +1429,6 @@ function PlacementCardBody({
   };
 
   const { ways, otherSplits } = waysOf(plan, macs.macs, distributedCapability);
-  const distributedOwns = ownsTheMac(distributed);
   const serving = servingWays(ways, macs.macs, single, distributed);
 
   /** Where a serving way runs, in the words the card's lines use. */
@@ -1435,7 +1472,7 @@ function PlacementCardBody({
 
   const renderWay = (way: Way) => {
     const c = way.candidate;
-    const live = wayLive(way, modelId, single, distributed);
+    const live = wayLive(way, modelId, single, distributed, liveActivity);
     const running = live != null && live.state !== 'failed';
     const figure = c ? goalFigure(c, goal) : null;
     const action = c?.action ?? null;
@@ -1453,13 +1490,13 @@ function PlacementCardBody({
     const needsCopy = missingOn(way);
     const copyJob = needsCopy ? macs.copies[copyKey(modelId, needsCopy.key)] : undefined;
     const copyLink = needsCopy ? macs.linkBetween(SELF_KEY, needsCopy.key) : null;
-    const blockedByDistributed = way.kind === 'local' && distributedOwns;
     // A way goose judged short (or could not judge) is not offered: the start would be refused.
+    // While the split owns this Mac, Run on this Mac is a switch like every other way: it stops the
+    // split first (servingWays lists it) and its stops-first line says so (Q-28).
     const fitsForGoose =
       c == null || (c.supported && c.fit.status !== 'short' && c.fit.status !== 'unknown');
     const startable =
       !running &&
-      !blockedByDistributed &&
       needsCopy == null &&
       fitsForGoose &&
       (action == null || action.kind !== 'unavailable');
@@ -1664,17 +1701,12 @@ function PlacementCardBody({
               })}
             </p>
           )}
-        {blockedByDistributed && !running && (
-          <p className={cx('break-words', TYPE.meta, WEIGHT.semibold)}>
-            {intl.formatMessage(i18n.distributedOwns)}
-          </p>
-        )}
         {action?.kind === 'unavailable' && !needsCopy && (
           <p className={cx('break-words', TYPE.meta)}>
             {way.mac ? macs.describeError(way.mac, action.reason) : action.reason}
           </p>
         )}
-        {way.kind === 'split' && splitDetails && (
+        {way.kind === 'split' && (splitDetails || otherSplits.length > 0) && (
           <Disclosure
             variant="plain"
             title={intl.formatMessage(i18n.details)}
@@ -1683,7 +1715,11 @@ function PlacementCardBody({
             onOpenChange={setDetailsOpen}
             testId="placement-split-details"
           >
-            {splitDetails}
+            <div className="flex flex-col gap-3">
+              {/* Splits goose cannot start are reference, not a choice: they live here (Q-25). */}
+              {otherSplits.length > 0 && <OtherSplits splits={otherSplits} />}
+              {splitDetails}
+            </div>
           </Disclosure>
         )}
       </li>
@@ -1767,33 +1803,6 @@ function PlacementCardBody({
           {note}
         </p>
       ))}
-      {otherSplits.length > 0 && (
-        <Disclosure
-          title={intl.formatMessage(i18n.others, { count: otherSplits.length })}
-          open={othersOpen}
-          onOpenChange={setOthersOpen}
-          testId="placement-others"
-        >
-          <ul className="flex flex-col gap-2">
-            {otherSplits.map((c) => (
-              <li
-                key={c.id}
-                className="flex flex-col gap-0.5"
-                data-testid={`placement-other-${c.id}`}
-              >
-                <span className={cx(TYPE.body, WEIGHT.semibold)}>
-                  {intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
-                    link: linkWord(c),
-                  })}
-                </span>
-                <span className={cx('break-words', TYPE.meta)} title={c.fit.detail}>
-                  {outcomeText(intl, c)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Disclosure>
-      )}
       {cutDialog}
     </section>
   );

@@ -1,6 +1,6 @@
 # MLX quality loop — BACKLOG (one row per open item; rewritten each tick; closed rows live in FINDINGS-LEDGER.md)
 
-Updated 2026-09-27 (ledger reconciled against main + the release checkouts). Ratio today: 167 rows · 55 proven live · 83 awaiting live prove · 2 cutting · 18 open (+ 4 shipped before proving existed · 3 parked · 2 refuted).
+Updated 2026-09-27 (ledger reconciled against main + the release checkouts). Ratio today: 167 rows · 55 proven live · 90 awaiting live prove · 2 cutting · 11 open (Q-20 Q-22 Q-25 Q-26 Q-28 Q-37 Q-38 fixed 2026-09-27) (+ 4 shipped before proving existed · 3 parked · 2 refuted).
 Before the reconcile: 51 "open" · 6 cutting/framed · 49 awaiting · 28 "fixed" with no prove status · 23 proven · 10 other — of the 51 "open": 32 were already fixed and shipped (12 of them proven live), 2 parked, 1 refuted, 16 truly open.
 
 ## 1. Awaiting LIVE proof (prove in the named run, then mark "PROVEN LIVE <run>")
@@ -30,6 +30,10 @@ Before the reconcile: 51 "open" · 6 cutting/framed · 49 awaiting · 28 "fixed"
 | Q-75 · Q-131 · Q-133 · Q-143 · Q-144 | pipeline restores prefixes; every served name answers; undeclared tool = failed call; turn-context on tool results; XML guard armed | E2E #5b on the Flash pipeline |
 | Q-138 · Q-139 | no bundled-mcps process after quit; MCP files never in the session dir | quit mid-session + ps; a search + fetch + doc in one chat |
 | Q-140 · Q-163 · Q-78 | load-sensitive tests and the pwd flake stay green; clean.sh flags a stand-in rank | the next CI runs on main; clean.sh on the next leftover |
+| Q-37 · Q-38 | Link: a failed supervisor restart shows its own reason; the Reconnecting card shows the fault (lastError) | the next mesh-daemon death on a live Mac (or a kill of tailscaled per-pid on the MacBook) |
+| Q-20 · Q-26 | Sampling opens on the Mac that serves chat; Run it's Running chip is the tile's green while it writes | 3.0.57+ with the Studio route up, a chat writing |
+| Q-28 · Q-25 | Run on this Mac while the split runs stops the split, then mounts here; other splits sit under Details | 3.0.57+ with the 27B split up |
+| Q-22 | the tile and tray say 'N requests from another app' | 3.0.57+ with a curl to :8090 beside a chat |
 
 ## 2. Cutting now
 | id | what | owner |
@@ -44,19 +48,12 @@ Before the reconcile: 51 "open" · 6 cutting/framed · 49 awaiting · 28 "fixed"
 | Q-18 | misleads | the swarm session still defaults to 128000 until the router's first pick | read context_limit of a 3.0.56 chat in sessions.db; persist the probed window (providers/swarm.rs:623-627) · engine |
 | Q-146 | misleads | a streamed split answer can withhold text for 17+ min | read /v1/status stream.tail + withholding (56e1487ba, live since 3.0.55) on the next silent call, then fix from the words · engine (tensor wrapper) |
 | Q-6 | misleads | "Coding · Agent" toggle changes nothing; tooltip promises a loop | drop the persona state or relabel (ChatInput.tsx:1782-1788, PersonaChooser.tsx:51) · UI |
-| Q-37 | misleads | Link "did not come back:" prefix on every supervisor failure | show the supervisor's reason alone (LeanZeroLinkSection.tsx:392-398) · UI |
 | Q-7 | misleads | "Set up agent" is the recipes hub; its fleet wizard talks to LM Studio | route it through goose's served model (RecipeChatWizard.tsx:27-32, 105-109) · UI |
 | Q-103 | stability | a short request waits minutes behind a long prefill (single engine and tensor split) | carry Q-134's between-decode-steps admission to the single engine's MTP path; A/B the canary under R2 3×13k · engine (Rapid-MLX fork) |
-| Q-28 | friction | Run on this Mac refused while the split runs | stop the split first via the servingWays switch (PlacementCard.tsx:1456-1462, 1667-1671) · UI |
-| Q-38 | friction | the Reconnecting card never shows lastError | pass lastError to ConnectingCard (LeanZeroLinkSection.tsx:435-450, 762) · UI |
 | Q-9 | friction | one action, two names ("Generate diagnostics bundle" / "Report a Problem") | one name (ChatInput.tsx:1864-1881, Diagnostics.tsx:10-13) · UI |
-| Q-20 | friction | Sampling opens on this Mac while the Studio serves | default to the route's peer (MlxEngineView.tsx:2431) · UI |
 | Q-21 | friction | Escape does nothing in two overlays | the app's dialog primitive (Diagnostics.tsx:206-207, AgentSetupWizard.tsx:118-122) · UI |
-| Q-22 | friction | "requests not from this app's chats or /v1" | "N requests from another app" (mlxTray.ts:456, MlxStateTile.tsx:173) · UI |
 | Q-60 | cosmetic (regressed) | the context counter vanishes while the split is down | keep the last window (ChatInput.tsx:657-671) · UI |
-| Q-26 | cosmetic | a writing engine's Run it chip is grey | pass live activity into wayServing (PlacementCard.tsx:794-826) · UI |
 | Q-24 | cosmetic | "recalled: memories … · past session <id>" jargon, faded | plain words in recall_line (recall.rs:879-896) + solid ink · engine words + UI |
 | Q-23 | cosmetic | Report a Problem backdrop solid black; folder chip shows through | bg-black/50; drop z-[100] (Diagnostics.tsx:207, DirSwitcher.tsx:184) · UI |
-| Q-25 | cosmetic | "1 other split › not supported yet" outside Details | move under the split's Details (PlacementCard.tsx:1770-1795) · UI |
 
 Parked (evidence in the ledger): Q-11 (no panic in 115 min of R2), Q-90 (reviewer recall 33/40; the motivating pair 2/8, no design in hand), Q-19 update row (cache-size arms not needed).

@@ -503,13 +503,16 @@ describe('Run it on the real 27B plan', () => {
     expect(within(split).getByText('tensor split · JACCL')).toBeInTheDocument();
     expect(within(split).getByText('fits only at 72,704 context')).toBeInTheDocument();
 
-    // The pipeline split goose cannot run for this model folds away with its reason.
-    await userEvent.click(screen.getByText('1 other split'));
+    // Q-25: the pipeline split goose cannot run for this model is no option at the card's top level
+    // — it waits, with its reason, under the split's Details.
+    const other = screen.getByTestId('placement-other-pipeline:jaccl:local+workhorse');
+    expect(within(split).getByTestId('placement-split-details')).toContainElement(other);
+    expect(other).not.toBeVisible();
+    await userEvent.click(within(split).getByText('Details'));
+    expect(within(split).getByText('1 other split')).toBeVisible();
     expect(
-      within(screen.getByTestId('placement-other-pipeline:jaccl:local+workhorse')).getByText(
-        /^not supported yet: goose splits qwen3_5 tensor-parallel only$/
-      )
-    ).toBeInTheDocument();
+      within(other).getByText(/^not supported yet: goose splits qwen3_5 tensor-parallel only$/)
+    ).toBeVisible();
     // No hardware lines under the card: the chips live on My Macs.
     expect(screen.queryByTestId('placement-nodes')).toBeNull();
     expect(mockPlan).toHaveBeenCalledWith('chat', MODEL);
@@ -678,6 +681,28 @@ describe('Run it on the real 27B plan', () => {
     ).toBeInTheDocument();
     await userEvent.click(within(local).getByTestId('placement-stop-local'));
     expect(onStopHere).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Q-26: the Studio's "Running" chip was grey (the idle tone) beside a green Writing tile — the chip
+   * was coloured with no activity at all. It takes the tile's own read when that read is its engine's.
+   */
+  it('Q-26: the running way’s chip is the tile’s colour — green while its engine writes', async () => {
+    mockPlan.mockResolvedValue(answer(PLAN_LINK));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    renderCard({ liveActivity: { engine: 'remote', activity: 'generating' } });
+    const peer = await screen.findByTestId('placement-way-peer');
+    const chip = within(peer).getByTestId('placement-live');
+    expect(chip).toHaveTextContent('Running');
+    expect(chip).toHaveAttribute('data-phase', 'writing');
+  });
+
+  it('Q-26: a read of another engine never colours this way; with no read it is the idle grey', async () => {
+    mockPlan.mockResolvedValue(answer(PLAN_LINK));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    renderCard({ liveActivity: { engine: 'single', activity: 'generating' } });
+    const peer = await screen.findByTestId('placement-way-peer');
+    expect(within(peer).getByTestId('placement-live')).toHaveAttribute('data-phase', 'idle');
   });
 
   it('Run on the Studio starts its engine; a refusal reads in words, naming the Mac and the switch', async () => {
@@ -1068,7 +1093,9 @@ describe('Run it on the real 27B plan', () => {
   it('renders on Studio tokens only, no left rails', async () => {
     renderCard();
     const card = await screen.findByTestId('placement-card');
-    await userEvent.click(screen.getByText('1 other split'));
+    await userEvent.click(
+      within(await screen.findByTestId('placement-way-split')).getByText('Details')
+    );
     assertStudioClean(card);
     expect(allClasses(card).filter((c) => c === 'border-l' || /^border-l-\d/.test(c))).toEqual([]);
   });
@@ -1441,6 +1468,51 @@ describe('Q-148: a way that would cut the answer being written asks first, and i
     ).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Stop the split' }));
     await waitFor(() => expect(mockDistributedStop).toHaveBeenCalledTimes(1));
+  });
+
+  /**
+   * Q-28 (3.0.30, R5 r5-0-start.png): with the split up, "Run on this Mac" offered no Run — only
+   * "The split owns this Mac — stop it to run a model here alone" — while Run was a switch on every
+   * other way. It is one here too: it says it stops the split, stops it, then mounts here.
+   */
+  it('Q-28: while the split runs, Run on this Mac stops the split first, then mounts here', async () => {
+    bridge.mlxEngineActivity = vi.fn(async () => liveSplitSnapshot([]));
+    mockDistributedStop.mockResolvedValue({
+      status: { mode: 'single', state: 'stopped', nodes: [] },
+      stop: { verified: true, steps: [] },
+    });
+    // goose credits the split's memory back to this Mac: the 27B fits here once the split stops.
+    mockPlan.mockResolvedValue(
+      answer({
+        ...PLAN_LINK,
+        candidates: (PLAN_LINK.candidates ?? []).map((c) =>
+          c.id === 'single:local'
+            ? {
+                ...c,
+                fit: {
+                  ...c.fit,
+                  status: 'fits',
+                  shortBytes: undefined,
+                  shortNode: undefined,
+                  afterStopping: [MODEL],
+                },
+                outcome: { code: 'best' },
+              }
+            : c
+        ),
+      })
+    );
+    const { onMountHere } = renderCard({ distributed: SPLIT_SERVING });
+    const local = await screen.findByTestId('placement-way-local');
+    expect(await within(local).findByTestId('placement-stops-first-local')).toHaveTextContent(
+      'Fits once Qwen3.8-27B-Atlassian-Q8-mlx stops — Run stops it on Mihai Macbook and Work’s Mac Studio first.'
+    );
+    expect(within(local).queryByText(/The split owns this Mac/)).toBeNull();
+    const run = within(local).getByTestId('placement-run-local');
+    expect(run).toBeEnabled();
+    await userEvent.click(run);
+    await waitFor(() => expect(onMountHere).toHaveBeenCalledTimes(1));
+    expect(mockDistributedStop).toHaveBeenCalledTimes(1);
   });
 
   it('with nothing in flight the switch goes on at once, and goose’s "Best" stands', async () => {

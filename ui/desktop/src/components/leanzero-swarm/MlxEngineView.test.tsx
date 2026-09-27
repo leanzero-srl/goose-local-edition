@@ -925,6 +925,32 @@ describe('MlxEngineView state tile instrument', () => {
     unmount();
   });
 
+  it('Q-26: Run it’s chip on the serving Mac is the tile’s green while that engine writes — never grey', async () => {
+    bridge.mlxLiveStatus = vi.fn(async (baseUrl: string) => ({
+      ok: true,
+      url: `${baseUrl}/v1/status`,
+      body: GENERATING_STATUS,
+    }));
+    withMesh([
+      peerNode({
+        node_id: ROUTE.peer,
+        hostname: ROUTE.peerHostname,
+        computer_name: ROUTE.peerComputerName,
+      }),
+    ]);
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    remoteStore.publish(ROUTE);
+    const { unmount } = render(<MlxEngineView />);
+    await screen.findByTestId('mlx-live-tps');
+    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-writing');
+    const peer = await screen.findByTestId('placement-way-peer');
+    await waitFor(() =>
+      expect(within(peer).getByTestId('placement-live')).toHaveAttribute('data-phase', 'writing')
+    );
+    expect(within(peer).getByTestId('placement-live')).toHaveTextContent('Running');
+    unmount();
+  });
+
   it('Stop on a route whose Mac is NOT answering: the route goes here at once, that Mac is asked in the background, a quiet line — no error, no spinner', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     mockRemoteStop.mockImplementation(async () => {
@@ -1025,7 +1051,7 @@ describe('MlxEngineView state tile instrument', () => {
       within(serving)
         .getAllByTestId('mlx-serving-row')
         .map((r) => r.textContent)
-    ).toEqual(['Chat · Memory · verify recall', "2 requests not from this app's chats or /v1"]);
+    ).toEqual(['Chat · Memory · verify recall', '2 requests from another app']);
     unmount();
   });
 
@@ -2907,8 +2933,15 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     expect(await screen.findAllByTestId('mlx-dist-node')).toHaveLength(2);
     expect(screen.getByTestId('mlx-dist-slots')).toHaveTextContent('Slots 0 / 2');
     expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
-    // This Mac's own start waits for the split to stop.
-    expect(screen.queryByTestId('placement-run-local')).toBeNull();
+    // Q-28: Run on this Mac is a switch like every other way — offered, free, and it says it stops
+    // the split first.
+    expect(screen.getByTestId('mlx-distributed-owns')).toHaveTextContent(
+      'Run on this Mac, under Run it below, stops the split first.'
+    );
+    await runHere();
+    expect(
+      within(screen.getByTestId('placement-way-local')).getByTestId('placement-stops-first-local')
+    ).toHaveTextContent(/first\.$/);
     // Q-43: the details rows are this Mac's single engine, and they say so.
     await userEvent.click(screen.getByRole('button', { name: 'This Mac’s engine · not running' }));
     expect(screen.getByTestId('mlx-details-elsewhere')).toHaveTextContent(
@@ -3242,6 +3275,63 @@ describe('MlxEngineView — the memory under "Serving on <peer>" is the peer’s
     expect(within(memory).queryByText(/Memory on/)).toBeNull();
     expect(screen.getByRole('button', { name: 'Engine details' })).toBeInTheDocument();
     expect(screen.queryByTestId('mlx-details-elsewhere')).toBeNull();
+    unmount();
+  });
+
+  /**
+   * Q-20: with the Studio serving this Mac's chat, Sampling opened on "Profiles on: Mihai Macbook ·
+   * no model mounted" — the profiles that shape nothing. It opens on the Mac that serves, with its
+   * running model; the user's own pick of a Mac still stands.
+   */
+  it('Q-20: Sampling opens on the Mac that serves chat, with its running model', async () => {
+    withMesh(
+      [
+        peerNode({
+          node_id: STUDIO_ID,
+          hostname: 'WorksMacStudio.lan',
+          computer_name: "Work's Mac Studio",
+        }),
+      ],
+      ME
+    );
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === STUDIO_ID
+        ? statusOf({ state: 'running', modelId: QWEN })
+        : statusOf({ state: 'stopped' })
+    );
+    remoteStore.publish(ROUTE);
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const on = await screen.findByTestId('mlx-sampling-mac');
+    await waitFor(() =>
+      expect(within(on).getByRole('radio', { name: "Work's Mac Studio" })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    await waitFor(() => expect(mockSettingsRead).toHaveBeenCalledWith(STUDIO_ID));
+
+    await userEvent.click(within(on).getByRole('radio', { name: LAPTOP }));
+    expect(within(on).getByRole('radio', { name: LAPTOP })).toHaveAttribute('aria-checked', 'true');
+    unmount();
+  });
+
+  it('Q-20: with no route up, Sampling opens on this Mac', async () => {
+    withMesh(
+      [
+        peerNode({
+          node_id: STUDIO_ID,
+          hostname: 'WorksMacStudio.lan',
+          computer_name: "Work's Mac Studio",
+        }),
+      ],
+      ME
+    );
+    mockStatus.mockResolvedValue(statusOf({ state: 'running', modelId: QWEN }));
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const on = await screen.findByTestId('mlx-sampling-mac');
+    expect(within(on).getByRole('radio', { name: LAPTOP })).toHaveAttribute('aria-checked', 'true');
     unmount();
   });
 });

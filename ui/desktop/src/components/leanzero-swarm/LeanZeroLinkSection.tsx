@@ -57,6 +57,26 @@ const CODE_LENGTH = 6;
 /** Consecutive failed status() polls (≈3s each) before the connected view flags staleness. */
 const STALE_POLL_THRESHOLD = 3;
 
+/**
+ * Every supervisor-restart failure reason starts with this (manager.rs `DaemonFault::cause`,
+ * documented on `ReconnectState::Failed`); no launch-reconnect reason does.
+ */
+const SUPERVISOR_REASON_HEAD = "LeanZero Link's mesh daemon";
+
+/**
+ * A failed reconnect in words. The launch reconnect's reason names only why it failed, so it gets
+ * the context; the supervisor's reason already says what happened to the daemon, and the launch
+ * context ("was on when this app last ran") would be false for it.
+ */
+function reconnectFailedCopy(reason: string): { label: string; text: string } {
+  return reason.startsWith(SUPERVISOR_REASON_HEAD)
+    ? { label: 'Restart failed', text: reason }
+    : {
+        label: 'Reconnect failed',
+        text: `The mesh was on when this app last ran and did not come back: ${reason}`,
+      };
+}
+
 function emailOf(auth: AuthState): string {
   return 'email' in auth ? auth.email : '';
 }
@@ -355,7 +375,10 @@ function ConnectCard({
 }) {
   const reconnectFailed = reconnect?.state === 'failed' ? reconnect : null;
   const meshLine = reconnectFailed
-    ? { tone: 'err' as Tone, text: 'reconnect failed' }
+    ? {
+        tone: 'err' as Tone,
+        text: reconnectFailedCopy(reconnectFailed.reason).label.toLowerCase(),
+      }
     : stayingOff
       ? { tone: 'stopped' as Tone, text: 'disconnected · stays off until you connect' }
       : { tone: 'stopped' as Tone, text: 'not connected' };
@@ -392,8 +415,7 @@ function ConnectCard({
           {reconnectFailed && (
             <ToneBanner
               tone="err"
-              label="Reconnect failed"
-              text={`The mesh was on when this app last ran and did not come back: ${reconnectFailed.reason}`}
+              {...reconnectFailedCopy(reconnectFailed.reason)}
               testId="link-reconnect-failed"
             />
           )}
@@ -432,7 +454,16 @@ function ConnectCard({
   );
 }
 
-function ConnectingCard({ email, reconnecting }: { email: string; reconnecting: boolean }) {
+function ConnectingCard({
+  email,
+  reconnecting,
+  cause,
+}: {
+  email: string;
+  reconnecting: boolean;
+  /** What the reconnect is recovering from: the supervisor's fault line, when it set one. */
+  cause: string | null;
+}) {
   return (
     <div className="mx-auto w-full max-w-md" data-testid="link-connecting">
       <Panel title={reconnecting ? 'Reconnecting' : 'Connecting'}>
@@ -445,6 +476,9 @@ function ConnectingCard({ email, reconnecting }: { email: string; reconnecting: 
           </span>
           <span className={TYPE.meta}>{email}</span>
         </div>
+        {reconnecting && cause && (
+          <ToneBanner tone="warn" label="Why" text={cause} testId="link-reconnect-cause" />
+        )}
       </Panel>
     </div>
   );
@@ -759,7 +793,13 @@ const LeanZeroLinkSectionBody: React.FC = () => {
       )}
 
       {auth?.state === 'connecting' && (
-        <ConnectingCard email={auth.email} reconnecting={reconnect?.state === 'reconnecting'} />
+        <ConnectingCard
+          email={auth.email}
+          reconnecting={reconnect?.state === 'reconnecting'}
+          // The launch reconnect clears lastError before it connects; a supervisor restart sets it
+          // to the fault it is recovering from (manager.rs FaultResponse::Restart).
+          cause={linkState?.lastError ?? null}
+        />
       )}
 
       {auth?.state === 'connected' && linkState && (

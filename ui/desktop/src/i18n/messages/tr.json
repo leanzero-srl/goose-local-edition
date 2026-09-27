@@ -3819,7 +3819,7 @@
     "defaultMessage": "Bölme"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Bölme bu Mac'i kullanıyor: bölme durdurulana kadar burada tek başına model çalışmaz (Durdur, aşağıdaki Çalıştır altında)."
+    "defaultMessage": "Bölme bu Mac’i kullanıyor. Aşağıdaki Çalıştır altındaki «Bu Mac’te çalıştır» önce bölmeyi durdurur."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Motor ayrıntıları"
@@ -4353,7 +4353,7 @@
     "defaultMessage": "bu Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {bu uygulamanın sohbetlerinden veya /v1 üzerinden gelmeyen # istek}}"
+    "defaultMessage": "{count, plural, other {başka bir uygulamadan # istek}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {istek bekliyor}}"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "kurulum, ön denetim, denetimler, olaylar"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "Bölme bu Mac’i kullanıyor — burada tek başına model çalıştırmak için durdurun."
   },
   "placementCard.estimated": {
     "defaultMessage": "tahmini"

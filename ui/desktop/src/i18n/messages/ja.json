@@ -3819,7 +3819,7 @@
     "defaultMessage": "分割"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "分割がこの Mac を使用しています。分割を停止するまで、ここで単独で動くモデルはありません（下の「実行」の停止から）。"
+    "defaultMessage": "分割がこの Mac を使用しています。下の「実行」にある「この Mac で実行」は、まず分割を停止します。"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "エンジンの詳細"
@@ -4353,7 +4353,7 @@
     "defaultMessage": "この Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {このアプリのチャットや /v1 以外からのリクエスト # 件}}"
+    "defaultMessage": "{count, plural, other {別のアプリからのリクエスト # 件}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {件のリクエストが待機中}}"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "セットアップ、事前チェック、チェック、イベント"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "分割がこの Mac を使用中です — ここでモデルを単独で実行するには停止してください。"
   },
   "placementCard.estimated": {
     "defaultMessage": "推定"
