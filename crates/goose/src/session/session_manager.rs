@@ -630,7 +630,7 @@ impl SessionManager {
         if !eligible {
             return Ok(None);
         }
-        let Some(_in_flight) = TitleInFlight::claim(id) else {
+        let Some(_in_flight) = TitleInFlight::claim(&self.storage.session_dir, id) else {
             return Ok(None);
         };
 

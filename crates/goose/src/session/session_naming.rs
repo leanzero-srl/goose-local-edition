@@ -109,12 +109,14 @@ static TITLES_IN_FLIGHT: LazyLock<std::sync::Mutex<std::collections::HashSet<Str
     LazyLock::new(Default::default);
 
 impl TitleInFlight {
-    pub(crate) fn claim(session_id: &str) -> Option<Self> {
+    /// A session is its store and its id: two stores (two test sessions dirs) reuse the same ids.
+    pub(crate) fn claim(store: &std::path::Path, session_id: &str) -> Option<Self> {
+        let key = format!("{}\0{session_id}", store.display());
         TITLES_IN_FLIGHT
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(session_id.to_string())
-            .then(|| Self(session_id.to_string()))
+            .insert(key.clone())
+            .then(|| Self(key))
     }
 }
 
