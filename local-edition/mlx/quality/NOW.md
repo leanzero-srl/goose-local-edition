@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 12:18 (real clock) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
+Updated: 2026-09-27 12:35 · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
 
 ## Live
 - Installed on both Macs: 3.0.57 (Q-161 XML guard + repeat stop, Q-164 last-token reuse, Q-162, Q-103 single-engine
@@ -9,15 +9,17 @@ Updated: 2026-09-27 12:18 (real clock) · heartbeat cron 90b0083a (silent 00:35�
   loops the ported guard does not constrain. Seen IN WORDS by the new forming disclosure (Q-151 live) and livecheck
   green all turn (Q-147 live). runwatch now also fires on a repeating live tail.
 - Q-161 agent owns the 27B split for probes (no other GPU user). Pipeline E2E #5b waits behind it.
-- 3.0.58 DONE (Q-165). Install QUEUED behind: critic round 2 (walks the installed app) + the Q-161 agent (probes
-  the split) — installing restarts both; it goes on the tick both report.
-- Critic round 2 (at rest, whole app) running → ROUND-2026-09-27-2.md.
+- 3.0.58 DONE (Q-165). Install QUEUED behind: the Q-161 agent (probes the split; an install restarts it).
+- Critic round 2 DONE: 20 rows PROVEN on screen, 8 reopened (Q-23,45,46,58,93,97,100,148), 11 new (Q-166..Q-176) —
+  worst: the false 'another MLX split (not goose's)' restore line is back (goose's own probe, a comma).
 - LOAD 26e DONE: 19 canaries, median 1.98 s, max 5.6 s (26d: 297–353 s) → Q-145 + Q-160 PROVEN LIVE; the one 503
   was Q-165.
 
 ## Agents
-- Q-161 (reopened): walk the live text through the guard's rules, mirror lz.7 exactly, add an engine-side stop on a
-  verbatim repeating span outside any call.
+- Q-161 (reopened): the live `!\n</parameter>\n</function>` loop the ported guard misses.
+- Round-2 sidecar: Q-166 probe false-foreign, Q-167 Best + Chat size, Q-168 rate bucket, Q-174 strings.
+- Round-2 desktop: Q-166 restore line, Q-170 Sampling, Q-172 stump card, Q-173 check chip, Q-174, Q-176/Q-23, Q-45.
+- Round-2 core: Q-169 stopped turn, Q-171/Q-97 titles, Q-175 the 2000-token writer.
 
 ## Next actions (in order)
 1. Q-161 + Q-162 + chat merge land → 3.0.56 (with engine surfaces + Q-160) → install → split-start 27B → E2E #3f
