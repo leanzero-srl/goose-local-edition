@@ -8628,10 +8628,10 @@
     "defaultMessage": "{main} {clause}"
   },
   "strategies.sentenceLoadMeasured": {
-    "defaultMessage": "{who,select,chat{Если {node} не загружен, он загружается, и ваш ход ждёт (примерно {duration}).} other{Если {node} не загружен, он загружается, и задача ждёт (примерно {duration}).}}"
+    "defaultMessage": "{who,select,chat{Если {node} не загружен, он загружается, и ваше сообщение ждёт (примерно {duration}).} other{Если {node} не загружен, он загружается, и задача ждёт (примерно {duration}).}}"
   },
   "strategies.sentenceLoadUnmeasured": {
-    "defaultMessage": "{who,select,chat{Если {node} не загружен, он загружается, и ваш ход ждёт; его первая загрузка ещё не измерена.} other{Если {node} не загружен, он загружается, и задача ждёт; его первая загрузка ещё не измерена.}}"
+    "defaultMessage": "{who,select,chat{Если {node} не загружен, он загружается, и ваше сообщение ждёт; его первая загрузка ещё не измерена.} other{Если {node} не загружен, он загружается, и задача ждёт; его первая загрузка ещё не измерена.}}"
   },
   "strategies.sentenceOverflowMany": {
     "defaultMessage": "{role} работает на {first}; когда он занят, лишняя работа уходит на {rest}."
@@ -8715,7 +8715,7 @@
     "defaultMessage": "Написание кода для каждой задачи"
   },
   "strategies.whatChat": {
-    "defaultMessage": "Ваши ходы в чате: ответы, правки, вызовы инструментов"
+    "defaultMessage": "Ваши сообщения в чате: ответы, правки, вызовы инструментов"
   },
   "strategies.whatFrontend": {
     "defaultMessage": "Задачи сборки, которые пишут пользовательский интерфейс (страницы, компоненты, стили)"

@@ -8628,10 +8628,10 @@
     "defaultMessage": "{main} {clause}"
   },
   "strategies.sentenceLoadMeasured": {
-    "defaultMessage": "{who,select,chat{Si {node} n’est pas chargé, il se charge et votre tour attend (environ {duration}).} other{Si {node} n’est pas chargé, il se charge et la tâche attend (environ {duration}).}}"
+    "defaultMessage": "{who,select,chat{Si {node} n’est pas chargé, il se charge et votre message attend (environ {duration}).} other{Si {node} n’est pas chargé, il se charge et la tâche attend (environ {duration}).}}"
   },
   "strategies.sentenceLoadUnmeasured": {
-    "defaultMessage": "{who,select,chat{Si {node} n’est pas chargé, il se charge et votre tour attend ; son premier chargement n’est pas encore mesuré.} other{Si {node} n’est pas chargé, il se charge et la tâche attend ; son premier chargement n’est pas encore mesuré.}}"
+    "defaultMessage": "{who,select,chat{Si {node} n’est pas chargé, il se charge et votre message attend ; son premier chargement n’est pas encore mesuré.} other{Si {node} n’est pas chargé, il se charge et la tâche attend ; son premier chargement n’est pas encore mesuré.}}"
   },
   "strategies.sentenceOverflowMany": {
     "defaultMessage": "{role} s’exécute sur {first} ; quand il est occupé, le travail en trop va à {rest}."
@@ -8715,7 +8715,7 @@
     "defaultMessage": "Écrire le code de chaque tâche"
   },
   "strategies.whatChat": {
-    "defaultMessage": "Vos tours dans une discussion : réponses, modifications, appels d’outils"
+    "defaultMessage": "Vos messages dans une discussion : réponses, modifications, appels d’outils"
   },
   "strategies.whatFrontend": {
     "defaultMessage": "Tâches de build qui écrivent l’interface utilisateur (pages, composants, styles)"

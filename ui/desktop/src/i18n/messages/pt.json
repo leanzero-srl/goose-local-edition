@@ -8628,10 +8628,10 @@
     "defaultMessage": "{main} {clause}"
   },
   "strategies.sentenceLoadMeasured": {
-    "defaultMessage": "{who,select,chat{Se {node} não estiver carregado, ele carrega e sua vez espera (cerca de {duration}).} other{Se {node} não estiver carregado, ele carrega e a tarefa espera (cerca de {duration}).}}"
+    "defaultMessage": "{who,select,chat{Se {node} não estiver carregado, ele carrega e sua mensagem espera (cerca de {duration}).} other{Se {node} não estiver carregado, ele carrega e a tarefa espera (cerca de {duration}).}}"
   },
   "strategies.sentenceLoadUnmeasured": {
-    "defaultMessage": "{who,select,chat{Se {node} não estiver carregado, ele carrega e sua vez espera; seu primeiro carregamento ainda não é medido.} other{Se {node} não estiver carregado, ele carrega e a tarefa espera; seu primeiro carregamento ainda não é medido.}}"
+    "defaultMessage": "{who,select,chat{Se {node} não estiver carregado, ele carrega e sua mensagem espera; seu primeiro carregamento ainda não é medido.} other{Se {node} não estiver carregado, ele carrega e a tarefa espera; seu primeiro carregamento ainda não é medido.}}"
   },
   "strategies.sentenceOverflowMany": {
     "defaultMessage": "{role} é executado em {first}; quando está ocupado, o trabalho extra vai para {rest}."
@@ -8715,7 +8715,7 @@
     "defaultMessage": "Escrever o código de cada tarefa"
   },
   "strategies.whatChat": {
-    "defaultMessage": "Suas vezes em um chat: respostas, edições, chamadas de ferramentas"
+    "defaultMessage": "Suas mensagens em um chat: respostas, edições, chamadas de ferramentas"
   },
   "strategies.whatFrontend": {
     "defaultMessage": "Tarefas de build que escrevem a interface do usuário (páginas, componentes, estilos)"

@@ -8628,10 +8628,10 @@
     "defaultMessage": "{main} {clause}"
   },
   "strategies.sentenceLoadMeasured": {
-    "defaultMessage": "{who,select,chat{{node} yüklü değilse yüklenir ve sıranız bekler (yaklaşık {duration}).} other{{node} yüklü değilse yüklenir ve görev bekler (yaklaşık {duration}).}}"
+    "defaultMessage": "{who,select,chat{{node} yüklü değilse yüklenir ve mesajınız bekler (yaklaşık {duration}).} other{{node} yüklü değilse yüklenir ve görev bekler (yaklaşık {duration}).}}"
   },
   "strategies.sentenceLoadUnmeasured": {
-    "defaultMessage": "{who,select,chat{{node} yüklü değilse yüklenir ve sıranız bekler; ilk yüklemesi henüz ölçülmedi.} other{{node} yüklü değilse yüklenir ve görev bekler; ilk yüklemesi henüz ölçülmedi.}}"
+    "defaultMessage": "{who,select,chat{{node} yüklü değilse yüklenir ve mesajınız bekler; ilk yüklemesi henüz ölçülmedi.} other{{node} yüklü değilse yüklenir ve görev bekler; ilk yüklemesi henüz ölçülmedi.}}"
   },
   "strategies.sentenceOverflowMany": {
     "defaultMessage": "{role}, {first} üzerinde çalışır; o meşgulken fazladan iş {rest}'e gider."
@@ -8715,7 +8715,7 @@
     "defaultMessage": "Her görev için kodu yazmak"
   },
   "strategies.whatChat": {
-    "defaultMessage": "Sohbetteki sıralarınız: yanıtlar, düzenlemeler, araç çağrıları"
+    "defaultMessage": "Sohbetteki mesajlarınız: yanıtlar, düzenlemeler, araç çağrıları"
   },
   "strategies.whatFrontend": {
     "defaultMessage": "Kullanıcı arayüzünü yazan derleme görevleri (sayfalar, bileşenler, stiller)"

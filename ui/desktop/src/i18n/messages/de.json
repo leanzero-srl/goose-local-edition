@@ -8628,10 +8628,10 @@
     "defaultMessage": "{main} {clause}"
   },
   "strategies.sentenceLoadMeasured": {
-    "defaultMessage": "{who,select,chat{Falls {node} nicht geladen ist, lädt er, und dein Zug wartet (etwa {duration}).} other{Falls {node} nicht geladen ist, lädt er, und die Aufgabe wartet (etwa {duration}).}}"
+    "defaultMessage": "{who,select,chat{Falls {node} nicht geladen ist, lädt er, und deine Nachricht wartet (etwa {duration}).} other{Falls {node} nicht geladen ist, lädt er, und die Aufgabe wartet (etwa {duration}).}}"
   },
   "strategies.sentenceLoadUnmeasured": {
-    "defaultMessage": "{who,select,chat{Falls {node} nicht geladen ist, lädt er, und dein Zug wartet; sein erstes Laden ist noch nicht gemessen.} other{Falls {node} nicht geladen ist, lädt er, und die Aufgabe wartet; sein erstes Laden ist noch nicht gemessen.}}"
+    "defaultMessage": "{who,select,chat{Falls {node} nicht geladen ist, lädt er, und deine Nachricht wartet; sein erstes Laden ist noch nicht gemessen.} other{Falls {node} nicht geladen ist, lädt er, und die Aufgabe wartet; sein erstes Laden ist noch nicht gemessen.}}"
   },
   "strategies.sentenceOverflowMany": {
     "defaultMessage": "{role} läuft auf {first}; wenn er ausgelastet ist, geht die zusätzliche Arbeit an {rest}."
@@ -8715,7 +8715,7 @@
     "defaultMessage": "Den Code für jede Aufgabe schreiben"
   },
   "strategies.whatChat": {
-    "defaultMessage": "Deine Züge in einem Chat: Antworten, Bearbeitungen, Tool-Aufrufe"
+    "defaultMessage": "Deine Nachrichten in einem Chat: Antworten, Bearbeitungen, Tool-Aufrufe"
   },
   "strategies.whatFrontend": {
     "defaultMessage": "Build-Aufgaben, die die Benutzeroberfläche schreiben (Seiten, Komponenten, Stile)"
