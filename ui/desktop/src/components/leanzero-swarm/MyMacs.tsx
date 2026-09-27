@@ -226,9 +226,7 @@ function AddAnotherMac() {
       </span>
       <div className="flex min-w-0 flex-col gap-1">
         <span className={TYPE.h2}>{intl.formatMessage(i18n.addAnotherTitle)}</span>
-        <p className={cx(TYPE.body, 'break-words')}>
-          {intl.formatMessage(i18n.addAnotherBody)}
-        </p>
+        <p className={cx(TYPE.body, 'break-words')}>{intl.formatMessage(i18n.addAnotherBody)}</p>
       </div>
     </section>
   );
