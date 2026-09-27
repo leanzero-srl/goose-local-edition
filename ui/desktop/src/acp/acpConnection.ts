@@ -2,6 +2,8 @@ import {
   DEFAULT_GOOSE_MCP_HOST_CAPABILITIES,
   GooseClient,
   type GooseClientCallbacks,
+  type LoopsChangedNotification_unstable,
+  type LoopsTickDueNotification_unstable,
 } from '@aaif/goose-sdk';
 import { PROTOCOL_VERSION, type InitializeResponse } from '@agentclientprotocol/sdk';
 import packageJson from '../../package.json';
@@ -24,6 +26,73 @@ const ACP_INITIALIZE_TIMEOUT_MS = 10_000;
 let clientPromise: Promise<InitializedAcpClient> | null = null;
 let resolvedClient: InitializedAcpClient | null = null;
 
+// Session-loop notifications (DESIGN-SESSION-LOOPS §5.1). The generated dispatcher routes them to
+// the typed callbacks below; this in-module emitter hands them to the tick driver and the rail.
+// A tick offer that arrives before any listener subscribed is held (latest per session) and
+// handed to the first listener, so an offer is never lost to mount order.
+type Listener<T> = (value: T) => void;
+
+const tickDueListeners = new Set<Listener<LoopsTickDueNotification_unstable>>();
+const undeliveredTickDue = new Map<string, LoopsTickDueNotification_unstable>();
+const loopsChangedListeners = new Set<Listener<LoopsChangedNotification_unstable>>();
+const connectionClosedListeners = new Set<Listener<void>>();
+
+function emit<T>(listeners: Set<Listener<T>>, value: T, what: string): void {
+  for (const listener of [...listeners]) {
+    try {
+      listener(value);
+    } catch (error) {
+      console.error(`A ${what} listener threw:`, error);
+    }
+  }
+}
+
+export function onLoopsTickDue(listener: Listener<LoopsTickDueNotification_unstable>): () => void {
+  tickDueListeners.add(listener);
+  const held = [...undeliveredTickDue.values()];
+  undeliveredTickDue.clear();
+  for (const offer of held) {
+    emit(new Set([listener]), offer, 'loops/tickDue');
+  }
+  return () => {
+    tickDueListeners.delete(listener);
+  };
+}
+
+export function onLoopsChanged(listener: Listener<LoopsChangedNotification_unstable>): () => void {
+  loopsChangedListeners.add(listener);
+  return () => {
+    loopsChangedListeners.delete(listener);
+  };
+}
+
+/** The ACP connection ended (its `closed` settled): goosed dropped this window's tick door. */
+export function onAcpConnectionClosed(listener: Listener<void>): () => void {
+  connectionClosedListeners.add(listener);
+  return () => {
+    connectionClosedListeners.delete(listener);
+  };
+}
+
+export async function handleLoopsTickDue(offer: LoopsTickDueNotification_unstable): Promise<void> {
+  if (tickDueListeners.size === 0) {
+    undeliveredTickDue.set(offer.sessionId, offer);
+    return;
+  }
+  emit(tickDueListeners, offer, 'loops/tickDue');
+}
+
+export async function handleLoopsChanged(change: LoopsChangedNotification_unstable): Promise<void> {
+  emit(loopsChangedListeners, change, 'loops/changed');
+}
+
+async function handleUnknownExtNotification(
+  method: string,
+  params: Record<string, unknown>
+): Promise<void> {
+  console.warn(`Unhandled goose notification ${method}`, params);
+}
+
 function createClientCallbacks(): () => GooseClientCallbacks {
   return () => ({
     requestPermission: requestAcpPermission,
@@ -31,19 +100,20 @@ function createClientCallbacks(): () => GooseClientCallbacks {
     unstable_sessionRecipeRequestParams: requestAcpRecipeParams,
     sessionUpdate: handleAcpSessionNotification,
     unstable_sessionUpdate: handleAcpGooseSessionNotification,
+    unstable_loopsTickDue: handleLoopsTickDue,
+    unstable_loopsChanged: handleLoopsChanged,
+    extNotification: handleUnknownExtNotification,
   });
 }
 
+function connectionEnded(): void {
+  resolvedClient = null;
+  clientPromise = null;
+  emit(connectionClosedListeners, undefined, 'connection-closed');
+}
+
 function monitorConnection(client: GooseClient): void {
-  client.closed
-    .then(() => {
-      resolvedClient = null;
-      clientPromise = null;
-    })
-    .catch(() => {
-      resolvedClient = null;
-      clientPromise = null;
-    });
+  client.closed.then(connectionEnded, connectionEnded);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

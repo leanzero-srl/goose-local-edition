@@ -14,7 +14,7 @@ import {
 import { cancelAcpElicitationRequestsForSession } from './elicitationRequests';
 import { parseAcpCreditsExhaustedError, type AcpCreditsExhaustedError } from './errors';
 import { cancelAcpPermissionRequestsForSession } from './permissionRequests';
-import { acpCancelPrompt, acpPromptSession } from './prompt';
+import { acpCancelPrompt, acpPromptSession, type AcpPromptMeta } from './prompt';
 import {
   acpForkSession,
   acpLoadSession,
@@ -35,7 +35,22 @@ export interface AcpSnapshotOptions {
 
 export interface AcpSubmitMessageOptions extends AcpSnapshotOptions {
   onFinish(error?: string): void | Promise<void>;
+  /** Sent as the prompt's ACP `_meta` (a loop tick's `goose.loopTick`). */
+  meta?: AcpPromptMeta;
+  /**
+   * Append `userMessage` to the transcript after the busy check and before the prompt is sent —
+   * the atomic form of what `handleSubmit` does with `setMessages` first. A message whose id is
+   * already in the transcript is not appended twice.
+   */
+  preAppend?: boolean;
 }
+
+/**
+ * `'busy'`: an attempt is already active on the session; nothing was appended or sent.
+ * `'submitted'`: the prompt was sent and its call has ended (finished, failed or cancelled —
+ * a failure still reaches `onFinish(error)` as before).
+ */
+export type AcpSubmitStatus = 'submitted' | 'busy';
 
 export interface AcpChatSessionController {
   createSession(
@@ -48,7 +63,7 @@ export interface AcpChatSessionController {
     sessionId: string,
     userMessage: Message,
     options: AcpSubmitMessageOptions
-  ): Promise<void>;
+  ): Promise<AcpSubmitStatus>;
   stop(sessionId: string): void;
   updateMessage(
     sessionId: string,
@@ -150,34 +165,41 @@ async function submitMessage(
   sessionId: string,
   userMessage: Message,
   options: AcpSubmitMessageOptions
-): Promise<void> {
+): Promise<AcpSubmitStatus> {
   assertNoPendingPromptCancellation(sessionId);
 
   const snapshot = acpChatSessionStore.getSnapshot(sessionId);
   if (snapshot?.activePromptAttemptId) {
-    return;
+    return 'busy';
+  }
+
+  if (options.preAppend) {
+    const messages = options.getCurrentSnapshot()?.messages ?? snapshot?.messages ?? [];
+    if (!userMessage.id || !messages.some((message) => message.id === userMessage.id)) {
+      acpChatSessionActions.setMessages(sessionId, [...messages, userMessage]);
+    }
   }
 
   const promptAttemptId = uuidv7();
   acpChatSessionActions.startPromptAttempt(sessionId, promptAttemptId);
 
   try {
-    await acpPromptSession(sessionId, userMessage);
+    await acpPromptSession(sessionId, userMessage, options.meta);
     if (acpChatSessionActions.clearPromptCancellation(sessionId, promptAttemptId)) {
-      return;
+      return 'submitted';
     }
     if (acpChatSessionActions.finishPromptAttemptIfCurrent(sessionId, promptAttemptId)) {
       void options.onFinish();
     }
   } catch (error) {
     if (acpChatSessionActions.clearPromptCancellation(sessionId, promptAttemptId)) {
-      return;
+      return 'submitted';
     }
 
     const creditsExhaustedError = parseAcpCreditsExhaustedError(error);
     if (creditsExhaustedError) {
       if (!acpChatSessionActions.isCurrentPromptAttempt(sessionId, promptAttemptId)) {
-        return;
+        return 'submitted';
       }
 
       const messages = [
@@ -188,7 +210,7 @@ async function submitMessage(
       if (acpChatSessionActions.finishPromptAttemptIfCurrent(sessionId, promptAttemptId)) {
         void options.onFinish();
       }
-      return;
+      return 'submitted';
     }
 
     const submitError = 'Submit error: ' + errorMessage(error);
@@ -204,6 +226,7 @@ async function submitMessage(
       new CustomEvent(AppEvents.MESSAGE_STREAM_FINISHED, { detail: { sessionId } })
     );
   }
+  return 'submitted';
 }
 
 function stop(sessionId: string): void {

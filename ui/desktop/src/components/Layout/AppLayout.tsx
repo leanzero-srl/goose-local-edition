@@ -17,6 +17,7 @@ import { UserInput } from '../../types/message';
 import SessionActivityIndicator from '../sessionActivity/SessionActivityIndicator';
 import { useReportGlanceSessions } from '../engineGlance/glanceStore';
 import { useGlanceTurnedOffNotice } from '../engineGlance/useGlanceTurnedOffNotice';
+import { LoopDriver } from '../loops/LoopDriver';
 
 const i18n = defineMessages({
   openNavigation: {
@@ -102,6 +103,8 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
 
   return (
     <div className="flex flex-1 w-full h-full relative animate-fade-in bg-background-primary flex-row">
+      {/* Session loops: goosed offers each tick; this window fires it through the chat's own door. */}
+      <LoopDriver />
       <div
         style={{ zIndex: Z_INDEX.HEADER }}
         className={cn('absolute flex items-center gap-1', headerPadding, headerTop, 'ml-1.5')}
