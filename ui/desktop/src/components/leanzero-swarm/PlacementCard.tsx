@@ -919,6 +919,32 @@ export function tooSmallForLive(
   return candidate.fit.context < liveContextTokens;
 }
 
+/** The splits beside the offered one, each with why goose will not run it — under its Details. */
+function OtherSplits({ splits }: { splits: readonly PlacementCandidate[] }) {
+  const intl = useIntl();
+  return (
+    <div className="flex flex-col gap-2" data-testid="placement-others">
+      <span className={cx(TYPE.meta, WEIGHT.semibold)}>
+        {intl.formatMessage(i18n.others, { count: splits.length })}
+      </span>
+      <ul className="flex flex-col gap-2">
+        {splits.map((c) => (
+          <li key={c.id} className="flex flex-col gap-0.5" data-testid={`placement-other-${c.id}`}>
+            <span className={cx(TYPE.body, WEIGHT.semibold)}>
+              {intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
+                link: linkWord(c),
+              })}
+            </span>
+            <span className={cx('break-words', TYPE.meta)} title={c.fit.detail}>
+              {outcomeText(intl, c)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function LiveChip({ live }: { live: { phase: EnginePhase; state: string } }) {
   const intl = useIntl();
   const word =
@@ -985,7 +1011,6 @@ function PlacementCardBody({
     follows?: string;
     detail?: string | null;
   } | null>(null);
-  const [othersOpen, setOthersOpen] = useState(false);
   const [detailsOpen, setDetailsOpenState] = useState(splitDetailsOpenAtFirst);
   const setDetailsOpen = useCallback((open: boolean) => {
     sessionStorage.setItem(SPLIT_DETAILS_KEY, open ? 'open' : 'folded');
@@ -1681,7 +1706,7 @@ function PlacementCardBody({
             {way.mac ? macs.describeError(way.mac, action.reason) : action.reason}
           </p>
         )}
-        {way.kind === 'split' && splitDetails && (
+        {way.kind === 'split' && (splitDetails || otherSplits.length > 0) && (
           <Disclosure
             variant="plain"
             title={intl.formatMessage(i18n.details)}
@@ -1690,7 +1715,11 @@ function PlacementCardBody({
             onOpenChange={setDetailsOpen}
             testId="placement-split-details"
           >
-            {splitDetails}
+            <div className="flex flex-col gap-3">
+              {/* Splits goose cannot start are reference, not a choice: they live here (Q-25). */}
+              {otherSplits.length > 0 && <OtherSplits splits={otherSplits} />}
+              {splitDetails}
+            </div>
           </Disclosure>
         )}
       </li>
@@ -1774,33 +1803,6 @@ function PlacementCardBody({
           {note}
         </p>
       ))}
-      {otherSplits.length > 0 && (
-        <Disclosure
-          title={intl.formatMessage(i18n.others, { count: otherSplits.length })}
-          open={othersOpen}
-          onOpenChange={setOthersOpen}
-          testId="placement-others"
-        >
-          <ul className="flex flex-col gap-2">
-            {otherSplits.map((c) => (
-              <li
-                key={c.id}
-                className="flex flex-col gap-0.5"
-                data-testid={`placement-other-${c.id}`}
-              >
-                <span className={cx(TYPE.body, WEIGHT.semibold)}>
-                  {intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
-                    link: linkWord(c),
-                  })}
-                </span>
-                <span className={cx('break-words', TYPE.meta)} title={c.fit.detail}>
-                  {outcomeText(intl, c)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Disclosure>
-      )}
       {cutDialog}
     </section>
   );

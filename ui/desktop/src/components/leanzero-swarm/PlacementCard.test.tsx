@@ -503,13 +503,16 @@ describe('Run it on the real 27B plan', () => {
     expect(within(split).getByText('tensor split · JACCL')).toBeInTheDocument();
     expect(within(split).getByText('fits only at 72,704 context')).toBeInTheDocument();
 
-    // The pipeline split goose cannot run for this model folds away with its reason.
-    await userEvent.click(screen.getByText('1 other split'));
+    // Q-25: the pipeline split goose cannot run for this model is no option at the card's top level
+    // — it waits, with its reason, under the split's Details.
+    const other = screen.getByTestId('placement-other-pipeline:jaccl:local+workhorse');
+    expect(within(split).getByTestId('placement-split-details')).toContainElement(other);
+    expect(other).not.toBeVisible();
+    await userEvent.click(within(split).getByText('Details'));
+    expect(within(split).getByText('1 other split')).toBeVisible();
     expect(
-      within(screen.getByTestId('placement-other-pipeline:jaccl:local+workhorse')).getByText(
-        /^not supported yet: goose splits qwen3_5 tensor-parallel only$/
-      )
-    ).toBeInTheDocument();
+      within(other).getByText(/^not supported yet: goose splits qwen3_5 tensor-parallel only$/)
+    ).toBeVisible();
     // No hardware lines under the card: the chips live on My Macs.
     expect(screen.queryByTestId('placement-nodes')).toBeNull();
     expect(mockPlan).toHaveBeenCalledWith('chat', MODEL);
@@ -1090,7 +1093,9 @@ describe('Run it on the real 27B plan', () => {
   it('renders on Studio tokens only, no left rails', async () => {
     renderCard();
     const card = await screen.findByTestId('placement-card');
-    await userEvent.click(screen.getByText('1 other split'));
+    await userEvent.click(
+      within(await screen.findByTestId('placement-way-split')).getByText('Details')
+    );
     assertStudioClean(card);
     expect(allClasses(card).filter((c) => c === 'border-l' || /^border-l-\d/.test(c))).toEqual([]);
   });
