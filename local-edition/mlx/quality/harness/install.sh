@@ -23,6 +23,7 @@ ssh workhorse "set -e; mp=\$(hdiutil attach -nobrowse -readonly /tmp/gs-$v.dmg |
 osascript -e 'quit app \"Goose Swarm\"' 2>/dev/null || true
 for i in \$(seq 1 60); do pgrep -f '$MAIN' >/dev/null || break; sleep 1; done
 if pgrep -f '$MAIN' >/dev/null; then echo \"studio: the old app did not quit (pid \$(pgrep -f '$MAIN' | head -1)) — NOT swapping\"; exit 3; fi
+for p in \$(ps -Ao pid=,ppid=,args= | awk '\$2==1 && /Goose Swarm.app\\/Contents\\/Resources\\/bin\\/(goose serve|tailscaled --tun)/ {print \$1}'); do echo \"studio: reaping orphan pid \$p\"; kill \$p; done
 rm -rf '/Applications/Goose Swarm.app'; mv '/Applications/Goose Swarm.new.app' '/Applications/Goose Swarm.app'
 swap=\$(date +%s); open -a '/Applications/Goose Swarm.app'
 for i in \$(seq 1 60); do p=\$(pgrep -f '$MAIN' | head -1); [ -n \"\$p\" ] && break; sleep 1; done
@@ -43,6 +44,17 @@ chromium.connectOverCDP('http://127.0.0.1:9333').then(async b=>{const p=b.contex
 const d=p.getByRole('dialog'); console.log(await d.count()? (await d.first().innerText()).replace(/\s+/g,' ').slice(0,200):'no dialog'); process.exit(0)}).catch(e=>{console.log('cdp: '+e.message);process.exit(0)})" 2>/dev/null)
   echo "macbook: the old app did not quit (pid $held; on screen: $dialog) — NOT swapping"; exit 3
 fi
+# Q-223 (2026-09-27): the 3.0.61 goosed survived the quit as an orphan (ppid 1) and kept Link's tailscaled, so the
+# new app's Link refused to connect. Until the app's quit path is fixed, reap orphaned goose servers of THIS bundle
+# per pid (never killpg — gate 4), then their tailscaled once its owner is gone.
+reap_orphans() {
+  for p in $(ps -Ao pid=,ppid=,args= | awk '$2==1 && /Goose Swarm.app\/Contents\/Resources\/bin\/goose serve/ {print $1}'); do
+    echo "macbook: reaping orphaned goose serve pid $p"; kill $p; done
+  sleep 3
+  for p in $(ps -Ao pid=,ppid=,args= | awk '$2==1 && /Goose Swarm.app\/Contents\/Resources\/bin\/tailscaled --tun/ {print $1}'); do
+    echo "macbook: reaping orphaned tailscaled pid $p"; kill $p; done
+}
+reap_orphans
 rm -rf "/Applications/Goose Swarm.app"; mv "/Applications/Goose Swarm.new.app" "/Applications/Goose Swarm.app"
 spctl -a -vv "/Applications/Goose Swarm.app" 2>&1 | head -1
 swap=$(date +%s)
