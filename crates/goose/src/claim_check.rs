@@ -21,7 +21,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::conversation::message::{
-    Message, MessageContent, SystemNotificationContent, SystemNotificationType,
+    audience_includes, Message, MessageContent, SystemNotificationContent, SystemNotificationType,
 };
 use rmcp::model::Role;
 
@@ -67,7 +67,9 @@ pub(crate) fn text_of(message: &Message) -> String {
         .content
         .iter()
         .filter_map(|c| match c {
-            MessageContent::Text(t) => Some(t.text.as_str()),
+            MessageContent::Text(t) if audience_includes(t.audience(), &Role::Assistant) => {
+                Some(t.text.as_str())
+            }
             _ => None,
         })
         .collect::<Vec<_>>()

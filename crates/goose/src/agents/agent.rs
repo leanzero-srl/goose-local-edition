@@ -3610,11 +3610,7 @@ impl Agent {
         }
     }
 
-    pub async fn create_recipe(
-        &self,
-        session_id: &str,
-        mut messages: Conversation,
-    ) -> Result<Recipe> {
+    pub async fn create_recipe(&self, session_id: &str, messages: Conversation) -> Result<Recipe> {
         tracing::info!("Starting recipe creation with {} messages", messages.len());
 
         let session = self
@@ -3656,6 +3652,7 @@ impl Agent {
             .filter(super::reply_parts::is_tool_visible_to_model)
             .collect();
 
+        let mut messages = messages.agent_visible_content();
         messages.push(Message::user().with_text(recipe_prompt));
 
         let (messages, issues) = fix_conversation(messages);

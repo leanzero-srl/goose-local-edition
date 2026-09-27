@@ -1064,7 +1064,12 @@ impl CliSession {
         output::show_thinking();
         let (plan_response, _usage) = goose::session_context::with_session_id(
             Some(self.session_id.clone()),
-            reasoner.complete(&model_config, &plan_prompt, plan_messages.messages(), &[]),
+            reasoner.complete(
+                &model_config,
+                &plan_prompt,
+                plan_messages.agent_visible_content().messages(),
+                &[],
+            ),
         )
         .await?;
         output::render_message(&plan_response, self.debug);

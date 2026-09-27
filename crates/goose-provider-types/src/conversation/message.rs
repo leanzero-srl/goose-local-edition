@@ -324,6 +324,31 @@ impl fmt::Display for MessageContent {
     }
 }
 
+/// Whether content carrying this MCP `audience` annotation is meant for `reader`. No annotation
+/// means everyone; an annotation names its readers, so `[user]` is the person's alone. The one
+/// audience rule (Q-211): the provider path (`Message::agent_visible_content`) and every side path
+/// that reads a tool result for a model ([`model_visible_content`]) apply it, so what a judge, a
+/// summary or a recipe reads is exactly what the chat's own model is shown.
+pub fn audience_includes(audience: Option<&Vec<Role>>, reader: &Role) -> bool {
+    audience.is_none_or(|roles| roles.contains(reader))
+}
+
+/// The items of a tool result a MODEL may read. MCP content marked for the user alone
+/// (`audience: [user]`) is shown to the person and never sent to a model (Q-211). Every path that
+/// turns a tool result into model-bound text reads it through here; content with no audience
+/// annotation — all of goose's own tools — passes untouched and in order.
+pub fn model_visible_content(result: &CallToolResult) -> impl Iterator<Item = &Content> {
+    result
+        .content
+        .iter()
+        .filter(|c| audience_includes(c.audience(), &Role::Assistant))
+}
+
+/// The text items of [`model_visible_content`], in order: the model-visible text of a tool result.
+pub fn model_visible_texts(result: &CallToolResult) -> impl Iterator<Item = &str> {
+    model_visible_content(result).filter_map(|c| c.as_text().map(|t| t.text.as_str()))
+}
+
 impl MessageContent {
     pub fn text<S: Into<String>>(text: S) -> Self {
         MessageContent::Text(
@@ -338,22 +363,14 @@ impl MessageContent {
     pub fn filter_for_audience(&self, audience: Role) -> Option<MessageContent> {
         match self {
             MessageContent::Text(text) => {
-                if text
-                    .audience()
-                    .map(|roles| roles.contains(&audience))
-                    .unwrap_or(true)
-                {
+                if audience_includes(text.audience(), &audience) {
                     Some(self.clone())
                 } else {
                     None
                 }
             }
             MessageContent::Image(img) => {
-                if img
-                    .audience()
-                    .map(|roles| roles.contains(&audience))
-                    .unwrap_or(true)
-                {
+                if audience_includes(img.audience(), &audience) {
                     Some(self.clone())
                 } else {
                     None
@@ -367,11 +384,7 @@ impl MessageContent {
                 let filtered_content: Vec<Content> = result
                     .content
                     .iter()
-                    .filter(|c| {
-                        c.audience()
-                            .map(|roles| roles.contains(&audience))
-                            .unwrap_or(true)
-                    })
+                    .filter(|c| audience_includes(c.audience(), &audience))
                     .cloned()
                     .collect();
 
@@ -572,14 +585,11 @@ impl MessageContent {
         }
     }
 
+    /// The model-visible text of a tool response ([`model_visible_texts`]), newline-joined.
     pub fn as_tool_response_text(&self) -> Option<String> {
         if let Some(tool_response) = self.as_tool_response() {
             if let Ok(result) = &tool_response.tool_result {
-                let texts: Vec<String> = result
-                    .content
-                    .iter()
-                    .filter_map(|content| content.as_text().map(|t| t.text.to_string()))
-                    .collect();
+                let texts: Vec<&str> = model_visible_texts(result).collect();
                 if !texts.is_empty() {
                     return Some(texts.join("\n"));
                 }
@@ -1904,5 +1914,90 @@ mod tests {
         });
         let req_no_summary = make_tool_request(Some(meta_no_summary));
         assert!(req_no_summary.persisted_chain_summary().is_none());
+    }
+
+    mod audience {
+        use crate::conversation::message::{
+            model_visible_content, model_visible_texts, Message, MessageContent,
+        };
+        use rmcp::model::{CallToolResult, Content, RawContent, Role};
+
+        fn user_only(text: &str) -> Content {
+            Content::text(text).with_audience(vec![Role::User])
+        }
+
+        /// Every shape goose's own tools and the swarm benchmark produce: no item carries an audience.
+        fn unannotated_results() -> Vec<CallToolResult> {
+            vec![
+                CallToolResult::success(vec![Content::text("one")]),
+                CallToolResult::success(vec![Content::text("a"), Content::text("b\nc")]),
+                CallToolResult::success(vec![
+                    Content::image("aGk=", "image/png"),
+                    Content::text("t"),
+                ]),
+                CallToolResult::success(vec![Content::embedded_text("file:///x", "body")]),
+                CallToolResult::success(vec![]),
+                CallToolResult::error(vec![Content::text("boom")]),
+            ]
+        }
+
+        /// The join every side path used before Q-211, kept as the reference for byte-identity.
+        fn pre_q211_text_join(result: &CallToolResult) -> String {
+            result
+                .content
+                .iter()
+                .filter_map(|c| match &c.raw {
+                    RawContent::Text(t) => Some(t.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        #[test]
+        fn unannotated_results_pass_whole_and_in_order() {
+            for result in unannotated_results() {
+                let visible: Vec<Content> = model_visible_content(&result).cloned().collect();
+                assert_eq!(visible, result.content);
+                assert_eq!(
+                    model_visible_texts(&result).collect::<Vec<_>>().join("\n"),
+                    pre_q211_text_join(&result)
+                );
+            }
+        }
+
+        #[test]
+        fn a_user_only_item_never_reaches_the_model_text() {
+            let result = CallToolResult::success(vec![
+                Content::text("for everyone"),
+                user_only("SECRET for the person"),
+                Content::text("for the model").with_audience(vec![Role::Assistant]),
+                Content::text("for both").with_audience(vec![Role::User, Role::Assistant]),
+            ]);
+            let texts: Vec<&str> = model_visible_texts(&result).collect();
+            assert_eq!(texts, ["for everyone", "for the model", "for both"]);
+            assert_eq!(model_visible_content(&result).count(), 3);
+
+            let message = Message::user().with_tool_response("id", Ok(result));
+            let text = message.content[0].as_tool_response_text().unwrap();
+            assert!(!text.contains("SECRET"), "{text}");
+        }
+
+        #[test]
+        fn the_provider_path_and_the_helper_apply_one_rule() {
+            let result = CallToolResult::success(vec![
+                Content::text("kept"),
+                user_only("SECRET"),
+                Content::text("nobody").with_audience(vec![]),
+            ]);
+            let helper: Vec<Content> = model_visible_content(&result).cloned().collect();
+            assert_eq!(helper, vec![Content::text("kept")]);
+            let message = Message::user().with_tool_response("id", Ok(result));
+            let visible = message.agent_visible_content();
+            let MessageContent::ToolResponse(filtered) = &visible.content[0] else {
+                panic!("the tool response is kept");
+            };
+            assert_eq!(filtered.tool_result.as_ref().unwrap().content, helper);
+        }
     }
 }

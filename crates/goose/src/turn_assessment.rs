@@ -22,12 +22,15 @@ use crate::agents::Agent;
 use crate::background_work::BackgroundWorkKind;
 use crate::config::Config;
 use crate::conversation::effective_role;
-use crate::conversation::message::{Message, MessageContent};
+use crate::conversation::message::{
+    audience_includes, model_visible_texts, Message, MessageContent,
+};
 use crate::providers::base::Provider;
 use crate::session::session_manager::{SessionManager, SessionType};
 use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
+use rmcp::model::Role;
 
 pub const ASSESSMENT_MEMORY_MAX_CHARS: usize =
     goose_memory_store::proposals::PROPOSAL_TEXT_MAX_CHARS;
@@ -114,7 +117,9 @@ fn text_of(message: &Message) -> String {
         .content
         .iter()
         .filter_map(|c| match c {
-            MessageContent::Text(t) => Some(t.text.as_str()),
+            MessageContent::Text(t) if audience_includes(t.audience(), &Role::Assistant) => {
+                Some(t.text.as_str())
+            }
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -556,14 +561,11 @@ impl AnswerQuestion {
     }
 }
 
+/// What the checker reads of a tool result: its model-visible text (Q-211) — the output the
+/// replies were written from, never content the server marked for the user alone.
 fn result_text(result: &crate::conversation::message::ToolResponse) -> String {
     match &result.tool_result {
-        Ok(result) => result
-            .content
-            .iter()
-            .filter_map(|c| c.as_text().map(|t| t.text.as_str()))
-            .collect::<Vec<_>>()
-            .join("\n"),
+        Ok(result) => model_visible_texts(result).collect::<Vec<_>>().join("\n"),
         Err(e) => e.message.to_string(),
     }
 }
@@ -1901,6 +1903,68 @@ mod tests {
                 }
             }
             println!("sample {sample}: {flagged} of {responses} model responses flagged ({proposed} findings proposed before verification)");
+        }
+    }
+
+    /// Q-211: the answer check reads a tool result as the chat's model read it.
+    mod audience {
+        use super::*;
+        use rmcp::model::{AnnotateAble, CallToolRequestParams, CallToolResult, Content};
+
+        const SECRET: &str = "SECRET 4242 for the person only";
+
+        fn turn(result: CallToolResult) -> Vec<Message> {
+            vec![
+                Message::user().with_text("How many notes are there?"),
+                Message::assistant()
+                    .with_text("Counting.")
+                    .with_tool_request("c1", Ok(CallToolRequestParams::new("count"))),
+                Message::user().with_tool_response("c1", Ok(result)),
+                Message::assistant().with_text("There are 7 notes."),
+            ]
+        }
+
+        #[test]
+        fn an_unannotated_result_reads_as_before() {
+            let result = CallToolResult::success(vec![
+                Content::text("7 notes"),
+                Content::image("aGk=", "image/png"),
+                Content::text("done"),
+            ]);
+            let inputs =
+                answer_check_inputs(&turn(result), 4, Path::new("/w"), &|_: &Path| false).unwrap();
+            assert_eq!(inputs.tool_outputs[0].text, "7 notes\ndone");
+        }
+
+        #[test]
+        fn a_user_only_item_never_reaches_the_answer_check() {
+            let result = CallToolResult::success(vec![
+                Content::text("7 notes"),
+                Content::text(SECRET).with_audience(vec![Role::User]),
+            ]);
+            let inputs =
+                answer_check_inputs(&turn(result), 4, Path::new("/w"), &|_: &Path| false).unwrap();
+            assert_eq!(inputs.tool_outputs[0].text, "7 notes");
+            assert!(!inputs.evidence.contains("SECRET"), "{}", inputs.evidence);
+            let prompt = answer_check_user_prompt(&inputs, AnswerQuestion::Answer).unwrap();
+            assert!(!prompt.contains("SECRET"), "{prompt}");
+        }
+
+        #[test]
+        fn a_user_only_text_never_reaches_the_turn_facts() {
+            let request =
+                Message::user()
+                    .with_text("list the notes")
+                    .with_content(MessageContent::Text(
+                        rmcp::model::RawTextContent {
+                            text: SECRET.to_string(),
+                            meta: None,
+                        }
+                        .no_annotation()
+                        .with_audience(vec![Role::User]),
+                    ));
+            let facts = turn_facts(&[request, Message::assistant().with_text("three notes")]);
+            assert_eq!(facts.user_texts, vec!["list the notes"]);
         }
     }
 }

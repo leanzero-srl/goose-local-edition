@@ -154,6 +154,14 @@ impl Conversation {
         self.filtered_messages(|meta| meta.agent_visible)
     }
 
+    /// Every message's content filtered by the provider path's audience rule
+    /// ([`Message::agent_visible_content`]): for a side call that hands a whole session to a model
+    /// (a recipe, a plan) — content marked for the user alone never reaches it (Q-211). Messages
+    /// themselves are kept; unannotated content passes untouched.
+    pub fn agent_visible_content(&self) -> Conversation {
+        Conversation::new_unvalidated(self.0.iter().map(Message::agent_visible_content))
+    }
+
     pub fn user_visible_messages(&self) -> Vec<Message> {
         self.filtered_messages(|meta| meta.user_visible)
     }
@@ -1453,6 +1461,61 @@ mod tests {
                 assert_eq!(c.text, "and now text");
             }
             other => panic!("unexpected content shape: {:?}", other),
+        }
+    }
+
+    /// Q-211: a side call that hands a whole session to a model (a recipe, a plan) formats it
+    /// through `agent_visible_content`: what reaches the provider carries no user-only content, and
+    /// an unannotated session is unchanged.
+    mod audience {
+        use crate::conversation::message::Message;
+        use crate::conversation::Conversation;
+        use crate::formats::openai::format_messages;
+        use crate::images::ImageFormat;
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Content, Role};
+
+        const SECRET: &str = "SECRET-for-the-person-only";
+
+        fn session(result: CallToolResult) -> Conversation {
+            Conversation::new_unvalidated(vec![
+                Message::user().with_text("list the notes"),
+                Message::assistant().with_tool_request("c1", Ok(CallToolRequestParams::new("ls"))),
+                Message::user().with_tool_response("c1", Ok(result)),
+                Message::assistant().with_text("three notes"),
+            ])
+        }
+
+        #[test]
+        fn an_unannotated_session_is_unchanged() {
+            let conversation = session(CallToolResult::success(vec![
+                Content::text("a.md"),
+                Content::image("aGk=", "image/png"),
+            ]));
+            assert_eq!(
+                conversation.agent_visible_content().messages(),
+                conversation.messages()
+            );
+        }
+
+        #[test]
+        fn user_only_content_never_reaches_the_provider() {
+            let conversation = session(CallToolResult::success(vec![
+                Content::text("a.md"),
+                Content::text(SECRET).with_audience(vec![Role::User]),
+            ]));
+            let raw = serde_json::to_string(&format_messages(
+                conversation.messages(),
+                &ImageFormat::OpenAi,
+            ))
+            .unwrap();
+            assert!(raw.contains(SECRET), "the unfiltered session leaks: {raw}");
+            let sent = serde_json::to_string(&format_messages(
+                conversation.agent_visible_content().messages(),
+                &ImageFormat::OpenAi,
+            ))
+            .unwrap();
+            assert!(sent.contains("a.md"), "{sent}");
+            assert!(!sent.contains(SECRET), "{sent}");
         }
     }
 }

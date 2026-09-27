@@ -1,5 +1,7 @@
+use crate::conversation::message::{
+    audience_includes, model_visible_content, model_visible_texts, Message, MessageContent,
+};
 use crate::conversation::message::{ActionRequiredData, MessageMetadata};
-use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::{merge_consecutive_messages, Conversation};
 use crate::prompt_template::render_template;
 use crate::providers::base::Provider;
@@ -488,13 +490,19 @@ async fn do_compact(
     ))
 }
 
+/// One message as text for a summarizing model. Content marked for the user alone never enters it
+/// (Q-211): `summarize_tool_call` and the orchestrator's summary pass messages the provider path
+/// never filtered.
 pub fn format_message_for_compacting(msg: &Message) -> String {
     let content_parts: Vec<String> = msg
         .content
         .iter()
         .filter_map(|content| match content {
-            MessageContent::Text(text) => Some(text.text.clone()),
-            MessageContent::Image(img) => Some(format!("[image: {}]", img.mime_type)),
+            MessageContent::Text(text) => {
+                audience_includes(text.audience(), &Role::Assistant).then(|| text.text.clone())
+            }
+            MessageContent::Image(img) => audience_includes(img.audience(), &Role::Assistant)
+                .then(|| format!("[image: {}]", img.mime_type)),
             MessageContent::ToolRequest(req) => {
                 if let Ok(call) = &req.tool_call {
                     Some(format!(
@@ -509,13 +517,7 @@ pub fn format_message_for_compacting(msg: &Message) -> String {
             }
             MessageContent::ToolResponse(res) => {
                 if let Ok(result) = &res.tool_result {
-                    let text_items: Vec<String> = result
-                        .content
-                        .iter()
-                        .filter_map(|content| {
-                            content.as_text().map(|text_str| text_str.text.clone())
-                        })
-                        .collect();
+                    let text_items: Vec<&str> = model_visible_texts(result).collect();
 
                     if !text_items.is_empty() {
                         Some(format!("tool_response: {}", text_items.join("\n")))
@@ -739,15 +741,8 @@ fn outcome_and_output(result: &rmcp::model::CallToolResult) -> (String, String) 
         None => verb.to_string(),
     };
 
-    let text = result
-        .content
-        .iter()
-        .filter_map(|c| c.as_text().map(|t| t.text.as_str()))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let non_text = result
-        .content
-        .iter()
+    let text = model_visible_texts(result).collect::<Vec<_>>().join("\n");
+    let non_text = model_visible_content(result)
         .filter(|c| c.as_text().is_none())
         .count();
     let text = text.trim_end();
@@ -1392,5 +1387,113 @@ mod tests {
         let result = tool_ids_to_summarize(&conversation, 2, 7);
         assert_eq!(result.len(), TOOLCALL_SUMMARIZATION_BATCH_SIZE);
         assert_eq!(result[0], "call0");
+    }
+
+    /// Q-211: what a summarizing model reads of a tool result is its model-visible content only;
+    /// goose's own (unannotated) results read exactly as before.
+    mod audience {
+        use super::*;
+        use rmcp::model::{CallToolResult, Content, RawTextContent};
+
+        const SECRET: &str = "SECRET-for-the-person-only";
+
+        fn with_user_only(visible: &str) -> CallToolResult {
+            CallToolResult::success(vec![
+                Content::text(visible),
+                Content::text(SECRET).with_audience(vec![Role::User]),
+                Content::image("aGk=", "image/png").with_audience(vec![Role::User]),
+            ])
+        }
+
+        fn unannotated() -> CallToolResult {
+            CallToolResult::success(vec![
+                Content::text("a"),
+                Content::text("b"),
+                Content::image("aGk=", "image/png"),
+            ])
+        }
+
+        fn pair(result: CallToolResult) -> Conversation {
+            Conversation::new_unvalidated(vec![
+                Message::user().with_text("go"),
+                Message::assistant()
+                    .with_tool_request("c1", Ok(CallToolRequestParams::new("probe".to_string()))),
+                Message::user().with_tool_response("c1", Ok(result)),
+            ])
+        }
+
+        #[test]
+        fn the_compaction_text_of_an_unannotated_message_is_unchanged() {
+            let msg = Message::user()
+                .with_text("hi")
+                .with_image("aGk=", "image/png")
+                .with_tool_response("c1", Ok(unannotated()));
+            assert_eq!(
+                format_message_for_compacting(&msg),
+                "[user]: hi\n[image: image/png]\ntool_response: a\nb"
+            );
+        }
+
+        #[test]
+        fn the_compaction_text_never_carries_user_only_content() {
+            let msg = Message::user()
+                .with_content(MessageContent::Text(
+                    RawTextContent {
+                        text: SECRET.to_string(),
+                        meta: None,
+                    }
+                    .no_annotation()
+                    .with_audience(vec![Role::User]),
+                ))
+                .with_tool_response("c1", Ok(with_user_only("seen")));
+            assert_eq!(
+                format_message_for_compacting(&msg),
+                "[user]: tool_response: seen"
+            );
+        }
+
+        #[test]
+        fn the_tool_call_record_of_an_unannotated_result_is_unchanged() {
+            let record = record_tool_call(&pair(unannotated()), "c1")
+                .unwrap()
+                .as_concat_text();
+            assert_eq!(
+                record,
+                format!(
+                    "{TOOL_RECORD_HEADER}\nprobe {{}} succeeded.\nOutput: \"a\\nb\" Plus 1 non-text item(s)."
+                )
+            );
+        }
+
+        #[test]
+        fn the_tool_call_record_never_carries_user_only_content() {
+            let record = record_tool_call(&pair(with_user_only("seen")), "c1")
+                .unwrap()
+                .as_concat_text();
+            assert_eq!(
+                record,
+                format!("{TOOL_RECORD_HEADER}\nprobe {{}} succeeded.\nOutput: \"seen\"")
+            );
+        }
+
+        #[tokio::test]
+        async fn the_tool_pair_digest_never_sends_user_only_content() {
+            use crate::model_config::mlx_endpoint::{MlxEndpoint, SERVED};
+            let engine = MlxEndpoint::start().await;
+            summarize_tool_call(
+                engine.provider.as_ref(),
+                &ModelConfig::new(SERVED),
+                "s",
+                &pair(with_user_only("seen")),
+                "c1",
+            )
+            .await
+            .unwrap();
+            let bodies = engine.bodies().await;
+            assert_eq!(bodies.len(), 1);
+            let sent = bodies[0].to_string();
+            assert!(sent.contains("tool_response: seen"), "{sent}");
+            assert!(!sent.contains(SECRET), "{sent}");
+        }
     }
 }
