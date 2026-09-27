@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "Cihazlarınızı özel bir mesh ağında birbirine bağlamak için oturum açın — parola yok, yalnızca e-postayla bir kod."
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "Tüm sürü için tek yer: şirket içi MLX motoru, bulut sağlayıcı kimlik bilgileri ve sürünün inşa ettiği düğüm havuzu."
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Bulut Sağlayıcıları"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "Mac’lerim"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Sürü Ayarları"
   },
   "linkDropNotice.details": {
     "defaultMessage": "Ayrıntılar"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "{engine} ile çalışır"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "Motor bölümleri"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "Motor"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "Mac’lerim"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "Modeller"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "Örnekleme"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "Sohbete {peer} üzerindeki motor yanıt veriyor; onun değerleri yukarıdaki kutuda. Bu satırlar bu Mac’in kendi motoruna ait."
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Önceki bölme {node} üzerinde hâlâ kapanıyor — bu bitince goose onu geri yükler"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "LeanZero MLX kurulumu"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "Adım {n}/{total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "Sıradaki"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "Mac’leriniz"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# Mac} other {# bağlı}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "Diğer Mac’lerinizi bağlayın"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "Modeller"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "Mac’lerinizde {count}"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "Bir model edinin"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "Çalıştır"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} çalışıyor"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "Bir model çalıştırın"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "Düğümler"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, one {# düğüm} other {# düğüm}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "Düğüm ekleyin"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Yazıyor"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "Düğümler"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Ayarlar"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "şu an sunuluyor"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "Bulut sağlayıcılarını yönet"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Mac’leri ve modelleri yönet"
+  },
+  "nodes.sections": {
+    "defaultMessage": "Düğüm bölümleri"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "Bir strateji hangi düğümün ne yapacağını belirleyecek: rolleri, düğümlerin denenme sırası ve bir sonrakine ne zaman geçileceği. O zamana kadar sohbetler ve swarm derlemeleri Düğümler sekmesindeki düğümleri kullanır."
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "Stratejiler bu sürümde geliyor"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "Düğüm, Mac’lerinizde ya da bulutta iş devredebileceğiniz bir modeldir. Sohbetler bir düğümde ya da stratejide başlar; swarm derlemeleri bir strateji kullanır."
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "Düğümler"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "Stratejiler"
+  },
+  "nodes.title": {
+    "defaultMessage": "Düğümler"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "Kaydet ve bağlantıyı denetle"
+  },
+  "providers.sections": {
+    "defaultMessage": "Providers bölümleri"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "Modellerinizin çalıştığı yer: Mac’lerinizdeki LeanZero MLX motoru ve oturum açtığınız bulut sağlayıcıları. Bunları Düğümler altında düğüme dönüştürün."
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Tarif sohbeti penceresinde görüntülenecek üst satırdaki istemler ve etkinlik düğmeleri."

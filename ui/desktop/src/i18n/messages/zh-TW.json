@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "登入即可把你的裝置連成一個私有 mesh 網路——不需要密碼,只需電子郵件收到的一組驗證碼。"
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "整個蜂群的統一入口:自研 MLX 引擎、雲端提供方憑證,以及蜂群建置所用的節點池。"
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "雲端提供方"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "我的 Mac"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "蜂群設定"
   },
   "linkDropNotice.details": {
     "defaultMessage": "詳細資訊"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "由 {engine} 驅動"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "引擎分區"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "引擎"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "我的 Mac"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "模型"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "取樣"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "聊天由 {peer} 上的引擎提供——其數據在上方的卡片中。這些列是此 Mac 自己的引擎。"
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "先前的拆分仍在 {node} 上關閉——完成後 goose 會恢復它"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "設定 LeanZero MLX"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "第 {n} 步，共 {total} 步 · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "下一步"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "你的 Mac"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# 台 Mac} other {已連線 # 台}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "連線你的其他 Mac"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "模型"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "你的 Mac 上有 {count} 個"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "取得模型"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "執行"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} 執行中"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "執行模型"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "節點"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, other {# 個節點}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "新增節點"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "正在生成"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "節點"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "設定"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "正在提供"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "管理雲端提供方"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "管理 Mac 和模型"
+  },
+  "nodes.sections": {
+    "defaultMessage": "節點分區"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "策略將決定哪個節點做什麼：它的角色、嘗試節點的順序，以及何時改用下一個。在此之前，聊天和swarm 建置使用「節點」分頁中的節點。"
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "策略將在本版本推出"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "節點是你可以交付工作的模型，執行在你的 Mac 上或雲端。聊天從某個節點或策略開始；swarm 建置使用策略。"
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "節點"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "策略"
+  },
+  "nodes.title": {
+    "defaultMessage": "節點"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "伺服器可能正在啟動或暫時無法使用。"
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "儲存並檢查連線"
+  },
+  "providers.sections": {
+    "defaultMessage": "Providers 分區"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "你的模型在哪裡執行：你 Mac 上的 LeanZero MLX 引擎，以及你已登入的雲端提供方。在「節點」中把它們變成節點。"
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "將顯示在配方交談視窗中的頂端提示與活動按鈕。"

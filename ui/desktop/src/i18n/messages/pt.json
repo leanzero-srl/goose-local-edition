@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "Inicie sessão para ligar seus dispositivos em uma malha privada — sem senha, apenas um código por e-mail."
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "Um só lugar para todo o enxame: o motor MLX próprio, as credenciais dos provedores de nuvem e o pool de nós com que o enxame constrói."
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Provedores de nuvem"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "Meus Macs"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Configurações do enxame"
   },
   "linkDropNotice.details": {
     "defaultMessage": "Detalhes"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "Com tecnologia {engine}"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "Seções do motor"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "Motor"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "Meus Macs"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "Modelos"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "Amostragem"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "O chat é atendido pelo motor em {peer}; os números dele estão no bloco acima. Estas linhas são do motor deste Mac."
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "A divisão anterior ainda está sendo encerrada em {node} — o goose a restaura quando isso terminar"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "Configurar o LeanZero MLX"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "Passo {n} de {total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "Próximo"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "Seus Macs"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# Mac} other {# conectados}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "Conecte seus outros Macs"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "Modelos"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "{count} nos seus Macs"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "Obtenha um modelo"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "Executar"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} em execução"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "Execute um modelo"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "Nós"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, one {# nó} other {# nós}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "Adicionar um nó"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Escrevendo"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "Nós"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Definições"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "servindo agora"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "Gerenciar provedores de nuvem"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Gerenciar Macs e modelos"
+  },
+  "nodes.sections": {
+    "defaultMessage": "Seções de nós"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "Uma estratégia dirá qual nó faz o quê: seus papéis, a ordem em que os nós são tentados e quando usar o próximo. Até lá, os chats e os builds do enxame usam os nós da aba Nós."
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "As estratégias chegam nesta versão"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "Um nó é um modelo para o qual você pode passar trabalho, nos seus Macs ou na nuvem. Os chats começam em um nó ou em uma estratégia; os builds do enxame usam uma estratégia."
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "Nós"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "Estratégias"
+  },
+  "nodes.title": {
+    "defaultMessage": "Nós"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "O servidor pode estar a iniciar ou temporariamente indisponível."
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "Salvar e verificar conexão"
+  },
+  "providers.sections": {
+    "defaultMessage": "Seções de Providers"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "Onde seus modelos rodam: o motor LeanZero MLX nos seus Macs e os provedores de nuvem em que você entrou. Transforme-os em nós em Nós."
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Os prompts principais e os botões de atividade que serão apresentados na janela de conversa da receita."

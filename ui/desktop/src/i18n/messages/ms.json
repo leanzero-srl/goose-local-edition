@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "Log masuk untuk memautkan peranti anda ke dalam mesh peribadi — tiada kata laluan, hanya kod melalui e-mel."
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "Satu tempat untuk seluruh swarm: enjin MLX dalaman, kelayakan penyedia awan, dan kumpulan nod yang digunakan swarm untuk membina."
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Penyedia Awan"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "Mac Saya"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Tetapan Swarm"
   },
   "linkDropNotice.details": {
     "defaultMessage": "Butiran"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "Dikuasakan oleh {engine}"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "Bahagian enjin"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "Enjin"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "Mac Saya"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "Model"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "Pensampelan"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "Sembang dilayan oleh enjin pada {peer} — angkanya dalam jubin di atas. Baris ini milik enjin Mac ini sendiri."
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Pembahagian sebelumnya masih ditutup pada {node} — goose memulihkannya sebaik sahaja selesai"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "Menyediakan LeanZero MLX"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "Langkah {n} daripada {total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "Seterusnya"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "Mac anda"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# Mac} other {# disambungkan}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "Sambungkan Mac anda yang lain"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "Model"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "{count} pada Mac anda"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "Dapatkan model"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "Jalankan"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} sedang berjalan"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "Jalankan model"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "Nod"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, other {# nod}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "Tambah nod"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Menulis"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "Nod"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Tetapan"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "sedang disajikan"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "Urus penyedia awan"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Urus Mac dan model"
+  },
+  "nodes.sections": {
+    "defaultMessage": "Bahagian nod"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "Strategi akan menentukan nod mana melakukan apa: peranannya, susunan nod dicuba dan bila menggunakan yang seterusnya. Sehingga itu, sembang dan binaan swarm menggunakan nod dalam tab Nod."
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "Strategi hadir dalam keluaran ini"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "Nod ialah model yang boleh anda serahkan kerja, pada Mac anda atau di awan. Sembang bermula pada nod atau strategi; binaan swarm menggunakan strategi."
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "Nod"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "Strategi"
+  },
+  "nodes.title": {
+    "defaultMessage": "Nod"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Pelayan mungkin sedang dimulakan atau tidak tersedia buat sementara waktu."
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "Simpan dan semak sambungan"
+  },
+  "providers.sections": {
+    "defaultMessage": "Bahagian Providers"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "Tempat model anda berjalan: enjin LeanZero MLX pada Mac anda dan penyedia awan yang anda log masuk. Jadikannya nod di bawah Nod."
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Gesaan utama dan butang aktiviti yang akan dipaparkan dalam tetingkap sembang resipi."

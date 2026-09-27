@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "サインインしてデバイスをプライベートメッシュに接続します。パスワードは不要で、メールで届くコードだけです。"
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "スウォーム全体をひとつの場所で: 自社製 MLX エンジン、クラウドプロバイダーの認証情報、そしてスウォームがビルドに使うノードプール。"
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "クラウドプロバイダー"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "マイ Mac"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "スウォーム設定"
   },
   "linkDropNotice.details": {
     "defaultMessage": "詳細"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "{engine} を利用"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "エンジンのセクション"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "エンジン"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "マイ Mac"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "モデル"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "サンプリング"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "チャットは {peer} のエンジンが応答しています。その数値は上のタイルにあります。ここに並ぶのはこの Mac 自身のエンジンです。"
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "前の分割が {node} でまだ終了処理中です — 終わり次第 goose が復元します"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "LeanZero MLX のセットアップ"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "ステップ {n}/{total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "次へ"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "あなたの Mac"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# 台の Mac} other {# 台接続済み}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "ほかの Mac を接続"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "モデル"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "Mac 上に {count} 個"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "モデルを入手"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "実行"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} を実行中"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "モデルを実行"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "ノード"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, other {# 個のノード}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "ノードを追加"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "書き込み中"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "ノード"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "設定"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "提供中"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "クラウドプロバイダーを管理"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Mac とモデルを管理"
+  },
+  "nodes.sections": {
+    "defaultMessage": "ノードのセクション"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "ストラテジーでは、どのノードが何を担当するかを決めます。ノードの役割、ノードを試す順番、次のノードに切り替えるタイミングです。それまでは、チャットとswarm のビルドは「ノード」タブのノードを使います。"
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "ストラテジーはこのリリースで登場します"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "ノードとは、Mac 上またはクラウドで作業を任せられるモデルです。チャットはノードかストラテジーで始まり、swarm のビルドはストラテジーを使います。"
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "ノード"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "ストラテジー"
+  },
+  "nodes.title": {
+    "defaultMessage": "ノード"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "保存して接続を確認"
+  },
+  "providers.sections": {
+    "defaultMessage": "Providers のセクション"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "モデルが動く場所: Mac 上の LeanZero MLX エンジンと、サインイン済みのクラウドプロバイダーです。「ノード」でノードにしましょう。"
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "レシピチャットウィンドウに表示される冒頭プロンプトとアクティビティボタンです。"

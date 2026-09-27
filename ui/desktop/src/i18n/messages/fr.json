@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "Connectez-vous pour relier vos appareils dans un maillage privé — pas de mot de passe, juste un code par e-mail."
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "Un seul endroit pour tout l'essaim : le moteur MLX maison, les identifiants des fournisseurs cloud et le pool de nœuds avec lequel l'essaim construit."
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Fournisseurs cloud"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "Mes Mac"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Réglages de l'essaim"
   },
   "linkDropNotice.details": {
     "defaultMessage": "Détails"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "Propulsé par {engine}"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "Sections du moteur"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "Moteur"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "Mes Mac"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "Modèles"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "Échantillonnage"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "Le chat est servi par le moteur de {peer} — ses chiffres sont dans la tuile ci-dessus. Ces lignes sont celles du moteur de ce Mac."
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "La répartition précédente s’arrête encore sur {node} — goose la restaure dès que c’est terminé"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "Configurer LeanZero MLX"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "Étape {n} sur {total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "Suivant"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "Vos Mac"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# Mac} other {# connectés}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "Connectez vos autres Mac"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "Modèles"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "{count} sur vos Mac"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "Obtenir un modèle"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "Exécuter"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} en cours d'exécution"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "Exécuter un modèle"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "Nœuds"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, one {# nœud} other {# nœuds}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "Ajouter un nœud"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Écrit"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "Nœuds"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Paramètres"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "en service"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "Gérer les fournisseurs cloud"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Gérer les Mac et les modèles"
+  },
+  "nodes.sections": {
+    "defaultMessage": "Sections des nœuds"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "Une stratégie indiquera quel nœud fait quoi : ses rôles, l'ordre dans lequel essayer les nœuds et quand passer au suivant. D'ici là, les discussions et les builds de l'essaim utilisent les nœuds de l'onglet Nœuds."
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "Les stratégies arrivent dans cette version"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "Un nœud est un modèle auquel vous confiez du travail, sur vos Mac ou dans le cloud. Les discussions démarrent sur un nœud ou une stratégie ; les builds de l'essaim utilisent une stratégie."
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "Nœuds"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "Stratégies"
+  },
+  "nodes.title": {
+    "defaultMessage": "Nœuds"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "Enregistrer et vérifier la connexion"
+  },
+  "providers.sections": {
+    "defaultMessage": "Sections Providers"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "Où vos modèles s'exécutent : le moteur LeanZero MLX sur vos Mac et les fournisseurs cloud auxquels vous êtes connecté. Transformez-les en nœuds dans Nœuds."
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Les invites principales et les boutons d'activité qui s'afficheront dans la fenêtre de discussion de la recette."

@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "अपने डिवाइस को एक निजी मेश में जोड़ने के लिए साइन इन करें — कोई पासवर्ड नहीं, बस ईमेल से एक कोड।"
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "पूरे स्वार्म के लिए एक जगह: अपना MLX इंजन, क्लाउड प्रदाता साख, और वह नोड पूल जिससे स्वार्म बनाता है।"
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "क्लाउड प्रदाता"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "मेरे Mac"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "स्वार्म सेटिंग्स"
   },
   "linkDropNotice.details": {
     "defaultMessage": "विवरण"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "{engine} द्वारा संचालित"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "इंजन अनुभाग"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "इंजन"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "मेरे Mac"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "मॉडल"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "सैंपलिंग"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "चैट {peer} के इंजन से चल रही है — उसके आँकड़े ऊपर की टाइल में हैं। ये पंक्तियाँ इस Mac के अपने इंजन की हैं।"
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "पिछला बँटवारा {node} पर अभी बंद हो रहा है — यह पूरा होते ही goose इसे बहाल कर देगा"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "LeanZero MLX सेट अप करना"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "चरण {n} / {total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "अगला"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "आपके Mac"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# Mac} other {# जुड़े हुए}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "अपने दूसरे Mac जोड़ें"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "मॉडल"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "आपके Mac पर {count}"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "एक मॉडल लें"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "चलाएँ"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} चल रहा है"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "एक मॉडल चलाएँ"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "नोड"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, one {# नोड} other {# नोड}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "नोड जोड़ें"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "लिख रहा है"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "नोड"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Settings"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "अभी सर्व हो रहा है"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "क्लाउड प्रदाता प्रबंधित करें"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Mac और मॉडल प्रबंधित करें"
+  },
+  "nodes.sections": {
+    "defaultMessage": "नोड अनुभाग"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "एक रणनीति बताएगी कि कौन-सा नोड क्या करता है: उसकी भूमिकाएँ, नोड किस क्रम में आज़माए जाएँ, और अगले का उपयोग कब करें। तब तक चैट और swarm बिल्ड नोड टैब के नोड का उपयोग करते हैं।"
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "रणनीतियाँ इसी रिलीज़ में आ रही हैं"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "नोड एक मॉडल है जिसे आप काम सौंप सकते हैं, आपके Mac पर या क्लाउड में। चैट किसी नोड या रणनीति पर शुरू होती हैं; swarm बिल्ड एक रणनीति का उपयोग करते हैं।"
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "नोड"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "रणनीतियाँ"
+  },
+  "nodes.title": {
+    "defaultMessage": "नोड"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "सहेजें और कनेक्शन जाँचें"
+  },
+  "providers.sections": {
+    "defaultMessage": "Providers अनुभाग"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "आपके मॉडल कहाँ चलते हैं: आपके Mac पर LeanZero MLX इंजन, और वे क्लाउड प्रदाता जिनमें आपने साइन इन किया है। उन्हें नोड में नोड बनाएँ।"
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "शीर्ष-पंक्ति संकेत और गतिविधि बटन जो रेसिपी चैट विंडो में प्रदर्शित होंगे।"

@@ -5,7 +5,6 @@ import {
   HashRouter,
   Routes,
   Route,
-  Navigate,
   useNavigate,
   useLocation,
   useSearchParams,
@@ -36,7 +35,7 @@ import SettingsView, { SettingsViewOptions } from './components/settings/Setting
 import SessionsView from './components/sessions/SessionsView';
 import SchedulesView from './components/schedule/SchedulesView';
 import LoopView from './components/loop/LoopView';
-import LeanZeroSwarmView from './components/leanzero-swarm/LeanZeroSwarmView';
+import { PROVIDER_ROUTES } from './components/nodes/providerRoutes';
 import BenchmarkView from './components/benchmark/BenchmarkView';
 import AgentWorkView from './components/agent-work/AgentWorkView';
 import BenchmarkAutoOpen from './components/benchmark/BenchmarkAutoOpen';
@@ -61,7 +60,7 @@ import SkillsView from './components/skills/SkillsView';
 import MemoriesView from './components/memories/MemoriesView';
 import AppsView from './components/apps/AppsView';
 import StandaloneAppView from './components/apps/StandaloneAppView';
-import { View, ViewOptions } from './utils/navigationUtils';
+import { providersHref, View, ViewOptions } from './utils/navigationUtils';
 
 import { useNavigation } from './hooks/useNavigation';
 import { useMlxTrayActions } from './hooks/useMlxTrayActions';
@@ -310,12 +309,6 @@ const LoopRoute = () => {
 
 const AgentWorkRoute = () => {
   return <AgentWorkView />;
-};
-
-const LeanZeroSwarmRoute = () => {
-  // `?tab=link` — the tray's "Open My Macs" lands on the tab that can act on it.
-  const [searchParams] = useSearchParams();
-  return <LeanZeroSwarmView requestedTab={searchParams.get('tab')} />;
 };
 
 const SkillsRoute = () => {
@@ -631,7 +624,7 @@ export function AppInner() {
       if (section && newView === 'settings') {
         navigate(`/settings?section=${section}`);
       } else if (section && (newView as string) === 'leanzero-swarm') {
-        navigate(`/leanzero-swarm?tab=${section}`);
+        navigate(providersHref(section));
       } else if (section && (newView as string) === 'pair') {
         navigate(sessionHref(section));
       } else {
@@ -829,9 +822,9 @@ export function AppInner() {
               <Route path="recipes" element={<RecipesRoute />} />
               <Route path="loop" element={<LoopRoute />} />
               <Route path="agent-work" element={<AgentWorkRoute />} />
-              <Route path="leanzero-swarm" element={<LeanZeroSwarmRoute />} />
-              {/* The old engine-window path stays alive as a redirect — no dead links. */}
-              <Route path="mlx-engine" element={<Navigate to="/leanzero-swarm" replace />} />
+              {PROVIDER_ROUTES.map((route) => (
+                <Route key={route.path} path={route.path} element={route.element} />
+              ))}
               <Route path="benchmark" element={<BenchmarkRoute />} />
               <Route path="skills" element={<SkillsRoute />} />
               <Route path="memories" element={<MemoriesRoute />} />

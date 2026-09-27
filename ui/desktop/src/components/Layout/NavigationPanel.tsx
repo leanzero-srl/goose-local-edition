@@ -97,10 +97,9 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
 
   const visibleItems = useMemo<NavItem[]>(() => {
     return NAV_ITEMS.filter((item) => {
-      // The Goose Swarm hub carries the swarm settings and cloud credentials for the local edition,
-      // and the MLX engine tab whenever the agent advertises that capability — so it shows for
-      // either fact, and only vanishes in an upstream-flavoured build with no MLX engine.
-      if (item.path === '/leanzero-swarm') return isLocal || mlxEngine;
+      // Nodes and Providers carry the swarm pool, cloud credentials and the MLX engine: they show
+      // for either fact, and only vanish in an upstream-flavoured build with no MLX engine.
+      if (item.requires === 'localOrMlx') return isLocal || mlxEngine;
       return true;
     });
   }, [isLocal, mlxEngine]);

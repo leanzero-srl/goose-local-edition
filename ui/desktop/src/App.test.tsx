@@ -312,6 +312,34 @@ describe('App Component - Brand New State', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/');
   });
 
+  it("routes main's set-view Providers deep links: the tray's 'mlx' to Engine, the Link tray's 'link' to My Macs, the retired 'swarm' to Nodes", async () => {
+    mockElectron.getConfig.mockReturnValue({
+      GOOSE_DEFAULT_PROVIDER: 'openai',
+      GOOSE_DEFAULT_MODEL: 'gpt-4',
+      GOOSE_ALLOWLIST_WARNING: false,
+    });
+
+    render(<AppInner />, { wrapper: AppInnerTestWrapper });
+
+    await waitFor(() => {
+      expect(mockElectron.reactReady).toHaveBeenCalled();
+    });
+
+    const setView = mockElectron.on.mock.calls.find(([channel]) => channel === 'set-view')?.[1];
+    expect(setView).toBeDefined();
+
+    // main.ts runMlxTrayAction('open-providers') and the engine glance's openEngine.
+    setView?.({} as any, 'leanzero-swarm', 'mlx');
+    expect(mockNavigate).toHaveBeenLastCalledWith('/leanzero-swarm?tab=mlx&mlx=engine');
+    // main.ts runLinkTrayAction('open') still sends 'link' (Q-194: My Macs lives in LeanZero MLX).
+    setView?.({} as any, 'leanzero-swarm', 'link');
+    expect(mockNavigate).toHaveBeenLastCalledWith('/leanzero-swarm?tab=mlx&mlx=macs');
+    setView?.({} as any, 'leanzero-swarm', 'swarm');
+    expect(mockNavigate).toHaveBeenLastCalledWith('/nodes');
+    setView?.({} as any, 'nodes');
+    expect(mockNavigate).toHaveBeenLastCalledWith('/nodes');
+  });
+
   it('never spawns a window from a renderer keydown; the menu accelerator owns Cmd+N', async () => {
     mockElectron.getConfig.mockReturnValue({
       GOOSE_DEFAULT_PROVIDER: 'openai',
@@ -437,7 +465,9 @@ describe('App — the close-run question', () => {
       expect(mockElectron.reactReady).toHaveBeenCalled();
     });
 
-    const ask = mockElectron.on.mock.calls.find(([channel]) => channel === 'confirm-close-run')?.[1];
+    const ask = mockElectron.on.mock.calls.find(
+      ([channel]) => channel === 'confirm-close-run'
+    )?.[1];
     expect(ask).toBeDefined();
     const title = 'A swarm run is live in this window';
     expect(screen.queryByRole('dialog', { name: title })).toBeNull();
@@ -467,7 +497,9 @@ describe('App — the close-run question', () => {
     await waitFor(() => {
       expect(mockElectron.reactReady).toHaveBeenCalled();
     });
-    const ask = mockElectron.on.mock.calls.find(([channel]) => channel === 'confirm-close-run')?.[1];
+    const ask = mockElectron.on.mock.calls.find(
+      ([channel]) => channel === 'confirm-close-run'
+    )?.[1];
     act(() => ask?.({} as any, { runs: [{ runId: 'r-2', runDir: '/x', workingDir: '/x' }] }));
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(confirmCloseRunReply).toHaveBeenCalledWith(false);

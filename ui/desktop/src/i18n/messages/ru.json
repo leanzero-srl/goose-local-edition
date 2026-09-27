@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "Войдите, чтобы объединить свои устройства в приватную mesh-сеть — без пароля, только код по электронной почте."
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "Одно место для всего роя: собственный движок MLX, учётные данные облачных провайдеров и пул узлов, которым рой строит."
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Облачные провайдеры"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "Мои Mac"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Настройки роя"
   },
   "linkDropNotice.details": {
     "defaultMessage": "Подробности"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "На базе {engine}"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "Разделы движка"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "Движок"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "Мои Mac"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "Модели"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "Сэмплирование"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "Чат обслуживает движок на {peer} — его показатели в плитке выше. Эти строки относятся к движку этого Mac."
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Предыдущее разделение ещё завершается на {node} — goose восстановит его, когда это закончится"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "Настройка LeanZero MLX"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "Шаг {n} из {total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "Далее"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "Ваши Mac"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# Mac} other {подключено: #}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "Подключите другие Mac"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "Модели"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "На ваших Mac: {count}"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "Получите модель"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "Запуск"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} работает"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "Запустите модель"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "Узлы"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, one {# узел} few {# узла} many {# узлов} other {# узла}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "Добавьте узел"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Пишет"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "Узлы"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Настройки"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "обслуживается сейчас"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "Управлять облачными провайдерами"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Управлять Mac и моделями"
+  },
+  "nodes.sections": {
+    "defaultMessage": "Разделы узлов"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "Стратегия будет определять, какой узел что делает: его роли, порядок, в котором пробуются узлы, и когда переходить к следующему. До тех пор чаты и сборки swarm используют узлы со вкладки «Узлы»."
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "Стратегии появятся в этом выпуске"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "Узел — это модель, которой можно передать работу, на ваших Mac или в облаке. Чаты начинаются на узле или стратегии; сборки swarm используют стратегию."
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "Узлы"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "Стратегии"
+  },
+  "nodes.title": {
+    "defaultMessage": "Узлы"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "Сохранить и проверить подключение"
+  },
+  "providers.sections": {
+    "defaultMessage": "Разделы Providers"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "Где работают ваши модели: движок LeanZero MLX на ваших Mac и облачные провайдеры, в которые вы вошли. Превратите их в узлы в разделе «Узлы»."
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Верхнеуровневые промпты и кнопки активностей, которые будут отображаться в окне чата рецепта."

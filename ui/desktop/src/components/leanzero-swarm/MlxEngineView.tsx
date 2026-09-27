@@ -114,6 +114,10 @@ import {
 } from './mlxLiveStats';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import { defineMessages, useIntl } from '../../i18n';
+import { mlxEngineServing } from '../chatServedBy/chatServedBy';
+import LeanZeroLinkSection from './LeanZeroLinkSection';
+import { MlxSetupStrip, type SetupFacts, type SetupTarget } from './MlxSetupStrip';
+import type { MlxTab } from '../../utils/navigationUtils';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { DistributedEngineSection } from './DistributedEngineSection';
 import { modeSummary, ownsTheMac } from './mlxDistributed';
@@ -2393,9 +2397,13 @@ function ModelsSection({
 // The view
 // ---------------------------------------------------------------------------
 
-type MlxTab = 'engine' | 'models' | 'sampling';
-
 const VIEW_I18N = defineMessages({
+  sections: { id: 'mlxEngine.sections', defaultMessage: 'Engine sections' },
+  tabEngine: { id: 'mlxEngine.tabEngine', defaultMessage: 'Engine' },
+  tabMacs: { id: 'mlxEngine.tabMacs', defaultMessage: 'My Macs' },
+  tabModels: { id: 'mlxEngine.tabModels', defaultMessage: 'Models' },
+  tabSampling: { id: 'mlxEngine.tabSampling', defaultMessage: 'Sampling' },
+  poweredBy: { id: 'mlxEngine.poweredBy', defaultMessage: 'Powered by {engine}' },
   samplingOn: { id: 'mlxEngineView.samplingOn', defaultMessage: 'Profiles on' },
   settingsFailed: {
     id: 'mlxEngineView.settingsFailed',
@@ -2408,9 +2416,28 @@ function draftKey(macKey: string, modelId: string): string {
   return `${macKey}\n${modelId}`;
 }
 
-function MlxEngineViewBody() {
-  const [tab, setTab] = useState<MlxTab>('engine');
-  const { mlxDistributed } = useFeatures();
+interface MlxEngineViewProps {
+  /** The inner tab, when the host routes it (Providers writes `mlx=` in the URL); else local state. */
+  tab?: MlxTab;
+  onTabChange?: (tab: MlxTab) => void;
+  /** Nodes in the swarm pool, for the setup strip's last step; null = not read. */
+  nodeCount?: number | null;
+  /** Where the setup strip's Nodes step goes; the host owns navigation. */
+  onOpenNodes?: () => void;
+}
+
+function MlxEngineViewBody({
+  tab: routedTab,
+  onTabChange,
+  nodeCount = null,
+  onOpenNodes,
+}: MlxEngineViewProps) {
+  const [ownTab, setOwnTab] = useState<MlxTab>('engine');
+  const { mlxDistributed, leanzeroLink } = useFeatures();
+  const requestedTab = routedTab ?? ownTab;
+  // My Macs exists only where LeanZero Link does; a link to it elsewhere opens the Engine tab.
+  const tab: MlxTab = requestedTab === 'macs' && !leanzeroLink ? 'engine' : requestedTab;
+  const setTab = onTabChange ?? setOwnTab;
   const intl = useIntl();
   const macsCtx = useMacs();
   const selfFacts = macsCtx.factsOf(SELF_KEY);
@@ -2948,12 +2975,15 @@ function MlxEngineViewBody() {
     })();
   }, [samplingSettings, samplingModelId, samplingMac, profileDrafts, saveSettingsOn]);
 
-  const openSamplingFor = useCallback((macKey: string, modelId: string) => {
-    samplingPickIsDefault.current = false;
-    setPickedSamplingMac(macKey);
-    setSamplingPick({ mac: macKey, id: modelId });
-    setTab('sampling');
-  }, []);
+  const openSamplingFor = useCallback(
+    (macKey: string, modelId: string) => {
+      samplingPickIsDefault.current = false;
+      setPickedSamplingMac(macKey);
+      setSamplingPick({ mac: macKey, id: modelId });
+      setTab('sampling');
+    },
+    [setTab]
+  );
 
   const managed = macsCtx.macs.filter((m) => m.online && !peerRefuses(m, 'manage'));
   const samplingMacPicker =
@@ -2987,30 +3017,56 @@ function MlxEngineViewBody() {
     />
   ) : null;
 
-  // The page shell (MainPanelLayout, the Goose Swarm header, the top-level tab bar and the
-  // scroll area) belongs to LeanZeroSwarmView — this component is the LeanZero MLX tab's content.
+  const modelCount = matrixRowCount(macsCtx);
+  const servingNow = mlxEngineServing(status, distributed.status, remote, macsCtx.self.name);
+  const answering =
+    servingNow.engine === 'split'
+      ? distributed.status?.state === 'ready' || distributed.status?.state === 'serving'
+      : servingNow.engine === 'remote'
+        ? remote?.state === 'ready'
+        : servingNow.engine === 'single' && status?.state === 'running';
+  const setupFacts: SetupFacts = {
+    linkAvailable: leanzeroLink,
+    linkConnected: macsCtx.linkState?.auth.state === 'connected',
+    macsOnline: macsCtx.macs.filter((m) => m.online).length,
+    models: modelCount,
+    running: answering ? servingNow.model : null,
+    nodes: nodeCount,
+  };
+  const openSetupTarget = (target: SetupTarget) => {
+    if (target.kind === 'mlx') setTab(target.tab);
+    else onOpenNodes?.();
+  };
+
+  // The page shell (MainPanelLayout, the Providers header, the top-level tab bar and the scroll
+  // area) belongs to LeanZeroSwarmView — this component is the LeanZero MLX tab's content.
   return (
     <div className="flex flex-col gap-4">
       {cutDialog}
+      {/* The flow the owner asked the UI to imply (Q-194): Macs → models → Run it → nodes. */}
+      <MlxSetupStrip facts={setupFacts} onOpen={openSetupTarget} />
       {/* The engine's own section switch sits UNDER the Providers strip, so it is the subordinate
           underline register, on the row's hairline — never a second solid strip that reads as
           another top nav. */}
       <div className={cx('flex flex-wrap items-end gap-3 border-b', SURFACE.hairline)}>
         <Segmented<MlxTab>
           variant="underline"
-          aria-label="Engine sections"
+          aria-label={intl.formatMessage(VIEW_I18N.sections)}
           options={[
-            { value: 'engine', label: 'Engine' },
+            { value: 'engine', label: intl.formatMessage(VIEW_I18N.tabEngine) },
+            ...(leanzeroLink
+              ? [{ value: 'macs' as const, label: intl.formatMessage(VIEW_I18N.tabMacs) }]
+              : []),
             {
               value: 'models',
               label: (
                 <>
-                  Models
-                  <span className={cx('text-lz-meta', TNUM)}>{matrixRowCount(macsCtx)}</span>
+                  {intl.formatMessage(VIEW_I18N.tabModels)}
+                  <span className={cx('text-lz-meta', TNUM)}>{modelCount}</span>
                 </>
               ),
             },
-            { value: 'sampling', label: 'Sampling' },
+            { value: 'sampling', label: intl.formatMessage(VIEW_I18N.tabSampling) },
           ]}
           value={tab}
           onChange={setTab}
@@ -3035,7 +3091,9 @@ function MlxEngineViewBody() {
         </span>
         {/* pr-3: without it the ScrollArea's right edge shaved the final glyph off "Rapid-MLX"
             (caught live on the packaged build, 2026-08-31). */}
-        <span className={cx('ml-auto shrink-0 pb-2.5 pr-3', TYPE.meta)}>Powered by Rapid-MLX</span>
+        <span className={cx('ml-auto shrink-0 pb-2.5 pr-3', TYPE.meta)}>
+          {intl.formatMessage(VIEW_I18N.poweredBy, { engine: 'Rapid-MLX' })}
+        </span>
       </div>
 
       {tab === 'engine' && (
@@ -3066,6 +3124,7 @@ function MlxEngineViewBody() {
           memory={servingMemory}
         />
       )}
+      {tab === 'macs' && <LeanZeroLinkSection />}
       {tab === 'models' && (
         <ModelsSection
           settings={settings}
@@ -3100,9 +3159,9 @@ function MlxEngineViewBody() {
 }
 
 /** The LeanZero MLX tab: inside the Providers view's MacsProvider, or its own when rendered alone. */
-const MlxEngineView: React.FC = () => (
+const MlxEngineView: React.FC<MlxEngineViewProps> = (props) => (
   <WithMacs>
-    <MlxEngineViewBody />
+    <MlxEngineViewBody {...props} />
   </WithMacs>
 );
 

@@ -22,16 +22,24 @@ vi.mock('./NavigationContext', () => ({
 
 afterEach(() => {
   navMock.expanded = true;
+  gateMock.isLocal = true;
+  gateMock.mlxEngine = true;
 });
 
+const gateMock = vi.hoisted(() => ({ isLocal: true, mlxEngine: true }));
+
 vi.mock('../../contexts/EditionContext', () => ({
-  useEdition: () => ({ edition: 'local', isLocal: true, setEdition: vi.fn() }),
+  useEdition: () => ({
+    edition: gateMock.isLocal ? 'local' : 'standard',
+    isLocal: gateMock.isLocal,
+    setEdition: vi.fn(),
+  }),
 }));
 
 vi.mock('../../contexts/FeaturesContext', () => ({
   useFeatures: () => ({
     localInference: true,
-    mlxEngine: true,
+    mlxEngine: gateMock.mlxEngine,
     leanzeroLink: true,
     isLoading: false,
   }),
@@ -71,6 +79,36 @@ const renderNav = (path = '/benchmark') =>
   );
 
 describe('NavigationPanel (Studio shell)', () => {
+  const primaryRows = () =>
+    within(screen.getByRole('navigation', { name: 'Primary' }))
+      .getAllByRole('button')
+      .map((b) => b.textContent);
+
+  it('Nodes is the FIRST row (Q-193), above MCPs, and opens /nodes; Providers stays last', () => {
+    renderNav('/nodes');
+    expect(primaryRows()).toEqual(['Nodes', 'MCPs', 'Skills', 'Memories', 'Providers']);
+    const nodes = within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', {
+      name: /Nodes/,
+    });
+    expect(nodes.getAttribute('aria-current')).toBe('page');
+    expect(nodes.querySelector('svg')).not.toBeNull();
+  });
+
+  it.each([
+    { isLocal: true, mlxEngine: false },
+    { isLocal: false, mlxEngine: true },
+  ])('Nodes shows exactly when Providers does (%o)', (gate) => {
+    Object.assign(gateMock, gate);
+    renderNav();
+    expect(primaryRows()).toEqual(['Nodes', 'MCPs', 'Skills', 'Memories', 'Providers']);
+  });
+
+  it('an upstream-flavoured build with no MLX engine hides Nodes and Providers together', () => {
+    Object.assign(gateMock, { isLocal: false, mlxEngine: false });
+    renderNav();
+    expect(primaryRows()).toEqual(['MCPs', 'Skills', 'Memories']);
+  });
+
   it('opens with the brand block: a solid accent square mark beside the wordmark in the h2 step', () => {
     renderNav();
     const brand = screen.getByTestId('brand-block');

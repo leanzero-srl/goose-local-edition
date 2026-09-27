@@ -2612,17 +2612,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "Đăng nhập để liên kết các thiết bị của bạn vào một mạng mesh riêng — không cần mật khẩu, chỉ cần một mã gửi qua email."
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "Một nơi cho cả bầy: động cơ MLX tự phát triển, thông tin xác thực nhà cung cấp đám mây, và nhóm nút mà bầy dùng để xây dựng."
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Nhà cung cấp đám mây"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "Các Mac của tôi"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Cài đặt bầy"
   },
   "linkDropNotice.details": {
     "defaultMessage": "Chi tiết"
@@ -4058,6 +4049,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "Chạy trên {engine}"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "Các mục của engine"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "Engine"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "Các Mac của tôi"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "Mô hình"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "Lấy mẫu"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "Cuộc trò chuyện do engine trên {peer} phục vụ — số liệu của nó ở ô phía trên. Các dòng này là engine của chính máy Mac này."
   },
@@ -4360,6 +4369,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Bản chia trước vẫn đang tắt trên {node} — goose sẽ khôi phục khi việc đó xong"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "Thiết lập LeanZero MLX"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "Bước {n}/{total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "Tiếp theo"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "Các Mac của bạn"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# Mac} other {# đã kết nối}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "Kết nối các Mac khác của bạn"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "Mô hình"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "{count} trên các Mac của bạn"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "Tải một mô hình"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "Chạy"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} đang chạy"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "Chạy một mô hình"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "Nút"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, other {# nút}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "Thêm một nút"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Đang viết"
@@ -5261,6 +5315,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "Nút"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Cài đặt"
   },
@@ -5425,6 +5482,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "đang phục vụ"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "Quản lý nhà cung cấp đám mây"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Quản lý Mac và mô hình"
+  },
+  "nodes.sections": {
+    "defaultMessage": "Các mục nút"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "Chiến lược sẽ cho biết nút nào làm việc gì: vai trò của nó, thứ tự thử các nút và khi nào dùng nút tiếp theo. Cho đến lúc đó, các cuộc trò chuyện và bản dựng swarm dùng các nút trong thẻ Nút."
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "Chiến lược sẽ có trong bản phát hành này"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "Nút là một mô hình mà bạn có thể giao việc, trên các Mac của bạn hoặc trên đám mây. Cuộc trò chuyện bắt đầu trên một nút hoặc một chiến lược; bản dựng swarm dùng một chiến lược."
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "Nút"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "Chiến lược"
+  },
+  "nodes.title": {
+    "defaultMessage": "Nút"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."
@@ -6427,6 +6511,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "Lưu và kiểm tra kết nối"
+  },
+  "providers.sections": {
+    "defaultMessage": "Các mục Providers"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "Nơi mô hình của bạn chạy: engine LeanZero MLX trên các Mac của bạn và các nhà cung cấp đám mây bạn đã đăng nhập. Biến chúng thành nút trong mục Nút."
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Các lời nhắc nổi bật và nút hoạt động sẽ hiển thị trong cửa sổ trò chuyện công thức."
