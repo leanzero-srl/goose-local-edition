@@ -40,7 +40,7 @@ if pgrep -f "$MAIN" >/dev/null; then
   # Name what holds it (a confirm the quit raised) instead of swapping under a live app.
   dialog=$(node -e "
 const {chromium}=require('/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core');
-chromium.connectOverCDP('http://127.0.0.1:9333').then(async b=>{const p=b.contexts()[0].pages().find(x=>x.url().includes('index.html'));
+chromium.connectOverCDP('http://127.0.0.1:9333').then(async b=>{let p; for (const q of b.contexts()[0].pages()) { if (q.url().includes('index.html') && !(await q.evaluate(()=>!!document.querySelector('[data-testid=engine-glance-desktop]')).catch(()=>true))) { p=q; break; } }
 const d=p.getByRole('dialog'); console.log(await d.count()? (await d.first().innerText()).replace(/\s+/g,' ').slice(0,200):'no dialog'); process.exit(0)}).catch(e=>{console.log('cdp: '+e.message);process.exit(0)})" 2>/dev/null)
   echo "macbook: the old app did not quit (pid $held; on screen: $dialog) — NOT swapping"; exit 3
 fi

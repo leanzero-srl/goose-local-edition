@@ -9,6 +9,7 @@
 // Never clicks, never navigates. Prints one JSON line; exit 0 = consistent, 3 = at least one contradiction.
 // Also importable: `liveCheck(page, { title })` returns the same object (r1.mjs calls it every minute).
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { mainPage } from './mainpage.mjs';
 import { fileURLToPath } from 'node:url';
 
 // A session row "says live" if it carries a running word, a busy/live ARIA state, or a live data-state —
@@ -72,7 +73,7 @@ function judge(act, engineBusy, rows, serving, title, url) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : ''; };
   const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
-  const p = b.contexts()[0].pages().find((x) => x.url().includes('index.html'));
+  const p = await mainPage(b);
   const r = await liveCheck(p, { title: arg('--title') });
   if (arg('--shot')) await p.screenshot({ path: arg('--shot') });
   console.log(JSON.stringify(r));

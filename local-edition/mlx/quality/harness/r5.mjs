@@ -1,12 +1,13 @@
 // R5 switch races, driven through the installed app's Run it card (CDP 9333).
 // usage: node r5.mjs <evidence-dir>   — each step: act, wait for the tile to settle, census both Macs.
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { mainPage } from './mainpage.mjs';
 import { execSync } from 'node:child_process';
 const dir = process.argv[2];
 const census = (label) =>
   execSync(`CENSUS_OUT=${dir}/census.jsonl /Users/mihaiperdum/Projects/goose/local-edition/mlx/quality/harness/census.sh ${label}`, { encoding: 'utf8' }).trim();
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
-const p = b.contexts()[0].pages().find((x) => x.url().includes('index.html'));
+const p = await mainPage(b);
 p.setDefaultTimeout(15000);
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 async function openEngine() {

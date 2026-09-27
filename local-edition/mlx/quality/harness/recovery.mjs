@@ -4,11 +4,12 @@
 // the Studio once the answer is being written, then samples the chat screen every second for 60 s:
 // the readiness bar, the model chip, the tail of the transcript, and main's engine snapshot (the tray).
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { mainPage } from './mainpage.mjs';
 import { spawn } from 'node:child_process';
 import { writeFileSync, appendFileSync } from 'node:fs';
 const [dir, mode] = process.argv.slice(2);
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
-const p = b.contexts()[0].pages().find((x) => x.url().includes('index.html'));
+const p = await mainPage(b);
 await p.goto(p.url().split('#')[0] + '#/'); await p.waitForTimeout(2500);
 await p.getByRole('button', { name: /^New session in / }).click(); await p.waitForTimeout(4000);
 const input = p.locator('[data-testid=chat-input]:visible').first();
