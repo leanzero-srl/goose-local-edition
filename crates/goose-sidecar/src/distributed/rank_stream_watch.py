@@ -52,6 +52,9 @@ class StreamWatch:
         # The Q-141 streamer reading the call being written (set by the relay), or why none is.
         self.streamer = None
         self.unstreamed = None
+        # Why the relay holds the call being written (Q-161: so far it is word for word an earlier
+        # call of this answer), else None.
+        self.holding = None
         self.episode = None
 
     def take(self, gen):
@@ -96,6 +99,8 @@ class StreamWatch:
                 "tool_not_streamed",
                 self.unstreamed or "no tool-call streamer is attached to this answer",
             )
+        if self.holding is not None:
+            return ("tool_repeat_held", self.holding)
         if self.streamer.broken is not None:
             return (
                 "tool_broken",

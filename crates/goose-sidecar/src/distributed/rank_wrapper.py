@@ -89,6 +89,11 @@
 #   synchronises at the generation loop's start), names a missing or unreadable config, and
 #   /v1/status carries each request's `sampling` (the values that reached the sampler, and their
 #   layer) and the engine's `sampling_defaults`.
+# - a runaway tool-call answer ends (Q-161): a tool request's decode is held to the Qwen3-Coder XML
+#   call's skeleton on a launch that asks for it (rank_xml_guard.py — the single engine's lz.7 guard;
+#   the checkpoint writes `!` where its turn should end), and a streamed answer that writes a call
+#   word for word again ends there, the repeat unsent (`StreamedToolCalls`) — E2E #3e's turn 0 was
+#   one 221,604-token answer of the same write + mkdir pair, 324 times.
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -320,6 +325,8 @@ original_load = server.ModelProvider.load
 
 def load(self, *args, **kwargs):
     loaded = original_load(self, *args, **kwargs)
+    if xml_skeleton_guard and skeleton["spec"] is None:
+        arm_skeleton_guard(self.tokenizer)
     model_loaded.set()
     return loaded
 
@@ -597,6 +604,10 @@ def _next_request(self, timeout=None):
     if prefill is not None and group.rank() == 0:
         loop.publish("poll")
         request = rank0_request(self, timeout)
+        # Checked here, not at arrival: a held request waits while the batch may store the very
+        # entry that makes its whole prompt cached (Q-164).
+        if request is not None and refused_as_fully_cached(self, request):
+            request = None
         if doorbell is None or timeout is None:
             loop.publish("share")
             request = original_share_request(self, request)
@@ -628,6 +639,7 @@ def _next_request(self, timeout=None):
     state["steps"] += 1
     loop.steps = state["steps"]
     loop.publish("batch" if timeout is None or request is not None else "idle")
+    mark_tool_request(request)
     return request
 
 
@@ -674,6 +686,9 @@ def generate(self, request, generation_args, progress_callback=None, watch=None)
     except ContextFull as full:
         leave()
         raise Refused(400, str(full), "context_length_exceeded") from None
+    except PromptFullyCached as cached:
+        leave()
+        raise Refused(409, str(cached), "prompt_fully_cached") from None
     except BaseException:
         leave()
         raise
@@ -741,12 +756,51 @@ def settle(self, request):
     except Exception as refusal:
         rqueue.put(refusal)
         return None, 0
+    # Rank 0's own queue object (never shared): the prompt the share gate checks (Q-164).
+    rqueue.goose_prompt = prompt
     return request, len(prompt)
+
+
+class PromptFullyCached(Exception):
+    """Q-164: the whole prompt is a key of the prompt cache."""
+
+    def __init__(self, tokens):
+        super().__init__(
+            f"this prompt ({tokens} tokens) is, token for token, an entry of the engine's prompt "
+            "cache — an earlier request's prompt and its answer up to the answer's last token — "
+            "and mlx_lm 0.31.3 cannot start a generation with no prompt token left to read (it "
+            "ended every rank of the split, Q-164); send it again with anything after it, or "
+            "after that entry leaves the cache"
+        )
+
+
+def refused_as_fully_cached(self, request):
+    """Q-164: rank 0, right before a request is shared. mlx_lm 0.31.3's `_generate` fetches the
+    nearest cache entry and trims the prompt's segments by what it holds; when an entry's key IS
+    the whole prompt, every segment is consumed and `BatchGenerator.insert_segments` reads
+    `seq[-1]` of an empty list — IndexError in the generation thread of EVERY rank (each holds the
+    same cache), RANK_FATAL, the split gone. Measured 2026-09-27 08:23:23 on 8091: a text
+    completion with max_tokens 1 answered one token (its entry's key is prompt + answer minus the
+    last token: the prompt itself), and the same prompt sent again ended both ranks. The same
+    lookup, read once before any rank can act on it, answers such a request 409 on its own queue;
+    the entry is left as it is (every rank's cache must stay the same)."""
+    prompt = getattr(request[0], "goose_prompt", None)
+    if prompt is None:
+        return False
+    try:
+        self.prompt_cache._trie.get(self.model_provider.model_key, prompt)
+    except KeyError:
+        return False
+    emit("RANK_PROMPT_FULLY_CACHED", {"prompt_tokens": len(prompt)})
+    request[0].put(PromptFullyCached(len(prompt)))
+    return True
 
 
 def _share_request(self, request):
     if request is not None and group.rank() == 0:
         request = settle(self, request)[0]
+        if request is not None and refused_as_fully_cached(self, request):
+            request = None
     return original_share_request(self, request)
 
 
@@ -806,6 +860,50 @@ def handle_chat_completions(self):
 if transient_tail_boundary:
     server.ResponseGenerator._tokenize = _tokenize
     server.APIHandler.handle_chat_completions = handle_chat_completions
+
+# Q-161 (rank_xml_guard.py): a tool request's decode held to the XML call's skeleton. It changes
+# what is sampled, so only a launch whose every rank runs it asks for it (`xml_skeleton_guard`);
+# every rank builds the same rules from its own copy of the same tokenizer when the model loads.
+xml_skeleton_guard = bool(spec.get("xml_skeleton_guard"))
+skeleton = {"spec": None}
+
+
+def arm_skeleton_guard(tokenizer):
+    try:
+        skeleton["spec"] = skeleton_spec(tokenizer, tokenizer.eos_token_ids)
+    except GuardUnarmed as why:
+        emit("RANK_XML_GUARD", {"rank": group.rank(), "armed": False, "why": str(why)})
+        return
+    emit(
+        "RANK_XML_GUARD",
+        {"rank": group.rank(), "armed": True, "rules": skeleton["spec"].report()},
+    )
+
+
+def mark_tool_request(request):
+    """Every rank, as a shared request leaves `_next_request`: mlx_lm makes a request's logits
+    processors from its arguments alone, so whether it carries tools rides the arguments (the
+    single engine guards tool requests only)."""
+    if xml_skeleton_guard and request is not None:
+        request[2].tool_request = bool(request[1].tools)
+
+
+if xml_skeleton_guard:
+    if not hasattr(server, "_make_logits_processors"):
+        raise SystemExit(
+            f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no "
+            "mlx_lm.server._make_logits_processors; the XML skeleton guard was written against "
+            "mlx_lm 0.31.3"
+        )
+    original_logits_processors = server._make_logits_processors
+
+    def _make_logits_processors(args):
+        processors = original_logits_processors(args)
+        if getattr(args, "tool_request", False) and skeleton["spec"] is not None:
+            processors = [*processors, XmlSkeletonGuard(skeleton["spec"])]
+        return processors
+
+    server._make_logits_processors = _make_logits_processors
 
 
 # A BaseException so mlx_lm's handle_completion (`except Exception` → 404) lets it through to
@@ -1009,8 +1107,34 @@ def delivered(tool_text, tools):
     return []
 
 
+class StreamedCall:
+    """One call of a streamed answer: its streamer, its id, and — until the relay sends it — the
+    frames built for it (`index` is None while the call is held, Q-161)."""
+
+    def __init__(self):
+        self.stream = ToolCallStream(qwen3_coder._convert_param_value, qwen3_coder._get_arguments_config)
+        self.id = str(uuid.uuid4())
+        self.index = None
+        self.held = []
+
+
 class StreamedToolCalls:
-    """The response generator as one streamed chat request's handler sees it."""
+    """The response generator as one streamed chat request's handler sees it.
+
+    Q-161: a call the model writes word for word again in the same answer ends the answer. E2E
+    #3e's turn 0 (sampling from generation_config) was ONE answer of 649 calls — the same `write`
+    of notes/kickoff.md and the same `mkdir -p …/notes`, 324 times each, then a call cut by the
+    context — 221,604 tokens over ~6.5 h; #3d's (greedy) was 54 identical `ledger_append`s. Nothing
+    reaches the model between the calls of one answer, so a call it repeats verbatim learns nothing
+    and runs nothing new (goose answers such a call "Not run: identical to call #1"), and each copy
+    makes the next more certain: measured on the split, after 4, 6 and 8 calls of that pair the
+    model put p≈0.88–1.0 on `\\n<tool_call>` at the junction and 0.04–0.07 on `<|im_end|>`. The
+    relay holds a call while its text is still word for word the start of a call this answer
+    already closed, sends it the moment it differs, and when it closes identical the call is never
+    sent: the relay names it (GOOSE_RANK_TOOL_CALL_REPEATED, with the words), stops the generation
+    on every rank (the handler's own `ctx.stop()`, which rank 0 shares), and the answer ends there
+    with the calls it made — finish_reason `tool_calls`. The measure is the model's own output, not
+    a count or a clock: the first verbatim repeat, whatever its length or position."""
 
     def __init__(self, handler, upstream, watch):
         self.handler = handler
@@ -1018,7 +1142,10 @@ class StreamedToolCalls:
         self.watch = watch
         self.parse = None
         self.tools = None
+        self.ctx = None
         self.index = 0
+        # The text of every call this answer closed, in order (the streamer's, between the markers).
+        self.closed = []
 
     def __getattr__(self, name):
         return getattr(self.upstream, name)
@@ -1040,6 +1167,7 @@ class StreamedToolCalls:
             return ctx, tokens
         self.parse = ctx.tool_parser
         self.tools = request.tools
+        self.ctx = ctx
         ctx.tool_parser = delivered
         return ctx, self.relay(tokens)
 
@@ -1048,44 +1176,94 @@ class StreamedToolCalls:
         for gen in tokens:
             if gen.state == "tool":
                 if call is None:
-                    call = [
-                        ToolCallStream(qwen3_coder._convert_param_value, qwen3_coder._get_arguments_config),
-                        str(uuid.uuid4()),
-                        self.index,
-                    ]
-                    self.index += 1
-                    self.watch.streamer = call[0]
+                    call = StreamedCall()
+                    self.watch.streamer = call.stream
                 self.feed(call, gen.text)
             elif call is not None:
-                self.finish(call)
+                repeated = self.finish(call)
                 call = None
+                if repeated:
+                    # The `</tool_call>` that closed the repeat is not handed on: the handler ends
+                    # the answer on the calls already sent, and its `finally` stops nothing twice.
+                    self.ctx.stop()
+                    tokens.close()
+                    return
             yield gen
         if call is not None:
             self.finish(call)
 
+    def repeat_of(self, text, whole):
+        """The 1-based position of the first call this answer closed whose text `text` is (whole) or
+        begins (not whole), else None."""
+        for position, earlier in enumerate(self.closed, start=1):
+            if earlier == text if whole else earlier.startswith(text):
+                return position
+        return None
+
     def feed(self, call, text):
-        stream, call_id, index = call
-        opened, fragment = stream.feed(text, self.tools)
+        opened, fragment = call.stream.feed(text, self.tools)
+        frame = None
         if opened is not None:
-            self.send({"index": index, "id": call_id, "type": "function",
-                       "function": {"name": opened, "arguments": fragment}})
+            frame = {"id": call.id, "type": "function", "function": {"name": opened, "arguments": fragment}}
         elif fragment:
-            self.send({"index": index, "function": {"arguments": fragment}})
+            frame = {"function": {"arguments": fragment}}
+        if call.index is not None:
+            if frame is not None:
+                self.send(call.index, frame)
+            return
+        if frame is not None:
+            call.held.append(frame)
+        position = self.repeat_of(call.stream.text, whole=False)
+        if position is None:
+            self.release(call)
+        else:
+            self.watch.holding = (
+                f"the call so far is word for word the start of call {position} of this answer: "
+                "it is sent the moment it differs, and ends the answer unsent if it closes identical"
+            )
+
+    def release(self, call):
+        call.index = self.index
+        self.index += 1
+        self.watch.holding = None
+        for frame in call.held:
+            self.send(call.index, frame)
+        call.held = []
 
     def finish(self, call):
-        stream, call_id, index = call
+        """Ends a call; True when it closed word for word a call this answer already made."""
+        stream = call.stream
         self.watch.streamer = None
+        self.watch.holding = None
+        position = self.repeat_of(stream.text, whole=True)
+        self.closed.append(stream.text)
+        if position is not None:
+            emit(
+                "RANK_TOOL_CALL_REPEATED",
+                {
+                    "name": stream.name,
+                    "repeat_of": position,
+                    "calls": len(self.closed) - 1,
+                    "chars": len(stream.text),
+                    "generated_chars": self.watch.generated_chars,
+                    "tail": self.watch.tail,
+                },
+            )
+            return True
+        if call.index is None:
+            self.release(call)
         rest, why = stream.close(self.parse, self.tools)
         if why is not None:
             emit(
                 "RANK_TOOL_CALL_UNPARSED",
                 {"name": stream.name, "why": why, "chars": len(stream.text), "sent_chars": len(stream.sent)},
             )
-            return
-        self.send({"index": index, "function": {"arguments": rest}})
+            return False
+        self.send(call.index, {"function": {"arguments": rest}})
+        return False
 
-    def send(self, tool_call):
-        frame = self.handler.generate_response("", None, tool_calls=[tool_call])
+    def send(self, index, tool_call):
+        frame = self.handler.generate_response("", None, tool_calls=[{"index": index, **tool_call}])
         self.handler.wfile.write(f"data: {json.dumps(frame)}\n\n".encode())
         self.handler.wfile.flush()
 
