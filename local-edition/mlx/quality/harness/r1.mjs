@@ -7,7 +7,7 @@
 // turn's own length) is logged STALL with a screenshot and the soak goes on waiting; HANG_FACTOR x ends the soak —
 // a hang is the finding, and the driver never cancels, retries or edits the turn itself.
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
-import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { liveCheck } from './livecheck.mjs';
 const dir = process.argv[2];
 const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
@@ -20,7 +20,7 @@ writeFileSync(out, 'turn\tstart\tend\tsecs\tended\ttools\trecalled\tchip\tcounte
 // What THIS turn added: the messages after the send, never the whole page (the smoke run matched an older
 // session's notice). A failed turn is any goose notice or the engine's empty-response line.
 const FAIL = /empty response|stopped answering|quit goose mid|No node can|Ran into this error|split across your Macs stopped|stopped making progress/;
-const added = (n0) => p.evaluate((n0) => { const ms = [...document.querySelectorAll('.goose-message')].slice(n0).map((m) => m.innerText); const recalled = ms.join('\n').split('\n').filter((l) => /^recalled:/.test(l.trim())).join(' | '); const tools = [...document.querySelectorAll('.goose-message')].slice(n0).reduce((k, m) => k + m.querySelectorAll('[class*=tool i], details').length, 0); return { text: ms.join(' ').replace(/\s+/g, ' '), tools, recalled }; }, n0);
+const added = (n0) => p.evaluate((n0) => { const ms = [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).slice(n0).map((m) => m.innerText); const recalled = ms.join('\n').split('\n').filter((l) => /^recalled:/.test(l.trim())).join(' | '); const tools = [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).slice(n0).reduce((k, m) => k + m.querySelectorAll('[class*=tool i], details').length, 0); return { text: ms.join(' ').replace(/\s+/g, ' '), tools, recalled }; }, n0);
 const briefArg = process.argv.indexOf('--brief');
 const brief = briefArg > 0 ? JSON.parse(readFileSync(process.argv[briefArg + 1], 'utf8')) : null;
 const builtin = [
@@ -68,8 +68,11 @@ let chatUrl = ''; let title = ''; const liveSeen = new Set();
 const lengths = []; const median = () => { const s = [...lengths].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 const maxTurns = maxTurnsArg || (brief ? steps.length : 200);
 for (let turn = 0; turn < maxTurns; turn++) {
+  // A STOP file ends the run at this boundary, before the next turn is sent — killing r1 from outside raced
+  // its 3-s gap and sent #3i's turn 4 into an install that stopped the split (Q-219).
+  if (existsSync(`${dir}/STOP`)) { appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} STOPPED by ${dir}/STOP before turn ${turn}\n`); break; }
   const prompt = turn < steps.length ? steps[turn] : `Continue improving the ledger package in ${work}: pick the next most useful feature or fix, implement it with a test, and run the suite. (turn ${turn})`;
-  const n0 = await p.evaluate(() => document.querySelectorAll('.goose-message').length);
+  const n0 = await p.evaluate(() => [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).length);
   // The owner shares this app while it runs (Q-147: he was on Providers mid-turn). Mid-turn the driver never
   // yanks his view; to TYPE it must be in its own chat, so it returns there only at a turn boundary.
   if (chatUrl && p.url() !== chatUrl) { appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} RETURN to own chat from ${p.url().split('#')[1]}\n`); await p.goto(chatUrl); await p.waitForTimeout(3000); }
