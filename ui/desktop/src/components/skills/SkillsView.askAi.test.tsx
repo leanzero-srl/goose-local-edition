@@ -12,6 +12,7 @@ import { IntlTestWrapper } from '../../i18n/test-utils';
 const startChat = vi.hoisted(() => vi.fn());
 vi.mock('../Layout/useStartChatAbout', () => ({ useStartChatAbout: () => startChat }));
 vi.mock('../../utils/workingDir', () => ({ getInitialWorkingDir: () => '/Users/me' }));
+vi.mock('../../utils/globalSkillsDir', () => ({ getGlobalSkillsDir: () => '~/.agents/skills' }));
 
 const skills = [
   {
@@ -58,7 +59,7 @@ describe('Skills detail — Ask AI about it', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Ask AI about it/ }));
     expect(startChat).toHaveBeenCalledTimes(1);
     const prompt = startChat.mock.calls[0][0] as string;
-    expect(prompt).toBe(askAboutSkillPrompt(skills[0] as never, '/Users/me'));
+    expect(prompt).toBe(askAboutSkillPrompt(skills[0] as never, '/Users/me', '~/.agents/skills'));
     expect(prompt).toContain('/Users/me/.agents/skills/release-checklist/SKILL.md');
     expect(prompt).toContain('found no other files');
   });

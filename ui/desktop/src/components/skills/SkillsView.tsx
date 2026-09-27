@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { BookOpen, Pencil, Sparkles, Trash2, Zap } from 'lucide-react';
 import { errorMessage } from '../../utils/conversionUtils';
 import { getInitialWorkingDir } from '../../utils/workingDir';
+import { getGlobalSkillsDir } from '../../utils/globalSkillsDir';
 import { defineMessages, useIntl } from '../../i18n';
 import { listSkillSources } from '../../acp/sources';
 import type { SourceEntry } from '@aaif/goose-sdk';
@@ -86,12 +87,18 @@ const ASK_FIRST =
  * (or that it found none), its scope — never an assumed structure. The old text told the model
  * "sibling files in the same folder are its references" and called the folder "the file"; on a folder
  * holding only SKILL.md a local model answered, with no tool call, that it had read "four sibling
- * reference files" and cited two invented ones (UX audit T2, 2026-09-23).
+ * reference files" and cited two invented ones (UX audit T2, 2026-09-23). `globalSkillsDir` is where
+ * goose reads global skills (utils/globalSkillsDir; Q-188: under GOOSE_PATH_ROOT a literal
+ * `~/.agents/skills` sent the fork into the owner's home, where the profile never reads it).
  */
-export function askAboutSkillPrompt(skill: SkillEntry, projectDir: string): string {
+export function askAboutSkillPrompt(
+  skill: SkillEntry,
+  projectDir: string,
+  globalSkillsDir: string
+): string {
   const head = `I want to work on my goose skill "${skill.name}" (${skill.description}).`;
   const project = projectDir.replace(/\/+$/, '');
-  const forkRoots = `a global skill goes in ~/.agents/skills/<new-name>/SKILL.md, a project skill in ${project || '<project>'}/.agents/skills/<new-name>/SKILL.md`;
+  const forkRoots = `a global skill goes in ${globalSkillsDir}/<new-name>/SKILL.md, a project skill in ${project || '<project>'}/.agents/skills/<new-name>/SKILL.md`;
   const origin = skillOrigin(skill);
   if (origin === 'builtin') {
     return [
@@ -351,7 +358,11 @@ export default function SkillsView() {
                 setSelectedPath(skill.path);
                 setDeleteRequest((n) => n + 1);
               }}
-              onAsk={() => void startChat(askAboutSkillPrompt(skill, getInitialWorkingDir()))}
+              onAsk={() =>
+                void startChat(
+                  askAboutSkillPrompt(skill, getInitialWorkingDir(), getGlobalSkillsDir())
+                )
+              }
             />
           ))}
         </LibraryGroup>
@@ -389,7 +400,11 @@ export default function SkillsView() {
               projectDir={getInitialWorkingDir()}
               requestEdit={editRequest}
               requestDelete={deleteRequest}
-              onAsk={() => void startChat(askAboutSkillPrompt(selected, getInitialWorkingDir()))}
+              onAsk={() =>
+                void startChat(
+                  askAboutSkillPrompt(selected, getInitialWorkingDir(), getGlobalSkillsDir())
+                )
+              }
               onSaved={(updated) =>
                 setSkills((prev) => prev.map((s) => (s.path === updated.path ? updated : s)))
               }

@@ -294,10 +294,8 @@ pub struct ApplyContext {
 impl ApplyContext {
     /// The context pointing at the real goose homes.
     pub fn production(conflict: ConflictPolicy) -> Self {
-        let skills_dir = crate::skills::global_skills_dir()
-            .unwrap_or_else(|| crate::config::paths::Paths::config_dir().join("skills"));
         ApplyContext {
-            skills_dir,
+            skills_dir: crate::skills::global_skills_dir(),
             config_dir: crate::config::paths::Paths::config_dir(),
             conflict,
         }

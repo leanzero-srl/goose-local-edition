@@ -77,7 +77,9 @@ import { expandTilde } from './utils/pathUtils';
 import {
   agentWorkRegistryPath,
   gooseGlobalMemoryDir,
+  gooseGlobalSkillsDir,
   gooseMemoryProposalsDir,
+  homeRelative,
   resolveGoosePathRoot,
 } from './utils/goosePaths';
 import {
@@ -1103,6 +1105,9 @@ let appConfig = {
   GOOSE_DEFAULT_MODEL: defaultModel,
   GOOSE_PREDEFINED_MODELS: predefinedModels,
   GOOSE_PATH_ROOT: resolveGoosePathRoot(),
+  // The renderer cannot resolve goose's dirs (no node:os); the skills import and the skill prompts
+  // read this one (Q-188). `~/.agents/skills` unset, as the renderer always wrote it.
+  GOOSE_GLOBAL_SKILLS_DIR: homeRelative(gooseGlobalSkillsDir(), os.homedir()),
   GOOSE_WORKING_DIR: '',
   // Start with the env-var override; the OS region locale is filled in after app.ready
   // (see updateLocaleFromSystem below) since getSystemLocale() cannot be called earlier.

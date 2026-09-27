@@ -104,6 +104,17 @@ fn home_folder_note(working_dir: &std::path::Path) -> Option<&'static str> {
     )
 }
 
+/// The global dir as the instructions name it: `~/.config/goose/memory/` for goose's default dir —
+/// the bytes every prompt has carried — and the real dir for any other (under GOOSE_PATH_ROOT the
+/// `~/.config/goose` the text named was the owner's, not this profile's; Q-188).
+fn global_memory_dir_shown(dir: &std::path::Path) -> String {
+    if dir == crate::goose_config_dir_under(None).join("memory") {
+        "~/.config/goose/memory/".to_string()
+    } else {
+        format!("{}/", dir.display())
+    }
+}
+
 /// Parameters for the retrieve_memories tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RetrieveMemoriesParams {
@@ -210,6 +221,7 @@ impl MemoryServer {
     /// process working directory, which the extension manager sets to the session's working dir when it
     /// spawns this server, so the startup index covers both scopes.
     pub fn with_global_dir(global_memory_dir: PathBuf) -> Self {
+        let global_shown = global_memory_dir_shown(&global_memory_dir);
         let instructions = formatdoc! {r#"
              This extension stores and retrieves categorized information with tagging support — it is YOUR
              long-term memory. Write to it PROACTIVELY, on your own initiative and WITHOUT asking permission
@@ -217,7 +229,7 @@ impl MemoryServer {
 
              Storage:
              - Local: .goose/memory/ (project-specific)
-             - Global: ~/.config/goose/memory/ (user-wide)
+             - Global: {global_shown} (user-wide)
 
              CALL remember_memory (do NOT ask the user first) the moment you learn any of these:
              - a durable USER PREFERENCE or taste (how they like things done; tools, styles, or conventions
@@ -1750,5 +1762,26 @@ mod tests {
             crate::goose_config_dir_under(None).join("memory"),
             before_q184
         );
+    }
+
+    /// Q-188: the instructions name the dir the server really writes. Unset, the Storage line keeps
+    /// the bytes every prompt has carried; under a root it names `<root>/config/memory/`, not the
+    /// owner's `~/.config/goose/memory/`.
+    #[test]
+    fn the_instructions_name_the_global_dir_the_server_writes() {
+        assert_eq!(
+            global_memory_dir_shown(&crate::goose_config_dir_under(None).join("memory")),
+            "~/.config/goose/memory/"
+        );
+
+        let root = tempdir().unwrap();
+        let memory =
+            crate::goose_config_dir_under(Some(root.path().as_os_str().to_owned())).join("memory");
+        let server = MemoryServer::with_global_dir(memory.clone());
+        let line = format!("- Global: {}/ (user-wide)", memory.display());
+        assert!(server.get_instructions().contains(&line), "{line}");
+        assert!(!server
+            .get_instructions()
+            .contains("~/.config/goose/memory/"));
     }
 }

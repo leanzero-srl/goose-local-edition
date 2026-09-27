@@ -40,7 +40,7 @@ pub fn plan_commands(opts: &ImportOptions, plan: &mut ImportPlan) -> Result<()> 
             class,
             name: name.clone(),
             source: Some(path),
-            target: format!("~/.agents/skills/{name}"),
+            target: format!("{}/{name}", crate::skills::global_skills_dir_display()),
             note,
         });
     }

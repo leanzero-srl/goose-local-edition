@@ -54,5 +54,30 @@ export const gooseGlobalMemoryDir = (): string => path.join(gooseDirs().config, 
 /** Saved memory proposals — the sibling of the global memory dir (goose-mcp memory `proposals_dir`). */
 export const gooseMemoryProposalsDir = (): string => path.join(gooseDirs().config, 'proposals');
 
+/**
+ * PURE: goose's `.agents` home — the mirror of `Paths::agents_home_dir()`: `<root>/.agents` under a
+ * root, `~/.agents` unset.
+ */
+export function gooseAgentsHomeFor(home: string, pathRoot: string | undefined): string {
+  return path.join(pathRoot ?? home, '.agents');
+}
+
+/**
+ * Global skills — `crates/goose/src/skills` `global_skills_dir()` (Q-188): where goose reads them and
+ * where the Claude Code import copies them. Unset root: `~/.agents/skills`, as always.
+ */
+export const gooseGlobalSkillsDir = (): string =>
+  path.join(gooseAgentsHomeFor(os.homedir(), resolveGoosePathRoot()), 'skills');
+
+/**
+ * PURE: a path as the renderer shows it and hands it back over IPC — `~/…` under the home folder
+ * (main's file handlers expand the tilde), the full path outside it.
+ */
+export function homeRelative(p: string, home: string): string {
+  const rest = path.relative(home, p);
+  if (rest === '' || rest.startsWith('..') || path.isAbsolute(rest)) return p;
+  return `~/${rest.split(path.sep).join('/')}`;
+}
+
 /** The desktop's registry of agent-work directories. */
 export const agentWorkRegistryPath = (): string => path.join(gooseDirs().config, 'agent-work.json');

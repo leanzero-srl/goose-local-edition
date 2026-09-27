@@ -37,20 +37,49 @@ pub struct SkillFrontmatter {
     pub metadata: HashMap<String, Value>,
 }
 
-/// Canonical writable location for global user skills: `~/.agents/skills`.
-pub fn global_skills_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".agents").join("skills"))
+/// Canonical writable location for global user skills: `~/.agents/skills`, or
+/// `<GOOSE_PATH_ROOT>/.agents/skills` under a root — `Paths::agents_home_dir`, the rule plugins and
+/// global agents already follow. Q-188: it was `dirs::home_dir()` alone, so an isolated profile
+/// read the owner's skills and its imports wrote into the owner's home.
+pub fn global_skills_dir() -> PathBuf {
+    Paths::in_agents_home_dir("skills")
+}
+
+/// [`global_skills_dir`] as a person reads it: `~/.agents/skills` under the home folder — the text
+/// every surface has always shown — and the full path for a root outside it.
+pub fn global_skills_dir_display() -> String {
+    display_home_relative(&global_skills_dir(), dirs::home_dir().as_deref())
+}
+
+pub(crate) fn display_home_relative(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) => {
+            let parts: Vec<_> = rest
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect();
+            format!("~/{}", parts.join("/"))
+        }
+        None => path.display().to_string(),
+    }
+}
+
+/// Every global (home- or root-rooted) skills folder, in discovery precedence. goose's own two hang
+/// from goose's dirs (under GOOSE_PATH_ROOT when set); `~/.claude/skills` and
+/// `~/.config/agents/skills` belong to other tools and stay in the owner's home.
+fn global_skill_roots() -> Vec<PathBuf> {
+    let mut roots = vec![global_skills_dir(), Paths::config_dir().join("skills")];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".claude").join("skills"));
+        roots.push(home.join(".config").join("agents").join("skills"));
+    }
+    roots
 }
 
 /// Canonical writable location for project-scoped skills:
 /// `<project>/.agents/skills`.
 pub fn project_skills_dir(project_dir: &Path) -> PathBuf {
     project_dir.join(".agents").join("skills")
-}
-
-pub(crate) fn skills_dir_global_or_err() -> Result<PathBuf, Error> {
-    global_skills_dir()
-        .ok_or_else(|| Error::internal_error().data("Could not determine home directory"))
 }
 
 pub(crate) fn skills_dir_project_or_err(project_dir: &str) -> Result<PathBuf, Error> {
@@ -64,7 +93,7 @@ pub(crate) fn skills_dir_project_or_err(project_dir: &str) -> Result<PathBuf, Er
 
 pub(crate) fn skill_base_dir(global: bool, project_dir: Option<&str>) -> Result<PathBuf, Error> {
     if global {
-        skills_dir_global_or_err()
+        Ok(global_skills_dir())
     } else {
         let pd = project_dir.ok_or_else(|| {
             Error::invalid_params().data("projectDir is required when global is false")
@@ -201,15 +230,7 @@ fn canonicalize_or_original(path: &Path) -> PathBuf {
 fn inferred_discoverable_skill_root(path: &Path) -> Option<PathBuf> {
     let canonical_path = canonicalize_or_original(path);
 
-    let mut global_roots = Vec::new();
-    if let Some(global_root) = global_skills_dir() {
-        global_roots.push(global_root);
-    }
-    global_roots.push(Paths::config_dir().join("skills"));
-    if let Some(home) = dirs::home_dir() {
-        global_roots.push(home.join(".claude").join("skills"));
-        global_roots.push(home.join(".config").join("agents").join("skills"));
-    }
+    let mut global_roots = global_skill_roots();
     global_roots.extend(installed_plugin_skill_dirs());
 
     for root in global_roots {
@@ -255,9 +276,7 @@ pub(crate) fn resolve_skill_dir(path: &str) -> Result<PathBuf, Error> {
 }
 
 pub(crate) fn is_global_skill_dir(path: &Path) -> bool {
-    global_skills_dir().as_deref().is_some_and(|root| {
-        canonicalize_or_original(path).starts_with(canonicalize_or_original(root))
-    })
+    canonicalize_or_original(path).starts_with(canonicalize_or_original(&global_skills_dir()))
 }
 
 pub(crate) fn infer_skill_name(dir: &Path) -> String {
@@ -328,16 +347,7 @@ pub(crate) fn parse_skill_frontmatter(raw: &str) -> (String, String) {
 /// global skill was labelled PROJECT. The folder keeps its first (project-precedence) position and
 /// the global flag; the later duplicate is dropped.
 pub fn all_skill_dirs(working_dir: Option<&Path>) -> Vec<(PathBuf, bool)> {
-    let mut global_dirs: Vec<PathBuf> = Vec::new();
-    let home = dirs::home_dir();
-    if let Some(h) = home.as_ref() {
-        global_dirs.push(h.join(".agents").join("skills"));
-    }
-    global_dirs.push(Paths::config_dir().join("skills"));
-    if let Some(h) = home.as_ref() {
-        global_dirs.push(h.join(".claude").join("skills"));
-        global_dirs.push(h.join(".config").join("agents").join("skills"));
-    }
+    let global_dirs = global_skill_roots();
 
     let mut dirs: Vec<(PathBuf, bool)> = Vec::new();
     if let Some(wd) = working_dir {
@@ -811,10 +821,23 @@ mod tests {
 
     // UX audit 2026-09-23: the desktop's working dir was the home folder, so `~/.agents/skills` was
     // scanned first as `<project>/.agents/skills` and every global skill was labelled PROJECT.
+    /// The hermetic root, held so a test that points GOOSE_PATH_ROOT elsewhere under `env_lock`
+    /// (config::paths) cannot swap it mid-assertion.
+    fn hold_the_hermetic_root() -> env_lock::EnvGuard<'static> {
+        let root = goose_test_support::hermetic_path_root().to_str().unwrap();
+        env_lock::lock_env([("GOOSE_PATH_ROOT", Some(root))])
+    }
+
+    // Since Q-188 the global `.agents/skills` hangs from `Paths::agents_home_dir()` — under the unit
+    // tests' hermetic root, so "the home folder" here is the folder holding that `.agents`.
     #[test]
     fn a_project_that_is_the_home_folder_does_not_relabel_the_global_roots() {
-        let home = dirs::home_dir().expect("home dir");
-        let dirs = all_skill_dirs(Some(&home));
+        let _root = hold_the_hermetic_root();
+        let agents_home = Paths::agents_home_dir();
+        let home = agents_home
+            .parent()
+            .expect("the .agents folder has a parent");
+        let dirs = all_skill_dirs(Some(home));
         let agents = home.join(".agents").join("skills");
         let listed: Vec<_> = dirs.iter().filter(|(d, _)| *d == agents).collect();
         assert_eq!(listed, vec![&(agents.clone(), true)], "{dirs:?}");
@@ -823,13 +846,53 @@ mod tests {
             (agents, true),
             "the folder keeps its first position"
         );
-        let claude = home.join(".claude").join("skills");
+        let owner_home = dirs::home_dir().expect("home dir");
+        let claude = owner_home.join(".claude").join("skills");
+        let dirs = all_skill_dirs(Some(&owner_home));
         assert_eq!(
-            dirs.iter().filter(|(d, _)| *d == claude).count(),
-            1,
+            dirs.iter()
+                .filter(|(d, _)| *d == claude)
+                .collect::<Vec<_>>(),
+            vec![&(claude.clone(), true)],
             "{dirs:?}"
         );
-        assert!(dirs.contains(&(home.join(".goose").join("skills"), false)));
+        assert!(dirs.contains(&(owner_home.join(".goose").join("skills"), false)));
+    }
+
+    /// Q-188: global skills are read from and written to `<GOOSE_PATH_ROOT>/.agents/skills` under a
+    /// root — never the owner's `~/.agents/skills`, which an isolated profile's imports wrote into.
+    /// The unit tests always run under a hermetic root (`Paths::root_override`), so this is the
+    /// root case without touching the env.
+    #[test]
+    fn global_skills_hang_from_the_path_root() {
+        let _root = hold_the_hermetic_root();
+        let root = Paths::root_override().expect("unit tests run under a hermetic root");
+        let rooted = root.join(".agents").join("skills");
+        assert_eq!(global_skills_dir(), rooted);
+        assert_eq!(skill_base_dir(true, None).unwrap(), rooted);
+        let owner = dirs::home_dir().unwrap().join(".agents").join("skills");
+        let dirs = all_skill_dirs(None);
+        assert_eq!(dirs[0], (rooted.clone(), true), "{dirs:?}");
+        assert!(!dirs.iter().any(|(d, _)| *d == owner), "{dirs:?}");
+        assert!(is_global_skill_dir(&rooted.join("x")));
+        assert!(!is_global_skill_dir(&owner.join("x")));
+    }
+
+    /// Q-188, unset root: `Paths` takes the home folder from etcetera, the old code from `dirs`. They
+    /// must be the same folder, or moving to `Paths` moved every owner's global skills.
+    #[test]
+    fn unset_the_global_skills_dir_is_the_old_home_path() {
+        let home = etcetera::home_dir().unwrap();
+        assert_eq!(Some(home.clone()), dirs::home_dir());
+        let unset = home.join(".agents").join("skills");
+        assert_eq!(
+            display_home_relative(&unset, Some(&home)),
+            "~/.agents/skills"
+        );
+        assert_eq!(
+            display_home_relative(Path::new("/elsewhere/.agents/skills"), Some(&home)),
+            "/elsewhere/.agents/skills"
+        );
     }
 
     /// Claude Code reads a SKILL.md with no frontmatter as a skill named by its directory, described by
