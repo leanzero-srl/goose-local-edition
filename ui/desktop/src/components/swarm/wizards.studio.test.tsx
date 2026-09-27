@@ -7,13 +7,12 @@ beforeAll(() => {
 });
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
-import PersonaChooser from './PersonaChooser';
 import RecipeWizard from './RecipeWizard';
 import RecipeChatWizard from './RecipeChatWizard';
 import AgentSetupWizard from './AgentSetupWizard';
 
 /**
- * The four Local Edition wizards moved onto the Studio tokens (no inline palette vars, no CHIP_RADIUS,
+ * The three Local Edition wizards moved onto the Studio tokens (no inline palette vars, no CHIP_RADIUS,
  * no hand-written grey, no opacity states, no border-l divider). This renders each one open, refuses the
  * bans on the rendered tree and measures every emitted class against the real pipeline.
  */
@@ -41,19 +40,6 @@ const utilitiesOf = (classes: string[]) => classes.filter((c) => !c.startsWith('
 
 describe('the Local Edition wizards emit only classes that compile, and nothing the Studio bans', () => {
   afterEach(() => cleanup());
-
-  it('PersonaChooser — a divided group, the active option the accent fill, no border-l', async () => {
-    const { container, getAllByRole } = render(
-      <PersonaChooser value="agent" onChange={() => {}} />
-    );
-    assertStudioClean(container);
-    const [coding, agent] = getAllByRole('button');
-    expect(agent.getAttribute('aria-pressed')).toBe('true');
-    expect(agent.className).toContain('bg-lz-accent');
-    expect(coding.className).toContain('text-lz-ink-3');
-    for (const b of [coding, agent]) expect(b.getAttribute('style')).toBeNull();
-    expect(await missingUtilities(utilitiesOf(allClasses(container)))).toEqual([]);
-  });
 
   it('RecipeWizard — the Studio field recipe, one primary Save, the err box on the tokens', async () => {
     const { getByRole } = render(<RecipeWizard isOpen onClose={() => {}} onSaved={() => {}} />);

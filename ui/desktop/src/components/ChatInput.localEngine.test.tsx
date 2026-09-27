@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import ChatInput from './ChatInput';
 import { ChatState } from '../types/chatState';
@@ -7,6 +7,8 @@ import { IntlTestWrapper } from '../i18n/test-utils';
 import type { ChatServedBy } from './chatServedBy/chatServedBy';
 
 /**
+ * The composer on a local engine (omlx / swarm).
+ *
  * Q-60, regressed on 3.0.41 (ROUND-2026-09-25-4 §3): "the counter is absent on the dead split".
  * 4333464ef kept the window only while a ROUTE reconnects; a split whose rank died reports no
  * window (`contextWindow: null`, readiness `split-stopped`), so the limit fell to 0 and the
@@ -57,11 +59,10 @@ vi.mock('./ui/Diagnostics', async (original) => ({
   ...(await original<typeof import('./ui/Diagnostics')>()),
   DiagnosticsModal: () => null,
 }));
-vi.mock('./swarm/usePersona', () => ({
-  usePersona: () => ({ persona: 'coding', setPersona: vi.fn() }),
+vi.mock('./swarm/AgentSetupWizard', () => ({
+  default: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="recipes-and-loops-open" /> : null,
 }));
-vi.mock('./swarm/PersonaChooser', () => ({ PersonaChooser: () => null }));
-vi.mock('./swarm/AgentSetupWizard', () => ({ default: () => null }));
 
 class ResizeObserverMock {
   observe() {}
@@ -90,7 +91,7 @@ const splitServing = (contextWindow: number | null, kind: 'ready' | 'unknown'): 
     readiness: { kind },
   }) as unknown as ChatServedBy;
 
-const input = (sessionId: string, model = 'qwen-27b') => (
+const input = (sessionId: string, model = 'qwen-27b', provider = 'omlx') => (
   <IntlTestWrapper>
     <ChatInput
       sessionId={sessionId}
@@ -98,7 +99,7 @@ const input = (sessionId: string, model = 'qwen-27b') => (
       chatState={ChatState.Idle}
       setView={vi.fn()}
       sessionModel={model}
-      sessionProvider="omlx"
+      sessionProvider={provider}
       sessionLoaded
       workingDir="/tmp"
     />
@@ -135,5 +136,30 @@ describe('the context counter while the split that measured it is down (Q-60)', 
     render(input('s2'));
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByTestId('context-indicator')).toBeNull();
+  });
+});
+
+/**
+ * Q-6, round live-1: a "Coding · Agent" toggle sat in the swarm composer. LEANZERO_PERSONA was read
+ * nowhere — a send did the same thing either way — and "Agent" promised "Autonomous — runs a loop".
+ * No mode that changes nothing: the bar carries no toggle, only the launcher, one click away.
+ */
+describe('the swarm composer has no mode toggle, only a launcher (Q-6)', () => {
+  beforeEach(() => {
+    served = splitServing(null, 'unknown');
+  });
+
+  it('no pressed-button pair and no "Persona" group', async () => {
+    render(input('s1', 'swarm-model', 'swarm'));
+    await screen.findByTestId('agent-setup');
+    expect(screen.queryByRole('group', { name: 'Persona' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(Coding|Agent)$/ })).toBeNull();
+    expect(document.querySelector('[aria-pressed]')).toBeNull();
+  });
+
+  it('the launcher is there from the start and opens the hub in one click', async () => {
+    render(input('s1', 'swarm-model', 'swarm'));
+    fireEvent.click(await screen.findByTestId('agent-setup'));
+    expect(screen.getByTestId('recipes-and-loops-open')).toBeInTheDocument();
   });
 });

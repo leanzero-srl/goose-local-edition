@@ -46,8 +46,6 @@ import {
   type KnownWindow,
   type MeasuredPrompt,
 } from './chatServedBy/contextFloor';
-import { PersonaChooser } from './swarm/PersonaChooser';
-import { usePersona } from './swarm/usePersona';
 import AgentSetupWizard from './swarm/AgentSetupWizard';
 import { defineMessages, useIntl } from '../i18n';
 import { Button as StudioButton, Chip, StatusDot, TYPE, cx } from './lz';
@@ -345,7 +343,6 @@ export default function ChatInput({
   useEffect(() => {
     onServedChange?.(chatServing.served);
   }, [chatServing.served, onServedChange]);
-  const { persona, setPersona } = usePersona();
   const [agentWizardOpen, setAgentWizardOpen] = useState(false);
 
   // Clear override when the underlying data catches up (session props for
@@ -1792,17 +1789,9 @@ export default function ChatInput({
           </Chip>
         </Tooltip>
 
-        {/* Left: persona chooser (Local Edition swarm only) */}
+        {/* Left: the one launcher for recipes and loops (Local Edition swarm only). A "Coding · Agent"
+            toggle stood here and changed nothing a send does (Q-6) — no mode, just the launcher. */}
         {isSwarmProvider && !isBottomBarNarrow && (
-          <PersonaChooser
-            value={persona}
-            onChange={(p) => {
-              setPersona(p);
-              if (p === 'agent') setAgentWizardOpen(true);
-            }}
-          />
-        )}
-        {isSwarmProvider && persona === 'agent' && !isBottomBarNarrow && (
           <StudioButton
             variant="ghost"
             size="sm"

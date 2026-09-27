@@ -56,10 +56,6 @@ vi.mock('./ModelAndProviderContext', () => ({
     currentProvider: 'anthropic',
   }),
 }));
-vi.mock('./swarm/usePersona', () => ({
-  usePersona: () => ({ persona: 'build', setPersona: vi.fn() }),
-}));
-vi.mock('./swarm/PersonaChooser', () => ({ PersonaChooser: () => null }));
 vi.mock('./swarm/AgentSetupWizard', () => ({ default: () => null }));
 vi.mock('./alerts', () => ({
   useAlerts: () => ({ alerts: [], addAlert: vi.fn(), clearAlerts: vi.fn() }),
@@ -195,9 +191,7 @@ describe('ChatInput bottom bar (Studio chrome)', () => {
       'ghost'
     );
     expect(
-      screen
-        .getByRole('button', { name: 'Report a problem' })
-        .getAttribute('data-variant')
+      screen.getByRole('button', { name: 'Report a problem' }).getAttribute('data-variant')
     ).toBe('ghost');
     expect(
       screen.getAllByRole('button').filter((b) => b.getAttribute('data-variant') === 'primary')
