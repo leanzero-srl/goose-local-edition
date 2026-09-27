@@ -13,7 +13,8 @@
 //! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
 //! then the runner's program — `rank_sampling.py` (a request's absent sampling fields, resolved as
 //! the single engine resolves them, Q-159) + `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
-//! `rank_state.py` + `rank_boundary.py` + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
+//! `rank_state.py` + `rank_prompt_search.py` (the prompt cache's nearest-entry search in linear time, Q-162) +
+//! `rank_boundary.py` + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
 //! what an absent max_tokens generates, the prefill modules what a step and a batch may hold, the
 //! boundary where a chat request's reusable prefix ends) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
 //! layer split, under `NodeConfig::pipeline_python`).
@@ -56,6 +57,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_prefill.py"),
     include_str!("rank_batch.py"),
     include_str!("rank_state.py"),
+    include_str!("rank_prompt_search.py"),
     include_str!("rank_boundary.py"),
     include_str!("rank_tool_stream.py"),
     include_str!("rank_stream_watch.py"),
@@ -667,6 +669,15 @@ impl RankPhase {
 impl RankLive {
     pub fn tail_text(&self) -> String {
         self.tail.iter().cloned().collect::<Vec<_>>().join("\n")
+    }
+
+    /// The rank's last loop state names a place it works on its CPU alone (`CPU_ONLY_PHASES`).
+    pub fn in_cpu_only_phase(&self) -> bool {
+        self.state
+            .as_ref()
+            .and_then(|state| state.get("at"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|at| super::CPU_ONLY_PHASES.contains(&at))
     }
 
     pub fn phase(&self) -> RankPhase {
@@ -2559,6 +2570,31 @@ cache.insert_cache("m", *entry(200))
 beside_batch = [len(cache), cache.nbytes]
 live_batch.clear()
 
+# Q-162: the cache searches through the linear trie, mlx_lm's own search answers the same over the
+# same nodes, and the loop says `cache_lookup` while the search runs, then where it was.
+from mlx_lm.models.cache import PromptTrie as UpstreamTrie
+searched_at = []
+linear_nearest = nearest_prompt
+
+def watched_nearest(*args):
+    searched_at.append(published_state[0]["at"])
+    return linear_nearest(*args)
+
+nearest_prompt = watched_nearest
+loop.publish("batch")
+leaving = list(range(200, 230)) + [999]
+_, lookup_rest = cache.fetch_nearest_cache("m", leaving)
+lookup = {
+    "trie": type(cache._trie).__name__,
+    "at": searched_at + [published_state[0]["at"]],
+    "rest": lookup_rest,
+    "same": all(
+        UpstreamTrie.search(cache._trie, "m", probe) == cache._trie.search("m", probe)
+        for probe in (leaving, list(range(200, 264)), list(range(200, 300)), [7], [])
+    ),
+}
+nearest_prompt = linear_nearest
+
 responses = server.ResponseGenerator.__new__(server.ResponseGenerator)
 responses.model_provider = types.SimpleNamespace(cli_args=cli, tokenizer=types.SimpleNamespace(chat_template=QWEN38))
 responses.requests = Queue()
@@ -2600,6 +2636,7 @@ print("GOOSE_TEST " + json.dumps({
     "entry_bytes": entry_bytes,
     "alone": alone,
     "beside_batch": beside_batch,
+    "lookup": lookup,
     "models": call("/v1/models"),
     "wrong_model": call("/v1/chat/completions", {"model": "other", "messages": messages}),
     "untranslated": call("/v1/chat/completions", {"model": served, "messages": messages, "reasoning_max_tokens": 512}),
@@ -2623,7 +2660,10 @@ print("GOOSE_TEST " + json.dumps({
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
-            include_str!("rank_state.py"),
+            concat!(
+                include_str!("rank_state.py"),
+                include_str!("rank_prompt_search.py")
+            ),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
             include_str!("rank_stream_watch.py"),
@@ -2661,6 +2701,13 @@ print("GOOSE_TEST " + json.dumps({
             seen["beside_batch"],
             serde_json::json!([1, entry]),
             "beside the live batch the cache keeps what the KV charge leaves"
+        );
+        assert_eq!(
+            seen["lookup"],
+            serde_json::json!({"trie": "LinearPromptTrie", "at": ["cache_lookup", "batch"],
+                "rest": [999], "same": true}),
+            "mlx_lm's own cache searches through the linear trie (Q-162), answering what mlx_lm's \
+             own search answers, and the loop reports the search as `cache_lookup` while it runs"
         );
         assert_eq!(seen["models"][0], 200);
         let listed: Vec<(&str, u64)> = seen["models"][1]["data"]
@@ -3004,7 +3051,10 @@ os._exit(0)
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
-            include_str!("rank_state.py"),
+            concat!(
+                include_str!("rank_state.py"),
+                include_str!("rank_prompt_search.py")
+            ),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
             include_str!("rank_stream_watch.py"),
@@ -3350,7 +3400,10 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
-            include_str!("rank_state.py"),
+            concat!(
+                include_str!("rank_state.py"),
+                include_str!("rank_prompt_search.py")
+            ),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
             include_str!("rank_stream_watch.py"),
@@ -3588,7 +3641,10 @@ print("GOOSE_TEST " + json.dumps({"cases": cases, "hold": ToolCallStream.HOLD, "
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
-            include_str!("rank_state.py"),
+            concat!(
+                include_str!("rank_state.py"),
+                include_str!("rank_prompt_search.py")
+            ),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
             include_str!("rank_stream_watch.py"),
@@ -3892,7 +3948,10 @@ print("GOOSE_TEST " + json.dumps({
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
-            include_str!("rank_state.py"),
+            concat!(
+                include_str!("rank_state.py"),
+                include_str!("rank_prompt_search.py")
+            ),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
             include_str!("rank_stream_watch.py"),
@@ -4249,7 +4308,10 @@ print("ok")
                 include_str!("rank_budget.py"),
                 include_str!("rank_prefill.py"),
                 include_str!("rank_batch.py"),
-                include_str!("rank_state.py"),
+                concat!(
+                    include_str!("rank_state.py"),
+                    include_str!("rank_prompt_search.py")
+                ),
                 include_str!("rank_boundary.py"),
                 include_str!("rank_tool_stream.py"),
                 include_str!("rank_stream_watch.py"),
@@ -4533,7 +4595,11 @@ print("ok")
              class ArraysCache:\n\
              \x20   def advance(self, N): pass\n\
              class BatchKVCache:\n\
-             \x20   step = 256\n",
+             \x20   step = 256\n\
+             class PromptTrieResult: pass\n\
+             class PromptTrie:\n\
+             \x20   def __init__(self): self._trie = {}\n\
+             \x20   def search(self, model, tokens): pass\n",
         )
         .unwrap();
         std::fs::create_dir_all(site.join("mlx_lm/tool_parsers")).unwrap();
@@ -4559,7 +4625,10 @@ print("ok")
              class LRUPromptCache:\n\
              \x20   def __init__(self, max_size=10, max_bytes=1 << 63):\n\
              \x20       self.max_size, self.max_bytes, self.trims = max_size, max_bytes, []\n\
+             \x20       from mlx_lm.models.cache import PromptTrie\n\
+             \x20       self._trie = PromptTrie()\n\
              \x20   def insert_cache(self, model, tokens, prompt_cache, *, cache_type='assistant'): pass\n\
+             \x20   def fetch_nearest_cache(self, model, tokens): pass\n\
              \x20   def trim_to(self, *, n_sequences=None, n_bytes=None): self.trims.append(n_bytes)\n\
              class _Rows(list):\n\
              \x20   prompt_cache = []\n\
@@ -4968,7 +5037,10 @@ threading.Event().wait()
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
-            include_str!("rank_state.py"),
+            concat!(
+                include_str!("rank_state.py"),
+                include_str!("rank_prompt_search.py")
+            ),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
             include_str!("rank_stream_watch.py"),

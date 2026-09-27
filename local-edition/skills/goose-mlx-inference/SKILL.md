@@ -462,6 +462,16 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   IOGPUDeviceUserClient accumulatedGPUTime) — CPU time missed a stuck rank 0 that still answered our own polls (4 min
   19 s, no event). Any single rank stalled > ~5 s (e.g. `vmmap` on it) reaches the same deadlock or a GPU-Timeout death.
   Detail, tools (sample, the __cxa_throw logger) and traps: skill mlx-jaccl-cluster, section "Q-114 ROOT CAUSE".
+- 2026-09-27 Q-162: the hang rule killed a WORKING tensor split. E2E #3e's 259,408-token compaction call sat 22 s on
+  rank 0 in mlx_lm 0.31.3 `PromptTrie.search` (cache.py:1612, the "longer" DFS) — no step, no GPU, both ranks `R` —
+  because every push copies the whole path (`extra + [tok]`): quadratic in the branch depth. Measured on the evidence
+  shape (2 entries ~260k, prompt leaves after 3 tokens): upstream 164,329 ms, goose's `rank_prompt_search.py` 32 ms,
+  identical results (20,000 random tries vs the REAL upstream incl. ties/errors; 15 × ~230k-token branches: 251 ms).
+  The result MUST stay upstream's exactly — every rank runs its own cache, a different reused prefix = a different
+  prefill step count = collectives paired off. The search publishes `at: cache_lookup`; `CPU_ONLY_PHASES` (mod.rs)
+  lets the hang rule count THAT rank's own CPU advance as progress. Never add a place inside a step or collective to
+  that list: CPU spinning there IS Q-114. Mixed releases: a peer on the old wrapper still searches slowly under
+  `at: batch`, so both Macs need the release.
 - 2026-09-26 Q-143 (fork 09f645526, tag lz-pipeline-qwen4.6; goose 5dbafb733): THE PIPELINE LINE OF THE FORK BRANCHED
   AT lz.2 (42d207cfc). Every single-engine fix in `rapid_mlx/engine/batched.py` / `api/models.py` after lz.2 reaches
   `pipeline_qwen4 serve` (which imports them) ONLY if cherry-picked — check before any pipeline pin bump:
