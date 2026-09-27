@@ -160,6 +160,19 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   import `test_pipeline_qwen4_serve.py` launch ranks — the in-process ones live in `_stream_parity`, `_prefix_adopt`,
   `_row_guard`, `_continuous`, `_srpf`; the real-fork goose tests need `GOOSE_TEST_PIPELINE_PYTHON` = a venv at the
   pin (never the live ~/.goose/distributed env while a split runs).
+- A CLIENT THAT LEAVES ENDS ITS ROW (Q-181, 2026-09-27; tensor rank_wrapper.py `client_left`, fork
+  lz-pipeline-qwen4.14 = 8c0007054 `watch_client`). mlx_lm 0.31.3 notices a closed connection ONLY when a write
+  raises — and nothing is written while text is withheld (typed value, held repeat, mlx_lm's own "tool" state) or
+  while a NON-streamed answer runs: goose's Stop left the split generating 48,466 tokens / 4,413 s for nobody. The
+  tensor handler now peeks the socket (zero-wait poll + MSG_PEEK: EOF or reset) at every progress report and token,
+  then `ctx.stop()` → rank 0's `uids_to_remove` → every rank removes the row next step. The pipeline awaits
+  `http.disconnect` beside every chat answer (uvicorn's h11 reads EOF → connection_lost); MEASURED before: streamed
+  was already cancelled by Starlette's own listener (ASGI spec 2.3 — at 2.4 Starlette waits for a failed write
+  too), whole answers ran on (201 → 3,087 tokens in 3 s). Both name it: `last_engine_stop.reason` =
+  `cancelled_by_client` (+ phase, how) and a GOOSE_RANK_CANCELLED_BY_CLIENT line on both runners. A
+  split still generating with no ESTABLISHED client on its port is this bug back. Fork CPU tests: force
+  `mx.set_default_device(mx.cpu)` with a `-p` plugin and skip `test_pipeline_qwen4.py`, `_serve.py`, `_vision.py`
+  (they launch ranks); a scratch dir holding a `bisect.py` shadows the stdlib — run scratch scripts from a subdir.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud

@@ -3941,6 +3941,199 @@ print("GOOSE_TEST " + json.dumps({"runaway": runaway, "rewrite": rewrite, "upstr
         assert_eq!(upstream["calls"].as_array().unwrap().len(), 12);
     }
 
+    /// Q-181 through the REAL mlx_lm 0.31.3 handler: after goose's Stop the tensor split kept
+    /// generating the cancelled request — /v1/status 'generating', 48,466 completion tokens, 4,413 s,
+    /// no ESTABLISHED client on 8091 — because nothing was written while its text was withheld, and
+    /// mlx_lm notices a closed connection only when a write fails. The stand-in generation writes a
+    /// call whose typed value (an array) the relay withholds until `</parameter>`, one piece at a
+    /// time, each once the handler has read the last; the client reads what it was sent and closes
+    /// the socket. Through the wrapper the generation is told to stop within a few pieces of the
+    /// close, the rank's log names it (GOOSE_RANK_CANCELLED_BY_CLIENT: the phase, the withholding
+    /// mode, generated vs sent) and /v1/status keeps it (`last_engine_stop`). The same holds for a
+    /// non-streamed answer (nothing is written before its end) and for a client that leaves while
+    /// its prompt is read. NEGATIVE CONTROL: mlx_lm's own handle_completion generates the withheld
+    /// call to the harness's end.
+    #[test]
+    fn a_client_that_leaves_while_its_text_is_withheld_ends_the_generation() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r##"
+import socket as sk
+
+TOOLS = [{"type": "function", "function": {"name": "shell", "parameters": {"type": "object", "properties": {
+    "command": {"type": "string"}, "paths": {"type": "array"}}}}}]
+HEAD = "\n<function=shell>\n<parameter=paths>\n["
+# Harness bounds, never the engine's: the pieces a generation nobody stops writes, and how many of
+# them the client waits for before it leaves.
+CAP = 1500
+LEAVE_AFTER = 40
+fed, leave_now, finished = {}, {}, {}
+
+def generation_thread():
+    while True:
+        rqueue, request, args = responses.requests.get()
+        answer = request.messages[-1]["content"]
+        gets = {"n": 0}
+        read = threading.Condition()
+        real_get = rqueue.get
+
+        def counted_get(*a, **k):
+            with read:
+                gets["n"] += 1
+                read.notify_all()
+            return real_get(*a, **k)
+
+        rqueue.get = counted_get
+        ctx = server.GenerationContext(
+            has_tool_calling=True, has_thinking=False, tool_parser=qwen3_coder.parse_tool_call,
+            sequences={(1,): "<tool_call>", (2,): "</tool_call>", (3,): "<|im_end|>"},
+            prompt=[0] * 8, prompt_cache_count=0,
+        )
+        puts = [0]
+
+        def put(item):
+            puts[0] += 1
+            rqueue.put(item)
+            deadline = time.monotonic() + 10
+            with read:
+                while not (gets["n"] > puts[0] or ctx._should_stop) and time.monotonic() < deadline:
+                    read.wait(0.01)
+
+        rqueue.put(ctx)
+        fed[answer] = 0
+        kind = answer.split()[0]
+        if kind == "call":
+            put(token("<tool_call>", "tool", (1,)))
+            for i in range(0, len(HEAD), 3):
+                put(token(HEAD[i:i + 3], "tool"))
+        for i in range(CAP):
+            if ctx._should_stop:
+                break
+            if kind == "call":
+                put(token(f'"p{i}", ', "tool"))
+            elif kind == "text":
+                put(token(f"word{i} ", "normal"))
+            else:
+                put((i, CAP * 10))
+            fed[answer] += 1
+            if fed[answer] == LEAVE_AFTER:
+                leave_now[answer].set()
+        rqueue.put(None)
+        finished[answer].set()
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def leave_while_withheld(answer, stream):
+    leave_now[answer], finished[answer] = threading.Event(), threading.Event()
+    body = json.dumps({"model": served, "stream": stream, "tools": TOOLS,
+                       "messages": [{"role": "user", "content": answer}]}).encode()
+    client = sk.create_connection(("127.0.0.1", httpd.server_address[1]))
+    client.sendall(
+        b"POST /v1/chat/completions HTTP/1.1\r\nHost: goose\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+    )
+    assert leave_now[answer].wait(30), answer
+    client.setblocking(False)
+    received = b""
+    try:
+        while chunk := client.recv(65536):
+            received += chunk
+    except BlockingIOError:
+        pass
+    at_close = fed[answer]
+    client.close()
+    assert finished[answer].wait(60), answer
+    return {"received": received.decode(errors="replace"), "at_close": at_close, "fed": fed[answer]}
+
+def status():
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/status"
+    with urllib.request.urlopen(url, timeout=10) as reply:
+        return json.loads(reply.read())["last_engine_stop"]
+
+arms = {}
+for name, answer, stream in (("streamed", "call streamed", True), ("whole", "text whole", False),
+                             ("prefill", "prefill whole", False)):
+    arms[name] = leave_while_withheld(answer, stream)
+    arms[name]["status"] = status()
+server.APIHandler.handle_completion = original_handle_completion
+upstream = leave_while_withheld("call upstream", True)
+print("GOOSE_TEST " + json.dumps({"arms": arms, "upstream": upstream, "cap": CAP, "leave_after": LEAVE_AFTER}))
+"##;
+        let (seen, printed) = run_wrapper_checks(&python, checks);
+        let cap = seen["cap"].as_u64().unwrap();
+        let leave_after = seen["leave_after"].as_u64().unwrap();
+        let stops: Vec<serde_json::Value> = printed
+            .lines()
+            .filter_map(|l| l.strip_prefix("GOOSE_RANK_CANCELLED_BY_CLIENT "))
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            stops.len(),
+            3,
+            "one named stop per arm that left, none for the negative control: {printed}"
+        );
+        for ((name, phase), stop) in [
+            ("streamed", "generation"),
+            ("whole", "generation"),
+            ("prefill", "prefill"),
+        ]
+        .into_iter()
+        .zip(&stops)
+        {
+            let arm = &seen["arms"][name];
+            let (at_close, fed) = (
+                arm["at_close"].as_u64().unwrap(),
+                arm["fed"].as_u64().unwrap(),
+            );
+            assert!(
+                fed < cap && fed - at_close <= 3,
+                "{name}: the generation was told to stop within a few pieces of the close \
+                 (fed {at_close} at the close, {fed} in all, the harness ends at {cap}): {arm}"
+            );
+            assert_eq!(stop["reason"], "cancelled_by_client", "{name}: {stop}");
+            assert_eq!(stop["phase"], phase, "{name}: {stop}");
+            let how = stop["how"].as_str().unwrap();
+            assert!(
+                how == "eof" || how.starts_with("ConnectionResetError"),
+                "{name}: the socket said how the client left: {how}"
+            );
+            assert_eq!(
+                arm["status"], *stop,
+                "{name}: /v1/status keeps the stop after the request left"
+            );
+        }
+        let streamed = &stops[0];
+        assert_eq!(
+            streamed["withholding"], "tool_typed_value",
+            "the stop names what was being withheld when the client left: {streamed}"
+        );
+        assert!(
+            streamed["sent_chars"].as_u64().unwrap()
+                < streamed["generated_chars"].as_u64().unwrap()
+        );
+        assert!(streamed["completion_tokens"].as_u64().unwrap() >= leave_after);
+        let received = seen["arms"]["streamed"]["received"].as_str().unwrap();
+        assert!(
+            received.contains("\"name\": \"shell\"") && !received.contains("p0"),
+            "the client had the call's open frame and none of the withheld value: {received}"
+        );
+        assert!(
+            stops[1].get("withholding").is_none(),
+            "a non-streamed answer has no stream watch: {}",
+            stops[1]
+        );
+        assert_eq!(stops[2]["completion_tokens"], 0);
+
+        let upstream = &seen["upstream"];
+        assert_eq!(
+            upstream["fed"].as_u64().unwrap(),
+            cap,
+            "negative control: unpatched mlx_lm generates the withheld call for a client that left: \
+             {upstream}"
+        );
+    }
+
     /// Q-161: the skeleton guard (rank_xml_guard.py) built from a tokenizer that splits the wire's
     /// markers as the Qwen3.5 tokenizer does, against the real qwen3.8 chat template. At each fixed
     /// position only the template's continuation (or the end of the turn) is left; `</parameter>`
