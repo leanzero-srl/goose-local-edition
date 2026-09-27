@@ -2611,7 +2611,15 @@ mod tests {
         .unwrap();
     }
 
+    /// Pins the session's model too: without one, `update_name` falls back to the machine's
+    /// `Config::global()` — a model on a developer's Mac, and on CI a result that changed from
+    /// run to run with no code change ("Could not resolve model config: missing model").
     async fn add_user_message(sm: &SessionManager, session_id: &str) {
+        sm.update(session_id)
+            .model_config(ModelConfig::new("naming-test-model"))
+            .apply()
+            .await
+            .unwrap();
         sm.add_message(session_id, &Message::user().with_text("hello world"))
             .await
             .unwrap();
