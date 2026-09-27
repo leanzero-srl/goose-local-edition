@@ -386,6 +386,48 @@
   "cardButtons.launch": {
     "defaultMessage": "Jalankan"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{# baris ditambahkan} other{# baris ditambahkan}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "Baris {line}"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "File baru"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "Tidak ada baris yang berubah — file sudah berisi teks ini."
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{# baris dihapus} other{# baris dihapus}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{Tampilkan # baris} other{Tampilkan semua # baris}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "Tampilkan di chat"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "Sebelumnya file tidak berisi teks — hanya teks baru yang ditampilkan."
+  },
+  "changes.rail.close": {
+    "defaultMessage": "Tutup perubahan"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "Perubahan {index} dari {count}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# file} other{# file}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "Tampilkan file yang diubah chat ini"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "Tampilkan di chat"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "Perubahan"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "Klik di sini untuk membawa Goose kembali ke fokus."
   },
@@ -8233,6 +8275,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "Lihat sesi subagen"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "Yang berubah"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "Izinkan {toolName}?"

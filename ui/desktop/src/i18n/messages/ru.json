@@ -386,6 +386,48 @@
   "cardButtons.launch": {
     "defaultMessage": "Запустить"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{# строка добавлена} few{# строки добавлено} many{# строк добавлено} other{# строки добавлено}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "Строка {line}"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "Новый файл"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "Ни одна строка не изменилась — в файле уже был этот текст."
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{# строка удалена} few{# строки удалено} many{# строк удалено} other{# строки удалено}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{Показать # строку} few{Показать все # строки} many{Показать все # строк} other{Показать все # строки}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "Показать в чате"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "Раньше в файле был не текст — показан только новый текст."
+  },
+  "changes.rail.close": {
+    "defaultMessage": "Закрыть изменения"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "Изменение {index} из {count}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# файл} few{# файла} many{# файлов} other{# файла}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "Показать файлы, изменённые в этом чате"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "Показать в чате"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "Изменения"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "Нажмите здесь, чтобы сфокусироваться на Goose."
   },
@@ -8233,6 +8275,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "Просмотреть сеанс субагента"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "Что изменилось"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "Разрешить {toolName}?"

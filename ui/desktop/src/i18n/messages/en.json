@@ -386,6 +386,48 @@
   "cardButtons.launch": {
     "defaultMessage": "Launch"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{# line added} other{# lines added}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "Line {line}"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "New file"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "No lines changed — the file already held this text."
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{# line removed} other{# lines removed}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{Show all # line} other{Show all # lines}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "Show in chat"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "The file held something that was not text before — only the new text is shown."
+  },
+  "changes.rail.close": {
+    "defaultMessage": "Close changes"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "Change {index} of {count}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# file} other{# files}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "Show the files this chat changed"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "Show in chat"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "Changes"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "Click here to bring Goose back into focus."
   },
@@ -8233,6 +8275,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "View subagent session"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "What changed"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "Allow {toolName}?"

@@ -386,6 +386,48 @@
   "cardButtons.launch": {
     "defaultMessage": "起動"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{# 行追加} other{# 行追加}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "{line} 行目"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "新しいファイル"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "変更された行はありません — ファイルにはすでにこのテキストがありました。"
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{# 行削除} other{# 行削除}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{# 行をすべて表示} other{# 行をすべて表示}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "チャットで表示"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "以前のファイルはテキストではありませんでした — 新しいテキストのみを表示しています。"
+  },
+  "changes.rail.close": {
+    "defaultMessage": "変更を閉じる"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "変更 {index}/{count}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# ファイル} other{# ファイル}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "このチャットで変更されたファイルを表示"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "チャットで表示"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "変更"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "クリックしてGooseにフォーカスを戻します。"
   },
@@ -8233,6 +8275,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "サブエージェントのセッションを表示"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "変更内容"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "{toolName}の実行を許可しますか？"

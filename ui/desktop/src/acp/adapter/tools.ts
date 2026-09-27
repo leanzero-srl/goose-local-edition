@@ -189,8 +189,21 @@ function toolResponseMetadata(
   if (repeat) {
     metadata.repeat = repeat;
   }
+  const fileDiff = fileDiffMeta(update);
+  if (fileDiff) {
+    metadata.fileDiff = fileDiff;
+  }
 
   return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+// What a developer write/edit changed (Q-189): the engine forwards only its own file tools' diffs,
+// on `_meta.goose.fileDiff`; `fileDiffOf` (components/changes/fileDiff.ts) is its one reader.
+function fileDiffMeta(update: ToolCallUpdate): Record<string, unknown> | undefined {
+  if (!isRecord(update._meta)) return undefined;
+  const goose = update._meta.goose;
+  if (!isRecord(goose)) return undefined;
+  return isRecord(goose.fileDiff) ? goose.fileDiff : undefined;
 }
 
 // The engine's repeat guard marks a call that repeated the previous one with the same output

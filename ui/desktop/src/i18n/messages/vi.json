@@ -386,6 +386,48 @@
   "cardButtons.launch": {
     "defaultMessage": "Khởi chạy"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{Đã thêm # dòng} other{Đã thêm # dòng}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "Dòng {line}"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "Tệp mới"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "Không có dòng nào thay đổi — tệp đã có sẵn nội dung này."
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{Đã xóa # dòng} other{Đã xóa # dòng}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{Hiện # dòng} other{Hiện tất cả # dòng}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "Xem trong cuộc trò chuyện"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "Trước đó tệp không chứa văn bản — chỉ hiển thị văn bản mới."
+  },
+  "changes.rail.close": {
+    "defaultMessage": "Đóng thay đổi"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "Thay đổi {index}/{count}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# tệp} other{# tệp}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "Hiện các tệp mà cuộc trò chuyện này đã thay đổi"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "Xem trong cuộc trò chuyện"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "Thay đổi"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "Nhấp vào đây để đưa Goose trở lại tiêu điểm."
   },
@@ -8233,6 +8275,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "Xem phiên làm việc của tác nhân con"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "Những gì đã thay đổi"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "Cho phép {toolName}?"

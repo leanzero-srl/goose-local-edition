@@ -40,6 +40,7 @@ import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
 import NeedsYouTray from './sessionActivity/NeedsYouCard';
+import ChangesRail from './changes/ChangesRail';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 import {
   Button,
@@ -642,6 +643,17 @@ export default function BaseChat({
           <SwarmRunPanel workingDir={session?.working_dir} run={swarmRun} className="mb-2" />
         )}
       </ScrollArea>
+
+      {/* What this chat's write/edit calls changed (Q-190): a pill in the corner that opens over
+          the chat — it never takes width from the conversation. */}
+      <ChangesRail
+        messages={messages}
+        className={cx(
+          'absolute right-4',
+          LAYER.chrome,
+          isLocal ? 'top-2' : isMobile || isNavCollapsed ? 'top-[4.5rem]' : 'top-14'
+        )}
+      />
 
       {chatState !== ChatState.Idle && (
         <div className="absolute bottom-1 left-4 z-20 pointer-events-none">
