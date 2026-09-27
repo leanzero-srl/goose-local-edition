@@ -348,10 +348,6 @@ fn device_for(
     }
 
     if let Some(device) = pool_device {
-        debug_assert!(matches!(
-            device.class(),
-            DeviceClass::Mlx | DeviceClass::Cloud
-        ));
         return Ok(Device::Existing {
             id: device.id.clone(),
             model_id: device.model_id.clone(),
