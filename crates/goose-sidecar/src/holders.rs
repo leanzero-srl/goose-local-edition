@@ -43,6 +43,16 @@ pub fn holders_dir() -> Result<PathBuf> {
     Ok(state.join(HOLDERS_DIR))
 }
 
+/// Whose reply holds the way: a person's, or a loop's tick (the session-loops runner opens those on
+/// the same guard; nothing does yet). A record written before the field existed is a person's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReplyKind {
+    #[default]
+    User,
+    Tick,
+}
+
 /// One open agent reply of a goosed: the session it answers, the session at the root of its
 /// delegate chain, and the way its last model call used (`None` before its first lease).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +69,8 @@ pub struct ReplyHold {
     /// waiting on the other's reply would otherwise wait forever).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub waiting: bool,
+    #[serde(default)]
+    pub kind: ReplyKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -493,6 +505,7 @@ mod tests {
             root_session: session.to_string(),
             way: None,
             waiting: false,
+            kind: ReplyKind::User,
         }
     }
 
@@ -604,6 +617,20 @@ mod tests {
             read_all(dir.path()).unwrap().is_empty(),
             "the stale record was displaced"
         );
+    }
+
+    #[test]
+    fn a_reply_says_whose_it_is_and_an_older_record_is_a_persons() {
+        let old: ReplyHold =
+            serde_json::from_str(r#"{"reply":1,"session":"s","rootSession":"s"}"#).unwrap();
+        assert_eq!(old.kind, ReplyKind::User);
+        let tick = ReplyHold {
+            kind: ReplyKind::Tick,
+            ..hold(2, "loop")
+        };
+        let text = serde_json::to_string(&tick).unwrap();
+        assert!(text.contains(r#""kind":"tick""#), "{text}");
+        assert_eq!(serde_json::from_str::<ReplyHold>(&text).unwrap(), tick);
     }
 
     #[test]

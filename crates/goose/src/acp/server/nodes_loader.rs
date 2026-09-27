@@ -785,6 +785,11 @@ static AGENT: StdMutex<Option<Weak<super::GooseAcpAgent>>> = StdMutex::new(None)
 /// Install this process's loader (once; the ACP server calls it as it starts), and have this Mac's
 /// engine report its loads to the load store.
 pub(super) fn install() {
+    // One loader per PROCESS, over the Mac-wide holder records: a unit test's agent must not
+    // install it (the loader's own tests build a `Core` of their own).
+    if cfg!(test) {
+        return;
+    }
     let mut installed_now = false;
     let core = LOADER.get_or_init(|| {
         installed_now = true;

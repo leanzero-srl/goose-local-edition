@@ -558,6 +558,31 @@ pub(super) async fn status_response(
     Ok(MlxEngineDistributedStatusResponse { status })
 }
 
+/// The split's way as the placement planner keys it: the runner's kind, each node's host in rank
+/// order (`local` for this Mac), the link backend.
+fn split_way(
+    config: &DistributedConfig,
+    runner: Option<distributed::Runner>,
+) -> Option<MlxPlacementKeyDto> {
+    let kind = match runner? {
+        distributed::Runner::MlxLmTensor => MlxPlacementKindDto::Tensor,
+        distributed::Runner::PipelineQwen4 => MlxPlacementKindDto::Pipeline,
+    };
+    Some(MlxPlacementKeyDto {
+        kind,
+        nodes: config
+            .nodes
+            .iter()
+            .map(|n| {
+                n.ssh
+                    .clone()
+                    .unwrap_or_else(|| crate::nodes::THIS_MAC.to_string())
+            })
+            .collect(),
+        link: Some(config.backend.as_str().to_string()),
+    })
+}
+
 /// Whether this Mac's rank's weights were in the file cache as the split starts (rank 0 is this
 /// Mac; the other ranks' caches are on their own Macs and are not seen from here).
 async fn local_rank_warm(config: &DistributedConfig) -> Result<bool, String> {
@@ -870,8 +895,13 @@ impl GooseAcpAgent {
             persist_config(&ran)?;
         }
         if matches!(outcome, StartOutcome::Started { .. }) {
-            // Every other goosed on this Mac (another window) finds the run through this record.
-            if let Err(e) = owner_record::publish(&published) {
+            // Every other goosed on this Mac (another window) finds the run through this record,
+            // and names the split's way by it (a lease on the split, residency, the served record).
+            let way = split_way(&asked, manager.status().runner);
+            if way.is_none() {
+                warn!(model = %published.model_id, "the split started without a runner in its status; its owner record names no way");
+            }
+            if let Err(e) = owner_record::publish_with_way(&published, way.as_ref()) {
                 warn!(error = %e, "publishing the distributed engine's owner record failed; other windows will not find it");
             }
             super::mlx_engine::remember_serving(ServingIntent::Split {

@@ -190,7 +190,11 @@ impl Ways for AgentWays {
         let plans = agent
             .on_mlx_engine_placement_plan(MlxEnginePlacementPlanRequest {
                 model_id: Some(model.clone()),
-                goal: node.def.goal.unwrap_or_default(),
+                // A node saved without a goal was chosen for chat: New node's and Run it's goal.
+                goal: node
+                    .def
+                    .goal
+                    .unwrap_or(goose_sdk_types::custom_requests::MlxPlacementGoalDto::Chat),
                 context: None,
             })
             .await

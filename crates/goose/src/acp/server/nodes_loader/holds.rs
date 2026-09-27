@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use goose_sidecar::holders::{self, HolderEntry, HolderKind, Registration, ReplyHold};
+use goose_sidecar::holders::{self, HolderEntry, HolderKind, Registration, ReplyHold, ReplyKind};
 use goose_sidecar::placement::store::PlacementKey;
 use tokio::sync::Notify;
 
@@ -28,6 +28,7 @@ pub(crate) struct Reply {
     pub opened: u64,
     /// Waiting in the loader: no model call of it is in flight.
     pub waiting: bool,
+    pub kind: ReplyKind,
 }
 
 #[derive(Default)]
@@ -112,6 +113,11 @@ impl Holds {
     }
 
     pub fn open_reply(self: &Arc<Self>, session: &str) -> ReplyGuard {
+        self.open_reply_as(session, ReplyKind::User)
+    }
+
+    /// A reply of `kind` (a loop's tick opens its turn here, once the loops runner exists).
+    pub fn open_reply_as(self: &Arc<Self>, session: &str, kind: ReplyKind) -> ReplyGuard {
         let id = self.next_seq();
         {
             let mut state = self.state.lock().unwrap();
@@ -124,6 +130,7 @@ impl Holds {
                     way: None,
                     opened: id,
                     waiting: false,
+                    kind,
                 },
             );
             state.open.insert(session.to_string(), id);
@@ -155,7 +162,7 @@ impl Holds {
 
     /// The way a lease of `session` used: the reply at its root holds it from now on.
     pub fn note_lease(&self, session: &str, way: PlacementKey) {
-        let (id, root, newly) = {
+        let (id, root, newly, kind) = {
             let mut state = self.state.lock().unwrap();
             let root = root_in(&state, session);
             let Some(&id) = state.open.get(&root) else {
@@ -173,7 +180,7 @@ impl Holds {
             }
             let newly = reply.way.is_none();
             reply.way = Some(way.clone());
-            (id, root, newly)
+            (id, root, newly, reply.kind)
         };
         if newly {
             let hold = ReplyHold {
@@ -182,6 +189,7 @@ impl Holds {
                 root_session: root,
                 way: Some(way),
                 waiting: false,
+                kind,
             };
             self.publish(|reg| reg.open_reply(hold));
         } else {
