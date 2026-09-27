@@ -927,26 +927,50 @@ pub fn past_session_candidates(
     lines.into_iter().map(|(_, line)| line).collect()
 }
 
-/// One line naming what rode along — shown to the person as a system notice and carried at the top of
-/// the part so the same words reach the model.
+/// One line saying, in plain words, what goose used — shown to the person as a system notice and
+/// carried at the top of the part so the same words reach the model. It counts notes and earlier
+/// chats instead of naming them: a store slug and a session id are jargon to the person (Q-24,
+/// 2026-09-25: "recalled: memories assistant-talk-and-swaps · past session 20260924_19"), and the
+/// model reads the names in the blocks below. Skills keep their names — the person installed them.
 pub fn recall_line(
     memories: &[SearchHit],
     skills: &[&SourceEntry],
     past: Option<&PastSession>,
+    extras: &Extras,
 ) -> String {
-    let mut parts = Vec::new();
+    let count =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut remembered = Vec::new();
     if !memories.is_empty() {
-        let names: Vec<&str> = memories.iter().map(|h| h.entry.category.as_str()).collect();
-        parts.push(format!("memories {}", names.join(", ")));
+        remembered.push(count(memories.len(), "note", "notes"));
+    }
+    if past.is_some() {
+        remembered.push(count(1, "earlier chat", "earlier chats"));
+    }
+    let mut parts = Vec::new();
+    if !remembered.is_empty() {
+        parts.push(format!("remembered: {}", remembered.join(", ")));
     }
     if !skills.is_empty() {
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
-        parts.push(format!("skills {}", names.join(", ")));
+        let noun = if skills.len() == 1 { "skill" } else { "skills" };
+        parts.push(format!("suggested {noun} {}", names.join(", ")));
     }
-    if let Some(past) = past {
-        parts.push(format!("past session {}", past.session_id));
+    if let Some((name, _)) = &extras.autoloaded {
+        parts.push(format!("loaded skill {name}"));
     }
-    format!("recalled: {}", parts.join(" · "))
+    if extras.correction_of.is_some() {
+        parts.push("noticed a correction".to_string());
+    }
+    if extras.answered.is_some() {
+        parts.push("noticed your answer".to_string());
+    }
+    let line = parts.join(" · ");
+    let mut chars = line.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => line,
+    }
 }
 
 /// The `<recall-line>` text of a turn-context block, if the block carries one.
@@ -992,16 +1016,7 @@ pub fn render_with(
     {
         return None;
     }
-    let mut line = recall_line(memories, skills, past);
-    if let Some((name, _)) = &extras.autoloaded {
-        line.push_str(&format!(" · loaded {name}"));
-    }
-    if extras.correction_of.is_some() {
-        line.push_str(" · correction noticed");
-    }
-    if extras.answered.is_some() {
-        line.push_str(" · answer noticed");
-    }
+    let line = recall_line(memories, skills, past, extras);
     let mut sections = vec![format!("<recall-line>{line}</recall-line>")];
     if !memories.is_empty() {
         let mut block = String::from(
@@ -1678,9 +1693,8 @@ mod tests {
         assert_eq!(past.role, "user");
         assert_eq!(past.headline, "the bench vendor answers on port 8850");
         let block = render(&[], &[], Some(&past)).unwrap();
-        assert!(block.starts_with(
-            "<recall-line>recalled: past session s-old</recall-line>\n<past-session>"
-        ));
+        assert!(block
+            .starts_with("<recall-line>Remembered: 1 earlier chat</recall-line>\n<past-session>"));
         assert!(block.contains("session s-old (\"vendor port\","));
         assert!(select_past_session(&results, &query_terms("bake bread")).is_none());
 
@@ -1766,11 +1780,11 @@ mod tests {
         let refs: Vec<&SourceEntry> = skills.iter().collect();
         let block = render(&hits, &refs, None).unwrap();
         assert!(block.starts_with(
-            "<recall-line>recalled: memories postgres · skills jira-api</recall-line>\n"
+            "<recall-line>Remembered: 1 note · suggested skill jira-api</recall-line>\n"
         ));
         assert_eq!(
             recall_line_of(&block),
-            Some("recalled: memories postgres · skills jira-api")
+            Some("Remembered: 1 note · suggested skill jira-api")
         );
         assert_eq!(
             recall_line_of("<turn-context>\n<current-time>x</current-time>"),
@@ -2354,7 +2368,7 @@ mod tests {
             history_tool: None,
         };
         let out = render_with(&[], &[], None, &extras).unwrap();
-        assert!(out.starts_with("<recall-line>recalled:  · loaded jira-api · correction noticed · answer noticed</recall-line>"), "{out}");
+        assert!(out.starts_with("<recall-line>Loaded skill jira-api · noticed a correction · noticed your answer</recall-line>"), "{out}");
         assert!(out.contains("<loaded-skill name=\"jira-api\">"));
         assert!(out.contains("correction of what you just did (\"Deleted the tests\")"));
         assert!(out.contains("You asked \"Which config?\" and the user answered \"prod\""));

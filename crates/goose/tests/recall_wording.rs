@@ -4,12 +4,104 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use goose::agents::platform_extensions::recall::{
-    history_tool, render, render_with, Extras, PastSession,
+    history_tool, recall_line_of, render, render_with, Extras, PastSession,
 };
 use goose::agents::{Agent, AgentConfig, ExtensionConfig, GoosePlatform};
 use goose::config::permission::PermissionManager;
 use goose::config::GooseMode;
 use goose::session::{SessionManager, SessionType};
+use goose_memory_store::{MemoryEntry, SearchHit};
+use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
+
+fn memory(category: &str) -> SearchHit {
+    SearchHit {
+        score: 9.0,
+        matched_terms: 2,
+        rare_terms: 2,
+        phrase: false,
+        name_terms: 2,
+        specific_terms: 1,
+        matched_specific: 1,
+        named: true,
+        topic_word_in_name: false,
+        topic_in_name: false,
+        identifier_in_name: false,
+        identifier_in_body: false,
+        together: true,
+        occurrences: 2,
+        entry: MemoryEntry {
+            is_global: true,
+            category: category.to_string(),
+            tags: vec!["user".to_string()],
+            content: format!("{category} headline\nbody"),
+        },
+    }
+}
+
+fn skill(name: &str) -> SourceEntry {
+    SourceEntry {
+        source_type: SourceType::Skill,
+        name: name.to_string(),
+        description: "Jira REST".to_string(),
+        content: String::new(),
+        path: format!("/skills/{name}"),
+        supporting_files: Vec::new(),
+        global: true,
+        writable: false,
+        properties: Default::default(),
+    }
+}
+
+/// Q-24 (2026-09-25): the notice above an answer read "recalled: memories assistant-talk-and-swaps ·
+/// past session 20260924_19" — a store slug and a session id, jargon to the person it is shown to.
+/// It says in plain words what goose used; the names stay in the blocks the model reads.
+#[test]
+fn the_recall_line_says_what_goose_used_in_plain_words() {
+    let line_of = |block: Option<String>| recall_line_of(&block.unwrap()).unwrap().to_string();
+
+    let one = [memory("assistant-talk-and-swaps")];
+    assert_eq!(
+        line_of(render(&one, &[], Some(&past()))),
+        "Remembered: 1 note, 1 earlier chat"
+    );
+    let two = [memory("postgres"), memory("assistant-talk-and-swaps")];
+    assert_eq!(line_of(render(&two, &[], None)), "Remembered: 2 notes");
+    assert_eq!(
+        line_of(render(&[], &[], Some(&past()))),
+        "Remembered: 1 earlier chat"
+    );
+
+    let skills = [skill("jira-api"), skill("confluence-api")];
+    let refs: Vec<&SourceEntry> = skills.iter().collect();
+    assert_eq!(
+        line_of(render(&one, &refs[..1], None)),
+        "Remembered: 1 note · suggested skill jira-api"
+    );
+    assert_eq!(
+        line_of(render(&[], &refs, None)),
+        "Suggested skills jira-api, confluence-api"
+    );
+
+    let extras = Extras {
+        autoloaded: Some(("jira-api".to_string(), "BODY".to_string())),
+        correction_of: Some("Deleted the tests".to_string()),
+        answered: Some(("Which config?".to_string(), "prod".to_string())),
+        history_tool: None,
+    };
+    assert_eq!(
+        line_of(render_with(&[], &[], None, &extras)),
+        "Loaded skill jira-api · noticed a correction · noticed your answer"
+    );
+
+    let block = render(&one, &refs[..1], Some(&past())).unwrap();
+    assert!(!recall_line_of(&block).unwrap().contains("20260924_19"));
+    assert!(
+        block.contains("session 20260924_19"),
+        "the model still reads the id"
+    );
+    assert!(block.contains("## assistant-talk-and-swaps"));
+    assert!(block.contains("- jira-api: Jira REST"));
+}
 
 #[ctor::ctor]
 fn hermetic_path_root() {
