@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 21:28 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-27 21:57 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.61 (both Macs, verified). BUILDING 3.0.62 from a654dfa85 (Q-185 background labels, Q-187/188,
@@ -14,11 +14,10 @@ Updated: 2026-09-27 21:28 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - Green through dc701189c; merges since gated locally (tsc, vitest 3,243, eslint, i18n, cargo check, wincheck).
 
 ## Agents
-- LANE D: design REVISION after the review (13 defects: one-way-at-a-time across Macs, cross-process holders,
-  per-reply batching, Tier A can't reach split/remote, …) · S1 nav/IA surgeon (told: no main.ts edit).
-- Q-215..218 engine glance (drop composer line + in-app float, card in flow, hide/restore, lead with the chat's
-  request) · Q-211/212 audience · Q-220 fetch 404 wording · Q-221 skills path check.
-- Merged locally, gate bdhcg38ai: Q-197/198/213/214 (9abeb5c1c).
+- S0 nodes contract + store (lane D; unblocks S2/S3/S5, S7 after S1) · Q-211/212 audience.
+- Merged + pushed today: Q-185, 187/188, 189/190, 191/192, 197/198/213/214, 215–218, 220, S1 (Q-193/194/202/203).
+  Q-221 merged locally, gate blgf1b8ms. Site Q-209/210 live (probe 413 ok).
+- 3.0.62 at notarization (a654dfa85 — before S1, the glance fixes, Q-220/221): next build 3.0.63 carries those.
 
 ## Next actions (in order)
 1. 3.0.61 DONE (glance + Q-183) → install at #3i turn-3 boundary (watcher b3ugzqvvu) → split-start 27B → #3i continues (new session = #3j if needed).
