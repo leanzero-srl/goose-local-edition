@@ -11,8 +11,10 @@
 //!    (SIGTERM, then SIGKILL, per pid — never a process group); a pipeline peer is first given
 //!    the grace window to leave on rank 0's shutdown broadcast;
 //! 5. the memory watchdog on the same poll: WARN stops admitting new requests, CRITICAL stops the
-//!    run with a loud event and never restarts it; a busy stretch that has already taken what is
-//!    left above CRITICAL on a node closes admission too (`MemoryGrowth`), before the floor;
+//!    run with a loud event and never restarts it; an engine whose OWN memory (its ranks' MLX
+//!    active + cache) has grown since it was last idle by what is left above CRITICAL on a node
+//!    closes admission too (`MemoryGrowth`), before the floor — another app's growth only lowers
+//!    what is left; every refusal names whose memory it is (the engine's or other apps');
 //! 6. a rank that died of memory (`RankOutOfMemory`) restarts the pair once memory recovered on
 //!    every node — once per outage, whatever `restart_on_failure` says.
 
@@ -1595,21 +1597,187 @@ fn parse_sample(out: super::ExecOutput) -> Result<NodeSample> {
     })
 }
 
-/// The busy stretch's own growth measured against what is left on the node: `consumed` is what
-/// the node's available memory has lost since the engine was last idle, `left` what remains above
-/// the CRITICAL reserve. A stretch that has already consumed at least what is left would reach
-/// CRITICAL if it ran as long again — the floor alone reads that too late (E2E #2: the Studio went
-/// from 49% to 14% free in 2.5 minutes, and WARN at 5% fired 2 s before the rank died). Bytes
-/// against bytes over the engine's own busy/idle boundary; no clock decides it.
-fn growth_projection(
-    idle_available: u64,
+/// One node's memory at a poll: what the kernel counts available, and what the engine's rank there
+/// holds — MLX's active + free-buffer cache from the rank's own `GOOSE_RANK_MEM`. Measured
+/// 2026-09-27 on the MacBook's pipeline rank: vmmap's physical footprint 58.1 GiB beside active
+/// 56.06 GB + cache 5.35 GB (57.2 GiB), with 75 GB wired and 0.65 GB purgeable node-wide — so MLX's
+/// counters ARE the rank's footprint (within ~1 GiB of interpreter), and none of it is `available`.
+/// `engine` is `None` while the rank has reported no memory.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct NodeMemory {
     available: u64,
     total: u64,
-    critical_ratio: f64,
-) -> Option<(u64, u64)> {
-    let consumed = idle_available.saturating_sub(available);
-    let left = available.saturating_sub((critical_ratio * total as f64) as u64);
+    engine: Option<u64>,
+}
+
+impl NodeMemory {
+    /// Everything on the node that is neither available nor the engine's: other apps, the system.
+    fn others(&self) -> Option<u64> {
+        self.engine.map(|engine| {
+            self.total
+                .saturating_sub(self.available)
+                .saturating_sub(engine)
+        })
+    }
+}
+
+/// What the engine and everything else on the node took since the engine was last idle, signed
+/// (a negative is memory given back). `None` while either poll lacks the engine's own report.
+fn taken_since_idle(idle: NodeMemory, now: NodeMemory) -> Option<(i128, i128)> {
+    let engine = now.engine? as i128 - idle.engine? as i128;
+    let node = idle.available as i128 - now.available as i128;
+    Some((engine, node - engine))
+}
+
+/// The ENGINE's own growth since it was last idle against what is left above the CRITICAL reserve
+/// on its node: `consumed` is what the rank's MLX memory grew by, `left` what the node still has
+/// above CRITICAL — another app's growth only lowers `left`, it is never charged as the engine's
+/// (Q-165: a cargo build took 18.9 GiB while rank 0 held 55.1 → 55.0 GB active, and the node-drop
+/// rule closed admission on a 1-token request). An engine that has already grown by at least what
+/// is left would reach CRITICAL if it grew as much again — the floor alone reads that too late
+/// (E2E #2: the Studio went from 49% to 14% free in 2.5 minutes, and WARN at 5% fired 2 s before
+/// the rank died). Bytes against bytes over the engine's own busy/idle boundary; no clock decides it.
+fn growth_projection(idle: NodeMemory, now: NodeMemory, critical_ratio: f64) -> Option<(u64, u64)> {
+    let consumed = now.engine?.saturating_sub(idle.engine?);
+    let left = now
+        .available
+        .saturating_sub((critical_ratio * now.total as f64) as u64);
     (consumed > 0 && consumed >= left).then_some((consumed, left))
+}
+
+/// Who took the memory a node is short of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Culprit {
+    Engine,
+    OtherApps,
+    /// The engine's rank has reported no memory of its own.
+    Unknown,
+}
+
+/// Whose memory is short on a node, in words the person reading a refused request can act on:
+/// who took memory since the engine was last idle — the engine or other apps — and what each
+/// holds now. With nothing taken since idle, the larger holder is named.
+fn memory_cause(node: &str, idle: NodeMemory, now: NodeMemory) -> (String, Culprit) {
+    let (Some(engine), Some(others)) = (now.engine, now.others()) else {
+        return (
+            format!(
+                "memory on {node} is low, and the engine's rank there has reported no memory of \
+                 its own, so how much of it is the engine's and how much other apps' is not known"
+            ),
+            Culprit::Unknown,
+        );
+    };
+    let holds = |engine_first: bool| {
+        let engine = format!("the engine holds {}", gib(engine));
+        let others = format!("other apps and the system use {}", gib(others));
+        if engine_first {
+            format!("{engine}; {others}")
+        } else {
+            format!("{others}; {engine}")
+        }
+    };
+    let grew = |bytes: i128| gib(bytes.max(0) as u64);
+    match taken_since_idle(idle, now) {
+        Some((by_engine, by_others)) if by_others > 0 && by_others >= by_engine => (
+            format!(
+                "memory on {node} is low because other apps took {} since the engine was last \
+                 idle ({})",
+                grew(by_others),
+                holds(false)
+            ),
+            Culprit::OtherApps,
+        ),
+        Some((by_engine, _)) if by_engine > 0 => (
+            format!(
+                "memory on {node} is low because the engine itself grew by {} since it was last \
+                 idle ({})",
+                grew(by_engine),
+                holds(true)
+            ),
+            Culprit::Engine,
+        ),
+        _ if others >= engine => (
+            format!("memory on {node} is low ({})", holds(false)),
+            Culprit::OtherApps,
+        ),
+        _ => (
+            format!("memory on {node} is low ({})", holds(true)),
+            Culprit::Engine,
+        ),
+    }
+}
+
+/// The MemoryGrowth verdict's words — the event, and the reason every refused request carries
+/// in its 503 body (both rank servers answer `…not admitting new requests: <reason>`, and goose's
+/// chat shows it as the turn's error).
+fn growth_message(
+    node: &str,
+    idle: NodeMemory,
+    now: NodeMemory,
+    (consumed, left): (u64, u64),
+    critical_ratio: f64,
+) -> String {
+    let others_took = match taken_since_idle(idle, now) {
+        Some((_, by_others)) if by_others > 0 => {
+            format!(", other apps having taken {} too", gib(by_others as u64))
+        }
+        _ => String::new(),
+    };
+    let holds = match (now.engine, now.others()) {
+        (Some(engine), Some(others)) => format!(
+            "the engine holds {}; other apps and the system use {}; ",
+            gib(engine),
+            gib(others)
+        ),
+        _ => String::new(),
+    };
+    format!(
+        "memory on {node} is running out because the engine itself grew by {} since it was last \
+         idle and only {} is left before the CRITICAL reserve{others_took}; the engine is holding \
+         new requests until the ones it is running finish and free it ({holds}available {} of {}, \
+         CRITICAL below {} = {critical_ratio:.3} × RAM)",
+        gib(consumed),
+        gib(left),
+        gib(now.available),
+        gib(now.total),
+        gib((critical_ratio * now.total as f64) as u64),
+    )
+}
+
+/// The floor verdict's words (WARN holds new requests, CRITICAL stops the run), with whose memory
+/// it is and what a person can do about it.
+fn floor_message(
+    node: &str,
+    verdict: Watchdog,
+    pressure: Pressure,
+    idle: NodeMemory,
+    now: NodeMemory,
+    (warn_ratio, critical_ratio): (f64, f64),
+) -> String {
+    let (cause, culprit) = memory_cause(node, idle, now);
+    let consequence = match (verdict, culprit) {
+        (Watchdog::Critical, _) => {
+            "the engine stops before the kernel kills it, and is not restarted"
+        }
+        (_, Culprit::OtherApps) => {
+            "the engine is holding new requests until memory recovers — quitting other apps \
+             frees it"
+        }
+        (_, Culprit::Engine) => {
+            "the engine is holding new requests until memory recovers — the requests it is \
+             running free it as they finish"
+        }
+        (_, Culprit::Unknown) => "the engine is holding new requests until memory recovers",
+    };
+    format!(
+        "{cause}; {consequence} (kernel pressure {}, available {} of {}; WARN below {} = \
+         {warn_ratio:.3} × RAM, CRITICAL below {} = {critical_ratio:.3} × RAM)",
+        pressure.as_str(),
+        gib(now.available),
+        gib(now.total),
+        gib((warn_ratio * now.total as f64) as u64),
+        gib((critical_ratio * now.total as f64) as u64),
+    )
 }
 
 async fn monitor(
@@ -1622,8 +1790,9 @@ async fn monitor(
     let mut admission_closed = false;
     let mut blind_reported = vec![false; ranks.len()];
     let mut gpu_blind_reported = vec![false; ranks.len()];
-    // Per node: its available memory the last time the engine was idle (the busy stretch's start).
-    let mut idle_available: Vec<Option<u64>> = vec![None; ranks.len()];
+    // Per node: its memory the last time the engine was idle (the busy stretch's start).
+    let mut idle_memory: Vec<Option<NodeMemory>> = vec![None; ranks.len()];
+    let mut engine_blind_reported = vec![false; ranks.len()];
     let mut over_plan = vec![false; ranks.len()];
     // Why admission is held for memory, while it is: a SIGKILL then is the kernel's.
     let mut memory_short: Option<String> = None;
@@ -1759,31 +1928,55 @@ async fn monitor(
                 reading.total_bytes,
                 (warn_ratio, critical_ratio),
             );
-            if busy_now == Some(false) || idle_available[rank].is_none() {
-                idle_available[rank] = Some(reading.available_bytes);
+            let (live, caps) = {
+                let live = ranks[rank].live.lock().unwrap();
+                (live.memory, live.caps.clone())
+            };
+            let now_memory = NodeMemory {
+                available: reading.available_bytes,
+                total: reading.total_bytes,
+                engine: live.map(|m| m.active.saturating_add(m.cache)),
+            };
+            // The baseline moves while the engine is idle, and once more when the rank's first
+            // memory report arrives after it was taken (the engine's side of it was unknown).
+            let idle = match idle_memory[rank] {
+                Some(idle)
+                    if busy_now != Some(false)
+                        && (idle.engine.is_some() || now_memory.engine.is_none()) =>
+                {
+                    idle
+                }
+                _ => now_memory,
+            };
+            idle_memory[rank] = Some(idle);
+            if now_memory.engine.is_some() {
+                engine_blind_reported[rank] = false;
+            } else if busy_now == Some(true) && !engine_blind_reported[rank] {
+                engine_blind_reported[rank] = true;
+                ctx.event(
+                    EventKind::WatchdogBlind,
+                    Some(&node_name),
+                    format!(
+                        "rank {rank} has reported no MLX memory of its own (GOOSE_RANK_MEM): the \
+                         growth rule cannot tell the engine's growth from other apps', so on this \
+                         node only the WARN/CRITICAL floors guard memory until it reports"
+                    ),
+                );
             }
-            let growth = match (busy_now, idle_available[rank]) {
-                (Some(true), Some(idle)) => growth_projection(
-                    idle,
-                    reading.available_bytes,
-                    reading.total_bytes,
-                    critical_ratio,
-                ),
+            let growth = match busy_now {
+                Some(true) => growth_projection(idle, now_memory, critical_ratio),
                 _ => None,
             };
             if let (Some((consumed, left)), Watchdog::Normal) = (growth, worst.0) {
                 worst = (
                     Watchdog::Warn,
                     EventKind::MemoryGrowth,
-                    format!(
-                        "{node_name}: this busy stretch has taken {} of available memory since \
-                         the engine was last idle and {} is left above the CRITICAL reserve \
-                         ({critical_ratio:.3} × RAM) — one more stretch like it would reach \
-                         CRITICAL (available {} of {})",
-                        gib(consumed),
-                        gib(left),
-                        gib(reading.available_bytes),
-                        gib(reading.total_bytes),
+                    growth_message(
+                        &node_name,
+                        idle,
+                        now_memory,
+                        (consumed, left),
+                        critical_ratio,
                     ),
                 );
             }
@@ -1794,21 +1987,16 @@ async fn monitor(
                         Watchdog::Critical => EventKind::WatchdogCritical,
                         _ => EventKind::WatchdogWarn,
                     },
-                    format!(
-                        "{node_name}: kernel pressure {}, available {} of {} (WARN below {} = \
-                         {warn_ratio:.3} × RAM, CRITICAL below {} = {critical_ratio:.3} × RAM)",
-                        pressure.as_str(),
-                        gib(reading.available_bytes),
-                        gib(reading.total_bytes),
-                        gib((warn_ratio * reading.total_bytes as f64) as u64),
-                        gib((critical_ratio * reading.total_bytes as f64) as u64),
+                    floor_message(
+                        &node_name,
+                        verdict,
+                        pressure,
+                        idle,
+                        now_memory,
+                        (warn_ratio, critical_ratio),
                     ),
                 );
             }
-            let (live, caps) = {
-                let live = ranks[rank].live.lock().unwrap();
-                (live.memory, live.caps.clone())
-            };
             let cap = |key: &str| {
                 caps.as_ref()
                     .and_then(|c| c.get(key))
@@ -3605,24 +3793,184 @@ mod tests {
     /// E2E #2's Studio (96 GiB, the CRITICAL reserve 0.02 × RAM = 1.9 GiB), read from the
     /// sampler's free percentage every 30 s while one busy stretch ran from 22:40:46 (49% free):
     /// 45% at 22:41:17, 34%, 32% at 22:42:18, 20% at 22:42:49, 14% at 22:43:20; the rank died at
-    /// 22:43:46, 2 s after the 5% floor's WARN. The stretch's own growth against what is left
-    /// fires at 22:42:49 — before the 44,430-token turn and the one that died were admitted.
+    /// 22:43:46, 2 s after the 5% floor's WARN, of a Metal OOM with "Prompt Cache: 41 sequences,
+    /// 16.00 GB" — the ENGINE grew, and the headless Studio ran nothing else, so the rank's MLX
+    /// memory grew by what the node lost. Its idle claim predates the durable rank log (Q-114);
+    /// the rule reads only differences, so two different idle claims give the same verdicts. The
+    /// engine's own growth against what is left fires at 22:42:49 — before the 44,430-token turn
+    /// and the one that died were admitted.
     #[test]
-    fn a_busy_stretch_that_took_what_is_left_closes_admission_before_the_floor() {
+    fn an_engine_that_grew_by_what_is_left_closes_admission_before_the_floor() {
         let total = 96 * GIB;
         let at = |percent: u64| total * percent / 100;
-        let project = |available| growth_projection(at(49), available, total, 0.02);
-        assert_eq!(project(at(45)), None);
-        assert_eq!(project(at(34)), None);
-        assert_eq!(project(at(32)), None);
-        let (consumed, left) = project(at(20)).expect("fires at 22:42:49");
-        assert!(consumed >= left, "{consumed} {left}");
-        assert!(
-            watchdog_verdict(Pressure::Normal, at(20), total, (0.05, 0.02)) == Watchdog::Normal,
-            "the floor alone still read NORMAL there"
+        for engine_idle in [14 * GIB, 30 * GIB] {
+            let idle = NodeMemory {
+                available: at(49),
+                total,
+                engine: Some(engine_idle),
+            };
+            let now = |available: u64| NodeMemory {
+                available,
+                total,
+                engine: Some(engine_idle + (at(49) - available)),
+            };
+            let project = |available| growth_projection(idle, now(available), 0.02);
+            assert_eq!(project(at(45)), None);
+            assert_eq!(project(at(34)), None);
+            assert_eq!(project(at(32)), None);
+            let (consumed, left) = project(at(20)).expect("fires at 22:42:49");
+            assert_eq!(consumed, at(49) - at(20));
+            assert!(consumed >= left, "{consumed} {left}");
+            assert!(
+                watchdog_verdict(Pressure::Normal, at(20), total, (0.05, 0.02)) == Watchdog::Normal,
+                "the floor alone still read NORMAL there"
+            );
+            let (cause, culprit) = memory_cause("Studio", idle, now(at(20)));
+            assert_eq!(culprit, Culprit::Engine, "{cause}");
+            assert!(
+                cause.starts_with("memory on Studio is low because the engine itself grew by"),
+                "{cause}"
+            );
+            let reason = growth_message("Studio", idle, now(at(20)), (consumed, left), 0.02);
+            assert!(
+                reason.starts_with(&format!(
+                    "memory on Studio is running out because the engine itself grew by {} since \
+                     it was last idle and only {} is left before the CRITICAL reserve; the \
+                     engine is holding new requests until the ones it is running finish and \
+                     free it (the engine holds {};",
+                    gib(consumed),
+                    gib(left),
+                    gib(engine_idle + consumed)
+                )),
+                "{reason}"
+            );
+            // An idle engine re-baselines: nothing consumed, nothing projected.
+            assert_eq!(growth_projection(now(at(20)), now(at(20)), 0.02), None);
+        }
+    }
+
+    /// Q-165, load 26e on the MacBook (128 GiB, CRITICAL 0.02 × RAM = 2.6 GiB) while a cargo
+    /// release build ran: the node's available fell 18.9 GiB during a busy stretch to 20.3 GiB
+    /// (17.7 GiB left above CRITICAL), and the node-drop rule closed admission for 17 s — a 1-token
+    /// request got the 503. Rank 0's GOOSE_RANK_MEM across the window: active 55.1 → 55.0 GB,
+    /// cache 5.39 → 5.38 GB. The engine did not grow, so nothing is projected; the floor reads
+    /// NORMAL; and whose memory it was names the other apps.
+    #[test]
+    fn another_apps_growth_never_closes_the_engines_admission() {
+        let total = 128 * GIB;
+        let available = 203 * GIB / 10;
+        let idle = NodeMemory {
+            available: available + 189 * GIB / 10,
+            total,
+            engine: Some(55_100_000_000 + 5_390_000_000),
+        };
+        let now = NodeMemory {
+            available,
+            total,
+            engine: Some(55_000_000_000 + 5_380_000_000),
+        };
+        assert_eq!(growth_projection(idle, now, 0.02), None);
+        assert_eq!(
+            watchdog_verdict(Pressure::Normal, available, total, (0.05, 0.02)),
+            Watchdog::Normal
         );
-        // An idle engine re-baselines: nothing consumed, nothing projected.
-        assert_eq!(growth_projection(at(20), at(20), total, 0.02), None);
+        let (cause, culprit) = memory_cause("Mihai Macbook", idle, now);
+        assert_eq!(culprit, Culprit::OtherApps, "{cause}");
+        assert_eq!(
+            cause,
+            "memory on Mihai Macbook is low because other apps took 19.0 GiB since the engine \
+             was last idle (other apps and the system use 51.5 GiB; the engine holds 56.2 GiB)"
+        );
+        // Had the build gone on to push the node under WARN, the 503 would say so, and say what
+        // frees it.
+        let under_warn = NodeMemory {
+            available: 5 * GIB,
+            ..now
+        };
+        let reason = floor_message(
+            "Mihai Macbook",
+            Watchdog::Warn,
+            Pressure::Normal,
+            idle,
+            under_warn,
+            (0.05, 0.02),
+        );
+        assert!(
+            reason.starts_with(
+                "memory on Mihai Macbook is low because other apps took 34.3 GiB since the \
+                 engine was last idle (other apps and the system use 66.8 GiB; the engine holds \
+                 56.2 GiB); the engine is holding new requests until memory recovers — quitting \
+                 other apps frees it (kernel pressure normal, available 5.0 GiB of 128.0 GiB;"
+            ),
+            "{reason}"
+        );
+    }
+
+    /// Another app's growth lowers what is left, so an engine that grows while a build eats the
+    /// node closes admission sooner than it would alone — the build is never charged as the
+    /// engine's growth, and never lets the engine's own growth pass either.
+    #[test]
+    fn another_apps_growth_lowers_what_is_left_for_the_engine() {
+        let total = 96 * GIB;
+        let idle = NodeMemory {
+            available: 48 * GIB,
+            total,
+            engine: Some(20 * GIB),
+        };
+        let engine_alone = NodeMemory {
+            available: 38 * GIB,
+            total,
+            engine: Some(30 * GIB),
+        };
+        assert_eq!(growth_projection(idle, engine_alone, 0.02), None);
+        let beside_a_build = NodeMemory {
+            available: 8 * GIB,
+            ..engine_alone
+        };
+        let (consumed, left) =
+            growth_projection(idle, beside_a_build, 0.02).expect("the build lowered what is left");
+        assert_eq!(consumed, 10 * GIB);
+        assert!(left < consumed, "{left}");
+        let build_alone = NodeMemory {
+            available: 8 * GIB,
+            ..idle
+        };
+        assert_eq!(growth_projection(idle, build_alone, 0.02), None);
+    }
+
+    /// A rank that has reported no memory of its own cannot be charged or cleared: the growth rule
+    /// projects nothing (the monitor says so once, WatchdogBlind), and a floor message says the
+    /// split between the engine and other apps is not known rather than guessing it.
+    #[test]
+    fn an_engine_without_a_memory_report_is_named_unknown_never_guessed() {
+        let total = 96 * GIB;
+        let idle = NodeMemory {
+            available: 48 * GIB,
+            total,
+            engine: None,
+        };
+        let now = NodeMemory {
+            available: 2 * GIB,
+            ..idle
+        };
+        assert_eq!(growth_projection(idle, now, 0.02), None);
+        let (cause, culprit) = memory_cause("Studio", idle, now);
+        assert_eq!(culprit, Culprit::Unknown);
+        assert!(cause.contains("is not known"), "{cause}");
+        let reason = floor_message(
+            "Studio",
+            Watchdog::Warn,
+            Pressure::Normal,
+            idle,
+            now,
+            (0.05, 0.02),
+        );
+        assert!(
+            reason.contains(
+                "is not known; the engine is holding new requests until memory recovers ("
+            ),
+            "{reason}"
+        );
     }
 
     fn exit_status(raw: i32) -> std::process::ExitStatus {
