@@ -448,6 +448,46 @@ mod tests {
         }
     }
 
+    /// The rows the chat router would dispatch differently from the engine. The router
+    /// (`goose::providers::swarm_router`) keeps its own copy of the rows whose name and registry
+    /// differ; a row it does not know dispatches to its bare name.
+    fn router_parity_failures(defs: &[CloudDef]) -> Vec<String> {
+        defs.iter()
+            .filter_map(|d| {
+                let routed = goose::providers::swarm::cloud_registry_name(d.name);
+                (routed != d.registry).then(|| {
+                    format!(
+                        "{}: the chat router dispatches to '{routed}', the engine to '{}'",
+                        d.name, d.registry
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// D7 (Q-206): a swarm cloud node reaches the same provider whether chat or a build uses it —
+    /// every roster row, so a new row whose registry differs from its name fails here instead of
+    /// misrouting chat in silence.
+    #[test]
+    fn every_cloud_def_routes_through_the_chat_router_to_its_own_registry() {
+        assert_eq!(router_parity_failures(CLOUD_DEFS), Vec::<String>::new());
+        let drifted = CloudDef {
+            name: "newcloud",
+            registry: "custom_newcloud",
+            secret_key: "NEWCLOUD_API_KEY",
+            needs_region: false,
+            label: "New Cloud",
+        };
+        assert_eq!(
+            router_parity_failures(std::slice::from_ref(&drifted)),
+            vec![
+                "newcloud: the chat router dispatches to 'newcloud', the engine to 'custom_newcloud'"
+                    .to_string()
+            ],
+            "a row the router does not know is caught"
+        );
+    }
+
     #[test]
     fn google_roster_parser_keeps_only_generate_content_models() {
         let v = serde_json::json!({"models":[
