@@ -1,14 +1,16 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 15:47 (date) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
+Updated: 2026-09-27 16:24 (date) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
 
 ## Live
 - Installed on both Macs: 3.0.59 — VERIFIED running (install.sh now proves a post-swap pid; Q-180: the 13:08 install
   left 3.0.58 running an hour and voided E2E #3g).
 - E2E #3h RUNNING (27B tensor, jira brief, 3.0.59 with the Q-161 row-processor fix really live): turns 0–4 done in
   250 / 314 / 208 / 1827 / 419 s, NO runaway so far. runwatch bbcribpnh (its LIVE counter + serving-title parse fixed).
-- BUILDING 3.0.60 from caf85afb4 (round-2 sidecar/desktop/core fixes, Q-177, Q-178/179 pipeline parity + prefix
-  cache, Q-181 cancel, harness) · watcher bw0xm2xgk. Install after #3h or at a turn boundary.
+- BUILDING 3.0.60 (3rd try) from ada1bbc39 with a PRIVATE TMPDIR (the 2 earlier failures + 3.0.54 = an agent's
+  electron-packager wiping the shared $TMPDIR/electron-packager) · watcher b3rd227rg. Adds Q-182 (the split's cache
+  evicted the reusable prefix under a label request's padded batch → periodic 70–98k full re-reads). Install at a
+  #3h turn boundary, then #3h continues on it or #3i starts.
 - #5b (Flash pipeline) found Q-178 (no arg streaming, no live words) and Q-179 (0 cache past ~53k) — both merged.
 
 ## Agents
