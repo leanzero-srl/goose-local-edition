@@ -675,7 +675,7 @@
     "defaultMessage": "Chỉ trò chuyện"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "Phiên trò chuyện có thể dùng endpoint này; các nút swarm thì chưa."
+    "defaultMessage": "Phiên trò chuyện và các nút có thể dùng endpoint này — hãy tạo một nút trong Nút; bản dựng swarm thì chưa."
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Kiểm tra thất bại"
@@ -687,7 +687,7 @@
     "defaultMessage": "Tương thích OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Bất kỳ máy chủ nào dùng API của OpenAI — vLLM, llama.cpp, Together, Groq, cổng nội bộ công ty. Thêm bao nhiêu tùy ý. Phiên trò chuyện có thể dùng chúng; các nút swarm thì chưa."
+    "defaultMessage": "Bất kỳ máy chủ nào dùng API của OpenAI — vLLM, llama.cpp, Together, Groq, cổng nội bộ công ty. Thêm bao nhiêu tùy ý. Tạo nút từ bất kỳ nhà cung cấp đã cấu hình nào trong Nút."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Đã cấu hình"
@@ -2886,7 +2886,7 @@
     "defaultMessage": "Không đọc được thư mục mô hình."
   },
   "macs.offThere": {
-    "defaultMessage": "{what} đang tắt trên {name} — hãy bật “Cho các Mac khác của tôi dùng Mac này” ở đó (Nhà cung cấp › Các Mac của tôi)"
+    "defaultMessage": "{what} đang tắt trên {name} — hãy bật “Cho các Mac khác của tôi dùng Mac này” ở đó (LeanZero MLX › Các Mac của tôi)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "Không tạm dừng được."
@@ -4346,6 +4346,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "Thêm một nút"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "Lưu thành nút"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Đang viết"
   },
@@ -5432,6 +5435,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "đang phục vụ"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "Chi tiết"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "Sửa"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "Thao tác thất bại"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "Mở Chạy"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "Thiết lập"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "Khởi động"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "Dừng"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "nodes.checking": {
+    "defaultMessage": "Đang kiểm tra {provider}…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "Luôn sẵn sàng · {provider} tính phí"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "Hãy sao chép mô hình sang {mac} trước"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "Hãy đưa mô hình về Mac này trước"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "Khởi động nút này sẽ dừng {names}"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "Nhân bản"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "Sửa trong nhóm của bầy"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Kết nối các Mac của bạn và chạy một mô hình, hoặc thêm một mô hình đám mây."
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "Chưa có nút nào"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "Luôn sẵn sàng · do {provider} phục vụ"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "Chưa đo lần khởi động đầu tiên"
+  },
+  "nodes.follows": {
+    "defaultMessage": "Phục vụ bất cứ thứ gì engine của Mac này đang chạy: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "Phục vụ bất cứ thứ gì engine của Mac này đang chạy; hiện không có gì chạy ở đó"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "Phục vụ bất cứ thứ gì engine của Mac này đang chạy: {model} · chia trên {count} Mac"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "từ nhóm của bầy"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "Nút · {name}"
   },
@@ -5441,11 +5516,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "Mở {name} trên trang Nút"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "Trên đám mây"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "Trên các Mac của bạn · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "Một bản dựng swarm đang dùng {node}; nút sẽ rảnh khi bản dựng kết thúc"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "Giữ đã nạp"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "Giữ {names}"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "Thiết lập {provider} trong Providers › Nhà cung cấp đám mây"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "Đám mây"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "Endpoint"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "Không còn trong nhóm của bầy"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{{count, number} thiết bị LM Studio trong cấu hình swarm của bạn không được hiển thị ở đây} other{{count, number} thiết bị LM Studio trong cấu hình swarm của bạn không được hiển thị ở đây}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} trên {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "Không đọc được thời gian nạp: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Quản lý nhà cung cấp đám mây"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Quản lý Mac và mô hình"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "Bộ nhớ trên {mac} so với ngân sách"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "cần {need} trên {budget} GB"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "chưa có đỉnh"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} trên {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "đỉnh {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "Thêm cho {name}"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{cả hai Mac} other{# Mac}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "Mac này"
   },
   "nodes.navFailed": {
     "defaultMessage": "Thất bại"
@@ -5459,8 +5600,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "Engine LeanZero MLX đang nạp một mô hình"
   },
+  "nodes.new": {
+    "defaultMessage": "Nút mới"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "Quay lại"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "Đóng"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "Một mô hình đám mây"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{Chưa thiết lập} one{Đã thiết lập #} other{Đã thiết lập #}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "Tạo nút"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "Tạo và khởi động"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "Sửa {name}"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "Một endpoint"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{Bất kỳ máy chủ tương thích OpenAI nào bạn đã thêm · chưa có} one{Bất kỳ máy chủ tương thích OpenAI nào bạn đã thêm · đã thêm #} other{Bất kỳ máy chủ tương thích OpenAI nào bạn đã thêm · đã thêm #}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "Lọc mô hình"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} trên {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "Lấy một mô hình trong Mô hình"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "Mục tiêu"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "Nút này nên chạy thế nào?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "Giữ đã nạp: không bao giờ dừng vì một nút khác"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} không liệt kê mô hình ({error}); đây là các mô hình goose biết cho nhà cung cấp này."
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "trên {macs}"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "Đang hỏi {provider} danh sách mô hình…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} không có danh sách mô hình; đây là các mô hình goose biết cho nhà cung cấp này."
+  },
+  "nodes.newName": {
+    "defaultMessage": "Tên"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "Đặt tên"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "Tiếp"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "Chưa có mô hình nào trên các Mac của bạn."
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose không tìm được cách nào để chạy mô hình này trên các Mac của bạn."
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "Chưa thiết lập"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "Trên các Mac của bạn"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "Engine LeanZero MLX, một Mac hoặc chia tách"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "Chọn một mô hình"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "Mô hình"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "Không đọc được các nhà cung cấp của bạn: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "Đang đọc các nhà cung cấp của bạn…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "Chưa lưu"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "Lập kế hoạch lại"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "Lưu nút"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "Thiết lập nhà cung cấp khác"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "Loại"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "Mô hình"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "Tên"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "Bước {n} / {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "Nhà cung cấp"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "Cách"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "Nút mới"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "Các cách chạy {model}"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "Nút này nên chạy ở đâu?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "Mô hình nào?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "Nhà cung cấp nào?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "Không lưu được nút"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose chưa có kế hoạch cho mô hình này"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "Kế hoạch của goose cho mô hình này không có cách đó"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} chưa kết nối với LeanZero Link"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "Thêm một Mac khác để chạy các mô hình quá lớn đối với Mac này"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "Hãy bật “{permission}” trên {mac} trước (LeanZero MLX › Các Mac của tôi)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "Đang nạp"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "Đang chờ một lượt nạp khác xong"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "Ghim một cách"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "Không có kế hoạch cho cách này: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "Đang đo các Mac của bạn cho cách này…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "Không đọc được các nút của bạn"
+  },
+  "nodes.reading": {
+    "defaultMessage": "Đang đọc các nút của bạn…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "Đang đọc thứ đang phục vụ…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "Chưa gỡ"
+  },
+  "nodes.remove": {
+    "defaultMessage": "Gỡ"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "Gỡ, và bắt đầu cuộc trò chuyện mới trên Nút bất kỳ (Tự động)"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "Nút bị gỡ khỏi danh sách nút của bạn. Các Mac, mô hình và nhà cung cấp của bạn vẫn giữ nguyên."
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "Gỡ"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "Gỡ nút khỏi các chiến lược đó luôn"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "Nhóm của bầy vẫn giữ thiết bị của nó; nút này sẽ không hiện ở đây nữa. Hãy sửa chính nhóm đó ở bên dưới."
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "Gỡ {node}?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# cuộc trò chuyện đang đặt nút này. Tin nhắn tiếp theo của nó sẽ báo rằng nút đã bị gỡ.} other{# cuộc trò chuyện đang đặt nút này. Tin nhắn tiếp theo của chúng sẽ báo rằng nút đã bị gỡ.}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "Đọc lại"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} thứ # · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "Đã lưu."
+  },
   "nodes.sections": {
     "defaultMessage": "Các mục nút"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Thiết lập các Mac của bạn"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "Hiện trong Chạy"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "Khởi động {node}"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "Khởi động nút này sẽ dừng {names}."
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "Khởi động {node}?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} đang phục vụ."
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{Khởi động trong khoảng {duration} · trung vị của # lượt nạp} other{Khởi động trong khoảng {duration} · trung vị của # lượt nạp}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "Không chạy được"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "Theo Mac này"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "Bị một bản dựng giữ"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "Thiếu khóa"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "Lần gọi cuối thất bại"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "Đang nạp"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "Cần một bước"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "Chưa nạp"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "Một cách khác đang chạy"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "Sẵn sàng"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "Đang phục vụ"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "Không rõ trạng thái"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "Đang chờ nạp"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "Dừng {node}"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "Chiến lược sẽ cho biết nút nào làm việc gì: vai trò của nó, thứ tự thử các nút và khi nào dùng nút tiếp theo. Cho đến lúc đó, các cuộc trò chuyện và bản dựng swarm dùng các nút trong thẻ Nút."
@@ -5471,6 +5894,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Nút là một mô hình mà bạn có thể giao việc, trên các Mac của bạn hoặc trên đám mây. Cuộc trò chuyện bắt đầu trên một nút hoặc một chiến lược; bản dựng swarm dùng một chiến lược."
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "Không đọc được nhóm của bầy"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "Nút"
   },
@@ -5479,6 +5905,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nút"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "Được dùng bởi"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{Chia tách · # Mac} other{Chia tách · # Mac}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "Mac này"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."
@@ -5678,6 +6113,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "Thao tác thất bại"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "Đã là một nút: “{name}”."
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "Cần cả hai máy Mac"
   },
@@ -5795,6 +6233,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "Chi tiết"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "Mở trong Nút"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# cách chia khác} other{# cách chia khác}}"
   },
@@ -5845,6 +6286,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "Đang cập nhật runner của bản chia trên {nodes}…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "Lưu thành nút"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose không có kế hoạch cho cách này, nên không thể cho biết nó chạy trên những Mac nào."
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} không chạy theo cách nào được hiển thị ở đây — hãy chọn mô hình đang chạy ở trên."
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "Lưu cách này thành nút để các cuộc trò chuyện và bản dựng có thể chọn nó"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "Chưa lưu: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "Đã lưu thành nút “{name}”."
   },
   "placementCard.short": {
     "defaultMessage": "Không vừa: thiếu {gb} trên {node}"
@@ -7952,6 +8411,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Bạn đã dừng câu trả lời này sau {elapsed} · {tokens} token"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "Backend"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "Dựng"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "Trò chuyện"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "Frontend"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "Lập kế hoạch"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "Kiểm thử"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Nhà cung cấp {name} đã được định cấu hình"
   },
@@ -8071,6 +8548,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Nút MLX của máy từ xa — đã lưu trong nhóm, phục vụ khi có định tuyến theo nút"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "Thêm một nút bằng “Thêm nút” — nút gia nhập nhóm ngay khi việc thêm được xác nhận."
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "Chưa có nút nào"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Mọi nút mà bầy chạy — các hàng đã cấu hình cộng với những gì LM Studio đang thường trú lúc này. Trọng số: càng cao càng nhận phần việc lớn hơn."

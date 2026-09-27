@@ -118,6 +118,17 @@ vi.mock('./SwarmNodesSection', () => ({
 vi.mock('../Layout/MainPanelLayout', () => ({
   MainPanelLayout: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
+// The setup strip's node facts come from the glance store's nodes read: one node, nothing serving.
+vi.mock('../../acp/nodes', () => ({
+  nodesRead: vi.fn(async () => ({
+    config: { version: 1 },
+    nodes: [{ def: { id: 'mihai-mlx', name: 'Mihai Macbook engine', kind: 'mlx', origin: 'pool' } }],
+    stored: false,
+    lmStudioHidden: 0,
+  })),
+  nodesResidency: vi.fn(async () => ({ nodes: [], loaderInstalled: false })),
+  nodesServedLast: vi.fn(async () => ({})),
+}));
 vi.mock('../ConfigContext', () => ({
   useConfig: () => ({ read: async () => ({ devices: [{ id: 'mihai-mlx' }] }) }),
 }));
@@ -243,7 +254,7 @@ describe('LeanZero MLX inner tabs, routed', () => {
       strip.compareDocumentPosition(engineTabs()) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
     // Signed out of Link: step 1 is Next; the one model on this Mac makes step 2 done; nothing
-    // runs; the pool read found one node.
+    // runs; the nodes read found one node.
     await waitFor(() =>
       expect(within(strip).getByTestId('mlx-setup-step-4')).toHaveTextContent('1 node')
     );

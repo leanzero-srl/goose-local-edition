@@ -675,7 +675,7 @@
     "defaultMessage": "채팅 전용"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "채팅 세션은 이 엔드포인트를 쓸 수 있지만 swarm 노드는 아직 쓸 수 없습니다."
+    "defaultMessage": "채팅 세션과 노드는 이 엔드포인트를 쓸 수 있습니다 — 노드에서 만드세요. swarm 빌드는 아직 쓸 수 없습니다."
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "확인 실패"
@@ -687,7 +687,7 @@
     "defaultMessage": "OpenAI 호환"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "OpenAI API를 쓰는 모든 서버 — vLLM, llama.cpp, Together, Groq, 회사 게이트웨이. 필요한 만큼 추가하세요. 채팅 세션은 쓸 수 있지만 swarm 노드는 아직 쓸 수 없습니다."
+    "defaultMessage": "OpenAI API를 쓰는 모든 서버 — vLLM, llama.cpp, Together, Groq, 회사 게이트웨이. 필요한 만큼 추가하세요. 구성된 어떤 제공자로도 노드에서 노드를 만들 수 있습니다."
   },
   "cloudProviders.configured": {
     "defaultMessage": "설정됨"
@@ -2886,7 +2886,7 @@
     "defaultMessage": "모델 폴더를 읽지 못했습니다."
   },
   "macs.offThere": {
-    "defaultMessage": "{name}에서 {what}이(가) 꺼져 있습니다 — 그 Mac에서 “내 다른 Mac이 이 Mac 사용 허용”을 켜세요(제공자 › 내 Mac)"
+    "defaultMessage": "{name}에서 {what}이(가) 꺼져 있습니다 — 그 Mac에서 “내 다른 Mac이 이 Mac 사용 허용”을 켜세요(LeanZero MLX › 내 Mac)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "일시정지하지 못했습니다."
@@ -4346,6 +4346,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "노드 추가"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "노드로 저장"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "작성 중"
   },
@@ -5432,6 +5435,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "지금 제공 중"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "세부 정보"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "편집"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "작업에 실패했습니다"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "실행 열기"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "설정"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "시작"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "중지"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "취소"
+  },
+  "nodes.checking": {
+    "defaultMessage": "{provider} 확인 중…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "항상 사용 가능 · {provider}에서 청구"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "먼저 모델을 {mac}에 복사하세요"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "먼저 이 Mac에 모델을 받으세요"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "시작하면 {names}이(가) 중지됩니다"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "복제"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "스웜 풀에서 편집"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Mac을 연결하고 모델을 실행하거나, 클라우드 모델을 추가하세요."
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "아직 노드가 없습니다"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "항상 사용 가능 · {provider}에서 제공"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "첫 시작은 아직 측정되지 않았습니다"
+  },
+  "nodes.follows": {
+    "defaultMessage": "이 Mac의 엔진이 실행하는 모델을 제공: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "이 Mac의 엔진이 실행하는 모델을 제공. 지금은 아무것도 실행 중이 아닙니다"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "이 Mac의 엔진이 실행하는 모델을 제공: {model} · Mac {count}대에 분할"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "스웜 풀에서"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "노드 · {name}"
   },
@@ -5441,11 +5516,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "노드 페이지에서 {name} 열기"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "클라우드"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "내 Mac · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "swarm 빌드가 {node}을(를) 사용 중입니다. 빌드가 끝나면 풀립니다"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "로드 유지"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "{names} 유지"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "Providers › 클라우드 제공자에서 {provider}을(를) 설정하세요"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "클라우드"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "엔드포인트"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "더 이상 스웜 풀에 없음"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{swarm 구성의 LM Studio 장치 {count, number}개는 여기에 표시되지 않습니다} other{swarm 구성의 LM Studio 장치 {count, number}개는 여기에 표시되지 않습니다}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} / {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "로드 시간을 읽을 수 없습니다: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "클라우드 제공자 관리"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac 및 모델 관리"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "{mac}의 메모리(예산 대비)"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "{need} / {budget} GB 필요"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "아직 최고치 없음"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} / {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "최고 {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "{name} 더 보기"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{Mac 두 대} other{Mac #대}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "이 Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "실패"
@@ -5459,8 +5600,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "LeanZero MLX 엔진이 모델을 불러오는 중입니다"
   },
+  "nodes.new": {
+    "defaultMessage": "새 노드"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "뒤로"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "닫기"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "클라우드 모델"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{설정된 항목 없음} one{#개 설정됨} other{#개 설정됨}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "노드 만들기"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "만들고 시작"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "{name} 편집"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "엔드포인트"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{추가한 OpenAI 호환 서버 · 아직 없음} one{추가한 OpenAI 호환 서버 · #개 추가됨} other{추가한 OpenAI 호환 서버 · #개 추가됨}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "모델 필터"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} / {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "모델에서 받기"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "목표"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "어떻게 실행할까요?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "로드 유지: 다른 노드 때문에 중지하지 않음"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider}이(가) 모델 목록을 주지 않았습니다({error}). goose가 알고 있는 모델입니다."
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "{macs}에서"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "{provider}에 모델 목록을 요청하는 중…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider}에는 모델 목록이 없습니다. goose가 알고 있는 모델입니다."
+  },
+  "nodes.newName": {
+    "defaultMessage": "이름"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "이름 지정"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "다음"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "아직 Mac에 모델이 없습니다."
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose가 이 모델을 Mac에서 실행할 방법을 찾지 못했습니다."
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "설정된 항목 없음"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "내 Mac에서"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "LeanZero MLX 엔진, Mac 한 대 또는 분할"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "모델 선택"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "모델"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "제공자를 읽을 수 없습니다: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "제공자를 읽는 중…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "저장되지 않음"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "다시 계획"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "노드 저장"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "다른 제공자 설정"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "종류"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "모델"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "이름"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "{total}단계 중 {n}단계 · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "제공자"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "방법"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "새 노드"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "{model} 실행 방법"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "어디에서 실행할까요?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "어떤 모델?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "어떤 제공자?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "노드를 저장할 수 없습니다"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose에 아직 이 모델의 계획이 없습니다"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "이 모델에 대한 goose의 계획에 그런 방법이 없습니다"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac}이(가) LeanZero Link에 연결되어 있지 않습니다"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "이 Mac에는 너무 큰 모델을 실행하려면 Mac을 한 대 더 추가하세요"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "먼저 {mac}에서 “{permission}”을(를) 켜세요(LeanZero MLX › 내 Mac)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "불러오는 중"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "다른 로드가 끝나기를 기다리는 중"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "방법 고정"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "이 방법에 대한 계획 없음: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "이 방법에 맞게 Mac을 측정하는 중…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "노드를 읽을 수 없습니다"
+  },
+  "nodes.reading": {
+    "defaultMessage": "노드를 읽는 중…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "지금 제공 중인 것을 읽는 중…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "제거되지 않음"
+  },
+  "nodes.remove": {
+    "defaultMessage": "제거"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "제거하고 새 채팅은 아무 노드(자동)에서 시작"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "노드가 노드 목록에서 제거됩니다. Mac, 모델, 제공자는 그대로 유지됩니다."
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "제거"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "해당 전략에서도 제거"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "스웜 풀은 장치를 그대로 유지하며, 이 노드는 여기에 더 이상 표시되지 않습니다. 풀 자체는 아래에서 편집하세요."
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "{node}을(를) 제거할까요?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{채팅 #개가 이 노드로 설정되어 있습니다. 다음 메시지에서 노드가 제거되었다고 알려 줍니다.} other{채팅 #개가 이 노드로 설정되어 있습니다. 다음 메시지에서 노드가 제거되었다고 알려 줍니다.}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "다시 읽기"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} #번째 · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "저장했습니다."
+  },
   "nodes.sections": {
     "defaultMessage": "노드 섹션"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Mac 설정"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "실행에서 보기"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "{node} 시작"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "시작하면 {names}이(가) 중지됩니다."
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "{node}을(를) 시작할까요?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node}이(가) 제공 중입니다."
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{약 {duration} 후 시작 · 로드 #회의 중앙값} other{약 {duration} 후 시작 · 로드 #회의 중앙값}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "실행할 수 없음"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "이 Mac을 따름"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "빌드가 사용 중"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "키 없음"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "마지막 호출 실패"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "불러오는 중"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "단계 필요"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "로드되지 않음"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "다른 방법이 실행 중"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "준비됨"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "제공 중"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "상태 알 수 없음"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "로드 대기 중"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "{node} 중지"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "전략은 어떤 노드가 무엇을 맡는지 정합니다. 노드의 역할, 노드를 시도하는 순서, 다음 노드로 넘어가는 시점입니다. 그 전까지 채팅과 swarm 빌드는 노드 탭의 노드를 사용합니다."
@@ -5471,6 +5894,9 @@
   "nodes.subtitle": {
     "defaultMessage": "노드는 Mac이나 클라우드에서 작업을 맡길 수 있는 모델입니다. 채팅은 노드나 전략에서 시작하고, swarm 빌드는 전략을 사용합니다."
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "스웜 풀을 읽을 수 없습니다"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "노드"
   },
@@ -5479,6 +5905,15 @@
   },
   "nodes.title": {
     "defaultMessage": "노드"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "사용처"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{분할 · Mac #대} other{분할 · Mac #대}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "이 Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."
@@ -5678,6 +6113,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "작업에 실패했습니다"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "이미 노드입니다: “{name}”."
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "두 Mac 모두 필요"
   },
@@ -5795,6 +6233,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "세부 정보"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "노드에서 열기"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{다른 분할 #개} other{다른 분할 #개}}"
   },
@@ -5845,6 +6286,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "{nodes}에서 분할 러너 업데이트 중…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "노드로 저장"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose에 이 방법에 대한 계획이 없어 어떤 Mac에서 실행되는지 알 수 없습니다."
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model}은(는) 여기 표시된 어떤 방법으로도 실행 중이 아닙니다 — 위에서 실행 중인 모델을 선택하세요."
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "이 방법을 노드로 저장하면 채팅과 빌드에서 선택할 수 있습니다"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "저장되지 않음: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "노드 “{name}”(으)로 저장했습니다."
   },
   "placementCard.short": {
     "defaultMessage": "들어가지 않음: {node}에서 {gb} 부족"
@@ -7952,6 +8411,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "{elapsed} 후 이 답변을 중지했습니다 · {tokens} 토큰"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "백엔드"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "빌드"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "채팅"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "프런트엔드"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "계획"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "테스트"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} 제공업체가 구성되었습니다."
   },
@@ -8071,6 +8548,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "원격 머신의 MLX 노드 — 풀에 저장됨, 노드별 라우팅이 오면 서비스됩니다"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "“노드 추가”로 추가하세요 — 추가가 확정되는 즉시 풀에 합류합니다."
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "아직 노드가 없습니다"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "스웜이 돌리는 모든 노드 — 설정된 행과 LM Studio에 지금 상주하는 것들. 가중치: 높을수록 더 많은 작업을 받습니다."

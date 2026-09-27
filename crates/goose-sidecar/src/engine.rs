@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -24,8 +24,121 @@ use crate::machine::{
 use crate::model_identity::{NodeModel, ServedNames};
 use crate::{
     listening_pids, measure, port_has_listener, MemoryReading, Sidecar, SidecarConfig, StartCancel,
-    StartupWatch, GIB,
+    StartCancelled, StartupWatch, GIB,
 };
+
+/// Milliseconds a load spent in each phase the engine showed. A phase it never showed is absent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LoadPhaseTimes {
+    pub starting: Option<u64>,
+    pub loading: Option<u64>,
+    pub warming: Option<u64>,
+}
+
+/// One load of this manager's engine that ended — ready or failed — measured at the path where it
+/// ended (design §6.4 step 10). A load the owner stopped (an Unmount) or a mount the gate refused
+/// never finished a load, and is not reported.
+#[derive(Debug, Clone)]
+pub struct EngineLoadMeasured {
+    pub model_id: String,
+    pub weights_bytes: u64,
+    pub phases: LoadPhaseTimes,
+    /// From the mount taking this Mac's load lock to the engine answering (or failing).
+    pub total_ms: u64,
+    /// Whether most of the weights were in the file cache when the start began; `Err` names why
+    /// it could not be read.
+    pub file_cache_warm: std::result::Result<bool, String>,
+    /// `Err` carries the engine's own words.
+    pub outcome: std::result::Result<(), String>,
+}
+
+/// Told of every load that ends; recording it is the caller's (goosed appends it to the load
+/// store — the manager knows no store).
+pub type LoadObserver = Arc<dyn Fn(EngineLoadMeasured) + Send + Sync>;
+
+/// The phases a start showed (`StartupWatch::phase_marks`), as times: each phase runs from its
+/// first sighting to the next phase's (the last one to `ended`); `starting` runs from `spawned`.
+pub fn phase_times(
+    marks: &[(&'static str, Instant)],
+    spawned: Instant,
+    ended: Instant,
+) -> LoadPhaseTimes {
+    let mut times = LoadPhaseTimes::default();
+    for (index, (phase, at)) in marks.iter().enumerate() {
+        let from = if *phase == "starting" { spawned } else { *at };
+        let to = marks.get(index + 1).map_or(ended, |(_, next)| *next);
+        let ms = Some(to.saturating_duration_since(from).as_millis() as u64);
+        match *phase {
+            "starting" => times.starting = ms,
+            "loading" => times.loading = ms,
+            "warming" => times.warming = ms,
+            _ => {}
+        }
+    }
+    times
+}
+
+/// Whether most of a model's weights are already in the file cache: `mincore` over every
+/// `.safetensors` page, mapped read-only (nothing is read, nothing faults in).
+#[cfg(target_os = "macos")]
+pub fn weights_cache_warm(dir: &Path) -> Result<bool> {
+    let mut resident = 0u64;
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|x| x == "safetensors") {
+            let (r, t) = pages_resident(&path)?;
+            resident += r;
+            total += t;
+        }
+    }
+    ensure!(total > 0, "no .safetensors pages under {}", dir.display());
+    // ratio: warm = at least half of the weights' pages already resident.
+    Ok(resident * 2 >= total)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn weights_cache_warm(dir: &Path) -> Result<bool> {
+    bail!(
+        "file-cache residency is read with macOS mincore; not measured for {}",
+        dir.display()
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn pages_resident(path: &Path) -> Result<(u64, u64)> {
+    use std::os::unix::io::AsRawFd;
+    let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let len = file.metadata()?.len() as usize;
+    if len == 0 {
+        return Ok((0, 0));
+    }
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let addr = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_SHARED,
+            file.as_raw_fd(),
+            0,
+        )
+    };
+    ensure!(
+        addr != libc::MAP_FAILED,
+        "mmap({}) failed: {}",
+        path.display(),
+        std::io::Error::last_os_error()
+    );
+    let pages = len.div_ceil(page);
+    let mut vec = vec![0 as libc::c_char; pages];
+    let rc = unsafe { libc::mincore(addr, len, vec.as_mut_ptr()) };
+    let error = std::io::Error::last_os_error();
+    unsafe { libc::munmap(addr, len) };
+    ensure!(rc == 0, "mincore({}) failed: {error}", path.display());
+    let resident = vec.iter().filter(|b| (**b as u8) & 1 != 0).count() as u64;
+    Ok((resident, pages as u64))
+}
 
 /// Rapid-MLX's `--max-concurrent-requests` is a HARD ADMISSION CAP, not a queue: the request past
 /// it is answered `503 Server is busy (max concurrent requests reached)`. One source for the serve
@@ -960,6 +1073,7 @@ pub struct MlxEngineManager {
     /// Read-held by a mount from its gate to its start's spawn; an Unmount write-takes it, so it
     /// returns only once no overtaken mount still holds the Mac's load lock.
     judging: tokio::sync::RwLock<()>,
+    load_observer: StdMutex<Option<LoadObserver>>,
     probe_client: reqwest::Client,
     /// The memory facts a unit test pins, so a mount's verdict never depends on what else this
     /// Mac is running (Q-105: four lifecycle tests failed whenever other engines held the RAM).
@@ -993,6 +1107,7 @@ impl MlxEngineManager {
             wait_tickets: std::sync::atomic::AtomicU64::new(0),
             unmounts: std::sync::atomic::AtomicU64::new(0),
             judging: tokio::sync::RwLock::new(()),
+            load_observer: StdMutex::new(None),
             probe_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -1055,6 +1170,11 @@ impl MlxEngineManager {
 
     pub fn settings(&self) -> EngineSettings {
         self.settings.lock().unwrap().clone()
+    }
+
+    /// Who is told of each load that ends (goosed's load store). Nobody until one is set.
+    pub fn set_load_observer(&self, observer: LoadObserver) {
+        *self.load_observer.lock().unwrap() = Some(observer);
     }
 
     pub fn set_nodes(&self, nodes: Vec<NodeModel>) {
@@ -1293,6 +1413,7 @@ impl MlxEngineManager {
     /// when the start ends (ready, failed, or cancelled by an Unmount), or here on any refusal.
     /// `unmounts`: the Unmount count when the mount began — an Unmount since then overtook it.
     async fn mount_holding(&self, model_id: &str, lock: LoadLock, unmounts: u64) -> Result<()> {
+        let began = Instant::now();
         let _judging = self.judging.read().await;
         let settings = self.settings();
         let model = self.mountable_model(&settings, model_id)?;
@@ -1328,7 +1449,7 @@ impl MlxEngineManager {
         {
             bail!("mount already in progress for '{current}'");
         }
-        let watch = Arc::new(StartupWatch::default());
+        let watch = Arc::new(StartupWatch::with_phases(start_phase));
         let cancel = Arc::new(StartCancel::default());
         let (ended, ended_rx) = tokio::sync::watch::channel(false);
         let previous = std::mem::replace(
@@ -1376,8 +1497,22 @@ impl MlxEngineManager {
         let expected_model_id = served_model_id(&settings, model_id);
         let state_arc = Arc::clone(&self.state);
         let model_id = model_id.to_string();
+        // A fresh start is a load; keeping an identical supervised engine is not.
+        let observer = self.load_observer.lock().unwrap().clone();
+        let measure = match (&supervised, observer) {
+            (None, Some(observer)) => {
+                let dir = expand_tilde(&settings.models_dir).join(&model_id);
+                let warm = tokio::task::spawn_blocking(move || weights_cache_warm(&dir))
+                    .await
+                    .map_err(|e| format!("the file-cache read panicked: {e}"))
+                    .and_then(|read| read.map_err(|e| format!("{e:#}")));
+                Some((observer, warm, Arc::clone(&watch)))
+            }
+            _ => None,
+        };
         tokio::spawn(async move {
             let the_mac = lock;
+            let spawned = Instant::now();
             let started = match supervised {
                 Some(sidecar) => sidecar
                     .ensure_running_unless(&cancel)
@@ -1392,6 +1527,19 @@ impl MlxEngineManager {
                     Sidecar::start(config).await.map(Box::new)
                 }
             };
+            let answered_at = Instant::now();
+            let report = |outcome: std::result::Result<(), String>| {
+                if let Some((observer, warm, watch)) = &measure {
+                    observer(EngineLoadMeasured {
+                        model_id: model_id.clone(),
+                        weights_bytes,
+                        phases: phase_times(&watch.phase_marks(), spawned, answered_at),
+                        total_ms: answered_at.saturating_duration_since(began).as_millis() as u64,
+                        file_cache_warm: warm.clone(),
+                        outcome,
+                    });
+                }
+            };
             match started {
                 Ok(sidecar) => {
                     let mut state = state_arc.lock().await;
@@ -1400,6 +1548,7 @@ impl MlxEngineManager {
                         ManagerState::Mounting { model_id: current, .. } if *current == model_id
                     );
                     if still_mounting {
+                        report(Ok(()));
                         *state = ManagerState::Running {
                             model_id,
                             sidecar,
@@ -1416,6 +1565,9 @@ impl MlxEngineManager {
                         &*state,
                         ManagerState::Mounting { model_id: current, .. } if *current == model_id
                     );
+                    if still_mounting && e.downcast_ref::<StartCancelled>().is_none() {
+                        report(Err(format!("{e:#}")));
+                    }
                     if still_mounting {
                         *state = ManagerState::Failed {
                             model_id,
@@ -2944,6 +3096,100 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(restarted.state, "running", "{:?}", restarted.last_error);
         assert_ne!(restarted.pid, Some(pid));
         manager.unmount().await;
+    }
+
+    /// Design §6.4 step 10: a load that ends is told to the observer exactly once, at the path
+    /// where it ended — ready with its phases and total, failed with the engine's own words — and
+    /// a mount that only keeps an identical supervised engine is no load.
+    #[tokio::test]
+    async fn a_load_that_ends_is_measured_at_its_ready_and_failed_paths() {
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager = test_manager();
+        let seen: Arc<StdMutex<Vec<EngineLoadMeasured>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        manager.set_load_observer(Arc::new(move |m| sink.lock().unwrap().push(m)));
+        let settings = |script: String| EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            spawn_command: vec!["python3".to_string(), "-c".to_string(), script],
+            ..Default::default()
+        };
+        manager.set_settings(settings(format!(
+            "import sys, time\nprint('Loading model with BatchedEngine', file=sys.stderr, flush=True)\n\
+             time.sleep(0.4)\nprint('Warming up (compiling Metal shaders)', file=sys.stderr, flush=True)\n\
+             time.sleep(0.4)\n{ARGV_FAKE_ENGINE}"
+        )));
+        manager.mount("pub/small").await.unwrap();
+        assert_eq!(settle(&manager).await.state, "running");
+        {
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 1, "one load, one measurement");
+            let load = &seen[0];
+            assert_eq!(load.model_id, "pub/small");
+            assert_eq!(load.outcome, Ok(()));
+            assert!(load.total_ms > 0);
+            assert!(
+                load.phases.loading.is_some() || load.phases.warming.is_some(),
+                "the phases the start showed are measured: {:?}",
+                load.phases
+            );
+        }
+
+        manager.mount("pub/small").await.unwrap();
+        assert_eq!(settle(&manager).await.state, "running");
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "an identical supervised engine is kept, not loaded again"
+        );
+        manager.unmount().await;
+
+        manager.set_settings(settings(
+            "import sys\nprint('Loading model with BatchedEngine', file=sys.stderr, flush=True)\n\
+             print('ValueError: no weights', file=sys.stderr, flush=True)\nsys.exit(3)\n"
+                .to_string(),
+        ));
+        manager.mount("pub/small").await.unwrap();
+        assert_eq!(settle(&manager).await.state, "failed");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        let words = seen[1].outcome.clone().unwrap_err();
+        assert!(words.contains("ValueError: no weights"), "{words}");
+    }
+
+    #[test]
+    fn phase_times_run_from_each_sighting_to_the_next() {
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let marks = [
+            ("starting", at(100)),
+            ("loading", at(300)),
+            ("warming", at(900)),
+        ];
+        let times = phase_times(&marks, t0, at(1_000));
+        assert_eq!(
+            times,
+            LoadPhaseTimes {
+                starting: Some(300),
+                loading: Some(600),
+                warming: Some(100),
+            }
+        );
+        let unseen = phase_times(&[("loading", at(50))], t0, at(80));
+        assert_eq!(
+            unseen,
+            LoadPhaseTimes {
+                starting: None,
+                loading: Some(30),
+                warming: None,
+            },
+            "a phase no look saw is absent, never 0"
+        );
     }
 
     /// S-L8: the circuit breaker now sits on the production re-mount path. A mount of the

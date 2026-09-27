@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use goose_sdk_types::custom_requests::MlxPlacementKeyDto;
 use serde::{Deserialize, Serialize};
 
 use crate::config::paths::Paths;
@@ -95,6 +96,45 @@ pub fn publish(engine: &PublishedEngine) -> Result<()> {
     publish_at(&record_path(), engine)
 }
 
+/// The record with the split's WAY beside it: its kind (tensor | pipeline), its Macs in rank order
+/// (`local`, then each peer's configured host — the placement planner's key) and its link. A lease
+/// on the split, residency and the served-turn record name the split by it. The engine's fields are
+/// unchanged, so every reader of `PublishedEngine` reads the record as before.
+pub fn publish_with_way(engine: &PublishedEngine, way: Option<&MlxPlacementKeyDto>) -> Result<()> {
+    publish_record_at(&record_path(), engine, way)
+}
+
+/// The split's way as its owner published it. `Ok(None)`: no record, or one written by a goose
+/// before the way was published (the way is then unknown — never guessed); `Err`: unreadable.
+pub fn read_way() -> Result<Option<MlxPlacementKeyDto>, String> {
+    read_way_at(&record_path())
+}
+
+#[derive(Serialize)]
+struct RecordOut<'a> {
+    #[serde(flatten)]
+    engine: &'a PublishedEngine,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    way: Option<&'a MlxPlacementKeyDto>,
+}
+
+#[derive(Deserialize)]
+struct WayIn {
+    #[serde(default)]
+    way: Option<MlxPlacementKeyDto>,
+}
+
+pub(crate) fn read_way_at(path: &Path) -> Result<Option<MlxPlacementKeyDto>, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    serde_json::from_slice::<WayIn>(&bytes)
+        .map(|record| record.way)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Removes the record only when THIS process published it — a window never withdraws another's.
 pub fn withdraw_if_mine() -> Result<bool> {
     withdraw_at(&record_path(), std::process::id())
@@ -105,11 +145,19 @@ pub fn read() -> OwnerRecord {
 }
 
 pub(crate) fn publish_at(path: &Path, engine: &PublishedEngine) -> Result<()> {
+    publish_record_at(path, engine, None)
+}
+
+pub(crate) fn publish_record_at(
+    path: &Path,
+    engine: &PublishedEngine,
+    way: Option<&MlxPlacementKeyDto>,
+) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     let tmp = path.with_extension(format!("json.{}", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(engine)?)
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&RecordOut { engine, way })?)
         .with_context(|| format!("writing {}", tmp.display()))?;
     std::fs::rename(&tmp, path).with_context(|| format!("renaming onto {}", path.display()))
 }
@@ -210,6 +258,28 @@ mod tests {
         assert!(path.exists());
         assert!(withdraw_at(&path, 10).unwrap());
         assert_eq!(read_at(&path, 10, |_| true), OwnerRecord::Absent);
+    }
+
+    /// The split's way travels beside the engine's fields: readers of the engine read the record as
+    /// before, and a record from a goose that did not publish a way says so (`None`), never a guess.
+    #[test]
+    fn the_record_carries_the_splits_way_beside_the_engine() {
+        use goose_sdk_types::custom_requests::MlxPlacementKindDto;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(RECORD_FILE);
+        assert_eq!(read_way_at(&path), Ok(None));
+        let way = MlxPlacementKeyDto {
+            kind: MlxPlacementKindDto::Pipeline,
+            nodes: vec!["local".into(), "link:studio-node".into()],
+            link: Some("jaccl".into()),
+        };
+        publish_record_at(&path, &engine(10), Some(&way)).unwrap();
+        assert_eq!(read_at(&path, 10, |_| true), OwnerRecord::Mine(engine(10)));
+        assert_eq!(read_way_at(&path), Ok(Some(way)));
+        publish_at(&path, &engine(10)).unwrap();
+        assert_eq!(read_way_at(&path), Ok(None));
+        std::fs::write(&path, b"{\"pid\": 1, \"way").unwrap();
+        assert!(read_way_at(&path).is_err());
     }
 
     #[test]

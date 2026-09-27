@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import type { GooseServeResult, Logger } from './gooseServe';
+import type { GooseServeResult, GooseServeStop, Logger } from './gooseServe';
 import {
   GOOSE_SERVE_EXITED_USER_MESSAGE,
   GooseServeLeaseRegistry,
@@ -22,7 +22,7 @@ function createGooseServeResult(
     process: new EventEmitter() as GooseServeResult['process'],
     errorLog: [],
     certFingerprint: null,
-    cleanup: vi.fn(async () => undefined),
+    cleanup: vi.fn(async () => 'exited' as const),
     hasExited: () => false,
     getExitDetails: () => ({ code: null, signal: null }),
     startupDiagnosticsPath: null,
@@ -76,7 +76,7 @@ describe('GooseServeLeaseRegistry', () => {
   });
 
   it('cleans up once after the last attached window is released', async () => {
-    const cleanup = vi.fn(async () => undefined);
+    const cleanup = vi.fn(async () => 'exited' as const);
     const store = new GooseServeLeaseRegistry(createLogger());
     const lease = store.create(createGooseServeResult({ cleanup }), 'local-secret');
     store.attachWindow(1, lease);
@@ -123,5 +123,81 @@ describe('GooseServeLeaseRegistry', () => {
 
     await store.releaseWindow(2);
     expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  // Q-223: on quit the window's `closed` releases its lease first (not awaited — it cannot be) and
+  // that removes the lease from the map; the old will-quit then counted zero leases and let the app
+  // exit while goosed was still tearing down. The quit must find the stop already under way.
+  it('makes the quit wait for a stop a window release already started', async () => {
+    let exitGoosed!: () => void;
+    const goosedExited = new Promise<void>((resolve) => {
+      exitGoosed = resolve;
+    });
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const cleanup = () => goosedExited.then(() => 'exited' as const);
+    const lease = store.create(createGooseServeResult({ cleanup }), 's');
+    store.attachWindow(1, lease);
+
+    void store.releaseWindow(1);
+    expect(store.activeLeaseCount()).toBe(0);
+    expect(store.hasBackendsToStop()).toBe(true);
+
+    let quitMayProceed = false;
+    const quit = store.stopAllAndWait().then(() => {
+      quitMayProceed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(quitMayProceed).toBe(false);
+
+    exitGoosed();
+    await quit;
+    expect(quitMayProceed).toBe(true);
+    expect(store.hasBackendsToStop()).toBe(false);
+  });
+
+  it('stops attached backends on quit and waits for each to exit', async () => {
+    const exits: ((ended: GooseServeStop) => void)[] = [];
+    const cleanups = [0, 1].map(() =>
+      vi.fn(
+        () =>
+          new Promise<GooseServeStop>((resolve) => {
+            exits.push(resolve);
+          })
+      )
+    );
+    const store = new GooseServeLeaseRegistry(createLogger());
+    cleanups.forEach((cleanup, windowId) =>
+      store.attachWindow(windowId, store.create(createGooseServeResult({ cleanup }), 's'))
+    );
+
+    let done = false;
+    const quit = store.stopAllAndWait().then((outcome) => {
+      done = true;
+      return outcome;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cleanups.map((c) => c.mock.calls.length)).toEqual([1, 1]);
+    exits[0]('exited');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(done).toBe(false);
+    exits[1]('abandoned');
+    // A stop that gave up is counted, so the quit's log never claims every backend exited.
+    await expect(quit).resolves.toEqual({ abandoned: 1 });
+  });
+
+  it('a failed stop is logged and never holds the quit forever', async () => {
+    const logger = createLogger();
+    const store = new GooseServeLeaseRegistry(logger);
+    const lease = store.create(
+      createGooseServeResult({ cleanup: async () => Promise.reject(new Error('EPERM')) }),
+      's'
+    );
+    store.attachWindow(1, lease);
+    await expect(store.stopAllAndWait()).resolves.toEqual({ abandoned: 1 });
+    expect(logger.error).toHaveBeenCalledWith(
+      'Failed to cleanup goose serve backend:',
+      expect.any(Error)
+    );
+    expect(store.hasBackendsToStop()).toBe(false);
   });
 });

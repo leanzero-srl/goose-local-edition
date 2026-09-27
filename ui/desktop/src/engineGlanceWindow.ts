@@ -97,7 +97,13 @@ export function createGlanceWindowPort(options: GlanceWindowOptions): GlanceWind
       // A link inside the card never opens a window of its own.
       contents.setWindowOpenHandler(() => ({ action: 'deny' }));
       contents.on('will-navigate', (event) => event.preventDefault());
-      win.on('closed', () => {
+      // Only THIS window's close forgets it. A window closed late (the quit's close, or a destroy
+      // whose 'closed' lands after the next ensure made a new one) used to null the NEW window's
+      // handle: the new one lived on unseen by this port and the next ensure made a third — the two
+      // floating windows Q-229 found holding the quit open.
+      const made = win;
+      made.on('closed', () => {
+        if (win !== made) return;
         win = null;
         view = null;
         options.onWebContents(null);

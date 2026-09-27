@@ -1,0 +1,151 @@
+{
+  "about": "Design §6.4 step 9: (what serves now, the way to start) -> (the ways that stop, in order). Run by nodes_loader/switch.rs and by ui/desktop/src/components/leanzero-swarm/placementSwitch.fixture.test.ts against PlacementCard's exported servingWays. `serving` is the three engines' status reads (single: mlxEngine/status; remote: remoteSingleStatus; distributed: distributedStatus).",
+  "cases": [
+    {
+      "name": "nothing serves: a single here starts with nothing to stop",
+      "serving": {},
+      "target": { "kind": "local" },
+      "expect": { "stops": [], "settlePeerBeforeStart": false }
+    },
+    {
+      "name": "this Mac's single serves Flash: a split of the 27B stops it first",
+      "serving": { "single": { "state": "running", "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" } },
+      "target": { "kind": "split" },
+      "expect": {
+        "stops": [{ "way": { "kind": "local" }, "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" }],
+        "settlePeerBeforeStart": false
+      }
+    },
+    {
+      "name": "a remote single on the Studio stops for a single here",
+      "serving": { "remote": { "state": "ready", "peer": "wh-node", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" } },
+      "target": { "kind": "local" },
+      "expect": {
+        "stops": [{ "way": { "kind": "peer", "peer": "wh-node" }, "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" }],
+        "settlePeerBeforeStart": false
+      }
+    },
+    {
+      "name": "a split stops for a remote single",
+      "serving": { "distributed": { "state": "serving", "mode": "distributed", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" } },
+      "target": { "kind": "peer", "peer": "wh-node" },
+      "expect": {
+        "stops": [{ "way": { "kind": "split" }, "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" }],
+        "settlePeerBeforeStart": false
+      }
+    },
+    {
+      "name": "a remote single stopped for the split: the split starts once the peer has answered its unmount",
+      "serving": { "remote": { "state": "ready", "peer": "wh-node", "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" } },
+      "target": { "kind": "split" },
+      "expect": {
+        "stops": [{ "way": { "kind": "peer", "peer": "wh-node" }, "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" }],
+        "settlePeerBeforeStart": true
+      }
+    },
+    {
+      "name": "a way still loading stops like a running one",
+      "serving": { "single": { "state": "mounting", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" } },
+      "target": { "kind": "peer", "peer": "wh-node" },
+      "expect": {
+        "stops": [{ "way": { "kind": "local" }, "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" }],
+        "settlePeerBeforeStart": false
+      }
+    },
+    {
+      "name": "a failed single is not serving: nothing stops",
+      "serving": { "single": { "state": "failed", "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" } },
+      "target": { "kind": "peer", "peer": "wh-node" },
+      "expect": { "stops": [], "settlePeerBeforeStart": false }
+    },
+    {
+      "name": "a stopped single with a model id left over is not serving",
+      "serving": { "single": { "state": "stopped", "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" } },
+      "target": { "kind": "split" },
+      "expect": { "stops": [], "settlePeerBeforeStart": false }
+    },
+    {
+      "name": "a route that is off is not serving",
+      "serving": { "remote": { "state": "off", "peer": "wh-node", "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" } },
+      "target": { "kind": "local" },
+      "expect": { "stops": [], "settlePeerBeforeStart": false }
+    },
+    {
+      "name": "a failed route is not serving",
+      "serving": { "remote": { "state": "failed", "peer": "wh-node", "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" } },
+      "target": { "kind": "split" },
+      "expect": { "stops": [], "settlePeerBeforeStart": false }
+    },
+    {
+      "name": "a route still mounting on the peer stops, and a split then waits for its unmount",
+      "serving": { "remote": { "state": "mounting", "peer": "wh-node", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" } },
+      "target": { "kind": "split" },
+      "expect": {
+        "stops": [{ "way": { "kind": "peer", "peer": "wh-node" }, "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" }],
+        "settlePeerBeforeStart": true
+      }
+    },
+    {
+      "name": "a route that names no model is not a serving way",
+      "serving": { "remote": { "state": "ready", "peer": "wh-node" } },
+      "target": { "kind": "local" },
+      "expect": { "stops": [], "settlePeerBeforeStart": false }
+    },
+    {
+      "name": "a failed split that no longer owns the Mac is not serving",
+      "serving": { "distributed": { "state": "failed", "mode": "single", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" } },
+      "target": { "kind": "local" },
+      "expect": { "stops": [], "settlePeerBeforeStart": false }
+    },
+    {
+      "name": "a split that is stopping still owns the Mac and is stopped (followed to its end)",
+      "serving": { "distributed": { "state": "stopping", "mode": "distributed", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" } },
+      "target": { "kind": "local" },
+      "expect": {
+        "stops": [{ "way": { "kind": "split" }, "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" }],
+        "settlePeerBeforeStart": false
+      }
+    },
+    {
+      "name": "a split recovering from a rank's memory death still owns the Mac",
+      "serving": { "distributed": { "state": "recovering", "mode": "distributed", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" } },
+      "target": { "kind": "peer", "peer": "wh-node" },
+      "expect": {
+        "stops": [{ "way": { "kind": "split" }, "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" }],
+        "settlePeerBeforeStart": false
+      }
+    },
+    {
+      "name": "a stopped split with its model remembered is not serving",
+      "serving": { "distributed": { "state": "stopped", "mode": "single", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" } },
+      "target": { "kind": "split" },
+      "expect": { "stops": [], "settlePeerBeforeStart": false }
+    },
+    {
+      "name": "every way reports serving (a torn switch): all stop, this Mac first, then the peer, then the split",
+      "serving": {
+        "single": { "state": "running", "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" },
+        "remote": { "state": "reconnecting", "peer": "wh-node", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" },
+        "distributed": { "state": "starting", "mode": "distributed", "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" }
+      },
+      "target": { "kind": "split" },
+      "expect": {
+        "stops": [
+          { "way": { "kind": "local" }, "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" },
+          { "way": { "kind": "peer", "peer": "wh-node" }, "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" },
+          { "way": { "kind": "split" }, "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx" }
+        ],
+        "settlePeerBeforeStart": true
+      }
+    },
+    {
+      "name": "the way that serves the target model is still stopped: Run is a switch, the loader's served-already check comes first",
+      "serving": { "single": { "state": "running", "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" } },
+      "target": { "kind": "local" },
+      "expect": {
+        "stops": [{ "way": { "kind": "local" }, "modelId": "rapid-mlx/Qwen3.8-Flash-Next-4bit" }],
+        "settlePeerBeforeStart": false
+      }
+    }
+  ]
+}

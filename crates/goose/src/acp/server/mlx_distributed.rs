@@ -90,7 +90,7 @@ fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedCo
     })
 }
 
-fn config_to_dto(config: DistributedConfig) -> MlxDistributedConfigDto {
+pub(super) fn config_to_dto(config: DistributedConfig) -> MlxDistributedConfigDto {
     MlxDistributedConfigDto {
         model_id: config.model_id,
         backend: config.backend.as_str().to_string(),
@@ -533,7 +533,7 @@ fn withdraw_owner_record() {
     }
 }
 
-async fn status_response(
+pub(super) async fn status_response(
 ) -> Result<MlxEngineDistributedStatusResponse, agent_client_protocol::Error> {
     let status = distributed::global_manager().status();
     if !status.state.owns_the_mac() {
@@ -556,6 +556,123 @@ async fn status_response(
     status.hosting = link::hosting_dto();
     status.allow_distributed_node = link::distributed_node_allowed();
     Ok(MlxEngineDistributedStatusResponse { status })
+}
+
+/// The split's way as the placement planner keys it: the runner's kind, each node's host in rank
+/// order (`local` for this Mac), the link backend.
+fn split_way(
+    config: &DistributedConfig,
+    runner: Option<distributed::Runner>,
+) -> Option<MlxPlacementKeyDto> {
+    let kind = match runner? {
+        distributed::Runner::MlxLmTensor => MlxPlacementKindDto::Tensor,
+        distributed::Runner::PipelineQwen4 => MlxPlacementKindDto::Pipeline,
+    };
+    Some(MlxPlacementKeyDto {
+        kind,
+        nodes: config
+            .nodes
+            .iter()
+            .map(|n| {
+                n.ssh
+                    .clone()
+                    .unwrap_or_else(|| crate::nodes::THIS_MAC.to_string())
+            })
+            .collect(),
+        link: Some(config.backend.as_str().to_string()),
+    })
+}
+
+/// Whether this Mac's rank's weights were in the file cache as the split starts (rank 0 is this
+/// Mac; the other ranks' caches are on their own Macs and are not seen from here).
+async fn local_rank_warm(config: &DistributedConfig) -> Result<bool, String> {
+    let dir = config
+        .nodes
+        .first()
+        .map(|n| expand_tilde(&n.model_dir))
+        .ok_or_else(|| "the split names no node".to_string())?;
+    tokio::task::spawn_blocking(move || goose_sidecar::engine::weights_cache_warm(&dir))
+        .await
+        .map_err(|e| format!("the file-cache read panicked: {e}"))?
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// The split's ready path (design §6.4 step 10): a run that started is followed to ready or
+/// failed and the load recorded — Run it's starts and the loader's alike. A run stopped before it
+/// answered ended no load and is not recorded. The row's weights and warmth are this Mac's rank's
+/// (the split's other ranks load on their own Macs).
+fn record_split_load(
+    began: std::time::Instant,
+    warm: Result<bool, String>,
+    config: DistributedConfig,
+) {
+    use goose_sidecar::distributed::supervisor::RunState;
+    use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
+    tokio::spawn(async move {
+        let manager = distributed::global_manager();
+        let result = loop {
+            let status = manager.status();
+            match status.state {
+                RunState::Ready | RunState::Serving => break Ok(()),
+                RunState::Failed => {
+                    break Err(status
+                        .last_error
+                        .unwrap_or_else(|| "the split failed and gave no words".to_string()))
+                }
+                RunState::Stopped | RunState::Stopping => {
+                    tracing::info!(model = %config.model_id, "the split was stopped before it answered; no load to record");
+                    return;
+                }
+                RunState::Preflight | RunState::Starting | RunState::Recovering => {
+                    tokio::time::sleep(super::nodes_loader::LOOK_AGAIN).await
+                }
+            }
+        };
+        let kind = match manager.status().runner {
+            Some(distributed::Runner::MlxLmTensor) => PlacementKind::Tensor,
+            Some(distributed::Runner::PipelineQwen4) => PlacementKind::Pipeline,
+            None => {
+                tracing::warn!(model = %config.model_id, "a split's load ended, but it reports no runner to key it by; not recorded");
+                return;
+            }
+        };
+        let file_cache_warm = match warm {
+            Ok(warm) => warm,
+            Err(why) => {
+                tracing::warn!(model = %config.model_id, %why, "a split's load ended, but whether this Mac's weights were cached could not be read; not recorded");
+                return;
+            }
+        };
+        let weights_bytes = config.nodes.first().map_or(0, |n| {
+            goose_sidecar::dir_size_bytes(&expand_tilde(&n.model_dir))
+        });
+        if weights_bytes == 0 {
+            tracing::warn!(model = %config.model_id, "a split's load ended, but this Mac's model folder could not be sized; not recorded");
+            return;
+        }
+        super::nodes_loader::rows::record(super::nodes_loader::rows::Ended {
+            model: config.model_id.clone(),
+            key: PlacementKey {
+                kind,
+                nodes: config
+                    .nodes
+                    .iter()
+                    .map(|n| {
+                        n.ssh
+                            .clone()
+                            .unwrap_or_else(|| crate::nodes::THIS_MAC.to_string())
+                    })
+                    .collect(),
+                link: Some(config.backend.as_str().to_string()),
+            },
+            macs: config.nodes.iter().map(|n| n.name.clone()).collect(),
+            weights_bytes,
+            phases: goose_sidecar::engine::LoadPhaseTimes::default(),
+            total_ms: began.elapsed().as_millis() as u64,
+            file_cache_warm,
+            result,
+        });
+    });
 }
 
 /// The provisioning jobs a config asks for: every node's `python` (and `pipelinePython`) that is a
@@ -762,6 +879,8 @@ impl GooseAcpAgent {
             node_names: config.nodes.iter().map(|n| n.name.clone()).collect(),
         };
         let manager = owned_manager()?;
+        let began = std::time::Instant::now();
+        let warm = local_rank_warm(&asked).await;
         let outcome = manager
             .start(config, served, sampling)
             .await
@@ -776,13 +895,19 @@ impl GooseAcpAgent {
             persist_config(&ran)?;
         }
         if matches!(outcome, StartOutcome::Started { .. }) {
-            // Every other goosed on this Mac (another window) finds the run through this record.
-            if let Err(e) = owner_record::publish(&published) {
+            // Every other goosed on this Mac (another window) finds the run through this record,
+            // and names the split's way by it (a lease on the split, residency, the served record).
+            let way = split_way(&asked, manager.status().runner);
+            if way.is_none() {
+                warn!(model = %published.model_id, "the split started without a runner in its status; its owner record names no way");
+            }
+            if let Err(e) = owner_record::publish_with_way(&published, way.as_ref()) {
                 warn!(error = %e, "publishing the distributed engine's owner record failed; other windows will not find it");
             }
             super::mlx_engine::remember_serving(ServingIntent::Split {
                 model_id: published.model_id.clone(),
             });
+            record_split_load(began, warm, asked.clone());
         }
         super::mlx_engine::align_omlx_host_env();
         Ok(match outcome {

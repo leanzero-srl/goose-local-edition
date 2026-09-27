@@ -675,7 +675,7 @@
     "defaultMessage": "Só chat"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "Sessões de chat podem usar este endpoint; os nós do swarm ainda não."
+    "defaultMessage": "Sessões de chat e nós podem usar este endpoint — crie um em Nós; os builds do enxame ainda não."
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Falha na verificação"
@@ -687,7 +687,7 @@
     "defaultMessage": "Compatível com OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Qualquer servidor que fale a API da OpenAI — vLLM, llama.cpp, Together, Groq, um gateway da empresa. Adicione quantos precisar. Sessões de chat podem usá-los; os nós do swarm ainda não."
+    "defaultMessage": "Qualquer servidor que fale a API da OpenAI — vLLM, llama.cpp, Together, Groq, um gateway da empresa. Adicione quantos precisar. Crie um nó a partir de qualquer provedor configurado em Nós."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Configurados"
@@ -2886,7 +2886,7 @@
     "defaultMessage": "Não foi possível ler a pasta de modelos."
   },
   "macs.offThere": {
-    "defaultMessage": "{what} está desativado em {name} — ative “Permitir que meus outros Macs usem este Mac” lá (Provedores › Meus Macs)"
+    "defaultMessage": "{what} está desativado em {name} — ative “Permitir que meus outros Macs usem este Mac” lá (LeanZero MLX › Meus Macs)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "Falha ao pausar."
@@ -4346,6 +4346,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "Adicionar um nó"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "Salvar como nó"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Escrevendo"
   },
@@ -5432,6 +5435,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "servindo agora"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "Detalhes"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "Editar"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "A ação falhou"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "Abrir Executar"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "Configurar"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "Iniciar"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "Parar"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "nodes.checking": {
+    "defaultMessage": "Verificando {provider}…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "Sempre disponível · cobrado por {provider}"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "Copie primeiro o modelo para {mac}"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "Traga primeiro o modelo para este Mac"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "Iniciá-lo interrompe {names}"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "Duplicar"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "Editar no pool do enxame"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Conecte seus Macs e execute um modelo, ou adicione um modelo na nuvem."
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "Ainda não há nós"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "Sempre disponível · servido por {provider}"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "Primeira inicialização ainda não medida"
+  },
+  "nodes.follows": {
+    "defaultMessage": "Atende com o que o motor deste Mac executa: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "Atende com o que o motor deste Mac executa; nada roda lá agora"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "Atende com o que o motor deste Mac executa: {model} · dividido entre {count} Macs"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "do seu pool do enxame"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "Nó · {name}"
   },
@@ -5441,11 +5516,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "Abrir {name} na página Nós"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "Na nuvem"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "Nos seus Macs · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "Um build do enxame está usando {node}; ele é liberado quando o build terminar"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "Manter carregado"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "Manter {names}"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "Configure {provider} em Providers › Provedores de nuvem"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "Nuvem"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "Endpoint"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "Não está mais no seu pool do enxame"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{{count, number} dispositivo do LM Studio na sua configuração do enxame não é mostrado aqui} other{{count, number} dispositivos do LM Studio na sua configuração do enxame não são mostrados aqui}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} de {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "Não foi possível ler os tempos de carregamento: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Gerenciar provedores de nuvem"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Gerenciar Macs e modelos"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "Memória em {mac} face ao orçamento"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "precisa de {need} de {budget} GB"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "ainda sem pico"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} de {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "pico {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "Mais para {name}"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{os dois Macs} other{# Macs}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "este Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "Falhou"
@@ -5459,8 +5600,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "O motor LeanZero MLX está carregando um modelo"
   },
+  "nodes.new": {
+    "defaultMessage": "Novo nó"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "Voltar"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "Fechar"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "Um modelo na nuvem"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{Nenhum configurado} one{# configurado} other{# configurados}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "Criar nó"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "Criar e iniciar"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "Editar {name}"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "Um endpoint"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{Qualquer servidor compatível com OpenAI que você adicionou · nenhum ainda} one{Qualquer servidor compatível com OpenAI que você adicionou · # adicionado} other{Qualquer servidor compatível com OpenAI que você adicionou · # adicionados}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "Filtrar modelos"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} de {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "Obtenha um em Modelos"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "Objetivo"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "Como ele deve rodar?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "Manter carregado: nunca pará-lo por outro nó"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} não listou seus modelos ({error}); estes são os modelos que o goose conhece para ele."
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "em {macs}"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "Pedindo a {provider} os seus modelos…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} não tem lista de modelos; estes são os modelos que o goose conhece para ele."
+  },
+  "nodes.newName": {
+    "defaultMessage": "Nome"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "Dê um nome"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "Próximo"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "Ainda não há modelos nos seus Macs."
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "O goose não encontrou nenhuma opção para executar este modelo nos seus Macs."
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "Nenhum configurado"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "Nos seus Macs"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "Motor LeanZero MLX, um Mac ou dividido"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "Escolha um modelo"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "Modelo"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "Não foi possível ler seus provedores: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "Lendo seus provedores…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "Não salvo"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "Planejar de novo"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "Salvar nó"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "Configurar outro provedor"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "Tipo"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "Modelo"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "Nome"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "Etapa {n} de {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "Provedor"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "Opção"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "Novo nó"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "Opções para executar {model}"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "Onde ele deve rodar?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "Qual modelo?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "Qual provedor?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "Não foi possível salvar o nó"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "O goose ainda não tem um plano para este modelo"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "O plano do goose para este modelo não tem essa opção"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} não está conectado ao LeanZero Link"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "Adicione outro Mac para executar modelos grandes demais para este"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "Ative primeiro “{permission}” em {mac} (LeanZero MLX › Meus Macs)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "Carregando"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "Aguardando outro carregamento terminar"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "Fixar uma opção"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "Sem plano para esta opção: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "Medindo seus Macs para esta opção…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "Não foi possível ler seus nós"
+  },
+  "nodes.reading": {
+    "defaultMessage": "Lendo seus nós…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "Lendo o que atende agora…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "Não removido"
+  },
+  "nodes.remove": {
+    "defaultMessage": "Remover"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "Remover e iniciar novos chats em Qualquer nó (Auto)"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "O nó é removido dos seus nós. Seus Macs, modelos e provedores ficam como estão."
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "Remover"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "Removê-lo também dessas estratégias"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "Seu pool do enxame mantém o dispositivo; este nó não aparece mais aqui. Edite o próprio pool abaixo."
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "Remover {node}?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# chat está definido para este nó. A próxima mensagem dele dirá que o nó foi removido.} other{# chats estão definidos para este nó. A próxima mensagem deles dirá que o nó foi removido.}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "Ler de novo"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} #º · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "Salvo."
+  },
   "nodes.sections": {
     "defaultMessage": "Seções de nós"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Configure seus Macs"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "Mostrar em Executar"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "Iniciar {node}"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "Iniciá-lo interrompe {names}."
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "Iniciar {node}?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} está atendendo."
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{Inicia em cerca de {duration} · mediana de # carregamento} other{Inicia em cerca de {duration} · mediana de # carregamentos}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "Não pode rodar"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "Segue este Mac"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "Ocupado por um build"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "Chave ausente"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "A última chamada falhou"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "Carregando"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "Falta uma etapa"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "Não carregado"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "Outra opção está rodando"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "Pronto"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "Atendendo"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "Estado desconhecido"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "Aguardando para carregar"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "Parar {node}"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "Uma estratégia dirá qual nó faz o quê: seus papéis, a ordem em que os nós são tentados e quando usar o próximo. Até lá, os chats e os builds do enxame usam os nós da aba Nós."
@@ -5471,6 +5894,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Um nó é um modelo para o qual você pode passar trabalho, nos seus Macs ou na nuvem. Os chats começam em um nó ou em uma estratégia; os builds do enxame usam uma estratégia."
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "Não foi possível ler seu pool do enxame"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "Nós"
   },
@@ -5479,6 +5905,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nós"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "Usado por"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{Dividido · # Mac} other{Dividido · # Macs}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "Este Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "O servidor pode estar a iniciar ou temporariamente indisponível."
@@ -5678,6 +6113,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "A ação falhou"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "Já é um nó: “{name}”."
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "Precisa dos dois Macs"
   },
@@ -5795,6 +6233,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "Detalhes"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "Abrir em Nós"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# outra divisão} other{# outras divisões}}"
   },
@@ -5845,6 +6286,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "Atualizando o runner do split em {nodes}…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "Salvar como nó"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "O goose não tem um plano para esta opção, então não sabe dizer em quais Macs ela roda."
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} não está rodando em nenhuma das opções mostradas aqui — escolha acima o modelo em execução."
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "Salve esta opção como nó para que chats e builds possam escolhê-la"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "Não salvo: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "Salvo como o nó “{name}”."
   },
   "placementCard.short": {
     "defaultMessage": "Não cabe: faltam {gb} em {node}"
@@ -7952,6 +8411,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Você interrompeu esta resposta após {elapsed} · {tokens} tokens"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "Backend"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "Build"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "Chat"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "Frontend"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "Planejamento"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "Testes"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "O fornecedor {name} está configurado"
   },
@@ -8071,6 +8548,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Nó MLX de uma máquina remota — salvo no pool, servido quando o roteamento por nó chegar"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "Adicione um com “Adicionar nó” — ele entra no pool assim que a adição é confirmada."
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "Ainda não há nós"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Cada nó que o enxame executa — linhas configuradas mais o que o LM Studio tem residente agora. Peso: quanto mais alto, maior a parte das tarefas."

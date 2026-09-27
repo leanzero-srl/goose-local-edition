@@ -661,7 +661,7 @@ async fn named_route(
 
 /// The route as every surface reads it. Only the goosed that owns the route restores it; another
 /// window's goosed reports what it sees.
-async fn current_status() -> MlxRemoteSingleStatusDto {
+pub(super) async fn current_status() -> MlxRemoteSingleStatusDto {
     let manager = super::link::existing_link_manager();
     let control = manager.as_deref().map(|m| m as &dyn PeerControl);
     match mlx_remote::read() {
@@ -769,6 +769,59 @@ impl crate::providers::swarm_router::RouteLoad for RouteLoadWatch {
 /// Let the swarm router wait on a loading route (called once as the ACP server starts).
 pub(super) fn install_route_load() {
     crate::providers::swarm_router::install_route_load(Arc::new(RouteLoadWatch));
+}
+
+/// Follow a loading route to what its load comes to (the node loader's wait for a remote single,
+/// and the load row's): `None` when nothing is loading.
+#[cfg(unix)]
+pub(super) async fn follow_route_load() -> Option<Result<(), String>> {
+    settle_load(current_status, fabric_cadence).await
+}
+
+/// The remote single's ready path (design §6.4 step 10): a route whose peer is loading the model
+/// is followed to its end and the load is recorded — Run it's starts and the loader's alike. The
+/// row's weights are this Mac's copy of the model (a peer serves the model this Mac holds); with
+/// no copy here the size is unknown and nothing is recorded. The weights load on the PEER, whose
+/// file cache this Mac cannot see: `file_cache_warm` is recorded false ("not seen warm"), and the
+/// peer's own goose records its engine's load with the warmth it measured.
+#[cfg(unix)]
+fn record_remote_load(
+    began: std::time::Instant,
+    peer: String,
+    peer_name: String,
+    model_id: String,
+) {
+    tokio::spawn(async move {
+        let Some(result) = follow_route_load().await else {
+            return;
+        };
+        let weights_bytes = match super::mlx_engine::load_engine_settings() {
+            Ok(settings) => {
+                let dir = goose_sidecar::engine::expand_tilde(&settings.models_dir);
+                goose_sidecar::hf::list_local_models(&dir)
+                    .ok()
+                    .and_then(|models| models.into_iter().find(|m| m.id == model_id))
+                    .map(|m| m.size_bytes)
+            }
+            Err(_) => None,
+        };
+        let Some(weights_bytes) = weights_bytes else {
+            tracing::warn!(model = %model_id, peer = %peer_name, "a remote single's load ended, but this Mac holds no copy of the model to size it; not recorded");
+            return;
+        };
+        super::nodes_loader::rows::record(super::nodes_loader::rows::Ended {
+            model: model_id,
+            key: goose_sidecar::placement::store::PlacementKey::single(
+                &crate::nodes::residency::peer_key(&peer),
+            ),
+            macs: vec![peer_name],
+            weights_bytes,
+            phases: goose_sidecar::engine::LoadPhaseTimes::default(),
+            total_ms: began.elapsed().as_millis() as u64,
+            file_cache_warm: false,
+            result,
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1343,8 +1396,19 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineRemoteSingleStartRequest,
     ) -> Result<MlxEngineRemoteSingleStartResponse, agent_client_protocol::Error> {
+        #[cfg(unix)]
+        let began = std::time::Instant::now();
         Ok(match self.remote_single_start(&req).await {
             Ok(status) => {
+                #[cfg(unix)]
+                if status.state == "mounting" {
+                    record_remote_load(
+                        began,
+                        req.peer.clone(),
+                        status_peer_name(&status),
+                        req.model_id.clone(),
+                    );
+                }
                 super::mlx_engine::remember_serving(ServingIntent::RemoteSingle {
                     peer: req.peer.clone(),
                     peer_name: status

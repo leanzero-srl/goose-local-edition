@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
-import { MlxSetupStrip, setupSteps, type SetupFacts } from './MlxSetupStrip';
+import { MlxSetupStrip, setupNodeFacts, setupSteps, type SetupFacts } from './MlxSetupStrip';
 import { TONE_FILL } from '../lz';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
@@ -14,6 +14,7 @@ const ALL_DONE: SetupFacts = {
   models: 2,
   running: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
   nodes: 3,
+  runningHasNode: true,
 };
 
 const renderStrip = (facts: SetupFacts, onOpen = vi.fn()) => {
@@ -41,7 +42,13 @@ describe('setupSteps — each step done or not from the facts; the first open on
     ['no model on any Mac', { models: 0, running: null }, ['done', 'next', 'later', 'done']],
     ['nothing running', { running: null }, ['done', 'done', 'next', 'done']],
     ['no node yet', { nodes: 0 }, ['done', 'done', 'done', 'next']],
-    ['the pool unread', { nodes: null }, ['done', 'done', 'done', 'next']],
+    ['the nodes unread', { nodes: null }, ['done', 'done', 'done', 'next']],
+    ['the running way has no node', { runningHasNode: false }, ['done', 'done', 'done', 'next']],
+    [
+      'nothing runs: step 4 asks nothing of it',
+      { running: null, runningHasNode: null },
+      ['done', 'done', 'next', 'done'],
+    ],
     [
       'a fresh install, signed out',
       { linkConnected: false, macsOnline: 1, models: 0, running: null, nodes: 0 },
@@ -119,6 +126,17 @@ describe('MlxSetupStrip renders each step state in its words and its solid colou
     expect(stepsRow()[3]).toEqual(['done', '4Nodes·1 node']);
   });
 
+  it('something runs and no node is that way: step 4 is Next "Save as a node" and saves it', async () => {
+    const { onOpen } = renderStrip({ ...ALL_DONE, runningHasNode: false });
+    expect(stepsRow()[3]).toEqual(['next', '4Nodes·Save as a nodeNext']);
+    await userEvent.click(within(screen.getByTestId('mlx-setup-steps')).getAllByRole('button')[3]);
+    expect(onOpen).toHaveBeenCalledWith({ kind: 'saveNode' });
+    cleanup();
+    // Nothing defined yet and the split running: the same — save what runs.
+    renderStrip({ ...ALL_DONE, nodes: 0, runningHasNode: false });
+    expect(stepsRow()[3]).toEqual(['next', '4Nodes·Save as a nodeNext']);
+  });
+
   it('an unread pool claims nothing about nodes: the step carries its name only', () => {
     renderStrip({ ...ALL_DONE, nodes: null });
     expect(stepsRow()[3]).toEqual(['next', '4NodesNext']);
@@ -163,4 +181,44 @@ describe('MlxSetupStrip renders each step state in its words and its solid colou
     );
     expect(await missingUtilities(classes)).toEqual([]);
   }, 30_000);
+});
+
+describe('setupNodeFacts — the strip reads the glance store, claims nothing before it lands', () => {
+  const residency = (serving: boolean, servingNodes: string[]) => ({
+    nodes: servingNodes.map((node) => ({ node, residency: { kind: 'serving' as const } })),
+    serving: serving
+      ? { kind: 'split' as const, modelId: 'm', servedModelId: 'm', macNames: [] }
+      : null,
+    loaderInstalled: false,
+  });
+  const read = (count: number) => ({
+    config: { version: 1 },
+    nodes: Array.from({ length: count }, (_, i) => ({
+      def: { id: `n${i}`, name: `n${i}`, kind: 'mlx' as const, origin: 'user' as const },
+      modelFrom: { kind: 'own' as const },
+    })),
+    stored: true,
+    lmStudioHidden: 0,
+  });
+
+  it('unread or failed: nothing claimed', () => {
+    expect(setupNodeFacts({ kind: 'unread' }, true)).toEqual({ nodes: null, runningHasNode: null });
+    expect(setupNodeFacts({ kind: 'failed', error: 'x' }, true)).toEqual({
+      nodes: null,
+      runningHasNode: null,
+    });
+  });
+
+  it('a node serves the running way; none does; nothing answers', () => {
+    const state = (servingNodes: string[], serving = true) => ({
+      kind: 'read' as const,
+      read: read(2),
+      residency: residency(serving, servingNodes),
+      servedNode: null,
+    });
+    expect(setupNodeFacts(state(['n0']), true)).toEqual({ nodes: 2, runningHasNode: true });
+    expect(setupNodeFacts(state([]), true)).toEqual({ nodes: 2, runningHasNode: false });
+    expect(setupNodeFacts(state([], false), true)).toEqual({ nodes: 2, runningHasNode: null });
+    expect(setupNodeFacts(state([]), false)).toEqual({ nodes: 2, runningHasNode: null });
+  });
 });
