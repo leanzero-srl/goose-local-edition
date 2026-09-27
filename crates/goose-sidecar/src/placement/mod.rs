@@ -5,6 +5,7 @@
 
 pub mod bench;
 pub mod chip;
+pub mod loads;
 pub mod model;
 pub mod planner;
 pub mod predict;
