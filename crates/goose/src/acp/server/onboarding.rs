@@ -171,10 +171,20 @@ fn import_failure_warning(
 
 fn goose_config_candidate_paths(config_dir: &Path) -> Vec<PathBuf> {
     let mut paths = vec![config_dir.join(CONFIG_YAML_NAME)];
-    if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".config").join("goose").join(CONFIG_YAML_NAME));
-    }
+    paths.extend(standard_goose_config_yaml());
     dedupe_paths(paths)
+}
+
+/// goose's own config.yaml in its standard place: goose's config dir under GOOSE_PATH_ROOT (Q-214: an
+/// isolated profile's onboarding offered to import the owner's `~/.config/goose` setup), and
+/// `~/.config/goose/config.yaml` unset, exactly the path it always probed.
+fn standard_goose_config_yaml() -> Option<PathBuf> {
+    match crate::config::paths::Paths::root_override() {
+        Some(_) => Some(crate::config::paths::Paths::in_config_dir(CONFIG_YAML_NAME)),
+        None => {
+            dirs::home_dir().map(|home| home.join(".config").join("goose").join(CONFIG_YAML_NAME))
+        }
+    }
 }
 
 fn claude_desktop_candidate_paths() -> Vec<PathBuf> {
@@ -704,5 +714,31 @@ extensions:
         assert_eq!(result.imported, 1);
         assert!(target.path().join("reviewer").join("SKILL.md").exists());
         assert!(!target.path().join("reviewer").join("loop").exists());
+    }
+
+    /// Q-214: under GOOSE_PATH_ROOT onboarding probes the profile's own config.yaml, never the
+    /// owner's `~/.config/goose/config.yaml`.
+    #[test]
+    fn onboarding_probes_the_goose_config_under_the_path_root() {
+        let root = TempDir::new().unwrap();
+        let server_config = TempDir::new().unwrap();
+        let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        let rooted = root.path().join("config").join(CONFIG_YAML_NAME);
+        let owner = dirs::home_dir()
+            .unwrap()
+            .join(".config")
+            .join("goose")
+            .join(CONFIG_YAML_NAME);
+
+        let paths = goose_config_candidate_paths(server_config.path());
+        assert_eq!(
+            paths,
+            vec![server_config.path().join(CONFIG_YAML_NAME), rooted.clone()]
+        );
+        assert!(!paths.contains(&owner), "{paths:?}");
+        assert_eq!(
+            goose_config_candidate_paths(&root.path().join("config")),
+            vec![rooted]
+        );
     }
 }
