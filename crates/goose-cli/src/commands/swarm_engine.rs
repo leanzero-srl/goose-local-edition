@@ -9,15 +9,21 @@
 //! AND a pool device is tagged for it, so an untagged pool stays byte-identical.
 
 use anyhow::{anyhow, bail, Context, Result};
+#[cfg(unix)]
 use goose::custom_requests::{NodesServingKind, NodesServingWayDto};
+#[cfg(unix)]
 use goose::nodes::{NodeDefKind, ResolvedNodeDef};
 use goose_sidecar::engine::{EngineSettings, MlxEngineManager};
+#[cfg(unix)]
 use goose_sidecar::holders::{self, HolderEntry, HolderKind, Registration};
+#[cfg(unix)]
 use goose_sidecar::machine::{LoadLock, LoadLockAttempt};
+#[cfg(unix)]
 use goose_sidecar::placement::store::PlacementKey;
 use goose_swarm::{DeviceCfg, DispatchRequest, EventSink};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::process::Command as ProcCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1099,15 +1105,25 @@ pub struct SidecarEngine {
     /// as "cannot answer" (see `note_probe_failure`).
     probe_failed_said: AtomicBool,
     absences: Mutex<Vec<serde_json::Value>>,
+    // The S8 holder side is unix-only, like everything it talks to: goose-sidecar's holder records
+    // are flocks (its `holders` and `placement` modules are `cfg(unix)`), and goosed's loader that
+    // reads and writes them (`acp::server::nodes_loader`) is `cfg(unix)` too. Off unix no goose
+    // window can hold this Mac's engine or see a build's record, so there is nothing to register
+    // and nothing to refuse for; and no engine can be started there to displace anything —
+    // `MlxEngineManager::mount` fails at this Mac's load lock ("unix account database" / "flock:
+    // unix only"), which `ensure_loaded` reports as `engine-mount-failed` with those words.
     /// This Mac's MLX holder directory (`holders::holders_dir`, S8): where the run registers as a
     /// holder of the engine, and where a mount reads who else holds it. `Err` names why the
     /// directory is unknown — then who holds the engine is unknown, never "nobody".
+    #[cfg(unix)]
     holders_dir: std::result::Result<PathBuf, String>,
     /// goose's `nodes` config, read at a mount: a `keepLoaded` MLX node the engine serves refuses
     /// a mount that would displace it. A fn so a test reads fixture nodes, never the real config.
+    #[cfg(unix)]
     nodes: fn() -> std::result::Result<Vec<ResolvedNodeDef>, String>,
     /// This run's `HolderKind::SwarmRun` record, kept for the engine object's life — the run's.
     /// Dropped with the engine it withdraws; a crash frees it through its flock.
+    #[cfg(unix)]
     holder: Mutex<Option<Registration>>,
 }
 
@@ -1116,6 +1132,7 @@ pub struct SidecarEngine {
 /// way, so it names one), or an unreadable record — which window's replies use the engine is then
 /// unknown, and nothing is displaced on a guess. A stale record (its process proven gone) and this
 /// process's own record hold nothing.
+#[cfg(unix)]
 fn goosed_reply_refusal(entries: &[HolderEntry], own_pid: u32) -> std::result::Result<(), String> {
     for entry in entries {
         match entry {
@@ -1153,6 +1170,7 @@ fn goosed_reply_refusal(entries: &[HolderEntry], own_pid: u32) -> std::result::R
 /// each read as this Mac's single the way goosed's residency reads a port it does not own
 /// (`served_repo` maps the configured alias back to its model), and matched by the residency
 /// rule itself (`names_way`).
+#[cfg(unix)]
 fn kept_loaded_refusal(
     kept: &[ResolvedNodeDef],
     served: &[String],
@@ -1185,6 +1203,7 @@ fn kept_loaded_refusal(
 /// The production nodes read: goose's `nodes` config as `nodes/read` resolves it. This Mac's name
 /// only names adopted pool nodes (never kept loaded); a failure to read it rides into the read as
 /// its named note.
+#[cfg(unix)]
 fn configured_nodes() -> std::result::Result<Vec<ResolvedNodeDef>, String> {
     let this_mac = match block_on_engine(goose::nodes::acp::this_mac_name()) {
         Ok(name) => name,
@@ -1238,6 +1257,7 @@ fn catalog_entries(json: &serde_json::Value) -> Vec<(String, Option<u64>)> {
 }
 
 impl SidecarEngine {
+    #[cfg(unix)]
     pub fn new(manager: Arc<MlxEngineManager>) -> Self {
         Self::with_holders(
             manager,
@@ -1246,6 +1266,18 @@ impl SidecarEngine {
         )
     }
 
+    #[cfg(not(unix))]
+    pub fn new(manager: Arc<MlxEngineManager>) -> Self {
+        let base_url = format!("http://127.0.0.1:{}", manager.settings().port);
+        Self {
+            manager,
+            base_url,
+            probe_failed_said: AtomicBool::new(false),
+            absences: Mutex::new(Vec::new()),
+        }
+    }
+
+    #[cfg(unix)]
     fn with_holders(
         manager: Arc<MlxEngineManager>,
         holders_dir: std::result::Result<PathBuf, String>,
@@ -1269,6 +1301,7 @@ impl SidecarEngine {
     /// engine's devices, the names it serves under. A failure is loud — the yellow stderr line and
     /// `swarm-holder-unregistered{dir, what, error}`, drained to run.jsonl with the probe absences:
     /// goose windows then cannot see this build and could switch the engine under it.
+    #[cfg(unix)]
     fn register_as_holder(&self, aliases: &[String]) {
         let pid = std::process::id();
         let served_as = aliases.join(", ");
@@ -1332,6 +1365,7 @@ impl SidecarEngine {
     /// switching); a goosed reply that is not waiting holds a way; a `keepLoaded` node is what the
     /// engine serves; or one of those is UNKNOWN (an unreadable directory, record, nodes config or
     /// catalog) — nothing is displaced on a guess.
+    #[cfg(unix)]
     fn clear_to_mount(
         &self,
         model_id: &str,
@@ -1410,6 +1444,7 @@ impl SidecarEngine {
 
     /// The ids this Mac's engine serves now. Nothing listening on its port (curl exit 7, a refused
     /// connection) is a proven "serves nothing", `Ok(empty)`; any other failure is `Err`.
+    #[cfg(unix)]
     fn served_ids_or_nothing_listening(&self) -> Result<Vec<String>> {
         let (url, out) = self.v1_models_output()?;
         if out.status.code() == Some(7) {
@@ -1540,6 +1575,8 @@ impl SwarmEngine for SidecarEngine {
         // rather than racing goosed's loader, and the device leaves the pool through the
         // MountFailure path (`engine-mount-failed` + `sidecar-device-excluded`). The swap claim is
         // held until this function returns — through the mount — so no loader switches meanwhile.
+        // Unix only, with the holder records (`SidecarEngine`'s fields say why off-unix has none).
+        #[cfg(unix)]
         let _swap_claim = match self.clear_to_mount(model_id, &hf_dir) {
             Ok(claim) => claim,
             Err(reason) => {
@@ -1672,6 +1709,7 @@ fn engines_for_run_with(
                 "  · mlx-sidecar engine registered at {} (provider omlx)",
                 sidecar.http_host()
             );
+            #[cfg(unix)]
             sidecar.register_as_holder(&aliases);
             engines.register_sidecar("mlx-sidecar", Arc::new(sidecar));
         }
