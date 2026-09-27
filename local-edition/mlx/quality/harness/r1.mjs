@@ -14,6 +14,7 @@ const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg >
 const work = `${dir}/work`; mkdirSync(work, { recursive: true });
 const STALL_FACTOR = 5; // ratio: of the median turn length measured in this soak
 const HANG_FACTOR = 15; // ratio: same; the soak.py hang rule of Step 1b used 10x a running median
+const AWAY_IDLE_POLLS = 3; // three 2-s polls with nothing served: a gap between calls or the turn end, never mid-stream
 const out = `${dir}/turns.tsv`;
 writeFileSync(out, 'turn\tstart\tend\tsecs\tended\ttools\trecalled\tchip\tcounter\tnotice\n');
 // What THIS turn added: the messages after the send, never the whole page (the smoke run matched an older
@@ -76,7 +77,7 @@ for (let turn = 0; turn < maxTurns; turn++) {
   await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
   const start = Date.now(); let lastChange = Date.now(); let prev = null; let ended = ''; let stallLogged = false;
   await p.waitForTimeout(3000);
-  let polls = 0; let away = false;
+  let polls = 0; let away = false; let idleAway = 0;
   while (true) {
     if (!chatUrl && (Date.now() - start) > 8000) chatUrl = p.url();
     // Every ~minute: does every surface agree that this session is live? (livecheck.mjs, Q-147)
@@ -90,7 +91,16 @@ for (let turn = 0; turn < maxTurns; turn++) {
     }
     // Someone else moved the view: nothing on screen is this turn's, so no done/stall verdict is taken from it.
     if (chatUrl && p.url() !== chatUrl) {
-      if (!away) { away = true; appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} VIEW_AWAY ${p.url().split('#')[1]}\n`); }
+      if (!away) { away = true; idleAway = 0; appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} VIEW_AWAY ${p.url().split('#')[1]}\n`); }
+      // Q-186: with the view away, the turn's end is invisible — #3i waited until a human navigated back.
+      // When the engine serves nothing for a few polls in a row, goose is between calls or done: go back
+      // to the chat, where the boundary can be read (a person on another page is only moved while idle).
+      const busy = await p.evaluate(async () => (await window.electron.mlxEngineActivity())?.stats?.numRunning ?? 0).catch(() => 1);
+      idleAway = busy ? 0 : idleAway + 1;
+      if (idleAway >= AWAY_IDLE_POLLS) {
+        await p.goto(chatUrl); await p.waitForTimeout(4000);
+        appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} VIEW_RETURNED engine idle ${idleAway} polls\n`);
+      }
       lastChange = Date.now(); await p.waitForTimeout(2000); continue;
     }
     away = false;
