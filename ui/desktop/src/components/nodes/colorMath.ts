@@ -91,9 +91,7 @@ export function ciede2000Lab(
   const sC = 1 + 0.045 * cMeanP;
   const sH = 1 + 0.015 * cMeanP * t;
   const rT = -Math.sin(2 * dTheta * RAD) * rC;
-  return Math.sqrt(
-    (dL / sL) ** 2 + (dC / sC) ** 2 + (dH / sH) ** 2 + rT * (dC / sC) * (dH / sH)
-  );
+  return Math.sqrt((dL / sL) ** 2 + (dC / sC) ** 2 + (dH / sH) ** 2 + rT * (dC / sC) * (dH / sH));
 }
 
 export function ciede2000(a: string, b: string): number {

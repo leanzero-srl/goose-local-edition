@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  BookmarkPlus,
-  Gauge,
-  Loader2,
-  Network,
-  Play,
-  RefreshCw,
-  Square,
-  Zap,
-} from 'lucide-react';
+import { BookmarkPlus, Gauge, Loader2, Network, Play, RefreshCw, Square, Zap } from 'lucide-react';
 import {
   Button,
   Chip,
@@ -685,7 +676,6 @@ export function tooSmallForLive(
   if (servesNow || candidate?.fit.context == null || liveContextTokens == null) return false;
   return candidate.fit.context < liveContextTokens;
 }
-
 
 interface PlacementCardProps {
   modelId: string;
@@ -1453,10 +1443,7 @@ function PlacementCardBody({
             {intl.formatMessage(saved.already ? i18n.alreadyNode : i18n.savedAs, {
               name: saved.name,
             })}{' '}
-            <a
-              className="underline"
-              href={`#${nodeHref(saved.id)}`}
-            >
+            <a className="underline" href={`#${nodeHref(saved.id)}`}>
               {intl.formatMessage(i18n.openInNodes)}
             </a>
           </p>

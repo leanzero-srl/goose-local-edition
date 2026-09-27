@@ -116,12 +116,7 @@ import { useFeatures } from '../../contexts/FeaturesContext';
 import { defineMessages, useIntl } from '../../i18n';
 import { mlxEngineServing } from '../chatServedBy/chatServedBy';
 import LeanZeroLinkSection from './LeanZeroLinkSection';
-import {
-  MlxSetupStrip,
-  setupNodeFacts,
-  type SetupFacts,
-  type SetupTarget,
-} from './MlxSetupStrip';
+import { MlxSetupStrip, setupNodeFacts, type SetupFacts, type SetupTarget } from './MlxSetupStrip';
 import { useGlanceNodes } from '../engineGlance/glanceStore';
 import type { MlxTab } from '../../utils/navigationUtils';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
@@ -2433,11 +2428,7 @@ interface MlxEngineViewProps {
   onOpenNodes?: () => void;
 }
 
-function MlxEngineViewBody({
-  tab: routedTab,
-  onTabChange,
-  onOpenNodes,
-}: MlxEngineViewProps) {
+function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngineViewProps) {
   const [ownTab, setOwnTab] = useState<MlxTab>('engine');
   const [saveRunningPending, setSaveRunningPending] = useState(false);
   const onSaveRunningHandled = useCallback(() => setSaveRunningPending(false), []);

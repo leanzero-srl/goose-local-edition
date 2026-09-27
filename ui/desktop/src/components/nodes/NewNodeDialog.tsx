@@ -587,7 +587,8 @@ function NewNodeDialogBody({
 
   const plan = wayPlans.kind === 'read' && model ? (wayPlans.plans.get(model) ?? null) : null;
   const { ways } = waysOf(plan, macs.macs, false);
-  const plannedWays: Way[] = plan && !plan.error ? ways : [];
+  // Only the rows goose planned: with no candidate there is no guessed row (§8.3).
+  const plannedWays: Way[] = plan && !plan.error ? ways.filter((w) => w.candidate != null) : [];
   const wayStep = (
     <div className="flex flex-col gap-3" data-testid="new-node-way">
       <div className="flex flex-wrap items-center justify-between gap-2">

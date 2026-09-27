@@ -1,16 +1,6 @@
 import type { ReactNode } from 'react';
 import type { IntlShape } from 'react-intl';
-import {
-  Chip,
-  RADIUS,
-  SURFACE,
-  TNUM,
-  TONE_TEXT,
-  TYPE,
-  WEIGHT,
-  cx,
-  type EnginePhase,
-} from '../lz';
+import { Chip, RADIUS, SURFACE, TNUM, TONE_TEXT, TYPE, WEIGHT, cx, type EnginePhase } from '../lz';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   goalFigure,
@@ -540,7 +530,10 @@ export function PlacementCandidates({
         // split that reads faster but writes slower wins only when the turn's answer is short enough.
         const isBest = c != null && plan?.best === c.id && !tooSmall;
         const isBestNow =
-          c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== plan.best && !tooSmall;
+          c != null &&
+          plan?.bestAvailable === c.id &&
+          plan.bestAvailable !== plan.best &&
+          !tooSmall;
         const why = wayWhy(intl, plan, way);
         const picked = pick != null && pick.selected === way.key;
         const onPick = pick != null && wayPickable(way) ? pick.onSelect : null;

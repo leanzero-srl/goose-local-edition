@@ -57,7 +57,8 @@ describe('the node palette', () => {
       for (let i = 0; i < fills.length; i++) {
         for (let j = i + 1; j < fills.length; j++) {
           const d = ciede2000(fills[i].fill.fill, fills[j].fill.fill);
-          if (d < MIN_DISTANCE) close.push(`${fills[i].owner} ~ ${fills[j].owner}: ${d.toFixed(1)}`);
+          if (d < MIN_DISTANCE)
+            close.push(`${fills[i].owner} ~ ${fills[j].owner}: ${d.toFixed(1)}`);
         }
       }
       expect(close).toEqual([]);
