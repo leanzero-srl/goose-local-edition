@@ -83,7 +83,15 @@ export interface StartGooseServeOptions extends FindGooseBinaryOptions {
   logger?: Logger;
   diagnosticsDir?: string;
   readinessFetch?: ReadinessFetch;
+  /** The SIGTERM → SIGKILL window; GOOSED_SIGKILL_AFTER_MS unless a test shortens it. */
+  sigkillAfterMs?: number;
 }
+
+// goosed follows the app that started it: this flag arms its stdin watch, and the pipe below
+// is the other end. The kernel closes it however this process ends — a quit whose handlers
+// never ran, a crash, SIGKILL — so goosed tears down and exits instead of living on as an
+// orphan (Q-223: goosed 10891 outlived its app by 1h22m and kept the mesh daemon).
+export const GOOSED_FOLLOWS_PARENT_ARG = '--exit-when-stdin-closes';
 
 export interface GooseServeResult {
   acpUrl: string;
@@ -420,6 +428,7 @@ export const startGooseServe = async ({
   logger = defaultLogger,
   diagnosticsDir,
   readinessFetch = fetch,
+  sigkillAfterMs = GOOSED_SIGKILL_AFTER_MS,
 }: StartGooseServeOptions): Promise<GooseServeResult> => {
   const workingDir = dir || process.cwd();
   const startupTrace = createGooseServeStartupDiagnostics(diagnosticsDir, workingDir);
@@ -457,6 +466,7 @@ export const startGooseServe = async ({
     '127.0.0.1',
     '--port',
     String(port),
+    GOOSED_FOLLOWS_PARENT_ARG,
   ];
 
   logger.info(`Starting goose serve from: ${goosePath} on port ${port} in dir ${workingDir}`);
@@ -489,10 +499,15 @@ export const startGooseServe = async ({
     // unref'd), so the group is still fully managed by this process.
     detached: true,
     shell: false as const,
-    stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+    // stdin is a pipe this process NEVER writes to and never ends: its only job is to close when this
+    // process is gone (GOOSED_FOLLOWS_PARENT_ARG). 'ignore' would hand goosed /dev/null — EOF at once.
+    stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'],
   };
 
   const gooseProcess = spawn(goosePath, args, spawnOptions);
+  gooseProcess.stdin?.on('error', (error) =>
+    logger.error(`goose serve stdin (the parent-watch pipe) failed: ${error}`)
+  );
   if (startupTrace) {
     startupTrace.diagnostics.pid = gooseProcess.pid ?? null;
     startupTrace.record('spawn_success', { pid: gooseProcess.pid ?? null });
@@ -633,24 +648,27 @@ export const startGooseServe = async ({
     startupTrace?.record('spawn_error', { message: error.message, name: error.name });
   });
 
-  const cleanup = async (): Promise<void> => {
-    return new Promise<void>((resolve) => {
-      if (exited || gooseProcess.killed) {
+  // The stop resolves on goosed's own EXIT — its teardown has run by then (the mesh daemon and the
+  // engine stopped) — never on a guess. The SIGKILL leg fires only when that exit has not come within
+  // the supervisors' own summed grace (sigkillAfterMs), and the stop then waits for the exit the
+  // SIGKILL causes. One stop per process: a second caller (a window's release racing the app's quit)
+  // waits on the same exit instead of returning early — the old `gooseProcess.killed` early return
+  // let the quit path finish before goosed had (Q-223).
+  let stopping: Promise<void> | null = null;
+  const cleanup = (): Promise<void> => {
+    if (stopping) return stopping;
+    stopping = new Promise<void>((resolve) => {
+      if (exited || spawnFailed) {
         resolve();
         return;
       }
+      let sigkillTimer: ReturnType<typeof setTimeout> | null = null;
+      gooseProcess.once('exit', () => {
+        if (sigkillTimer) clearTimeout(sigkillTimer);
+        resolve();
+      });
 
-      let resolved = false;
-      const finish = () => {
-        if (!resolved) {
-          resolved = true;
-          resolve();
-        }
-      };
-
-      gooseProcess.once('close', finish);
-
-      logger.info('Terminating goose serve');
+      logger.info(`Terminating goose serve (pid ${gooseProcess.pid ?? '?'})`);
       try {
         if (process.platform === 'win32') {
           if (gooseProcess.pid) {
@@ -663,13 +681,17 @@ export const startGooseServe = async ({
         logger.error('Error while terminating goose serve process:', error);
       }
 
-      setTimeout(() => {
-        if (!exited && !gooseProcess.killed && process.platform !== 'win32') {
+      if (process.platform !== 'win32') {
+        sigkillTimer = setTimeout(() => {
+          if (exited) return;
+          logger.error(
+            `goose serve (pid ${gooseProcess.pid ?? '?'}) did not exit within ${sigkillAfterMs} ms of SIGTERM — its teardown outlived every supervisor's grace; sending SIGKILL`
+          );
           killGroupOrProcess(gooseProcess, 'SIGKILL');
-        }
-        finish();
-      }, GOOSED_SIGKILL_AFTER_MS);
+        }, sigkillAfterMs);
+      }
     });
+    return stopping;
   };
 
   const ready = await waitForGooseServeReady(statusUrl, errorLog, () => exited || spawnFailed, {

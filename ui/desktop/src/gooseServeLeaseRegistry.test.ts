@@ -124,4 +124,78 @@ describe('GooseServeLeaseRegistry', () => {
     await store.releaseWindow(2);
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
+
+  // Q-223: on quit the window's `closed` releases its lease first (not awaited — it cannot be) and
+  // that removes the lease from the map; the old will-quit then counted zero leases and let the app
+  // exit while goosed was still tearing down. The quit must find the stop already under way.
+  it('makes the quit wait for a stop a window release already started', async () => {
+    let exitGoosed!: () => void;
+    const goosedExited = new Promise<void>((resolve) => {
+      exitGoosed = resolve;
+    });
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const lease = store.create(createGooseServeResult({ cleanup: () => goosedExited }), 's');
+    store.attachWindow(1, lease);
+
+    void store.releaseWindow(1);
+    expect(store.activeLeaseCount()).toBe(0);
+    expect(store.hasBackendsToStop()).toBe(true);
+
+    let quitMayProceed = false;
+    const quit = store.stopAllAndWait().then(() => {
+      quitMayProceed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(quitMayProceed).toBe(false);
+
+    exitGoosed();
+    await quit;
+    expect(quitMayProceed).toBe(true);
+    expect(store.hasBackendsToStop()).toBe(false);
+  });
+
+  it('stops attached backends on quit and waits for each to exit', async () => {
+    const exits: (() => void)[] = [];
+    const cleanups = [0, 1].map(() =>
+      vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            exits.push(resolve);
+          })
+      )
+    );
+    const store = new GooseServeLeaseRegistry(createLogger());
+    cleanups.forEach((cleanup, windowId) =>
+      store.attachWindow(windowId, store.create(createGooseServeResult({ cleanup }), 's'))
+    );
+
+    let done = false;
+    const quit = store.stopAllAndWait().then(() => {
+      done = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cleanups.map((c) => c.mock.calls.length)).toEqual([1, 1]);
+    exits[0]();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(done).toBe(false);
+    exits[1]();
+    await quit;
+    expect(done).toBe(true);
+  });
+
+  it('a failed stop is logged and never holds the quit forever', async () => {
+    const logger = createLogger();
+    const store = new GooseServeLeaseRegistry(logger);
+    const lease = store.create(
+      createGooseServeResult({ cleanup: async () => Promise.reject(new Error('EPERM')) }),
+      's'
+    );
+    store.attachWindow(1, lease);
+    await store.stopAllAndWait();
+    expect(logger.error).toHaveBeenCalledWith(
+      'Failed to cleanup goose serve backend:',
+      expect.any(Error)
+    );
+    expect(store.hasBackendsToStop()).toBe(false);
+  });
 });
