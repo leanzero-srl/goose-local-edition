@@ -76,7 +76,10 @@ async fn a_stump_title_is_retried_at_the_end_of_a_completed_turn() -> Result<()>
             "Sure.",
         ),
         ("Remind me what inactive cutoff we settled on", "24 months."),
-        ("Draft the email to Aoife that goes with the PDF", "Drafted."),
+        (
+            "Draft the email to Aoife that goes with the PDF",
+            "Drafted.",
+        ),
     ] {
         manager
             .add_message(&session.id, &Message::user().with_text(prompt))
