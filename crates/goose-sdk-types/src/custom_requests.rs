@@ -1528,6 +1528,12 @@ pub struct UpdateSourceRequest {
     /// should omit this so per-skill metadata isn't silently erased.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub properties: Option<std::collections::HashMap<String, serde_json::Value>>,
+    /// The project folder the client listed the source under (`sources/list`'s `projectDir`). An
+    /// agent is touched only when it lies in a folder that listing offers — global agent folders,
+    /// this project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the
+    /// global and extra folders (Q-213).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -1544,6 +1550,12 @@ pub struct DeleteSourceRequest {
     #[serde(rename = "type")]
     pub source_type: SourceType,
     pub path: String,
+    /// The project folder the client listed the source under (`sources/list`'s `projectDir`). An
+    /// agent is touched only when it lies in a folder that listing offers — global agent folders,
+    /// this project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the
+    /// global and extra folders (Q-213).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
 }
 
 /// Export a source at an absolute path as a portable JSON payload.
@@ -1554,6 +1566,12 @@ pub struct ExportSourceRequest {
     #[serde(rename = "type")]
     pub source_type: SourceType,
     pub path: String,
+    /// The project folder the client listed the source under (`sources/list`'s `projectDir`). An
+    /// agent is touched only when it lies in a folder that listing offers — global agent folders,
+    /// this project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the
+    /// global and extra folders (Q-213).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]

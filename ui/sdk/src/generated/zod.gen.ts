@@ -2240,6 +2240,10 @@ export const zUpdateSourceRequest_unstable = z.object({
     properties: z.union([
         z.record(z.unknown()),
         z.null()
+    ]).optional(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
     ]).optional()
 });
 
@@ -2252,7 +2256,11 @@ export const zUpdateSourceResponse_unstable = z.object({
  */
 export const zDeleteSourceRequest_unstable = z.object({
     type: zSourceType,
-    path: z.string()
+    path: z.string(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 /**
@@ -2260,7 +2268,11 @@ export const zDeleteSourceRequest_unstable = z.object({
  */
 export const zExportSourceRequest_unstable = z.object({
     type: zSourceType,
-    path: z.string()
+    path: z.string(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zExportSourceResponse_unstable = z.object({
