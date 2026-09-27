@@ -20,8 +20,15 @@ pub fn format_installed_skills(working_dir: Option<&Path>) -> String {
     if skills.is_empty() {
         output.push_str("No skills installed.\n\n");
         output.push_str("Skills are loaded from SKILL.md files in:\n");
-        output.push_str("  - ~/.agents/skills/ (global)\n");
-        output.push_str("  - ~/.agents/plugins/*/skills/ (installed plugins)\n");
+        let plugins = crate::skills::display_home_relative(
+            &crate::config::paths::Paths::plugins_dir(),
+            dirs::home_dir().as_deref(),
+        );
+        output.push_str(&format!(
+            "  - {}/ (global)\n",
+            crate::skills::global_skills_dir_display()
+        ));
+        output.push_str(&format!("  - {plugins}/*/skills/ (installed plugins)\n"));
         output.push_str("  - .agents/skills/ (in current project)\n");
     } else {
         output.push_str(&format!("**Installed skills ({}):**\n\n", skills.len()));

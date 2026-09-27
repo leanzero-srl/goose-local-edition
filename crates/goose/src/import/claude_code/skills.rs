@@ -37,10 +37,7 @@ pub fn plan_skills(opts: &ImportOptions, plan: &mut ImportPlan) -> Result<()> {
             None => continue,
         };
         let (description, _body) = parse_skill_frontmatter(&fs::read_to_string(&skill_md)?);
-        let target = target_root
-            .as_ref()
-            .map(|t| t.join(&name).display().to_string())
-            .unwrap_or_else(|| format!("~/.agents/skills/{name}"));
+        let target = target_root.join(&name).display().to_string();
 
         plan.push(Action {
             import_type: ImportType::Skills,

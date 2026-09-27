@@ -27,7 +27,7 @@ const skill = (over: Record<string, unknown> = {}) =>
 
 describe('the skill prompt states the folder it was given, never an assumed one', () => {
   it('a folder holding only SKILL.md is said to hold nothing else — no "sibling references"', () => {
-    const p = askAboutSkillPrompt(skill(), '/Users/me');
+    const p = askAboutSkillPrompt(skill(), '/Users/me', '~/.agents/skills');
     expect(p).toContain('the file /Users/me/.agents/skills/release-checklist/SKILL.md');
     expect(p).not.toContain('the file /Users/me/.agents/skills/release-checklist —');
     expect(p).toContain('found no other files');
@@ -52,7 +52,8 @@ describe('the skill prompt states the folder it was given, never an assumed one'
           '/w/proj/.agents/skills/deploy/docs/gotchas.md',
         ],
       }),
-      '/w/proj'
+      '/w/proj',
+      '~/.agents/skills'
     );
     expect(p).toContain('found 2 other files: docs/gotchas.md, scripts/ship.sh.');
     expect(p).toContain('Open a file before you say anything about what it holds.');
@@ -63,7 +64,11 @@ describe('the skill prompt states the folder it was given, never an assumed one'
 
   it('a very large folder names a bounded list and counts the rest', () => {
     const files = Array.from({ length: 75 }, (_, i) => `/s/big/f${String(i).padStart(2, '0')}.md`);
-    const p = askAboutSkillPrompt(skill({ path: '/s/big', supportingFiles: files }), '/w');
+    const p = askAboutSkillPrompt(
+      skill({ path: '/s/big', supportingFiles: files }),
+      '/w',
+      '~/.agents/skills'
+    );
     expect(p).toContain('found 75 other files');
     expect(p).toContain('f59.md, and 15 more not named here');
     expect(p).not.toContain('f60.md');
@@ -76,7 +81,8 @@ describe('the skill prompt states the folder it was given, never an assumed one'
         path: 'builtin://skills/goose-doc-guide',
         name: 'goose-doc-guide',
       }),
-      '/w'
+      '/w',
+      '~/.agents/skills'
     );
     expect(p).toContain('there is no file on disk');
     expect(p).toContain('load_skill with the name "goose-doc-guide"');
@@ -85,9 +91,19 @@ describe('the skill prompt states the folder it was given, never an assumed one'
   });
 
   it('a persona says which part the swarm rewrites and where a lasting change goes', () => {
-    const p = askAboutSkillPrompt(skill({ path: '/c/goose/skills/stack-python-fastapi' }), '/w');
+    const p = askAboutSkillPrompt(
+      skill({ path: '/c/goose/skills/stack-python-fastapi' }),
+      '/w',
+      '~/.agents/skills'
+    );
     expect(p).toContain('goose wrote this skill about itself');
     expect(p).toContain('"## Your notes" heading');
+  });
+
+  it('a fork goes where goose reads global skills — the root under GOOSE_PATH_ROOT (Q-188)', () => {
+    const p = askAboutSkillPrompt(skill(), '/Users/me', '/tmp/profile/.agents/skills');
+    expect(p).toContain('a global skill goes in /tmp/profile/.agents/skills/<new-name>/SKILL.md');
+    expect(p).not.toContain('~/.agents/skills');
   });
 });
 

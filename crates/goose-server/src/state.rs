@@ -38,7 +38,7 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(_tls: bool) -> anyhow::Result<Arc<AppState>> {
-        register_builtin_extensions(goose_mcp::BUILTIN_EXTENSIONS.clone());
+        register_builtin_extensions(goose::builtin_extension::builtin_extensions());
 
         let agent_manager = AgentManager::instance().await?;
         let (session_delta_tap, _) = tokio::sync::broadcast::channel(SESSION_DELTA_TAP_CAPACITY);

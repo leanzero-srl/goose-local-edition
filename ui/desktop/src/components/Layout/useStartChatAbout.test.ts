@@ -85,7 +85,8 @@ describe('chatAboutTitle', () => {
             type: 'skill',
             global: true,
           } as never,
-          '/Users/me'
+          '/Users/me',
+          '~/.agents/skills'
         )
       )
     ).toBe('Skill · goose-feature-dev');

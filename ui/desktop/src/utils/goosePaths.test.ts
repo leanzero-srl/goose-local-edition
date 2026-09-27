@@ -5,10 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { benchmarkProfileDirectory } from '../benchProfile';
 import {
   agentWorkRegistryPath,
+  gooseAgentsHomeFor,
   gooseConfigYamlPath,
   gooseDirs,
   gooseGlobalMemoryDir,
+  gooseGlobalSkillsDir,
   gooseMemoryProposalsDir,
+  homeRelative,
   resolveGoosePathRoot,
 } from './goosePaths';
 import { defaultGooseConfigPath } from './mainBrand';
@@ -67,6 +70,38 @@ describe('goose paths under GOOSE_PATH_ROOT (Q-183, mirrors crates/goose/src/con
       expect(benchmarkProfileDirectory(home, resolveGoosePathRoot())).toBe(
         path.join(home, '.config', 'goose', 'benchmark')
       );
+      expect(gooseGlobalSkillsDir()).toBe(path.join(home, '.agents', 'skills'));
+      expect(homeRelative(gooseGlobalSkillsDir(), home)).toBe('~/.agents/skills');
     }
+  });
+});
+
+describe('global skills under GOOSE_PATH_ROOT (Q-188, mirrors Paths::agents_home_dir)', () => {
+  it('hangs .agents from the root, and from the home folder only when unset', () => {
+    expect(gooseAgentsHomeFor('/Users/me', '/tmp/profile')).toBe(
+      path.join('/tmp/profile', '.agents')
+    );
+    expect(gooseAgentsHomeFor('/Users/me', undefined)).toBe(path.join('/Users/me', '.agents'));
+  });
+
+  it('the global skills dir follows the root the process was given', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goose-path-root-'));
+    vi.stubEnv('GOOSE_PATH_ROOT', root);
+    expect(gooseGlobalSkillsDir()).toBe(path.join(root, '.agents', 'skills'));
+    expect(gooseGlobalSkillsDir().startsWith(path.join(os.homedir(), '.agents'))).toBe(false);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('shows a path under the home folder with a tilde, and any other path whole', () => {
+    expect(homeRelative('/Users/me/.agents/skills', '/Users/me')).toBe('~/.agents/skills');
+    expect(homeRelative('/Users/me/profiles/a/.agents/skills', '/Users/me')).toBe(
+      '~/profiles/a/.agents/skills'
+    );
+    expect(homeRelative('/tmp/profile/.agents/skills', '/Users/me')).toBe(
+      '/tmp/profile/.agents/skills'
+    );
+    expect(homeRelative('/Users/meadow/.agents/skills', '/Users/me')).toBe(
+      '/Users/meadow/.agents/skills'
+    );
   });
 });

@@ -10,7 +10,7 @@ use goose::posthog::get_telemetry_choice;
 use goose::recipe::Recipe;
 use goose::source_roots::SourceRoot;
 use goose_mcp::mcp_server_runner::{serve, McpCommand};
-use goose_mcp::{AutoVisualiserRouter, ComputerControllerServer, MemoryServer, TutorialServer};
+use goose_mcp::{AutoVisualiserRouter, ComputerControllerServer, TutorialServer};
 
 #[cfg(feature = "telemetry")]
 use crate::commands::configure::configure_telemetry_consent_dialog;
@@ -1432,10 +1432,7 @@ async fn handle_mcp_command(server: McpCommand) -> Result<()> {
     match server {
         McpCommand::AutoVisualiser => serve(AutoVisualiserRouter::new()).await?,
         McpCommand::ComputerController => serve(ComputerControllerServer::new()).await?,
-        McpCommand::Memory => {
-            let proposals = goose::config::Config::global().memory_proposals_enabled();
-            serve(MemoryServer::with_proposals(proposals)).await?
-        }
+        McpCommand::Memory => serve(goose::builtin_extension::memory_server()).await?,
         McpCommand::Tutorial => serve(TutorialServer::new()).await?,
     }
     Ok(())
@@ -2401,7 +2398,7 @@ async fn handle_default_session() -> Result<()> {
 }
 
 pub async fn cli() -> anyhow::Result<()> {
-    register_builtin_extensions(goose_mcp::BUILTIN_EXTENSIONS.clone());
+    register_builtin_extensions(goose::builtin_extension::builtin_extensions());
 
     let cli = Cli::parse();
 

@@ -8,6 +8,7 @@ import { addConfigExtension } from '../../../acp/extensions';
 import { acpUpsertConfig, acpReadConfig } from '../../../acp/config';
 import type { ExtensionConfig } from '../../../types/extensions';
 import { getInitialWorkingDir } from '../../../utils/workingDir';
+import { getGlobalSkillsDir } from '../../../utils/globalSkillsDir';
 import GooseImportSection from './GooseImportSection';
 
 /**
@@ -64,7 +65,7 @@ function parseFrontmatter(text: string): { fm: Record<string, string>; body: str
         block.push(lines[j]);
         j += 1;
       }
-      const indents = block.filter((l) => l.trim()).map((l) => (l.match(/^(\s*)/)?.[1].length ?? 0));
+      const indents = block.filter((l) => l.trim()).map((l) => l.match(/^(\s*)/)?.[1].length ?? 0);
       const minIndent = indents.length ? Math.min(...indents) : 0;
       const dedented = block.map((l) => l.slice(minIndent));
       fm[key] =
@@ -121,12 +122,20 @@ async function ensureCopiedSkillHasName(
   await window.electron.writeFile(skillMdPath, next);
 }
 
-/** Where an imported skill lands, mirroring importSelectedSkills' destBase. */
-function skillDest(scope: 'global' | 'project', projectDir: string, slug: string): string {
-  return scope === 'global' ? `~/.agents/skills/${slug}` : `${projectDir}/.agents/skills/${slug}`;
+/** The folder an import writes to: goose's global skills dir (Q-188: under GOOSE_PATH_ROOT, the root's) or the project's. */
+function skillDestBase(scope: 'global' | 'project', projectDir: string): string {
+  return scope === 'global' ? getGlobalSkillsDir() : `${projectDir}/.agents/skills`;
 }
 
-async function scanClaudeSkills(scope: 'global' | 'project', projectDir: string): Promise<ClaudeSkill[]> {
+/** Where an imported skill lands — the same base importSelectedSkills copies into. */
+function skillDest(scope: 'global' | 'project', projectDir: string, slug: string): string {
+  return `${skillDestBase(scope, projectDir)}/${slug}`;
+}
+
+async function scanClaudeSkills(
+  scope: 'global' | 'project',
+  projectDir: string
+): Promise<ClaudeSkill[]> {
   const names = await window.electron.listFiles(CLAUDE_SKILLS_DIR).catch(() => [] as string[]);
   const skills: ClaudeSkill[] = [];
   const usedSlugs = new Set<string>();
@@ -209,7 +218,8 @@ async function scanClaudeMcp(): Promise<{ servers: McpServerScan[]; parseError: 
           ? 'http'
           : 'stdio';
     // Not importable unless the transport's mandatory field is present (stdio needs command, http needs url).
-    const usable = transport === 'stdio' ? Boolean(command) : transport === 'http' ? Boolean(url) : false;
+    const usable =
+      transport === 'stdio' ? Boolean(command) : transport === 'http' ? Boolean(url) : false;
     return {
       name,
       transport,
@@ -307,7 +317,7 @@ export default function ImportView() {
       scope === 'global'
         ? ({ scope: 'global' } as const)
         : ({ scope: 'projectDir', projectDir } as const);
-    const destBase = scope === 'global' ? '~/.agents/skills' : `${projectDir}/.agents/skills`;
+    const destBase = skillDestBase(scope, projectDir);
 
     setImporting(true);
     const chosen = skills.filter((s) => selected.has(s.dirName));
@@ -482,7 +492,10 @@ export default function ImportView() {
     <div className="space-y-4 pr-4 pb-8 max-w-3xl">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2">
-          <span className="flex items-center justify-center h-6 w-6" style={{ backgroundColor: AZURE }}>
+          <span
+            className="flex items-center justify-center h-6 w-6"
+            style={{ backgroundColor: AZURE }}
+          >
             <LeanZero className="h-4 w-4 text-white" />
           </span>
           <div>
@@ -516,7 +529,7 @@ export default function ImportView() {
               } ${i > 0 ? 'border-l border-border-primary' : ''}`}
               style={{ backgroundColor: scope === s ? AZURE : 'transparent' }}
             >
-              {s === 'global' ? 'Global (~/.agents/skills)' : 'This project'}
+              {s === 'global' ? `Global (${getGlobalSkillsDir()})` : 'This project'}
             </button>
           ))}
         </div>
@@ -533,164 +546,181 @@ export default function ImportView() {
         </div>
       ) : (
         <>
-        {mcpParseError && (
-          <div
-            className="flex items-center gap-2 text-xs px-3 py-2 border border-border-primary"
-            style={{ color: '#f5a623', borderRadius: 3 }}
-          >
-            <FileWarning className="h-4 w-4 shrink-0" />
-            ~/.claude.json is present but couldn't be parsed — MCP servers may be hidden. Fix the JSON and
-            Rescan.
-          </div>
-        )}
-        {skills.length > 0 && (
-        <SectionCard title="Skills" count={skills.length}>
-          <div className="px-3 py-1 divide-y divide-border-primary">
-            {skills.map((skill) => {
-              const isSel = selected.has(skill.dirName);
-              const res = results[skill.dirName];
-              return (
-                <div key={skill.dirName} className="flex items-center gap-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-text-primary truncate">{skill.displayName}</span>
-                      {skill.supportingCount > 0 && (
-                        <span
-                          className="text-[10px] text-text-secondary flex items-center gap-0.5 shrink-0"
-                          title={`${skill.supportingCount} supporting files — copied as a directory`}
-                        >
-                          <FileWarning className="h-3 w-3" />
-                          {skill.supportingCount} files
-                        </span>
-                      )}
-                      {/* Say what is actually out of date. "already present" was true and useless: the copy
-                          in goose sat twelve days behind its source and the word for that is not "present". */}
-                      {skill.drift?.exists &&
-                        (skill.drift.added + skill.drift.changed > 0 ? (
-                          <span
-                            className="text-[10px] font-bold px-1.5 py-0.5 shrink-0 bg-[#b45309] text-white"
-                            title={`${skill.drift.added} new file(s), ${skill.drift.changed} changed since the last import — importing will update them`}
-                          >
-                            {skill.drift.added + skill.drift.changed} OUT OF DATE
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-text-tertiary shrink-0">up to date</span>
-                        ))}
-                    </div>
-                    {skill.description && (
-                      <div className="text-xs text-text-secondary truncate">{skill.description}</div>
-                    )}
-                  </div>
-                  <div className="w-6 flex justify-center shrink-0">{res ? STATUS_ICON[res.status] : null}</div>
-                  <Switch checked={isSel} onCheckedChange={() => toggle(skill.dirName)} variant="mono" />
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex items-center justify-between px-3 py-2 border-t border-border-primary">
-            <span className="text-xs text-text-secondary">{selectedCount} selected</span>
-            <button
-              onClick={() => void importSelectedSkills()}
-              disabled={importing || selectedCount === 0}
-              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-              style={{ backgroundColor: AZURE, borderRadius: 3 }}
+          {mcpParseError && (
+            <div
+              className="flex items-center gap-2 text-xs px-3 py-2 border border-border-primary"
+              style={{ color: '#f5a623', borderRadius: 3 }}
             >
-              {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              Import {selectedCount} skill{selectedCount === 1 ? '' : 's'}
-            </button>
-          </div>
-        </SectionCard>
-        )}
-
-        {mcpServers.length > 0 && (
-          <SectionCard title="MCP servers" count={mcpServers.length}>
-            <div className="px-3 py-1 divide-y divide-border-primary">
-              {mcpServers.map((srv) => {
-                const isSel = selectedMcp.has(srv.name) && srv.supported;
-                const res = results[`mcp:${srv.name}`];
-                const detail =
-                  srv.transport === 'http'
-                    ? srv.url
-                    : `${srv.command ?? ''} ${srv.args.join(' ')}`.trim();
-                return (
-                  <div key={srv.name} className="flex items-center gap-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-text-primary truncate">{srv.name}</span>
-                        <span className="text-[10px] text-text-secondary shrink-0">{srv.transport}</span>
-                        {!srv.supported && (
-                          <span className="text-[10px] shrink-0" style={{ color: '#ff3b30' }}>
-                            unsupported (sse)
+              <FileWarning className="h-4 w-4 shrink-0" />
+              ~/.claude.json is present but couldn't be parsed — MCP servers may be hidden. Fix the
+              JSON and Rescan.
+            </div>
+          )}
+          {skills.length > 0 && (
+            <SectionCard title="Skills" count={skills.length}>
+              <div className="px-3 py-1 divide-y divide-border-primary">
+                {skills.map((skill) => {
+                  const isSel = selected.has(skill.dirName);
+                  const res = results[skill.dirName];
+                  return (
+                    <div key={skill.dirName} className="flex items-center gap-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-text-primary truncate">
+                            {skill.displayName}
                           </span>
-                        )}
-                        {(Object.keys(srv.envValues).length > 0 ||
-                          Object.values(srv.headers).some(Boolean)) && (
-                          <span
-                            className="text-[10px] text-text-secondary shrink-0"
-                            title="env/header values are imported into the keyring as secrets"
-                          >
-                            sets secrets
-                          </span>
+                          {skill.supportingCount > 0 && (
+                            <span
+                              className="text-[10px] text-text-secondary flex items-center gap-0.5 shrink-0"
+                              title={`${skill.supportingCount} supporting files — copied as a directory`}
+                            >
+                              <FileWarning className="h-3 w-3" />
+                              {skill.supportingCount} files
+                            </span>
+                          )}
+                          {/* Say what is actually out of date. "already present" was true and useless: the copy
+                          in goose sat twelve days behind its source and the word for that is not "present". */}
+                          {skill.drift?.exists &&
+                            (skill.drift.added + skill.drift.changed > 0 ? (
+                              <span
+                                className="text-[10px] font-bold px-1.5 py-0.5 shrink-0 bg-[#b45309] text-white"
+                                title={`${skill.drift.added} new file(s), ${skill.drift.changed} changed since the last import — importing will update them`}
+                              >
+                                {skill.drift.added + skill.drift.changed} OUT OF DATE
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-text-tertiary shrink-0">
+                                up to date
+                              </span>
+                            ))}
+                        </div>
+                        {skill.description && (
+                          <div className="text-xs text-text-secondary truncate">
+                            {skill.description}
+                          </div>
                         )}
                       </div>
-                      {detail && (
-                        <div className="text-xs text-text-secondary truncate font-mono">{detail}</div>
-                      )}
+                      <div className="w-6 flex justify-center shrink-0">
+                        {res ? STATUS_ICON[res.status] : null}
+                      </div>
+                      <Switch
+                        checked={isSel}
+                        onCheckedChange={() => toggle(skill.dirName)}
+                        variant="mono"
+                      />
                     </div>
-                    <div className="w-6 flex justify-center shrink-0">
-                      {res ? STATUS_ICON[res.status] : null}
-                    </div>
-                    <Switch
-                      checked={isSel}
-                      onCheckedChange={() => toggleMcp(srv.name)}
-                      variant="mono"
-                      disabled={!srv.supported}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-between px-3 py-2 border-t border-border-primary">
-              <span className="text-xs text-text-secondary">{selectedMcpCount} selected</span>
-              <button
-                onClick={() => void importSelectedMcp()}
-                disabled={importing || selectedMcpCount === 0}
-                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                style={{ backgroundColor: AZURE, borderRadius: 3 }}
-              >
-                {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                Add {selectedMcpCount} server{selectedMcpCount === 1 ? '' : 's'}
-              </button>
-            </div>
-          </SectionCard>
-        )}
-
-        {memory.present && (
-          <SectionCard title="Memory" count={1}>
-            <div className="px-3 py-2 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm text-text-primary">CLAUDE.md → goose hints + memory</div>
-                <div className="text-xs text-text-secondary">
-                  {(memory.bytes / 1024).toFixed(1)} KB of global instructions · idempotent, re-runnable
-                </div>
+                  );
+                })}
               </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <div className="w-6 flex justify-center">
-                  {results.memory ? STATUS_ICON[results.memory.status] : null}
-                </div>
+              <div className="flex items-center justify-between px-3 py-2 border-t border-border-primary">
+                <span className="text-xs text-text-secondary">{selectedCount} selected</span>
                 <button
-                  onClick={() => void importMemory()}
-                  disabled={importing}
+                  onClick={() => void importSelectedSkills()}
+                  disabled={importing || selectedCount === 0}
                   className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                   style={{ backgroundColor: AZURE, borderRadius: 3 }}
                 >
                   {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Import memory
+                  Import {selectedCount} skill{selectedCount === 1 ? '' : 's'}
                 </button>
               </div>
-            </div>
-          </SectionCard>
-        )}
+            </SectionCard>
+          )}
+
+          {mcpServers.length > 0 && (
+            <SectionCard title="MCP servers" count={mcpServers.length}>
+              <div className="px-3 py-1 divide-y divide-border-primary">
+                {mcpServers.map((srv) => {
+                  const isSel = selectedMcp.has(srv.name) && srv.supported;
+                  const res = results[`mcp:${srv.name}`];
+                  const detail =
+                    srv.transport === 'http'
+                      ? srv.url
+                      : `${srv.command ?? ''} ${srv.args.join(' ')}`.trim();
+                  return (
+                    <div key={srv.name} className="flex items-center gap-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-text-primary truncate">{srv.name}</span>
+                          <span className="text-[10px] text-text-secondary shrink-0">
+                            {srv.transport}
+                          </span>
+                          {!srv.supported && (
+                            <span className="text-[10px] shrink-0" style={{ color: '#ff3b30' }}>
+                              unsupported (sse)
+                            </span>
+                          )}
+                          {(Object.keys(srv.envValues).length > 0 ||
+                            Object.values(srv.headers).some(Boolean)) && (
+                            <span
+                              className="text-[10px] text-text-secondary shrink-0"
+                              title="env/header values are imported into the keyring as secrets"
+                            >
+                              sets secrets
+                            </span>
+                          )}
+                        </div>
+                        {detail && (
+                          <div className="text-xs text-text-secondary truncate font-mono">
+                            {detail}
+                          </div>
+                        )}
+                      </div>
+                      <div className="w-6 flex justify-center shrink-0">
+                        {res ? STATUS_ICON[res.status] : null}
+                      </div>
+                      <Switch
+                        checked={isSel}
+                        onCheckedChange={() => toggleMcp(srv.name)}
+                        variant="mono"
+                        disabled={!srv.supported}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-between px-3 py-2 border-t border-border-primary">
+                <span className="text-xs text-text-secondary">{selectedMcpCount} selected</span>
+                <button
+                  onClick={() => void importSelectedMcp()}
+                  disabled={importing || selectedMcpCount === 0}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                  style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                >
+                  {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  Add {selectedMcpCount} server{selectedMcpCount === 1 ? '' : 's'}
+                </button>
+              </div>
+            </SectionCard>
+          )}
+
+          {memory.present && (
+            <SectionCard title="Memory" count={1}>
+              <div className="px-3 py-2 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-text-primary">CLAUDE.md → goose hints + memory</div>
+                  <div className="text-xs text-text-secondary">
+                    {(memory.bytes / 1024).toFixed(1)} KB of global instructions · idempotent,
+                    re-runnable
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="w-6 flex justify-center">
+                    {results.memory ? STATUS_ICON[results.memory.status] : null}
+                  </div>
+                  <button
+                    onClick={() => void importMemory()}
+                    disabled={importing}
+                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                    style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                  >
+                    {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    Import memory
+                  </button>
+                </div>
+              </div>
+            </SectionCard>
+          )}
         </>
       )}
 
