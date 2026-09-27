@@ -327,8 +327,13 @@ async fn the_output_tail_holds_with_goose_s_own_token_counter() {
     let budget = check_tail_budget(window);
     assert!(counter.count_tokens(tail) <= budget);
     assert!(tail.ends_with("FAILED: missing svc- accounts\n"));
-    let start = output.len() - tail.len();
-    let longer = &output[output[..start].char_indices().last().unwrap().0..];
+    let (before, _) = output.split_at(output.len() - tail.len());
+    let one_more = before
+        .char_indices()
+        .last()
+        .expect("the tail is not the whole output")
+        .0;
+    let longer = output.split_at(one_more).1;
     assert!(
         counter.count_tokens(longer) > budget,
         "one more character would fit, so the tail is not the longest"

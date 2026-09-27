@@ -46,8 +46,13 @@ pub fn parse_time(text: &str) -> Result<DateTime<Utc>, String> {
 }
 
 pub fn new_loop_id() -> String {
-    let hex = Uuid::new_v4().simple().to_string();
-    format!("{LOOP_ID_PREFIX}{}", &hex[..8])
+    let hex: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(8)
+        .collect();
+    format!("{LOOP_ID_PREFIX}{hex}")
 }
 
 /// A new loop from a validated start (`rules::validate_loop`), before the runner claims and

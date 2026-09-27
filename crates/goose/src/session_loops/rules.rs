@@ -34,7 +34,7 @@ fn cadence_parts(text: &str) -> Option<(i64, char)> {
     parse_cadence(text)?;
     let text = text.trim();
     let unit = text.chars().last()?;
-    let number = text[..text.len() - unit.len_utf8()].trim().parse().ok()?;
+    let number = text.strip_suffix(unit)?.trim().parse().ok()?;
     Some((number, unit))
 }
 
@@ -1050,35 +1050,30 @@ enum Piece<'a> {
 /// `{name}` where name is `[a-z][a-z0-9_]*`; any other brace is text.
 fn pieces(steps: &str) -> Vec<Piece<'_>> {
     let mut out = Vec::new();
-    let bytes = steps.as_bytes();
-    let (mut i, mut text_from) = (0, 0);
-    while i < bytes.len() {
-        if bytes[i] == b'{' {
-            let name_from = i + 1;
-            let mut j = name_from;
-            while j < bytes.len()
-                && (bytes[j].is_ascii_lowercase() || bytes[j].is_ascii_digit() || bytes[j] == b'_')
-            {
-                j += 1;
+    let mut rest = steps;
+    while let Some(open) = rest.find('{') {
+        let (before, from_brace) = rest.split_at(open);
+        if !before.is_empty() {
+            out.push(Piece::Text(before));
+        }
+        let (brace, after) = from_brace.split_at('{'.len_utf8());
+        let name_len = after
+            .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
+            .unwrap_or(after.len());
+        let (name, tail) = after.split_at(name_len);
+        match (name.chars().next(), tail.strip_prefix('}')) {
+            (Some(first), Some(tail)) if first.is_ascii_lowercase() => {
+                out.push(Piece::Slot(name));
+                rest = tail;
             }
-            if j > name_from
-                && bytes[name_from].is_ascii_lowercase()
-                && j < bytes.len()
-                && bytes[j] == b'}'
-            {
-                if text_from < i {
-                    out.push(Piece::Text(&steps[text_from..i]));
-                }
-                out.push(Piece::Slot(&steps[name_from..j]));
-                i = j + 1;
-                text_from = i;
-                continue;
+            _ => {
+                out.push(Piece::Text(brace));
+                rest = after;
             }
         }
-        i += 1;
     }
-    if text_from < steps.len() {
-        out.push(Piece::Text(&steps[text_from..]));
+    if !rest.is_empty() {
+        out.push(Piece::Text(rest));
     }
     out
 }
@@ -1345,7 +1340,10 @@ impl LoopCommand {
 fn split_word(text: &str) -> (&str, &str) {
     let text = text.trim_start();
     match text.find(char::is_whitespace) {
-        Some(i) => (&text[..i], text[i..].trim()),
+        Some(i) => {
+            let (word, after) = text.split_at(i);
+            (word, after.trim())
+        }
         None => (text, ""),
     }
 }
@@ -1429,24 +1427,25 @@ pub fn check_tail_budget(context_window_tokens: usize) -> usize {
 /// The longest suffix of `output` whose token count is at most the budget, counted with the
 /// caller's counter (goose's own `TokenCounter::count_tokens` in the runner). The search assumes a
 /// suffix never counts more tokens than a longer suffix of the same text.
-pub fn output_tail<'a>(
-    output: &'a str,
+pub fn output_tail(
+    output: &str,
     context_window_tokens: usize,
     count_tokens: impl Fn(&str) -> usize,
-) -> &'a str {
+) -> &str {
     let budget = check_tail_budget(context_window_tokens);
     let mut boundaries: Vec<usize> = output.char_indices().map(|(i, _)| i).collect();
     boundaries.push(output.len());
+    let suffix = |at: usize| output.split_at(boundaries[at]).1;
     let (mut lo, mut hi) = (0usize, boundaries.len() - 1);
     while lo < hi {
         let mid = (lo + hi) / 2;
-        if count_tokens(&output[boundaries[mid]..]) <= budget {
+        if count_tokens(suffix(mid)) <= budget {
             hi = mid;
         } else {
             lo = mid + 1;
         }
     }
-    &output[boundaries[lo]..]
+    suffix(lo)
 }
 
 // ---------------------------------------------------------------------------------------------

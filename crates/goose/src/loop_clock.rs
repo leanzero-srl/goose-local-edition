@@ -55,7 +55,7 @@ fn default_to() -> String {
 pub fn parse_cadence(s: &str) -> Option<Duration> {
     let s = s.trim();
     let unit = s.chars().last()?;
-    let num = &s[..s.len() - unit.len_utf8()];
+    let num = s.strip_suffix(unit)?;
     let n: i64 = num.trim().parse().ok()?;
     if n <= 0 {
         return None;
