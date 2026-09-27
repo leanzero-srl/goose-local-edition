@@ -7,7 +7,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
 const p = b.contexts()[0].pages().find((x) => x.url().includes('index.html'));
 p.setDefaultTimeout(15000);
-await p.goto(p.url().split('#')[0] + '#/leanzero-swarm'); await p.waitForTimeout(5000);
+await p.goto(p.url().split('#')[0] + '#/leanzero-swarm?tab=mlx&mlx=engine'); await p.waitForTimeout(5000);
 await p.getByText('LeanZero MLX', { exact: true }).first().click().catch(() => {}); await p.waitForTimeout(4000);
 // --model <text>: pick that model in the Engine picker first (the picker is how a user chooses what Run starts).
 const mi = process.argv.indexOf('--model');
