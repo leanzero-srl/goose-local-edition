@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link इस Mac का नाम नहीं बता सका ({error}) — नोड इसी Mac के लिए बनेगा; नीचे उसका नाम दें।"
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "केवल यह Mac जुड़ा है — आपके दूसरे Mac LeanZero Link से जुड़ते ही यहाँ दिखेंगे (प्रदाता › मेरे Mac)।"
+    "defaultMessage": "केवल यह Mac जुड़ा है — आपके दूसरे Mac LeanZero Link से जुड़ते ही यहाँ दिखेंगे (LeanZero MLX › मेरे Mac)।"
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "एक Mac चुनें…"
@@ -4017,7 +4017,7 @@
     "defaultMessage": "दूसरा Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "{name} पर “मेरे दूसरे Mac इस Mac का उपयोग कर सकें › विभाजित मॉडल का एक हिस्सा चलाना” चालू करें (वहाँ प्रदाता › मेरे Mac में)।"
+    "defaultMessage": "{name} पर “मेरे दूसरे Mac इस Mac का उपयोग कर सकें › विभाजित मॉडल का एक हिस्सा चलाना” चालू करें (वहाँ LeanZero MLX › मेरे Mac में)।"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "इसका goose सेवा नहीं दे सकता"
@@ -5246,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "खाता"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "अपने दूसरे Mac पर उसी खाते से LeanZero Link में साइन इन करें। वह यहाँ दिखेगा, और आप एक Mac के लिए बहुत बड़े मॉडल दोनों पर चला सकेंगे।"
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "दूसरा Mac जोड़ें"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“मॉडल लोड और डाउनलोड करना” तब लागू होगा जब यह Mac LeanZero Link से दोबारा जुड़ेगा।"
   },
@@ -5318,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "मॉडल"
   },
-  "myMacs.none": {
-    "defaultMessage": "आपके LeanZero Link खाते में अभी कोई दूसरा Mac नहीं है — उसे यहाँ देखने के लिए उस पर साइन इन करें।"
+  "myMacs.nodeLoading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "सेवा दे रहा है"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "आपके Mac पर नोड पढ़े नहीं जा सके: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {इस Mac पर नोड} other {{name} पर नोड}}"
   },
   "myMacs.off": {
     "defaultMessage": "बंद"
   },
   "myMacs.on": {
     "defaultMessage": "चालू"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "{name} को नोड पेज पर खोलें"
   },
   "myMacs.reconnect": {
     "defaultMessage": "अभी दोबारा जोड़ें"
@@ -5525,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "अभी सर्व हो रहा है"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "नोड · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "कौन-सा नोड सेवा दे रहा है, यह पता नहीं: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "{name} को नोड पेज पर खोलें"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "क्लाउड प्रदाता प्रबंधित करें"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac और मॉडल प्रबंधित करें"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "विफल"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "LeanZero MLX इंजन विफल हुआ — इंजन कार्ड कारण बताता है"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "LeanZero MLX इंजन एक मॉडल लोड कर रहा है"
   },
   "nodes.sections": {
     "defaultMessage": "नोड अनुभाग"

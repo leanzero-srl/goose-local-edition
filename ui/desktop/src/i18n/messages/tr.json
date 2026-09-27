@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link bu Mac’i adlandıramadı ({error}) — düğüm bu Mac için oluşturulur; aşağıda adlandırın."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Yalnızca bu Mac bağlı — diğer Mac’leriniz LeanZero Link’e katıldıklarında burada görünür (Sağlayıcılar › Mac’lerim)."
+    "defaultMessage": "Yalnızca bu Mac bağlı — diğer Mac’leriniz LeanZero Link’e katıldıklarında burada görünür (LeanZero MLX › Mac’lerim)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Bir Mac seçin…"
@@ -4017,7 +4017,7 @@
     "defaultMessage": "Diğer Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "{name} üzerinde “Diğer Mac’lerim bu Mac’i kullanabilsin › Bölünmüş bir modelin parçasını çalıştırma” seçeneğini açın (oradaki Sağlayıcılar › Mac’lerim)."
+    "defaultMessage": "{name} üzerinde “Diğer Mac’lerim bu Mac’i kullanabilsin › Bölünmüş bir modelin parçasını çalıştırma” seçeneğini açın (oradaki LeanZero MLX › Mac’lerim)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "Oradaki goose hizmet veremiyor"
@@ -5246,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "Hesap"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Diğer Mac’inizde aynı hesapla LeanZero Link’e giriş yapın. Burada görünür ve tek bir Mac için fazla büyük modelleri ikisinde birden çalıştırabilirsiniz."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Başka bir Mac ekle"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“Model yükleme ve indirme”, bu Mac LeanZero Link’e yeniden bağlandığında geçerli olur."
   },
@@ -5318,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "Modeller"
   },
-  "myMacs.none": {
-    "defaultMessage": "LeanZero Link hesabınızda henüz başka Mac yok — burada görmek için o Mac’te oturum açın."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Hizmet veriyor"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Mac’lerinizdeki düğümler okunamadı: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Bu Mac’teki düğümler} other {{name} üzerindeki düğümler}}"
   },
   "myMacs.off": {
     "defaultMessage": "kapalı"
   },
   "myMacs.on": {
     "defaultMessage": "açık"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "{name} düğümünü Düğümler sayfasında aç"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Şimdi yeniden bağlan"
@@ -5525,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "şu an sunuluyor"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Düğüm · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "Hangi düğümün hizmet verdiği bilinmiyor: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "{name} düğümünü Düğümler sayfasında aç"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Bulut sağlayıcılarını yönet"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac’leri ve modelleri yönet"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Başarısız"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "LeanZero MLX motoru başarısız oldu — nedeni motor kartında"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "LeanZero MLX motoru bir model yüklüyor"
   },
   "nodes.sections": {
     "defaultMessage": "Düğüm bölümleri"

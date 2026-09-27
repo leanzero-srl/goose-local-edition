@@ -178,6 +178,12 @@ const i18n = defineMessages({
     defaultMessage: 'Open {name} — it asked: {question}',
   },
   untitled: { id: 'engineGlance.untitled', defaultMessage: 'Untitled session' },
+  node: { id: 'nodes.glanceNode', defaultMessage: 'Node · {name}' },
+  openNode: { id: 'nodes.glanceOpenNode', defaultMessage: 'Open {name} on the Nodes page' },
+  nodeUnknown: {
+    id: 'nodes.glanceNodeUnknown',
+    defaultMessage: 'Which node serves is not known: {error}',
+  },
 });
 
 const STAGE_WORD: Record<GlanceStage, (typeof i18n)['idle']> = {
@@ -473,6 +479,72 @@ function NeedsYouStrip({
   );
 }
 
+/**
+ * The node the serving way belongs to (design §7.3), under the mode line: a link to its card on the
+ * Nodes page where the surface can navigate, plain words where it cannot (the desktop window).
+ * Two nodes naming one way are both said; the link opens the first (the chat's own, else pinned).
+ */
+function NodeLine({
+  servedBy,
+  onOpenNode,
+}: {
+  servedBy: NonNullable<EngineGlance['servedBy']>;
+  onOpenNode?: (nodeId: string) => void;
+}) {
+  const intl = useIntl();
+  if ('error' in servedBy) {
+    return (
+      <span
+        data-testid="engine-glance-node-unknown"
+        title={servedBy.error}
+        className="line-clamp-2 break-words text-lz-meta"
+      >
+        {intl.formatMessage(i18n.nodeUnknown, { error: servedBy.error })}
+      </span>
+    );
+  }
+  const name = intl.formatList(
+    servedBy.nodes.map((n) => n.name),
+    { type: 'conjunction' }
+  );
+  const text = intl.formatMessage(i18n.node, { name });
+  const first = servedBy.nodes[0];
+  if (!onOpenNode) {
+    return (
+      <span
+        data-testid="engine-glance-served-node"
+        className={cx('line-clamp-2 break-words text-lz-meta', WEIGHT.semibold)}
+      >
+        {text}
+      </span>
+    );
+  }
+  const label = intl.formatMessage(i18n.openNode, { name: first.name });
+  return (
+    <button
+      type="button"
+      data-testid="engine-glance-served-node"
+      data-node={first.id}
+      title={label}
+      aria-label={label}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenNode(first.id);
+      }}
+      className={cx(
+        'pointer-events-auto flex min-w-0 max-w-full items-start gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:mt-px [&_svg]:size-3.5',
+        WEIGHT.semibold,
+        RADIUS.control,
+        FOCUS
+      )}
+    >
+      <Network aria-hidden />
+      <span className="line-clamp-2 min-w-0 break-words">{text}</span>
+    </button>
+  );
+}
+
 export type GlanceVariant = 'dock' | 'desktop';
 
 export interface EngineGlanceCardProps {
@@ -482,6 +554,8 @@ export interface EngineGlanceCardProps {
   expanded: boolean;
   onOpenEngine: () => void;
   onOpenSession: (sessionId: string) => void;
+  /** Opens a node's card on the Nodes page. Absent = the node is named, not linked. */
+  onOpenNode?: (nodeId: string) => void;
   onToggleExpanded: () => void;
   onCollapsedChange: (collapsed: boolean) => void;
   /**
@@ -954,6 +1028,11 @@ function GlanceFace(
             )}
           </span>
         </div>
+        {/* The node the way belongs to: under the mode line, on its own full-width row so a node
+            name is never squeezed by the controls beside the header. */}
+        {engine.present && engine.servedBy && (
+          <NodeLine servedBy={engine.servedBy} onOpenNode={props.onOpenNode} />
+        )}
         {question && (
           <div data-testid="engine-glance-question" className="flex min-w-0 flex-col gap-0.5">
             <span className={cx('truncate text-lz-body', WEIGHT.semibold)}>{questionName}</span>
@@ -1023,7 +1102,7 @@ function GlanceFace(
               props.onOpenSession(engine.chat!.sessionId);
             }}
             className={cx(
-              'pointer-events-auto flex min-w-0 items-center gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
+              'pointer-events-auto flex min-w-0 max-w-full items-center gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
               WEIGHT.semibold,
               RADIUS.control,
               FOCUS
@@ -1044,7 +1123,7 @@ function GlanceFace(
               setFormingOpen((open) => !open);
             }}
             className={cx(
-              'pointer-events-auto flex min-w-0 items-center gap-1 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
+              'pointer-events-auto flex min-w-0 max-w-full items-center gap-1 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
               WEIGHT.semibold,
               TNUM,
               RADIUS.control,

@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link không lấy được tên Mac này ({error}) — nút được tạo cho Mac này; hãy đặt tên bên dưới."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Chỉ Mac này được liên kết — các Mac khác của bạn sẽ hiện ở đây khi tham gia LeanZero Link (Nhà cung cấp › Các Mac của tôi)."
+    "defaultMessage": "Chỉ Mac này được liên kết — các Mac khác của bạn sẽ hiện ở đây khi tham gia LeanZero Link (LeanZero MLX › Các Mac của tôi)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Chọn một Mac…"
@@ -4017,7 +4017,7 @@
     "defaultMessage": "Mac còn lại"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Bật “Cho các Mac khác của tôi dùng Mac này › Chạy một phần của mô hình được chia” trên {name} (Nhà cung cấp › Các Mac của tôi ở đó)."
+    "defaultMessage": "Bật “Cho các Mac khác của tôi dùng Mac này › Chạy một phần của mô hình được chia” trên {name} (LeanZero MLX › Các Mac của tôi ở đó)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "goose ở đó không thể phục vụ"
@@ -5246,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "Tài khoản"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Đăng nhập LeanZero Link bằng cùng tài khoản trên Mac kia của bạn. Nó sẽ xuất hiện ở đây, và bạn có thể chạy trên cả hai những mô hình quá lớn cho một Mac."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Thêm một Mac khác"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“Tải lên và tải xuống mô hình” có hiệu lực khi Mac này kết nối lại với LeanZero Link."
   },
@@ -5318,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "Mô hình"
   },
-  "myMacs.none": {
-    "defaultMessage": "Chưa có Mac nào khác trong tài khoản LeanZero Link của bạn — hãy đăng nhập trên Mac đó để thấy nó ở đây."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Đang nạp"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Đang phục vụ"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Không đọc được các nút trên Mac của bạn: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Các nút trên Mac này} other {Các nút trên {name}}}"
   },
   "myMacs.off": {
     "defaultMessage": "tắt"
   },
   "myMacs.on": {
     "defaultMessage": "bật"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "Mở {name} trên trang Nút"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Kết nối lại ngay"
@@ -5525,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "đang phục vụ"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Nút · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "Không rõ nút nào đang phục vụ: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "Mở {name} trên trang Nút"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Quản lý nhà cung cấp đám mây"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Quản lý Mac và mô hình"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Thất bại"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "Engine LeanZero MLX đã thất bại — thẻ engine cho biết lý do"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Đang nạp"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "Engine LeanZero MLX đang nạp một mô hình"
   },
   "nodes.sections": {
     "defaultMessage": "Các mục nút"

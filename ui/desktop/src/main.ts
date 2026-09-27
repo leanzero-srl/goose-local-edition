@@ -168,6 +168,7 @@ import {
   isGlancePrefs,
   isGlanceSessions,
   mergeGlanceSessions,
+  servingReportsOf,
   type GlancePrefs,
   type GlancePush,
   type GlanceSessions,
@@ -2292,6 +2293,8 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
         ? { report: mlxDistributed.report, ageMs: Date.now() - mlxDistributed.atMs }
         : null,
       remote: mlxRemote,
+      // The node that serves, as each window's goosed read it (glanceStore.ts) — never guessed here.
+      served: servingReportsOf(glanceSessionsByWindow.values()),
     }),
     sessions:
       glanceSessionsByWindow.size > 0

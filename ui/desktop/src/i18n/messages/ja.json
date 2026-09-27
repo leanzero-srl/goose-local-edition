@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link がこの Mac の名前を取得できませんでした({error}) — ノードはこの Mac 用に作成されます。下で名前を付けてください。"
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "リンクされているのはこの Mac だけです — 他の Mac は LeanZero Link に参加するとここに表示されます(プロバイダ › マイ Mac)。"
+    "defaultMessage": "リンクされているのはこの Mac だけです — 他の Mac は LeanZero Link に参加するとここに表示されます(LeanZero MLX › マイ Mac)。"
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Mac を選択…"
@@ -4017,7 +4017,7 @@
     "defaultMessage": "もう一台の Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "{name} で「他の Mac にこの Mac の使用を許可 › 分割モデルの一部を実行」をオンにしてください(そちらのプロバイダ › マイ Mac)。"
+    "defaultMessage": "{name} で「他の Mac にこの Mac の使用を許可 › 分割モデルの一部を実行」をオンにしてください(そちらのLeanZero MLX › マイ Mac)。"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "その goose は対応していません"
@@ -5246,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "アカウント"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "もう一台の Mac で同じアカウントで LeanZero Link にサインインしてください。ここに表示され、1 台の Mac には大きすぎるモデルを両方で実行できます。"
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "別の Mac を追加"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "「モデルの読み込みとダウンロード」は、この Mac が LeanZero Link に再接続したときに有効になります。"
   },
@@ -5318,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "モデル"
   },
-  "myMacs.none": {
-    "defaultMessage": "LeanZero Link アカウントに他の Mac はまだありません — その Mac でサインインするとここに表示されます。"
+  "myMacs.nodeLoading": {
+    "defaultMessage": "読み込み中"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "提供中"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Mac 上のノードを読み取れませんでした: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {この Mac のノード} other {{name} のノード}}"
   },
   "myMacs.off": {
     "defaultMessage": "オフ"
   },
   "myMacs.on": {
     "defaultMessage": "オン"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "ノードページで {name} を開く"
   },
   "myMacs.reconnect": {
     "defaultMessage": "今すぐ再接続"
@@ -5525,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "提供中"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "ノード · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "どのノードが提供中か分かりません: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "ノードページで {name} を開く"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "クラウドプロバイダーを管理"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac とモデルを管理"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "失敗"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "LeanZero MLX エンジンが失敗しました — 理由はエンジンカードにあります"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "読み込み中"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "LeanZero MLX エンジンがモデルを読み込んでいます"
   },
   "nodes.sections": {
     "defaultMessage": "ノードのセクション"

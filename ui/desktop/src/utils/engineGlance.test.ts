@@ -5,7 +5,11 @@ import {
   glancePrefsOf,
   isGlancePrefs,
   isGlancePush,
+  isGlanceSessions,
   mergeGlanceSessions,
+  nodesNavChip,
+  servingReportsOf,
+  type GlanceServingReport,
 } from './engineGlance';
 import { INITIAL_SNAPSHOT } from './mlxEngineMonitor';
 import { attributeServing } from './mlxServing';
@@ -36,7 +40,7 @@ import {
 } from '../components/leanzero-swarm/mlxDistributed.fixtures';
 import type { MlxRemoteReport } from './mlxRemoteReport';
 
-const NONE = { distributed: null, remote: null };
+const NONE = { distributed: null, remote: null, served: [] };
 
 describe('buildEngineGlance — the single engine', () => {
   it('writing: green, the live writing rate leads, the reading rate beside it, the chat it serves', () => {
@@ -153,6 +157,7 @@ describe('buildEngineGlance — the split across Macs', () => {
   const fresh = (status = FLASH_READY) => ({
     distributed: { report: toMlxDistributedReport(status), ageMs: 0 },
     remote: null,
+    served: [],
   });
 
   it('the owner’s screenshot: reading an 80.3K prompt for 3m 11s at 237 tok/s, with the bar', () => {
@@ -190,6 +195,7 @@ describe('buildEngineGlance — the split across Macs', () => {
         ageMs: MLX_DISTRIBUTED_STALE_MS + 1,
       },
       remote: null,
+      served: [],
     });
     expect(g).toMatchObject({ stage: 'stale', phase: 'idle', busy: false });
   });
@@ -201,6 +207,7 @@ describe('buildEngineGlance — the split across Macs', () => {
         ageMs: 0,
       },
       remote: null,
+      served: [],
     });
     expect(g).toMatchObject({ stage: 'held', phase: 'held', busy: true });
   });
@@ -209,6 +216,7 @@ describe('buildEngineGlance — the split across Macs', () => {
     const g = buildEngineGlance(INITIAL_SNAPSHOT, {
       distributed: { report: toMlxDistributedReport(HOSTING_RANK_1), ageMs: 0 },
       remote: null,
+      served: [],
     });
     expect(g.engine.mode).toBe('hosting');
     expect(g.present).toBe(true);
@@ -230,6 +238,7 @@ describe('buildEngineGlance — chat routed to a linked Mac', () => {
     const g = buildEngineGlance(runningSnapshot(GENERATING_STATUS, { engine: 'remote' }), {
       distributed: null,
       remote: route(),
+      served: [],
     });
     expect(g).toMatchObject({
       engine: { mode: 'remote', peerName: 'Work’s Mac Studio' },
@@ -246,7 +255,7 @@ describe('buildEngineGlance — chat routed to a linked Mac', () => {
         mode: 'reconnecting',
         statusDetail: 'connection refused',
       },
-      { distributed: null, remote: route() }
+      { distributed: null, remote: route(), served: [] }
     );
     expect(g).toMatchObject({
       stage: 'reconnecting',
@@ -271,7 +280,7 @@ describe('buildEngineGlance — chat routed to a linked Mac', () => {
           pollMs: 2000,
         },
       },
-      { distributed: null, remote: route({ state: 'reconnecting' }) }
+      { distributed: null, remote: route({ state: 'reconnecting' }), served: [] }
     );
     expect(g).toMatchObject({ stage: 'away', phase: 'held', busy: false });
   });
@@ -285,7 +294,11 @@ describe('buildEngineGlance — which request the card leads with (Q-218)', () =
         modelId: FLASH_MODEL,
         serving: attributeServing(rows, 2, [], null),
       }),
-      { distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 }, remote: null }
+      {
+        distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 },
+        remote: null,
+        served: [],
+      }
     );
 
   it('screenshot 26: the chat’s 77k prompt leads, 1% read at ITS rate — the 174-token side call is named by its kind', () => {
@@ -388,5 +401,134 @@ describe('the glance prefs and sessions', () => {
   it('a push is recognised only with an engine, sessions and prefs', () => {
     expect(isGlancePush(glancePush(runningSnapshot(IDLE_STATUS)))).toBe(true);
     expect(isGlancePush({ engine: {}, sessions: { running: 0, needsYou: [] } })).toBe(false);
+  });
+});
+
+describe('the node the serving way belongs to (design §7.3, S7)', () => {
+  const SPLIT_NODE = { id: '27b-split', name: '27B · both Macs' };
+  const FOLLOWS = { id: 'mihai-engine', name: 'Mihai Macbook engine' };
+  const splitWay = (over: Partial<{ modelId: string; servedModelId: string }> = {}) => ({
+    kind: 'split' as const,
+    modelId: FLASH_MODEL,
+    servedModelId: 'flash',
+    ...over,
+  });
+  const split = (served: GlanceServingReport[]) =>
+    buildEngineGlance(
+      runningSnapshot(SPLIT_READING_BODY, { engine: 'distributed', modelId: FLASH_MODEL }),
+      {
+        distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 },
+        remote: null,
+        served,
+      }
+    );
+
+  it('names the nodes of the report for the SAME way and model, in the report’s order', () => {
+    const g = split([{ way: splitWay(), nodes: [SPLIT_NODE, FOLLOWS] }]);
+    expect(g.servedBy).toEqual({ nodes: [SPLIT_NODE, FOLLOWS] });
+  });
+
+  it('matches the model by either id the engine goes by (served alias or the models-folder id)', () => {
+    const byAlias = buildEngineGlance(runningSnapshot(GENERATING_STATUS, { modelId: 'flash' }), {
+      distributed: null,
+      remote: null,
+      served: [
+        {
+          way: { kind: 'single', modelId: FLASH_MODEL, servedModelId: 'flash' },
+          nodes: [FOLLOWS],
+        },
+      ],
+    });
+    expect(byAlias.servedBy).toEqual({ nodes: [FOLLOWS] });
+  });
+
+  it('with no report the glance names nothing — never a node guessed from the model', () => {
+    expect(split([]).servedBy).toBeNull();
+  });
+
+  it('a report of another way or another model is a read that raced a switch: it says nothing', () => {
+    expect(
+      split([{ way: { ...splitWay(), kind: 'single' }, nodes: [FOLLOWS] }]).servedBy
+    ).toBeNull();
+    expect(
+      split([
+        {
+          way: splitWay({ modelId: 'other/27B', servedModelId: '27b' }),
+          nodes: [SPLIT_NODE],
+        },
+      ]).servedBy
+    ).toBeNull();
+  });
+
+  it('a way no node names (Run it started, nothing saved yet) names nothing', () => {
+    expect(split([{ way: splitWay(), nodes: [] }]).servedBy).toBeNull();
+  });
+
+  it('a window whose read failed is said as that — unless another window read this way', () => {
+    const failed = { error: 'nodes/residency: goosed unreachable' };
+    expect(split([failed]).servedBy).toEqual(failed);
+    expect(split([failed, { way: splitWay(), nodes: [SPLIT_NODE] }]).servedBy).toEqual({
+      nodes: [SPLIT_NODE],
+    });
+  });
+
+  it('a rank served for another Mac, or no engine, names no node of this Mac’s goose', () => {
+    const report: GlanceServingReport = { way: splitWay(), nodes: [SPLIT_NODE] };
+    const hosting = buildEngineGlance(INITIAL_SNAPSHOT, {
+      distributed: { report: toMlxDistributedReport(HOSTING_RANK_1), ageMs: 0 },
+      remote: null,
+      served: [report],
+    });
+    expect(hosting.servedBy).toBeNull();
+    const off = buildEngineGlance(INITIAL_SNAPSHOT, { ...NONE, served: [report] });
+    expect(off.servedBy).toBeNull();
+  });
+
+  it('main collects the windows’ reports; a window that read nothing adds none', () => {
+    const report: GlanceServingReport = { way: splitWay(), nodes: [SPLIT_NODE] };
+    expect(
+      servingReportsOf([
+        { running: 1, needsYou: [], serving: report },
+        { running: 0, needsYou: [] },
+        { running: 0, needsYou: [], serving: null },
+      ])
+    ).toEqual([report]);
+  });
+
+  it('a window’s report is accepted only with a well-formed serving read', () => {
+    const base = { running: 0, needsYou: [] };
+    expect(isGlanceSessions({ ...base, serving: { way: splitWay(), nodes: [SPLIT_NODE] } })).toBe(
+      true
+    );
+    expect(isGlanceSessions({ ...base, serving: { error: 'x' } })).toBe(true);
+    expect(isGlanceSessions({ ...base, serving: { way: splitWay(), nodes: [{ id: 1 }] } })).toBe(
+      false
+    );
+    expect(
+      isGlanceSessions({ ...base, serving: { way: { ...splitWay(), kind: 'lan' }, nodes: [] } })
+    ).toBe(false);
+  });
+});
+
+describe('the Nodes nav chip (design §5.1): Loading or Failed from the glance, else nothing', () => {
+  it('loading while the glance shows a load, failed while it shows a failure', () => {
+    expect(nodesNavChip(buildEngineGlance({ ...INITIAL_SNAPSHOT, mode: 'mounting' }, NONE))).toBe(
+      'loading'
+    );
+    expect(
+      nodesNavChip(
+        buildEngineGlance(
+          { ...INITIAL_SNAPSHOT, mode: 'failed', failedError: 'out of memory loading layer 41' },
+          NONE
+        )
+      )
+    ).toBe('failed');
+  });
+
+  it('says nothing while the engine writes, idles or is off — a permanent count would be noise', () => {
+    expect(nodesNavChip(buildEngineGlance(runningSnapshot(GENERATING_STATUS), NONE))).toBeNull();
+    expect(nodesNavChip(buildEngineGlance(runningSnapshot(IDLE_STATUS), NONE))).toBeNull();
+    expect(nodesNavChip(buildEngineGlance(INITIAL_SNAPSHOT, NONE))).toBeNull();
+    expect(nodesNavChip(null)).toBeNull();
   });
 });

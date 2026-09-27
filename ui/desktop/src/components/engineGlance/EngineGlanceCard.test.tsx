@@ -6,8 +6,11 @@ import { EngineGlanceCard, type EngineGlanceCardProps } from './EngineGlanceCard
 import { INITIAL_SNAPSHOT } from '../../utils/mlxEngineMonitor';
 import { attributeServing } from '../../utils/mlxServing';
 import { toMlxDistributedReport } from '../../utils/mlxDistributedReport';
+import { assertStudioClean } from '../lz/assertStudioClean';
+import { missingUtilities } from '../lz/compileStudioCss';
 import {
   CHAT_ROW,
+  GLANCE_MODEL,
   SPLIT_READING_BODY,
   TOOL_LABEL_ROW,
   TURN_BESIDE_SIDE_CALL_BODY,
@@ -437,4 +440,67 @@ describe('EngineGlanceCard — what the chat’s turn is forming (Q-215: the dis
     renderCard(writing, { forming });
     expect(screen.queryByTestId('engine-glance-forming-toggle')).toBeNull();
   });
+});
+
+describe('EngineGlanceCard — the node the serving way belongs to (design §7.3, S7)', () => {
+  const NODE = { id: '27b-split', name: '27B · both Macs' };
+  const served = (nodes: { id: string; name: string }[]) =>
+    glancePush(runningSnapshot(GENERATING_STATUS), {
+      served: [{ way: { kind: 'single', modelId: GLANCE_MODEL, servedModelId: 'q' }, nodes }],
+    });
+
+  it('the sidebar card names it under the mode line and links to its card on the Nodes page', () => {
+    const onOpenNode = vi.fn();
+    const props = renderCard(served([NODE]), { onOpenNode });
+    const line = screen.getByTestId('engine-glance-served-node');
+    expect(line.textContent).toBe('Node · 27B · both Macs');
+    expect(line.getAttribute('aria-label')).toBe('Open 27B · both Macs on the Nodes page');
+    fireEvent.click(line);
+    expect(onOpenNode).toHaveBeenCalledWith('27b-split');
+    // The node link is its own control: it never also opens the Engine.
+    expect(props.onOpenEngine).not.toHaveBeenCalled();
+  });
+
+  it('two nodes naming one way are both said; the link opens the first', () => {
+    const onOpenNode = vi.fn();
+    renderCard(served([NODE, { id: 'mac-engine', name: 'Mihai Macbook engine' }]), {
+      onOpenNode,
+    });
+    const line = screen.getByTestId('engine-glance-served-node');
+    expect(line.textContent).toBe('Node · 27B · both Macs and Mihai Macbook engine');
+    fireEvent.click(line);
+    expect(onOpenNode).toHaveBeenCalledWith('27b-split');
+  });
+
+  it('the desktop window, which cannot navigate, says the name as plain words', () => {
+    renderCard(served([NODE]), { variant: 'desktop' });
+    const line = screen.getByTestId('engine-glance-served-node');
+    expect(line.tagName).toBe('SPAN');
+    expect(line.textContent).toBe('Node · 27B · both Macs');
+  });
+
+  it('no report of this way: no node line at all — nothing guessed', () => {
+    renderCard(writing, { onOpenNode: vi.fn() });
+    expect(screen.queryByTestId('engine-glance-served-node')).toBeNull();
+    expect(screen.queryByTestId('engine-glance-node-unknown')).toBeNull();
+  });
+
+  it('a failed read is said in its words', () => {
+    renderCard(
+      glancePush(runningSnapshot(GENERATING_STATUS), {
+        served: [{ error: 'nodes/residency: goosed unreachable' }],
+      })
+    );
+    expect(screen.getByTestId('engine-glance-node-unknown').textContent).toBe(
+      'Which node serves is not known: nodes/residency: goosed unreachable'
+    );
+  });
+
+  it('carries no banned pattern, and every class it adds compiles', async () => {
+    renderCard(served([NODE]), { onOpenNode: vi.fn() });
+    const card = screen.getByTestId('engine-glance');
+    assertStudioClean(card);
+    const line = screen.getByTestId('engine-glance-served-node');
+    expect(await missingUtilities([...line.classList])).toEqual([]);
+  }, 30_000);
 });

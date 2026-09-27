@@ -51,6 +51,9 @@ export const nodesTabOf = (value: string | null | undefined): NodesTab =>
 export const mlxHref = (tab: MlxTab): string => `${PROVIDERS_ROUTE}?tab=mlx&mlx=${tab}`;
 export const cloudHref = (): string => `${PROVIDERS_ROUTE}?tab=cloud`;
 export const nodesHref = (tab: NodesTab = 'nodes'): string => `${NODES_ROUTE}?tab=${tab}`;
+/** One node's card on the Nodes page (design §5.2): the glance, My Macs and Run it link here. */
+export const nodeHref = (id: string): string =>
+  `${nodesHref('nodes')}&node=${encodeURIComponent(id)}`;
 
 /**
  * Where an old Providers tab lives now: `swarm` (Swarm Settings) moved to the Nodes page and `link`

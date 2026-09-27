@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link konnte diesen Mac nicht benennen ({error}) — der Node wird für diesen Mac angelegt; benenne ihn unten."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Nur dieser Mac ist verbunden — deine anderen Macs erscheinen hier, sobald sie LeanZero Link beitreten (Anbieter › Meine Macs)."
+    "defaultMessage": "Nur dieser Mac ist verbunden — deine anderen Macs erscheinen hier, sobald sie LeanZero Link beitreten (LeanZero MLX › Meine Macs)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Mac wählen…"
@@ -4017,7 +4017,7 @@
     "defaultMessage": "Der andere Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Schalte „Meine anderen Macs dürfen diesen Mac nutzen › Teil eines aufgeteilten Modells ausführen“ auf {name} ein (dort unter Anbieter › Meine Macs)."
+    "defaultMessage": "Schalte „Meine anderen Macs dürfen diesen Mac nutzen › Teil eines aufgeteilten Modells ausführen“ auf {name} ein (dort unter LeanZero MLX › Meine Macs)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "Sein goose kann nicht dienen"
@@ -5246,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "Konto"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Melde dich auf deinem anderen Mac mit demselben Konto bei LeanZero Link an. Er erscheint hier, und du kannst Modelle, die für einen Mac zu groß sind, über beide ausführen."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Weiteren Mac hinzufügen"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "„Modelle laden und herunterladen“ gilt, sobald sich dieser Mac erneut mit LeanZero Link verbindet."
   },
@@ -5318,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "Modelle"
   },
-  "myMacs.none": {
-    "defaultMessage": "Noch kein anderer Mac ist in deinem LeanZero-Link-Konto — melde dich dort an, um ihn hier zu sehen."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Lädt"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Bedient"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Die Nodes auf deinen Macs konnten nicht gelesen werden: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Nodes auf diesem Mac} other {Nodes auf {name}}}"
   },
   "myMacs.off": {
     "defaultMessage": "aus"
   },
   "myMacs.on": {
     "defaultMessage": "an"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "{name} auf der Seite „Nodes“ öffnen"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Jetzt neu verbinden"
@@ -5525,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "läuft gerade"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Node · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "Welcher Node bedient, ist nicht bekannt: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "{name} auf der Seite „Nodes“ öffnen"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Cloud-Anbieter verwalten"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Macs und Modelle verwalten"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Fehlgeschlagen"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "Die LeanZero-MLX-Engine ist fehlgeschlagen — die Engine-Karte sagt, warum"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Lädt"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "Die LeanZero-MLX-Engine lädt ein Modell"
   },
   "nodes.sections": {
     "defaultMessage": "Nodes-Bereiche"

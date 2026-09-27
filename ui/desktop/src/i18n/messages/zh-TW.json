@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link 無法取得這台 Mac 的名稱({error}) — 節點將為這台 Mac 建立;請在下方命名。"
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "只有這台 Mac 已連結 — 你的其他 Mac 加入 LeanZero Link 後會顯示在這裡(供應商 › 我的 Mac)。"
+    "defaultMessage": "只有這台 Mac 已連結 — 你的其他 Mac 加入 LeanZero Link 後會顯示在這裡(LeanZero MLX › 我的 Mac)。"
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "選擇一台 Mac…"
@@ -4017,7 +4017,7 @@
     "defaultMessage": "另一台 Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "請在 {name} 上開啟「允許我的其他 Mac 使用這台 Mac › 執行分割模型的一部分」（在那台 Mac 的供應商 › 我的 Mac）。"
+    "defaultMessage": "請在 {name} 上開啟「允許我的其他 Mac 使用這台 Mac › 執行分割模型的一部分」（在那台 Mac 的LeanZero MLX › 我的 Mac）。"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "它的 goose 無法提供服務"
@@ -5246,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "帳號"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "在你的另一台 Mac 上用同一帳號登入 LeanZero Link。它會出現在這裡，你就能跨兩台 Mac 執行一台裝不下的模型。"
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "新增另一台 Mac"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "「載入與下載模型」會在這台 Mac 重新連線 LeanZero Link 後生效。"
   },
@@ -5318,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "模型"
   },
-  "myMacs.none": {
-    "defaultMessage": "你的 LeanZero Link 帳號中還沒有其他 Mac — 在那台 Mac 上登入後就會顯示在這裡。"
+  "myMacs.nodeLoading": {
+    "defaultMessage": "載入中"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "服務中"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "無法讀取你 Mac 上的節點：{reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {這台 Mac 上的節點} other {{name} 上的節點}}"
   },
   "myMacs.off": {
     "defaultMessage": "關"
   },
   "myMacs.on": {
     "defaultMessage": "開"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "在節點頁面開啟 {name}"
   },
   "myMacs.reconnect": {
     "defaultMessage": "立即重新連線"
@@ -5525,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "正在提供"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "節點 · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "不知道是哪個節點在服務：{error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "在節點頁面開啟 {name}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "管理雲端提供方"
   },
   "nodes.manageMacs": {
     "defaultMessage": "管理 Mac 和模型"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "失敗"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "LeanZero MLX 引擎失敗 — 引擎卡片上寫著原因"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "載入中"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "LeanZero MLX 引擎正在載入模型"
   },
   "nodes.sections": {
     "defaultMessage": "節點分區"
