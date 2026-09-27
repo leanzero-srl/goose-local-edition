@@ -7,16 +7,6 @@ use super::{EmptyResponse, RecipeDto};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct LoopConfigDto {
-    pub max_iterations: u32,
-    #[serde(default)]
-    pub stop_check_command: Option<String>,
-    #[serde(default)]
-    pub state_artifact: Option<String>,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ScheduledJobDto {
     pub id: String,
     pub source: String,
@@ -29,8 +19,6 @@ pub struct ScheduledJobDto {
     pub current_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_start_time: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub loop_config: Option<LoopConfigDto>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
@@ -54,8 +42,6 @@ pub struct CreateScheduleRequest {
     pub id: String,
     pub recipe: RecipeDto,
     pub cron: String,
-    #[serde(default)]
-    pub loop_config: Option<LoopConfigDto>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]

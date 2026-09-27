@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Text neben den Aufrufen ({chars} Zeichen) — nicht Teil der Antwort"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "Quellordner wählen"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,one{# Rezept importieren} other{# Rezepte importieren}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,one{# Rezept importiert} other{# Rezepte importiert}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,one{# Rezept importiert, {failed} fehlgeschlagen} other{# Rezepte importiert, {failed} fehlgeschlagen}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "Schleifen werden nicht mehr importiert — {id} ({cron}). Rezepte werden weiterhin importiert."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "Schleifen ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "Keine Rezepte unter {dir} gefunden."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "Wählen Sie einen anderen Goose-Konfigurations- oder Datenordner, um dessen Rezepte zu importieren."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "Rezepte ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "{dir} wird durchsucht…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "schedule.json konnte nicht gelesen werden: Es ist keine Liste von Zeitplänen"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "schedule.json konnte nicht gelesen werden: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "Aus einem anderen Goose"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "Schließen"
   },

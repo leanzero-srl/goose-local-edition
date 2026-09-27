@@ -102,7 +102,6 @@ impl SchedulerTrait for FixtureScheduler {
                 recipe_base_dir: recipe_path
                     .parent()
                     .map(|parent| parent.to_string_lossy().to_string()),
-                loop_config: None,
             },
             false,
         )

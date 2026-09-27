@@ -133,6 +133,9 @@ setup (another project's `~/.config/goose` or an exported bundle) into this one.
   **Implementation detail to resolve at build time:** how goose persists schedules and whether they can be read
   from a *different* config dir (vs. an explicit export/import file). If there's no clean cross‑config read, add
   a lightweight "export loops → JSON / import loops ← JSON" pair. Flagged **MEDIUM** confidence.
+  **Retired 2026-09-27 (Q-227/Q-228, L8):** the scheduler's `loop_config` no longer exists; loops live in the
+  chat (session loops). The import section still scans `schedule.json` and names each job carrying a
+  `loop_config` as "Loops are no longer imported"; an unreadable file is named with its error.
 - Conditional here too: show Recipes / Loops only if the chosen source has them.
 
 ## Confidence flags (honest)

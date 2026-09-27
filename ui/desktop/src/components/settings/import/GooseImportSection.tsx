@@ -1,65 +1,139 @@
 import React, { useState } from 'react';
-import { FolderOpen, Check, X, Loader2, Repeat } from 'lucide-react';
+import { FolderOpen, Check, X, Loader2, Repeat, FileWarning } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { Switch } from '../../ui/switch';
 import { parseRecipeFromFile } from '../../../recipe';
 import { saveRecipe, listSavedRecipes } from '../../../recipe/recipe_management';
-import { acpCreateSchedule } from '../../../acp/schedules';
+import { defineMessages, useIntl } from '../../../i18n';
 
 /**
- * Goose Local Edition — import goose's OWN recipes + loops from ANOTHER goose setup (the "loops of its own"
- * ask). Pick a source goose config/data folder; it is scanned for recipes/ (*.yaml|json) and a schedule.json
- * whose entries with loop_config are loops. Recipes are saved via saveRecipe; loops are recreated via
- * acpCreateSchedule after mapping the on-disk snake_case (stop_check:{Shell:{command}}) to the wire DTO.
+ * Goose Local Edition — import goose's OWN recipes from ANOTHER goose setup. Pick a source goose
+ * config/data folder; its recipes/ (*.yaml|json) are saved via saveRecipe.
  *
- * CONFIDENCE: recipes = HIGH (reuses the tested parseRecipeFromFile + saveRecipe). Loops = MEDIUM — the
- * schedule.json format mapping is tested on synthetic data only (no real loops existed locally to test).
+ * The scheduler's recipe loop (`loop_config` on a schedule.json job) was retired (Q-227/Q-228, L8):
+ * loops now live in the chat (session loops). A source schedule.json is still scanned so every job
+ * that carries a `loop_config` is NAMED as not imported rather than silently dropped, and a
+ * schedule.json that cannot be read is named with its error rather than read as "no loops".
  */
 
+const i18n = defineMessages({
+  title: {
+    id: 'gooseImportSection.title',
+    defaultMessage: 'From another Goose',
+  },
+  chooseSource: {
+    id: 'gooseImportSection.chooseSource',
+    defaultMessage: 'Choose source folder',
+  },
+  pickPrompt: {
+    id: 'gooseImportSection.pickPrompt',
+    defaultMessage: 'Pick another Goose config/data folder to import its recipes.',
+  },
+  scanning: {
+    id: 'gooseImportSection.scanning',
+    defaultMessage: 'Scanning {dir}…',
+  },
+  nothingFound: {
+    id: 'gooseImportSection.nothingFound',
+    defaultMessage: 'No recipes found under {dir}.',
+  },
+  recipesHeader: {
+    id: 'gooseImportSection.recipesHeader',
+    defaultMessage: 'Recipes ({count})',
+  },
+  importRecipes: {
+    id: 'gooseImportSection.importRecipes',
+    defaultMessage: 'Import {count, plural, one {# recipe} other {# recipes}}',
+  },
+  importedRecipes: {
+    id: 'gooseImportSection.importedRecipes',
+    defaultMessage: 'Imported {ok, plural, one {# recipe} other {# recipes}}',
+  },
+  importedRecipesWithFailures: {
+    id: 'gooseImportSection.importedRecipesWithFailures',
+    defaultMessage: 'Imported {ok, plural, one {# recipe} other {# recipes}}, {failed} failed',
+  },
+  loopsHeader: {
+    id: 'gooseImportSection.loopsHeader',
+    defaultMessage: 'Loops ({count})',
+  },
+  loopNotImported: {
+    id: 'gooseImportSection.loopNotImported',
+    defaultMessage: 'Loops are no longer imported — {id} ({cron}). Recipes still import.',
+  },
+  scheduleUnreadable: {
+    id: 'gooseImportSection.scheduleUnreadable',
+    defaultMessage: 'schedule.json could not be read: {error}',
+  },
+  scheduleNotAList: {
+    id: 'gooseImportSection.scheduleNotAList',
+    defaultMessage: 'schedule.json could not be read: it is not a list of schedules',
+  },
+});
+
 const AZURE = '#2e8bff';
-type ItemStatus = 'idle' | 'importing' | 'done' | 'skipped' | 'error';
+type ItemStatus = 'importing' | 'done' | 'error';
 
 interface RecipeScan {
   file: string;
   name: string;
 }
-interface OnDiskLoopConfig {
-  max_iterations?: number;
-  // serde serializes SuccessCheck internally-tagged: {"type":"Shell","command":"..."} — NOT {Shell:{...}}.
-  stop_check?: { type?: string; command?: string } | null;
-  state_artifact?: string | null;
-}
-interface LoopScan {
+interface RetiredLoop {
   id: string;
   cron: string;
-  loop: OnDiskLoopConfig;
 }
+type ScheduleProblem = { kind: 'unreadable'; error: string } | { kind: 'notAList' };
 
 const STATUS_ICON: Record<ItemStatus, React.ReactNode> = {
-  idle: null,
   importing: <Loader2 className="h-4 w-4 animate-spin" style={{ color: AZURE }} />,
   done: <Check className="h-4 w-4" style={{ color: '#2ecc71' }} strokeWidth={3} />,
-  skipped: <span className="text-[10px] text-text-secondary">present</span>,
   error: <X className="h-4 w-4" style={{ color: '#ff3b30' }} strokeWidth={3} />,
 };
 
 const RECIPE_RE = /\.(ya?ml|json)$/i;
+const ABSENT_FILE_RE = /no such file/i;
 
-async function firstReadable(paths: string[]): Promise<string | null> {
-  for (const p of paths) {
-    const r = await window.electron.readFile(p);
-    if (r.found && r.file) return r.file;
+/** Every job in a source schedule.json that carries the retired `loop_config`, or the named reason the
+ *  file could not be read. An absent file is neither: there is simply nothing to report. */
+async function scanRetiredLoops(
+  dir: string
+): Promise<{ loops: RetiredLoop[]; problem: ScheduleProblem | null }> {
+  // schedule.json must be inside the chosen folder (no `..` traversal).
+  const res = await window.electron.readFile(`${dir}/schedule.json`);
+  if (!res.found) {
+    if (res.error && !ABSENT_FILE_RE.test(res.error)) {
+      return { loops: [], problem: { kind: 'unreadable', error: res.error.trim() } };
+    }
+    return { loops: [], problem: null };
   }
-  return null;
+  if (!res.file.trim()) return { loops: [], problem: null };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.file);
+  } catch (e) {
+    return {
+      loops: [],
+      problem: { kind: 'unreadable', error: e instanceof Error ? e.message : String(e) },
+    };
+  }
+  if (!Array.isArray(parsed)) return { loops: [], problem: { kind: 'notAList' } };
+  const loops: RetiredLoop[] = [];
+  for (const job of parsed as Array<Record<string, unknown>>) {
+    if (job && typeof job === 'object' && job.loop_config && typeof job.loop_config === 'object') {
+      loops.push({ id: String(job.id ?? ''), cron: String(job.cron ?? '') });
+    }
+  }
+  return { loops, problem: null };
 }
 
 export default function GooseImportSection() {
+  const intl = useIntl();
   const [sourceDir, setSourceDir] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [recipes, setRecipes] = useState<RecipeScan[]>([]);
-  const [loops, setLoops] = useState<LoopScan[]>([]);
+  const [retiredLoops, setRetiredLoops] = useState<RetiredLoop[]>([]);
+  const [scheduleProblem, setScheduleProblem] = useState<ScheduleProblem | null>(null);
   const [selRecipes, setSelRecipes] = useState<Set<string>>(new Set());
-  const [selLoops, setSelLoops] = useState<Set<string>>(new Set());
   const [results, setResults] = useState<Record<string, ItemStatus>>({});
   const [busy, setBusy] = useState(false);
 
@@ -77,28 +151,9 @@ export default function GooseImportSection() {
       setRecipes(recipeFiles);
       setSelRecipes(new Set(recipeFiles.map((r) => r.file)));
 
-      // schedule.json must be inside the chosen folder (no `..` traversal), so scheduled_recipes/ resolves
-      // consistently under the same dir at import time.
-      const scheduleRaw = await firstReadable([`${dir}/schedule.json`]);
-      const parsedLoops: LoopScan[] = [];
-      if (scheduleRaw) {
-        try {
-          const jobs = JSON.parse(scheduleRaw) as Array<Record<string, unknown>>;
-          for (const j of Array.isArray(jobs) ? jobs : []) {
-            if (j.loop_config && typeof j.loop_config === 'object') {
-              parsedLoops.push({
-                id: String(j.id ?? ''),
-                cron: String(j.cron ?? ''),
-                loop: j.loop_config as OnDiskLoopConfig,
-              });
-            }
-          }
-        } catch {
-          /* malformed schedule.json — no loops */
-        }
-      }
-      setLoops(parsedLoops);
-      setSelLoops(new Set(parsedLoops.map((l) => l.id)));
+      const scan = await scanRetiredLoops(dir);
+      setRetiredLoops(scan.loops);
+      setScheduleProblem(scan.problem);
     } finally {
       setScanning(false);
     }
@@ -135,67 +190,20 @@ export default function GooseImportSection() {
       }
     }
     setBusy(false);
-    const msg = `Imported ${ok} recipe${ok === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}`;
-    if (failed) toast.error(msg);
-    else toast.success(msg);
-  };
-
-  const importLoops = async () => {
-    if (!sourceDir) return;
-    setBusy(true);
-    let ok = 0;
-    let failed = 0;
-    let skipped = 0;
-    for (const l of loops.filter((x) => selLoops.has(x.id))) {
-      const rk = `loop:${l.id}`;
-      setResults((s) => ({ ...s, [rk]: 'importing' }));
-      try {
-        // The loop's recipe lives beside it as scheduled_recipes/<id>.{yaml,json}.
-        const recipeRaw = await firstReadable([
-          `${sourceDir}/scheduled_recipes/${l.id}.yaml`,
-          `${sourceDir}/scheduled_recipes/${l.id}.yml`,
-          `${sourceDir}/scheduled_recipes/${l.id}.json`,
-        ]);
-        if (!recipeRaw) throw new Error('recipe not found for loop');
-        const recipe = await parseRecipeFromFile(recipeRaw);
-        await acpCreateSchedule({
-          id: l.id,
-          recipe,
-          cron: l.cron,
-          loop_config: {
-            maxIterations: l.loop.max_iterations ?? 1,
-            stopCheckCommand: l.loop.stop_check?.command,
-            stateArtifact: l.loop.state_artifact ?? undefined,
-          },
-        });
-        ok += 1;
-        setResults((s) => ({ ...s, [rk]: 'done' }));
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (/exist|already/i.test(msg)) {
-          skipped += 1;
-          setResults((s) => ({ ...s, [rk]: 'skipped' }));
-        } else {
-          failed += 1;
-          setResults((s) => ({ ...s, [rk]: 'error' }));
-        }
-      }
+    if (failed) {
+      toast.error(intl.formatMessage(i18n.importedRecipesWithFailures, { ok, failed }));
+    } else {
+      toast.success(intl.formatMessage(i18n.importedRecipes, { ok }));
     }
-    setBusy(false);
-    const msg = `Imported ${ok} loop${ok === 1 ? '' : 's'}${skipped ? `, ${skipped} already present` : ''}${failed ? `, ${failed} failed` : ''}`;
-    if (failed) toast.error(msg);
-    else toast.success(msg);
   };
 
   const Row = ({
     label,
-    sub,
     checked,
     onToggle,
     status,
   }: {
     label: string;
-    sub?: string;
     checked: boolean;
     onToggle: () => void;
     status?: ItemStatus;
@@ -203,12 +211,18 @@ export default function GooseImportSection() {
     <div className="flex items-center gap-3 py-2">
       <div className="min-w-0 flex-1">
         <div className="text-sm text-text-primary truncate font-mono">{label}</div>
-        {sub && <div className="text-xs text-text-secondary truncate">{sub}</div>}
       </div>
       <div className="w-6 flex justify-center shrink-0">{status ? STATUS_ICON[status] : null}</div>
       <Switch checked={checked} onCheckedChange={onToggle} variant="mono" />
     </div>
   );
+
+  const scheduleProblemText =
+    scheduleProblem === null
+      ? null
+      : scheduleProblem.kind === 'unreadable'
+        ? intl.formatMessage(i18n.scheduleUnreadable, { error: scheduleProblem.error })
+        : intl.formatMessage(i18n.scheduleNotAList);
 
   return (
     <div
@@ -217,33 +231,38 @@ export default function GooseImportSection() {
       data-testid="goose-import-section"
     >
       <div className="flex items-center justify-between px-3 py-2 bg-background-secondary border-b border-border-primary">
-        <span className="text-sm font-semibold text-text-primary">From another Goose</span>
+        <span className="text-sm font-semibold text-text-primary">
+          {intl.formatMessage(i18n.title)}
+        </span>
         <button
           onClick={() => void chooseAndScan()}
           disabled={scanning}
           className="flex items-center gap-1 text-xs border border-border-primary px-2 py-1 text-text-primary hover:border-text-secondary transition-colors disabled:opacity-50"
           style={{ borderRadius: 3 }}
         >
-          <FolderOpen className="h-3.5 w-3.5" /> Choose source folder
+          <FolderOpen className="h-3.5 w-3.5" /> {intl.formatMessage(i18n.chooseSource)}
         </button>
       </div>
 
       {!sourceDir ? (
         <div className="px-3 py-4 text-xs text-text-secondary">
-          Pick another Goose config/data folder to import its recipes and loops.
+          {intl.formatMessage(i18n.pickPrompt)}
         </div>
       ) : scanning ? (
-        <div className="px-3 py-4 text-xs text-text-secondary">Scanning {sourceDir}…</div>
-      ) : recipes.length === 0 && loops.length === 0 ? (
         <div className="px-3 py-4 text-xs text-text-secondary">
-          No recipes or loops found under {sourceDir}.
+          {intl.formatMessage(i18n.scanning, { dir: sourceDir })}
+        </div>
+      ) : recipes.length === 0 && retiredLoops.length === 0 && scheduleProblemText === null ? (
+        <div className="px-3 py-4 text-xs text-text-secondary">
+          {intl.formatMessage(i18n.nothingFound, { dir: sourceDir })}
         </div>
       ) : (
         <div className="px-3 py-2 space-y-3">
           {recipes.length > 0 && (
             <div>
               <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary mb-1">
-                <FolderOpen className="h-3.5 w-3.5" /> Recipes ({recipes.length})
+                <FolderOpen className="h-3.5 w-3.5" />{' '}
+                {intl.formatMessage(i18n.recipesHeader, { count: recipes.length })}
               </div>
               <div className="divide-y divide-border-primary">
                 {recipes.map((r) => (
@@ -263,39 +282,39 @@ export default function GooseImportSection() {
                   className="text-xs font-semibold px-3 py-1.5 text-white disabled:opacity-50"
                   style={{ backgroundColor: AZURE, borderRadius: 3 }}
                 >
-                  Import {selRecipes.size} recipe{selRecipes.size === 1 ? '' : 's'}
+                  {intl.formatMessage(i18n.importRecipes, { count: selRecipes.size })}
                 </button>
               </div>
             </div>
           )}
 
-          {loops.length > 0 && (
-            <div>
+          {retiredLoops.length > 0 && (
+            <div data-testid="goose-import-retired-loops">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary mb-1">
-                <Repeat className="h-3.5 w-3.5" /> Loops ({loops.length})
+                <Repeat className="h-3.5 w-3.5" />{' '}
+                {intl.formatMessage(i18n.loopsHeader, { count: retiredLoops.length })}
               </div>
               <div className="divide-y divide-border-primary">
-                {loops.map((l) => (
-                  <Row
-                    key={l.id}
-                    label={l.id}
-                    sub={`${l.cron} · ${l.loop.max_iterations ?? 1} iterations`}
-                    checked={selLoops.has(l.id)}
-                    onToggle={() => toggle(selLoops, setSelLoops, l.id)}
-                    status={results[`loop:${l.id}`]}
-                  />
+                {retiredLoops.map((l, index) => (
+                  <div
+                    key={`${l.id}:${index}`}
+                    className="py-2 text-xs text-text-primary"
+                    data-testid="goose-import-retired-loop"
+                  >
+                    {intl.formatMessage(i18n.loopNotImported, { id: l.id, cron: l.cron })}
+                  </div>
                 ))}
               </div>
-              <div className="flex justify-end pt-1">
-                <button
-                  onClick={() => void importLoops()}
-                  disabled={busy || selLoops.size === 0}
-                  className="text-xs font-semibold px-3 py-1.5 text-white disabled:opacity-50"
-                  style={{ backgroundColor: AZURE, borderRadius: 3 }}
-                >
-                  Import {selLoops.size} loop{selLoops.size === 1 ? '' : 's'}
-                </button>
-              </div>
+            </div>
+          )}
+
+          {scheduleProblemText !== null && (
+            <div
+              className="flex items-start gap-1.5 py-2 text-xs text-text-primary"
+              data-testid="goose-import-schedule-problem"
+            >
+              <FileWarning className="h-3.5 w-3.5 shrink-0" style={{ color: '#ff3b30' }} />
+              <span>{scheduleProblemText}</span>
             </div>
           )}
         </div>

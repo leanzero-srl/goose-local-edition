@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Çağrıların yanına yazılan metin ({chars} karakter) — yanıtın parçası değil"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "Kaynak klasörü seç"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,one{# tarifi içe aktar} other{# tarifi içe aktar}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,one{# tarif içe aktarıldı} other{# tarif içe aktarıldı}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,one{# tarif içe aktarıldı, {failed} başarısız} other{# tarif içe aktarıldı, {failed} başarısız}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "Döngüler artık içe aktarılmıyor — {id} ({cron}). Tarifler hâlâ içe aktarılıyor."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "Döngüler ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "{dir} altında tarif bulunamadı."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "Tariflerini içe aktarmak için başka bir Goose yapılandırma/veri klasörü seçin."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "Tarifler ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "{dir} taranıyor…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "schedule.json okunamadı: bir zamanlama listesi değil"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "schedule.json okunamadı: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "Başka bir Goose’tan"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "Kapat"
   },

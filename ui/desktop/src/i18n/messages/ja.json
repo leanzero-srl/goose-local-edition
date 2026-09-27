@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "呼び出しと並んで書かれたテキスト ({chars} 文字) — 回答には含まれません"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "ソースフォルダーを選択"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,other{# 件のレシピをインポート}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,other{# 件のレシピをインポートしました}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,other{# 件のレシピをインポートしました（{failed} 件失敗）}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "ループはインポートされなくなりました — {id}（{cron}）。レシピは引き続きインポートされます。"
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "ループ（{count}）"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "{dir} にレシピが見つかりません。"
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "別の Goose の設定またはデータフォルダーを選ぶと、そのレシピをインポートできます。"
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "レシピ（{count}）"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "{dir} をスキャン中…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "schedule.json を読み込めませんでした: スケジュールのリストではありません"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "schedule.json を読み込めませんでした: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "別の Goose から"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "閉じる"
   },
