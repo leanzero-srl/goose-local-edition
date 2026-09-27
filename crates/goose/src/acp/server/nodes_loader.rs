@@ -1,0 +1,831 @@
+//! The node loader (design DESIGN-NODES-AND-STRATEGIES.md §6.4, slice S5): makes a node's way
+//! serve this Mac's goose when a demand asks for it, under the product's real rule — ONE MLX way
+//! serves this Mac's goose at a time, across all Macs. Installed through S0's seam
+//! (`crate::nodes::seam`), so the router, summon and `nodes/ensureServing` reach it without
+//! depending on it.
+//!
+//! `ensure_serving(node, demand)`, in the design's order:
+//!  1. served already → Ready (unless the demanding reply opened after a queued switch to another
+//!     way: it waits behind that switch, so new replies never starve a queued one);
+//!  2. cloud / endpoint → Ready;
+//!  3. a swarm build holds the engine → Refused (the loader never stops an engine under a build);
+//!  4. the stop set is EVERY serving way (Run it's `servingWays`, pinned by `switch.fixture.json`);
+//!     one kept loaded → Refused;
+//!  5. a step the loader never takes (provisioning, copying a model, permissions) → Refused in the
+//!     planner's or the split plan's words; a split set up for another model is NOT a step
+//!     (`split_config`, pinned by `split_config.fixture.json`);
+//!  6. the one fit rule (the placement plan, crediting what the stop set frees) → Refused on Short;
+//!  7. a reply open on a way in the stop set — in any goose process on this Mac, other than the
+//!     demand's own root and replies waiting in a loader — or requests on this Mac's engine no
+//!     reply explains → Wait, in ONE FIFO; woken by a reply ending (in-process: the reply guard's
+//!     drop; another process: the kernel releasing that reply's flock), never by a clock;
+//!  8. batching is per REPLY (the guard `on_prompt` takes): a reply keeps its way for every model
+//!     call; a delegate's demand is its parent reply's own;
+//!  9. the swap claim (one loader per Mac at a time), then the stops in Run it's order, each
+//!     followed to its end, then the start — through the same ACP handlers Run it calls;
+//! 10. the ready paths append the load row (`rows`);
+//! 11. a failed load is not restored — the stop set stays stopped, the turn gets the load's words;
+//! 12. a cancel before the claim leaves nothing; after the stops began the swap runs to its end
+//!     and is recorded `cancelledAfterStop`;
+//! 13. the serving intent is written by the handlers, as for any owner start.
+//!
+//! The only periodic look is [`LOOK_AGAIN`], for what no event announces: an engine finishing a
+//! load or stop it reports only on its status, and requests from a client goose cannot see. It is
+//! an observation cadence — each look reads a status; what it reads decides (gate 5).
+
+mod holds;
+mod live;
+pub(super) mod rows;
+mod split_config;
+mod switch;
+
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use goose_sdk_types::custom_requests::{
+    MlxDistributedConfigDto, MlxPlacementKeyDto, MlxPlacementKindDto, NodeEnsureServing,
+    NodeLoadRefusalCode,
+};
+use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
+use tokio::sync::{oneshot, Notify};
+
+use crate::nodes::seam::{self, Demand, LoaderActivity, NodeLoader};
+use crate::nodes::{NodeDefKind, ResolvedNodeDef};
+
+pub use holds::ReplyGuard;
+use holds::{Blocker, Holds};
+use switch::{Serving, Stop, SwitchPlan, WayRef};
+
+/// How often a wait no event can end looks again (an engine's status, a foreign client's
+/// requests). The distributed supervisor's own poll interval (`supervisor.rs` `POLL_INTERVAL`):
+/// the states read here change at that cadence. An observation, never a verdict (gate 5).
+pub(super) const LOOK_AGAIN: Duration = Duration::from_secs(2);
+
+/// Why a demand cannot be served, in words the composer shows verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Refusal {
+    pub code: NodeLoadRefusalCode,
+    pub reason: String,
+}
+
+impl Refusal {
+    fn new(code: NodeLoadRefusalCode, reason: impl Into<String>) -> Self {
+        Refusal {
+            code,
+            reason: reason.into(),
+        }
+    }
+}
+
+/// What a start does.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Start {
+    MountHere,
+    RemoteSingle {
+        peer: String,
+    },
+    /// The split with the saved setup, which already names this model.
+    SplitSaved,
+    /// The split with a config discovered for this model (Run it's `startSplitFor`).
+    SplitFor(Box<MlxDistributedConfigDto>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Prepared {
+    pub model: String,
+    pub key: PlacementKey,
+    pub start: Start,
+}
+
+/// Whether a node's way serves this Mac's goose now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Residency {
+    Serving,
+    /// Its way is loading already (Run it, a restore, another loader): wait for it.
+    Loading(Option<String>),
+    NotServing,
+}
+
+/// Everything the loader reads and does outside its own bookkeeping — the ACP handlers Run it
+/// calls, in production; a scripted fake in the tests.
+#[async_trait]
+pub(crate) trait Ways: Send + Sync {
+    /// The node with its model read through (a pool node's device model).
+    async fn resolve(&self, node: &crate::nodes::NodeDef) -> Result<ResolvedNodeDef, Refusal>;
+    async fn residency(&self, node: &ResolvedNodeDef) -> Result<Residency, Refusal>;
+    /// The three engines' reports (Run it's inputs), or a conflict this goose may not switch:
+    /// a way another goose window owns.
+    async fn serving(&self) -> Result<Serving, Refusal>;
+    /// The node kept loaded whose way `stop` is, in words.
+    async fn kept_loaded(&self, stop: &Stop) -> Result<Option<String>, Refusal>;
+    /// Steps 5–6: a step or the fit refuses; otherwise what starting means.
+    async fn prepare(
+        &self,
+        node: &ResolvedNodeDef,
+        target: &WayRef,
+        plan: &SwitchPlan,
+    ) -> Result<Prepared, Refusal>;
+    /// Stop one way and return once it has let go (Run it's `stopForSwitch`).
+    async fn stop(&self, stop: &Stop, plan: &SwitchPlan) -> Result<(), String>;
+    /// Start the way and follow it until it answers; `Err` carries the engine's words.
+    async fn start(&self, node: &ResolvedNodeDef, prepared: &Prepared) -> Result<(), String>;
+    /// Requests on this Mac's engine that no reply accounts for (another client on the port).
+    async fn unexplained_requests(&self) -> Option<u32>;
+}
+
+/// Why a waiting demand looks again.
+enum Wake {
+    /// This process's bookkeeping changed (a reply ended, a demand left the queue, a lease moved).
+    Changed,
+    /// A reply of another goose process ends when its flock is released.
+    ReplyEnd(std::path::PathBuf),
+    /// A status only a look can read.
+    LookAgain,
+}
+
+enum Look {
+    Ready,
+    Refused(Refusal),
+    Wait { reason: String, wake: Wake },
+    Go(Box<(Prepared, SwitchPlan)>),
+}
+
+struct Queued {
+    seq: u64,
+    node: String,
+    node_name: String,
+}
+
+pub(crate) struct Core {
+    ways: Arc<dyn Ways>,
+    holds: Arc<Holds>,
+    queue: StdMutex<VecDeque<Queued>>,
+    activity: StdMutex<BTreeMap<String, LoaderActivity>>,
+    changed: Arc<Notify>,
+    /// One swap at a time in this process; the swap claim serialises processes.
+    swapping: Arc<tokio::sync::Mutex<()>>,
+}
+
+/// A demand in the queue; dropping it (the turn went, or the demand ended) leaves the queue.
+struct Ticket {
+    core: Arc<Core>,
+    seq: u64,
+}
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        self.core
+            .queue
+            .lock()
+            .unwrap()
+            .retain(|q| q.seq != self.seq);
+        self.core.changed.notify_waiters();
+    }
+}
+
+/// The demanding reply waits in the loader: it holds nothing meanwhile (see `holds`).
+struct Paused {
+    core: Arc<Core>,
+    root: String,
+}
+
+impl Drop for Paused {
+    fn drop(&mut self) {
+        self.core.holds.set_waiting(&self.root, false);
+    }
+}
+
+/// Flips when the demanding turn's future is dropped mid-swap.
+struct CancelOnDrop(Arc<AtomicBool>, bool);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if !self.1 {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+fn short(model: &str) -> &str {
+    model.rsplit('/').next().unwrap_or(model)
+}
+
+/// A way that is starting now, in words; `None` when every way has settled.
+fn loading_way(serving: &Serving) -> Option<String> {
+    let model = |m: &Option<String>| short(m.as_deref().unwrap_or("a model")).to_string();
+    if let Some(single) = serving.single.as_ref().filter(|s| s.state == "mounting") {
+        return Some(format!(
+            "this Mac's engine is loading {}",
+            model(&single.model_id)
+        ));
+    }
+    if let Some(remote) = serving.remote.as_ref().filter(|r| r.state == "mounting") {
+        return Some(format!(
+            "the engine on {} is loading {}",
+            remote.peer.as_deref().unwrap_or("a linked Mac"),
+            model(&remote.model_id)
+        ));
+    }
+    if let Some(split) = serving
+        .distributed
+        .as_ref()
+        .filter(|d| matches!(d.state.as_str(), "preflight" | "starting"))
+    {
+        return Some(format!("the split is starting {}", model(&split.model_id)));
+    }
+    None
+}
+
+/// The way a node names, as the loader starts it.
+fn target_of(node: &ResolvedNodeDef) -> Result<(WayRef, PlacementKey), Refusal> {
+    let Some(key) = crate::nodes::acp::node_key(node) else {
+        return Err(Refusal::new(
+            NodeLoadRefusalCode::NeedsStep,
+            format!(
+                "{} serves whatever this Mac's engine runs; start a model in Run it",
+                node.def.name
+            ),
+        ));
+    };
+    let key = PlacementKey {
+        kind: match key.kind {
+            MlxPlacementKindDto::Single => PlacementKind::Single,
+            MlxPlacementKindDto::Tensor => PlacementKind::Tensor,
+            MlxPlacementKindDto::Pipeline => PlacementKind::Pipeline,
+        },
+        nodes: key.nodes,
+        link: key.link,
+    };
+    let way = WayRef::of_key(&key).ok_or_else(|| {
+        Refusal::new(
+            NodeLoadRefusalCode::NeedsStep,
+            format!(
+                "{}'s way names no Mac goose can start it on; pick its way again in New node",
+                node.def.name
+            ),
+        )
+    })?;
+    Ok((way, key))
+}
+
+pub(crate) fn key_of(dto: &MlxPlacementKeyDto) -> PlacementKey {
+    PlacementKey {
+        kind: match dto.kind {
+            MlxPlacementKindDto::Single => PlacementKind::Single,
+            MlxPlacementKindDto::Tensor => PlacementKind::Tensor,
+            MlxPlacementKindDto::Pipeline => PlacementKind::Pipeline,
+        },
+        nodes: dto.nodes.clone(),
+        link: dto.link.clone(),
+    }
+}
+
+impl Core {
+    pub(crate) fn new(ways: Arc<dyn Ways>, holders_dir: Option<std::path::PathBuf>) -> Arc<Self> {
+        let changed = Arc::new(Notify::new());
+        Arc::new(Core {
+            ways,
+            holds: Holds::new(holders_dir, Arc::clone(&changed)),
+            queue: StdMutex::new(VecDeque::new()),
+            activity: StdMutex::new(BTreeMap::new()),
+            changed,
+            swapping: Arc::new(tokio::sync::Mutex::new(())),
+        })
+    }
+
+    pub(crate) fn holds(&self) -> &Arc<Holds> {
+        &self.holds
+    }
+
+    fn set_activity(&self, activity: LoaderActivity) {
+        self.activity
+            .lock()
+            .unwrap()
+            .insert(activity.node().to_string(), activity);
+    }
+
+    fn clear_activity(&self, node: &str) {
+        self.activity.lock().unwrap().remove(node);
+    }
+
+    pub(crate) fn in_progress(&self) -> Vec<LoaderActivity> {
+        self.activity.lock().unwrap().values().cloned().collect()
+    }
+
+    pub(crate) async fn ensure_serving(self: &Arc<Self>, demand: Demand) -> NodeEnsureServing {
+        if demand.node.kind != NodeDefKind::Mlx {
+            return NodeEnsureServing::Ready;
+        }
+        if demand.session_id.is_some() {
+            return Arc::clone(self).run(demand, None).await;
+        }
+        // A demand from the UI (Start on a card): the first answer comes back now; a wait or a
+        // load continues in the background, and the card follows it through `nodes/residency`.
+        let (first, answer) = oneshot::channel();
+        let core = Arc::clone(self);
+        tokio::spawn(async move {
+            core.run(demand, Some(first)).await;
+        });
+        answer.await.unwrap_or_else(|_| NodeEnsureServing::Refused {
+            code: NodeLoadRefusalCode::Unknown,
+            reason: "the loader's task ended without an answer".to_string(),
+        })
+    }
+
+    async fn run(
+        self: Arc<Self>,
+        demand: Demand,
+        mut first: Option<oneshot::Sender<NodeEnsureServing>>,
+    ) -> NodeEnsureServing {
+        let node_id = demand.node.id.clone();
+        let answer = self.demand(demand, &mut first).await;
+        match &answer {
+            NodeEnsureServing::Refused { reason, .. } => {
+                self.set_activity(LoaderActivity::RefusedLastTime {
+                    node: node_id,
+                    reason: reason.clone(),
+                })
+            }
+            _ => self.clear_activity(&node_id),
+        }
+        if let Some(first) = first {
+            let _ = first.send(answer.clone());
+        }
+        answer
+    }
+
+    async fn demand(
+        self: &Arc<Self>,
+        demand: Demand,
+        first: &mut Option<oneshot::Sender<NodeEnsureServing>>,
+    ) -> NodeEnsureServing {
+        let refused = |r: Refusal| NodeEnsureServing::Refused {
+            code: r.code,
+            reason: r.reason,
+        };
+        let node = match self.ways.resolve(&demand.node).await {
+            Ok(node) => node,
+            Err(r) => return refused(r),
+        };
+        let (target, _) = match target_of(&node) {
+            Ok(target) => target,
+            Err(r) => return refused(r),
+        };
+        let root = demand.session_id.as_deref().map(|s| self.holds.root_of(s));
+        let reply_opened = root.as_deref().and_then(|r| self.holds.reply_opened(r));
+        let seq = self.holds.next_seq();
+        self.queue.lock().unwrap().push_back(Queued {
+            seq,
+            node: node.def.id.clone(),
+            node_name: node.def.name.clone(),
+        });
+        let ticket = Ticket {
+            core: Arc::clone(self),
+            seq,
+        };
+        let mut paused: Option<Paused> = None;
+        let tell_first = |first: &mut Option<oneshot::Sender<NodeEnsureServing>>, reason: &str| {
+            if let Some(tx) = first.take() {
+                let _ = tx.send(NodeEnsureServing::Wait {
+                    reason: reason.to_string(),
+                });
+            }
+        };
+        let mut looks = 0u64;
+        loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            looks += 1;
+            let look = self
+                .look(
+                    &node,
+                    &target,
+                    seq,
+                    root.as_deref(),
+                    reply_opened,
+                    looks == 1,
+                )
+                .await;
+            let (prepared, plan) = match look {
+                Look::Ready => return NodeEnsureServing::Ready,
+                Look::Refused(r) => return refused(r),
+                Look::Wait { reason, wake } => {
+                    if let (None, Some(root)) = (&paused, &root) {
+                        self.holds.set_waiting(root, true);
+                        paused = Some(Paused {
+                            core: Arc::clone(self),
+                            root: root.clone(),
+                        });
+                    }
+                    self.set_activity(LoaderActivity::Waiting {
+                        node: node.def.id.clone(),
+                        reason: reason.clone(),
+                    });
+                    tell_first(first, &reason);
+                    wait(notified, wake).await;
+                    continue;
+                }
+                Look::Go(go) => *go,
+            };
+            // From here the demanding reply has no model call in flight: it holds nothing.
+            if let (None, Some(root)) = (&paused, &root) {
+                self.holds.set_waiting(root, true);
+                paused = Some(Paused {
+                    core: Arc::clone(self),
+                    root: root.clone(),
+                });
+            }
+            // The swap: this process's one swap, then the Mac's swap claim — both waited for, and
+            // both cancellable (a cancel here leaves nothing: no stop has begun).
+            let swapping = Arc::clone(&self.swapping).lock_owned().await;
+            let claim = match self.claim(&node, &prepared, first).await {
+                Ok(claim) => claim,
+                Err(r) => return refused(r),
+            };
+            // Under the claim, look again: another loader may have switched meanwhile.
+            match self
+                .look(&node, &target, seq, root.as_deref(), reply_opened, true)
+                .await
+            {
+                Look::Ready => return NodeEnsureServing::Ready,
+                Look::Refused(r) => return refused(r),
+                Look::Wait { .. } => {
+                    drop((claim, swapping));
+                    continue;
+                }
+                Look::Go(_) => {}
+            }
+            let loading = format!("loading {} for this chat", node.def.name);
+            tell_first(first, &loading);
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let mut on_drop = CancelOnDrop(Arc::clone(&cancelled), false);
+            let (done, result) = oneshot::channel();
+            let core = Arc::clone(self);
+            let owned = (ticket, paused, claim, swapping);
+            tokio::spawn(async move {
+                let answer = core.execute(&node, prepared, plan, cancelled).await;
+                drop(owned);
+                let _ = done.send(answer);
+            });
+            let answer = result.await.unwrap_or_else(|_| NodeEnsureServing::Refused {
+                code: NodeLoadRefusalCode::Unknown,
+                reason: "the loader's swap task ended without an answer".to_string(),
+            });
+            on_drop.1 = true;
+            return answer;
+        }
+    }
+
+    /// Take the Mac's swap claim, waiting (cancellably) while another goose window's loader holds
+    /// it. With no holder directory there is no other process to serialise with.
+    async fn claim(
+        &self,
+        node: &ResolvedNodeDef,
+        prepared: &Prepared,
+        first: &mut Option<oneshot::Sender<NodeEnsureServing>>,
+    ) -> Result<Option<goose_sidecar::machine::LoadLock>, Refusal> {
+        let Some(dir) = self.holds.dir().map(|d| d.to_path_buf()) else {
+            return Ok(None);
+        };
+        let what = format!(
+            "goose (pid {}) is switching this Mac's goose to {}",
+            std::process::id(),
+            node.def.name
+        );
+        let model = prepared.model.clone();
+        let failed = |e: String| {
+            Refusal::new(
+                NodeLoadRefusalCode::Unknown,
+                format!("the Mac's swap claim could not be taken: {e}"),
+            )
+        };
+        let (d, w, m) = (dir.clone(), what.clone(), model.clone());
+        let attempt =
+            tokio::task::spawn_blocking(move || goose_sidecar::holders::try_claim_swap(&d, &w, &m))
+                .await
+                .map_err(|e| failed(e.to_string()))?
+                .map_err(|e| failed(format!("{e:#}")))?;
+        let held = match attempt {
+            goose_sidecar::machine::LoadLockAttempt::Acquired(lock) => return Ok(Some(lock)),
+            goose_sidecar::machine::LoadLockAttempt::Held(held) => held,
+        };
+        let by = held
+            .holder
+            .as_ref()
+            .map_or_else(|| held.message(), |h| h.what.clone());
+        let reason = format!(
+            "another goose window is switching this Mac's goose ({by}); loading {} when it finishes",
+            node.def.name
+        );
+        self.set_activity(LoaderActivity::Waiting {
+            node: node.def.id.clone(),
+            reason: reason.clone(),
+        });
+        if let Some(tx) = first.take() {
+            let _ = tx.send(NodeEnsureServing::Wait { reason });
+        }
+        tokio::task::spawn_blocking(move || {
+            goose_sidecar::holders::claim_swap_waiting(&dir, &what, &model)
+        })
+        .await
+        .map_err(|e| failed(e.to_string()))?
+        .map(Some)
+        .map_err(|e| failed(format!("{e:#}")))
+    }
+
+    async fn look(
+        &self,
+        node: &ResolvedNodeDef,
+        target: &WayRef,
+        seq: u64,
+        root: Option<&str>,
+        reply_opened: Option<u64>,
+        prepare_now: bool,
+    ) -> Look {
+        let name = &node.def.name;
+        // 1. Served already?
+        match self.ways.residency(node).await {
+            Err(r) => return Look::Refused(r),
+            Ok(Residency::Serving) => {
+                let ahead = self.switch_ahead(seq, &node.def.id, reply_opened);
+                return match ahead {
+                    Some(other) => Look::Wait {
+                        reason: format!(
+                            "{name} is serving, and a switch to {other} was asked for before this reply began; this reply waits behind it"
+                        ),
+                        wake: Wake::Changed,
+                    },
+                    None => Look::Ready,
+                };
+            }
+            Ok(Residency::Loading(phase)) => {
+                return Look::Wait {
+                    reason: match phase {
+                        Some(phase) => format!("{name} is loading ({phase})"),
+                        None => format!("{name} is loading"),
+                    },
+                    wake: Wake::LookAgain,
+                }
+            }
+            Ok(Residency::NotServing) => {}
+        }
+        // 3. Held by a build?
+        match self.holds.build_holder() {
+            Err(reason) => return Look::Refused(Refusal::new(NodeLoadRefusalCode::Unknown, reason)),
+            Ok(Some(build)) => {
+                return Look::Refused(Refusal::new(
+                    NodeLoadRefusalCode::HeldByBuild,
+                    format!(
+                        "a swarm build is using this Mac's engine ({}, pid {}); it frees when the build ends",
+                        build.what, build.pid
+                    ),
+                ))
+            }
+            Ok(None) => {}
+        }
+        // One way at a time is one queue: only the oldest demand switches.
+        if let Some(ahead) = self.queue_ahead(seq) {
+            return Look::Wait {
+                reason: format!("waiting for the switch to {ahead} first; then {name}"),
+                wake: Wake::Changed,
+            };
+        }
+        // 4. The stop set.
+        let serving = match self.ways.serving().await {
+            Ok(serving) => serving,
+            Err(r) => return Look::Refused(r),
+        };
+        let plan = switch::switch_plan(&serving, target);
+        // A way another actor is starting (Run it, a restore) is the person's intent: waited for
+        // until it settles, never stopped mid-load by an automatic demand.
+        if let Some(loading) = loading_way(&serving) {
+            return Look::Wait {
+                reason: format!("{loading}; then {name}"),
+                wake: Wake::LookAgain,
+            };
+        }
+        for stop in &plan.stops {
+            match self.ways.kept_loaded(stop).await {
+                Err(r) => return Look::Refused(r),
+                Ok(Some(kept)) => {
+                    return Look::Refused(Refusal::new(
+                        NodeLoadRefusalCode::KeptLoaded,
+                        format!("Can't load {name}: {kept}"),
+                    ))
+                }
+                Ok(None) => {}
+            }
+        }
+        // 5–6. A step, or the fit: judged at the first look (a refusal is known before any wait)
+        // and again at the look that switches — never on every wake of a wait.
+        let prepared = if prepare_now {
+            match self.ways.prepare(node, target, &plan).await {
+                Ok(prepared) => Some(prepared),
+                Err(r) => return Look::Refused(r),
+            }
+        } else {
+            None
+        };
+        // 7. Replies in flight on a way that would stop.
+        let blockers = match self.holds.blockers(&plan.stops, root) {
+            Ok(blockers) => blockers,
+            Err(reason) => {
+                return Look::Refused(Refusal::new(NodeLoadRefusalCode::Unknown, reason))
+            }
+        };
+        if let Some(blocker) = blockers.first() {
+            let count = blockers.iter().filter(|b| b.way() == blocker.way()).count();
+            let replies = if count == 1 { "reply" } else { "replies" };
+            let finish = if count == 1 {
+                "it finishes"
+            } else {
+                "they finish"
+            };
+            return Look::Wait {
+                reason: format!(
+                    "{} is answering {count} {replies}; loading {name} when {finish}",
+                    blocker.way()
+                ),
+                wake: match blocker {
+                    Blocker::Here { .. } => Wake::Changed,
+                    Blocker::Elsewhere { lock, .. } => Wake::ReplyEnd(lock.clone()),
+                },
+            };
+        }
+        if plan.stops.iter().any(|s| s.way == WayRef::local()) {
+            if let Some(requests) = self.ways.unexplained_requests().await {
+                return Look::Wait {
+                    reason: format!(
+                        "this Mac's engine is answering {requests} request(s) from a client no goose reply accounts for; loading {name} when they finish"
+                    ),
+                    wake: Wake::LookAgain,
+                };
+            }
+        }
+        let prepared = match prepared {
+            Some(prepared) => prepared,
+            None => match self.ways.prepare(node, target, &plan).await {
+                Ok(prepared) => prepared,
+                Err(r) => return Look::Refused(r),
+            },
+        };
+        Look::Go(Box::new((prepared, plan)))
+    }
+
+    /// A queued switch older than the demanding reply, to another node: the reply waits behind it.
+    fn switch_ahead(&self, seq: u64, node: &str, reply_opened: Option<u64>) -> Option<String> {
+        let opened = reply_opened?;
+        self.queue
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|q| q.seq < seq && q.seq < opened && q.node != node)
+            .map(|q| q.node_name.clone())
+    }
+
+    fn queue_ahead(&self, seq: u64) -> Option<String> {
+        self.queue
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|q| q.seq < seq)
+            .map(|q| q.node_name.clone())
+    }
+
+    async fn execute(
+        &self,
+        node: &ResolvedNodeDef,
+        prepared: Prepared,
+        plan: SwitchPlan,
+        cancelled: Arc<AtomicBool>,
+    ) -> NodeEnsureServing {
+        self.set_activity(LoaderActivity::Loading {
+            node: node.def.id.clone(),
+            phase: None,
+        });
+        let failed = |reason: String| NodeEnsureServing::Refused {
+            code: NodeLoadRefusalCode::LoadFailed,
+            reason,
+        };
+        let expected = rows::expect(&prepared.model, prepared.key.clone(), cancelled);
+        for stop in &plan.stops {
+            if let Err(words) = self.ways.stop(stop, &plan).await {
+                rows::forget(&expected);
+                return failed(format!(
+                    "stopping {} ({}) to load {} failed: {words}",
+                    stop.way.words(),
+                    short(&stop.model_id),
+                    node.def.name
+                ));
+            }
+        }
+        let answer = match self.ways.start(node, &prepared).await {
+            Ok(()) => NodeEnsureServing::Ready,
+            // Step 11: nothing is restored — a second load nobody asked for can fail too.
+            Err(words) => failed(format!("{} failed to load: {words}", node.def.name)),
+        };
+        self.changed.notify_waiters();
+        answer
+    }
+}
+
+async fn wait(notified: std::pin::Pin<&mut tokio::sync::futures::Notified<'_>>, wake: Wake) {
+    match wake {
+        Wake::Changed => notified.await,
+        Wake::LookAgain => {
+            tokio::select! {
+                _ = notified => {}
+                _ = tokio::time::sleep(LOOK_AGAIN) => {}
+            }
+        }
+        Wake::ReplyEnd(lock) => {
+            let ended = tokio::task::spawn_blocking(move || {
+                goose_sidecar::holders::wait_for_reply_end(&lock)
+            });
+            tokio::select! {
+                _ = notified => {}
+                result = ended => {
+                    if let Ok(Err(e)) = result {
+                        tracing::warn!(error = %format!("{e:#}"), "nodes loader: waiting on another window's reply failed; looking again");
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct Seam(Arc<Core>);
+
+#[async_trait]
+impl NodeLoader for Seam {
+    async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing {
+        self.0.ensure_serving(demand).await
+    }
+
+    fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto) {
+        self.0.holds.note_lease(session, key_of(way));
+    }
+
+    fn note_child(&self, child_session: &str, parent_session: &str) {
+        self.0.holds.note_child(child_session, parent_session);
+    }
+
+    fn in_progress(&self) -> Vec<LoaderActivity> {
+        self.0.in_progress()
+    }
+}
+
+static LOADER: OnceLock<Arc<Core>> = OnceLock::new();
+static AGENT: StdMutex<Option<Weak<super::GooseAcpAgent>>> = StdMutex::new(None);
+
+/// Install this process's loader (once; the ACP server calls it as it starts), and have this Mac's
+/// engine report its loads to the load store.
+pub(super) fn install() {
+    let mut installed_now = false;
+    let core = LOADER.get_or_init(|| {
+        installed_now = true;
+        let dir = match goose_sidecar::holders::holders_dir() {
+            Ok(dir) => Some(dir),
+            Err(e) => {
+                tracing::error!(error = %format!("{e:#}"), "nodes loader: this Mac's holder directory is unknown; this goose cannot see other windows' replies and will not switch ways");
+                None
+            }
+        };
+        Core::new(Arc::new(live::AgentWays), dir)
+    });
+    if installed_now {
+        seam::install_loader(Arc::new(Seam(Arc::clone(core))));
+        goose_sidecar::engine::global_manager().set_load_observer(rows::single_observer());
+    }
+}
+
+/// The agent whose ACP handlers the loader calls (the latest one this process serves).
+pub(super) fn attach_agent(agent: &Arc<super::GooseAcpAgent>) {
+    *AGENT.lock().unwrap() = Some(Arc::downgrade(agent));
+}
+
+fn agent() -> Result<Arc<super::GooseAcpAgent>, Refusal> {
+    AGENT
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(Weak::upgrade)
+        .ok_or_else(|| {
+            Refusal::new(
+                NodeLoadRefusalCode::Unknown,
+                "no goose window is connected to this goose process, so it cannot start a way",
+            )
+        })
+}
+
+/// The reply guard `on_prompt` holds for the whole turn. `None` before the loader is installed.
+pub(super) fn open_reply(session_id: &str) -> Option<ReplyGuard> {
+    LOADER.get().map(|core| core.holds().open_reply(session_id))
+}
+
+#[cfg(test)]
+mod tests;

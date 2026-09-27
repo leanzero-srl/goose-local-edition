@@ -1,0 +1,780 @@
+//! The loader's races, on a scripted engine (`Fake`): what a demand waits for, what wakes it, what
+//! it stops and in what order, and what a cancel or a failure leaves behind. Each wait is bounded
+//! by the test's own `settle` so a deadlock fails the test instead of hanging it.
+
+use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
+use std::time::Duration;
+
+use goose_sdk_types::custom_requests::{NodeDef, NodeModelFrom, NodeOrigin, NodePlacement};
+use goose_sidecar::placement::loads::LoadOutcome;
+
+use super::switch::{DistributedFacts, RemoteFacts, SingleFacts, WayKind};
+use super::*;
+
+/// How long a test lets the loader get where it is going before it calls the state a hang. A
+/// test harness bound on the TEST, never on the product: the loader under test has no clock.
+const SETTLE: Duration = Duration::from_secs(5);
+
+struct NodeSpec {
+    way: WayRef,
+    model: String,
+}
+
+#[derive(Default)]
+struct Fake {
+    nodes: HashMap<String, NodeSpec>,
+    serving: StdMutex<Option<String>>,
+    log: StdMutex<Vec<String>>,
+    kept: StdMutex<Option<String>>,
+    refuse_prepare: StdMutex<Option<Refusal>>,
+    fail_start: StdMutex<Option<String>>,
+    /// A start that waits here until the test releases it.
+    start_gate: StdMutex<Option<Arc<Notify>>>,
+    prepares: StdMutex<usize>,
+}
+
+impl Fake {
+    fn with(nodes: &[(&str, WayRef, &str)], serving: Option<&str>) -> Arc<Self> {
+        Arc::new(Fake {
+            nodes: nodes
+                .iter()
+                .map(|(id, way, model)| {
+                    (
+                        id.to_string(),
+                        NodeSpec {
+                            way: way.clone(),
+                            model: model.to_string(),
+                        },
+                    )
+                })
+                .collect(),
+            serving: StdMutex::new(serving.map(str::to_string)),
+            ..Default::default()
+        })
+    }
+
+    fn log(&self) -> Vec<String> {
+        self.log.lock().unwrap().clone()
+    }
+
+    fn serving(&self) -> Option<String> {
+        self.serving.lock().unwrap().clone()
+    }
+}
+
+fn placement_of(way: &WayRef) -> NodePlacement {
+    match way.kind {
+        WayKind::Local => NodePlacement::Single {
+            macs: vec!["local".into()],
+            link: None,
+        },
+        WayKind::Peer => NodePlacement::Single {
+            macs: vec![format!("link:{}", way.peer.clone().unwrap())],
+            link: None,
+        },
+        WayKind::Split => NodePlacement::Pipeline {
+            macs: vec!["local".into(), "link:wh".into()],
+            link: Some("jaccl".into()),
+        },
+    }
+}
+
+fn def(id: &str, fake: &Fake) -> NodeDef {
+    let spec = &fake.nodes[id];
+    NodeDef {
+        id: id.to_string(),
+        name: format!("{id} node"),
+        kind: NodeDefKind::Mlx,
+        model: Some(spec.model.clone()),
+        placement: Some(placement_of(&spec.way)),
+        goal: None,
+        provider: None,
+        keep_loaded: false,
+        pool_device: None,
+        origin: NodeOrigin::User,
+    }
+}
+
+#[async_trait]
+impl Ways for Fake {
+    async fn resolve(&self, node: &NodeDef) -> Result<ResolvedNodeDef, Refusal> {
+        Ok(ResolvedNodeDef {
+            def: node.clone(),
+            model: node.model.clone(),
+            provider: None,
+            model_from: NodeModelFrom::Own,
+            pending_adoption: false,
+        })
+    }
+
+    async fn residency(&self, node: &ResolvedNodeDef) -> Result<Residency, Refusal> {
+        Ok(if self.serving().as_deref() == Some(node.def.id.as_str()) {
+            Residency::Serving
+        } else {
+            Residency::NotServing
+        })
+    }
+
+    async fn serving(&self) -> Result<Serving, Refusal> {
+        let Some(id) = self.serving() else {
+            return Ok(Serving::default());
+        };
+        let spec = &self.nodes[&id];
+        let model_id = Some(spec.model.clone());
+        Ok(match spec.way.kind {
+            WayKind::Local => Serving {
+                single: Some(SingleFacts {
+                    state: "running".into(),
+                    model_id,
+                }),
+                ..Default::default()
+            },
+            WayKind::Peer => Serving {
+                remote: Some(RemoteFacts {
+                    state: "ready".into(),
+                    peer: spec.way.peer.clone(),
+                    model_id,
+                }),
+                ..Default::default()
+            },
+            WayKind::Split => Serving {
+                distributed: Some(DistributedFacts {
+                    state: "serving".into(),
+                    mode: "distributed".into(),
+                    model_id,
+                }),
+                ..Default::default()
+            },
+        })
+    }
+
+    async fn kept_loaded(&self, _stop: &Stop) -> Result<Option<String>, Refusal> {
+        Ok(self.kept.lock().unwrap().clone())
+    }
+
+    async fn prepare(
+        &self,
+        node: &ResolvedNodeDef,
+        _target: &WayRef,
+        _plan: &SwitchPlan,
+    ) -> Result<Prepared, Refusal> {
+        *self.prepares.lock().unwrap() += 1;
+        if let Some(refusal) = self.refuse_prepare.lock().unwrap().clone() {
+            return Err(refusal);
+        }
+        let (_, key) = target_of(node)?;
+        Ok(Prepared {
+            model: node.model.clone().unwrap(),
+            key,
+            start: Start::MountHere,
+        })
+    }
+
+    async fn stop(&self, stop: &Stop, _plan: &SwitchPlan) -> Result<(), String> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("stop {:?} {}", stop.way.kind, stop.model_id));
+        *self.serving.lock().unwrap() = None;
+        Ok(())
+    }
+
+    async fn start(&self, node: &ResolvedNodeDef, prepared: &Prepared) -> Result<(), String> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("start {}", node.def.id));
+        let gate = self.start_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+        if let Some(words) = self.fail_start.lock().unwrap().clone() {
+            let _ = rows::outcome_of(&prepared.model, &prepared.key, &Err(words.clone()));
+            return Err(words);
+        }
+        *self.serving.lock().unwrap() = Some(node.def.id.clone());
+        Ok(())
+    }
+
+    async fn unexplained_requests(&self) -> Option<u32> {
+        None
+    }
+}
+
+fn demand(fake: &Fake, node: &str, session: Option<&str>) -> Demand {
+    Demand {
+        node: def(node, fake),
+        session_id: session.map(str::to_string),
+        role: None,
+    }
+}
+
+fn lease(core: &Core, session: &str, fake: &Fake, node: &str) {
+    let (_, key) = target_of(&ResolvedNodeDef {
+        def: def(node, fake),
+        model: None,
+        provider: None,
+        model_from: NodeModelFrom::Own,
+        pending_adoption: false,
+    })
+    .unwrap();
+    core.holds().note_lease(session, key);
+}
+
+async fn until(what: &str, cond: impl Fn() -> bool) {
+    tokio::time::timeout(SETTLE, async {
+        while !cond() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("never reached: {what}"));
+}
+
+async fn answer(task: tokio::task::JoinHandle<NodeEnsureServing>) -> NodeEnsureServing {
+    tokio::time::timeout(SETTLE, task)
+        .await
+        .expect("the demand settled")
+        .unwrap()
+}
+
+fn waiting(core: &Core, node: &str) -> Option<String> {
+    core.in_progress().into_iter().find_map(|a| match a {
+        LoaderActivity::Waiting { node: n, reason } if n == node => Some(reason),
+        _ => None,
+    })
+}
+
+fn flash_and_split() -> Arc<Fake> {
+    Fake::with(
+        &[
+            (
+                "flash",
+                WayRef::local(),
+                "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+            ),
+            (
+                "split",
+                WayRef::split(),
+                "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+            ),
+            (
+                "studio",
+                WayRef::peer("wh"),
+                "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+            ),
+        ],
+        Some("flash"),
+    )
+}
+
+#[tokio::test]
+async fn a_served_node_is_ready_and_nothing_stops() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let _reply = core.holds().open_reply("chat-1");
+    let got = core
+        .ensure_serving(demand(&fake, "flash", Some("chat-1")))
+        .await;
+    assert_eq!(got, NodeEnsureServing::Ready);
+    assert!(fake.log().is_empty());
+}
+
+/// §13 item 3: the batching unit is a REPLY. Two chats alternate on two ways, each in a tool loop
+/// (several model calls per reply): the swaps equal the reply alternations — never one per call —
+/// and no reply is stopped mid-way.
+#[tokio::test]
+async fn two_chats_in_tool_loops_swap_once_per_reply_never_per_call() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+
+    // Chat 1's reply is on Flash, several calls in.
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    // Chat 2's reply wants the split: it waits for chat 1's reply.
+    let reply_2 = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-2"));
+    let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("chat 2 waits", || waiting(&core, "split").is_some()).await;
+    assert!(
+        waiting(&core, "split")
+            .unwrap()
+            .contains("is answering 1 reply"),
+        "{:?}",
+        waiting(&core, "split")
+    );
+    // Chat 1's second and third calls of the same reply: served on Flash, no swap.
+    for _ in 0..2 {
+        let got = core
+            .ensure_serving(demand(&fake, "flash", Some("chat-1")))
+            .await;
+        assert_eq!(got, NodeEnsureServing::Ready);
+        lease(&core, "chat-1", &fake, "flash");
+    }
+    assert!(fake.log().is_empty(), "no swap mid-reply: {:?}", fake.log());
+
+    // Chat 1's reply ends: chat 2's switch runs.
+    drop(reply_1);
+    assert_eq!(answer(chat_2).await, NodeEnsureServing::Ready);
+    lease(&core, "chat-2", &fake, "split");
+    assert_eq!(
+        fake.log(),
+        vec![
+            "stop Local rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string(),
+            "start split".to_string()
+        ]
+    );
+
+    // Chat 1's next reply wants Flash back: it waits for chat 2's reply, whose later calls are served.
+    let reply_1b = core.holds().open_reply("chat-1");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "flash", Some("chat-1"));
+    let chat_1 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("chat 1 waits", || waiting(&core, "flash").is_some()).await;
+    for _ in 0..3 {
+        assert_eq!(
+            core.ensure_serving(demand(&fake, "split", Some("chat-2")))
+                .await,
+            NodeEnsureServing::Ready
+        );
+    }
+    assert_eq!(fake.log().len(), 2, "still one swap: {:?}", fake.log());
+    drop(reply_2);
+    assert_eq!(answer(chat_1).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.log().len(), 4, "two reply alternations, two swaps");
+    assert_eq!(fake.serving().as_deref(), Some("flash"));
+    drop(reply_1b);
+}
+
+/// A delegate's demand is its parent reply's own: the parent's hold yields (the parent is blocked
+/// inside the tool call — waiting on it would deadlock), and the parent's next call swaps back.
+#[tokio::test]
+async fn a_delegates_demand_is_its_parents_own_and_does_not_deadlock() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let _parent = core.holds().open_reply("parent");
+    lease(&core, "parent", &fake, "flash");
+    core.holds().note_child("delegate", "parent");
+    let got = tokio::time::timeout(
+        SETTLE,
+        core.ensure_serving(demand(&fake, "split", Some("delegate"))),
+    )
+    .await
+    .expect("a delegate never waits on its own parent");
+    assert_eq!(got, NodeEnsureServing::Ready);
+    lease(&core, "delegate", &fake, "split");
+    assert_eq!(
+        core.holds().reply("parent").unwrap().way.unwrap().kind,
+        goose_sidecar::placement::store::PlacementKind::Pipeline,
+        "the delegate's lease is held by its parent's reply"
+    );
+    let back = tokio::time::timeout(
+        SETTLE,
+        core.ensure_serving(demand(&fake, "flash", Some("parent"))),
+    )
+    .await
+    .expect("the parent's call back never waits on itself");
+    assert_eq!(back, NodeEnsureServing::Ready);
+    assert_eq!(
+        fake.log().len(),
+        4,
+        "two swaps per delegate call: {:?}",
+        fake.log()
+    );
+}
+
+/// A reply that opens after a queued switch and wants the running way waits behind the switch —
+/// new replies never starve it.
+#[tokio::test]
+async fn a_reply_opened_after_a_queued_demand_waits_behind_it() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let _reply_2 = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-2"));
+    let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the switch is queued", || waiting(&core, "split").is_some()).await;
+
+    let _reply_3 = core.holds().open_reply("chat-3");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "flash", Some("chat-3"));
+    let chat_3 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("chat 3 waits behind the switch", || {
+        waiting(&core, "flash").is_some_and(|w| w.contains("waits behind it"))
+    })
+    .await;
+    // Chat 1 (opened before the switch) is still served meanwhile.
+    assert_eq!(
+        core.ensure_serving(demand(&fake, "flash", Some("chat-1")))
+            .await,
+        NodeEnsureServing::Ready
+    );
+    drop(reply_1);
+    assert_eq!(answer(chat_2).await, NodeEnsureServing::Ready);
+    // Chat 2's reply has no lease yet, so chat 3's switch back runs at once.
+    assert_eq!(answer(chat_3).await, NodeEnsureServing::Ready);
+    assert_eq!(
+        fake.log(),
+        vec![
+            "stop Local rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string(),
+            "start split".to_string(),
+            "stop Split Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+            "start flash".to_string(),
+        ]
+    );
+}
+
+/// §6.4 step 12: a turn cancelled while its demand waits leaves the queue before any stop.
+#[tokio::test]
+async fn a_cancelled_demand_leaves_the_queue_before_any_stop() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let _reply_2 = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-2"));
+    let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("chat 2 waits", || waiting(&core, "split").is_some()).await;
+    chat_2.abort();
+    let _ = chat_2.await;
+    until("the queue is empty", || {
+        core.queue.lock().unwrap().is_empty()
+    })
+    .await;
+    assert!(
+        !core.holds().reply("chat-2").unwrap().waiting,
+        "the cancelled demand's reply holds its way again"
+    );
+    drop(reply_1);
+    tokio::task::yield_now().await;
+    assert!(fake.log().is_empty(), "nothing stopped: {:?}", fake.log());
+    assert_eq!(fake.serving().as_deref(), Some("flash"));
+}
+
+/// §6.4 step 12: once the stops began, a cancel lets the swap run to its end — the target stays
+/// loaded — and the load is recorded `cancelledAfterStop`.
+#[tokio::test]
+async fn a_cancel_after_the_stops_began_completes_the_swap_and_records_it() {
+    let fake = Fake::with(
+        &[
+            (
+                "flash",
+                WayRef::local(),
+                "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+            ),
+            ("split", WayRef::split(), "loader-test/cancel-after-stop"),
+        ],
+        Some("flash"),
+    );
+    let gate = Arc::new(Notify::new());
+    *fake.start_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let core = Core::new(fake.clone(), None);
+    let _reply = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-2"));
+    let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the swap started", || fake.log().len() == 2).await;
+    chat_2.abort();
+    let _ = chat_2.await;
+    gate.notify_one();
+    until("the target is loaded anyway", || {
+        fake.serving().as_deref() == Some("split")
+    })
+    .await;
+    let spec = &fake.nodes["split"];
+    let (_, key) = target_of(&ResolvedNodeDef {
+        def: def("split", &fake),
+        model: None,
+        provider: None,
+        model_from: NodeModelFrom::Own,
+        pending_adoption: false,
+    })
+    .unwrap();
+    assert_eq!(
+        rows::outcome_of(&spec.model, &key, &Ok(())),
+        LoadOutcome::CancelledAfterStop,
+        "the ready path records the swap as cancelled after its stops"
+    );
+}
+
+/// §6.4 step 11: a failed load is not restored — the stop set stays stopped — and the turn gets
+/// the load's own words.
+#[tokio::test]
+async fn a_failed_load_is_not_restored_and_the_turn_gets_its_words() {
+    let fake = flash_and_split();
+    *fake.fail_start.lock().unwrap() = Some("short 1.6 GB on Work's Mac Studio".into());
+    let core = Core::new(fake.clone(), None);
+    let _reply = core.holds().open_reply("chat-2");
+    let got = core
+        .ensure_serving(demand(&fake, "split", Some("chat-2")))
+        .await;
+    match got {
+        NodeEnsureServing::Refused { code, reason } => {
+            assert_eq!(code, NodeLoadRefusalCode::LoadFailed);
+            assert!(
+                reason.contains("short 1.6 GB on Work's Mac Studio"),
+                "{reason}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        fake.log(),
+        vec![
+            "stop Local rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string(),
+            "start split".to_string()
+        ],
+        "nothing started again"
+    );
+    assert_eq!(fake.serving(), None);
+    assert!(matches!(
+        core.in_progress().as_slice(),
+        [LoaderActivity::RefusedLastTime { .. }]
+    ));
+}
+
+#[tokio::test]
+async fn a_kept_loaded_way_and_a_step_refuse_before_anything_stops() {
+    let fake = flash_and_split();
+    *fake.kept.lock().unwrap() = Some("flash node is kept loaded on this Mac's engine".into());
+    let core = Core::new(fake.clone(), None);
+    let got = core.ensure_serving(demand(&fake, "split", Some("s"))).await;
+    assert!(
+        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::KeptLoaded, reason } if reason.contains("kept loaded")),
+        "{got:?}"
+    );
+    *fake.kept.lock().unwrap() = None;
+    *fake.refuse_prepare.lock().unwrap() = Some(Refusal::new(
+        NodeLoadRefusalCode::NeedsStep,
+        "Qwen3.8-27B is not on Work’s Mac Studio yet — copy it there, then Run.",
+    ));
+    let got = core.ensure_serving(demand(&fake, "split", Some("s"))).await;
+    assert!(
+        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::NeedsStep, reason } if reason.contains("copy it there")),
+        "{got:?}"
+    );
+    assert!(fake.log().is_empty());
+}
+
+/// Two demands that each wait on the other's reply cannot both hold: a reply waiting in the loader
+/// holds nothing, so the older switch runs, then the other.
+#[tokio::test]
+async fn replies_waiting_on_each_other_do_not_deadlock() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let _reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let _reply_2 = core.holds().open_reply("chat-2");
+    lease(&core, "chat-2", &fake, "flash");
+    let (c1, c2) = (Arc::clone(&core), Arc::clone(&core));
+    let (d1, d2) = (
+        demand(&fake, "split", Some("chat-1")),
+        demand(&fake, "studio", Some("chat-2")),
+    );
+    let one = tokio::spawn(async move { c1.ensure_serving(d1).await });
+    until("chat 1 waits on chat 2's reply", || {
+        waiting(&core, "split").is_some()
+    })
+    .await;
+    let two = tokio::spawn(async move { c2.ensure_serving(d2).await });
+    assert_eq!(answer(one).await, NodeEnsureServing::Ready);
+    assert_eq!(answer(two).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.log().len(), 4, "{:?}", fake.log());
+    assert_eq!(fake.serving().as_deref(), Some("studio"));
+}
+
+/// The prepare (the placement plan: a network probe) runs at the first look and at the look that
+/// switches — not on every wake of a wait.
+#[tokio::test]
+async fn the_plan_is_read_at_the_first_look_and_the_switch_not_on_every_wake() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-2"));
+    let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("chat 2 waits", || waiting(&core, "split").is_some()).await;
+    // Five wakes (another reply opening and ending), each a look while chat 1 still holds Flash.
+    for _ in 0..5 {
+        drop(core.holds().open_reply("chat-9"));
+        tokio::task::yield_now().await;
+    }
+    assert!(fake.log().is_empty());
+    drop(reply_1);
+    assert_eq!(answer(chat_2).await, NodeEnsureServing::Ready);
+    let prepares = *fake.prepares.lock().unwrap();
+    assert!(prepares <= 3, "{prepares} plan reads");
+}
+
+/// A demand from the UI (no session) answers at once with the wait, and loads in the background.
+#[tokio::test]
+async fn a_ui_demand_answers_wait_at_once_and_loads_in_the_background() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let got = tokio::time::timeout(SETTLE, core.ensure_serving(demand(&fake, "split", None)))
+        .await
+        .unwrap();
+    assert!(matches!(got, NodeEnsureServing::Wait { .. }), "{got:?}");
+    drop(reply_1);
+    until("the background load ran", || {
+        fake.serving().as_deref() == Some("split")
+    })
+    .await;
+}
+
+/// A reply open in ANOTHER goose process (a stand-in holding the same records and flocks): the
+/// demand waits on it, is woken by the kernel when that reply ends, and only then stops the way.
+#[tokio::test]
+async fn an_open_reply_in_another_process_holds_the_way_until_it_ends() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), Some(dir.path().to_path_buf()));
+    let script = r#"
+import fcntl, json, os, sys
+d = sys.argv[1]
+pid = os.getpid()
+stem = '%d-0' % pid
+me = open(os.path.join(d, stem + '.lock'), 'a+'); fcntl.flock(me, fcntl.LOCK_EX)
+reply = open(os.path.join(d, stem + '-r1.lock'), 'a+'); fcntl.flock(reply, fcntl.LOCK_EX)
+record = {'pid': pid, 'startedAt': 0, 'since': 0, 'kind': 'goosed', 'replies': [
+    {'reply': 1, 'session': 'other-window-chat', 'rootSession': 'other-window-chat',
+     'way': {'kind': 'single', 'nodes': ['local']}}]}
+open(os.path.join(d, stem + '.json.tmp'), 'w').write(json.dumps(record))
+os.rename(os.path.join(d, stem + '.json.tmp'), os.path.join(d, stem + '.json'))
+print('HELD', flush=True)
+sys.stdin.readline()
+record['replies'] = []
+open(os.path.join(d, stem + '.json.tmp'), 'w').write(json.dumps(record))
+os.rename(os.path.join(d, stem + '.json.tmp'), os.path.join(d, stem + '.json'))
+os.remove(os.path.join(d, stem + '-r1.lock'))
+fcntl.flock(reply, fcntl.LOCK_UN)
+print('ENDED', flush=True)
+sys.stdin.readline()
+"#;
+    let mut other = tokio::process::Command::new("/usr/bin/python3")
+        .args(["-c", script, dir.path().to_str().unwrap()])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let mut out = tokio::io::BufReader::new(other.stdout.take().unwrap()).lines();
+    assert_eq!(out.next_line().await.unwrap().as_deref(), Some("HELD"));
+    let mut stdin = other.stdin.take().unwrap();
+
+    let _reply = core.holds().open_reply("chat-here");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-here"));
+    let here = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the demand waits on the other window's reply", || {
+        waiting(&core, "split").is_some()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        fake.log().is_empty(),
+        "nothing stops under another window's reply"
+    );
+
+    stdin.write_all(b"\n").await.unwrap();
+    assert_eq!(out.next_line().await.unwrap().as_deref(), Some("ENDED"));
+    assert_eq!(answer(here).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.log().len(), 2, "{:?}", fake.log());
+    stdin.write_all(b"\n").await.unwrap();
+    other.wait().await.unwrap();
+}
+
+/// A swarm build registered as a holder: the loader refuses, by name, and stops nothing.
+#[tokio::test]
+async fn a_build_holding_the_engine_refuses_and_stops_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), Some(dir.path().to_path_buf()));
+    let registration = goose_sidecar::holders::Registration::register(
+        dir.path(),
+        goose_sidecar::holders::HolderKind::SwarmRun {
+            way: goose_sidecar::placement::store::PlacementKey::single("local"),
+            model: "rapid-mlx/Qwen3.8-Flash-Next-4bit".into(),
+            what: "swarm build run-7 on Qwen3.8-Flash".into(),
+        },
+    )
+    .unwrap();
+    // Registered by this test process: the loader reads other processes only, so the record is
+    // re-labelled as a live stand-in's (a sleeping child).
+    let record = registration.record();
+    drop(registration);
+    let mut child = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let (started_at, _) = goose_sidecar::machine::process_start(child.id()).unwrap();
+    let foreign = goose_sidecar::holders::HolderRecord {
+        pid: child.id(),
+        started_at,
+        ..record
+    };
+    std::fs::write(
+        dir.path()
+            .join(format!("{}-{}.json", foreign.pid, foreign.started_at)),
+        serde_json::to_string(&foreign).unwrap(),
+    )
+    .unwrap();
+    let got = core.ensure_serving(demand(&fake, "split", Some("s"))).await;
+    match got {
+        NodeEnsureServing::Refused { code, reason } => {
+            assert_eq!(code, NodeLoadRefusalCode::HeldByBuild);
+            assert!(reason.contains("swarm build run-7"), "{reason}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(fake.log().is_empty());
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+/// Another goose window's loader holds the Mac's swap claim: this demand waits for it, then runs.
+#[tokio::test]
+async fn a_swap_claimed_by_another_loader_is_waited_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), Some(dir.path().to_path_buf()));
+    let goose_sidecar::machine::LoadLockAttempt::Acquired(other) =
+        goose_sidecar::holders::try_claim_swap(dir.path(), "the other window switches", "m")
+            .unwrap()
+    else {
+        panic!()
+    };
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("s"));
+    let here = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the demand waits on the claim", || {
+        waiting(&core, "split").is_some_and(|w| w.contains("the other window switches"))
+    })
+    .await;
+    assert!(fake.log().is_empty());
+    drop(other);
+    assert_eq!(answer(here).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.log().len(), 2);
+}
+
+#[tokio::test]
+async fn a_node_that_follows_this_mac_is_never_loaded() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let mut d = demand(&fake, "split", Some("s"));
+    d.node.placement = Some(NodePlacement::Follows);
+    let got = core.ensure_serving(d).await;
+    assert!(
+        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::NeedsStep, reason } if reason.contains("Run it")),
+        "{got:?}"
+    );
+}

@@ -122,6 +122,8 @@ mod mlx_replica;
 pub use mlx_engine::GoosedMlxControl;
 mod needs_you;
 mod new_session;
+#[cfg(unix)]
+mod nodes_loader;
 mod onboarding;
 mod prompts;
 mod proposals;
@@ -966,6 +968,8 @@ impl GooseAcpAgent {
         let session_manager = Arc::new(SessionManager::new(options.data_dir));
 
         mlx_remote_single::install_route_load();
+        #[cfg(unix)]
+        nodes_loader::install();
         // Eagerly initialize the SQLite pool so it's ready when providers/sessions need it.
         let storage_clone = session_manager.storage().clone();
         tokio::spawn(async move {
@@ -2642,6 +2646,10 @@ impl GooseAcpAgent {
         let session_id = args.session_id.0.to_string();
         let sid = sid_short(&session_id);
         let t_start = std::time::Instant::now();
+        // The reply, for the node loader (design §6.4 step 8): every model call of this turn —
+        // and of its delegates — holds the way it used until the turn ends, however it ends.
+        #[cfg(unix)]
+        let _reply = nodes_loader::open_reply(&session_id);
         // Q-132: while this turn runs, the end-of-turn reviewer of any chat waits, and one already
         // in flight is dropped — on an engine that batches statically it held this turn's request.
         let user_turn = crate::turn_priority::user_turn();
@@ -3322,6 +3330,8 @@ where
     W: futures::AsyncWrite + Unpin + Send + 'static,
 {
     Box::pin(async move {
+        #[cfg(unix)]
+        nodes_loader::attach_agent(&agent);
         let handler = GooseAcpHandler { agent };
 
         SacpAgent
@@ -3357,6 +3367,8 @@ impl agent_client_protocol::ConnectTo<Client> for GooseAgentConnection {
         client: impl agent_client_protocol::ConnectTo<SacpAgent>,
     ) -> std::result::Result<(), agent_client_protocol::Error> {
         let agent = self.server.create_agent().await.internal_err()?;
+        #[cfg(unix)]
+        nodes_loader::attach_agent(&agent);
         let handler = GooseAcpHandler { agent };
         SacpAgent
             .builder()
