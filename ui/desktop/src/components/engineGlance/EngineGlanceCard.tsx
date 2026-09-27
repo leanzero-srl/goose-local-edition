@@ -476,7 +476,7 @@ function NodeLine({
     return (
       <span
         data-testid="engine-glance-served-node"
-        className={cx('truncate text-lz-meta', WEIGHT.semibold)}
+        className={cx('line-clamp-2 break-words text-lz-meta', WEIGHT.semibold)}
       >
         {text}
       </span>
@@ -496,14 +496,14 @@ function NodeLine({
         onOpenNode(first.id);
       }}
       className={cx(
-        'pointer-events-auto flex min-w-0 items-center gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
+        'pointer-events-auto flex min-w-0 max-w-full items-start gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:mt-px [&_svg]:size-3.5',
         WEIGHT.semibold,
         RADIUS.control,
         FOCUS
       )}
     >
       <Network aria-hidden />
-      <span className="min-w-0 truncate">{text}</span>
+      <span className="line-clamp-2 min-w-0 break-words">{text}</span>
     </button>
   );
 }
@@ -770,9 +770,6 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
                 {modeLine(intl, engine.engine)}
               </span>
             )}
-            {engine.present && engine.servedBy && (
-              <NodeLine servedBy={engine.servedBy} onOpenNode={props.onOpenNode} />
-            )}
           </div>
           <span className="flex shrink-0 items-center">
             {hasDetails && (
@@ -813,6 +810,11 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
             )}
           </span>
         </div>
+        {/* The node the way belongs to: under the mode line, on its own full-width row so a node
+            name is never squeezed by the controls beside the header. */}
+        {engine.present && engine.servedBy && (
+          <NodeLine servedBy={engine.servedBy} onOpenNode={props.onOpenNode} />
+        )}
         {question && (
           <div data-testid="engine-glance-question" className="flex min-w-0 flex-col gap-0.5">
             <span className={cx('truncate text-lz-body', WEIGHT.semibold)}>{questionName}</span>
@@ -882,7 +884,7 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
               props.onOpenSession(engine.chat!.sessionId);
             }}
             className={cx(
-              'pointer-events-auto flex min-w-0 items-center gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
+              'pointer-events-auto flex min-w-0 max-w-full items-center gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
               WEIGHT.semibold,
               RADIUS.control,
               FOCUS
@@ -903,7 +905,7 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
               setFormingOpen((open) => !open);
             }}
             className={cx(
-              'pointer-events-auto flex min-w-0 items-center gap-1 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
+              'pointer-events-auto flex min-w-0 max-w-full items-center gap-1 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
               WEIGHT.semibold,
               TNUM,
               RADIUS.control,
