@@ -225,7 +225,9 @@ pub struct ModelInfo {
     /// The underlying model resolved from provider metadata, when the configured model is an alias or endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_model: Option<String>,
-    /// The maximum context length this model supports
+    /// The maximum context length this model supports; 0 when nothing declares it — never a
+    /// default standing in for the unknown (`ProviderEntry::normalize_model_config` backfills only
+    /// a value above 0).
     pub context_limit: usize,
     /// Cost per token for input in USD (optional)
     pub input_token_cost: Option<f64>,
@@ -305,12 +307,18 @@ pub fn model_info_for_provider_model(provider_name: &str, model_name: &str) -> M
         .and_then(|model| model.reasoning)
         .unwrap_or_else(|| ModelConfig::new(model_name).is_reasoning_model());
 
+    // The canonical window or 0 (unknown). `ModelConfig::context_limit()` would answer
+    // DEFAULT_CONTEXT_LIMIT here, and that number was then backfilled into every session of an
+    // undeclared model as if declared (Q-18: every `swarm` session saved 128000) — which also kept
+    // openai-compatible and litellm providers from ever probing the served window, since both use a
+    // configured limit as-is.
     ModelInfo {
         name: model_name.to_string(),
         resolved_model: None,
         context_limit: ModelConfig::new(model_name)
             .with_canonical_limits(provider_name)
-            .context_limit(),
+            .context_limit
+            .unwrap_or(0),
         input_token_cost: None,
         output_token_cost: None,
         currency: None,

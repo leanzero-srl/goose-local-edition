@@ -616,14 +616,21 @@ impl Provider for SwarmProvider {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Chat: the pool's smallest reported context window, once a pick has measured one — so goose's
-    /// compaction fires before the node's wall rather than at the default for an unknown model
-    /// "swarm". The first turn of a fresh goosed runs on the default (no pick has happened yet); every
-    /// later turn on the pool's. Build: the model config's own limit, unchanged.
+    /// Chat: the pool's smallest reported context window — the last pick's, or measured now by the
+    /// pick's probes when no pick has run in this goosed — so goose's compaction fires before the
+    /// node's wall. When no node can say it, the answer is an error naming why: the model config's
+    /// limit is never read here, because for "swarm" it is the default for an unknown model name
+    /// (128,000), which the first turn of every fresh goosed used to run on (Q-18). Build: the model
+    /// config's own limit, unchanged.
     async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
         match self.observe_route(model_config) {
-            Route::Chat => Ok(super::swarm_router::pool_context_limit()
-                .unwrap_or_else(|| model_config.context_limit())),
+            Route::Chat => super::swarm_router::pool_context_window()
+                .await
+                .map_err(|reason| {
+                    ProviderError::ExecutionError(format!(
+                        "swarm chat: the pool's context window is unknown — {reason}"
+                    ))
+                }),
             Route::Build => Ok(model_config.context_limit()),
         }
     }
@@ -1175,7 +1182,8 @@ mod tests {
     }
 
     /// The route is remembered from the call that named it: a chat model flips goose's context
-    /// management back on, and its limit is the model's own until the router has measured a pool.
+    /// management back on, and its limit is the pool's — unknown, and said so, when no pool can be
+    /// measured (the unit tests' hermetic config has no `swarm` block).
     #[tokio::test]
     async fn context_management_follows_the_route_the_calls_name() {
         let p = SwarmProvider {
@@ -1187,13 +1195,17 @@ mod tests {
         };
         assert!(p.manages_own_context());
         let chat = ModelConfig::new(SWARM_CHAT_MODEL);
-        let limit = p.get_context_limit(&chat).await.unwrap();
+        let unknown = p.get_context_limit(&chat).await.unwrap_err();
         assert!(
             !p.manages_own_context(),
             "a chat call turns goose's context management on"
         );
-        // No pick has measured a pool in this process → the model's own limit, unchanged.
-        assert_eq!(limit, chat.context_limit());
+        assert!(
+            unknown
+                .to_string()
+                .contains("the pool's context window is unknown — no `swarm` block"),
+            "{unknown}"
+        );
         let build = ModelConfig::new(SWARM_BUILD_MODEL);
         assert_eq!(
             p.get_context_limit(&build).await.unwrap(),

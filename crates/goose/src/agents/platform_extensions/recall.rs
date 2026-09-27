@@ -1164,13 +1164,13 @@ impl McpClientTrait for RecallClient {
             (Ok(model_config), Some(manager)) => {
                 let provider = manager.get_provider().lock().await.clone();
                 match provider {
-                    Some(provider) => Some(
+                    Some(provider) => {
                         crate::context_mgmt::effective_context_limit(
                             provider.as_ref(),
                             &model_config,
                         )
-                        .await,
-                    ),
+                        .await
+                    }
                     None => None,
                 }
             }

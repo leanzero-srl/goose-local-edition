@@ -292,7 +292,7 @@ pub async fn resolve_model_info(
             Ok(info)
         }
         Err(error) => {
-            let mut info = ModelInfo::new(model, model_config.context_limit());
+            let mut info = ModelInfo::new(model, model_config.context_limit.unwrap_or(0));
             info.reasoning = model_config.is_reasoning_model();
             tracing::debug!(
                 provider = name,

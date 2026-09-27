@@ -271,15 +271,37 @@ pub async fn compact_messages_with_tail(
 /// context for hybrid local models like Qwen3.6). Read via Config — the same path that reads the
 /// threshold — so it gates the auto-compaction trigger regardless of any provider wrapping. No-op
 /// when GOOSE_LOCAL_CONTEXT_CAP is unset or 0.
-pub async fn effective_context_limit(provider: &dyn Provider, model_config: &ModelConfig) -> usize {
-    let context_limit = provider
-        .get_context_limit(model_config)
-        .await
-        .unwrap_or_else(|_| model_config.context_limit());
-    match Config::global().get_param::<usize>("GOOSE_LOCAL_CONTEXT_CAP") {
-        Ok(cap) if cap > 0 => context_limit.min(cap),
-        _ => context_limit,
-    }
+///
+/// `None` = the window is UNKNOWN: the provider could not measure it (it answered an error) and the
+/// model config declares none. Never the default for an unknown model standing in for it (Q-18:
+/// the swarm's first turn ran on 128,000 until a pick had measured the pool) — the consumers say
+/// "unknown" (the MOIM line), skip what needs a window (proactive compaction, the skill autoload
+/// budget), and the provider's own context-length error still triggers recovery compaction.
+pub async fn effective_context_limit(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+) -> Option<usize> {
+    let context_limit = match provider.get_context_limit(model_config).await {
+        Ok(limit) => limit,
+        Err(err) => match model_config.context_limit {
+            Some(declared) => declared,
+            None => {
+                tracing::warn!(
+                    model = %model_config.model_name,
+                    reason = %err,
+                    "context_window_unknown: the provider could not measure the window and the model \
+                     declares none; compaction waits for the provider's own context-length error"
+                );
+                return None;
+            }
+        },
+    };
+    Some(
+        match Config::global().get_param::<usize>("GOOSE_LOCAL_CONTEXT_CAP") {
+            Ok(cap) if cap > 0 => context_limit.min(cap),
+            _ => context_limit,
+        },
+    )
 }
 
 pub async fn check_if_compaction_needed(
@@ -304,7 +326,9 @@ pub async fn check_if_compaction_needed(
         .model_config
         .clone()
         .unwrap_or_else(|| ModelConfig::new("unknown"));
-    let context_limit = effective_context_limit(provider, &model_config).await;
+    let Some(context_limit) = effective_context_limit(provider, &model_config).await else {
+        return Ok(false);
+    };
 
     let (current_tokens, _token_source) = match session.usage.total_tokens {
         Some(tokens) => (tokens as usize, "session metadata"),
@@ -575,7 +599,7 @@ pub fn tool_ids_to_summarize(
 
     // Never summarize the last N tool calls (current turn)
     let eligible = tool_call_ids.len().saturating_sub(protect_last_n);
-    if eligible <= cutoff + TOOLCALL_SUMMARIZATION_BATCH_SIZE {
+    if eligible <= cutoff.saturating_add(TOOLCALL_SUMMARIZATION_BATCH_SIZE) {
         return Vec::new();
     }
 

@@ -212,10 +212,10 @@ impl Agent {
     async fn handle_status_command(&self, session_id: &str) -> Result<Option<Message>> {
         let provider = self.provider().await?;
         let model_config = self.model_config_for_session(session_id).await?;
-        let context_limit = provider
-            .get_context_limit(&model_config)
-            .await
-            .unwrap_or_else(|_| model_config.context_limit());
+        let window = match provider.get_context_limit(&model_config).await {
+            Ok(limit) => Ok(limit),
+            Err(err) => model_config.context_limit.ok_or(err),
+        };
 
         let goose_mode = self.goose_mode().await;
 
@@ -241,11 +241,16 @@ impl Agent {
             .unwrap_or(0)
             .max(0) as usize;
 
-        let context_pct = if context_limit > 0 {
-            let pct = ((context_tokens as f64 / context_limit as f64) * 100.0).round() as usize;
-            format!("{}%", pct.min(100))
-        } else {
-            "N/A".to_string()
+        let context = match window {
+            Ok(context_limit) if context_limit > 0 => {
+                let pct = ((context_tokens as f64 / context_limit as f64) * 100.0).round() as usize;
+                format!(
+                    "{context_tokens} / {context_limit} tokens ({}%)",
+                    pct.min(100)
+                )
+            }
+            Ok(context_limit) => format!("{context_tokens} / {context_limit} tokens (N/A)"),
+            Err(err) => format!("{context_tokens} tokens; window unknown ({err})"),
         };
 
         let text = format!(
@@ -254,14 +259,12 @@ impl Agent {
              - Provider: {}\n\
              - Mode: {}\n\
              - Tokens (lifetime): {}\n\
-             - Context: {} / {} tokens ({})",
+             - Context: {}",
             model_config.model_name,
             provider.get_name(),
             goose_mode,
             lifetime_tokens,
-            context_tokens,
-            context_limit,
-            context_pct,
+            context,
         );
 
         Ok(Some(user_only_assistant_text(text)))

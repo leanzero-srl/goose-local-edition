@@ -787,6 +787,9 @@ pub(crate) struct Router {
     /// The smallest context window among the servable nodes at the last pick; 0 = no node said.
     /// What `get_context_limit` hands goose so its own compaction fires before the node's wall.
     last_pool_context_limit: AtomicU32,
+    /// Whether a pick or a measurement has read a servable pool at all — so "no node said" is
+    /// told apart from "nobody has looked yet".
+    pool_measured: std::sync::atomic::AtomicBool,
 }
 
 impl Router {
@@ -796,6 +799,7 @@ impl Router {
             sticky: StdMutex::new(HashMap::new()),
             queued: AtomicUsize::new(0),
             last_pool_context_limit: AtomicU32::new(0),
+            pool_measured: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -804,6 +808,64 @@ impl Router {
         match self.last_pool_context_limit.load(Ordering::SeqCst) {
             0 => None,
             n => Some(n as usize),
+        }
+    }
+
+    fn record_pool_window(&self, smallest_window: Option<u64>) {
+        let limit = smallest_window.map_or(0, |w| u32::try_from(w).unwrap_or(u32::MAX));
+        self.last_pool_context_limit.store(limit, Ordering::SeqCst);
+        self.pool_measured.store(true, Ordering::SeqCst);
+    }
+
+    /// The pool's window as `get_context_limit` answers it: the last pick's, else measured NOW by
+    /// the probes a pick runs (and its one-node-per-engine rule), without taking a slot. Before
+    /// this, a fresh goosed answered the default for the unknown model name "swarm" — 128,000 —
+    /// until its first pick, and that number was saved on every session (Q-18). `Err` names why
+    /// no window is known; it is never a number standing in for one.
+    pub(crate) async fn pool_context_window(
+        &self,
+        nodes: &[Node],
+        probe: &dyn NodeProbe,
+    ) -> Result<usize, String> {
+        if let Some(limit) = self.pool_context_limit() {
+            return Ok(limit);
+        }
+        if self.pool_measured.load(Ordering::SeqCst) {
+            return Err(
+                "no servable node reported its context window at the last pick".to_string(),
+            );
+        }
+        let probes = futures::future::join_all(nodes.iter().map(|n| probe.probe(n))).await;
+        let mut candidates: Vec<(&Node, Servable)> = Vec::new();
+        let mut reasons: Vec<String> = Vec::new();
+        for (node, outcome) in nodes.iter().zip(probes) {
+            match outcome {
+                Ok(facts) => candidates.push((node, facts)),
+                Err(reason) => reasons.push(format!("{}: {reason}", node.id)),
+            }
+        }
+        one_node_per_engine(&mut candidates, &mut reasons);
+        if candidates.is_empty() {
+            return Err(if reasons.is_empty() {
+                "no enabled device is configured under `swarm.devices`".to_string()
+            } else {
+                format!("no node can serve — {}", reasons.join("; "))
+            });
+        }
+        let smallest = candidates
+            .iter()
+            .filter_map(|(_, facts)| facts.context_window)
+            .min();
+        self.record_pool_window(smallest);
+        match smallest {
+            Some(window) => Ok(usize::try_from(window).unwrap_or(usize::MAX)),
+            None => {
+                let ids: Vec<&str> = candidates.iter().map(|(n, _)| n.id.as_str()).collect();
+                Err(format!(
+                    "no servable node reports its context window ({})",
+                    ids.join(", ")
+                ))
+            }
         }
     }
 
@@ -877,8 +939,7 @@ impl Router {
             }
         }
         if !servable.is_empty() {
-            let limit = smallest_window.map_or(0, |w| u32::try_from(w).unwrap_or(u32::MAX));
-            self.last_pool_context_limit.store(limit, Ordering::SeqCst);
+            self.record_pool_window(smallest_window);
         }
         if servable.is_empty() {
             return Err(ProviderError::ExecutionError(format!(
@@ -1022,9 +1083,21 @@ fn one_node_per_engine(candidates: &mut Vec<(&Node, Servable)>, reasons: &mut Ve
 
 static ROUTER: LazyLock<Router> = LazyLock::new(Router::new);
 
-/// The shared router's pool context limit — what the provider reports to goose for `swarm` chat.
-pub(crate) fn pool_context_limit() -> Option<usize> {
-    ROUTER.pool_context_limit()
+/// The shared router's pool window — what the provider reports to goose for `swarm` chat: the
+/// last pick's, else measured now against the configured pool (see [`Router::pool_context_window`]).
+pub(crate) async fn pool_context_window() -> Result<usize, String> {
+    if let Some(limit) = ROUTER.pool_context_limit() {
+        return Ok(limit);
+    }
+    let cfg = load_pool().map_err(|err| match err {
+        ProviderError::ExecutionError(reason) => reason
+            .strip_prefix("swarm chat: ")
+            .unwrap_or(&reason)
+            .to_string(),
+        other => other.to_string(),
+    })?;
+    let nodes = with_remote_route(nodes_from_config(&cfg), mlx_remote::read().live().as_ref());
+    ROUTER.pool_context_window(&nodes, &*PROBE).await
 }
 static PROVIDERS: LazyLock<Arc<LiveProviders>> = LazyLock::new(|| Arc::new(LiveProviders::new()));
 static PROBE: LazyLock<LiveProbe> = LazyLock::new(|| LiveProbe {
@@ -1581,6 +1654,56 @@ mod tests {
             .unwrap();
         assert_eq!(router.pool_context_limit(), Some(262_144));
         drop(lease);
+    }
+
+    /// Q-18: before any pick, the window is MEASURED by the pick's own probes — no slot taken —
+    /// and when nothing can say it the answer names why, never a number.
+    #[tokio::test]
+    async fn before_any_pick_the_pool_window_is_measured_and_unknown_is_said() {
+        let nodes = vec![node("big", 2, 1), node("small", 2, 1), node("down", 2, 1)];
+        let probe = FakeProbe(HashMap::from([
+            ("big".to_string(), window(262_144)),
+            ("small".to_string(), window(32_768)),
+            ("down".to_string(), Err("engine stopped".to_string())),
+        ]));
+        let router = Router::new();
+        assert_eq!(router.pool_context_window(&nodes, &probe).await, Ok(32_768));
+        assert_eq!(
+            router.pool_context_limit(),
+            Some(32_768),
+            "kept like a pick's"
+        );
+        let free: usize = nodes
+            .iter()
+            .map(|n| router.semaphore(n).available_permits())
+            .sum();
+        assert_eq!(free, 6, "a measurement holds no slot");
+
+        let mute = Router::new();
+        let err = mute
+            .pool_context_window(&nodes, &FakeProbe::all_idle(&nodes))
+            .await
+            .unwrap_err();
+        assert!(err.contains("big, small, down"), "{err}");
+        assert!(mute
+            .pool_context_window(&nodes, &FakeProbe::all_idle(&nodes))
+            .await
+            .is_err());
+
+        let dead = Router::new();
+        let all_down = FakeProbe(HashMap::from([(
+            "big".to_string(),
+            Err("connection refused".to_string()),
+        )]));
+        let err = dead
+            .pool_context_window(&nodes[..1], &all_down)
+            .await
+            .unwrap_err();
+        assert!(err.contains("big: connection refused"), "{err}");
+        assert_eq!(
+            Router::new().pool_context_window(&[], &all_down).await,
+            Err("no enabled device is configured under `swarm.devices`".to_string())
+        );
     }
 
     #[tokio::test]

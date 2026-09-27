@@ -1603,10 +1603,12 @@ impl CliSession {
             .agent
             .model_config_for_session(&self.session_id)
             .await?;
+        // 0 renders "context usage unavailable": a provider that cannot measure the window and a
+        // model that declares none have no window to draw a gauge against (Q-18).
         let context_limit = provider
             .get_context_limit(&model_config)
             .await
-            .unwrap_or_else(|_| model_config.context_limit());
+            .unwrap_or_else(|_| model_config.context_limit.unwrap_or(0));
 
         let config = Config::global();
         let show_cost = config
