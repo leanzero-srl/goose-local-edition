@@ -126,7 +126,7 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
       'Reading a 32k-token prompt for 2m 45s',
       'Read the last prompt at 196 tok/s',
       'Serving chat: Memory · verify recall',
-      "2 requests not from this app's chats or /v1",
+      '2 requests from another app',
       'Swarm run live: bench-r9',
       'Cache saved 45k prompt tokens, 78% of lookups hit',
       'Served 5 requests, 92k read, 672 written',
@@ -273,7 +273,7 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
     });
     const got = labels(buildMlxTrayModel(stale, OPTS).items);
     expect(got).toContain('Stale: timeout: no answer within 1500 ms');
-    expect(got).toContain("3 requests not from this app's chats or /v1");
+    expect(got).toContain('3 requests from another app');
     expect(got).toContain('Who is unknown: goose backend returned 401');
   });
 });

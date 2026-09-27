@@ -4353,7 +4353,7 @@
     "defaultMessage": "이 Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {이 앱의 채팅이나 /v1이 아닌 요청 #개}}"
+    "defaultMessage": "{count, plural, other {다른 앱의 요청 #개}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {개 요청 대기 중}}"

@@ -1025,7 +1025,7 @@ describe('MlxEngineView state tile instrument', () => {
       within(serving)
         .getAllByTestId('mlx-serving-row')
         .map((r) => r.textContent)
-    ).toEqual(['Chat · Memory · verify recall', "2 requests not from this app's chats or /v1"]);
+    ).toEqual(['Chat · Memory · verify recall', '2 requests from another app']);
     unmount();
   });
 

@@ -4353,7 +4353,7 @@
     "defaultMessage": "यह Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, one {# अनुरोध इस ऐप की चैट या /v1 से नहीं} other {# अनुरोध इस ऐप की चैट या /v1 से नहीं}}"
+    "defaultMessage": "{count, plural, one {किसी दूसरे ऐप से # अनुरोध} other {किसी दूसरे ऐप से # अनुरोध}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {अनुरोध प्रतीक्षा में} other {अनुरोध प्रतीक्षा में}}"

@@ -4353,7 +4353,7 @@
     "defaultMessage": "この Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {このアプリのチャットや /v1 以外からのリクエスト # 件}}"
+    "defaultMessage": "{count, plural, other {別のアプリからのリクエスト # 件}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {件のリクエストが待機中}}"

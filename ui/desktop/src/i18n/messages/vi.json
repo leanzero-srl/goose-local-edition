@@ -4353,7 +4353,7 @@
     "defaultMessage": "máy Mac này"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {# yêu cầu không đến từ các cuộc trò chuyện của ứng dụng này hay /v1}}"
+    "defaultMessage": "{count, plural, other {# yêu cầu từ một ứng dụng khác}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {yêu cầu đang chờ}}"

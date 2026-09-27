@@ -329,7 +329,7 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(lines).toEqual([
       'Chat · Memory · verify recall',
       'External client via /v1 · omlx/mihai-qwen3.8-27b-atlassian-q8-mlx',
-      "1 request not from this app's chats or /v1",
+      '1 request from another app',
       'Swarm run live: bench-r9',
     ]);
     await expectDesigned(container);
@@ -350,9 +350,7 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(screen.getByTestId('mlx-serving')).toHaveTextContent(
       'Who is using it could not be read: goose backend returned 401'
     );
-    expect(screen.getByTestId('mlx-serving')).toHaveTextContent(
-      "3 requests not from this app's chats or /v1"
-    );
+    expect(screen.getByTestId('mlx-serving')).toHaveTextContent('3 requests from another app');
   });
 
   it('a failed read says "Live stats unavailable" with the reason — nothing invented', async () => {

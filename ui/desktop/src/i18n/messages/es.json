@@ -4353,7 +4353,7 @@
     "defaultMessage": "este Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, one {# solicitud que no viene de los chats de esta app ni de /v1} other {# solicitudes que no vienen de los chats de esta app ni de /v1}}"
+    "defaultMessage": "{count, plural, one {# solicitud de otra app} other {# solicitudes de otra app}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {solicitud en espera} other {solicitudes en espera}}"

@@ -4353,7 +4353,7 @@
     "defaultMessage": "這台 Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, other {# 個請求不是來自本應用程式的對話或 /v1}}"
+    "defaultMessage": "{count, plural, other {# 個請求來自其他應用程式}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {個請求在等待}}"

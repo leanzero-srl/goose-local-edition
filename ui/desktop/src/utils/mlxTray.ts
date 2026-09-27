@@ -453,7 +453,9 @@ function servingItems(serving: MlxServing | null): MlxTrayItem[] {
   if (serving.unattributed > 0) {
     items.push({
       type: 'info',
-      label: `${plural(serving.unattributed, 'request', 'requests')} not from this app's chats or /v1`,
+      // The engine lists requests by an internal id: the caller's address is not known, so none is
+      // shown — plain words, never the attribution rule's internals (Q-22).
+      label: `${plural(serving.unattributed, 'request', 'requests')} from another app`,
     });
     if (serving.swarmRuns.length > 0) {
       items.push({ type: 'info', label: clip(`Swarm run live: ${serving.swarmRuns.join(', ')}`) });

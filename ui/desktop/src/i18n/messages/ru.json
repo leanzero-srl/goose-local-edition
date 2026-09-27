@@ -4353,7 +4353,7 @@
     "defaultMessage": "этот Mac"
   },
   "mlxStateTile.unattributed": {
-    "defaultMessage": "{count, plural, one {# запрос не из чатов этого приложения и не через /v1} few {# запроса не из чатов этого приложения и не через /v1} many {# запросов не из чатов этого приложения и не через /v1} other {# запроса не из чатов этого приложения и не через /v1}}"
+    "defaultMessage": "{count, plural, one {# запрос из другого приложения} few {# запроса из другого приложения} many {# запросов из другого приложения} other {# запроса из другого приложения}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {запрос ждёт} few {запроса ждут} many {запросов ждут} other {запроса ждут}}"
