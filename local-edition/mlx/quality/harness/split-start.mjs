@@ -39,6 +39,13 @@ const complete = async (secs) => {
 };
 // A restore after install may already have brought the split back: then there is no Run to press.
 if (/distributed\/running/.test(await status()) && (await servesWanted())) await complete(0);
+// 3.0.61 install (2026-09-27): the restore was still STARTING when this looked — no Run button, not yet running —
+// and it exited 2 on a split that answered 20 s later. A restore in flight is waited for, not reported missing.
+for (let k = 0; /^distributed\/(mounting|unknown|reconnecting)/.test(await status()); k++) {
+  if (k % 6 === 0) console.log(`restore in flight: ${await status()}`);
+  await p.waitForTimeout(5000);
+  if (/distributed\/running/.test(await status()) && (await servesWanted())) await complete('restored');
+}
 const i = owners.indexOf('Run across both Macs');
 if (i < 0) { console.log('no split Run button', JSON.stringify(owners)); process.exit(2); }
 const t0 = Date.now();
