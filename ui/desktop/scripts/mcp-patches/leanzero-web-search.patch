@@ -109,7 +109,31 @@
 +}
 --- a/src/openapi-extractor.ts
 +++ b/src/openapi-extractor.ts
-@@ -315,7 +315,7 @@
+@@ -11,6 +11,7 @@
+ import * as yaml from 'js-yaml';
+ import { CrawlCache, crawlCache } from './crawl-cache.js';
+ import { getAxiosHttpAgentConfig, safeFetchUrl } from './utils.js';
++import { PageFetchError, asFetchFailure, describeFetchFailure, httpStatusFailure } from './fetch-failure.js';
+ import {
+   TechnicalDocType,
+   DownloadedOpenAPI,
+@@ -288,8 +289,9 @@
+ async function downloadOpenAPISpec(
+   url: string,
+   maxContentLength: number = 10000000 // 10MB default
+-): Promise<{ content: string; type: TechnicalDocType } | null> {
++): Promise<{ content: string; type: TechnicalDocType }> {
+   const maxRetries = 2;
++  let failure: PageFetchError | undefined;
+ 
+   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+     try {
+@@ -311,11 +313,11 @@
+           continue;
+         }
+         console.warn(`[OpenAPIExtractor] Failed to download: HTTP ${response.status}`);
+-        return null;
++        throw httpStatusFailure(url, response.status, response.statusText);
        }
  
        // Detect content type
@@ -118,6 +142,64 @@
        let docType: TechnicalDocType = TechnicalDocType.OPENAPI_JSON;
  
        if (contentType.includes('yaml') || url.toLowerCase().endsWith('.yaml')) {
+@@ -330,7 +332,9 @@
+ 
+       return { content, type: docType };
+     } catch (error) {
++      if (error instanceof PageFetchError && error.status !== undefined) throw error;
+       console.error(`[OpenAPIExtractor] Error downloading OpenAPI spec from ${url}:`, error);
++      failure = describeFetchFailure(url, error);
+       if (attempt < maxRetries) {
+         // Exponential backoff: 1s, 2s
+         await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+@@ -338,7 +342,7 @@
+     }
+   }
+ 
+-  return null;
++  throw failure ?? describeFetchFailure(url, new Error('the download never completed'));
+ }
+ 
+ /**
+@@ -544,7 +548,7 @@
+         return {
+           success: false,
+           url,
+-          error: `Failed to fetch page: HTTP ${pageResponse.status}`,
++          error: httpStatusFailure(url, pageResponse.status, pageResponse.statusText).message,
+         };
+       }
+       
+@@ -573,14 +577,6 @@
+       // Step 3: Download the OpenAPI spec
+       const downloaded = await downloadOpenAPISpec(discoveredSpec.url, maxContentLength);
+       
+-      if (!downloaded) {
+-        return {
+-          success: false,
+-          url,
+-          error: 'Failed to download OpenAPI specification',
+-        };
+-      }
+-      
+       // Step 4: Parse and extract metadata
+       const specData = this.parseOpenAPISpec(downloaded.content, downloaded.type);
+       
+@@ -648,11 +644,12 @@
+       };
+     } catch (error) {
+       console.error(`[OpenAPIExtractor] Error extracting OpenAPI spec from ${url}:`, error);
+-      
++      const named = asFetchFailure(url, error);
++
+       return {
+         success: false,
+         url,
+-        error: error instanceof Error ? error.message : 'Unknown error',
++        error: named instanceof Error ? named.message : 'Unknown error',
+       };
+     }
+   }
 --- a/src/progressive-search-engine.ts
 +++ b/src/progressive-search-engine.ts
 @@ -3,7 +3,7 @@
@@ -619,7 +701,27 @@
      return results;
 --- a/src/server.ts
 +++ b/src/server.ts
-@@ -35,10 +35,11 @@
+@@ -24,6 +24,19 @@
+   Unauthorized = -32008,
+ }
+ 
++const FETCH_FAILURE_CODES: Record<FetchFailureKind, ERROR_CODES> = {
++  'not-found': ERROR_CODES.InvalidRequest,
++  refused: ERROR_CODES.Unauthorized,
++  'rate-limited': ERROR_CODES.ResourceExhausted,
++  'server-error': ERROR_CODES.InternalError,
++  'http-error': ERROR_CODES.InvalidRequest,
++  timeout: ERROR_CODES.RequestTimeout,
++  dns: ERROR_CODES.ConnectionClosed,
++  network: ERROR_CODES.ConnectionClosed,
++  unreadable: ERROR_CODES.InternalError,
++  other: ERROR_CODES.InternalError,
++};
++
+ class McpError extends Error {
+   readonly code: number;
+   
+@@ -35,10 +48,11 @@
  }
  
  import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -632,9 +734,12 @@
  import { EnhancedContentExtractor } from './enhanced-content-extractor.js';
  import { pdfExtractor as pdfExtractorInstance } from './pdf-extractor.js';
  
-@@ -48,12 +49,9 @@
+@@ -46,14 +60,11 @@
+ 
+ import { WebSearchToolInput, WebSearchToolOutput, SearchResult } from './types.js';
  import { ProgressiveSearchEngine } from './progressive-search-engine.js';
- import { isPdfUrl, fetchSitemapUrls, withTimeout, clampReadWindow } from './utils.js';
+-import { isPdfUrl, fetchSitemapUrls, withTimeout, clampReadWindow } from './utils.js';
++import { isPdfUrl, fetchSitemapUrls, withTimeout, clampReadWindow, type SitemapAttempt } from './utils.js';
  
 -// Root directory for files this server writes (research-output markdown, and —
 -// via the crawl cache — saved OpenAPI specs). Defaults to the launch dir when it
@@ -648,7 +753,7 @@
  function getOutputRoot(): string {
    // 1) Per-request override (hosted X-Output-Dir header), via AsyncLocalStorage.
    //    SANDBOXED under a server base so a remote tenant can only organize files
-@@ -63,21 +61,15 @@
+@@ -63,21 +74,15 @@
    const ctx = requestContext.getStore();
    if (ctx?.outputDir && String(ctx.outputDir).trim()) {
      const base = process.env.CLIENT_OUTPUT_BASE
@@ -673,15 +778,18 @@
  }
  
  // Per-tool wall-clock budgets. All sit comfortably below the Forge function
-@@ -97,6 +89,7 @@
+@@ -97,8 +102,10 @@
  import * as yaml from 'js-yaml';
  import { attachClientDetect, isAgenticClient, getClientInfo } from './client-detect.js';
  import { searchLearning, toolLearning } from './insights.js';
 +import { dataDir, outputRoot } from './state-dir.js';
  import { buildDownloadUrl, mimeFor } from './download-registry.js';
  import { requestContext } from './request-context.js';
++import { PageFetchError, asFetchFailure, GITHUB_ADVICE, SEARCH_FIRST, type FetchFailureKind } from './fetch-failure.js';
  
-@@ -141,7 +134,7 @@
+ // ============================================================================
+ // Import observability module
+@@ -141,7 +148,7 @@
  • Save cited research to a markdown file (give it URLs) → research_and_save_to_markdown.
  • A GitHub repo's code/README → get-github-repo-content.   An API's endpoints → get-openapi-spec.
  • Re-read something already fetched → list-cached-documents, then read-cached-document.
@@ -690,20 +798,26 @@
  
  export class WebSearchMCPServer {
    private server: McpServer;
-@@ -170,6 +163,12 @@
-       throw error;
-     }
+@@ -168,6 +175,18 @@
  
+     if (error instanceof McpError) {
+       throw error;
++    }
++
 +    // Verbatim: the keyword mapping below would relabel a setup message
 +    // ("Access denied: …", "Resource not found: …") as something it is not.
 +    if (error instanceof SearchUnavailableError) {
 +      throw new McpError(ERROR_CODES.InternalError, error.message);
 +    }
 +
++    // Already names the URL, the HTTP status and what to do next (Q-220);
++    // the keyword mapping below would prefix it with a misleading label.
++    if (error instanceof PageFetchError) {
++      throw new McpError(FETCH_FAILURE_CODES[error.kind], error.message);
+     }
+ 
      if (error instanceof Error) {
-       // Categorize common errors and map to appropriate MCP error codes
-       const message = error.message.toLowerCase();
-@@ -498,7 +497,7 @@
+@@ -498,7 +517,7 @@
  
            // Format: structured JSON block + human-readable text for AI-friendly parsing
            const jsonBlock = `\`\`\`json\n${JSON.stringify(summaryResults, null, 2)}\n\`\`\``;
@@ -712,7 +826,89 @@
  
            summaryResults.forEach((summary, i) => {
              responseText += `**${i + 1}. ${summary.title}**\n`;
-@@ -1868,9 +1867,9 @@
+@@ -551,7 +570,7 @@
+               }),
+               TOOL_TIMEOUTS.singlePage,
+               'get-single-web-page-content',
+-            );
++            ).catch((err) => { throw asFetchFailure(obj.url as string, err); });
+             const content = contentObj.content;
+  
+            // Get page title from URL (simple extraction)
+@@ -757,6 +776,8 @@
+         },
+         {
+           retries: Math.max(0, maxRetries - 1),
++          // A 404 or an unresolvable host answers the same on every attempt.
++          shouldRetry: (err) => !(err instanceof PageFetchError && err.definitive),
+           minTimeout: 500,
+           maxTimeout: 4000,
+           factor: 2,
+@@ -1151,12 +1172,16 @@
+           }
+ 
+           console.log(`[MCP] Sitemap call for ${obj.url} (filtering=${filtering}, extractTopMatching=${extractTopMatching}, offset=${offset}, limit=${limit})`);
+-          const allUrls = await fetchSitemapUrls(obj.url);
++          const sitemapAttempts: SitemapAttempt[] = [];
++          const allUrls = await fetchSitemapUrls(obj.url, sitemapAttempts);
+ 
+           if (allUrls.length === 0) {
+             toolLearning('get-website-sitemap', 'no-results', { url: obj.url, reason: 'empty-or-missing-sitemap' }, '');
++            const tried = sitemapAttempts.map((a) => `- ${a.url} — ${a.outcome}`).join('\n');
+             return this.respondText(
+-              `No URLs found in the sitemap for ${obj.url}. The sitemap might not exist or could be empty.`,
++              `No page URLs found in a sitemap for ${obj.url}.` +
++              (tried ? ` Tried:\n${tried}\n` : ' ') +
++              `This site publishes no readable sitemap at these addresses: ${SEARCH_FIRST} to find its pages.`,
+             );
+           }
+ 
+@@ -1304,7 +1329,7 @@
+               this.githubExtractor.getContent(repoInfo.owner, repoInfo.repo, targetPath, branch),
+               TOOL_TIMEOUTS.github,
+               'get-github-repo-content/list',
+-            );
++            ).catch((err) => { throw asFetchFailure(obj.url as string, err, GITHUB_ADVICE); });
+ 
+             if (contents.length === 0) {
+               toolLearning('get-github-repo-content', 'no-results', { url: obj.url, mode: 'list', path: targetPath }, '');
+@@ -1334,7 +1359,7 @@
+               this.githubExtractor.getFileContent(repoInfo.owner, repoInfo.repo, targetPath, branch),
+               TOOL_TIMEOUTS.github,
+               'get-github-repo-content/file',
+-            );
++            ).catch((err) => { throw asFetchFailure(obj.url as string, err, GITHUB_ADVICE); });
+ 
+             const ext = targetPath.split('.').pop() || '';
+             const fence = /^(ts|tsx|js|jsx|py|java|go|rs|rb|cs|kt|swift|c|cpp|h|hpp|sh|json|yaml|yml|md|html|css)$/i.test(ext) ? ext.toLowerCase() : '';
+@@ -1361,7 +1386,7 @@
+             this.githubExtractor.extractGitHubContent(obj.url, { maxDepth, maxFiles }),
+             TOOL_TIMEOUTS.github,
+             'get-github-repo-content/crawl',
+-          );
++          ).catch((err) => { throw asFetchFailure(obj.url as string, err, GITHUB_ADVICE); });
+ 
+           let responseText = `**Repository:** ${result.repositoryInfo.owner}/${result.repositoryInfo.repo}\n\n`;
+           if (result.readme) {
+@@ -1449,7 +1474,7 @@
+             } as any),
+             TOOL_TIMEOUTS.openapi,
+             'get-openapi-spec',
+-          );
++          ).catch((err) => { throw asFetchFailure(obj.url as string, err); });
+ 
+           console.log(`[MCP] OpenAPI extraction completed: success=${result.success}`);
+ 
+@@ -1694,7 +1719,7 @@
+             pdfExtractor.extractPdfContent(obj.url, { maxContentLength }),
+             TOOL_TIMEOUTS.pdf,
+             'get-pdf-content',
+-          );
++          ).catch((err) => { throw asFetchFailure(obj.url as string, err); });
+ 
+           console.log(`[MCP] PDF extraction completed: method=${result.extractionMethod}, length=${result.text.length}`);
+ 
+@@ -1868,9 +1893,9 @@
  
            // Search both well-known dirs in order: OpenAPI specs, then research output.
            // CRITICAL: resolve the OpenAPI dir from the extractor's cache, NOT from
@@ -725,7 +921,7 @@
            const openapiDir = openAPIExtractor.getOpenAPIDir();
            const researchDir = path.join(projectRoot, 'docs', 'research-output');
  
-@@ -2082,11 +2081,9 @@
+@@ -2082,11 +2107,9 @@
        }
        const message = error instanceof Error ? error.message : 'Unknown web search error';
        telemetryCollector.recordSearchFailure(searchEngineName || 'unknown', Date.now() - startTime);
@@ -740,7 +936,7 @@
      }
    }
  
-@@ -2150,42 +2147,40 @@
+@@ -2150,42 +2173,40 @@
    private setupGracefulShutdown(): void {
      // Handle unhandled promise rejections
      process.on('unhandledRejection', (reason, promise) => {
@@ -1477,3 +1673,753 @@
      });
  
      client = new Client({ name: 'research-test-client', version: '1.0.0' });
+--- /dev/null
++++ b/src/fetch-failure.ts
+@@ -0,0 +1,218 @@
++import axios from 'axios';
++import { STATUS_CODES } from 'node:http';
++
++/**
++ * One wording for every failed fetch, so a model can act on it: the URL, the
++ * HTTP status (or that none was received), what it means, and what to do next.
++ * A bare "Request failed with status code 404" named neither the URL nor a
++ * remedy, and a local model kept guessing sibling URLs on the same site (Q-220).
++ */
++export type FetchFailureKind =
++  | 'not-found'
++  | 'refused'
++  | 'rate-limited'
++  | 'server-error'
++  | 'http-error'
++  | 'timeout'
++  | 'dns'
++  | 'network'
++  | 'unreadable'
++  | 'other';
++
++export const SEARCH_FIRST =
++  'fetch a URL taken from a search result, or run a search first with get-web-search-summaries';
++
++export interface FetchAdvice {
++  notFound?: string;
++  refused?: string;
++  rateLimited?: string;
++}
++
++export const GITHUB_ADVICE: FetchAdvice = {
++  notFound:
++    'GitHub has no such repository, branch or path, or it is private. Check the owner/repo spelling, run a search first with get-web-search-summaries to find the real repository, or call get-github-repo-content with mode "list" to see which paths exist.',
++  refused:
++    'GitHub refused the request; without a GITHUB_TOKEN its API allows 60 requests an hour, so this is usually that limit. Set GITHUB_TOKEN, or try again later.',
++  rateLimited: 'GitHub is rate-limiting this client. Set GITHUB_TOKEN for a higher limit, or try again later.',
++};
++
++const DEFAULT_ADVICE: Required<FetchAdvice> = {
++  notFound: `Do not guess another address on this site: ${SEARCH_FIRST}.`,
++  refused: 'Try another result from the search, or a different source.',
++  rateLimited: 'Try another result from the search, or come back to this page later.',
++};
++
++export class PageFetchError extends Error {
++  readonly url: string;
++  readonly kind: FetchFailureKind;
++  readonly status?: number;
++  /** Status and meaning without the URL or the advice — for lists that already show the URL. */
++  readonly brief: string;
++  readonly advice: string;
++
++  constructor(url: string, kind: FetchFailureKind, brief: string, advice: string, status?: number) {
++    super(`Could not fetch ${url} — ${brief}.${advice ? ` ${advice}` : ''}`);
++    this.name = 'PageFetchError';
++    this.url = url;
++    this.kind = kind;
++    this.brief = brief;
++    this.advice = advice;
++    this.status = status;
++  }
++
++  /** Retrying cannot change the answer: the page or the host is not there. */
++  get definitive(): boolean {
++    return this.kind === 'not-found' || this.kind === 'dns';
++  }
++
++  withNote(note: string): PageFetchError {
++    return new PageFetchError(this.url, this.kind, `${this.brief}; ${note}`, this.advice, this.status);
++  }
++}
++
++function statusLabel(status: number, statusText?: string): string {
++  const text = STATUS_CODES[status] ?? statusText?.trim();
++  return text ? `HTTP ${status} (${text})` : `HTTP ${status}`;
++}
++
++export function httpStatusFailure(
++  url: string,
++  status: number,
++  statusText?: string,
++  advice: FetchAdvice = {},
++): PageFetchError {
++  const label = statusLabel(status, statusText);
++  const say = { ...DEFAULT_ADVICE, ...advice };
++  if (status === 404 || status === 410) {
++    return new PageFetchError(url, 'not-found', `${label}: the page does not exist at this address`, say.notFound, status);
++  }
++  if (status === 401 || status === 403) {
++    return new PageFetchError(url, 'refused', `${label}: the site refused the request`, say.refused, status);
++  }
++  if (status === 429) {
++    return new PageFetchError(
++      url,
++      'rate-limited',
++      `${label}: the site refused the request because it is rate-limiting automated fetches`,
++      say.rateLimited,
++      status,
++    );
++  }
++  if (status >= 500) {
++    return new PageFetchError(
++      url,
++      'server-error',
++      `${label}: the site failed on its side`,
++      'Try again later, or use another result.',
++      status,
++    );
++  }
++  return new PageFetchError(url, 'http-error', label, 'Check the address, or use another result.', status);
++}
++
++const NO_STATUS = 'no HTTP status was received';
++const DNS_CODES = new Set(['ENOTFOUND']);
++const NETWORK_CODES = new Set([
++  'ECONNREFUSED',
++  'ECONNRESET',
++  'EHOSTUNREACH',
++  'ENETUNREACH',
++  'EAI_AGAIN',
++  'EPIPE',
++  'CERT_HAS_EXPIRED',
++  'DEPTH_ZERO_SELF_SIGNED_CERT',
++  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
++  'ERR_TLS_CERT_ALTNAME_INVALID',
++]);
++
++function errorCode(error: unknown): string | undefined {
++  const own = (error as { code?: unknown })?.code;
++  if (typeof own === 'string') return own;
++  const cause = (error as { cause?: { code?: unknown } })?.cause?.code;
++  return typeof cause === 'string' ? cause : undefined;
++}
++
++function hostOf(url: string): string {
++  try {
++    return new URL(url).hostname;
++  } catch {
++    return url;
++  }
++}
++
++function timeoutFailure(url: string, message: string): PageFetchError {
++  const ms = message.match(/(\d+)\s*ms/i)?.[1];
++  const after = ms ? `timed out after ${ms} ms` : 'timed out';
++  return new PageFetchError(
++    url,
++    'timeout',
++    `${after} (${NO_STATUS})`,
++    'The site may be slow or down: try again once, or use another result.',
++  );
++}
++
++function dnsFailure(url: string, advice: FetchAdvice): PageFetchError {
++  return new PageFetchError(
++    url,
++    'dns',
++    `the host ${hostOf(url)} does not resolve (DNS lookup failed, ${NO_STATUS})`,
++    advice.notFound ?? `The address is likely wrong: ${SEARCH_FIRST}.`,
++  );
++}
++
++function isTimeout(error: unknown, message: string): boolean {
++  const name = (error as { name?: unknown })?.name;
++  const code = errorCode(error);
++  return (
++    name === 'TimeoutError' ||
++    code === 'ECONNABORTED' ||
++    code === 'ETIMEDOUT' ||
++    /timed out|timeout/i.test(message)
++  );
++}
++
++/**
++ * The failure of a fetch of `url`, named, when `error` is one: an HTTP status,
++ * a timeout, a DNS or connection failure. Any other error (a bad argument, a
++ * parse failure) is returned unchanged so it is not relabelled as a fetch.
++ */
++export function asFetchFailure(url: string, error: unknown, advice: FetchAdvice = {}): unknown {
++  if (error instanceof PageFetchError) return error;
++  const message = error instanceof Error ? error.message : String(error);
++
++  if (axios.isAxiosError(error) && error.response) {
++    return httpStatusFailure(url, error.response.status, error.response.statusText, advice);
++  }
++
++  const code = errorCode(error);
++  if (code && DNS_CODES.has(code)) return dnsFailure(url, advice);
++  if (/net::ERR_NAME_NOT_RESOLVED/.test(message)) return dnsFailure(url, advice);
++  if (isTimeout(error, message)) return timeoutFailure(url, message);
++
++  const netErr = message.match(/net::(ERR_[A-Z_]+)/)?.[1];
++  if ((code && NETWORK_CODES.has(code)) || netErr || axios.isAxiosError(error) || message === 'fetch failed') {
++    return new PageFetchError(
++      url,
++      'network',
++      `could not connect (${code ?? netErr ?? message}, ${NO_STATUS})`,
++      'Try again, or use another result.',
++    );
++  }
++  if (/low quality content/i.test(message)) {
++    return new PageFetchError(
++      url,
++      'unreadable',
++      `the page answered but has no readable text (${message}); it may need JavaScript or be a bot check`,
++      'Try another result from the search, or a different source.',
++    );
++  }
++  return error;
++}
++
++/** Like asFetchFailure, but always a PageFetchError: for errors already known to come from fetching `url`. */
++export function describeFetchFailure(url: string, error: unknown, advice: FetchAdvice = {}): PageFetchError {
++  const named = asFetchFailure(url, error, advice);
++  if (named instanceof PageFetchError) return named;
++  const message = error instanceof Error ? error.message : String(error);
++  return new PageFetchError(url, 'other', message, 'Try another result, or a different source.');
++}
+--- a/src/enhanced-content-extractor.ts
++++ b/src/enhanced-content-extractor.ts
+@@ -8,6 +8,7 @@
+ import { sessionRateLimiter } from './enterprise-guardrails.js';
+ import { requestDeduplicator } from './request-deduplicator.js';
+ import { requestContext } from './request-context.js';
++import { PageFetchError, describeFetchFailure, httpStatusFailure } from './fetch-failure.js';
+ 
+ /**
+  * Parses a GitHub URL to extract owner, repo, and path information.
+@@ -202,10 +203,19 @@
+             sessionRateLimiter.record404(options.sessionId, 'enhanced-content-extractor');
+           }
+ 
+-          throw new Error(`Both axios and browser extraction failed for ${url}`);
++          // Report the HTTP answer the site gave (403/429/503…) rather than a
++          // generic "both failed": that status is what the caller can act on.
++          const httpFailure = describeFetchFailure(url, error);
++          const browserFailure = describeFetchFailure(url, browserError);
++          if (browserFailure.kind === httpFailure.kind && browserFailure.status === httpFailure.status) {
++            throw httpFailure.withNote('a browser retry got the same answer');
++          }
++          throw httpFailure.status !== undefined
++            ? httpFailure.withNote(`the browser retry also failed: ${browserFailure.brief}`)
++            : browserFailure.withNote(`the plain HTTP fetch failed first: ${httpFailure.brief}`);
+         }
+       } else {
+-        throw error;
++        throw describeFetchFailure(url, error);
+       }
+     }
+ 
+@@ -340,8 +350,9 @@
+ 
+       console.log(`[BrowserExtractor] Navigating to ${url}`);
+       
++      let response;
+       try {
+-        await page.goto(url, { 
++        response = await page.goto(url, { 
+           waitUntil: 'domcontentloaded',
+           timeout: Math.min(timeout, 10000) // Increased timeout for single page tool
+         });
+@@ -374,10 +385,14 @@
+             }
+           });
+           
+-          await http1Page.goto(url, { 
++          const http1Response = await http1Page.goto(url, { 
+             waitUntil: 'domcontentloaded',
+             timeout: Math.min(timeout, 8000)
+           });
++          if (http1Response && http1Response.status() >= 400) {
++            await http1Context.close();
++            throw httpStatusFailure(url, http1Response.status(), http1Response.statusText());
++          }
+           
+           const html = await http1Page.content();
+           const content = this.parseContent(html);
+@@ -388,6 +403,12 @@
+         }
+       }
+ 
++      // The browser renders an error page like any other; its text is not the page's content.
++      if (response && response.status() >= 400) {
++        await context.close();
++        throw httpStatusFailure(url, response.status(), response.statusText());
++      }
++
+       // Wait for main content to load
+       try {
+         await page.waitForSelector('article, main, .content, .post-content, .entry-content', {
+@@ -430,6 +451,12 @@
+   }
+ 
+   private shouldUseBrowser(error: any, url: string): boolean {
++    // A 404/410 is the site's answer about the address, whatever words its error
++    // page happens to contain ("robot" on www.atlassian.com's): a browser gets it too.
++    if (error.response?.status === 404 || error.response?.status === 410) {
++      return false;
++    }
++
+     // Conditions where browser is likely to succeed where axios failed
+     const indicators = [
+       // HTTP status codes that suggest bot detection
+@@ -684,6 +711,9 @@
+   }
+ 
+   private getSpecificErrorMessage(error: unknown): string {
++    if (error instanceof PageFetchError) {
++      return error.brief;
++    }
+     if (axios.isAxiosError(error)) {
+       if (error.code === 'ECONNABORTED') {
+         return 'Request timeout';
+--- a/src/pdf-extractor.ts
++++ b/src/pdf-extractor.ts
+@@ -10,6 +10,7 @@
+ import { browserPool } from './browser-pool.js';
+ import { auditLogger, telemetryCollector } from './observability.js';
+ import { safeFetchUrl } from './utils.js';
++import { PageFetchError, asFetchFailure, describeFetchFailure, httpStatusFailure } from './fetch-failure.js';
+ 
+ // pdf-parse v2 exposes a `PDFParse` CLASS (not a default function as in v1).
+ // Usage: `new PDFParse({ data: bytes }).getText()` -> { pages, text, total }.
+@@ -76,8 +77,17 @@
+     await safeFetchUrl(url);
+ 
+     try {
+-      // Try direct HTTP download first (fastest)
+-      const httpResult = await this.extractWithHttp(url, config);
++      // Try direct HTTP download first (fastest). An HTTP error status is kept:
++      // a 404 ends here (a browser gets the same answer), any other status is
++      // what gets reported if the browser retry fails too.
++      let httpResult: PdfExtractionResult | null = null;
++      let httpFailure: PageFetchError | undefined;
++      try {
++        httpResult = await this.extractWithHttp(url, config);
++      } catch (error) {
++        if (!(error instanceof PageFetchError) || error.definitive) throw error;
++        httpFailure = error;
++      }
+       
+       if (httpResult && httpResult.text.trim().length > 0) {
+         telemetryCollector.recordContentExtraction(Date.now() - startTime);
+@@ -100,7 +110,13 @@
+       }
+ 
+       // Fallback to browser-based extraction
+-      const browserResult = await this.extractWithBrowser(url, config);
++      let browserResult: PdfExtractionResult;
++      try {
++        browserResult = await this.extractWithBrowser(url, config);
++      } catch (browserError) {
++        if (!httpFailure) throw browserError;
++        throw httpFailure.withNote(`the browser retry also failed: ${describeFetchFailure(url, browserError).brief}`);
++      }
+       
+       telemetryCollector.recordContentExtraction(Date.now() - startTime);
+       
+@@ -129,6 +145,8 @@
+         'PdfExtraction'
+       );
+       
++      const named = asFetchFailure(url, error);
++      if (named instanceof PageFetchError) throw named;
+       throw new Error(`Failed to extract PDF from ${url}: ${this.getErrorDetails(error)}`);
+     }
+   }
+@@ -150,7 +168,7 @@
+       });
+ 
+       if (!response.ok) {
+-        return null;
++        throw httpStatusFailure(url, response.status, response.statusText);
+       }
+ 
+       const arrayBuffer = await response.arrayBuffer();
+@@ -177,6 +195,7 @@
+         extractionMethod: 'http',
+       };
+     } catch (error) {
++      if (error instanceof PageFetchError) throw error;
+       console.error(`[PdfExtractor] HTTP extraction failed for ${url}:`, error);
+       return null;
+     }
+@@ -194,7 +213,10 @@
+ 
+     try {
+       // Navigate to the PDF URL
+-      await page.goto(url, { waitUntil: 'networkidle', timeout });
++      const response = await page.goto(url, { waitUntil: 'networkidle', timeout });
++      if (response && response.status() >= 400) {
++        throw httpStatusFailure(url, response.status(), response.statusText());
++      }
+ 
+       // Wait for PDF to load
+       await page.waitForSelector('body', { timeout });
+--- a/src/github-extractor.ts
++++ b/src/github-extractor.ts
+@@ -3,6 +3,7 @@
+ import { getAxiosHttpAgentConfig } from './utils.js';
+ import { GitHubFile } from './types.js';
+ import { requestContext } from './request-context.js';
++import { describeFetchFailure, GITHUB_ADVICE } from './fetch-failure.js';
+ 
+ // Extend AxiosRequestConfig to include the _retry flag for type-safe rate-limit handling
+ declare module 'axios' {
+@@ -209,7 +210,7 @@
+       };
+     } catch (error) {
+       console.error(`[GitHubExtractor] Failed to get repo info for ${owner}/${repo}:`, error);
+-      throw new Error(`Failed to fetch repository info: ${this.getErrorMessage(error)}`);
++      throw describeFetchFailure(url, error, GITHUB_ADVICE);
+     }
+   }
+ 
+@@ -276,7 +277,7 @@
+           }];
+     } catch (error) {
+       console.error(`[GitHubExtractor] Failed to get contents for ${owner}/${repo}:${path}:`, error);
+-      throw new Error(`Failed to fetch contents: ${this.getErrorMessage(error)}`);
++      throw describeFetchFailure(branch ? `${url}?ref=${branch}` : url, error, GITHUB_ADVICE);
+     }
+   }
+ 
+@@ -301,7 +302,7 @@
+       return content;
+     } catch (error) {
+       console.error(`[GitHubExtractor] Failed to get file content for ${owner}/${repo}:${path}:`, error);
+-      throw new Error(`Failed to fetch file content: ${this.getErrorMessage(error)}`);
++      throw describeFetchFailure(branch ? `${url}?ref=${branch}` : url, error, GITHUB_ADVICE);
+     }
+   }
+ 
+@@ -451,16 +452,6 @@
+   }
+ 
+   /**
+-   * Get error message from axios error
+-   */
+-  private getErrorMessage(error: unknown): string {
+-    if (axios.isAxiosError(error)) {
+-      return error.message || `HTTP ${error.response?.status || 'unknown'}`;
+-    }
+-    return error instanceof Error ? error.message : 'Unknown error';
+-  }
+-
+-  /**
+    * Extract content from a GitHub URL (public method)
+    */
+   async extractGitHubContent(
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -8,6 +8,7 @@
+ import https from 'https';
+ import dns from 'dns/promises';
+ import net from 'net';
++import { describeFetchFailure } from './fetch-failure.js';
+ 
+ // Shared HTTP/HTTPS agents with keep-alive connection pooling
+ const httpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 30000 });
+@@ -241,11 +242,18 @@
+   }
+ }
+ 
++export interface SitemapAttempt {
++  url: string;
++  outcome: string;
++}
++
+ /**
+  * Fetches and parses a sitemap from a given base URL.
+  * Implements robust discovery via robots.txt, root sitemaps, and recursive index parsing.
++ * Every address tried is appended to `attempts` with its HTTP answer, so an
++ * empty result can say what was asked and what the site replied.
+  */
+-export async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
++export async function fetchSitemapUrls(baseUrl: string, attempts: SitemapAttempt[] = []): Promise<string[]> {
+   await safeFetchUrl(baseUrl);
+ 
+   const urlObj = new URL(baseUrl);
+@@ -265,11 +273,15 @@
+     });
+     const robotsText = robotsResponse.data as string;
+     const sitemapMatches = robotsText.matchAll(/^Sitemap:\s*(https?:\/\/[^\s]+)/gmi);
++    let listed = 0;
+     for (const match of sitemapMatches) {
+       allUrls.add(match[1]);
++      listed++;
+     }
+-  } catch {
++    attempts.push({ url: robotsUrl, outcome: `HTTP ${robotsResponse.status}, lists ${listed} sitemap(s)` });
++  } catch (error) {
+     console.log(`[Utils] No sitemaps found in robots.txt or file missing`);
++    attempts.push({ url: `${origin}/robots.txt`, outcome: describeFetchFailure(`${origin}/robots.txt`, error).brief });
+   }
+ 
+   // 2. Try common default locations if robots.txt didn't provide enough
+@@ -312,6 +324,8 @@
+         if (loc) locs.push(loc);
+       });
+ 
++      attempts.push({ url: currentSitemapUrl, outcome: `HTTP ${response.status}, ${locs.length} <loc> entries` });
++
+       for (const loc of locs) {
+         // If the location looks like another sitemap, add it to the queue for processing
+         if (loc.toLowerCase().includes('sitemap')) {
+@@ -322,6 +336,7 @@
+       }
+     } catch (error) {
+       console.log(`[Utils] Failed to fetch sitemap ${currentSitemapUrl}: ${error instanceof Error ? error.message : 'Error'}`);
++      attempts.push({ url: currentSitemapUrl, outcome: describeFetchFailure(currentSitemapUrl, error).brief });
+     }
+   }
+ 
+--- /dev/null
++++ b/tests/unit/fetch-failure.test.ts
+@@ -0,0 +1,230 @@
++// goose Q-220: a page fetch that fails names the URL, the HTTP status, and what
++// to do next. A local model given "Resource not found: Request failed with status
++// code 404" guessed three sibling URLs in a row and kept guessing.
++import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
++import { mkdtempSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import path from 'node:path';
++import axios, { AxiosError, AxiosHeaders } from 'axios';
++
++const TMP_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'ws-fetch-failure-'));
++process.env.DATA_DIR = TMP_DATA_DIR;
++
++const { asFetchFailure, describeFetchFailure, PageFetchError } = await import('../../src/fetch-failure.js');
++const { EnhancedContentExtractor } = await import('../../src/enhanced-content-extractor.js');
++const { PdfExtractor } = await import('../../src/pdf-extractor.js');
++const { openAPIExtractor } = await import('../../src/openapi-extractor.js');
++const { fetchSitemapUrls, withTimeout } = await import('../../src/utils.js');
++type SitemapAttempt = import('../../src/utils.js').SitemapAttempt;
++
++function httpError(status: number, statusText = ''): AxiosError {
++  const headers = new AxiosHeaders();
++  return new AxiosError(`Request failed with status code ${status}`, 'ERR_BAD_REQUEST', { headers }, null, {
++    status,
++    statusText,
++    headers: {},
++    config: { headers },
++    data: '',
++  });
++}
++
++// A public literal address: the SSRF guard passes it without a DNS lookup.
++let n = 0;
++const page = (p: string) => `http://93.184.215.14/${p}-${++n}`;
++
++const NOT_FOUND_ADVICE =
++  'Do not guess another address on this site: fetch a URL taken from a search result, or run a search first with get-web-search-summaries.';
++
++afterEach(() => vi.restoreAllMocks());
++afterAll(() => rmSync(TMP_DATA_DIR, { recursive: true, force: true }));
++
++describe('asFetchFailure wording', () => {
++  const url = 'https://developer.atlassian.com/cloud/jira/guessed-page';
++
++  it('404 names the URL, the status, that the page does not exist, and the search tool', () => {
++    expect((asFetchFailure(url, httpError(404)) as Error).message).toBe(
++      `Could not fetch ${url} — HTTP 404 (Not Found): the page does not exist at this address. ${NOT_FOUND_ADVICE}`,
++    );
++  });
++
++  it('410 is the same not-found answer', () => {
++    const failure = asFetchFailure(url, httpError(410)) as InstanceType<typeof PageFetchError>;
++    expect(failure.kind).toBe('not-found');
++    expect(failure.message).toContain('HTTP 410 (Gone): the page does not exist at this address');
++  });
++
++  it('403 and 429 say the site refused, and to try another result', () => {
++    expect((asFetchFailure(url, httpError(403)) as Error).message).toBe(
++      `Could not fetch ${url} — HTTP 403 (Forbidden): the site refused the request. Try another result from the search, or a different source.`,
++    );
++    expect((asFetchFailure(url, httpError(429)) as Error).message).toBe(
++      `Could not fetch ${url} — HTTP 429 (Too Many Requests): the site refused the request because it is rate-limiting automated fetches. Try another result from the search, or come back to this page later.`,
++    );
++  });
++
++  it('5xx says the site failed on its side', () => {
++    expect((asFetchFailure(url, httpError(503)) as Error).message).toBe(
++      `Could not fetch ${url} — HTTP 503 (Service Unavailable): the site failed on its side. Try again later, or use another result.`,
++    );
++  });
++
++  it('timeouts say so, with the budget and that no status came back', async () => {
++    const hung = new Promise(() => {});
++    const err = await withTimeout(hung, 25, 'get-single-web-page-content').catch((e: unknown) => e);
++    expect((asFetchFailure(url, err) as Error).message).toBe(
++      `Could not fetch ${url} — timed out after 25 ms (no HTTP status was received). The site may be slow or down: try again once, or use another result.`,
++    );
++    const axiosTimeout = new AxiosError('timeout of 6000ms exceeded', 'ECONNABORTED');
++    expect((asFetchFailure(url, axiosTimeout) as InstanceType<typeof PageFetchError>).kind).toBe('timeout');
++    const abort = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
++    expect((asFetchFailure(url, abort) as InstanceType<typeof PageFetchError>).kind).toBe('timeout');
++  });
++
++  it('an unresolvable host is a wrong address, not a network blip', () => {
++    const dns = new AxiosError('getaddrinfo ENOTFOUND nope.invalid', 'ENOTFOUND');
++    expect((asFetchFailure('https://nope.invalid/x', dns) as Error).message).toBe(
++      'Could not fetch https://nope.invalid/x — the host nope.invalid does not resolve (DNS lookup failed, no HTTP status was received). The address is likely wrong: fetch a URL taken from a search result, or run a search first with get-web-search-summaries.',
++    );
++  });
++
++  it('an error that is not a fetch failure is returned unchanged', () => {
++    const bad = new Error('Invalid arguments: url is required and must be a string');
++    expect(asFetchFailure(url, bad)).toBe(bad);
++    expect(describeFetchFailure(url, bad).message).toContain(url);
++  });
++});
++
++describe('the fetch paths report the failure, not a bare status line', () => {
++  it('page extraction: a 404 is not retried in a browser and names the URL', async () => {
++    const url = page('missing');
++    const get = vi.spyOn(axios, 'get').mockRejectedValue(httpError(404, 'Not Found'));
++    const err = await new EnhancedContentExtractor().extractContent({ url }).catch((e: unknown) => e);
++    expect(get).toHaveBeenCalledTimes(1);
++    expect(err).toBeInstanceOf(PageFetchError);
++    expect((err as Error).message).toBe(
++      `Could not fetch ${url} — HTTP 404 (Not Found): the page does not exist at this address. ${NOT_FOUND_ADVICE}`,
++    );
++  });
++
++  it('page extraction: a 404 whose error page mentions "robot" still goes no further than the HTTP answer', async () => {
++    const url = page('robot-404');
++    const notFound = httpError(404, 'Not Found');
++    notFound.response!.data = '<html>Not found. Are you a robot? Please enable JavaScript</html>';
++    const get = vi.spyOn(axios, 'get').mockRejectedValue(notFound);
++    const { browserPool } = await import('../../src/browser-pool.js');
++    const browser = vi.spyOn(browserPool, 'getBrowser');
++    const err = await new EnhancedContentExtractor().extractContent({ url }).catch((e: unknown) => e);
++    expect(get).toHaveBeenCalledTimes(1);
++    expect(browser).not.toHaveBeenCalled();
++    expect((err as InstanceType<typeof PageFetchError>).status).toBe(404);
++  });
++
++  it('page extraction: a browser retry that hits the same status says so once', async () => {
++    const url = page('forbidden');
++    vi.spyOn(axios, 'get').mockRejectedValue(httpError(403));
++    const { browserPool } = await import('../../src/browser-pool.js');
++    const response = { status: () => 403, statusText: () => 'Forbidden' };
++    const pw = {
++      addInitScript: vi.fn(),
++      newPage: vi.fn().mockResolvedValue({ route: vi.fn(), goto: vi.fn().mockResolvedValue(response) }),
++      close: vi.fn(),
++    };
++    vi.spyOn(browserPool, 'getBrowser').mockResolvedValue({ newContext: vi.fn().mockResolvedValue(pw) } as never);
++    const err = await new EnhancedContentExtractor().extractContent({ url }).catch((e: unknown) => e);
++    expect((err as Error).message).toBe(
++      `Could not fetch ${url} — HTTP 403 (Forbidden): the site refused the request; a browser retry got the same answer. Try another result from the search, or a different source.`,
++    );
++    expect(pw.close).toHaveBeenCalled();
++  });
++
++  it('page extraction: a search-result list gets the short form beside its URL', async () => {
++    const url = page('listed');
++    vi.spyOn(axios, 'get').mockRejectedValue(httpError(404));
++    const [result] = await new EnhancedContentExtractor().extractContentForResults(
++      [{ title: 't', url, description: 'd', fullContent: '', contentPreview: '', wordCount: 0, timestamp: 'now', fetchStatus: 'success' }],
++      1,
++    );
++    expect(result.fetchStatus).toBe('error');
++    expect(result.error).toBe('HTTP 404 (Not Found): the page does not exist at this address');
++  });
++
++  it('PDF: a 404 ends at the HTTP answer instead of rendering the error page as the document', async () => {
++    const url = page('paper') + '.pdf';
++    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 404, statusText: 'Not Found' }));
++    const err = await new PdfExtractor().extractPdfContent(url).catch((e: unknown) => e);
++    expect((err as Error).message).toBe(
++      `Could not fetch ${url} — HTTP 404 (Not Found): the page does not exist at this address. ${NOT_FOUND_ADVICE}`,
++    );
++  });
++
++  it('OpenAPI: the page status names the URL and the remedy', async () => {
++    const url = page('api-docs');
++    vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, statusText: 'Not Found', data: '', headers: {} });
++    const result = await openAPIExtractor.extractOpenAPISpec(url, { forceRefresh: true });
++    expect(result.success).toBe(false);
++    expect(result.error).toBe(
++      `Could not fetch ${url} — HTTP 404 (Not Found): the page does not exist at this address. ${NOT_FOUND_ADVICE}`,
++    );
++  });
++
++  it('sitemap: every address tried is recorded with its answer', async () => {
++    const base = 'http://93.184.215.14';
++    vi.spyOn(axios, 'get').mockRejectedValue(httpError(404));
++    const attempts: SitemapAttempt[] = [];
++    const urls = await fetchSitemapUrls(base, attempts);
++    expect(urls).toEqual([]);
++    expect(attempts.map((a) => a.url)).toEqual([
++      `${base}/robots.txt`,
++      `${base}/sitemap.xml`,
++      `${base}/sitemap_index.xml`,
++      `${base}/sitemap1.xml`,
++    ]);
++    for (const a of attempts) expect(a.outcome).toBe('HTTP 404 (Not Found): the page does not exist at this address');
++  });
++});
++
++describe('the tool result the model reads (get-single-web-page-content)', () => {
++  let client: import('@modelcontextprotocol/sdk/client/index.js').Client;
++
++  beforeAll(async () => {
++    const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
++    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
++    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
++    const { WebSearchMCPServer } = await import('../../src/server.js');
++    const target = new McpServer({ name: 'fetch-failure-test', version: '0' });
++    new WebSearchMCPServer({ skipShutdownHooks: true }).registerToolsOn(target);
++    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
++    await target.connect(serverSide);
++    client = new Client({ name: 'fetch-failure-test', version: '0' });
++    await client.connect(clientSide);
++  });
++
++  afterAll(async () => {
++    await client?.close();
++  });
++
++  it('a 404 is an error result naming the URL, the status and get-web-search-summaries', async () => {
++    const url = page('guessed');
++    vi.spyOn(axios, 'get').mockRejectedValue(httpError(404, 'Not Found'));
++    const result = await client.callTool({ name: 'get-single-web-page-content', arguments: { url } });
++    expect(result.isError).toBe(true);
++    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
++    expect(text).toBe(
++      `Could not fetch ${url} — HTTP 404 (Not Found): the page does not exist at this address. ${NOT_FOUND_ADVICE}`,
++    );
++    expect(text).not.toContain('Resource not found');
++  });
++
++  it('a 429 that the browser retry cannot get past keeps the site’s answer', async () => {
++    const url = page('busy');
++    vi.spyOn(axios, 'get').mockRejectedValue(httpError(429));
++    const { browserPool } = await import('../../src/browser-pool.js');
++    vi.spyOn(browserPool, 'getBrowser').mockRejectedValue(new Error('no browser in this test'));
++    const result = await client.callTool({ name: 'get-single-web-page-content', arguments: { url } });
++    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
++    expect(result.isError).toBe(true);
++    expect(text).toBe(
++      `Could not fetch ${url} — HTTP 429 (Too Many Requests): the site refused the request because it is rate-limiting automated fetches; the browser retry also failed: no browser in this test. Try another result from the search, or come back to this page later.`,
++    );
++  });
++});
