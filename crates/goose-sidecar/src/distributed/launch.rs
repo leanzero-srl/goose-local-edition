@@ -11,7 +11,8 @@
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
 //! every rank), `rank_formation.py` (a JACCL group's formation handshake, Q-136), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
 //! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
-//! then the runner's program — `rank_sampling.py` (a request's absent sampling fields, resolved as
+//! then the runner's program — `rank_request.py` (the request fields rank 0 refuses by name before
+//! any rank sees the request, Q-177) + `rank_sampling.py` (a request's absent sampling fields, resolved as
 //! the single engine resolves them, Q-159) + `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
 //! `rank_state.py` + `rank_prompt_search.py` (the prompt cache's nearest-entry search in linear time, Q-162) +
 //! `rank_boundary.py` + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_xml_guard.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
@@ -53,6 +54,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_formation.py"),
     include_str!("rank_live.py"),
     include_str!("rank_thinking.py"),
+    include_str!("rank_request.py"),
     include_str!("rank_sampling.py"),
     include_str!("rank_budget.py"),
     include_str!("rank_prefill.py"),
@@ -2682,25 +2684,10 @@ print("GOOSE_TEST " + json.dumps({
 }))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}\
+            "{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
-            include_str!("rank_load_lock.py"),
-            include_str!("rank_env.py"),
-            include_str!("rank_live.py"),
-            include_str!("rank_thinking.py"),
-            include_str!("rank_sampling.py"),
-            include_str!("rank_budget.py"),
-            include_str!("rank_prefill.py"),
-            include_str!("rank_batch.py"),
-            concat!(
-                include_str!("rank_state.py"),
-                include_str!("rank_prompt_search.py")
-            ),
-            include_str!("rank_boundary.py"),
-            include_str!("rank_tool_stream.py"),
-            include_str!("rank_stream_watch.py"),
-            include_str!("rank_xml_guard.py"),
+            tensor_modules(),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -3074,25 +3061,10 @@ print("GOOSE_TEST " + json.dumps({
 os._exit(0)
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}\
+            "{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
-            include_str!("rank_load_lock.py"),
-            include_str!("rank_env.py"),
-            include_str!("rank_live.py"),
-            include_str!("rank_thinking.py"),
-            include_str!("rank_sampling.py"),
-            include_str!("rank_budget.py"),
-            include_str!("rank_prefill.py"),
-            include_str!("rank_batch.py"),
-            concat!(
-                include_str!("rank_state.py"),
-                include_str!("rank_prompt_search.py")
-            ),
-            include_str!("rank_boundary.py"),
-            include_str!("rank_tool_stream.py"),
-            include_str!("rank_stream_watch.py"),
-            include_str!("rank_xml_guard.py"),
+            tensor_modules(),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -3424,25 +3396,10 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
                                    "command": COMMAND}))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}\
+            "{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
-            include_str!("rank_load_lock.py"),
-            include_str!("rank_env.py"),
-            include_str!("rank_live.py"),
-            include_str!("rank_thinking.py"),
-            include_str!("rank_sampling.py"),
-            include_str!("rank_budget.py"),
-            include_str!("rank_prefill.py"),
-            include_str!("rank_batch.py"),
-            concat!(
-                include_str!("rank_state.py"),
-                include_str!("rank_prompt_search.py")
-            ),
-            include_str!("rank_boundary.py"),
-            include_str!("rank_tool_stream.py"),
-            include_str!("rank_stream_watch.py"),
-            include_str!("rank_xml_guard.py"),
+            tensor_modules(),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -3519,6 +3476,15 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
         run_against_real_packages_printing(python, &wrapper_program(checks), &spec)
     }
 
+    /// Every module the tensor program concatenates before the wrapper, as shipped: a program a
+    /// test assembles around the wrapper's body takes them from here, so a module added to
+    /// `TENSOR_PROGRAM` reaches every such test (Q-177: six hand-kept lists missed rank_request.py).
+    fn tensor_modules() -> &'static str {
+        TENSOR_PROGRAM
+            .strip_suffix(include_str!("rank_wrapper.py"))
+            .expect("the tensor program ends in the wrapper")
+    }
+
     /// The shipped tensor program with its group, formation and doorbell head replaced by a
     /// stand-in group of `size` 2 (rank 0) — every module it concatenates before the wrapper, as
     /// shipped, so a module added to `TENSOR_PROGRAM` is here too — and `checks` run where mlx_lm's
@@ -3526,9 +3492,7 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
     /// them.
     fn wrapper_program(checks: &str) -> String {
         let wrapper = include_str!("rank_wrapper.py");
-        let modules = TENSOR_PROGRAM
-            .strip_suffix(wrapper)
-            .expect("the tensor program ends in the wrapper");
+        let modules = tensor_modules();
         let start = wrapper
             .find("import faulthandler  # noqa")
             .expect("the wrapper's body starts after the group check");
@@ -4406,6 +4370,220 @@ print("GOOSE_TEST " + json.dumps({**seen, "answers": answers, "upstream_read": l
         );
     }
 
+    /// Q-177 through the REAL mlx_lm 0.31.3 handler: every request field the split cannot honour
+    /// is a 400 naming the field (`param`), its code and — where the engine has one — its limit,
+    /// answered by rank 0 before the request reaches `responses.requests` (the queue
+    /// `_next_request` shares with every rank); the stand-in generation thread records every
+    /// request that reaches it. Before the fix: `top_logprobs` 12, a negative max_tokens, a
+    /// missing `messages` closed the connection with no reply (mlx_lm's validator raises a bare
+    /// ValueError its do_POST never catches); `n` 2, a JSON `response_format`, a `seed`, a
+    /// non-string stop word reached generation (the last one kills every rank's generation thread
+    /// in `_make_state_machine`); `stream_options: {}` ended the stream on a KeyError with no
+    /// [DONE]. Any other exception escaping the handler before a response began is a 500 naming
+    /// it. POSITIVE CONTROLS: `top_logprobs` 11, `response_format` text with `n` 1 and a real stop
+    /// word, a chat request, and `stream_options: {}` are served whole.
+    #[test]
+    fn a_request_the_split_cannot_honour_is_refused_before_any_rank_sees_it() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+arrived = []
+
+def generation_thread():
+    while True:
+        rqueue, request, args = responses.requests.get()
+        if request.request_type == "text":
+            arrived.append(request.prompt)
+        elif isinstance(request.messages, str):
+            arrived.append(request.messages)
+        else:
+            arrived.append(request.messages[-1]["content"])
+        rqueue.put(server.GenerationContext(
+            has_tool_calling=False, has_thinking=False, tool_parser=None,
+            sequences={(3,): "<|im_end|>"}, prompt=[1, 2], prompt_cache_count=0,
+        ))
+        rqueue.put(token("ok", "normal"))
+        rqueue.put(token("", None, (3,), "stop"))
+        rqueue.put(None)
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def sent(case, path, extra):
+    if path == "/v1/completions":
+        body = {"model": served, "prompt": case, **extra}
+    else:
+        body = {"model": served, "messages": [{"role": "user", "content": case}], **extra}
+    for key in [k for k, v in extra.items() if v is None]:
+        del body[key]
+    try:
+        status, text = post(path, body)
+    except Exception as dropped:
+        return {"status": "dropped", "why": f"{type(dropped).__name__}: {dropped}"}
+    try:
+        return {"status": status, "body": json.loads(text)}
+    except ValueError:
+        return {"status": status, "text": text}
+
+TEXT, CHAT = "/v1/completions", "/v1/chat/completions"
+cases = {
+    "top_logprobs_12": (TEXT, {"logprobs": True, "top_logprobs": 12}),
+    "top_logprobs_negative": (TEXT, {"logprobs": True, "top_logprobs": -2}),
+    "logprobs_integer": (TEXT, {"logprobs": 5}),
+    "n_2": (CHAT, {"n": 2}),
+    "n_zero": (TEXT, {"n": 0}),
+    "json_object": (CHAT, {"response_format": {"type": "json_object"}}),
+    "json_schema": (TEXT, {"response_format": {"type": "json_schema", "json_schema": {"name": "x"}}}),
+    "max_tokens_negative": (TEXT, {"max_tokens": -1}),
+    "max_completion_tokens_negative": (CHAT, {"max_completion_tokens": -5}),
+    "stop_not_string": (TEXT, {"stop": ["\n", 7]}),
+    "stop_empty": (TEXT, {"stop": [""]}),
+    "stop_object": (TEXT, {"stop": {"end": 1}}),
+    "seed": (TEXT, {"seed": 7}),
+    "stream_options_string": (TEXT, {"stream": True, "stream_options": "usage"}),
+    "temperature_negative": (TEXT, {"temperature": -0.5}),
+    "no_messages": (CHAT, {"messages": None}),
+    "messages_string": (CHAT, {"messages": "messages_string"}),
+    "no_prompt": (TEXT, {"prompt": None}),
+    "top_logprobs_11": (TEXT, {"logprobs": True, "top_logprobs": 11}),
+    "text_format": (TEXT, {"response_format": {"type": "text"}, "n": 1, "stop": ["\n\n"]}),
+    "chat": (CHAT, {}),
+    "stream_usage_default": (TEXT, {"stream": True, "stream_options": {}}),
+}
+seen = {case: sent(case, path, extra) for case, (path, extra) in cases.items()}
+
+def unforeseen(self):
+    raise RuntimeError("an unforeseen handler failure")
+
+server.APIHandler.handle_text_completions = unforeseen
+seen["unforeseen"] = sent("unforeseen", TEXT, {})
+seen["arrived"] = arrived
+print("GOOSE_TEST " + json.dumps(seen))
+"#;
+        let (seen, _) = run_wrapper_checks(&python, checks);
+        let arrived: Vec<&str> = seen["arrived"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap())
+            .collect();
+        // (case, param, code, words the message must carry)
+        let refused = [
+            (
+                "top_logprobs_12",
+                "top_logprobs",
+                "invalid_value",
+                "at most 11",
+            ),
+            (
+                "top_logprobs_negative",
+                "top_logprobs",
+                "invalid_value",
+                "at least 0",
+            ),
+            ("logprobs_integer", "logprobs", "invalid_value", "bool"),
+            ("n_2", "n", "unsupported_parameter", "n must be 1"),
+            ("n_zero", "n", "invalid_value", "positive integer"),
+            (
+                "json_object",
+                "response_format",
+                "unsupported_parameter",
+                "json_object",
+            ),
+            (
+                "json_schema",
+                "response_format",
+                "unsupported_parameter",
+                "json_schema",
+            ),
+            (
+                "max_tokens_negative",
+                "max_tokens",
+                "invalid_value",
+                "at least 0",
+            ),
+            (
+                "max_completion_tokens_negative",
+                "max_completion_tokens",
+                "invalid_value",
+                "at least 0",
+            ),
+            ("stop_not_string", "stop", "invalid_value", "stop[1]"),
+            ("stop_empty", "stop", "invalid_value", "stop[0] is empty"),
+            ("stop_object", "stop", "invalid_value", "dict"),
+            (
+                "seed",
+                "seed",
+                "unsupported_parameter",
+                "NotImplementedError",
+            ),
+            (
+                "stream_options_string",
+                "stream_options",
+                "invalid_value",
+                "str",
+            ),
+            (
+                "temperature_negative",
+                "temperature",
+                "invalid_value",
+                "at least 0",
+            ),
+            (
+                "no_messages",
+                "messages",
+                "missing_required_parameter",
+                "required",
+            ),
+            ("messages_string", "messages", "invalid_value", "str"),
+            (
+                "no_prompt",
+                "prompt",
+                "missing_required_parameter",
+                "required",
+            ),
+        ];
+        for (case, param, code, words) in refused {
+            let reply = &seen[case];
+            assert_eq!(reply["status"], 400, "{case}: {reply}");
+            let error = &reply["body"]["error"];
+            assert_eq!(error["param"], param, "{case}: {reply}");
+            assert_eq!(error["code"], code, "{case}: {reply}");
+            assert_eq!(error["type"], "invalid_request_error", "{case}: {reply}");
+            assert!(
+                error["message"].as_str().unwrap().contains(words),
+                "{case}: {reply}"
+            );
+            assert!(
+                !arrived.contains(&case),
+                "{case} reached generation: {seen}"
+            );
+        }
+        for case in [
+            "top_logprobs_11",
+            "text_format",
+            "chat",
+            "stream_usage_default",
+        ] {
+            assert_eq!(seen[case]["status"], 200, "{case}: {}", seen[case]);
+            assert!(arrived.contains(&case), "{case} never reached generation");
+        }
+        assert!(
+            seen["stream_usage_default"]["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("data: [DONE]\n\n"),
+            "{}",
+            seen["stream_usage_default"]
+        );
+        assert_eq!(seen["unforeseen"]["status"], 500, "{seen}");
+        assert_eq!(
+            seen["unforeseen"]["body"]["error"]["message"],
+            "RuntimeError: an unforeseen handler failure"
+        );
+        assert_eq!(arrived.len(), 4, "{seen}");
+    }
+
     /// Q-146 through the REAL mlx_lm 0.31.3 handler: while a streamed chat answer writes a tool
     /// call, rank 0's /v1/status row says what its client has and has not been sent, and a
     /// GOOSE_RANK_WITHHELD line marks each span the handler withholds text in. Four answers, each
@@ -4583,25 +4761,10 @@ print("GOOSE_TEST " + json.dumps({"cases": cases, "hold": ToolCallStream.HOLD, "
                                    "command": COMMAND, "window": READER_TAIL_CHARS}))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}\
+            "{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
-            include_str!("rank_load_lock.py"),
-            include_str!("rank_env.py"),
-            include_str!("rank_live.py"),
-            include_str!("rank_thinking.py"),
-            include_str!("rank_sampling.py"),
-            include_str!("rank_budget.py"),
-            include_str!("rank_prefill.py"),
-            include_str!("rank_batch.py"),
-            concat!(
-                include_str!("rank_state.py"),
-                include_str!("rank_prompt_search.py")
-            ),
-            include_str!("rank_boundary.py"),
-            include_str!("rank_tool_stream.py"),
-            include_str!("rank_stream_watch.py"),
-            include_str!("rank_xml_guard.py"),
+            tensor_modules(),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -4891,25 +5054,10 @@ print("GOOSE_TEST " + json.dumps({
 }))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}\
+            "{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
-            include_str!("rank_load_lock.py"),
-            include_str!("rank_env.py"),
-            include_str!("rank_live.py"),
-            include_str!("rank_thinking.py"),
-            include_str!("rank_sampling.py"),
-            include_str!("rank_budget.py"),
-            include_str!("rank_prefill.py"),
-            include_str!("rank_batch.py"),
-            concat!(
-                include_str!("rank_state.py"),
-                include_str!("rank_prompt_search.py")
-            ),
-            include_str!("rank_boundary.py"),
-            include_str!("rank_tool_stream.py"),
-            include_str!("rank_stream_watch.py"),
-            include_str!("rank_xml_guard.py"),
+            tensor_modules(),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -5259,6 +5407,7 @@ print("ok")
                 include_str!("rank_formation.py"),
                 include_str!("rank_live.py"),
                 include_str!("rank_thinking.py"),
+                include_str!("rank_request.py"),
                 include_str!("rank_sampling.py"),
                 include_str!("rank_budget.py"),
                 include_str!("rank_prefill.py"),
@@ -6074,23 +6223,8 @@ threading.Thread(target=responses._next_request, args=(0.1,), daemon=True).start
 threading.Event().wait()
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}{prelude}{}{steps}",
-            include_str!("rank_load_lock.py"),
-            include_str!("rank_env.py"),
-            include_str!("rank_live.py"),
-            include_str!("rank_thinking.py"),
-            include_str!("rank_sampling.py"),
-            include_str!("rank_budget.py"),
-            include_str!("rank_prefill.py"),
-            include_str!("rank_batch.py"),
-            concat!(
-                include_str!("rank_state.py"),
-                include_str!("rank_prompt_search.py")
-            ),
-            include_str!("rank_boundary.py"),
-            include_str!("rank_tool_stream.py"),
-            include_str!("rank_stream_watch.py"),
-            include_str!("rank_xml_guard.py"),
+            "{}{prelude}{}{steps}",
+            tensor_modules(),
             &wrapper[start..end]
         );
         let tmp = tempfile::tempdir().unwrap();
