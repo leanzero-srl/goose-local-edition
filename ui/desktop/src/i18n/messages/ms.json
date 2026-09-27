@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "cari sambungan..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {Sibuk dalam ‘{name}’} other {Sibuk dalam sembang lain}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Mesej yang dihantar sekarang berkongsi enjin dengan jawapan itu — berjalan lebih perlahan, atau menunggu jika tiada ruang."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Mesej yang dihantar sekarang menunggu sehingga enjin ada ruang untuknya."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Konfigurasi"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Tiada model MLX tersimpan — pilih satu dalam Providers."
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "Buka sembang itu"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "Buka Enjin"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Memproses..."
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} token konteks + {live} sedang ditulis, daripada tetingkap {limit} token"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Had Perbualan"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose sedang memadatkan perbualan..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} aksara"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {# panggilan alat sedang terbentuk}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Diterima setakat ini: {arguments} aksara argumen{reasoning, select, none {} other {, {reasoning} aksara penaakulan}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Teks yang ditulis di sebelah panggilan ({chars} aksara) — bukan sebahagian daripada jawapan"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Sembunyikan"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose sedang mengusahakannya…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "memulakan semula sesi..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Tunjukkan apa yang sedang terbentuk"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose sedang mengusahakannya…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Menyemak…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Tutup"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Memuatkan model..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Tetapan Model Tempatan"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Tiada perkataan daripada {mac} seketika — menyemak…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Menulis selama {elapsed} · {tokens} token · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Menulis selama {elapsed} · {tokens} token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "menyemak sembang ini…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {satu panggilan ke {tool}} other {# panggilan alat, yang terkini ke {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# daripadanya sama dengan panggilan terdahulu} other {# daripadanya sama dengan panggilan-panggilan terdahulu}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# daripadanya sama dengan panggilan {tool} yang terdahulu} other {# daripadanya sama dengan panggilan {tool} yang terdahulu}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}, {repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "swarm dijeda — tiada apa berjalan sehingga anda sambung semula"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan memuat turun kemas kini di latar belakang dan memasangnya pada kali seterusnya anda keluar atau mula semula."

@@ -13,14 +13,38 @@ import { reconnectingMac, type ChatServedBy } from './chatServedBy';
  *    or ends in the dropped-turn notice (Q-52);
  *  - `silent`: the turn's own stream went quiet for far longer than its own measured cadence,
  *    before main's poll can notice anything (Q-55) — a display cue, never a terminator;
- *  - `reading`: the engine is reading this turn's prompt, from main's live stats (Q-13).
+ *  - `reading`: the engine is reading this turn's prompt, from main's live stats (Q-13);
+ *  - `writing`: the engine is writing this turn's answer — for how long, how many tokens and at
+ *    what rate, from the same live stats (Q-151: a 39-minute answer showed only the characters the
+ *    chat had received, ~5× fewer than the engine's tokens, and no time at all).
  */
 export type TurnCue =
   | { kind: 'reconnecting'; mac: string }
   | { kind: 'gone'; mac: string; gone: PeerGone }
   | { kind: 'checking'; mac: string }
   | { kind: 'silent'; mac: string }
-  | ({ kind: 'reading'; mac: string } & ReadingProgress);
+  | ({ kind: 'reading'; mac: string } & ReadingProgress)
+  | ({ kind: 'writing'; mac: string } & WritingProgress);
+
+/**
+ * The engine's own account of this turn's answer: seconds since the request arrived, the tokens it
+ * has generated and its decode rate (null until it has written two tokens — a rate needs an interval).
+ */
+export interface WritingProgress {
+  elapsedS: number;
+  tokens: number;
+  tps: number | null;
+}
+
+export function writingProgress(request: MlxLiveRequest | null): WritingProgress | null {
+  if (!request || request.phase !== 'generation' || request.status === 'waiting') return null;
+  if (request.elapsedS == null) return null;
+  return {
+    elapsedS: request.elapsedS,
+    tokens: request.completionTokens,
+    tps: request.completionTokens >= 2 ? request.tokensPerSecond : null,
+  };
+}
 
 /**
  * How far the engine is into this turn's prompt, by what it actually reports:
@@ -136,5 +160,7 @@ export function pickTurnCue({ served, inFlight, lostTo, silent }: TurnCueInputs)
   if (silent && mac && served.engine === 'remote') return { kind: 'silent', mac };
   const reading = readingProgress(served.turnRequest, served.readTps);
   if (reading && mac) return { kind: 'reading', mac, ...reading };
+  const writing = writingProgress(served.turnRequest);
+  if (writing && mac) return { kind: 'writing', mac, ...writing };
   return null;
 }

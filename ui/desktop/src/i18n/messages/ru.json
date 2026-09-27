@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "поиск расширений..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {Занят в «{name}»} other {Занят в другом чате}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Сообщение, отправленное сейчас, делит движок с этим ответом — оно идёт медленнее или ждёт, если нет места."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Сообщение, отправленное сейчас, подождёт, пока у движка появится место."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Настроить"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Нет сохранённой модели MLX — выберите её в Providers."
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "Открыть этот чат"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "Открыть движок"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Обработка..."
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} токенов контекста + {live} пишутся сейчас, из окна в {limit} токенов"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Ограничения разговора"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose сжимает разговор..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} симв."
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {Формируется # вызов инструмента} few {Формируется # вызова инструментов} other {Формируется # вызовов инструментов}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Получено: {arguments} символов аргументов{reasoning, select, none {} other {, {reasoning} символов рассуждений}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Текст рядом с вызовами ({chars} симв.) — не входит в ответ"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Скрыть"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose работает над этим…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "перезапуск сеанса..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Показать, что формируется"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose работает над этим…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Проверка…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Закрыть"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Загрузка модели..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Настройки локальной модели"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "От {mac} какое-то время нет слов — проверяем…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Пишет уже {elapsed} · {tokens} токенов · {rate} ток/с"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Пишет уже {elapsed} · {tokens} токенов"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "проверяю этот чат…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {# вызов инструмента, последний — {tool}} few {# вызова инструментов, последний — {tool}} other {# вызовов инструментов, последний — {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# из них совпадает с более ранним вызовом} few {# из них совпадают с более ранними вызовами} other {# из них совпадают с более ранними вызовами}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# из них совпадает с более ранним вызовом {tool}} few {# из них совпадают с более ранним вызовом {tool}} other {# из них совпадают с более ранним вызовом {tool}}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}, {repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "рой на паузе — ничего не выполняется, пока вы не продолжите"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Обновление будет автоматически скачано в фоновом режиме."

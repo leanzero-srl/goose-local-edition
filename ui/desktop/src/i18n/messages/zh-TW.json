@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "搜尋擴充功能…"
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {正在處理「{name}」} other {正在處理另一個聊天}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "現在傳送的訊息將與該回答共用引擎 — 速度會變慢，若沒有空間則會等待。"
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "現在傳送的訊息會等待，直到引擎有空間處理它。"
+  },
   "cardButtons.configure": {
     "defaultMessage": "設定"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "沒有已儲存的 MLX 模型 — 請在 Providers 中選擇一個。"
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "開啟那個聊天"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "開啟引擎"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "正在處理…"
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} 個上下文 token + 正在寫入的 {live} 個，視窗共 {limit} 個 token"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "對話限制"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose 正在壓縮對話…"
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} 個字元"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {正在產生 # 個工具呼叫}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "目前已收到：{arguments} 個參數字元{reasoning, select, none {} other {，{reasoning} 個推理字元}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "與呼叫一同寫出的文字（{chars} 個字元）— 不屬於回答"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "隱藏"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose 正在處理…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "正在重新啟動工作階段…"
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "顯示正在產生的內容"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose 正在處理…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "正在檢查…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "關閉"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "正在載入模型…"
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "本機模型設定"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "{mac} 已有一會兒沒有輸出 — 正在檢查…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "已寫 {elapsed} · {tokens} 個 token · {rate} token/秒"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "已寫 {elapsed} · {tokens} 個 token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "正在檢查此聊天…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {對 {tool} 的一個工具呼叫} other {# 個工具呼叫，最新的是 {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {其中 # 個與先前的呼叫完全相同} other {其中 # 個與先前的呼叫完全相同}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {其中 # 個與先前的 {tool} 呼叫完全相同} other {其中 # 個與先前的 {tool} 呼叫完全相同}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}，{repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "叢集已暫停 — 在你繼續之前不會執行任何內容"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose 會在背景下載更新，並於您下次結束或重新啟動時安裝。"

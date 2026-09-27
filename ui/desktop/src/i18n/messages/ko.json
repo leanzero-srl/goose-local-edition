@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "익스텐션 검색..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {‘{name}’에서 작업 중} other {다른 채팅에서 작업 중}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "지금 보낸 메시지는 그 답변과 엔진을 나눠 씁니다 — 더 느리게 실행되거나, 여유가 없으면 기다립니다."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "지금 보낸 메시지는 엔진에 여유가 생길 때까지 기다립니다."
+  },
   "cardButtons.configure": {
     "defaultMessage": "구성"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "저장된 MLX 모델이 없습니다 — Providers에서 선택하세요."
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "그 채팅 열기"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "엔진 열기"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "처리 중..."
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "컨텍스트 {context} 토큰 + 지금 작성 중 {live}, 창 {limit} 토큰 중"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "대화 제한"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose가 대화를 압축하고 있습니다..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars}자"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {작성 중인 도구 호출 #개}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "지금까지 받음: 인수 {arguments}자{reasoning, select, none {} other {, 추론 {reasoning}자}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "호출 옆에 작성된 텍스트 ({chars}자) — 답변에 포함되지 않음"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "숨기기"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose가 작업 중…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "세션 다시 시작 중..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "작성 중인 내용 보기"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose가 작업 중…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "확인 중…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "닫기"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "모델 로드 중..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "로컬 모델 설정"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "잠시 {mac}에서 출력이 없습니다 — 확인 중…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "{elapsed} 동안 작성 중 · 토큰 {tokens}개 · {rate} 토큰/초"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "{elapsed} 동안 작성 중 · 토큰 {tokens}개"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "이 채팅을 확인하는 중…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {{tool} 도구 호출 1개} other {도구 호출 #개, 최근 호출은 {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {그중 #개는 이전 호출과 동일} other {그중 #개는 이전 호출들과 동일}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {그중 #개는 이전 {tool} 호출과 동일} other {그중 #개는 이전 {tool} 호출과 동일}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}, {repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "스웜 일시 중지됨 — 다시 시작할 때까지 아무것도 실행되지 않음"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "업데이트는 백그라운드에서 자동으로 다운로드됩니다."

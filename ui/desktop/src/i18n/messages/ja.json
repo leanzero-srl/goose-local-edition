@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "拡張機能を検索..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {「{name}」で処理中} other {別のチャットで処理中}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "今送信したメッセージは、その回答とエンジンを共有します — 遅くなるか、空きがなければ待機します。"
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "今送信したメッセージは、エンジンに空きができるまで待機します。"
+  },
   "cardButtons.configure": {
     "defaultMessage": "設定"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "保存された MLX モデルがありません — Providers で選んでください。"
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "そのチャットを開く"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "エンジンを開く"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "処理中..."
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "コンテキスト {context} トークン + 現在書き込み中 {live}、ウィンドウ {limit} トークン中"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "会話制限"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "gooseが会話を圧縮しています..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} 文字"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {作成中のツール呼び出し # 件}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "これまでに受信: 引数 {arguments} 文字{reasoning, select, none {} other {、推論 {reasoning} 文字}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "呼び出しと並んで書かれたテキスト ({chars} 文字) — 回答には含まれません"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "閉じる"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "gooseが処理中です…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "セッションを再起動中..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "作成中の内容を表示"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "gooseが処理中です…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "確認中…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "閉じる"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "モデルを読み込み中..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "ローカルモデル設定"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "しばらく {mac} から出力がありません — 確認中…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "{elapsed} 書き込み中 · {tokens} トークン · {rate} トークン/秒"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "{elapsed} 書き込み中 · {tokens} トークン"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "このチャットを確認中…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {{tool} へのツール呼び出し 1 件} other {ツール呼び出し # 件、最新は {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {うち # 件は以前の呼び出しと同一} other {うち # 件は以前の呼び出しと同一}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {うち # 件は以前の {tool} 呼び出しと同一} other {うち # 件は以前の {tool} 呼び出しと同一}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}、{repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "スウォームは一時停止中 — 再開するまで何も実行されません"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "アップデートはバックグラウンドで自動的にダウンロードされます。"

@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "एक्सटेंशन खोजें..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {‘{name}’ में व्यस्त} other {किसी दूसरी चैट में व्यस्त}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "अभी भेजा गया संदेश उस उत्तर के साथ इंजन साझा करेगा — यह धीमा चलेगा, या जगह न होने पर प्रतीक्षा करेगा।"
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "अभी भेजा गया संदेश तब तक प्रतीक्षा करेगा जब तक इंजन के पास उसके लिए जगह न हो।"
+  },
   "cardButtons.configure": {
     "defaultMessage": "कॉन्फ़िगर करें"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "कोई सहेजा MLX मॉडल नहीं — Providers में एक चुनें।"
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "वह चैट खोलें"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "इंजन खोलें"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "प्रसंस्करण..."
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} टोकन संदर्भ + {live} अभी लिखे जा रहे, {limit}-टोकन विंडो में से"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "बातचीत की सीमाएँ"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose बातचीत को संक्षिप्त कर रहा है..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} अक्षर"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {# टूल कॉल बन रही है} other {# टूल कॉल बन रही हैं}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "अब तक प्राप्त: {arguments} अक्षर आर्ग्युमेंट{reasoning, select, none {} other {, {reasoning} अक्षर तर्क}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "कॉल के साथ लिखा गया टेक्स्ट ({chars} अक्षर) — उत्तर का हिस्सा नहीं"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "छिपाएँ"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose इस पर काम कर रहा है..."
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "सत्र पुनः प्रारंभ हो रहा है..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "जो बन रहा है वह दिखाएँ"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose इस पर काम कर रहा है..."
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "जाँच हो रही है…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "बंद करें"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "मॉडल लोड हो रहा है..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "स्थानीय मॉडल Settings"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "कुछ देर से {mac} से कोई शब्द नहीं — जाँच रहे हैं…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "{elapsed} से लिख रहा है · {tokens} टोकन · {rate} टोकन/से"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "{elapsed} से लिख रहा है · {tokens} टोकन"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "यह चैट जाँची जा रही है…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {{tool} को एक टूल कॉल} other {# टूल कॉल, नवीनतम {tool} को}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {इनमें से # पहले के किसी कॉल जैसा ही है} other {इनमें से # पहले के कॉल जैसे ही हैं}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {इनमें से # पहले के {tool} कॉल जैसा ही है} other {इनमें से # पहले के {tool} कॉल जैसे ही हैं}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}, {repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "स्वार्म रुका हुआ है — जब तक आप फिर से शुरू नहीं करते, कुछ नहीं चल रहा"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "अपडेट बैकग्राउंड में अपने आप डाउनलोड हो जाएगा."

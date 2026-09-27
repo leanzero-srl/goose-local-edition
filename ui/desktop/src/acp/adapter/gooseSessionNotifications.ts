@@ -37,6 +37,10 @@ function applyStatusMessage(
   update: Extract<GooseSessionNotification_unstable['update'], { sessionUpdate: 'status_message' }>
 ): AcpChatStateChange[] {
   const notificationType = update.status.type === 'notice' ? 'inlineMessage' : 'thinkingMessage';
+  // A response forming tool calls carries what it has received (Q-151): the chat lists it behind
+  // the status line. Every other status carries none, so an earlier line's list never lingers.
+  const forming =
+    update.status.type === 'progress' ? (update.status.forming ?? undefined) : undefined;
 
   // A progress status replaces the one directly before it: the loading line reads only the last
   // message, and a live counter (a response forming tool calls) would otherwise add a message per tick.
@@ -44,6 +48,7 @@ function applyStatusMessage(
   const lastProgress = notificationType === 'thinkingMessage' ? progressContentOf(last) : undefined;
   if (lastProgress) {
     lastProgress.msg = update.status.message;
+    lastProgress.data = forming;
     return messagesChange(state);
   }
 
@@ -56,6 +61,7 @@ function applyStatusMessage(
         type: 'systemNotification',
         notificationType,
         msg: update.status.message,
+        ...(forming ? { data: forming } : {}),
       },
     ],
     metadata: {

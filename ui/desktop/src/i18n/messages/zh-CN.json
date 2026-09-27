@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "搜索扩展…"
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {正在处理“{name}”} other {正在处理另一个聊天}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "现在发送的消息将与该回答共享引擎 — 速度会变慢，若没有空间则会等待。"
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "现在发送的消息会等待，直到引擎有空间处理它。"
+  },
   "cardButtons.configure": {
     "defaultMessage": "配置"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "没有已保存的 MLX 模型 — 请在 Providers 中选择一个。"
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "打开那个聊天"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "打开引擎"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "处理中…"
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} 个上下文 token + 正在写入的 {live} 个，窗口共 {limit} 个 token"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "对话限制"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose 正在压缩对话…"
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} 个字符"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {正在生成 # 个工具调用}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "目前已收到：{arguments} 个参数字符{reasoning, select, none {} other {，{reasoning} 个推理字符}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "与调用一同写出的文本（{chars} 个字符）— 不属于回答"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "隐藏"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose 正在处理…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "正在重启会话…"
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "显示正在生成的内容"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose 正在处理…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "正在检查…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "关闭"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "正在加载模型…"
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "本地模型设置"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "{mac} 已有一会儿没有输出 — 正在检查…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "已写 {elapsed} · {tokens} 个 token · {rate} token/秒"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "已写 {elapsed} · {tokens} 个 token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "正在检查此聊天…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {对 {tool} 的一个工具调用} other {# 个工具调用，最新的是 {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {其中 # 个与之前的调用完全相同} other {其中 # 个与之前的调用完全相同}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {其中 # 个与之前的 {tool} 调用完全相同} other {其中 # 个与之前的 {tool} 调用完全相同}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}，{repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "集群已暂停 — 在你恢复之前不会运行任何内容"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "更新将在后台自动下载。"

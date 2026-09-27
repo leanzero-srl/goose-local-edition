@@ -39,7 +39,43 @@ const i18n = defineMessages({
     id: 'turnCue.readingPlain',
     defaultMessage: '{mac} is reading your prompt ({tokens} tokens)…',
   },
+  writing: {
+    id: 'turnCue.writing',
+    defaultMessage: 'Writing for {elapsed} · {tokens} tokens · {rate} tok/s',
+  },
+  writingNoRate: {
+    id: 'turnCue.writingNoRate',
+    defaultMessage: 'Writing for {elapsed} · {tokens} tokens',
+  },
 });
+
+function readingText(intl: IntlShape, cue: Extract<TurnCue, { kind: 'reading' }>): string {
+  const tokens = compactTokens(cue.promptTokens);
+  switch (cue.progress) {
+    case 'percent':
+      return intl.formatMessage(i18n.readingPercent, {
+        mac: cue.mac,
+        tokens,
+        percent: cue.percent,
+      });
+    case 'eta':
+      return intl.formatMessage(i18n.readingEta, {
+        mac: cue.mac,
+        tokens,
+        elapsed: formatElapsed(cue.elapsedS),
+        expected: formatElapsed(cue.expectedS),
+        rate: formatRate(cue.rate, intl.locale),
+      });
+    case 'elapsed':
+      return intl.formatMessage(i18n.readingElapsed, {
+        mac: cue.mac,
+        tokens,
+        elapsed: formatElapsed(cue.elapsedS),
+      });
+    case 'plain':
+      return intl.formatMessage(i18n.readingPlain, { mac: cue.mac, tokens });
+  }
+}
 
 /** The status line's words for a turn cue (turnStatus.ts). */
 export function turnCueText(intl: IntlShape, cue: TurnCue): string {
@@ -56,32 +92,16 @@ export function turnCueText(intl: IntlShape, cue: TurnCue): string {
       return intl.formatMessage(i18n.checking, { mac: cue.mac });
     case 'silent':
       return intl.formatMessage(i18n.silent, { mac: cue.mac });
-    case 'reading': {
-      const tokens = compactTokens(cue.promptTokens);
-      switch (cue.progress) {
-        case 'percent':
-          return intl.formatMessage(i18n.readingPercent, {
-            mac: cue.mac,
-            tokens,
-            percent: cue.percent,
-          });
-        case 'eta':
-          return intl.formatMessage(i18n.readingEta, {
-            mac: cue.mac,
-            tokens,
-            elapsed: formatElapsed(cue.elapsedS),
-            expected: formatElapsed(cue.expectedS),
-            rate: formatRate(cue.rate, intl.locale),
-          });
-        case 'elapsed':
-          return intl.formatMessage(i18n.readingElapsed, {
-            mac: cue.mac,
-            tokens,
-            elapsed: formatElapsed(cue.elapsedS),
-          });
-        case 'plain':
-          return intl.formatMessage(i18n.readingPlain, { mac: cue.mac, tokens });
-      }
+    case 'reading':
+      return readingText(intl, cue);
+    case 'writing': {
+      const values = {
+        elapsed: formatElapsed(cue.elapsedS),
+        tokens: compactTokens(cue.tokens),
+      };
+      return cue.tps != null && cue.tps > 0
+        ? intl.formatMessage(i18n.writing, { ...values, rate: formatRate(cue.tps, intl.locale) })
+        : intl.formatMessage(i18n.writingNoRate, values);
     }
   }
 }

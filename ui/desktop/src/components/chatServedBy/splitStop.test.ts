@@ -163,6 +163,7 @@ describe('deriveChatServedBy — the split stopped, said everywhere (Q-81)', () 
       activity: null,
       work: null,
       busyWithOthers: null,
+      busyIn: null,
       turnRequest: null,
       readTps: null,
       readiness: {
