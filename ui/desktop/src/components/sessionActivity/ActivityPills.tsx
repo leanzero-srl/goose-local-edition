@@ -1,13 +1,16 @@
 import { useSyncExternalStore, type ReactNode } from 'react';
-import { CircleStop, Hand, TriangleAlert } from 'lucide-react';
+import { CircleStop, Hand, Repeat, TriangleAlert } from 'lucide-react';
+import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
-import { PHASE_FILL, RADIUS, TNUM, TONE_FILL, cx } from '../lz';
+import { PHASE_FILL, RADIUS, TNUM, TONE_FILL, cx, type Tone } from '../lz';
+import { clockTime, parseTime } from '../loops/model';
 import { backgroundWorkLabel, backgroundWorkShort } from './backgroundWorkText';
 import {
   elapsedLabel,
   sessionStates,
   useActivityOf,
   type BackgroundWorkKind,
+  type LoopStatus,
 } from './sessionActivityStore';
 import { stoppedTurnText } from './stoppedTurnText';
 
@@ -37,6 +40,51 @@ const i18n = defineMessages({
   backgroundLabel: {
     id: 'sessionActivity.backgroundLabel',
     defaultMessage: 'goose is still working for this chat: {work}',
+  },
+  looping: { id: 'sessionActivity.looping', defaultMessage: 'Looping' },
+  loopNext: { id: 'sessionActivity.loopNext', defaultMessage: 'Next {time}' },
+  loopPaused: { id: 'sessionActivity.loopPaused', defaultMessage: 'Paused' },
+  loopWaitingYou: { id: 'sessionActivity.loopWaitingYou', defaultMessage: 'Waiting for you' },
+  loopUnreadable: { id: 'sessionActivity.loopUnreadable', defaultMessage: 'Loop unreadable' },
+  loopLabelNext: {
+    id: 'sessionActivity.loopLabelNext',
+    defaultMessage: "This chat's loop runs its next tick at {time}",
+  },
+  loopLabelNextMissing: {
+    id: 'sessionActivity.loopLabelNextMissing',
+    defaultMessage: "This chat's loop is waiting, but goose sent no time for its next tick",
+  },
+  loopLabelNextUnreadable: {
+    id: 'sessionActivity.loopLabelNextUnreadable',
+    defaultMessage: "This chat's loop is waiting; its next tick time could not be read: {error}",
+  },
+  loopLabelRunning: {
+    id: 'sessionActivity.loopLabelRunning',
+    defaultMessage: "This chat's loop is running a tick",
+  },
+  loopLabelChecking: {
+    id: 'sessionActivity.loopLabelChecking',
+    defaultMessage: "This chat's loop is running its check after a tick",
+  },
+  loopLabelWaitingTurn: {
+    id: 'sessionActivity.loopLabelWaitingTurn',
+    defaultMessage: "A tick of this chat's loop is due; it starts when the turn before it ends",
+  },
+  loopLabelWaitingYou: {
+    id: 'sessionActivity.loopLabelWaitingYou',
+    defaultMessage: "The last tick of this chat's loop didn't say when to come back",
+  },
+  loopLabelNeedsYou: {
+    id: 'sessionActivity.loopLabelNeedsYou',
+    defaultMessage: "This chat's loop waits until your answer to its tick has run",
+  },
+  loopLabelPaused: {
+    id: 'sessionActivity.loopLabelPaused',
+    defaultMessage: "This chat's loop is paused; open the chat to see why and resume it",
+  },
+  loopLabelElsewhere: {
+    id: 'sessionActivity.loopLabelElsewhere',
+    defaultMessage: "This chat's loop runs in another goose window",
   },
 });
 
@@ -125,6 +173,114 @@ export function BackgroundPill({
   );
 }
 
+interface LoopPillFace {
+  text: string;
+  label: string;
+  tone: Tone;
+}
+
+/** The viewer's own UTC offset at that moment, so "Next 22:40" is the time on their clock. */
+function localClock(ms: number): ReturnType<typeof clockTime> {
+  return clockTime(ms, -new Date(ms).getTimezoneOffset());
+}
+
+function loopPillFace(
+  intl: IntlShape,
+  status: LoopStatus | undefined,
+  nextTickAt: string | undefined,
+  error: string | undefined
+): LoopPillFace | null {
+  const looping = (label: string): LoopPillFace => ({
+    text: intl.formatMessage(i18n.looping),
+    label,
+    tone: 'accent',
+  });
+  if (error !== undefined) {
+    return {
+      text: intl.formatMessage(i18n.loopUnreadable),
+      // The engine's own sentence ("The loop record could not be read: …"), verbatim.
+      label: error,
+      tone: 'err',
+    };
+  }
+  switch (status) {
+    case undefined:
+    case 'ended':
+      return null;
+    case 'waiting': {
+      if (nextTickAt === undefined) {
+        return looping(intl.formatMessage(i18n.loopLabelNextMissing));
+      }
+      const parsed = parseTime(nextTickAt);
+      const time = parsed.ok ? localClock(parsed.value) : parsed;
+      if (!time.ok) {
+        return looping(intl.formatMessage(i18n.loopLabelNextUnreadable, { error: time.error }));
+      }
+      return {
+        text: intl.formatMessage(i18n.loopNext, { time: time.value }),
+        label: intl.formatMessage(i18n.loopLabelNext, { time: time.value }),
+        tone: 'accent',
+      };
+    }
+    case 'running':
+      return looping(intl.formatMessage(i18n.loopLabelRunning));
+    case 'checking':
+      return looping(intl.formatMessage(i18n.loopLabelChecking));
+    case 'waiting_turn':
+      return looping(intl.formatMessage(i18n.loopLabelWaitingTurn));
+    case 'needs_you':
+      return looping(intl.formatMessage(i18n.loopLabelNeedsYou));
+    case 'elsewhere':
+      return looping(intl.formatMessage(i18n.loopLabelElsewhere));
+    case 'waiting_you':
+      return {
+        text: intl.formatMessage(i18n.loopWaitingYou),
+        label: intl.formatMessage(i18n.loopLabelWaitingYou),
+        tone: 'warn',
+      };
+    case 'paused':
+      return {
+        text: intl.formatMessage(i18n.loopPaused),
+        label: intl.formatMessage(i18n.loopLabelPaused),
+        tone: 'stopped',
+      };
+  }
+}
+
+/**
+ * The chat's loop between its ticks (session loops §8.6), in the Background pill's grammar: a
+ * solid fill, an icon, one or two words. Accent "Looping" / "Next 22:40"; stopped-fill "Paused";
+ * warn "Waiting for you" when a self-paced tick named no delay (not a question, so not Active
+ * now); err "Loop unreadable" when the record could not be read. Nothing for an ended loop.
+ */
+export function LoopingPill({
+  status,
+  nextTickAt,
+  error,
+  className,
+}: {
+  status?: LoopStatus;
+  nextTickAt?: string;
+  error?: string;
+  className?: string;
+}) {
+  const intl = useIntl();
+  const face = loopPillFace(intl, status, nextTickAt, error);
+  if (!face) return null;
+  return (
+    <span
+      data-testid="session-looping-pill"
+      data-loop={error !== undefined ? 'unreadable' : status}
+      title={face.label}
+      aria-label={face.label}
+      className={cx(PILL, RADIUS.pill, TONE_FILL[face.tone], TNUM, '[&_svg]:size-3', className)}
+    >
+      <Repeat aria-hidden />
+      {face.text}
+    </span>
+  );
+}
+
 /** Solid amber: the session is waiting on the person. */
 export function NeedsYouPill({ count, className }: { count: number; className?: string }) {
   const intl = useIntl();
@@ -206,7 +362,8 @@ export function useSessionStateAttrs(sessionId: string): {
 
 /**
  * What a session row shows about its session RIGHT NOW, from the one activity store: needs-you,
- * running, failed or stopped pills, or — when the session is idle — `idle` (the row's usual "27m ago").
+ * running, background, looping, failed or stopped pills, or — when the session is idle — `idle`
+ * (the row's usual "27m ago").
  */
 export function SessionActivityMarker({
   sessionId,
@@ -229,6 +386,13 @@ export function SessionActivityMarker({
       {activity.runningSince && <RunningPill since={activity.runningSince} />}
       {states.includes('background') && activity.background && (
         <BackgroundPill kind={activity.background} />
+      )}
+      {states.includes('looping') && (
+        <LoopingPill
+          status={activity.loopStatus}
+          nextTickAt={activity.loopNextTickAt}
+          error={activity.loopError}
+        />
       )}
       {states.includes('failed') && <FailedPill reason={activity.failedReason} />}
       {states.includes('stopped') && activity.stoppedElapsedMs !== undefined && (

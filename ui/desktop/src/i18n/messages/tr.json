@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "Son tur başarısız oldu"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "Bu sohbetin döngüsü bir turdan sonra kontrolünü çalıştırıyor"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "Bu sohbetin döngüsü başka bir goose penceresinde çalışıyor"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "Bu sohbetin döngüsü, turuna verdiğin yanıt çalışana kadar bekler"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "Bu sohbetin döngüsü sonraki turunu {time} saatinde çalıştırır"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "Bu sohbetin döngüsü bekliyor, ancak goose sonraki turunun zamanını göndermedi"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "Bu sohbetin döngüsü bekliyor; sonraki turunun zamanı okunamadı: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "Bu sohbetin döngüsü duraklatıldı; nedenini görmek ve sürdürmek için sohbeti aç"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "Bu sohbetin döngüsü bir tur çalıştırıyor"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Bu sohbetin döngüsünün bir turu zamanı geldi; önceki sıra bitince başlar"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "Bu sohbetin döngüsünün son turu ne zaman döneceğini söylemedi"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Sonraki {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "Duraklatıldı"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Döngü okunamıyor"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Seni bekliyor"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "Döngüde"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Sana ihtiyaç var"
   },

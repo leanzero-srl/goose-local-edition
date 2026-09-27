@@ -13,7 +13,24 @@ use tracing::warn;
 use super::{GooseAcpAgent, ResultExt};
 use crate::execution::manager::AgentManager;
 use crate::needs_you::{self, NeedsYouItem, NeedsYouStatus, Resolution};
-use crate::session::SessionType;
+use crate::session::{SessionManager, SessionType};
+
+/// Close the item, then tell the loop runner (session loops §4.6, the asked rule): a question a
+/// tick left open holds that chat's loop, and its resolution is what lets the next tick be offered
+/// — after the answer's turn ends, or at once when dismissed. The runner is told only AFTER the
+/// resolution is written, so reading `needs_you.v0` it finds the item closed and how; a refused
+/// resolve (unknown item, already closed, empty answer) changed nothing and tells it nothing.
+async fn resolve_then_tell_the_loop(
+    session_manager: &SessionManager,
+    session_id: &str,
+    item_id: &str,
+    resolution: Resolution,
+    loop_resolved: impl FnOnce(&str, &str),
+) -> anyhow::Result<NeedsYouItem> {
+    let item = needs_you::resolve(session_manager, session_id, item_id, resolution).await?;
+    loop_resolved(session_id, item_id);
+    Ok(item)
+}
 
 fn dto(
     session_id: &str,
@@ -188,16 +205,158 @@ impl GooseAcpAgent {
             .get_session(&req.session_id, false)
             .await
             .invalid_params_err_ctx("Unknown session")?;
-        let item = needs_you::resolve(
+        let item = resolve_then_tell_the_loop(
             &self.session_manager,
             &req.session_id,
             &req.item_id,
             resolution,
+            crate::session_loops::seam::needs_you_resolved,
         )
         .await
         .invalid_params_err()?;
         Ok(ResolveNeedsYouResponse {
             item: dto(&session.id, &session.name, &session.working_dir, item),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::needs_you::{NeedsYouState, NewQuestion};
+    use crate::session::extension_data::ExtensionState;
+
+    async fn a_chat_with_a_question() -> (tempfile::TempDir, SessionManager, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(dir.path().to_path_buf());
+        let session = manager
+            .create_session(
+                dir.path().to_path_buf(),
+                "loop chat".into(),
+                SessionType::User,
+                crate::config::GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        let item = needs_you::raise(
+            &manager,
+            &session.id,
+            NewQuestion {
+                question: "Which CSV delimiter does the owner want?".into(),
+                why: "The generator and the validator must agree on it.".into(),
+                recommended_answer: "A comma".into(),
+                options: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        (dir, manager, session.id, item.id)
+    }
+
+    /// What the loop runner sees when it is told: the ids, and the item's status in the store at
+    /// that moment (the runner reads `needs_you.v0` to tell an answer from a dismissal).
+    fn told(
+        manager: &SessionManager,
+        seen: &Mutex<Vec<(String, String, NeedsYouStatus)>>,
+        session_id: &str,
+        item_id: &str,
+    ) {
+        let session = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(manager.get_session(session_id, false))
+        })
+        .unwrap();
+        let status = NeedsYouState::from_extension_data(&session.extension_data)
+            .unwrap()
+            .items
+            .into_iter()
+            .find(|item| item.id == item_id)
+            .unwrap()
+            .status;
+        seen.lock()
+            .unwrap()
+            .push((session_id.to_string(), item_id.to_string(), status));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn needs_you_answered_tells_the_loop_once_after_the_answer_is_written() {
+        let (_dir, manager, session_id, item_id) = a_chat_with_a_question().await;
+        let seen = Mutex::new(Vec::new());
+        let item = resolve_then_tell_the_loop(
+            &manager,
+            &session_id,
+            &item_id,
+            Resolution::Answered("A semicolon".into()),
+            |s, i| told(&manager, &seen, s, i),
+        )
+        .await
+        .unwrap();
+        assert_eq!(item.status, NeedsYouStatus::Answered);
+        assert_eq!(
+            seen.into_inner().unwrap(),
+            vec![(session_id, item_id, NeedsYouStatus::Answered)]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn needs_you_dismissed_tells_the_loop_once_after_the_dismissal_is_written() {
+        let (_dir, manager, session_id, item_id) = a_chat_with_a_question().await;
+        let seen = Mutex::new(Vec::new());
+        resolve_then_tell_the_loop(
+            &manager,
+            &session_id,
+            &item_id,
+            Resolution::Dismissed,
+            |s, i| told(&manager, &seen, s, i),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            seen.into_inner().unwrap(),
+            vec![(session_id, item_id, NeedsYouStatus::Dismissed)]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn needs_you_a_refused_resolve_tells_the_loop_nothing() {
+        let (_dir, manager, session_id, item_id) = a_chat_with_a_question().await;
+        let seen = Mutex::new(Vec::new());
+        let refusals = [
+            (item_id.as_str(), Resolution::Answered("   ".into())),
+            ("ny_not_there", Resolution::Dismissed),
+        ];
+        for (id, resolution) in refusals {
+            assert!(
+                resolve_then_tell_the_loop(&manager, &session_id, id, resolution, |s, i| {
+                    told(&manager, &seen, s, i)
+                })
+                .await
+                .is_err()
+            );
+        }
+        resolve_then_tell_the_loop(
+            &manager,
+            &session_id,
+            &item_id,
+            Resolution::Dismissed,
+            |s, i| told(&manager, &seen, s, i),
+        )
+        .await
+        .unwrap();
+        // Closed once: a second answer is refused, so the loop hears of the item exactly once.
+        assert!(resolve_then_tell_the_loop(
+            &manager,
+            &session_id,
+            &item_id,
+            Resolution::Answered("A comma".into()),
+            |s, i| told(&manager, &seen, s, i),
+        )
+        .await
+        .is_err());
+        assert_eq!(
+            seen.into_inner().unwrap(),
+            vec![(session_id, item_id, NeedsYouStatus::Dismissed)]
+        );
     }
 }

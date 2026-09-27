@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "Lượt gần nhất thất bại"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "Vòng lặp của cuộc trò chuyện này đang chạy bước kiểm tra sau một lượt"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "Vòng lặp của cuộc trò chuyện này chạy trong một cửa sổ goose khác"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "Vòng lặp của cuộc trò chuyện này chờ đến khi câu trả lời của bạn cho lượt của nó đã chạy xong"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "Vòng lặp của cuộc trò chuyện này chạy lượt tiếp theo lúc {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "Vòng lặp của cuộc trò chuyện này đang chờ, nhưng goose không gửi thời điểm cho lượt tiếp theo"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "Vòng lặp của cuộc trò chuyện này đang chờ; không đọc được thời điểm lượt tiếp theo: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "Vòng lặp của cuộc trò chuyện này đã tạm dừng; mở cuộc trò chuyện để xem lý do và tiếp tục"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "Vòng lặp của cuộc trò chuyện này đang chạy một lượt"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Đã đến lượt của vòng lặp trong cuộc trò chuyện này; lượt bắt đầu khi lượt trước kết thúc"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "Lượt cuối của vòng lặp trong cuộc trò chuyện này không nói khi nào quay lại"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Tiếp theo {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "Đã tạm dừng"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Không đọc được vòng lặp"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Đang chờ bạn"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "Đang lặp"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Cần bạn"
   },
