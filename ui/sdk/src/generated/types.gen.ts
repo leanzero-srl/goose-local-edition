@@ -5597,6 +5597,11 @@ export type SessionActivityResponse_unstable = {
      * User/scheduled sessions goose is doing background work for, oldest call first (Q-185).
      */
     background?: Array<BackgroundSessionDto>;
+    /**
+     * Sessions with a loop that has not ended (session loops, Q-228), each with its status as
+     * read now; an unreadable loop record is listed with its error.
+     */
+    looping?: Array<LoopSummaryDto>;
 };
 
 export type RunningSessionDto = {
@@ -5685,6 +5690,23 @@ export type BackgroundSessionDto = {
  * names it — the session lists, the chat, the MLX engine card and the cut guard.
  */
 export type BackgroundWorkKind = 'factCheck' | 'memoryReview' | 'title' | 'toolLabel' | 'compaction' | 'toolDigest' | 'permissionCheck' | 'safetyCheck' | 'sessionSummary' | 'recipe';
+
+/**
+ * One chat's loop, as the lists show it. Exactly one of `status` / `error`: an unreadable record
+ * is named, never skipped.
+ */
+export type LoopSummaryDto = {
+    sessionId: string;
+    status?: LoopStatus | null;
+    nextTickAt?: string | null;
+    error?: string | null;
+};
+
+/**
+ * The loop's status (§4.7). `elsewhere` is never written: it is derived at read time for a loop
+ * whose owner is another live goose process.
+ */
+export type LoopStatus = 'running' | 'checking' | 'waiting' | 'waiting_turn' | 'waiting_you' | 'needs_you' | 'paused' | 'ended' | 'elsewhere';
 
 /**
  * Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.
@@ -6312,6 +6334,507 @@ export type NodeEnsureServing = {
 export type NodeLoadRefusalCode = 'unknownNode' | 'heldByBuild' | 'keptLoaded' | 'needsStep' | 'fit' | 'loadFailed' | 'loaderAbsent' | 'unknown';
 
 /**
+ * The loop of one chat. A PURE read: never claims the clock, never writes.
+ */
+export type LoopsGetRequest_unstable = {
+    sessionId: string;
+};
+
+/**
+ * `loop` absent AND `error` absent = this chat has no loop. An unreadable record answers
+ * `error`, never an absent loop.
+ */
+export type LoopsGetResponse_unstable = {
+    loop?: LoopRecord | null;
+    /**
+     * The status as read now: `paused{closed}` when the owner is proven gone, `elsewhere` when
+     * another live goose runs it, else the written status.
+     */
+    effectiveStatus?: LoopStatus | null;
+    effectiveReason?: LoopStatusReason | null;
+    error?: string | null;
+};
+
+/**
+ * The loop record, `extension_data["loop.v0"]` (§4.2). Written only through the session
+ * manager's per-key read-modify-write.
+ */
+export type LoopRecord = {
+    /**
+     * `lp_<8 hex>`, stable for the loop's life.
+     */
+    id: string;
+    /**
+     * The user's words, verbatim.
+     */
+    goal: string;
+    template: LoopTemplateId;
+    /**
+     * The template's step text as the user left it, slots included.
+     */
+    steps?: string;
+    cadence: LoopCadence;
+    /**
+     * Relative to the session's working dir.
+     */
+    stateFile: string;
+    /**
+     * A shell command run in the working dir after each tick.
+     */
+    check?: string | null;
+    /**
+     * The user's own tick count; absent by default.
+     */
+    stopAfterTicks?: number | null;
+    status: LoopStatus;
+    statusReason?: LoopStatusReason | null;
+    nextTick?: LoopNextTick | null;
+    offer?: LoopOffer | null;
+    owner?: LoopOwner | null;
+    createdAt: string;
+    startedAt: string;
+    endedAt?: string | null;
+    ticks?: Array<LoopTickRecord>;
+};
+
+/**
+ * The starting template the user picked in the Start dialog (§7.4).
+ */
+export type LoopTemplateId = 'quality' | 'until_check' | 'watch' | 'blank';
+
+/**
+ * When the next tick STARTS (§4.3). A cadence never cuts a tick or a check.
+ */
+export type LoopCadence = {
+    every: string;
+    kind: 'every';
+} | {
+    kind: 'self_paced';
+} | {
+    kind: 'back_to_back';
+};
+
+/**
+ * Why the loop has the status it has; every variant is a sentence the user reads (§4.6, §8.4).
+ */
+export type LoopStatusReason = {
+    afterTick: number;
+    kind: 'by_you';
+} | {
+    n: number;
+    kind: 'you_stopped_tick';
+} | {
+    n: number;
+    blockedOn: string;
+    kind: 'blocked';
+} | {
+    n: number;
+    error: string;
+    kind: 'check_could_not_run';
+} | {
+    prev: number;
+    n: number;
+    error: string;
+    kind: 'same_failure_twice';
+} | {
+    prev: number;
+    n: number;
+    kind: 'no_report_twice';
+} | {
+    prev: number;
+    n: number;
+    kind: 'stalled';
+} | {
+    closedAt?: string | null;
+    kind: 'closed';
+} | {
+    n: number;
+    kind: 'finishing_elsewhere';
+} | {
+    n: number;
+    check: string;
+    kind: 'goal_met';
+} | {
+    n: number;
+    kind: 'reported_done';
+} | {
+    k: number;
+    kind: 'reached_count';
+} | {
+    n: number;
+    kind: 'stopped_by_you';
+} | {
+    sessionId: string;
+    chat: string;
+    kind: 'user_turn';
+} | {
+    refused: LoopRefuseReason;
+    kind: 'refused';
+} | {
+    n: number;
+    kind: 'reviewers';
+} | {
+    node: string;
+    chat: string;
+    target: string;
+    kind: 'way_held';
+} | {
+    n: number;
+    kind: 'no_delay';
+} | {
+    n: number;
+    given: string;
+    kind: 'bad_delay';
+} | {
+    n: number;
+    itemId: string;
+    question: string;
+    kind: 'asked';
+} | {
+    n: number;
+    kind: 'answer_running';
+};
+
+/**
+ * What a refused tick offer said (§5.1): the renderer could not submit the tick now.
+ */
+export type LoopRefuseReason = {
+    kind: 'turn_running';
+} | {
+    kind: 'queued_message';
+} | {
+    kind: 'pending_cancel';
+} | {
+    error: string;
+    kind: 'load_failed';
+} | {
+    error: string;
+    kind: 'submit_failed';
+};
+
+export type LoopNextTick = {
+    at: string;
+    reason: LoopNextReason;
+};
+
+/**
+ * Why the next tick is at the time it is.
+ */
+export type LoopNextReason = {
+    kind: 'first';
+} | {
+    kind: 'cadence';
+} | {
+    kind: 'overdue';
+} | {
+    interval: string;
+    reason?: string | null;
+    kind: 'self_paced';
+} | {
+    kind: 'back_to_back';
+} | {
+    kind: 'after_your_turn';
+} | {
+    kind: 'after_your_answer';
+} | {
+    kind: 'on_wake';
+} | {
+    kind: 'resume';
+} | {
+    kind: 'now';
+};
+
+/**
+ * A due tick the runner offered the renderer (§5.1); cleared when `on_prompt` accepts it.
+ */
+export type LoopOffer = {
+    n: number;
+    messageId: string;
+    offeredAt: string;
+    refused?: LoopRefuseReason | null;
+};
+
+/**
+ * Which goose process runs the loop's clock (§5.1).
+ */
+export type LoopOwner = {
+    goosedPid: number;
+    /**
+     * The process's start, unix seconds: with the pid, what proves it is still the owner.
+     */
+    goosedStartedAt: number;
+    /**
+     * goosed's parent (the app) at the claim: a goosed reparented away from it is an orphan.
+     */
+    appPid: number;
+};
+
+export type LoopTickRecord = {
+    /**
+     * 1 = the loop's first tick.
+     */
+    n: number;
+    origin: LoopTickOrigin;
+    startedAt: string;
+    endedAt?: string | null;
+    /**
+     * The tick's prompt message (`looptick_<loopId>_<n>_<uuid>`); the next tick's marker ends
+     * its range.
+     */
+    firstMessageId: string;
+    report?: LoopReport | null;
+    outcome?: LoopTickOutcome | null;
+    /**
+     * Paths goose wrote or edited in the tick (`write`/`edit` diffs), the state file excluded.
+     * A shell command that changed files is not listed.
+     */
+    wrote?: Array<string>;
+    check?: LoopCheckRun | null;
+    /**
+     * The `nodes.served` record of the tick's lease, when there is one.
+     */
+    served?: NodeServedTurnDto | null;
+    tokens?: LoopTokenDelta | null;
+};
+
+/**
+ * What started a tick.
+ */
+export type LoopTickOrigin = 'first' | 'cadence' | 'now' | 'self_paced' | 'back_to_back' | 'after_your_turn' | 'after_your_answer' | 'on_wake' | 'resume';
+
+/**
+ * What the tick's `loop_report` call said, verbatim.
+ */
+export type LoopReport = {
+    verdict: LoopVerdict;
+    /**
+     * What this tick did, with its evidence (command output, file:line).
+     */
+    summary: string;
+    /**
+     * The one concrete next step.
+     */
+    nextStep: string;
+    /**
+     * Self-paced only: `<n>s|m|h`.
+     */
+    nextIn?: string | null;
+    /**
+     * Why that delay.
+     */
+    nextReason?: string | null;
+    /**
+     * Verdict `blocked`: what only the user can decide.
+     */
+    blockedOn?: string | null;
+};
+
+export type LoopVerdict = 'progress' | 'done' | 'blocked';
+
+/**
+ * How a tick ended (§4.2). Absent on the tick in flight.
+ */
+export type LoopTickOutcome = {
+    kind: 'progress';
+} | {
+    kind: 'done';
+} | {
+    kind: 'blocked';
+} | {
+    itemId: string;
+    question: string;
+    kind: 'asked';
+} | {
+    errorClass: string;
+    error: string;
+    kind: 'failed';
+} | {
+    kind: 'no_report';
+} | {
+    toSession: string;
+    toChat: string;
+    way?: string | null;
+    kind: 'yielded';
+} | {
+    kind: 'stopped_by_you';
+};
+
+/**
+ * One run of the check command after a tick. `ran: false` with `error` = it could not run
+ * (never a failed check).
+ */
+export type LoopCheckRun = {
+    command: string;
+    startedAt: string;
+    /**
+     * Absent while the check runs.
+     */
+    endedAt?: string | null;
+    ran: boolean;
+    exit?: number | null;
+    /**
+     * The longest suffix of the output within 1/64 of the session's context window (§4.4).
+     */
+    outputTail?: string;
+    /**
+     * The full output, in goose's data dir.
+     */
+    logPath?: string | null;
+    error?: string | null;
+};
+
+/**
+ * Session token totals after − before the tick: a measurement, shown, never a decision.
+ */
+export type LoopTokenDelta = {
+    input: number;
+    output: number;
+    total: number;
+};
+
+/**
+ * Start (or replace) this chat's loop; the first tick runs now. Claims the clock.
+ */
+export type LoopsStartRequest_unstable = {
+    sessionId: string;
+    goal: string;
+    template: LoopTemplateId;
+    steps?: string;
+    cadence: LoopCadence;
+    stateFile: string;
+    check?: string | null;
+    stopAfterTicks?: number | null;
+};
+
+/**
+ * The loop after a change, or the named refusal (nothing written).
+ */
+export type LoopsChangeResponse_unstable = {
+    loop?: LoopRecord | null;
+    refusal?: LoopRefusal | null;
+};
+
+/**
+ * A named refusal: nothing was written.
+ */
+export type LoopRefusal = {
+    code: LoopRefusalCode;
+    reason: string;
+};
+
+export type LoopRefusalCode = 'empty_goal' | 'bad_cadence' | 'empty_state_file' | 'state_file_outside' | 'unknown_slot' | 'check_required' | 'bad_stop_after' | 'no_loop' | 'runner_absent' | 'extension_sync_absent' | 'swarm_build' | 'record_unreadable' | 'refused';
+
+/**
+ * Edit the loop. Editing does not start a tick.
+ */
+export type LoopsUpdateRequest_unstable = {
+    sessionId: string;
+    patch: LoopEdit;
+};
+
+/**
+ * Every field the Edit dialog shows, as the user left it (the whole editable set, so clearing
+ * the check or the tick count is a value, not an absence).
+ */
+export type LoopEdit = {
+    goal: string;
+    template: LoopTemplateId;
+    steps?: string;
+    cadence: LoopCadence;
+    stateFile: string;
+    check?: string | null;
+    stopAfterTicks?: number | null;
+};
+
+/**
+ * Pause / Resume / Stop loop / Run a tick now / Stop check. `resume` and `tickNow` claim the
+ * clock; the others write the record without claiming.
+ */
+export type LoopsControlRequest_unstable = {
+    sessionId: string;
+    action: LoopControlAction;
+};
+
+export type LoopControlAction = 'pause' | 'resume' | 'stop' | 'tickNow' | 'stopCheck';
+
+/**
+ * The renderer could not submit an offered tick now; it sends `loops/ready` when that clears.
+ */
+export type LoopsTickRefusedRequest_unstable = {
+    sessionId: string;
+    loopId: string;
+    n: number;
+    reason: LoopRefuseReason;
+};
+
+export type LoopsTickRefusedResponse_unstable = {
+    refusal?: LoopRefusal | null;
+};
+
+/**
+ * What refused an offer for this chat has cleared (the store's attempt ended, the queue
+ * emptied): re-send the open offer.
+ */
+export type LoopsReadyRequest_unstable = {
+    sessionId: string;
+};
+
+export type LoopsReadyResponse_unstable = {
+    reoffered: boolean;
+    refusal?: LoopRefusal | null;
+};
+
+/**
+ * The Mac woke: re-read the wall clock (one tick if any were due, never a burst).
+ */
+export type LoopsWakeRequest_unstable = {
+    [key: string]: unknown;
+};
+
+export type LoopsWakeResponse_unstable = {
+    rearmed: number;
+    refusal?: LoopRefusal | null;
+};
+
+export type LoopsTemplatesRequest_unstable = {
+    [key: string]: unknown;
+};
+
+export type LoopsTemplatesResponse_unstable = {
+    templates: Array<LoopTemplateDto>;
+};
+
+export type LoopTemplateDto = {
+    id: LoopTemplateId;
+    name: string;
+    description: string;
+    /**
+     * The steps with their slots, as the dialog prefills them.
+     */
+    steps: string;
+    /**
+     * The slot names the steps use (`state_file`, `check`, …).
+     */
+    slots: Array<string>;
+    suggestedCadence: LoopCadence;
+    /**
+     * The template cannot start without a check command.
+     */
+    needsCheck: boolean;
+};
+
+/**
+ * Every chat's loop (ended ones included). A PURE read.
+ */
+export type LoopsListRequest_unstable = {
+    [key: string]: unknown;
+};
+
+export type LoopsListResponse_unstable = {
+    loops: Array<LoopSummaryDto>;
+};
+
+/**
  * Goose-custom session update notification — a parallel to ACP's
  * `session/update` carrying goose-specific update variants.
  */
@@ -6415,6 +6938,29 @@ export type StatusMessageUpdate = {
     status: StatusMessage;
 };
 
+/**
+ * A loop tick is due in this chat (session loops, design DESIGN-SESSION-LOOPS.md §5.1): the
+ * renderer submits `prompt` as a user message with id `messageId` through the same door a typed
+ * message uses, carrying `_meta.goose.loopTick = {loopId, n, messageId}`, or answers
+ * `loops/tickRefused`. The offer stands until goosed accepts it; a repeat of the same
+ * `(loopId, n, messageId)` is the same offer, never a second tick.
+ */
+export type LoopsTickDueNotification_unstable = {
+    sessionId: string;
+    loopId: string;
+    n: number;
+    messageId: string;
+    prompt: string;
+};
+
+/**
+ * A chat's loop record changed (the rail and the pills update on this event, never on a poll).
+ */
+export type LoopsChangedNotification_unstable = {
+    sessionId: string;
+    loop: LoopRecord;
+};
+
 export type RequestRecipeParams_unstable = {
     sessionId: string;
     parameters: Array<RecipeParameterDto>;
@@ -6432,14 +6978,14 @@ export type RecipeParamsAction = 'submit' | 'cancel';
 export type ExtRequest = {
     id: string;
     method: string;
-    params?: AddSessionExtensionRequest_unstable | RemoveSessionExtensionRequest_unstable | GetToolsRequest_unstable | SetToolPermissionsRequest_unstable | GooseToolCallRequest_unstable | ReadResourceRequest_unstable | AppsListRequest_unstable | AppsExportRequest_unstable | AppsImportRequest_unstable | UpdateWorkingDirRequest_unstable | SetSessionSystemPromptRequest_unstable | SteerSessionRequest_unstable | DiagnosticsGetRequest_unstable | ListPromptsRequest_unstable | GetPromptRequest_unstable | SavePromptRequest_unstable | ResetPromptRequest_unstable | DeleteSessionRequest | InspectConfigExtensionRequest_unstable | GetConfigExtensionsRequest_unstable | GetAvailableExtensionsRequest_unstable | AddConfigExtensionRequest_unstable | RemoveConfigExtensionRequest_unstable | SetConfigExtensionEnabledRequest_unstable | GetSessionExtensionsRequest_unstable | ListProvidersRequest_unstable | ProviderSupportedModelsListRequest_unstable | ProviderCatalogListRequest_unstable | ProviderSetupCatalogListRequest_unstable | ProviderCatalogTemplateRequest_unstable | CustomProviderCreateRequest_unstable | CustomProviderReadRequest_unstable | CustomProviderUpdateRequest_unstable | CustomProviderDeleteRequest_unstable | RefreshProviderInventoryRequest_unstable | ProviderConfigReadRequest_unstable | ProviderConfigStatusRequest_unstable | ProviderConfigSaveRequest_unstable | ProviderConfigDeleteRequest_unstable | ProviderConfigAuthenticateRequest_unstable | ProviderSecretsListRequest_unstable | ProviderSecretDeleteRequest_unstable | CanonicalModelInfoRequest_unstable | PreferencesReadRequest_unstable | PreferencesSaveRequest_unstable | PreferencesRemoveRequest_unstable | ConfigReadRequest_unstable | ConfigUpsertRequest_unstable | ConfigRemoveRequest_unstable | ConfigReadAllRequest_unstable | DefaultsReadRequest_unstable | DefaultsSaveRequest_unstable | DefaultsClearRequest_unstable | OnboardingImportScanRequest_unstable | OnboardingImportApplyRequest_unstable | ExportSessionRequest_unstable | ImportSessionRequest_unstable | ShareSessionNostrRequest_unstable | EncodeRecipeRequest_unstable | DecodeRecipeRequest_unstable | ScanRecipeRequest_unstable | ListRecipesRequest_unstable | DeleteRecipeRequest_unstable | ScheduleRecipeRequest_unstable | SetRecipeSlashCommandRequest_unstable | SaveRecipeRequest_unstable | CreateRecipeRequest_unstable | ParseRecipeRequest_unstable | RecipeToYamlRequest_unstable | ListSchedulesRequest_unstable | ListScheduleSessionsRequest_unstable | CreateScheduleRequest_unstable | DeleteScheduleRequest_unstable | PauseScheduleRequest_unstable | UnpauseScheduleRequest_unstable | UpdateScheduleRequest_unstable | RunScheduleNowRequest_unstable | KillRunningJobRequest_unstable | InspectRunningJobRequest_unstable | GetSessionInfoRequest_unstable | TruncateSessionConversationRequest_unstable | UpdateSessionProjectRequest_unstable | RenameSessionRequest_unstable | ArchiveSessionRequest_unstable | UnarchiveSessionRequest_unstable | CreateSourceRequest_unstable | ListSourcesRequest_unstable | ListAgentMentionsRequest_unstable | ListSlashCommandsRequest_unstable | UpdateSourceRequest_unstable | DeleteSourceRequest_unstable | ExportSourceRequest_unstable | ImportSourcesRequest_unstable | DictationTranscribeRequest_unstable | DictationConfigRequest_unstable | DictationSecretSaveRequest_unstable | DictationSecretDeleteRequest_unstable | DictationModelsListRequest_unstable | DictationModelDownloadRequest_unstable | DictationModelDownloadProgressRequest_unstable | DictationModelCancelRequest_unstable | DictationModelDeleteRequest_unstable | DictationModelSelectRequest_unstable | LocalInferenceModelsListRequest_unstable | LocalInferenceModelDownloadRequest_unstable | LocalInferenceModelDownloadProgressRequest_unstable | LocalInferenceModelDownloadCancelRequest_unstable | LocalInferenceModelDeleteRequest_unstable | LocalInferenceModelSettingsReadRequest_unstable | LocalInferenceModelSettingsUpdateRequest_unstable | LocalInferenceHuggingFaceSearchRequest_unstable | LocalInferenceHuggingFaceRepoVariantsRequest_unstable | LocalInferenceBuiltinChatTemplatesListRequest_unstable | MlxEngineStatusRequest_unstable | MlxEngineMountRequest_unstable | MlxEngineMountAfterLoadRequest_unstable | MlxEngineStopOtherEngineRequest_unstable | MlxEngineUnmountRequest_unstable | MlxEngineSettingsReadRequest_unstable | MlxEngineSettingsUpdateRequest_unstable | MlxEngineModelsListRequest_unstable | MlxEngineModelDeleteRequest_unstable | MlxEngineHfSearchRequest_unstable | MlxEngineBrowseRequest_unstable | MlxEngineDownloadRequest_unstable | MlxEngineDownloadProgressRequest_unstable | MlxEngineBrowseFiltersRequest_unstable | MlxEngineModelCardRequest_unstable | MlxEngineDownloadPauseRequest_unstable | MlxEngineDownloadResumeRequest_unstable | MlxEngineDistributedStatusRequest_unstable | MlxEngineDistributedPreflightRequest_unstable | MlxEngineDistributedStartRequest_unstable | MlxEngineDistributedStopRequest_unstable | MlxEngineRemoteSingleStartRequest_unstable | MlxEngineRemoteSingleStopRequest_unstable | MlxEngineRemoteSingleStatusRequest_unstable | MlxEngineServingIntentRequest_unstable | MlxEngineDistributedMakeRoomRequest_unstable | MlxEngineDistributedPeerCandidatesRequest_unstable | MlxEngineDistributedDiscoverRequest_unstable | MlxEngineDistributedProvisionRequest_unstable | MlxEngineDistributedConfigUpdateRequest_unstable | MlxEngineDownloadCancelRequest_unstable | MlxEngineLinkFactsRequest_unstable | MlxEngineReplicaTargetsRequest_unstable | MlxEngineReplicateRequest_unstable | MlxEngineReplicaPullRequest_unstable | MlxEnginePlacementPlanRequest_unstable | MlxEngineMeasureSpeedRequest_unstable | MlxEngineSpeedHistoryRequest_unstable | MlxEngineReplicaProgressRequest_unstable | MlxEngineReplicaCancelRequest_unstable | LeanzeroLinkHealthRequest_unstable | LeanzeroLinkRequestCodeRequest_unstable | LeanzeroLinkVerifyRequest_unstable | LeanzeroLinkConnectRequest_unstable | LeanzeroLinkStatusRequest_unstable | LeanzeroLinkLogoutRequest_unstable | LeanzeroLinkDisconnectRequest_unstable | LeanzeroLinkNodesRequest_unstable | ListMemoryProposalsRequest_unstable | AnswerMemoryProposalRequest_unstable | SessionActivityRequest_unstable | ResolveNeedsYouRequest_unstable | LeanzeroLinkRemoteExecuteRequest_unstable | NodesReadRequest_unstable | NodesWriteRequest_unstable | NodesRemoveNodeRequest_unstable | NodesRemoveStrategyRequest_unstable | NodesBuildEligibilityRequest_unstable | NodesResidencyRequest_unstable | NodesLoadHistoryRequest_unstable | NodesServedLastRequest_unstable | NodesEnsureServingRequest_unstable | {
+    params?: AddSessionExtensionRequest_unstable | RemoveSessionExtensionRequest_unstable | GetToolsRequest_unstable | SetToolPermissionsRequest_unstable | GooseToolCallRequest_unstable | ReadResourceRequest_unstable | AppsListRequest_unstable | AppsExportRequest_unstable | AppsImportRequest_unstable | UpdateWorkingDirRequest_unstable | SetSessionSystemPromptRequest_unstable | SteerSessionRequest_unstable | DiagnosticsGetRequest_unstable | ListPromptsRequest_unstable | GetPromptRequest_unstable | SavePromptRequest_unstable | ResetPromptRequest_unstable | DeleteSessionRequest | InspectConfigExtensionRequest_unstable | GetConfigExtensionsRequest_unstable | GetAvailableExtensionsRequest_unstable | AddConfigExtensionRequest_unstable | RemoveConfigExtensionRequest_unstable | SetConfigExtensionEnabledRequest_unstable | GetSessionExtensionsRequest_unstable | ListProvidersRequest_unstable | ProviderSupportedModelsListRequest_unstable | ProviderCatalogListRequest_unstable | ProviderSetupCatalogListRequest_unstable | ProviderCatalogTemplateRequest_unstable | CustomProviderCreateRequest_unstable | CustomProviderReadRequest_unstable | CustomProviderUpdateRequest_unstable | CustomProviderDeleteRequest_unstable | RefreshProviderInventoryRequest_unstable | ProviderConfigReadRequest_unstable | ProviderConfigStatusRequest_unstable | ProviderConfigSaveRequest_unstable | ProviderConfigDeleteRequest_unstable | ProviderConfigAuthenticateRequest_unstable | ProviderSecretsListRequest_unstable | ProviderSecretDeleteRequest_unstable | CanonicalModelInfoRequest_unstable | PreferencesReadRequest_unstable | PreferencesSaveRequest_unstable | PreferencesRemoveRequest_unstable | ConfigReadRequest_unstable | ConfigUpsertRequest_unstable | ConfigRemoveRequest_unstable | ConfigReadAllRequest_unstable | DefaultsReadRequest_unstable | DefaultsSaveRequest_unstable | DefaultsClearRequest_unstable | OnboardingImportScanRequest_unstable | OnboardingImportApplyRequest_unstable | ExportSessionRequest_unstable | ImportSessionRequest_unstable | ShareSessionNostrRequest_unstable | EncodeRecipeRequest_unstable | DecodeRecipeRequest_unstable | ScanRecipeRequest_unstable | ListRecipesRequest_unstable | DeleteRecipeRequest_unstable | ScheduleRecipeRequest_unstable | SetRecipeSlashCommandRequest_unstable | SaveRecipeRequest_unstable | CreateRecipeRequest_unstable | ParseRecipeRequest_unstable | RecipeToYamlRequest_unstable | ListSchedulesRequest_unstable | ListScheduleSessionsRequest_unstable | CreateScheduleRequest_unstable | DeleteScheduleRequest_unstable | PauseScheduleRequest_unstable | UnpauseScheduleRequest_unstable | UpdateScheduleRequest_unstable | RunScheduleNowRequest_unstable | KillRunningJobRequest_unstable | InspectRunningJobRequest_unstable | GetSessionInfoRequest_unstable | TruncateSessionConversationRequest_unstable | UpdateSessionProjectRequest_unstable | RenameSessionRequest_unstable | ArchiveSessionRequest_unstable | UnarchiveSessionRequest_unstable | CreateSourceRequest_unstable | ListSourcesRequest_unstable | ListAgentMentionsRequest_unstable | ListSlashCommandsRequest_unstable | UpdateSourceRequest_unstable | DeleteSourceRequest_unstable | ExportSourceRequest_unstable | ImportSourcesRequest_unstable | DictationTranscribeRequest_unstable | DictationConfigRequest_unstable | DictationSecretSaveRequest_unstable | DictationSecretDeleteRequest_unstable | DictationModelsListRequest_unstable | DictationModelDownloadRequest_unstable | DictationModelDownloadProgressRequest_unstable | DictationModelCancelRequest_unstable | DictationModelDeleteRequest_unstable | DictationModelSelectRequest_unstable | LocalInferenceModelsListRequest_unstable | LocalInferenceModelDownloadRequest_unstable | LocalInferenceModelDownloadProgressRequest_unstable | LocalInferenceModelDownloadCancelRequest_unstable | LocalInferenceModelDeleteRequest_unstable | LocalInferenceModelSettingsReadRequest_unstable | LocalInferenceModelSettingsUpdateRequest_unstable | LocalInferenceHuggingFaceSearchRequest_unstable | LocalInferenceHuggingFaceRepoVariantsRequest_unstable | LocalInferenceBuiltinChatTemplatesListRequest_unstable | MlxEngineStatusRequest_unstable | MlxEngineMountRequest_unstable | MlxEngineMountAfterLoadRequest_unstable | MlxEngineStopOtherEngineRequest_unstable | MlxEngineUnmountRequest_unstable | MlxEngineSettingsReadRequest_unstable | MlxEngineSettingsUpdateRequest_unstable | MlxEngineModelsListRequest_unstable | MlxEngineModelDeleteRequest_unstable | MlxEngineHfSearchRequest_unstable | MlxEngineBrowseRequest_unstable | MlxEngineDownloadRequest_unstable | MlxEngineDownloadProgressRequest_unstable | MlxEngineBrowseFiltersRequest_unstable | MlxEngineModelCardRequest_unstable | MlxEngineDownloadPauseRequest_unstable | MlxEngineDownloadResumeRequest_unstable | MlxEngineDistributedStatusRequest_unstable | MlxEngineDistributedPreflightRequest_unstable | MlxEngineDistributedStartRequest_unstable | MlxEngineDistributedStopRequest_unstable | MlxEngineRemoteSingleStartRequest_unstable | MlxEngineRemoteSingleStopRequest_unstable | MlxEngineRemoteSingleStatusRequest_unstable | MlxEngineServingIntentRequest_unstable | MlxEngineDistributedMakeRoomRequest_unstable | MlxEngineDistributedPeerCandidatesRequest_unstable | MlxEngineDistributedDiscoverRequest_unstable | MlxEngineDistributedProvisionRequest_unstable | MlxEngineDistributedConfigUpdateRequest_unstable | MlxEngineDownloadCancelRequest_unstable | MlxEngineLinkFactsRequest_unstable | MlxEngineReplicaTargetsRequest_unstable | MlxEngineReplicateRequest_unstable | MlxEngineReplicaPullRequest_unstable | MlxEnginePlacementPlanRequest_unstable | MlxEngineMeasureSpeedRequest_unstable | MlxEngineSpeedHistoryRequest_unstable | MlxEngineReplicaProgressRequest_unstable | MlxEngineReplicaCancelRequest_unstable | LeanzeroLinkHealthRequest_unstable | LeanzeroLinkRequestCodeRequest_unstable | LeanzeroLinkVerifyRequest_unstable | LeanzeroLinkConnectRequest_unstable | LeanzeroLinkStatusRequest_unstable | LeanzeroLinkLogoutRequest_unstable | LeanzeroLinkDisconnectRequest_unstable | LeanzeroLinkNodesRequest_unstable | ListMemoryProposalsRequest_unstable | AnswerMemoryProposalRequest_unstable | SessionActivityRequest_unstable | ResolveNeedsYouRequest_unstable | LeanzeroLinkRemoteExecuteRequest_unstable | NodesReadRequest_unstable | NodesWriteRequest_unstable | NodesRemoveNodeRequest_unstable | NodesRemoveStrategyRequest_unstable | NodesBuildEligibilityRequest_unstable | NodesResidencyRequest_unstable | NodesLoadHistoryRequest_unstable | NodesServedLastRequest_unstable | NodesEnsureServingRequest_unstable | LoopsGetRequest_unstable | LoopsStartRequest_unstable | LoopsUpdateRequest_unstable | LoopsControlRequest_unstable | LoopsTickRefusedRequest_unstable | LoopsReadyRequest_unstable | LoopsWakeRequest_unstable | LoopsTemplatesRequest_unstable | LoopsListRequest_unstable | {
         [key: string]: unknown;
     } | null;
 };
 
 export type ExtResponse = {
     id: string;
-    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineMountResponse_unstable | MlxEngineStopOtherEngineResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | MlxEngineDistributedStatusResponse_unstable | MlxEngineDistributedPreflightResponse_unstable | MlxEngineDistributedStartResponse_unstable | MlxEngineDistributedStopResponse_unstable | MlxEngineRemoteSingleStartResponse_unstable | MlxEngineRemoteSingleStopResponse_unstable | MlxEngineRemoteSingleStatusResponse_unstable | MlxEngineServingIntentResponse_unstable | MlxEngineDistributedMakeRoomResponse_unstable | MlxEngineDistributedPeerCandidatesResponse_unstable | MlxEngineDistributedDiscoverResponse_unstable | MlxEngineDistributedProvisionResponse_unstable | MlxEngineDistributedConfigResponse_unstable | MlxEngineLinkFactsResponse_unstable | MlxEngineReplicaTargetsResponse_unstable | MlxEngineReplicateResponse_unstable | MlxEnginePlacementPlanResponse_unstable | MlxEngineMeasureSpeedResponse_unstable | MlxEngineSpeedHistoryResponse_unstable | MlxEngineReplicaProgressResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | ListMemoryProposalsResponse_unstable | AnswerMemoryProposalResponse_unstable | SessionActivityResponse_unstable | ResolveNeedsYouResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | NodesReadResponse_unstable | NodesWriteResponse_unstable | NodesBuildEligibilityResponse_unstable | NodesResidencyResponse_unstable | NodesLoadHistoryResponse_unstable | NodesServedLastResponse_unstable | NodesEnsureServingResponse_unstable | unknown;
+    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineMountResponse_unstable | MlxEngineStopOtherEngineResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | MlxEngineDistributedStatusResponse_unstable | MlxEngineDistributedPreflightResponse_unstable | MlxEngineDistributedStartResponse_unstable | MlxEngineDistributedStopResponse_unstable | MlxEngineRemoteSingleStartResponse_unstable | MlxEngineRemoteSingleStopResponse_unstable | MlxEngineRemoteSingleStatusResponse_unstable | MlxEngineServingIntentResponse_unstable | MlxEngineDistributedMakeRoomResponse_unstable | MlxEngineDistributedPeerCandidatesResponse_unstable | MlxEngineDistributedDiscoverResponse_unstable | MlxEngineDistributedProvisionResponse_unstable | MlxEngineDistributedConfigResponse_unstable | MlxEngineLinkFactsResponse_unstable | MlxEngineReplicaTargetsResponse_unstable | MlxEngineReplicateResponse_unstable | MlxEnginePlacementPlanResponse_unstable | MlxEngineMeasureSpeedResponse_unstable | MlxEngineSpeedHistoryResponse_unstable | MlxEngineReplicaProgressResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | ListMemoryProposalsResponse_unstable | AnswerMemoryProposalResponse_unstable | SessionActivityResponse_unstable | ResolveNeedsYouResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | NodesReadResponse_unstable | NodesWriteResponse_unstable | NodesBuildEligibilityResponse_unstable | NodesResidencyResponse_unstable | NodesLoadHistoryResponse_unstable | NodesServedLastResponse_unstable | NodesEnsureServingResponse_unstable | LoopsGetResponse_unstable | LoopsChangeResponse_unstable | LoopsTickRefusedResponse_unstable | LoopsReadyResponse_unstable | LoopsWakeResponse_unstable | LoopsTemplatesResponse_unstable | LoopsListResponse_unstable | unknown;
 } | {
     error: {
         code: number;
@@ -6451,7 +6997,7 @@ export type ExtResponse = {
 
 export type ExtNotification = {
     method: string;
-    params?: GooseSessionNotification_unstable | {
+    params?: GooseSessionNotification_unstable | LoopsTickDueNotification_unstable | LoopsChangedNotification_unstable | {
         [key: string]: unknown;
     } | null;
 };

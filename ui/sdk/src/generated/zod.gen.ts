@@ -5800,12 +5800,49 @@ export const zBackgroundSessionDto = z.object({
     startedAt: z.string()
 });
 
+/**
+ * The loop's status (§4.7). `elsewhere` is never written: it is derived at read time for a loop
+ * whose owner is another live goose process.
+ */
+export const zLoopStatus = z.union([
+    z.literal('running'),
+    z.literal('checking'),
+    z.literal('waiting'),
+    z.literal('waiting_turn'),
+    z.literal('waiting_you'),
+    z.literal('needs_you'),
+    z.literal('paused'),
+    z.literal('ended'),
+    z.literal('elsewhere')
+]);
+
+/**
+ * One chat's loop, as the lists show it. Exactly one of `status` / `error`: an unreadable record
+ * is named, never skipped.
+ */
+export const zLoopSummaryDto = z.object({
+    sessionId: z.string(),
+    status: z.union([
+        zLoopStatus,
+        z.null()
+    ]).optional(),
+    nextTickAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
 export const zSessionActivityResponse_unstable = z.object({
     running: z.array(zRunningSessionDto),
     needsYou: z.array(zNeedsYouItemDto),
     failed: z.array(zFailedSessionDto),
     stopped: z.array(zStoppedSessionDto).optional().default([]),
-    background: z.array(zBackgroundSessionDto).optional().default([])
+    background: z.array(zBackgroundSessionDto).optional().default([]),
+    looping: z.array(zLoopSummaryDto).optional().default([])
 });
 
 export const zNeedsYouAction = z.enum(['answer', 'dismiss']);
@@ -6521,6 +6558,628 @@ export const zNodesEnsureServingResponse_unstable = z.object({
 });
 
 /**
+ * The loop of one chat. A PURE read: never claims the clock, never writes.
+ */
+export const zLoopsGetRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+/**
+ * The starting template the user picked in the Start dialog (§7.4).
+ */
+export const zLoopTemplateId = z.union([
+    z.literal('quality'),
+    z.literal('until_check'),
+    z.literal('watch'),
+    z.literal('blank')
+]);
+
+/**
+ * When the next tick STARTS (§4.3). A cadence never cuts a tick or a check.
+ */
+export const zLoopCadence = z.union([
+    z.object({
+        every: z.string(),
+        kind: z.literal('every')
+    }),
+    z.object({
+        kind: z.literal('self_paced')
+    }),
+    z.object({
+        kind: z.literal('back_to_back')
+    })
+]);
+
+/**
+ * What a refused tick offer said (§5.1): the renderer could not submit the tick now.
+ */
+export const zLoopRefuseReason = z.union([
+    z.object({
+        kind: z.literal('turn_running')
+    }),
+    z.object({
+        kind: z.literal('queued_message')
+    }),
+    z.object({
+        kind: z.literal('pending_cancel')
+    }),
+    z.object({
+        error: z.string(),
+        kind: z.literal('load_failed')
+    }),
+    z.object({
+        error: z.string(),
+        kind: z.literal('submit_failed')
+    })
+]);
+
+/**
+ * Why the loop has the status it has; every variant is a sentence the user reads (§4.6, §8.4).
+ */
+export const zLoopStatusReason = z.union([
+    z.object({
+        afterTick: z.number().int().gte(0),
+        kind: z.literal('by_you')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        kind: z.literal('you_stopped_tick')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        blockedOn: z.string(),
+        kind: z.literal('blocked')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        error: z.string(),
+        kind: z.literal('check_could_not_run')
+    }),
+    z.object({
+        prev: z.number().int().gte(0),
+        n: z.number().int().gte(0),
+        error: z.string(),
+        kind: z.literal('same_failure_twice')
+    }),
+    z.object({
+        prev: z.number().int().gte(0),
+        n: z.number().int().gte(0),
+        kind: z.literal('no_report_twice')
+    }),
+    z.object({
+        prev: z.number().int().gte(0),
+        n: z.number().int().gte(0),
+        kind: z.literal('stalled')
+    }),
+    z.object({
+        closedAt: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('closed')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        kind: z.literal('finishing_elsewhere')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        check: z.string(),
+        kind: z.literal('goal_met')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        kind: z.literal('reported_done')
+    }),
+    z.object({
+        k: z.number().int().gte(0),
+        kind: z.literal('reached_count')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        kind: z.literal('stopped_by_you')
+    }),
+    z.object({
+        sessionId: z.string(),
+        chat: z.string(),
+        kind: z.literal('user_turn')
+    }),
+    z.object({
+        refused: zLoopRefuseReason,
+        kind: z.literal('refused')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        kind: z.literal('reviewers')
+    }),
+    z.object({
+        node: z.string(),
+        chat: z.string(),
+        target: z.string(),
+        kind: z.literal('way_held')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        kind: z.literal('no_delay')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        given: z.string(),
+        kind: z.literal('bad_delay')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        itemId: z.string(),
+        question: z.string(),
+        kind: z.literal('asked')
+    }),
+    z.object({
+        n: z.number().int().gte(0),
+        kind: z.literal('answer_running')
+    })
+]);
+
+/**
+ * Why the next tick is at the time it is.
+ */
+export const zLoopNextReason = z.union([
+    z.object({
+        kind: z.literal('first')
+    }),
+    z.object({
+        kind: z.literal('cadence')
+    }),
+    z.object({
+        kind: z.literal('overdue')
+    }),
+    z.object({
+        interval: z.string(),
+        reason: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('self_paced')
+    }),
+    z.object({
+        kind: z.literal('back_to_back')
+    }),
+    z.object({
+        kind: z.literal('after_your_turn')
+    }),
+    z.object({
+        kind: z.literal('after_your_answer')
+    }),
+    z.object({
+        kind: z.literal('on_wake')
+    }),
+    z.object({
+        kind: z.literal('resume')
+    }),
+    z.object({
+        kind: z.literal('now')
+    })
+]);
+
+export const zLoopNextTick = z.object({
+    at: z.string(),
+    reason: zLoopNextReason
+});
+
+/**
+ * A due tick the runner offered the renderer (§5.1); cleared when `on_prompt` accepts it.
+ */
+export const zLoopOffer = z.object({
+    n: z.number().int().gte(0),
+    messageId: z.string(),
+    offeredAt: z.string(),
+    refused: z.union([
+        zLoopRefuseReason,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Which goose process runs the loop's clock (§5.1).
+ */
+export const zLoopOwner = z.object({
+    goosedPid: z.number().int().gte(0),
+    goosedStartedAt: z.number().int().gte(0),
+    appPid: z.number().int().gte(0)
+});
+
+/**
+ * What started a tick.
+ */
+export const zLoopTickOrigin = z.enum([
+    'first',
+    'cadence',
+    'now',
+    'self_paced',
+    'back_to_back',
+    'after_your_turn',
+    'after_your_answer',
+    'on_wake',
+    'resume'
+]);
+
+export const zLoopVerdict = z.enum([
+    'progress',
+    'done',
+    'blocked'
+]);
+
+/**
+ * What the tick's `loop_report` call said, verbatim.
+ */
+export const zLoopReport = z.object({
+    verdict: zLoopVerdict,
+    summary: z.string(),
+    nextStep: z.string(),
+    nextIn: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    nextReason: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    blockedOn: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * How a tick ended (§4.2). Absent on the tick in flight.
+ */
+export const zLoopTickOutcome = z.union([
+    z.object({
+        kind: z.literal('progress')
+    }),
+    z.object({
+        kind: z.literal('done')
+    }),
+    z.object({
+        kind: z.literal('blocked')
+    }),
+    z.object({
+        itemId: z.string(),
+        question: z.string(),
+        kind: z.literal('asked')
+    }),
+    z.object({
+        errorClass: z.string(),
+        error: z.string(),
+        kind: z.literal('failed')
+    }),
+    z.object({
+        kind: z.literal('no_report')
+    }),
+    z.object({
+        toSession: z.string(),
+        toChat: z.string(),
+        way: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('yielded')
+    }),
+    z.object({
+        kind: z.literal('stopped_by_you')
+    })
+]);
+
+/**
+ * One run of the check command after a tick. `ran: false` with `error` = it could not run
+ * (never a failed check).
+ */
+export const zLoopCheckRun = z.object({
+    command: z.string(),
+    startedAt: z.string(),
+    endedAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    ran: z.boolean(),
+    exit: z.union([
+        z.number().int(),
+        z.null()
+    ]).optional(),
+    outputTail: z.string().optional().default(''),
+    logPath: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Session token totals after − before the tick: a measurement, shown, never a decision.
+ */
+export const zLoopTokenDelta = z.object({
+    input: z.number().int().gte(0),
+    output: z.number().int().gte(0),
+    total: z.number().int().gte(0)
+});
+
+export const zLoopTickRecord = z.object({
+    n: z.number().int().gte(0),
+    origin: zLoopTickOrigin,
+    startedAt: z.string(),
+    endedAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    firstMessageId: z.string(),
+    report: z.union([
+        zLoopReport,
+        z.null()
+    ]).optional(),
+    outcome: z.union([
+        zLoopTickOutcome,
+        z.null()
+    ]).optional(),
+    wrote: z.array(z.string()).optional().default([]),
+    check: z.union([
+        zLoopCheckRun,
+        z.null()
+    ]).optional(),
+    served: z.union([
+        zNodeServedTurnDto,
+        z.null()
+    ]).optional(),
+    tokens: z.union([
+        zLoopTokenDelta,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The loop record, `extension_data["loop.v0"]` (§4.2). Written only through the session
+ * manager's per-key read-modify-write.
+ */
+export const zLoopRecord = z.object({
+    id: z.string(),
+    goal: z.string(),
+    template: zLoopTemplateId,
+    steps: z.string().optional().default(''),
+    cadence: zLoopCadence,
+    stateFile: z.string(),
+    check: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    stopAfterTicks: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    status: zLoopStatus,
+    statusReason: z.union([
+        zLoopStatusReason,
+        z.null()
+    ]).optional(),
+    nextTick: z.union([
+        zLoopNextTick,
+        z.null()
+    ]).optional(),
+    offer: z.union([
+        zLoopOffer,
+        z.null()
+    ]).optional(),
+    owner: z.union([
+        zLoopOwner,
+        z.null()
+    ]).optional(),
+    createdAt: z.string(),
+    startedAt: z.string(),
+    endedAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    ticks: z.array(zLoopTickRecord).optional().default([])
+});
+
+/**
+ * `loop` absent AND `error` absent = this chat has no loop. An unreadable record answers
+ * `error`, never an absent loop.
+ */
+export const zLoopsGetResponse_unstable = z.object({
+    loop: z.union([
+        zLoopRecord,
+        z.null()
+    ]).optional(),
+    effectiveStatus: z.union([
+        zLoopStatus,
+        z.null()
+    ]).optional(),
+    effectiveReason: z.union([
+        zLoopStatusReason,
+        z.null()
+    ]).optional(),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Start (or replace) this chat's loop; the first tick runs now. Claims the clock.
+ */
+export const zLoopsStartRequest_unstable = z.object({
+    sessionId: z.string(),
+    goal: z.string(),
+    template: zLoopTemplateId,
+    steps: z.string().optional().default(''),
+    cadence: zLoopCadence,
+    stateFile: z.string(),
+    check: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    stopAfterTicks: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zLoopRefusalCode = z.union([
+    z.literal('empty_goal'),
+    z.literal('bad_cadence'),
+    z.literal('empty_state_file'),
+    z.literal('state_file_outside'),
+    z.literal('unknown_slot'),
+    z.literal('check_required'),
+    z.literal('bad_stop_after'),
+    z.literal('no_loop'),
+    z.literal('runner_absent'),
+    z.literal('extension_sync_absent'),
+    z.literal('swarm_build'),
+    z.literal('record_unreadable'),
+    z.literal('refused')
+]);
+
+/**
+ * A named refusal: nothing was written.
+ */
+export const zLoopRefusal = z.object({
+    code: zLoopRefusalCode,
+    reason: z.string()
+});
+
+/**
+ * The loop after a change, or the named refusal (nothing written).
+ */
+export const zLoopsChangeResponse_unstable = z.object({
+    loop: z.union([
+        zLoopRecord,
+        z.null()
+    ]).optional(),
+    refusal: z.union([
+        zLoopRefusal,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Every field the Edit dialog shows, as the user left it (the whole editable set, so clearing
+ * the check or the tick count is a value, not an absence).
+ */
+export const zLoopEdit = z.object({
+    goal: z.string(),
+    template: zLoopTemplateId,
+    steps: z.string().optional().default(''),
+    cadence: zLoopCadence,
+    stateFile: z.string(),
+    check: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    stopAfterTicks: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Edit the loop. Editing does not start a tick.
+ */
+export const zLoopsUpdateRequest_unstable = z.object({
+    sessionId: z.string(),
+    patch: zLoopEdit
+});
+
+export const zLoopControlAction = z.enum([
+    'pause',
+    'resume',
+    'stop',
+    'tickNow',
+    'stopCheck'
+]);
+
+/**
+ * Pause / Resume / Stop loop / Run a tick now / Stop check. `resume` and `tickNow` claim the
+ * clock; the others write the record without claiming.
+ */
+export const zLoopsControlRequest_unstable = z.object({
+    sessionId: z.string(),
+    action: zLoopControlAction
+});
+
+/**
+ * The renderer could not submit an offered tick now; it sends `loops/ready` when that clears.
+ */
+export const zLoopsTickRefusedRequest_unstable = z.object({
+    sessionId: z.string(),
+    loopId: z.string(),
+    n: z.number().int().gte(0),
+    reason: zLoopRefuseReason
+});
+
+export const zLoopsTickRefusedResponse_unstable = z.object({
+    refusal: z.union([
+        zLoopRefusal,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * What refused an offer for this chat has cleared (the store's attempt ended, the queue
+ * emptied): re-send the open offer.
+ */
+export const zLoopsReadyRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+export const zLoopsReadyResponse_unstable = z.object({
+    reoffered: z.boolean(),
+    refusal: z.union([
+        zLoopRefusal,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The Mac woke: re-read the wall clock (one tick if any were due, never a burst).
+ */
+export const zLoopsWakeRequest_unstable = z.record(z.unknown());
+
+export const zLoopsWakeResponse_unstable = z.object({
+    rearmed: z.number().int().gte(0),
+    refusal: z.union([
+        zLoopRefusal,
+        z.null()
+    ]).optional()
+});
+
+export const zLoopsTemplatesRequest_unstable = z.record(z.unknown());
+
+export const zLoopTemplateDto = z.object({
+    id: zLoopTemplateId,
+    name: z.string(),
+    description: z.string(),
+    steps: z.string(),
+    slots: z.array(z.string()),
+    suggestedCadence: zLoopCadence,
+    needsCheck: z.boolean()
+});
+
+export const zLoopsTemplatesResponse_unstable = z.object({
+    templates: z.array(zLoopTemplateDto)
+});
+
+/**
+ * Every chat's loop (ended ones included). A PURE read.
+ */
+export const zLoopsListRequest_unstable = z.record(z.unknown());
+
+export const zLoopsListResponse_unstable = z.object({
+    loops: z.array(zLoopSummaryDto)
+});
+
+/**
  * Streaming context-window usage update for a session.
  */
 export const zSessionUsageUpdate = z.object({
@@ -6619,6 +7278,29 @@ export const zGooseSessionUpdate = z.union([
 export const zGooseSessionNotification_unstable = z.object({
     sessionId: z.string(),
     update: zGooseSessionUpdate
+});
+
+/**
+ * A loop tick is due in this chat (session loops, design DESIGN-SESSION-LOOPS.md §5.1): the
+ * renderer submits `prompt` as a user message with id `messageId` through the same door a typed
+ * message uses, carrying `_meta.goose.loopTick = {loopId, n, messageId}`, or answers
+ * `loops/tickRefused`. The offer stands until goosed accepts it; a repeat of the same
+ * `(loopId, n, messageId)` is the same offer, never a second tick.
+ */
+export const zLoopsTickDueNotification_unstable = z.object({
+    sessionId: z.string(),
+    loopId: z.string(),
+    n: z.number().int().gte(0),
+    messageId: z.string(),
+    prompt: z.string()
+});
+
+/**
+ * A chat's loop record changed (the rail and the pills update on this event, never on a poll).
+ */
+export const zLoopsChangedNotification_unstable = z.object({
+    sessionId: z.string(),
+    loop: zLoopRecord
 });
 
 export const zRequestRecipeParams_unstable = z.object({
@@ -6812,7 +7494,16 @@ export const zExtRequest = z.object({
             zNodesResidencyRequest_unstable,
             zNodesLoadHistoryRequest_unstable,
             zNodesServedLastRequest_unstable,
-            zNodesEnsureServingRequest_unstable
+            zNodesEnsureServingRequest_unstable,
+            zLoopsGetRequest_unstable,
+            zLoopsStartRequest_unstable,
+            zLoopsUpdateRequest_unstable,
+            zLoopsControlRequest_unstable,
+            zLoopsTickRefusedRequest_unstable,
+            zLoopsReadyRequest_unstable,
+            zLoopsWakeRequest_unstable,
+            zLoopsTemplatesRequest_unstable,
+            zLoopsListRequest_unstable
         ]),
         z.union([
             z.record(z.unknown()),
@@ -6948,7 +7639,14 @@ export const zExtResponse = z.union([
                 zNodesResidencyResponse_unstable,
                 zNodesLoadHistoryResponse_unstable,
                 zNodesServedLastResponse_unstable,
-                zNodesEnsureServingResponse_unstable
+                zNodesEnsureServingResponse_unstable,
+                zLoopsGetResponse_unstable,
+                zLoopsChangeResponse_unstable,
+                zLoopsTickRefusedResponse_unstable,
+                zLoopsReadyResponse_unstable,
+                zLoopsWakeResponse_unstable,
+                zLoopsTemplatesResponse_unstable,
+                zLoopsListResponse_unstable
             ]),
             z.unknown()
         ]).optional()
@@ -6966,7 +7664,11 @@ export const zExtResponse = z.union([
 export const zExtNotification = z.object({
     method: z.string(),
     params: z.union([
-        zGooseSessionNotification_unstable,
+        z.union([
+            zGooseSessionNotification_unstable,
+            zLoopsTickDueNotification_unstable,
+            zLoopsChangedNotification_unstable
+        ]),
         z.union([
             z.record(z.unknown()),
             z.null()

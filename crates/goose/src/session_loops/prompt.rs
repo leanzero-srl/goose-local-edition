@@ -10,7 +10,9 @@ use goose_sdk_types::custom_requests::{
 use serde::{Deserialize, Serialize};
 
 use super::record::parse_time;
-use super::rules::{cadence_label, clock_time, goal_first_line, render_steps, LastNextStep, StepFacts};
+use super::rules::{
+    cadence_label, clock_time, goal_first_line, render_steps, LastNextStep, StepFacts,
+};
 
 /// How the question tick n−1 asked was resolved (read by the runner from `needs_you.v0`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,7 +48,11 @@ fn outcome_words(outcome: Option<&LoopTickOutcome>) -> &'static str {
 }
 
 /// The step facts of tick `n`, from the record and the tick before it.
-pub fn step_facts(record: &LoopRecord, prev: Option<&LoopTickRecord>, working_dir: &str) -> StepFacts {
+pub fn step_facts(
+    record: &LoopRecord,
+    prev: Option<&LoopTickRecord>,
+    working_dir: &str,
+) -> StepFacts {
     StepFacts {
         state_file: record.state_file.clone(),
         check: record.check.clone(),
@@ -88,10 +94,7 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
     ));
     lines.push("(Now · Next · Found · Done; keep it short enough to read in one go).".to_string());
 
-    let steps = render_steps(
-        &record.steps,
-        &step_facts(record, prev, &facts.working_dir),
-    );
+    let steps = render_steps(&record.steps, &step_facts(record, prev, &facts.working_dir));
     if !steps.text.trim().is_empty() {
         lines.push(
             "What each tick does (the user's steps, as they left them in the dialog):".to_string(),
@@ -115,7 +118,11 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
             (None, Some(LoopTickOutcome::Failed { error, .. })) => {
                 last.push_str(&format!(": {}", error.trim()))
             }
-            (None, _) => last.push_str(": it ended without calling loop_report."),
+            (None, Some(LoopTickOutcome::NoReport)) => {
+                last.push_str(": it ended without calling loop_report.")
+            }
+            // A yield, a question or the user's stop ended it; the line after says which.
+            (None, _) => last.push('.'),
         }
         lines.push(last);
 

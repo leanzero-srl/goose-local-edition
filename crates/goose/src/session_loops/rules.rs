@@ -20,8 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::record::{fmt_time, parse_time};
 use super::templates::{
-    SLOTS, SLOT_CHECK, SLOT_GOAL_FIRST_LINE, SLOT_LAST_NEXT_STEP, SLOT_STATE_FILE,
-    SLOT_WORKING_DIR,
+    SLOTS, SLOT_CHECK, SLOT_GOAL_FIRST_LINE, SLOT_LAST_NEXT_STEP, SLOT_STATE_FILE, SLOT_WORKING_DIR,
 };
 use super::{LOOP_ID_PREFIX, TICK_ID_PREFIX};
 use crate::loop_clock::{parse_cadence, DeskClock, WorkWindow};
@@ -155,9 +154,15 @@ pub fn next_tick(
     let ended_at = parse_time(ended_at)?;
     match &record.cadence {
         LoopCadence::Every { every } => {
-            let clock = always_open(every)
-                .ok_or_else(|| format!("the loop's cadence \"{every}\" is not <n>s, <n>m or <n>h"))?;
+            let clock = always_open(every).ok_or_else(|| {
+                format!("the loop's cadence \"{every}\" is not <n>s, <n>m or <n>h")
+            })?;
             let started = parse_time(&last.started_at)?;
+            if started.checked_add_signed(clock.cadence).is_none() {
+                return Err(format!(
+                    "the cadence \"{every}\" reaches past the last date goose can hold"
+                ));
+            }
             let (at, why) = clock.next_tick(Some(started), now);
             let at = at.ok_or_else(|| format!("the clock named no next tick: {why}"))?;
             let reason = if why == "cadence" {
@@ -184,7 +189,15 @@ pub fn next_tick(
                     },
                 });
             };
-            let at = (ended_at + delay).max(now);
+            let Some(at) = ended_at.checked_add_signed(delay) else {
+                return Ok(NextTickDecision::WaitingYou {
+                    reason: LoopStatusReason::BadDelay {
+                        n: last.n,
+                        given: given.to_string(),
+                    },
+                });
+            };
+            let at = at.max(now);
             let reason = LoopNextReason::SelfPaced {
                 interval: given.to_string(),
                 reason: last.report.as_ref().and_then(|r| r.next_reason.clone()),
@@ -238,7 +251,10 @@ pub enum TickEnd {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cause: Option<CancelCause>,
     },
-    Errored { error_class: String, error: String },
+    Errored {
+        error_class: String,
+        error: String,
+    },
 }
 
 /// An open needs-you item the tick created (read by the runner from `needs_you.v0`).
@@ -288,11 +304,12 @@ pub fn check_runs_after(end: &TickEnd, report: Option<&LoopReport>, asked: bool)
 fn outcome_of(tick: &LoopTickRecord, facts: &TickFacts) -> LoopTickOutcome {
     match &facts.end {
         TickEnd::Cancelled {
-            cause: Some(CancelCause::Yield {
-                to_session,
-                to_chat,
-                way,
-            }),
+            cause:
+                Some(CancelCause::Yield {
+                    to_session,
+                    to_chat,
+                    way,
+                }),
         } => LoopTickOutcome::Yielded {
             to_session: to_session.clone(),
             to_chat: to_chat.clone(),
@@ -380,12 +397,13 @@ pub fn decide_after_tick(record: &LoopRecord, facts: &TickFacts) -> Result<Decis
     }
 
     let checked = matches!(outcome, LoopTickOutcome::Progress | LoopTickOutcome::Done);
-    let check_run = match (&record.check, checked) {
-        (Some(command), true) => Some(facts.check.as_ref().ok_or_else(|| {
-            format!("the check `{command}` has no run recorded after tick {n}")
-        })?),
-        _ => None,
-    };
+    let check_run =
+        match (&record.check, checked) {
+            (Some(command), true) => Some(facts.check.as_ref().ok_or_else(|| {
+                format!("the check `{command}` has no run recorded after tick {n}")
+            })?),
+            _ => None,
+        };
     if let (Some(command), Some(run)) = (&record.check, check_run) {
         if run.ran && run.exit == Some(0) {
             return decided(
@@ -575,8 +593,9 @@ pub fn ticks_due(record: &LoopRecord, now: DateTime<Utc>) -> Result<u32, String>
     }
     Ok(match &record.cadence {
         LoopCadence::Every { every } => {
-            let step = parse_cadence(every)
-                .ok_or_else(|| format!("the loop's cadence \"{every}\" is not <n>s, <n>m or <n>h"))?;
+            let step = parse_cadence(every).ok_or_else(|| {
+                format!("the loop's cadence \"{every}\" is not <n>s, <n>m or <n>h")
+            })?;
             let missed = (now - at).num_seconds() / step.num_seconds();
             u32::try_from(missed + 1).map_err(|_| format!("{} ticks came due", missed + 1))?
         }
@@ -915,7 +934,10 @@ pub fn tick_id(loop_id: &str, n: u32, uuid: &str) -> String {
 
 fn is_loop_id(id: &str) -> bool {
     id.strip_prefix(LOOP_ID_PREFIX).is_some_and(|hex| {
-        hex.len() == 8 && hex.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+        hex.len() == 8
+            && hex
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
     })
 }
 
@@ -992,8 +1014,12 @@ pub enum LastNextStep {
     /// This is the first tick.
     First,
     /// Tick `prev` named none (it ended without a report).
-    NamedNone { prev: u32 },
-    Named { text: String },
+    NamedNone {
+        prev: u32,
+    },
+    Named {
+        text: String,
+    },
 }
 
 /// The facts the slots are filled from.
@@ -1084,9 +1110,7 @@ pub fn render_steps(steps: &str, facts: &StepFacts) -> RenderedSteps {
             Piece::Slot(name) => match name {
                 SLOT_STATE_FILE => text.push_str(&format!("`{}`", facts.state_file)),
                 SLOT_WORKING_DIR => text.push_str(&format!("`{}`", facts.working_dir)),
-                SLOT_GOAL_FIRST_LINE => {
-                    text.push_str(&format!("\"{}\"", facts.goal_first_line))
-                }
+                SLOT_GOAL_FIRST_LINE => text.push_str(&format!("\"{}\"", facts.goal_first_line)),
                 SLOT_CHECK => match &facts.check {
                     Some(check) => text.push_str(&format!("`{check}`")),
                     None => text.push_str(NO_CHECK_SENTENCE),

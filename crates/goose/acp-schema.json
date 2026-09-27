@@ -13397,6 +13397,14 @@
           },
           "description": "User/scheduled sessions goose is doing background work for, oldest call first (Q-185).",
           "default": []
+        },
+        "looping": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LoopSummaryDto"
+          },
+          "description": "Sessions with a loop that has not ended (session loops, Q-228), each with its status as\nread now; an unreadable loop record is listed with its error.",
+          "default": []
         }
       },
       "required": [
@@ -13649,6 +13657,90 @@
         }
       ],
       "description": "What goose asks the model FOR a session besides the answer being written (Q-185): the call's\nkind, set once where the call is made (`goose::background_work`) and read by every surface that\nnames it — the session lists, the chat, the MLX engine card and the cut guard."
+    },
+    "LoopSummaryDto": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nextTickAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "One chat's loop, as the lists show it. Exactly one of `status` / `error`: an unreadable record\nis named, never skipped."
+    },
+    "LoopStatus": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "running",
+          "description": "A tick's turn is in flight."
+        },
+        {
+          "type": "string",
+          "const": "checking",
+          "description": "The check command runs after a tick."
+        },
+        {
+          "type": "string",
+          "const": "waiting",
+          "description": "The next tick is scheduled."
+        },
+        {
+          "type": "string",
+          "const": "waiting_turn",
+          "description": "A tick is due but must wait (a user turn, this chat's own turn or queued message, the\nprevious tick's reviewers, a way a user reply holds)."
+        },
+        {
+          "type": "string",
+          "const": "waiting_you",
+          "description": "A self-paced tick named no delay goose can read."
+        },
+        {
+          "type": "string",
+          "const": "needs_you",
+          "description": "A tick asked the user and the question is open, or its answer's turn still runs."
+        },
+        {
+          "type": "string",
+          "const": "paused",
+          "description": "By the user, by a self-pause rule, or because the owning goose was closed."
+        },
+        {
+          "type": "string",
+          "const": "ended",
+          "description": "A stop condition held."
+        },
+        {
+          "type": "string",
+          "const": "elsewhere",
+          "description": "Another live goose window runs this loop's clock."
+        }
+      ],
+      "description": "The loop's status (§4.7). `elsewhere` is never written: it is derived at read time for a loop\nwhose owner is another live goose process."
     },
     "ResolveNeedsYouRequest_unstable": {
       "type": "object",
@@ -15473,6 +15565,1760 @@
         }
       ]
     },
+    "LoopsGetRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "The loop of one chat. A PURE read: never claims the clock, never writes.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/get"
+    },
+    "LoopsGetResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "loop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effectiveStatus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The status as read now: `paused{closed}` when the owner is proven gone, `elsewhere` when\nanother live goose runs it, else the written status."
+        },
+        "effectiveReason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopStatusReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "description": "`loop` absent AND `error` absent = this chat has no loop. An unreadable record answers\n`error`, never an absent loop.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/get"
+    },
+    "LoopRecord": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "`lp_<8 hex>`, stable for the loop's life."
+        },
+        "goal": {
+          "type": "string",
+          "description": "The user's words, verbatim."
+        },
+        "template": {
+          "$ref": "#/$defs/LoopTemplateId"
+        },
+        "steps": {
+          "type": "string",
+          "description": "The template's step text as the user left it, slots included.",
+          "default": ""
+        },
+        "cadence": {
+          "$ref": "#/$defs/LoopCadence"
+        },
+        "stateFile": {
+          "type": "string",
+          "description": "Relative to the session's working dir."
+        },
+        "check": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A shell command run in the working dir after each tick."
+        },
+        "stopAfterTicks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The user's own tick count; absent by default.",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/LoopStatus"
+        },
+        "statusReason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopStatusReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nextTick": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopNextTick"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopOffer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopOwner"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ticks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LoopTickRecord"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "id",
+        "goal",
+        "template",
+        "cadence",
+        "stateFile",
+        "status",
+        "createdAt",
+        "startedAt"
+      ],
+      "description": "The loop record, `extension_data[\"loop.v0\"]` (§4.2). Written only through the session\nmanager's per-key read-modify-write."
+    },
+    "LoopTemplateId": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "quality",
+          "description": "Software quality loop: discover → critique → fix → prove."
+        },
+        {
+          "type": "string",
+          "const": "until_check",
+          "description": "Until a check passes."
+        },
+        {
+          "type": "string",
+          "const": "watch",
+          "description": "Watch and act."
+        },
+        {
+          "type": "string",
+          "const": "blank",
+          "description": "The goal alone."
+        }
+      ],
+      "description": "The starting template the user picked in the Start dialog (§7.4)."
+    },
+    "LoopCadence": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "every": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "every"
+            }
+          },
+          "required": [
+            "kind",
+            "every"
+          ],
+          "description": "Fixed: the time between tick starts, in the one cadence grammar (`<n>s|m|h`)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "self_paced"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "\"When goose decides\": each tick's report names its next delay and why."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "back_to_back"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "\"Right after each tick\": as soon as the tick just ended is recorded, checked and reviewed."
+        }
+      ],
+      "description": "When the next tick STARTS (§4.3). A cadence never cuts a tick or a check."
+    },
+    "LoopStatusReason": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "afterTick": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "by_you"
+            }
+          },
+          "required": [
+            "kind",
+            "afterTick"
+          ],
+          "description": "Pause, from the rail or `/loop pause`."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "you_stopped_tick"
+            }
+          },
+          "required": [
+            "kind",
+            "n"
+          ],
+          "description": "The user stopped the running tick (composer Stop, Escape, an interruption word)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blockedOn": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "blocked"
+            }
+          },
+          "required": [
+            "kind",
+            "n",
+            "blockedOn"
+          ],
+          "description": "The tick reported `blocked`."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "check_could_not_run"
+            }
+          },
+          "required": [
+            "kind",
+            "n",
+            "error"
+          ],
+          "description": "The check could not run (spawn error, a missing shell, stopped by the user). Never read as\na failed check."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prev": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "same_failure_twice"
+            }
+          },
+          "required": [
+            "kind",
+            "prev",
+            "n",
+            "error"
+          ],
+          "description": "Ticks `prev` and `n` failed with the same error class."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prev": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "no_report_twice"
+            }
+          },
+          "required": [
+            "kind",
+            "prev",
+            "n"
+          ],
+          "description": "Ticks `prev` and `n` both ended without a loop report."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prev": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "stalled"
+            }
+          },
+          "required": [
+            "kind",
+            "prev",
+            "n"
+          ],
+          "description": "Tick `n` reported progress, made no write or edit outside the state file, and named the\nsame next step as tick `prev`."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "closedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "closed"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "The goose that ran the clock is gone. `closedAt` is set when that goose released the loop\nitself (its last window closed); absent when it was proven gone afterwards (its time is not\nknown, and is never guessed)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "finishing_elsewhere"
+            }
+          },
+          "required": [
+            "kind",
+            "n"
+          ],
+          "description": "Paused from this window while tick `n` still finishes in the window that runs the loop."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "check": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "goal_met"
+            }
+          },
+          "required": [
+            "kind",
+            "n",
+            "check"
+          ],
+          "description": "The check passed after a tick whose verdict was done or progress."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "reported_done"
+            }
+          },
+          "required": [
+            "kind",
+            "n"
+          ],
+          "description": "No check is set and the tick reported done (the model's own claim, labelled as such)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "k": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "reached_count"
+            }
+          },
+          "required": [
+            "kind",
+            "k"
+          ],
+          "description": "The user's own tick count was reached."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "stopped_by_you"
+            }
+          },
+          "required": [
+            "kind",
+            "n"
+          ],
+          "description": "Stop loop, from the rail or `/loop stop`."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string"
+            },
+            "chat": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_turn"
+            }
+          },
+          "required": [
+            "kind",
+            "sessionId",
+            "chat"
+          ],
+          "description": "A user turn runs in this goose."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "refused": {
+              "$ref": "#/$defs/LoopRefuseReason"
+            },
+            "kind": {
+              "type": "string",
+              "const": "refused"
+            }
+          },
+          "required": [
+            "kind",
+            "refused"
+          ],
+          "description": "The renderer refused the offer."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "reviewers"
+            }
+          },
+          "required": [
+            "kind",
+            "n"
+          ],
+          "description": "Tick `n`'s end-of-turn reviewers still run on the same model."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "chat": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "way_held"
+            }
+          },
+          "required": [
+            "kind",
+            "node",
+            "chat",
+            "target"
+          ],
+          "description": "A user reply holds the way this tick would swap (the Mac-wide half)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "no_delay"
+            }
+          },
+          "required": [
+            "kind",
+            "n"
+          ],
+          "description": "Tick `n` named no delay."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "given": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "bad_delay"
+            }
+          },
+          "required": [
+            "kind",
+            "n",
+            "given"
+          ],
+          "description": "Tick `n` named a delay outside the cadence grammar."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "itemId": {
+              "type": "string"
+            },
+            "question": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "asked"
+            }
+          },
+          "required": [
+            "kind",
+            "n",
+            "itemId",
+            "question"
+          ],
+          "description": "Tick `n` asked the user and the question is open."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "answer_running"
+            }
+          },
+          "required": [
+            "kind",
+            "n"
+          ],
+          "description": "The user answered tick `n`'s question and that answer's turn runs."
+        }
+      ],
+      "description": "Why the loop has the status it has; every variant is a sentence the user reads (§4.6, §8.4)."
+    },
+    "LoopRefuseReason": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "turn_running"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "This chat already has a turn in flight."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "queued_message"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "The composer's queue for this chat is not empty."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pending_cancel"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "A stop of this chat's previous answer is still settling."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "load_failed"
+            }
+          },
+          "required": [
+            "kind",
+            "error"
+          ],
+          "description": "The session could not be loaded into the window."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "submit_failed"
+            }
+          },
+          "required": [
+            "kind",
+            "error"
+          ],
+          "description": "goose refused the tick's message."
+        }
+      ],
+      "description": "What a refused tick offer said (§5.1): the renderer could not submit the tick now."
+    },
+    "LoopNextTick": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/LoopNextReason"
+        }
+      },
+      "required": [
+        "at",
+        "reason"
+      ]
+    },
+    "LoopNextReason": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "first"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "The loop's first tick."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cadence"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "The previous start plus the cadence."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "overdue"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "The previous tick overran the cadence: as soon as it is recorded."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "interval": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "self_paced"
+            }
+          },
+          "required": [
+            "kind",
+            "interval"
+          ],
+          "description": "The delay the previous tick named, and its reason verbatim (absent when it gave none)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "back_to_back"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "after_your_turn"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "after_your_answer"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "on_wake"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "resume"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "now"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "\"Run a tick now\"."
+        }
+      ],
+      "description": "Why the next tick is at the time it is."
+    },
+    "LoopOffer": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "offeredAt": {
+          "type": "string"
+        },
+        "refused": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopRefuseReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "n",
+        "messageId",
+        "offeredAt"
+      ],
+      "description": "A due tick the runner offered the renderer (§5.1); cleared when `on_prompt` accepts it."
+    },
+    "LoopOwner": {
+      "type": "object",
+      "properties": {
+        "goosedPid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "goosedStartedAt": {
+          "type": "integer",
+          "description": "The process's start, unix seconds: with the pid, what proves it is still the owner.",
+          "minimum": 0
+        },
+        "appPid": {
+          "type": "integer",
+          "description": "goosed's parent (the app) at the claim: a goosed reparented away from it is an orphan.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "goosedPid",
+        "goosedStartedAt",
+        "appPid"
+      ],
+      "description": "Which goose process runs the loop's clock (§5.1)."
+    },
+    "LoopTickRecord": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "description": "1 = the loop's first tick.",
+          "minimum": 0
+        },
+        "origin": {
+          "$ref": "#/$defs/LoopTickOrigin"
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "firstMessageId": {
+          "type": "string",
+          "description": "The tick's prompt message (`looptick_<loopId>_<n>_<uuid>`); the next tick's marker ends\nits range."
+        },
+        "report": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopReport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopTickOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wrote": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Paths goose wrote or edited in the tick (`write`/`edit` diffs), the state file excluded.\nA shell command that changed files is not listed.",
+          "default": []
+        },
+        "check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopCheckRun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "served": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeServedTurnDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The `nodes.served` record of the tick's lease, when there is one."
+        },
+        "tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopTokenDelta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "n",
+        "origin",
+        "startedAt",
+        "firstMessageId"
+      ]
+    },
+    "LoopTickOrigin": {
+      "type": "string",
+      "enum": [
+        "first",
+        "cadence",
+        "now",
+        "self_paced",
+        "back_to_back",
+        "after_your_turn",
+        "after_your_answer",
+        "on_wake",
+        "resume"
+      ],
+      "description": "What started a tick."
+    },
+    "LoopReport": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "$ref": "#/$defs/LoopVerdict"
+        },
+        "summary": {
+          "type": "string",
+          "description": "What this tick did, with its evidence (command output, file:line)."
+        },
+        "nextStep": {
+          "type": "string",
+          "description": "The one concrete next step."
+        },
+        "nextIn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Self-paced only: `<n>s|m|h`."
+        },
+        "nextReason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why that delay."
+        },
+        "blockedOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Verdict `blocked`: what only the user can decide."
+        }
+      },
+      "required": [
+        "verdict",
+        "summary",
+        "nextStep"
+      ],
+      "description": "What the tick's `loop_report` call said, verbatim."
+    },
+    "LoopVerdict": {
+      "type": "string",
+      "enum": [
+        "progress",
+        "done",
+        "blocked"
+      ]
+    },
+    "LoopTickOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "progress"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "done"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "blocked"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "itemId": {
+              "type": "string"
+            },
+            "question": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "asked"
+            }
+          },
+          "required": [
+            "kind",
+            "itemId",
+            "question"
+          ],
+          "description": "The tick asked the user (`ask_user` ends the turn), decided by the runner from the\nsession's needs-you store, never by the model."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "errorClass": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "kind",
+            "errorClass",
+            "error"
+          ],
+          "description": "The turn errored."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "no_report"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "The turn ended without calling `loop_report`."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "toSession": {
+              "type": "string"
+            },
+            "toChat": {
+              "type": "string"
+            },
+            "way": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "yielded"
+            }
+          },
+          "required": [
+            "kind",
+            "toSession",
+            "toChat"
+          ],
+          "description": "The tick was cancelled for a user reply. `way` is set once the Mac-wide half knows it."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "stopped_by_you"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "The user stopped the tick or the loop."
+        }
+      ],
+      "description": "How a tick ended (§4.2). Absent on the tick in flight."
+    },
+    "LoopCheckRun": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Absent while the check runs."
+        },
+        "ran": {
+          "type": "boolean"
+        },
+        "exit": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "outputTail": {
+          "type": "string",
+          "description": "The longest suffix of the output within 1/64 of the session's context window (§4.4).",
+          "default": ""
+        },
+        "logPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The full output, in goose's data dir."
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command",
+        "startedAt",
+        "ran"
+      ],
+      "description": "One run of the check command after a tick. `ran: false` with `error` = it could not run\n(never a failed check)."
+    },
+    "LoopTokenDelta": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "total"
+      ],
+      "description": "Session token totals after − before the tick: a measurement, shown, never a decision."
+    },
+    "LoopsStartRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "template": {
+          "$ref": "#/$defs/LoopTemplateId"
+        },
+        "steps": {
+          "type": "string",
+          "default": ""
+        },
+        "cadence": {
+          "$ref": "#/$defs/LoopCadence"
+        },
+        "stateFile": {
+          "type": "string"
+        },
+        "check": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stopAfterTicks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sessionId",
+        "goal",
+        "template",
+        "cadence",
+        "stateFile"
+      ],
+      "description": "Start (or replace) this chat's loop; the first tick runs now. Claims the clock.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/start"
+    },
+    "LoopsChangeResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "loop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopRefusal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "The loop after a change, or the named refusal (nothing written).",
+      "x-side": "agent"
+    },
+    "LoopRefusal": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/LoopRefusalCode"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "reason"
+      ],
+      "description": "A named refusal: nothing was written."
+    },
+    "LoopRefusalCode": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "empty_goal",
+            "bad_cadence",
+            "empty_state_file",
+            "state_file_outside",
+            "unknown_slot",
+            "check_required",
+            "bad_stop_after",
+            "no_loop"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "runner_absent",
+          "description": "No loop runner in this goose process."
+        },
+        {
+          "type": "string",
+          "const": "extension_sync_absent",
+          "description": "The `loop_report` extension cannot be synced in this goose process."
+        },
+        {
+          "type": "string",
+          "const": "swarm_build",
+          "description": "The chat builds with the swarm."
+        },
+        {
+          "type": "string",
+          "const": "record_unreadable",
+          "description": "The loop record could not be read."
+        },
+        {
+          "type": "string",
+          "const": "refused",
+          "description": "The runner refused (its words)."
+        }
+      ]
+    },
+    "LoopsUpdateRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "patch": {
+          "$ref": "#/$defs/LoopEdit"
+        }
+      },
+      "required": [
+        "sessionId",
+        "patch"
+      ],
+      "description": "Edit the loop. Editing does not start a tick.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/update"
+    },
+    "LoopEdit": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "template": {
+          "$ref": "#/$defs/LoopTemplateId"
+        },
+        "steps": {
+          "type": "string",
+          "default": ""
+        },
+        "cadence": {
+          "$ref": "#/$defs/LoopCadence"
+        },
+        "stateFile": {
+          "type": "string"
+        },
+        "check": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stopAfterTicks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "goal",
+        "template",
+        "cadence",
+        "stateFile"
+      ],
+      "description": "Every field the Edit dialog shows, as the user left it (the whole editable set, so clearing\nthe check or the tick count is a value, not an absence)."
+    },
+    "LoopsControlRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/LoopControlAction"
+        }
+      },
+      "required": [
+        "sessionId",
+        "action"
+      ],
+      "description": "Pause / Resume / Stop loop / Run a tick now / Stop check. `resume` and `tickNow` claim the\nclock; the others write the record without claiming.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/control"
+    },
+    "LoopControlAction": {
+      "type": "string",
+      "enum": [
+        "pause",
+        "resume",
+        "stop",
+        "tickNow",
+        "stopCheck"
+      ]
+    },
+    "LoopsTickRefusedRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "loopId": {
+          "type": "string"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "$ref": "#/$defs/LoopRefuseReason"
+        }
+      },
+      "required": [
+        "sessionId",
+        "loopId",
+        "n",
+        "reason"
+      ],
+      "description": "The renderer could not submit an offered tick now; it sends `loops/ready` when that clears.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/tickRefused"
+    },
+    "LoopsTickRefusedResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopRefusal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/tickRefused"
+    },
+    "LoopsReadyRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "What refused an offer for this chat has cleared (the store's attempt ended, the queue\nemptied): re-send the open offer.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/ready"
+    },
+    "LoopsReadyResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "reoffered": {
+          "type": "boolean"
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopRefusal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "reoffered"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/ready"
+    },
+    "LoopsWakeRequest_unstable": {
+      "type": "object",
+      "description": "The Mac woke: re-read the wall clock (one tick if any were due, never a burst).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/wake"
+    },
+    "LoopsWakeResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "rearmed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopRefusal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "rearmed"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/wake"
+    },
+    "LoopsTemplatesRequest_unstable": {
+      "type": "object",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/templates"
+    },
+    "LoopsTemplatesResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "templates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LoopTemplateDto"
+          }
+        }
+      },
+      "required": [
+        "templates"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/templates"
+    },
+    "LoopTemplateDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/LoopTemplateId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "string",
+          "description": "The steps with their slots, as the dialog prefills them."
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The slot names the steps use (`state_file`, `check`, …)."
+        },
+        "suggestedCadence": {
+          "$ref": "#/$defs/LoopCadence"
+        },
+        "needsCheck": {
+          "type": "boolean",
+          "description": "The template cannot start without a check command."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "steps",
+        "slots",
+        "suggestedCadence",
+        "needsCheck"
+      ]
+    },
+    "LoopsListRequest_unstable": {
+      "type": "object",
+      "description": "Every chat's loop (ended ones included). A PURE read.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/list"
+    },
+    "LoopsListResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "loops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LoopSummaryDto"
+          }
+        }
+      },
+      "required": [
+        "loops"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/list"
+    },
     "GooseSessionNotification_unstable": {
       "type": "object",
       "properties": {
@@ -15718,6 +17564,55 @@
         "status"
       ],
       "description": "Live UI/session status. This is not conversation transcript content, and\nshould not be persisted or replayed as history."
+    },
+    "LoopsTickDueNotification_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "loopId": {
+          "type": "string"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "loopId",
+        "n",
+        "messageId",
+        "prompt"
+      ],
+      "description": "A loop tick is due in this chat (session loops, design DESIGN-SESSION-LOOPS.md §5.1): the\nrenderer submits `prompt` as a user message with id `messageId` through the same door a typed\nmessage uses, carrying `_meta.goose.loopTick = {loopId, n, messageId}`, or answers\n`loops/tickRefused`. The offer stands until goosed accepts it; a repeat of the same\n`(loopId, n, messageId)` is the same offer, never a second tick.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/tickDue"
+    },
+    "LoopsChangedNotification_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "loop": {
+          "$ref": "#/$defs/LoopRecord"
+        }
+      },
+      "required": [
+        "sessionId",
+        "loop"
+      ],
+      "description": "A chat's loop record changed (the rail and the pills update on this event, never on a poll).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/loops/changed"
     },
     "RequestRecipeParams_unstable": {
       "type": "object",
@@ -17350,6 +19245,87 @@
                   ],
                   "description": "Params for _goose/unstable/nodes/ensureServing",
                   "title": "NodesEnsureServingRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsGetRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/get",
+                  "title": "LoopsGetRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsStartRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/start",
+                  "title": "LoopsStartRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsUpdateRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/update",
+                  "title": "LoopsUpdateRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsControlRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/control",
+                  "title": "LoopsControlRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsTickRefusedRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/tickRefused",
+                  "title": "LoopsTickRefusedRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsReadyRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/ready",
+                  "title": "LoopsReadyRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsWakeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/wake",
+                  "title": "LoopsWakeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsTemplatesRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/templates",
+                  "title": "LoopsTemplatesRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsListRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/list",
+                  "title": "LoopsListRequest_unstable"
                 }
               ]
             },
@@ -18364,6 +20340,62 @@
                         }
                       ],
                       "title": "NodesEnsureServingResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LoopsGetResponse_unstable"
+                        }
+                      ],
+                      "title": "LoopsGetResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LoopsChangeResponse_unstable"
+                        }
+                      ],
+                      "title": "LoopsChangeResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LoopsTickRefusedResponse_unstable"
+                        }
+                      ],
+                      "title": "LoopsTickRefusedResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LoopsReadyResponse_unstable"
+                        }
+                      ],
+                      "title": "LoopsReadyResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LoopsWakeResponse_unstable"
+                        }
+                      ],
+                      "title": "LoopsWakeResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LoopsTemplatesResponse_unstable"
+                        }
+                      ],
+                      "title": "LoopsTemplatesResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/LoopsListResponse_unstable"
+                        }
+                      ],
+                      "title": "LoopsListResponse_unstable"
                     }
                   ]
                 },
@@ -18428,6 +20460,24 @@
                   ],
                   "description": "Params for _goose/unstable/session/update",
                   "title": "GooseSessionNotification_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsTickDueNotification_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/tickDue",
+                  "title": "LoopsTickDueNotification_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LoopsChangedNotification_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/loops/changed",
+                  "title": "LoopsChangedNotification_unstable"
                 }
               ]
             },

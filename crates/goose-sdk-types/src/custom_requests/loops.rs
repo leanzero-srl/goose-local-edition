@@ -263,7 +263,10 @@ pub enum LoopTickOutcome {
         question: String,
     },
     /// The turn errored.
-    Failed { error_class: String, error: String },
+    Failed {
+        error_class: String,
+        error: String,
+    },
     /// The turn ended without calling `loop_report`.
     NoReport,
     /// The tick was cancelled for a user reply. `way` is set once the Mac-wide half knows it.

@@ -208,4 +208,56 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn the_loops_notifications_are_registered_with_their_wire_shapes() {
+        let mut generator = SchemaGenerator::default();
+        let methods: Vec<String> = custom_notification_schemas(&mut generator)
+            .into_iter()
+            .map(|s| s.method)
+            .collect();
+        assert_eq!(
+            methods,
+            vec![
+                "_goose/unstable/session/update",
+                "_goose/unstable/loops/tickDue",
+                "_goose/unstable/loops/changed",
+            ]
+        );
+
+        let due = LoopsTickDueNotification {
+            session_id: "s1".into(),
+            loop_id: "lp_0a1b2c3d".into(),
+            n: 3,
+            message_id: "looptick_lp_0a1b2c3d_3_abc".into(),
+            prompt: "Loop tick 3".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(due).unwrap(),
+            json!({
+                "sessionId": "s1",
+                "loopId": "lp_0a1b2c3d",
+                "n": 3,
+                "messageId": "looptick_lp_0a1b2c3d_3_abc",
+                "prompt": "Loop tick 3"
+            })
+        );
+
+        let changed = serde_json::to_value(LoopsChangedNotification {
+            session_id: "s1".into(),
+            record: LoopRecord::default(),
+        })
+        .unwrap();
+        assert_eq!(changed["loop"]["status"], json!("waiting"));
+        assert_eq!(changed["loop"]["cadence"], json!({"kind": "self_paced"}));
+    }
+
+    #[test]
+    fn session_activity_from_a_backend_without_loops_reads_no_looping_sessions() {
+        let old: crate::custom_requests::SessionActivityResponse = serde_json::from_value(json!({
+            "running": [], "needsYou": [], "failed": []
+        }))
+        .unwrap();
+        assert!(old.looping.is_empty());
+    }
 }
