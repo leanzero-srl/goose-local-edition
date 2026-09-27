@@ -100,6 +100,7 @@ export function selectOrphanedGoosed(
 }
 
 const execFileAsync = promisify(execFile);
+const PS_TIMEOUT_MS = 4000;
 
 const psTable = async (pids?: number[]): Promise<string> => {
   const select = pids ? ['-p', pids.join(',')] : ['-ax'];
@@ -112,13 +113,17 @@ const psTable = async (pids?: number[]): Promise<string> => {
         encoding: 'utf8',
         maxBuffer: 16 * 1024 * 1024,
         env: { ...process.env, LC_ALL: 'C' },
+        // The launch awaits this scan: a `ps` that never answers must not hold the app. Transport,
+        // like the benchmark cancel's ps (main.ts) — it bounds a system call, never model work.
+        timeout: PS_TIMEOUT_MS,
       }
     );
     return stdout;
   } catch (error) {
-    // `ps -p` exits 1 when none of the pids exist — that IS the answer (all gone).
-    const stdout = (error as { stdout?: string }).stdout;
-    if (pids && typeof stdout === 'string') return stdout;
+    // `ps -p` exits 1 when none of the pids exist — that IS the answer (all gone). Anything else
+    // (a timeout, a signal) is not an answer and must not read as "gone".
+    const failed = error as { code?: unknown; stdout?: string };
+    if (pids && failed.code === 1 && typeof failed.stdout === 'string') return failed.stdout;
     throw error;
   }
 };

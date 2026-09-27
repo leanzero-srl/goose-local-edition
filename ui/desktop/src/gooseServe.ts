@@ -667,6 +667,18 @@ export const startGooseServe = async ({
         if (sigkillTimer) clearTimeout(sigkillTimer);
         resolve();
       });
+      // The quit waits on this stop, so it must end even when no exit ever arrives (a SIGKILL
+      // that could not land; taskkill failing on Windows): one more grace window, then the stop
+      // gives up on this goosed — loudly — instead of holding the app open forever.
+      const giveUp = () => {
+        sigkillTimer = setTimeout(() => {
+          if (exited) return;
+          logger.error(
+            `goose serve (pid ${gooseProcess.pid ?? '?'}) never exited; the stop gives up on it and the app goes on without it`
+          );
+          resolve();
+        }, sigkillAfterMs);
+      };
 
       logger.info(`Terminating goose serve (pid ${gooseProcess.pid ?? '?'})`);
       try {
@@ -681,13 +693,16 @@ export const startGooseServe = async ({
         logger.error('Error while terminating goose serve process:', error);
       }
 
-      if (process.platform !== 'win32') {
+      if (process.platform === 'win32') {
+        giveUp();
+      } else {
         sigkillTimer = setTimeout(() => {
           if (exited) return;
           logger.error(
             `goose serve (pid ${gooseProcess.pid ?? '?'}) did not exit within ${sigkillAfterMs} ms of SIGTERM — its teardown outlived every supervisor's grace; sending SIGKILL`
           );
           killGroupOrProcess(gooseProcess, 'SIGKILL');
+          giveUp();
         }, sigkillAfterMs);
       }
     });

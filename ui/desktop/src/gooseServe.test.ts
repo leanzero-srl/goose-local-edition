@@ -342,7 +342,9 @@ describe('startGooseServe — goosed ends with its app, and the stop waits for i
         readinessFetch: ready,
       });
       try {
-        await expect(waitForFileLines(argsPath)).resolves.toContain('--exit-when-stdin-closes');
+        // The fake records its argv and then blocks in `cat`: once the file exists it is reading.
+        await waitFor(() => fs.existsSync(argsPath), 'the fake goosed to record its argv');
+        expect(fs.readFileSync(argsPath, 'utf8').split('\n')).toContain('--exit-when-stdin-closes');
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(fs.existsSync(eofPath)).toBe(false);
         expect(result.hasExited()).toBe(false);
