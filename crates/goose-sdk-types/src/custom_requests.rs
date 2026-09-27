@@ -14,6 +14,8 @@ mod needs_you;
 pub use needs_you::*;
 mod nodes;
 pub use nodes::*;
+mod loops;
+pub use loops::*;
 
 /// Schema descriptor for a single custom method, produced by the
 /// `#[custom_methods]` macro's generated `custom_method_schemas()` function.

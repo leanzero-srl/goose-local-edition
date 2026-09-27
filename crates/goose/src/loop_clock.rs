@@ -49,17 +49,21 @@ fn default_to() -> String {
     "18:00".to_string()
 }
 
+/// `<n>s|m|h`, n > 0. A person types this (the desk manifest, a session loop's cadence, `/loop
+/// every`), so a value chrono cannot hold, or a last character that is not one byte, is `None`
+/// rather than a panic.
 pub fn parse_cadence(s: &str) -> Option<Duration> {
     let s = s.trim();
-    let (num, unit) = s.split_at(s.len().checked_sub(1)?);
+    let unit = s.chars().last()?;
+    let num = s.strip_suffix(unit)?;
     let n: i64 = num.trim().parse().ok()?;
     if n <= 0 {
         return None;
     }
     match unit {
-        "s" => Some(Duration::seconds(n)),
-        "m" => Some(Duration::minutes(n)),
-        "h" => Some(Duration::hours(n)),
+        's' => Duration::try_seconds(n),
+        'm' => Duration::try_minutes(n),
+        'h' => Duration::try_hours(n),
         _ => None,
     }
 }
@@ -235,6 +239,20 @@ mod tests {
         assert_eq!(parse_cadence("90s"), Some(Duration::seconds(90)));
         assert_eq!(parse_cadence("soon"), None);
         assert_eq!(parse_cadence("0m"), None);
+    }
+
+    #[test]
+    fn cadence_a_person_types_never_panics() {
+        assert_eq!(parse_cadence("10é"), None);
+        assert_eq!(parse_cadence("é"), None);
+        assert_eq!(parse_cadence(""), None);
+        assert_eq!(parse_cadence("999999999999999m"), None);
+        assert_eq!(parse_cadence("9223372036854775807h"), None);
+        assert_eq!(parse_cadence("99999999999999999999s"), None);
+        assert_eq!(
+            parse_cadence("9223372036854775s"),
+            Some(Duration::seconds(9_223_372_036_854_775))
+        );
     }
 
     #[test]

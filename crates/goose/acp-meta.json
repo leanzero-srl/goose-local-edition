@@ -874,12 +874,65 @@
       "method": "_goose/unstable/nodes/ensureServing",
       "requestType": "NodesEnsureServingRequest_unstable",
       "responseType": "NodesEnsureServingResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/get",
+      "requestType": "LoopsGetRequest_unstable",
+      "responseType": "LoopsGetResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/start",
+      "requestType": "LoopsStartRequest_unstable",
+      "responseType": "LoopsChangeResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/update",
+      "requestType": "LoopsUpdateRequest_unstable",
+      "responseType": "LoopsChangeResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/control",
+      "requestType": "LoopsControlRequest_unstable",
+      "responseType": "LoopsChangeResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/tickRefused",
+      "requestType": "LoopsTickRefusedRequest_unstable",
+      "responseType": "LoopsTickRefusedResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/ready",
+      "requestType": "LoopsReadyRequest_unstable",
+      "responseType": "LoopsReadyResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/wake",
+      "requestType": "LoopsWakeRequest_unstable",
+      "responseType": "LoopsWakeResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/templates",
+      "requestType": "LoopsTemplatesRequest_unstable",
+      "responseType": "LoopsTemplatesResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/list",
+      "requestType": "LoopsListRequest_unstable",
+      "responseType": "LoopsListResponse_unstable"
     }
   ],
   "notifications": [
     {
       "method": "_goose/unstable/session/update",
       "paramsType": "GooseSessionNotification_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/tickDue",
+      "paramsType": "LoopsTickDueNotification_unstable"
+    },
+    {
+      "method": "_goose/unstable/loops/changed",
+      "paramsType": "LoopsChangedNotification_unstable"
     }
   ],
   "agentRequests": [

@@ -162,12 +162,14 @@ impl GooseAcpAgent {
             })
             .collect();
         let background = self.background_sessions().await;
+        let looping = crate::session_loops::acp::looping(&self.session_manager).await?;
         Ok(SessionActivityResponse {
             running,
             needs_you,
             failed,
             stopped,
             background,
+            looping,
         })
     }
 

@@ -1427,4 +1427,92 @@ impl GooseAcpAgent {
     ) -> Result<NodesEnsureServingResponse, agent_client_protocol::Error> {
         crate::nodes::acp::ensure_serving(req).await
     }
+
+    #[custom_method(LoopsGetRequest)]
+    async fn dispatch_loops_get(
+        &self,
+        req: LoopsGetRequest,
+    ) -> Result<LoopsGetResponse, agent_client_protocol::Error> {
+        crate::session_loops::acp::get(&self.session_manager, req).await
+    }
+
+    #[custom_method(LoopsStartRequest)]
+    async fn dispatch_loops_start(
+        &self,
+        req: LoopsStartRequest,
+    ) -> Result<LoopsChangeResponse, agent_client_protocol::Error> {
+        let session_id = req.session_id.clone();
+        let response = crate::session_loops::acp::start(&self.session_manager, req).await?;
+        if let Some(record) = &response.record {
+            let agent = self.get_session_agent(&session_id).await?;
+            crate::session_loops::seam::sync_loop_extension(agent, &session_id, record)
+                .await
+                .map_err(|e| agent_client_protocol::Error::internal_error().data(e))?;
+        }
+        Ok(response)
+    }
+
+    #[custom_method(LoopsUpdateRequest)]
+    async fn dispatch_loops_update(
+        &self,
+        req: LoopsUpdateRequest,
+    ) -> Result<LoopsChangeResponse, agent_client_protocol::Error> {
+        crate::session_loops::acp::update(&self.session_manager, req).await
+    }
+
+    #[custom_method(LoopsControlRequest)]
+    async fn dispatch_loops_control(
+        &self,
+        req: LoopsControlRequest,
+    ) -> Result<LoopsChangeResponse, agent_client_protocol::Error> {
+        let session_id = req.session_id.clone();
+        let response = crate::session_loops::acp::control(req).await?;
+        if let Some(record) = &response.record {
+            let agent = self.get_session_agent(&session_id).await?;
+            crate::session_loops::seam::sync_loop_extension(agent, &session_id, record)
+                .await
+                .map_err(|e| agent_client_protocol::Error::internal_error().data(e))?;
+        }
+        Ok(response)
+    }
+
+    #[custom_method(LoopsTickRefusedRequest)]
+    async fn dispatch_loops_tick_refused(
+        &self,
+        req: LoopsTickRefusedRequest,
+    ) -> Result<LoopsTickRefusedResponse, agent_client_protocol::Error> {
+        crate::session_loops::acp::tick_refused(req).await
+    }
+
+    #[custom_method(LoopsReadyRequest)]
+    async fn dispatch_loops_ready(
+        &self,
+        req: LoopsReadyRequest,
+    ) -> Result<LoopsReadyResponse, agent_client_protocol::Error> {
+        crate::session_loops::acp::ready(req).await
+    }
+
+    #[custom_method(LoopsWakeRequest)]
+    async fn dispatch_loops_wake(
+        &self,
+        _req: LoopsWakeRequest,
+    ) -> Result<LoopsWakeResponse, agent_client_protocol::Error> {
+        crate::session_loops::acp::wake().await
+    }
+
+    #[custom_method(LoopsTemplatesRequest)]
+    async fn dispatch_loops_templates(
+        &self,
+        _req: LoopsTemplatesRequest,
+    ) -> Result<LoopsTemplatesResponse, agent_client_protocol::Error> {
+        Ok(crate::session_loops::acp::templates())
+    }
+
+    #[custom_method(LoopsListRequest)]
+    async fn dispatch_loops_list(
+        &self,
+        _req: LoopsListRequest,
+    ) -> Result<LoopsListResponse, agent_client_protocol::Error> {
+        crate::session_loops::acp::list(&self.session_manager).await
+    }
 }

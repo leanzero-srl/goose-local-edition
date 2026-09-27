@@ -96,6 +96,10 @@ pub struct SessionActivityResponse {
     /// User/scheduled sessions goose is doing background work for, oldest call first (Q-185).
     #[serde(default)]
     pub background: Vec<BackgroundSessionDto>,
+    /// Sessions with a loop that has not ended (session loops, Q-228), each with its status as
+    /// read now; an unreadable loop record is listed with its error.
+    #[serde(default)]
+    pub looping: Vec<super::LoopSummaryDto>,
 }
 
 /// What goose asks the model FOR a session besides the answer being written (Q-185): the call's

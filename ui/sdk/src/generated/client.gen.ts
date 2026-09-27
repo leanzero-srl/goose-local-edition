@@ -150,6 +150,24 @@ import type {
   LocalInferenceModelSettingsUpdateResponse_unstable,
   LocalInferenceModelsListRequest_unstable,
   LocalInferenceModelsListResponse_unstable,
+  LoopsChangeResponse_unstable,
+  LoopsChangedNotification_unstable,
+  LoopsControlRequest_unstable,
+  LoopsGetRequest_unstable,
+  LoopsGetResponse_unstable,
+  LoopsListRequest_unstable,
+  LoopsListResponse_unstable,
+  LoopsReadyRequest_unstable,
+  LoopsReadyResponse_unstable,
+  LoopsStartRequest_unstable,
+  LoopsTemplatesRequest_unstable,
+  LoopsTemplatesResponse_unstable,
+  LoopsTickDueNotification_unstable,
+  LoopsTickRefusedRequest_unstable,
+  LoopsTickRefusedResponse_unstable,
+  LoopsUpdateRequest_unstable,
+  LoopsWakeRequest_unstable,
+  LoopsWakeResponse_unstable,
   MlxEngineBrowseFiltersRequest_unstable,
   MlxEngineBrowseFiltersResponse_unstable,
   MlxEngineBrowseRequest_unstable,
@@ -371,6 +389,15 @@ import {
   zLocalInferenceModelSettingsReadResponse_unstable,
   zLocalInferenceModelSettingsUpdateResponse_unstable,
   zLocalInferenceModelsListResponse_unstable,
+  zLoopsChangeResponse_unstable,
+  zLoopsChangedNotification_unstable,
+  zLoopsGetResponse_unstable,
+  zLoopsListResponse_unstable,
+  zLoopsReadyResponse_unstable,
+  zLoopsTemplatesResponse_unstable,
+  zLoopsTickDueNotification_unstable,
+  zLoopsTickRefusedResponse_unstable,
+  zLoopsWakeResponse_unstable,
   zMlxEngineBrowseFiltersResponse_unstable,
   zMlxEngineBrowseResponse_unstable,
   zMlxEngineDistributedConfigResponse_unstable,
@@ -2325,11 +2352,110 @@ export class GooseExtClient {
       raw,
     ) as NodesEnsureServingResponse_unstable;
   }
+
+  async loopsGet_unstable(
+    params: LoopsGetRequest_unstable,
+  ): Promise<LoopsGetResponse_unstable> {
+    const raw = await this.conn.extMethod("_goose/unstable/loops/get", params);
+    return zLoopsGetResponse_unstable.parse(raw) as LoopsGetResponse_unstable;
+  }
+
+  async loopsStart_unstable(
+    params: LoopsStartRequest_unstable,
+  ): Promise<LoopsChangeResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/loops/start",
+      params,
+    );
+    return zLoopsChangeResponse_unstable.parse(
+      raw,
+    ) as LoopsChangeResponse_unstable;
+  }
+
+  async loopsUpdate_unstable(
+    params: LoopsUpdateRequest_unstable,
+  ): Promise<LoopsChangeResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/loops/update",
+      params,
+    );
+    return zLoopsChangeResponse_unstable.parse(
+      raw,
+    ) as LoopsChangeResponse_unstable;
+  }
+
+  async loopsControl_unstable(
+    params: LoopsControlRequest_unstable,
+  ): Promise<LoopsChangeResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/loops/control",
+      params,
+    );
+    return zLoopsChangeResponse_unstable.parse(
+      raw,
+    ) as LoopsChangeResponse_unstable;
+  }
+
+  async loopsTickRefused_unstable(
+    params: LoopsTickRefusedRequest_unstable,
+  ): Promise<LoopsTickRefusedResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/loops/tickRefused",
+      params,
+    );
+    return zLoopsTickRefusedResponse_unstable.parse(
+      raw,
+    ) as LoopsTickRefusedResponse_unstable;
+  }
+
+  async loopsReady_unstable(
+    params: LoopsReadyRequest_unstable,
+  ): Promise<LoopsReadyResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/loops/ready",
+      params,
+    );
+    return zLoopsReadyResponse_unstable.parse(
+      raw,
+    ) as LoopsReadyResponse_unstable;
+  }
+
+  async loopsWake_unstable(
+    params: LoopsWakeRequest_unstable,
+  ): Promise<LoopsWakeResponse_unstable> {
+    const raw = await this.conn.extMethod("_goose/unstable/loops/wake", params);
+    return zLoopsWakeResponse_unstable.parse(raw) as LoopsWakeResponse_unstable;
+  }
+
+  async loopsTemplates_unstable(
+    params: LoopsTemplatesRequest_unstable,
+  ): Promise<LoopsTemplatesResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/loops/templates",
+      params,
+    );
+    return zLoopsTemplatesResponse_unstable.parse(
+      raw,
+    ) as LoopsTemplatesResponse_unstable;
+  }
+
+  async loopsList_unstable(
+    params: LoopsListRequest_unstable,
+  ): Promise<LoopsListResponse_unstable> {
+    const raw = await this.conn.extMethod("_goose/unstable/loops/list", params);
+    return zLoopsListResponse_unstable.parse(raw) as LoopsListResponse_unstable;
+  }
 }
 
 export interface GooseExtNotifications {
   unstable_sessionUpdate?: (
     notification: GooseSessionNotification_unstable,
+  ) => Promise<void>;
+  unstable_loopsTickDue?: (
+    notification: LoopsTickDueNotification_unstable,
+  ) => Promise<void>;
+  unstable_loopsChanged?: (
+    notification: LoopsChangedNotification_unstable,
   ) => Promise<void>;
 }
 
@@ -2358,6 +2484,20 @@ export function installGooseExtNotificationDispatcher(
             params,
           ) as GooseSessionNotification_unstable;
           await callbacks.unstable_sessionUpdate?.(parsed);
+          return;
+        }
+        case "_goose/unstable/loops/tickDue": {
+          const parsed = zLoopsTickDueNotification_unstable.parse(
+            params,
+          ) as LoopsTickDueNotification_unstable;
+          await callbacks.unstable_loopsTickDue?.(parsed);
+          return;
+        }
+        case "_goose/unstable/loops/changed": {
+          const parsed = zLoopsChangedNotification_unstable.parse(
+            params,
+          ) as LoopsChangedNotification_unstable;
+          await callbacks.unstable_loopsChanged?.(parsed);
           return;
         }
         default:
