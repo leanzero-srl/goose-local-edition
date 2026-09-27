@@ -243,7 +243,6 @@ pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
     let mut sources: Vec<SourceEntry> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let home = dirs::home_dir();
     let config = Paths::config_dir();
 
     let local_recipe_dirs: Vec<PathBuf> = vec![
@@ -259,13 +258,12 @@ pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
             p.split(sep).map(PathBuf::from).collect::<Vec<_>>()
         })
         .chain(
+            // goose's own folders, which hang from GOOSE_PATH_ROOT like its agents (Q-197).
             [
-                home.as_ref().map(|h| h.join(".goose/recipes")),
-                Some(config.join("recipes")),
-                home.as_ref().map(|h| h.join(".agents/recipes")),
-            ]
-            .into_iter()
-            .flatten(),
+                Paths::in_legacy_home_dir("recipes"),
+                config.join("recipes"),
+                Paths::in_agents_home_dir("recipes"),
+            ],
         )
         .collect();
 
@@ -275,15 +273,7 @@ pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
         working_dir.join(".agents/agents"),
     ];
 
-    let global_agent_dirs: Vec<PathBuf> = [
-        home.as_ref().map(|h| h.join(".goose/agents")),
-        home.as_ref().map(|h| h.join(".agents/agents")),
-        Some(config.join("agents")),
-        home.as_ref().map(|h| h.join(".claude/agents")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let global_agent_dirs = crate::sources::global_agent_roots();
 
     scan_recipes_from_dir(
         working_dir,
@@ -3035,5 +3025,56 @@ You review code."#;
             .await
             .unwrap();
         assert!(extract_text(&result.content[0]).contains("final output"));
+    }
+
+    /// Q-197: summon discovers global agents and recipes from goose's own folders under
+    /// GOOSE_PATH_ROOT — it read `~/.agents/agents`, `~/.goose/agents` and `~/.agents/recipes` from
+    /// the owner's home, so an isolated profile delegated to the owner's agents.
+    #[test]
+    fn summon_discovers_global_agents_and_recipes_under_the_path_root() {
+        let root = TempDir::new().unwrap();
+        let work = TempDir::new().unwrap();
+        let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        for (dir, name) in [
+            (".agents/agents", "q197-agents"),
+            (".goose/agents", "q197-goose"),
+        ] {
+            let dir = root.path().join(dir);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join(format!("{name}.md")),
+                format!("---\nname: {name}\ndescription: d\n---\nbody"),
+            )
+            .unwrap();
+        }
+        for (dir, name) in [
+            (".agents/recipes", "q197-agents-recipe"),
+            (".goose/recipes", "q197-goose-recipe"),
+        ] {
+            let dir = root.path().join(dir);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join(format!("{name}.yaml")),
+                "title: T\ndescription: d\ninstructions: i",
+            )
+            .unwrap();
+        }
+
+        let sources = discover_filesystem_sources(work.path());
+        let found = |name: &str, kind: SourceType| {
+            sources
+                .iter()
+                .any(|s| s.name == name && s.source_type == kind)
+        };
+        assert!(found("q197-agents", SourceType::Agent), "{sources:?}");
+        assert!(found("q197-goose", SourceType::Agent), "{sources:?}");
+        assert!(
+            found("q197-agents-recipe", SourceType::Recipe),
+            "{sources:?}"
+        );
+        assert!(
+            found("q197-goose-recipe", SourceType::Recipe),
+            "{sources:?}"
+        );
     }
 }

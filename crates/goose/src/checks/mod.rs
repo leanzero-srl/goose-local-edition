@@ -5,6 +5,7 @@
 //! User-facing CRUD lives in `crate::sources` for parity with skills and
 //! projects; `goose review` consumes [`Check`] and [`discover`] directly.
 
+use crate::config::paths::Paths;
 use crate::sources::parse_frontmatter;
 use anyhow::{anyhow, bail, Context, Result};
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
@@ -276,10 +277,22 @@ fn synthesize_review_md_check(scope_dir: &str, path: &Path, body: &str) -> Check
 ///
 /// The first existing directory wins for a given check name; closer scopes
 /// (repo root, then sub-trees) shadow these globals when names collide.
+///
+/// goose's own folder is goose's config dir's `checks` under GOOSE_PATH_ROOT (Q-197: an isolated
+/// profile ran the owner's `~/.config/goose/checks`); unset it stays `$HOME/.config/goose/checks`
+/// exactly as before. `~/.config/agents/checks` is the shared cross-tool folder and stays in the
+/// owner's home, as `~/.config/agents/skills` does.
 pub fn global_checks_dirs() -> Vec<PathBuf> {
+    let home = dirs_home();
     let mut dirs = Vec::new();
-    if let Some(home) = dirs_home() {
-        dirs.push(home.join(".config").join("goose").join("checks"));
+    match Paths::root_override() {
+        Some(_) => dirs.push(Paths::in_config_dir("checks")),
+        None => dirs.extend(
+            home.iter()
+                .map(|home| home.join(".config").join("goose").join("checks")),
+        ),
+    }
+    if let Some(home) = home {
         dirs.push(home.join(".config").join("agents").join("checks"));
     }
     dirs
@@ -738,5 +751,21 @@ tools: [Bash, Read, Grep]
         );
         let result = discover_with_globals(root, &[], &[]).unwrap();
         assert_eq!(result.checks.len(), 1);
+    }
+
+    /// Q-197: under GOOSE_PATH_ROOT goose's global checks are `<root>/config/checks`, never the
+    /// owner's `~/.config/goose/checks`; the cross-tool `~/.config/agents/checks` stays home.
+    #[test]
+    fn global_checks_hang_from_the_path_root() {
+        let root = tempdir().unwrap();
+        let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        let home = dirs_home().unwrap();
+        assert_eq!(
+            global_checks_dirs(),
+            vec![
+                root.path().join("config").join("checks"),
+                home.join(".config").join("agents").join("checks"),
+            ]
+        );
     }
 }

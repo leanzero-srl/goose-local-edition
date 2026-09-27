@@ -32,9 +32,8 @@ fn local_recipe_dirs() -> Vec<PathBuf> {
     if let Ok(cwd) = env::current_dir() {
         local_dirs.push(cwd.join(".agents/recipes"));
     }
-    if let Some(home) = dirs::home_dir() {
-        local_dirs.push(home.join(".agents/recipes"));
-    }
+    // goose's own `.agents` home, under GOOSE_PATH_ROOT when set (Q-197).
+    local_dirs.push(Paths::in_agents_home_dir("recipes"));
 
     let mut dirs: Vec<PathBuf> = local_dirs
         .into_iter()

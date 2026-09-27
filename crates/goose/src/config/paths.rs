@@ -28,7 +28,6 @@ impl Paths {
                 DirType::Data => base.join("data"),
                 DirType::State => base.join("state"),
                 DirType::Plugins => base.join(".agents").join("plugins"),
-                DirType::Agents => base.join(".agents").join("agents"),
                 DirType::AgentsHome => base.join(".agents"),
             }
         } else {
@@ -47,7 +46,6 @@ impl Paths {
                 DirType::Data => strategy.data_dir(),
                 DirType::State => strategy.state_dir().unwrap_or(strategy.data_dir()),
                 DirType::Plugins => strategy.home_dir().join(".agents").join("plugins"),
-                DirType::Agents => strategy.home_dir().join(".agents").join("agents"),
                 DirType::AgentsHome => strategy.home_dir().join(".agents"),
             }
         }
@@ -69,16 +67,20 @@ impl Paths {
         Self::get_dir(DirType::Plugins)
     }
 
-    pub fn agents_dir() -> PathBuf {
-        Self::get_dir(DirType::Agents)
-    }
-
     pub fn agents_home_dir() -> PathBuf {
         Self::get_dir(DirType::AgentsHome)
     }
 
     pub fn in_agents_home_dir(subpath: &str) -> PathBuf {
         Self::agents_home_dir().join(subpath)
+    }
+
+    /// goose's legacy `~/.goose` (global agents and recipes predate `.agents`): the sibling of
+    /// [`Self::agents_home_dir`], so `<GOOSE_PATH_ROOT>/.goose` under a root (Q-197).
+    pub fn in_legacy_home_dir(subpath: &str) -> PathBuf {
+        Self::agents_home_dir()
+            .with_file_name(".goose")
+            .join(subpath)
     }
 
     pub fn in_state_dir(subpath: &str) -> PathBuf {
@@ -99,7 +101,6 @@ enum DirType {
     Data,
     State,
     Plugins,
-    Agents,
     AgentsHome,
 }
 
@@ -130,5 +131,31 @@ mod tests {
                 Some(Paths::in_config_dir("proposals").as_path())
             );
         }
+    }
+
+    /// Q-197, unset root: the legacy `.goose` beside `Paths`' `.agents` is the owner's `~/.goose`,
+    /// the folder agents and recipes were always read from.
+    #[test]
+    fn unset_the_legacy_home_is_the_old_dot_goose() {
+        let agents_home = etcetera::home_dir().unwrap().join(".agents");
+        assert_eq!(
+            agents_home.with_file_name(".goose").join("agents"),
+            dirs::home_dir().unwrap().join(".goose").join("agents")
+        );
+    }
+
+    /// Q-197: under a root the legacy folder hangs from it, beside `.agents`.
+    #[test]
+    fn the_legacy_home_hangs_from_the_path_root() {
+        let root = tempfile::tempdir().unwrap();
+        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        assert_eq!(
+            Paths::in_legacy_home_dir("agents"),
+            root.path().join(".goose").join("agents")
+        );
+        assert_eq!(
+            Paths::in_agents_home_dir("agents"),
+            root.path().join(".agents").join("agents")
+        );
     }
 }

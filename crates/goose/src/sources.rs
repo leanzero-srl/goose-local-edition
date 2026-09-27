@@ -428,7 +428,7 @@ fn builtin_skill_entry(mut source: SourceEntry) -> SourceEntry {
 
 fn agent_base_dir(global: bool, project_dir: Option<&str>) -> Result<PathBuf, Error> {
     if global {
-        Ok(Paths::agents_dir())
+        Ok(Paths::in_agents_home_dir("agents"))
     } else {
         let project_dir = project_dir.ok_or_else(|| {
             Error::invalid_params().data("projectDir is required when global is false")
@@ -541,18 +541,29 @@ fn reject_read_only_agent_file(path: &Path, additional_roots: &[SourceRoot]) -> 
     Ok(())
 }
 
+/// Every global agent folder, in discovery precedence — the ONE list the ACP listing
+/// (`list_agent_dirs`), the path check (`is_global_agent_file`) and summon's discovery
+/// (`discover_filesystem_sources`) share. Q-197: they carried three copies, each reading
+/// `~/.agents/agents` from the owner's home, so an isolated GOOSE_PATH_ROOT profile listed, summoned
+/// and could edit the owner's agents. goose's own three hang from goose's dirs: `.agents/agents`
+/// (`Paths::in_agents_home_dir`, where a global agent is created), the legacy `.goose/agents`
+/// (`Paths::in_legacy_home_dir`) and `<config>/agents`. `~/.claude/agents` belongs to another tool
+/// and stays in the owner's home, as `~/.claude/skills` does (`skills::global_skill_roots`).
+pub(crate) fn global_agent_roots() -> Vec<PathBuf> {
+    let mut roots = vec![
+        Paths::in_agents_home_dir("agents"),
+        Paths::in_legacy_home_dir("agents"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".claude").join("agents"));
+    }
+    roots.push(Paths::config_dir().join("agents"));
+    roots
+}
+
 fn is_global_agent_file(path: &Path) -> bool {
     let canonical_path = canonicalize_or_original(path);
-    let mut global_roots = Vec::new();
-    global_roots.push(Paths::agents_dir());
-    if let Some(home) = dirs::home_dir() {
-        global_roots.push(home.join(".agents").join("agents"));
-        global_roots.push(home.join(".goose").join("agents"));
-        global_roots.push(home.join(".claude").join("agents"));
-    }
-    global_roots.push(Paths::config_dir().join("agents"));
-
-    global_roots
+    global_agent_roots()
         .into_iter()
         .any(|root| canonical_path.starts_with(canonicalize_or_original(&root)))
 }
@@ -614,28 +625,10 @@ fn list_agent_dirs(working_dir: Option<&Path>, additional_roots: &[SourceRoot]) 
         });
     }
 
-    dirs.push(SourceRoot {
-        path: Paths::agents_dir(),
+    dirs.extend(global_agent_roots().into_iter().map(|path| SourceRoot {
+        path,
         writable: true,
-    });
-    if let Some(home) = dirs::home_dir() {
-        dirs.push(SourceRoot {
-            path: home.join(".agents").join("agents"),
-            writable: true,
-        });
-        dirs.push(SourceRoot {
-            path: home.join(".goose").join("agents"),
-            writable: true,
-        });
-        dirs.push(SourceRoot {
-            path: home.join(".claude").join("agents"),
-            writable: true,
-        });
-    }
-    dirs.push(SourceRoot {
-        path: Paths::config_dir().join("agents"),
-        writable: true,
-    });
+    }));
     dirs.extend(additional_roots.iter().cloned());
     dirs
 }
@@ -2076,5 +2069,52 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{:?}", err).contains("not found"));
+    }
+
+    /// Q-197: global agents are listed, created and path-checked under `<GOOSE_PATH_ROOT>` — goose's
+    /// `.agents/agents`, its legacy `.goose/agents` and `<config>/agents` — never the owner's
+    /// `~/.agents/agents` or `~/.goose/agents`; `~/.claude/agents` (another tool's) stays home.
+    #[test]
+    fn global_agents_hang_from_the_path_root() {
+        let root = TempDir::new().unwrap();
+        let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        let agents = root.path().join(".agents").join("agents");
+        let legacy = root.path().join(".goose").join("agents");
+        let owner = dirs::home_dir().unwrap();
+
+        assert_eq!(
+            global_agent_roots(),
+            vec![
+                agents.clone(),
+                legacy.clone(),
+                owner.join(".claude").join("agents"),
+                root.path().join("config").join("agents"),
+            ]
+        );
+        assert_eq!(agent_base_dir(true, None).unwrap(), agents);
+
+        for (dir, name) in [(&agents, "q197-rooted"), (&legacy, "q197-legacy")] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(
+                dir.join(format!("{name}.md")),
+                format!("---\nname: {name}\ndescription: d\n---\n\nbody"),
+            )
+            .unwrap();
+        }
+        let listed = list_agent_sources(None, &[]);
+        for name in ["q197-rooted", "q197-legacy"] {
+            let entry = listed.iter().find(|s| s.name == name);
+            assert!(
+                entry.is_some_and(|s| s.global && s.writable),
+                "{name}: {listed:?}"
+            );
+        }
+        assert!(is_global_agent_file(&agents.join("q197-rooted.md")));
+        assert!(!is_global_agent_file(
+            &owner.join(".agents").join("agents").join("x.md")
+        ));
+        assert!(!is_global_agent_file(
+            &owner.join(".goose").join("agents").join("x.md")
+        ));
     }
 }
