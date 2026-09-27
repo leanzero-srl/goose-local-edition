@@ -227,32 +227,18 @@ fn canonicalize_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn inferred_discoverable_skill_root(path: &Path) -> Option<PathBuf> {
-    let canonical_path = canonicalize_or_original(path);
-
-    let mut global_roots = global_skill_roots();
-    global_roots.extend(installed_plugin_skill_dirs());
-
-    for root in global_roots {
-        let canonical_root = canonicalize_or_original(&root);
-        if canonical_path.starts_with(&canonical_root) {
-            return Some(canonical_root);
-        }
-    }
-
-    canonical_path.ancestors().find_map(|ancestor| {
-        let parent = ancestor.parent()?;
-        let is_project_skills_root = ancestor.file_name().and_then(|name| name.to_str())
-            == Some("skills")
-            && matches!(
-                parent.file_name().and_then(|name| name.to_str()),
-                Some(".goose") | Some(".claude") | Some(".agents")
-            );
-        is_project_skills_root.then(|| ancestor.to_path_buf())
-    })
-}
-
-pub(crate) fn resolve_discoverable_skill_dir(path: &str) -> Result<PathBuf, Error> {
+/// A skill folder an update, delete or export may touch: one the skills listing offers for the SAME
+/// request — a folder holding SKILL.md inside one of `all_skill_dirs(projectDir)` (goose's global
+/// roots, `~/.claude/skills` and `~/.config/agents/skills`, the project's `.agents|.goose|.claude/skills`,
+/// installed plugins' skill dirs), which the listing walks recursively. Q-221: the old rule accepted
+/// any folder under an ancestor named `.agents|.goose|.claude/skills`, so a client naming the owner's
+/// `~/.agents/skills/<x>` explicitly could rewrite or delete it from an isolated GOOSE_PATH_ROOT
+/// profile that never lists it (the skills side of Q-213). A folder outside every listed root is
+/// refused by name, never "not found".
+pub(crate) fn resolve_listed_skill_dir(
+    path: &str,
+    working_dir: Option<&Path>,
+) -> Result<PathBuf, Error> {
     if path.is_empty() {
         return Err(Error::invalid_params().data("Source path must not be empty"));
     }
@@ -261,18 +247,27 @@ pub(crate) fn resolve_discoverable_skill_dir(path: &str) -> Result<PathBuf, Erro
         .canonicalize()
         .map_err(|_| Error::invalid_params().data(format!("Source \"{}\" not found", path)))?;
 
-    if inferred_discoverable_skill_root(&canonical_dir).is_none()
-        || !canonical_dir.is_dir()
-        || !canonical_dir.join("SKILL.md").is_file()
-    {
+    if !canonical_dir.is_dir() || !canonical_dir.join("SKILL.md").is_file() {
         return Err(Error::invalid_params().data(format!("Source \"{}\" not found", path)));
     }
 
-    Ok(canonical_dir)
-}
+    let listed = all_skill_dirs(working_dir);
+    if !listed
+        .iter()
+        .any(|(root, _)| canonical_dir.starts_with(canonicalize_or_original(root)))
+    {
+        let folders: Vec<String> = listed
+            .iter()
+            .map(|(root, _)| root.display().to_string())
+            .collect();
+        return Err(Error::invalid_params().data(format!(
+            "Skill \"{}\" is outside the skill folders goose lists for this request ({}); a project skill needs the request's projectDir",
+            path,
+            folders.join(", ")
+        )));
+    }
 
-pub(crate) fn resolve_skill_dir(path: &str) -> Result<PathBuf, Error> {
-    resolve_discoverable_skill_dir(path)
+    Ok(canonical_dir)
 }
 
 pub(crate) fn is_global_skill_dir(path: &Path) -> bool {

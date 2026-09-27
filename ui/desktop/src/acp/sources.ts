@@ -35,12 +35,17 @@ export async function createSkillSource(params: {
  *
  * Only `type: 'skill'` may be updated. Built-ins are rejected by `require_mutable_type` on the backend, and
  * `entry.writable` cannot be used to predict that — it is hardcoded true for every skill including built-ins.
+ *
+ * `projectDir` is the one the skill was LISTED under (`listSkillSources`): the backend touches only a folder
+ * that listing offers for it and refuses anything else by name (Q-221 — a folder-name rule let an explicit
+ * path reach the owner's ~/.agents/skills from an isolated profile). Without it a project skill is refused.
  */
 export async function updateSkillSource(params: {
   path: string;
   name: string;
   description: string;
   content: string;
+  projectDir: string;
 }): Promise<SourceEntry> {
   const client = await getAcpClient();
   const { source } = await client.goose.sourcesUpdate_unstable({
@@ -49,14 +54,18 @@ export async function updateSkillSource(params: {
     name: params.name,
     description: params.description,
     content: params.content,
+    projectDir: params.projectDir,
   });
   return source;
 }
 
-/** Delete a skill and its on-disk directory. Irreversible — there is no trash. Confirm before calling. */
-export async function deleteSkillSource(path: string): Promise<void> {
+/**
+ * Delete a skill and its on-disk directory. Irreversible — there is no trash. Confirm before calling.
+ * `projectDir` is the one the skill was listed under, as for {@link updateSkillSource} (Q-221).
+ */
+export async function deleteSkillSource(path: string, projectDir: string): Promise<void> {
   const client = await getAcpClient();
-  await client.goose.sourcesDelete_unstable({ type: 'skill', path });
+  await client.goose.sourcesDelete_unstable({ type: 'skill', path, projectDir });
 }
 
 /**
