@@ -1800,7 +1800,9 @@ describe('MlxEngineView models tab', () => {
     const loaded = await screen.findByTestId(`model-cell-self-${QWEN}`);
     await waitFor(() => expect(loaded).toHaveTextContent('Loaded'));
     const chip = within(loaded).getByText('Loaded').closest('[data-testid="lz-chip"]')!;
-    expect(chip).toHaveAttribute('data-phase', 'idle');
+    // Reopened on 3.0.57: the idle phase's grey read as the least alive — at rest it is solid ok.
+    expect(chip).toHaveAttribute('data-tone', 'ok');
+    expect(chip).not.toHaveAttribute('data-phase');
     unmount();
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     const again = render(<MlxEngineView />);
@@ -2922,11 +2924,15 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     mockDistributedStatus.mockResolvedValue(FLASH_READY);
     render(<MlxEngineView />);
     await waitFor(() =>
-      expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent('Split across 2 Macs · over Thunderbolt')
+      expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent(
+        'Split across 2 Macs · over Thunderbolt'
+      )
     );
     const tile = screen.getByTestId('mlx-state-badge');
     expect(tile).toHaveAttribute('data-mode', 'distributed');
-    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Split across 2 Macs · over Thunderbolt');
+    expect(screen.getByTestId('mlx-mode')).toHaveTextContent(
+      'Split across 2 Macs · over Thunderbolt'
+    );
     expect(within(tile).queryByRole('button', { name: 'Mount' })).toBeNull();
     expect(screen.getByTestId('mlx-distributed-owns')).toBeInTheDocument();
     // The nodes live in the split's Details under Run it, which renders once its own reads land.
@@ -3435,6 +3441,49 @@ describe('Q-170: Sampling opens on the model serving chat and shows the engine�
     expect(temperature).toHaveTextContent('engine uses 1 · the model’s own config');
     expect(screen.getByTestId('mlx-sampling-engine-topP')).toHaveTextContent('engine uses 0.95');
     expect(screen.getByTestId('mlx-sampling-engine-topK')).toHaveTextContent('engine uses 20');
+    unmount();
+  });
+});
+
+/**
+ * Q-45 reopened, critic round 2 (3.0.57): with the 27B split up and idle the served copies read
+ * grey "Split" / "Part of a split" (the idle phase's #71717a) while copies on disk sat quiet — the
+ * serving copy still looked the least alive.
+ */
+describe('Q-45: a served copy is a SOLID chip, never the idle grey', () => {
+  const SPLIT_IDLE = { ...FLASH_READY, modelId: QWEN, state: 'ready' };
+  const HOSTING = {
+    rank: 1,
+    size: 2,
+    requesterName: LAPTOP,
+    requesterNodeId: 'self-node',
+    requesterHostname: 'this-mac',
+    modelId: QWEN,
+    servedModelId: QWEN,
+    backend: 'jaccl',
+    runner: 'mlxLmTensor',
+    state: 'ready',
+  };
+
+  it('“Split” and “Part of a split” at rest are the solid ok fill on both Macs', async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue(SPLIT_IDLE);
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([MODELS[0]]);
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === PEER ? statusOf({ state: 'stopped', hosting: HOSTING } as never) : statusOf({})
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    const here = await screen.findByTestId(`model-cell-self-${QWEN}`);
+    await waitFor(() => expect(here).toHaveAttribute('data-role', 'split'));
+    const studio = await screen.findByTestId(`model-cell-${PEER}-${QWEN}`);
+    await waitFor(() => expect(studio).toHaveAttribute('data-role', 'hosting'));
+    for (const cell of [here, studio]) {
+      const chip = within(cell).getAllByTestId('lz-chip')[0];
+      expect(chip.className).toContain('bg-lz-ok-solid');
+      expect(chip.className).not.toContain('bg-lz-phase-idle');
+    }
     unmount();
   });
 });
