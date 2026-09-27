@@ -1,23 +1,19 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 11:26 (real clock) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
+Updated: 2026-09-27 11:52 (real clock) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
 
 ## Live
-- Installed on both Macs: 3.0.56 (3.0.55 + engine/chat surfaces Q-148..Q-158, Q-160 slots, Q-162, open chat pinned).
-- E2E #3e (3.0.55, 27B tensor, sampled) FAILED unseen for 7 h: ONE answer of 221,604 tokens = 324 × identical
-  write+mkdir (Q-161), then the hang rule killed the split mid prompt-cache search (Q-162), then r1 fired 29 dead
-  turns (fixed: a notice ends the round). The cron heartbeat did not fire 00:35→07:50 — runwatch.sh now wakes on
-  every stop rule for every run.
-- 27B tensor split is UP for the Q-161 investigation agent (sole GPU user; direct requests on 8091).
-- lz-ppm + CogniRunner sessions run the live-state method (lz-ppm: 5 defects found, B-119..B-125).
+- Installed on both Macs: 3.0.57 (Q-161 XML guard + repeat stop, Q-164 last-token reuse, Q-162, Q-103 single-engine
+  SRPF lz.10, the 18 reconciled open rows, Q-163). NOT yet built: Q-165 (memory guard counts only the engine).
+- E2E #3f RUNNING since 11:51: 27B tensor split, jira brief, runwatch bv2quwm9c (wakes on notice/hang/LIVE/runaway).
+  Ladder OK to 39k. Prove: Q-161 (no runaway), Q-162, Q-141/142/107, Q-151/153 lines, livecheck green (Q-147).
+- LOAD 26e DONE: 19 canaries, median 1.98 s, max 5.6 s (26d: 297–353 s) → Q-145 + Q-160 PROVEN LIVE; the one 503
+  was Q-165.
+- 3.0.58 (Q-165) is built only after #3f: a compile now takes the MacBook's memory and Q-165's old rule would close
+  admission mid-run.
 
 ## Agents
-- none running. All merged on main 30d5b18aa (full gate green): Q-161 guard + Q-164 last-token reuse, Q-162, the 18
-  reconciled open rows (composer Q-6/7/9/21/23/60 · engine tab/Run it/Link/tray Q-20/22/25/26/28/37/38 · core
-  Q-14/18/24 · single-engine SRPF Q-103 lz.10).
-- BUILDING 3.0.57 from 30d5b18aa (cargo started 11:22) · watcher btj4twspz. Both Macs must run it.
-- LOAD 26e RUNNING on 3.0.56 Flash pipeline (fork with Q-145 aging + Q-160 slots): 3×30k + canary/60 s, 20 min;
-  watcher b14y17s37 fires at 6 canaries or a failure. Pass = steady-state canaries in seconds (26d: 353/297 s).
+- none running.
 
 ## Next actions (in order)
 1. Q-161 + Q-162 + chat merge land → 3.0.56 (with engine surfaces + Q-160) → install → split-start 27B → E2E #3f
