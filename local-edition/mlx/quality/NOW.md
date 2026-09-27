@@ -12,8 +12,7 @@ Updated: 2026-09-27 20:53 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   engine glance (dock, float, desktop mini window over another app).
 
 ## CI
-- Red on 3a3…/NOW commit: tool_results_do_not_spend_the_title_window ("missing model") — flaky, the title tests read
-  the machine's global config; fa15f595d pins the session model in the shared helper. PROVE: CI green on fa15f595d.
+- Green again from dc701189c on (the title-test flake fixed at the cause, fa15f595d).
 
 ## Agents
 - OWNER BATCH 2026-09-27 (Q-189..196): lane D ARCHITECT (read-only + CDP walk + research) → DESIGN-NODES-AND-STRATEGIES.md:
