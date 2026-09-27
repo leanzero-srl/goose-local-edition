@@ -1184,7 +1184,9 @@ fn connect_failure_text(error: &LinkError) -> String {
             ..
         }) => format!(
             "{text}. Another goose on this Mac (goosed pid {goosed}) runs LeanZero Link; quit \
-             that goose, then Connect again."
+             that goose — or, if no goose window of it is open (an orphan another build left), \
+             stop that goosed per-pid (`kill {goosed}`: its own teardown stops its daemon) — \
+             then Connect again."
         ),
         LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
             listener_pid: Some(pid),
@@ -3062,8 +3064,13 @@ mod tests {
         let text = connect_failure_text(&other_goose);
         assert!(text.contains("goosed pid 10891"), "{text}");
         assert!(
-            !text.contains("`kill"),
+            !text.contains("`kill 11275`"),
             "a live goose's daemon is never the thing to kill: {text}"
+        );
+        assert!(
+            text.contains("`kill 10891`"),
+            "an orphaned goosed of another build has no window to quit; its own SIGTERM teardown \
+             is the step: {text}"
         );
 
         let unreadable = LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {

@@ -1,4 +1,9 @@
-import type { GooseServeExitSignal, GooseServeResult, Logger } from './gooseServe';
+import type {
+  GooseServeExitSignal,
+  GooseServeResult,
+  GooseServeStop,
+  Logger,
+} from './gooseServe';
 
 export const GOOSE_SERVE_EXITED_USER_MESSAGE =
   "This window's Goose backend stopped. Close this window and open a new chat to start a new backend. If this keeps happening, restart Goose Desktop.";
@@ -6,7 +11,7 @@ export const GOOSE_SERVE_EXITED_USER_MESSAGE =
 export interface GooseServeLease {
   acpUrl: string;
   secretKey: string;
-  cleanup: () => Promise<void>;
+  cleanup: () => Promise<GooseServeStop | void>;
   windowIds: Set<number>;
   cleanedUp: boolean;
   exited: boolean;
@@ -19,7 +24,7 @@ export class GooseServeLeaseRegistry {
   // Stops already under way. A window's `closed` releases its lease and starts the stop without
   // waiting (nothing there can), which removes the lease from the map — so the app's quit must
   // still find and wait on it here, or it exits while goosed is mid-teardown (Q-223).
-  private stopping = new Set<Promise<void>>();
+  private stopping = new Set<Promise<GooseServeStop>>();
 
   constructor(private readonly logger: Logger) {}
 
@@ -136,9 +141,9 @@ export class GooseServeLeaseRegistry {
     }
   }
 
-  async cleanupLease(lease: GooseServeLease) {
+  async cleanupLease(lease: GooseServeLease): Promise<GooseServeStop> {
     if (lease.cleanedUp) {
-      return;
+      return 'exited';
     }
 
     lease.cleanedUp = true;
@@ -147,12 +152,16 @@ export class GooseServeLeaseRegistry {
     }
     lease.windowIds.clear();
 
-    const stop = lease.cleanup().catch((error) => {
-      this.logger.error('Failed to cleanup goose serve backend:', error);
-    });
+    const stop: Promise<GooseServeStop> = lease.cleanup().then(
+      (ended) => ended ?? 'exited',
+      (error) => {
+        this.logger.error('Failed to cleanup goose serve backend:', error);
+        return 'abandoned';
+      }
+    );
     this.stopping.add(stop);
     try {
-      await stop;
+      return await stop;
     } finally {
       this.stopping.delete(stop);
     }
@@ -163,10 +172,15 @@ export class GooseServeLeaseRegistry {
     return this.uniqueLeases().length > 0 || this.stopping.size > 0;
   }
 
-  /** Stop every attached backend and wait for EVERY stop — these and any already under way. */
-  async stopAllAndWait() {
-    await this.cleanupAll();
-    await Promise.all([...this.stopping]);
+  /**
+   * Stop every attached backend and wait for EVERY stop — these and any already under way. Returns
+   * how many stops ended without their goosed exiting (gave up, or failed), so the quit's log says
+   * what happened instead of claiming every backend exited.
+   */
+  async stopAllAndWait(): Promise<{ abandoned: number }> {
+    const underWay = Promise.all([...this.stopping]);
+    const [attached, earlier] = await Promise.all([this.cleanupAll(), underWay]);
+    return { abandoned: [...attached, ...earlier].filter((e) => e === 'abandoned').length };
   }
 
   /** Every backend still serving a window — attached, not cleaned up, not exited. */
@@ -178,8 +192,8 @@ export class GooseServeLeaseRegistry {
     return this.uniqueLeases().length;
   }
 
-  async cleanupAll() {
-    await Promise.all(this.uniqueLeases().map((lease) => this.cleanupLease(lease)));
+  cleanupAll(): Promise<GooseServeStop[]> {
+    return Promise.all(this.uniqueLeases().map((lease) => this.cleanupLease(lease)));
   }
 
   private uniqueLeases(): GooseServeLease[] {

@@ -93,13 +93,16 @@ export interface StartGooseServeOptions extends FindGooseBinaryOptions {
 // orphan (Q-223: goosed 10891 outlived its app by 1h22m and kept the mesh daemon).
 export const GOOSED_FOLLOWS_PARENT_ARG = '--exit-when-stdin-closes';
 
+/** How a stop ended: goosed EXITED (or was never running), or the stop gave up waiting for it. */
+export type GooseServeStop = 'exited' | 'abandoned';
+
 export interface GooseServeResult {
   acpUrl: string;
   workingDir: string;
   process: ChildProcess;
   errorLog: string[];
   certFingerprint: string | null;
-  cleanup: () => Promise<void>;
+  cleanup: () => Promise<GooseServeStop>;
   hasExited: () => boolean;
   getExitDetails: () => { code: number | null; signal: GooseServeExitSignal };
   startupDiagnosticsPath: string | null;
@@ -654,18 +657,18 @@ export const startGooseServe = async ({
   // SIGKILL causes. One stop per process: a second caller (a window's release racing the app's quit)
   // waits on the same exit instead of returning early — the old `gooseProcess.killed` early return
   // let the quit path finish before goosed had (Q-223).
-  let stopping: Promise<void> | null = null;
-  const cleanup = (): Promise<void> => {
+  let stopping: Promise<GooseServeStop> | null = null;
+  const cleanup = (): Promise<GooseServeStop> => {
     if (stopping) return stopping;
-    stopping = new Promise<void>((resolve) => {
+    stopping = new Promise<GooseServeStop>((resolve) => {
       if (exited || spawnFailed) {
-        resolve();
+        resolve('exited');
         return;
       }
       let sigkillTimer: ReturnType<typeof setTimeout> | null = null;
       gooseProcess.once('exit', () => {
         if (sigkillTimer) clearTimeout(sigkillTimer);
-        resolve();
+        resolve('exited');
       });
       // The quit waits on this stop, so it must end even when no exit ever arrives (a SIGKILL
       // that could not land; taskkill failing on Windows): one more grace window, then the stop
@@ -676,7 +679,7 @@ export const startGooseServe = async ({
           logger.error(
             `goose serve (pid ${gooseProcess.pid ?? '?'}) never exited; the stop gives up on it and the app goes on without it`
           );
-          resolve();
+          resolve('abandoned');
         }, sigkillAfterMs);
       };
 

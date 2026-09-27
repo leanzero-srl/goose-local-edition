@@ -928,6 +928,11 @@ async fn start_stops_an_orphan_a_dead_goosed_left_and_starts_its_own() {
     let root = tempfile::tempdir().unwrap();
     let config = fake_config(root.path());
     let orphan = spawn_orphan_listener(&config.tailscaled_argv(), &config.socket_path).await;
+    assert_eq!(
+        leanzero_link::mesh::orphan_proof_for(&config, orphan),
+        Ok(()),
+        "the reconnect's pre-check (no signal) agrees before any join key is spent"
+    );
 
     let engine = MeshEngine::start(config.clone())
         .await
@@ -953,6 +958,13 @@ async fn start_keeps_an_orphan_whose_command_line_is_not_ours() {
     let mut stranger = config.tailscaled_argv();
     stranger.push("--verbose=2".to_string());
     let orphan = spawn_orphan_listener(&stranger, &config.socket_path).await;
+    let refused = leanzero_link::mesh::orphan_proof_for(&config, orphan)
+        .expect_err("the reconnect's pre-check refuses it before a join key is spent");
+    assert!(
+        refused.reason.contains("command line is not the one"),
+        "{}",
+        refused.reason
+    );
 
     let err = match MeshEngine::start(config.clone()).await {
         Ok(_) => panic!("start adopted or replaced a daemon the proof does not cover"),

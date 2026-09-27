@@ -1062,9 +1062,11 @@ impl NotAnOrphan {
 ///    is another goose on this Mac — a second window's or profile's backend — and is never
 ///    touched;
 /// 3. it runs as this user;
-/// 4. its command line ends with exactly the argv this goosed spawns for this socket
+/// 4. its command line ENDS WITH exactly the argv this goosed spawns for this socket
 ///    ([`MeshConfig::tailscaled_argv`]: this bundle's tailscaled, this state dir, this
-///    socket). Only an interpreter may precede it (a script daemon); nothing may differ.
+///    socket). What precedes it is not checked — an interpreter for a script daemon — which
+///    cannot make a stranger ours: the pid is the one the kernel reports listening on OUR
+///    socket, and the argv must still name our binary, state dir and socket.
 pub fn orphan_daemon_proof(
     process: &DaemonProcess,
     our_argv: &[String],
@@ -1159,6 +1161,31 @@ fn daemon_process(pid: u32) -> Option<DaemonProcess> {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect(),
     })
+}
+
+/// [`orphan_daemon_proof`] for `listener_pid` as it is right now — no signal sent. The
+/// launch reconnect asks this BEFORE it spends a join key, so a holder the start would
+/// refuse fails the reconnect with no network call.
+#[cfg(unix)]
+pub fn orphan_proof_for(config: &MeshConfig, listener_pid: u32) -> Result<(), NotAnOrphan> {
+    let Some(process) = daemon_process(listener_pid) else {
+        return Err(NotAnOrphan::because(format!(
+            "pid {listener_pid} could not be read (it may have just exited)"
+        )));
+    };
+    orphan_daemon_proof(
+        &process,
+        &config.tailscaled_argv(),
+        unsafe { libc::getuid() },
+        std::process::id(),
+    )
+}
+
+#[cfg(not(unix))]
+pub fn orphan_proof_for(_config: &MeshConfig, _listener_pid: u32) -> Result<(), NotAnOrphan> {
+    Err(NotAnOrphan::because(
+        "the orphan proof (peer credentials) is not implemented on this platform".to_string(),
+    ))
 }
 
 /// Stop, per pid, the orphan a dead goosed left on OUR socket — only on

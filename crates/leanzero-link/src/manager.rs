@@ -1601,10 +1601,11 @@ impl LinkManager {
     /// second window's backend) owns the mesh: `Skipped`, nothing to do here — the old
     /// path minted a key, spawned, and failed with advice to kill a healthy daemon. A
     /// daemon whose spawner is gone → the orphan a goosed killed before its teardown
-    /// leaves: the reconnect is due, and the connect's `MeshEngine::start` stops it per
-    /// pid on `orphan_daemon_proof` (Q-223 — it used to be `Failed` with a `kill` for the
-    /// user to type). A holder that fails the proof is refused there and the reconnect
-    /// records that refusal. Never adopted either way.
+    /// leaves: when `orphan_daemon_proof` holds, the reconnect is due and the connect's
+    /// `MeshEngine::start` stops it per pid (Q-223 — it used to be `Failed` with a `kill`
+    /// for the user to type); when it does not (another bundle's daemon, another user),
+    /// `Failed` naming the rule — decided HERE, before a join key is spent on a connect
+    /// the start would refuse. Never adopted either way.
     fn mesh_socket_verdict(&self, now: DateTime<Utc>) -> Result<(), ReconnectState> {
         let socket = &self.core.config.mesh.socket_path;
         match crate::mesh::socket_holder(socket) {
@@ -1620,14 +1621,31 @@ impl LinkManager {
                 ),
             }),
             Ok(Some(holder)) => {
-                tracing::warn!(
-                    listener_pid = holder.listener_pid,
-                    parent_pid = ?holder.parent_pid,
-                    socket = %socket.display(),
-                    "leanzero_link_reconnect: a tailscaled whose goosed is gone holds the mesh \
-                     socket; the connect stops it per pid on proof, then starts a fresh one"
-                );
-                Ok(())
+                match crate::mesh::orphan_proof_for(&self.core.config.mesh, holder.listener_pid) {
+                    Ok(()) => {
+                        tracing::warn!(
+                            listener_pid = holder.listener_pid,
+                            parent_pid = ?holder.parent_pid,
+                            socket = %socket.display(),
+                            "leanzero_link_reconnect: a tailscaled whose goosed is gone holds the \
+                             mesh socket; the connect stops it per pid on proof, then starts a \
+                             fresh one"
+                        );
+                        Ok(())
+                    }
+                    Err(not_an_orphan) => Err(ReconnectState::Failed {
+                        reason: format!(
+                            "a tailscaled holds the mesh socket '{}' (pid {}) and this goosed may \
+                             not stop it: {}. LeanZero Link never adopts a daemon it did not \
+                             spawn — stop it per-pid (`kill {}`), then Retry",
+                            socket.display(),
+                            holder.listener_pid,
+                            not_an_orphan.reason,
+                            holder.listener_pid
+                        ),
+                        at: now,
+                    }),
+                }
             }
             Err(err) => Err(ReconnectState::Failed {
                 reason: format!(

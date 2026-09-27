@@ -1380,7 +1380,7 @@ const createChat = async (
     const cleanupGooseServe = gooseServeResult.cleanup;
     gooseServeResult.cleanup = async () => {
       try {
-        await cleanupGooseServe();
+        return await cleanupGooseServe();
       } finally {
         localCertificateTrust.release();
       }
@@ -6822,9 +6822,15 @@ app.on('will-quit', (event) => {
     log.info(
       `App quitting: waiting for ${gooseServeLeases.activeLeaseCount()} attached backend(s) and any stop already under way to exit`
     );
-    void gooseServeLeases.stopAllAndWait().finally(() => {
+    void gooseServeLeases.stopAllAndWait().then(({ abandoned }) => {
       backendsStopped = true;
-      log.info('App quitting: every goose serve backend has exited');
+      if (abandoned > 0) {
+        log.error(
+          `App quitting: ${abandoned} goose serve backend(s) did not exit (logged above); quitting without them — their own stdin watch ends them once this process is gone`
+        );
+      } else {
+        log.info('App quitting: every goose serve backend has exited');
+      }
       app.quit();
     });
     return;
