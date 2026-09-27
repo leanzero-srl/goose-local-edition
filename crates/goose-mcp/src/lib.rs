@@ -50,7 +50,9 @@ pub use tutorial::TutorialServer;
 /// Type definition for a function that spawns and serves a builtin extension server
 pub type SpawnServerFn = fn(tokio::io::DuplexStream, tokio::io::DuplexStream);
 
-fn spawn_and_serve<S>(
+/// Serve a builtin extension server on the in-process transport a [`SpawnServerFn`] receives.
+/// Public so goose can register the builtin this crate cannot configure (memory, Q-187).
+pub fn spawn_and_serve<S>(
     name: &'static str,
     server: S,
     transport: (tokio::io::DuplexStream, tokio::io::DuplexStream),
@@ -76,11 +78,15 @@ macro_rules! builtin {
     }};
 }
 
+/// The builtins that need no goose config. `memory` is NOT here (Q-187): its `memory_proposals`
+/// setting lives in goose's config, which this crate cannot read (goose depends on it), and the
+/// memory builtin this map used to build ignored the setting — proposals stayed on in every
+/// desktop and CLI session of a user who had turned them off. goose registers memory beside these
+/// (`goose::builtin_extension::builtin_extensions`).
 pub static BUILTIN_EXTENSIONS: Lazy<HashMap<&'static str, SpawnServerFn>> = Lazy::new(|| {
     HashMap::from([
         builtin!(autovisualiser, AutoVisualiserRouter),
         builtin!(computercontroller, ComputerControllerServer),
-        builtin!(memory, MemoryServer),
         builtin!(tutorial, TutorialServer),
     ])
 });

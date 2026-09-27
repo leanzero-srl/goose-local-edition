@@ -182,20 +182,8 @@ pub struct MemoryServer {
     proposals_dir: Option<PathBuf>,
 }
 
-impl Default for MemoryServer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[tool_router(router = tool_router)]
 impl MemoryServer {
-    /// The server over goose's global memory dir, `<config>/memory` — the dir recall, the Claude Code
-    /// importer and the desktop Memories view read (Q-184).
-    pub fn new() -> Self {
-        Self::with_global_dir(crate::goose_config_dir().join("memory"))
-    }
-
     pub fn global_memory_dir(&self) -> &std::path::Path {
         &self.global_memory_dir
     }
@@ -204,10 +192,14 @@ impl MemoryServer {
         self.proposals_dir.as_deref()
     }
 
-    /// The same server with `propose_knowledge` filing proposals (the owner's default) or writing
-    /// entries directly. The caller reads the config; this process reads none.
+    /// The server over goose's global memory dir, `<config>/memory` — the dir recall, the Claude Code
+    /// importer and the desktop Memories view read (Q-184) — with `propose_knowledge` filing proposals
+    /// (the owner's default) or writing entries directly. There is no constructor without the
+    /// setting: `new()` was the config-blind path the in-process builtin and `goosed mcp memory`
+    /// took (Q-187). The caller reads the config — `goose::builtin_extension::memory_server` — this
+    /// crate reads none.
     pub fn with_proposals(memory_proposals: bool) -> Self {
-        let mut server = Self::new();
+        let mut server = Self::with_global_dir(crate::goose_config_dir().join("memory"));
         if !memory_proposals {
             server.proposals_dir = None;
         }

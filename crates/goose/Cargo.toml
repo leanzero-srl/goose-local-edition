@@ -231,6 +231,7 @@ leanzero-link = { version = "0.1.0", path = "../leanzero-link", features = ["rus
 goose-memory-store = { path = "../goose-memory-store" }
 hmac = "0.13"
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+goose-mcp = { path = "../goose-mcp", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { workspace = true }
@@ -264,7 +265,6 @@ opentelemetry_sdk = { workspace = true, features = ["testing"] }
 goose-test-support = { path = "../goose-test-support", default-features = false }
 bytes = { workspace = true }
 http = { workspace = true }
-goose-mcp = { path = "../goose-mcp", default-features = false }
 insta = { version = "1", default-features = false }
 dtor = { version = "1.0.5", default-features = false, features = ["proc_macro"] }
 tower = { version = "0.5.2", default-features = false, features = ["util"] }

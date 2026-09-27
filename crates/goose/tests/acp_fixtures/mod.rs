@@ -790,7 +790,7 @@ where
     if std::env::var_os("GOOSE_PATH_ROOT").is_none() {
         std::env::set_var("GOOSE_PATH_ROOT", ACP_CONFIG_ROOT.path());
     }
-    register_builtin_extensions(goose_mcp::BUILTIN_EXTENSIONS.clone());
+    register_builtin_extensions(goose::builtin_extension::builtin_extensions());
 
     let handle = std::thread::Builder::new()
         .name("acp-test".to_string())

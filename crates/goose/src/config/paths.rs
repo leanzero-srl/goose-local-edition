@@ -113,12 +113,15 @@ mod tests {
     #[test]
     fn the_memory_tool_writes_where_goose_reads_under_a_path_root() {
         let root = tempfile::tempdir().unwrap();
-        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        let _guard = env_lock::lock_env([
+            ("GOOSE_PATH_ROOT", root.path().to_str()),
+            ("GOOSE_MEMORY_PROPOSALS", Some("true")),
+        ]);
         assert_eq!(Paths::config_dir(), root.path().join("config"));
         assert_eq!(goose_mcp::goose_config_dir(), Paths::config_dir());
 
         for server in [
-            goose_mcp::MemoryServer::new(),
+            crate::builtin_extension::memory_server(),
             goose_mcp::MemoryServer::with_proposals(true),
         ] {
             assert_eq!(server.global_memory_dir(), Paths::in_config_dir("memory"));
