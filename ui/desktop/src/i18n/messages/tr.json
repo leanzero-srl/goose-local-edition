@@ -284,6 +284,9 @@
   "backButton.back": {
     "defaultMessage": "Geri"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "LeanZero’dan Goose Swarm — leanzero.net’i aç"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },

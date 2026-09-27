@@ -284,6 +284,9 @@
   "backButton.back": {
     "defaultMessage": "返回"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "LeanZero 出品的 Goose Swarm — 打开 leanzero.net"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
