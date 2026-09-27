@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "Показать всю карточку"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "Что пишет · {count, plural, one {# вызов инструмента} few {# вызова инструментов} many {# вызовов инструментов} other {# вызова инструментов}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "Скрыть, что пишет"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "Движок: {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "Скрыть эту карточку — вернуть её можно внизу боковой панели или в Настройки › Приложение"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# запрос в работе} few {# запроса в работе} many {# запросов в работе} other {# запроса в работе}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "tok/s при чтении этого промпта"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "Показать карточку движка"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "Карточка движка скрыта. Показать её снова внизу боковой панели."
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, one {# сеанс идёт} few {# сеанса идут} many {# сеансов идут} other {# сеанса идут}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "Рядом: {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac недоступен"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "В боковой панели"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "В свободном месте под вашими сеансами; поверх окна, когда движок работает, а в боковой панели нет места."
+    "defaultMessage": "Внизу боковой панели, под вашими сессиями. Скройте её прямо на карточке; вернуть её можно строкой, которая остаётся на её месте, или здесь."
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Движок с первого взгляда"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Подключиться к серверу goose, запущенному в другом месте (требуется перезапуск приложения)"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} симв."
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, one {Формируется # вызов инструмента} few {Формируется # вызова инструментов} other {Формируется # вызовов инструментов}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "Получено: {arguments} символов аргументов{reasoning, select, none {} other {, {reasoning} символов рассуждений}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# из них совпадает с более ранним вызовом} few {# из них совпадают с более ранними вызовами} other {# из них совпадают с более ранними вызовами}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# из них совпадает с более ранним вызовом {tool}} few {# из них совпадают с более ранним вызовом {tool}} other {# из них совпадают с более ранним вызовом {tool}}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "Текст рядом с вызовами ({chars} симв.) — не входит в ответ"
   },
   "goosehintsModal.close": {
     "defaultMessage": "Закрыть"
@@ -2633,21 +2669,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose сжимает разговор..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} симв."
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, one {Формируется # вызов инструмента} few {Формируется # вызова инструментов} other {Формируется # вызовов инструментов}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "Получено: {arguments} символов аргументов{reasoning, select, none {} other {, {reasoning} символов рассуждений}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "Текст рядом с вызовами ({chars} симв.) — не входит в ответ"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "Скрыть"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose работает над этим…"
   },
@@ -2656,9 +2677,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "перезапуск сеанса..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "Показать, что формируется"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose работает над этим…"
@@ -8491,57 +8509,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose хочет вызвать {toolName}. Разрешить?"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "Проверяем, сохранил ли {mac} ваш ответ…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {goose на {mac} не запущен — откройте goose там или запустите чат на этом Mac} other {{mac} не отвечает с {time} — goose, возможно, закрыт, или Mac не в сети}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов) — прошло {elapsed}"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов) — {elapsed} из примерно {expected} при измеренных {rate} ток/с"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов) — {percent}%"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "Ожидание переподключения {mac}…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "От {mac} какое-то время нет слов — проверяем…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "Пишет уже {elapsed} · {tokens} токенов · {rate} ток/с"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "Пишет уже {elapsed} · {tokens} токенов"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "проверяю этот чат…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {# вызов инструмента, последний — {tool}} few {# вызова инструментов, последний — {tool}} other {# вызовов инструментов, последний — {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {# из них совпадает с более ранним вызовом} few {# из них совпадают с более ранними вызовами} other {# из них совпадают с более ранними вызовами}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {# из них совпадает с более ранним вызовом {tool}} few {# из них совпадают с более ранним вызовом {tool}} other {# из них совпадают с более ранним вызовом {tool}}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}, {repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "рой на паузе — ничего не выполняется, пока вы не продолжите"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Обновление будет автоматически скачано в фоновом режиме."

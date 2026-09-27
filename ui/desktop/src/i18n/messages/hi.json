@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "पूरा कार्ड दिखाएँ"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "यह क्या लिख रहा है · {count, plural, one {# टूल कॉल} other {# टूल कॉल}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "यह क्या लिख रहा है, छिपाएँ"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "इंजन: {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "यह कार्ड छिपाएँ — साइडबार के नीचे से या Settings › ऐप से वापस लाएँ"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# अनुरोध चल रहा है} other {# अनुरोध चल रहे हैं}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "इस प्रॉम्प्ट को पढ़ते हुए tok/s"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "इंजन कार्ड दिखाएँ"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "इंजन कार्ड छिपा है। इसे साइडबार के नीचे फिर से दिखाएँ।"
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, one {# सत्र चल रहा है} other {# सत्र चल रहे हैं}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "इसके साथ: {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac दूर है"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "साइडबार में"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "आपके सत्रों के नीचे की खाली जगह में; जब इंजन काम कर रहा हो और साइडबार में जगह न हो तो विंडो के ऊपर तैरता है।"
+    "defaultMessage": "साइडबार के नीचे, आपके सेशनों के नीचे। इसे कार्ड से ही छिपाएँ; यह अपनी जगह छोड़ी गई पंक्ति से, या यहाँ से वापस आता है।"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "इंजन एक नज़र में"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "कहीं और चल रहे goose सर्वर से कनेक्ट करें (ऐप पुनरारंभ की आवश्यकता है)"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} अक्षर"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, one {# टूल कॉल बन रही है} other {# टूल कॉल बन रही हैं}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "अब तक प्राप्त: {arguments} अक्षर आर्ग्युमेंट{reasoning, select, none {} other {, {reasoning} अक्षर तर्क}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {इनमें से # पहले के किसी कॉल जैसा ही है} other {इनमें से # पहले के कॉल जैसे ही हैं}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {इनमें से # पहले के {tool} कॉल जैसा ही है} other {इनमें से # पहले के {tool} कॉल जैसे ही हैं}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "कॉल के साथ लिखा गया टेक्स्ट ({chars} अक्षर) — उत्तर का हिस्सा नहीं"
   },
   "goosehintsModal.close": {
     "defaultMessage": "बंद करें"
@@ -2633,21 +2669,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose बातचीत को संक्षिप्त कर रहा है..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} अक्षर"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, one {# टूल कॉल बन रही है} other {# टूल कॉल बन रही हैं}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "अब तक प्राप्त: {arguments} अक्षर आर्ग्युमेंट{reasoning, select, none {} other {, {reasoning} अक्षर तर्क}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "कॉल के साथ लिखा गया टेक्स्ट ({chars} अक्षर) — उत्तर का हिस्सा नहीं"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "छिपाएँ"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose इस पर काम कर रहा है..."
   },
@@ -2656,9 +2677,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "सत्र पुनः प्रारंभ हो रहा है..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "जो बन रहा है वह दिखाएँ"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose इस पर काम कर रहा है..."
@@ -8491,57 +8509,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose {toolName} को कॉल करना चाहेंगे। अनुमति दें?"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "जाँच रहे हैं कि {mac} के पास अभी भी आपका उत्तर है या नहीं…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {{mac} पर goose नहीं चल रहा है — वहाँ goose खोलें, या इस Mac पर चैट चलाएँ} other {{mac} ने {time} से जवाब नहीं दिया — हो सकता है उसका goose बंद हो, या वह ऑफ़लाइन हो}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन) — अब तक {elapsed}"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन) — मापी गई {rate} टोकन/से की दर पर लगभग {expected} में से {elapsed}"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन) — {percent}%"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "{mac} के फिर से जुड़ने की प्रतीक्षा…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "कुछ देर से {mac} से कोई शब्द नहीं — जाँच रहे हैं…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "{elapsed} से लिख रहा है · {tokens} टोकन · {rate} टोकन/से"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "{elapsed} से लिख रहा है · {tokens} टोकन"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "यह चैट जाँची जा रही है…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {{tool} को एक टूल कॉल} other {# टूल कॉल, नवीनतम {tool} को}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {इनमें से # पहले के किसी कॉल जैसा ही है} other {इनमें से # पहले के कॉल जैसे ही हैं}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {इनमें से # पहले के {tool} कॉल जैसा ही है} other {इनमें से # पहले के {tool} कॉल जैसे ही हैं}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}, {repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "स्वार्म रुका हुआ है — जब तक आप फिर से शुरू नहीं करते, कुछ नहीं चल रहा"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "अपडेट बैकग्राउंड में अपने आप डाउनलोड हो जाएगा."

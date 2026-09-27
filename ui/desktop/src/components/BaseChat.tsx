@@ -3,7 +3,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { defineMessages, useIntl } from '../i18n';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { SearchView } from './conversation/SearchView';
-import LoadingGoose from './LoadingGoose';
 import ProgressiveMessageList from './ProgressiveMessageList';
 import { MainPanelLayout } from './Layout/MainPanelLayout';
 import ChatInput from './ChatInput';
@@ -12,9 +11,7 @@ import { useFileDrop } from '../hooks/useFileDrop';
 import { useEdition } from '../contexts/EditionContext';
 import { useModelAndProvider } from './ModelAndProviderContext';
 import { ChatState } from '../types/chatState';
-import type { ChatServedBy } from './chatServedBy/chatServedBy';
-import { turnLine } from './chatServedBy/turnLine';
-import { useTurnCue } from './chatServedBy/useTurnCue';
+import { formingOf, usePublishForming } from './forming/formingStore';
 import { ChatType } from '../types/chat';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useNavigationContextSafe } from './Layout/NavigationContext';
@@ -240,8 +237,6 @@ export default function BaseChat({
   const disableAnimation = location.state?.disableAnimation || false;
   const [hasStartedUsingRecipe, setHasStartedUsingRecipe] = React.useState(false);
   const [hasNotAcceptedRecipe, setHasNotAcceptedRecipe] = useState<boolean>();
-  const [served, setServed] = useState<ChatServedBy | null>(null);
-  const intl = useIntl();
   const [hasRecipeSecurityWarnings, setHasRecipeSecurityWarnings] = useState(false);
   const isMobile = useIsMobile();
   const { isLocal } = useEdition();
@@ -293,9 +288,13 @@ export default function BaseChat({
   // (dead/absent heartbeat, started before this mount) renders nothing. A live run, or one this
   // session starts, attaches exactly as before.
   const swarmRun = useSwarmRun(session?.working_dir, 500, { residentGate: true });
-  // What THIS turn waits on (the Mac reconnecting, a check after it, a silent stream, a prompt
-  // being read), from the composer's one served-by derivation; null = the default words.
-  const turnCue = useTurnCue(served, chatState, messages);
+  // What this turn is still forming (its tool calls, the text beside them): the engine card at the
+  // foot of the sidebar lists it for the chat it serves (Q-215 — the status line under the composer
+  // that carried it is gone).
+  usePublishForming(
+    sessionId,
+    chatState === ChatState.Idle ? null : formingOf(messages[messages.length - 1])
+  );
 
   const recipe = session?.recipe as Recipe | null | undefined;
 
@@ -673,15 +672,6 @@ export default function BaseChat({
         )}
       />
 
-      {chatState !== ChatState.Idle && (
-        <div className="absolute bottom-1 left-4 z-20 pointer-events-none">
-          <LoadingGoose
-            chatState={chatState}
-            {...turnLine(intl, chatState, swarmRun.held, turnCue, messages[messages.length - 1])}
-          />
-        </div>
-      )}
-
       {/* What the model (or an extension) needs from the person: pinned outside the scroll area so
           it never scrolls away, and kept until it is answered or dismissed. */}
       <NeedsYouTray
@@ -694,6 +684,7 @@ export default function BaseChat({
 
       <div
         data-testid="chat-input-card"
+        data-chat-state={chatState}
         className={cx(
           SURFACE.card,
           'relative z-10 mx-4 mb-4 overflow-hidden',
@@ -737,7 +728,6 @@ export default function BaseChat({
           workingDir={session?.working_dir}
           onWorkingDirChange={handleWorkingDirChange}
           latestInference={latestInference}
-          onServedChange={setServed}
           {...customChatInputProps}
         />
       </div>

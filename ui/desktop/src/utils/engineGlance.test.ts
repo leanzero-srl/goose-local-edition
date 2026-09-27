@@ -15,6 +15,9 @@ import {
   CHAT_ROW,
   GLANCE_MODEL,
   SPLIT_READING_BODY,
+  TOOL_LABEL_ROW,
+  TURN_BESIDE_SIDE_CALL_BODY,
+  TURN_WAITING_BEHIND_SIDE_CALL_BODY,
   figure,
   glancePush,
   measuredRead,
@@ -271,6 +274,74 @@ describe('buildEngineGlance — chat routed to a linked Mac', () => {
       { distributed: null, remote: route({ state: 'reconnecting' }) }
     );
     expect(g).toMatchObject({ stage: 'away', phase: 'held', busy: false });
+  });
+});
+
+describe('buildEngineGlance — which request the card leads with (Q-218)', () => {
+  const split = (body: unknown, rows = [CHAT_ROW, TOOL_LABEL_ROW]) =>
+    buildEngineGlance(
+      runningSnapshot(body, {
+        engine: 'distributed',
+        modelId: FLASH_MODEL,
+        serving: attributeServing(rows, 2, [], null),
+      }),
+      { distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 }, remote: null }
+    );
+
+  it('screenshot 26: the chat’s 77k prompt leads, 1% read at ITS rate — the 174-token side call is named by its kind', () => {
+    const g = split(TURN_BESIDE_SIDE_CALL_BODY);
+    expect(g).toMatchObject({
+      stage: 'prefill',
+      phase: 'reading',
+      hero: { kind: 'prompt', tokens: 77000, elapsedS: 9 },
+      second: { kind: 'reading', tps: 85.6 },
+      progress: { done: 770, total: 77000, unit: 'tokens' },
+      chat: { sessionId: CHAT_ROW.sessionId, work: null },
+      side: ['toolLabel'],
+      otherClients: 0,
+    });
+  });
+
+  it('the turn waiting for a slot while the side call is read: queued, never "Reading prompt" for the chat', () => {
+    const g = split(TURN_WAITING_BEHIND_SIDE_CALL_BODY);
+    expect(g.stage).toBe('queued');
+    expect(g.phase).toBe('held');
+    expect(g.hero).toMatchObject({ kind: 'queued' });
+    expect(g.side).toEqual(['toolLabel']);
+  });
+
+  it('negative control — no chat turn on the engine, only goose’s call for it: the card speaks for the engine', () => {
+    const g = split(TURN_BESIDE_SIDE_CALL_BODY, [TOOL_LABEL_ROW]);
+    expect(g.chat).toMatchObject({ work: 'toolLabel' });
+    expect(g.side).toEqual([]);
+    // Engine-wide, the headline still names the largest prompt being read, never the longest-read.
+    expect(g.hero).toMatchObject({ kind: 'prompt', tokens: 77000 });
+    // Engine-wide reading rate: both reads summed.
+    expect(g.second).toMatchObject({ kind: 'reading', tps: 89.5 });
+  });
+
+  it('the single engine: the lead’s own writing rate, not the sum with a side call writing beside it', () => {
+    const body = {
+      ...GENERATING_STATUS,
+      requests: [
+        GENERATING_STATUS.requests[1],
+        {
+          ...GENERATING_STATUS.requests[1],
+          request_id: 'side-title',
+          prompt_tokens: 300,
+          completion_tokens: 12,
+          tokens_per_second: 40,
+        },
+      ],
+    };
+    const g = buildEngineGlance(
+      runningSnapshot(body, {
+        serving: attributeServing([CHAT_ROW, { ...CHAT_ROW, id: 3, work: 'title' }], 2, [], null),
+      }),
+      NONE
+    );
+    expect(g.hero).toEqual({ kind: 'writing', tps: 19.9 });
+    expect(g.side).toEqual(['title']);
   });
 });
 

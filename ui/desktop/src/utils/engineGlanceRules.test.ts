@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   cornerBounds,
   desktopGlanceVisible,
-  dockFits,
+  dockRestorable,
+  dockShown,
   glanceHasContent,
   glanceLive,
-  inAppPlacement,
+  gooseInFront,
   nearestCorner,
   snoozeAfter,
 } from './engineGlanceRules';
@@ -82,32 +83,54 @@ describe('desktopGlanceVisible — the floating window on the desktop', () => {
   });
 });
 
-describe('inAppPlacement — docked in the sidebar or floating over the window', () => {
-  it('the sidebar with room docks it, idle included', () => {
-    expect(inAppPlacement(idle, { navExpanded: true, dockRoom: true })).toBe('dock');
-    expect(inAppPlacement(writing, { navExpanded: true, dockRoom: true })).toBe('dock');
+describe('the docked card — at the foot of the sidebar, or hidden by the person (Q-216..218)', () => {
+  it('shown whenever there is something to show, idle included — no room is measured, nothing floats', () => {
+    expect(dockShown(idle)).toBe(true);
+    expect(dockShown(writing)).toBe(true);
+    expect(dockRestorable(writing)).toBe(false);
   });
 
-  it('no room (or no sidebar): it floats only while live', () => {
-    expect(inAppPlacement(writing, { navExpanded: true, dockRoom: false })).toBe('float');
-    expect(inAppPlacement(writing, { navExpanded: false, dockRoom: true })).toBe('float');
-    expect(inAppPlacement(idle, { navExpanded: false, dockRoom: false })).toBe('hidden');
+  it('hidden by the person: not shown, and the row that brings it back is offered', () => {
+    const hidden = { ...writing, prefs: { ...writing.prefs, inApp: false } };
+    expect(dockShown(hidden)).toBe(false);
+    expect(dockRestorable(hidden)).toBe(true);
   });
 
-  it('turned off, or nothing to show: hidden', () => {
-    const offPref = { ...writing, prefs: { ...writing.prefs, inApp: false } };
-    expect(inAppPlacement(offPref, { navExpanded: true, dockRoom: true })).toBe('hidden');
-    expect(inAppPlacement(off, { navExpanded: true, dockRoom: true })).toBe('hidden');
+  it('nothing to show: neither the card nor a row that would restore an empty card', () => {
+    const hiddenOff = { ...off, prefs: { ...off.prefs, inApp: false } };
+    expect(dockShown(off)).toBe(false);
+    expect(dockRestorable(hiddenOff)).toBe(false);
+  });
+
+  it('a question with no engine still shows (the card is the question)', () => {
+    const asked = { ...off, sessions: { running: 0, needsYou: [question] } };
+    expect(dockShown(asked)).toBe(true);
+  });
+});
+
+describe('gooseInFront — the fact the "in the background" desktop window hangs on', () => {
+  const onScreen = { visible: true, minimized: false };
+  it('macOS: goose active with a window on screen is in front, even with NO window focused (its own folder panel open)', () => {
+    expect(gooseInFront('darwin', true, false, [onScreen])).toBe(true);
+  });
+
+  it('macOS: another app in front — goose is in the background', () => {
+    expect(gooseInFront('darwin', false, false, [onScreen])).toBe(false);
+  });
+
+  it('macOS: goose still the active app but every window minimized or hidden — the owner’s original ask', () => {
+    expect(gooseInFront('darwin', true, false, [{ visible: true, minimized: true }])).toBe(false);
+    expect(gooseInFront('darwin', true, false, [{ visible: false, minimized: false }])).toBe(false);
+    expect(gooseInFront('darwin', true, false, [])).toBe(false);
+  });
+
+  it('elsewhere: a focused goose window is the fact', () => {
+    expect(gooseInFront('linux', false, true, [])).toBe(true);
+    expect(gooseInFront('win32', true, false, [onScreen])).toBe(false);
   });
 });
 
 describe('the geometry', () => {
-  it('dockFits: the trees plus the card must fit the column; an unmeasured card never docks', () => {
-    expect(dockFits(800, 500, 140)).toBe(true);
-    expect(dockFits(800, 700, 140)).toBe(false);
-    expect(dockFits(800, 100, 0)).toBe(false);
-  });
-
   const area = { x: 0, y: 25, width: 1512, height: 920 };
 
   it('nearestCorner: the quadrant of the window’s centre', () => {

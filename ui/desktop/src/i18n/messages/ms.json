@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "Tunjukkan kad penuh"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "Apa yang sedang ditulis · {count, plural, other {# panggilan alat}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "Sembunyikan apa yang sedang ditulis"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "Enjin: {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "Sembunyikan kad ini — kembalikan dari bahagian bawah bar sisi atau Tetapan › Aplikasi"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# permintaan sedang berjalan}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "tok/s membaca prompt ini"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "Tunjukkan kad enjin"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "Kad enjin disembunyikan. Tunjukkannya semula di bahagian bawah bar sisi."
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, other {# sesi berjalan}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "Di sebelahnya: {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac tiada"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "Di bar sisi"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "Di ruang kosong di bawah sesi anda; terapung di atas tetingkap semasa enjin bekerja dan bar sisi tiada ruang."
+    "defaultMessage": "Di bahagian bawah bar sisi, di bawah sesi anda. Sembunyikannya dari kad itu sendiri; ia kembali dari baris yang ditinggalkan di tempatnya, atau dari sini."
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Enjin sepintas lalu"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Sambung ke pelayan goose yang berjalan di tempat lain (memerlukan memulakan semula aplikasi)"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} aksara"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, other {# panggilan alat sedang terbentuk}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "Diterima setakat ini: {arguments} aksara argumen{reasoning, select, none {} other {, {reasoning} aksara penaakulan}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# daripadanya sama dengan panggilan terdahulu} other {# daripadanya sama dengan panggilan-panggilan terdahulu}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# daripadanya sama dengan panggilan {tool} yang terdahulu} other {# daripadanya sama dengan panggilan {tool} yang terdahulu}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "Teks yang ditulis di sebelah panggilan ({chars} aksara) — bukan sebahagian daripada jawapan"
   },
   "goosehintsModal.close": {
     "defaultMessage": "Tutup"
@@ -2633,21 +2669,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose sedang memadatkan perbualan..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} aksara"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, other {# panggilan alat sedang terbentuk}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "Diterima setakat ini: {arguments} aksara argumen{reasoning, select, none {} other {, {reasoning} aksara penaakulan}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "Teks yang ditulis di sebelah panggilan ({chars} aksara) — bukan sebahagian daripada jawapan"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "Sembunyikan"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose sedang mengusahakannya…"
   },
@@ -2656,9 +2677,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "memulakan semula sesi..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "Tunjukkan apa yang sedang terbentuk"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose sedang mengusahakannya…"
@@ -8491,57 +8509,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose ingin memanggil {toolName}. Benarkan?"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "Menyemak sama ada {mac} masih menyimpan jawapan anda…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {goose tidak berjalan pada {mac} — buka goose di sana, atau jalankan sembang pada Mac ini} other {{mac} tidak menjawab sejak {time} — goose mungkin ditutup, atau ia di luar talian}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token) — {elapsed} setakat ini"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token) — {elapsed} daripada kira-kira {expected} pada {rate} tok/s terukur"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token) — {percent}%"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "Menunggu {mac} menyambung semula…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "Tiada perkataan daripada {mac} seketika — menyemak…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "Menulis selama {elapsed} · {tokens} token · {rate} tok/s"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "Menulis selama {elapsed} · {tokens} token"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "menyemak sembang ini…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {satu panggilan ke {tool}} other {# panggilan alat, yang terkini ke {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {# daripadanya sama dengan panggilan terdahulu} other {# daripadanya sama dengan panggilan-panggilan terdahulu}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {# daripadanya sama dengan panggilan {tool} yang terdahulu} other {# daripadanya sama dengan panggilan {tool} yang terdahulu}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}, {repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "swarm dijeda — tiada apa berjalan sehingga anda sambung semula"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan memuat turun kemas kini di latar belakang dan memasangnya pada kali seterusnya anda keluar atau mula semula."

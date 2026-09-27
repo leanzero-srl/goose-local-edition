@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "Kartın tamamını göster"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "Ne yazıyor · {count, plural, one {# araç çağrısı} other {# araç çağrısı}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "Ne yazdığını gizle"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "Motor: {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "Bu kartı gizle — kenar çubuğunun altından veya Ayarlar › Uygulama bölümünden geri getir"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# istek işleniyor}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "bu istemi okurken tok/s"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "Motor kartını göster"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "Motor kartı gizli. Kenar çubuğunun altında yeniden göster."
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, other {# oturum çalışıyor}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "Yanında: {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac yok"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "Kenar çubuğunda"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "Oturumlarınızın altındaki boş alanda; motor çalışırken ve kenar çubuğunda yer yokken pencerenin üzerinde yüzer."
+    "defaultMessage": "Kenar çubuğunun altında, oturumlarınızın altında. Kartın kendisinden gizleyin; yerinde bıraktığı satırdan veya buradan geri gelir."
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Bir bakışta motor"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Başka bir yerde çalışan bir goose sunucusuna bağlanın (uygulamanın yeniden başlatılmasını gerektirir)"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} karakter"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, other {# araç çağrısı oluşuyor}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "Şu ana kadar alınan: {arguments} karakter argüman{reasoning, select, none {} other {, {reasoning} karakter akıl yürütme}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {bunlardan # tanesi önceki bir çağrıyla aynı} other {bunlardan # tanesi önceki çağrılarla aynı}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {bunlardan # tanesi önceki bir {tool} çağrısıyla aynı} other {bunlardan # tanesi önceki bir {tool} çağrısıyla aynı}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "Çağrıların yanına yazılan metin ({chars} karakter) — yanıtın parçası değil"
   },
   "goosehintsModal.close": {
     "defaultMessage": "Kapat"
@@ -2633,21 +2669,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose konuşmayı sıkıştırıyor..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} karakter"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, other {# araç çağrısı oluşuyor}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "Şu ana kadar alınan: {arguments} karakter argüman{reasoning, select, none {} other {, {reasoning} karakter akıl yürütme}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "Çağrıların yanına yazılan metin ({chars} karakter) — yanıtın parçası değil"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "Gizle"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose bunun üzerinde çalışıyor…"
   },
@@ -2656,9 +2677,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "oturum yeniden başlatılıyor..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "Oluşmakta olanı göster"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose bunun üzerinde çalışıyor…"
@@ -8491,57 +8509,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose, {toolName}'yi aramak istiyor. İzin vermek?"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "{mac} yanıtınızı hâlâ tutuyor mu diye bakılıyor…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {{mac} üzerinde goose çalışmıyor — goose’u orada açın ya da sohbeti bu Mac’te çalıştırın} other {{mac} {time} saatinden beri yanıt vermiyor — goose kapalı olabilir ya da çevrimdışı}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} isteminizi okuyor ({tokens} token) — şu ana kadar {elapsed}"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} isteminizi okuyor ({tokens} token) — ölçülen {rate} tok/sn ile yaklaşık {expected} sürenin {elapsed} kadarı"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} isteminizi okuyor ({tokens} token) — %{percent}"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} isteminizi okuyor ({tokens} token)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "{mac} yeniden bağlanması bekleniyor…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "Bir süredir {mac} kaynağından kelime yok — kontrol ediliyor…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "{elapsed} süredir yazıyor · {tokens} token · {rate} tok/s"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "{elapsed} süredir yazıyor · {tokens} token"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "bu sohbet kontrol ediliyor…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {{tool} için bir araç çağrısı} other {# araç çağrısı, sonuncusu {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {bunlardan # tanesi önceki bir çağrıyla aynı} other {bunlardan # tanesi önceki çağrılarla aynı}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {bunlardan # tanesi önceki bir {tool} çağrısıyla aynı} other {bunlardan # tanesi önceki bir {tool} çağrısıyla aynı}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}, {repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "sürü duraklatıldı — siz devam ettirene kadar hiçbir şey çalışmıyor"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Güncelleme arka planda otomatik olarak indirilecektir."

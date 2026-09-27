@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "Mostrar la tarjeta completa"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "Lo que está escribiendo · {count, plural, one {# llamada a herramienta} other {# llamadas a herramientas}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "Ocultar lo que está escribiendo"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "Motor: {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "Ocultar esta tarjeta — recupérala al pie de la barra lateral o en Ajustes › App"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# solicitud en curso} other {# solicitudes en curso}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "tok/s leyendo este prompt"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "Mostrar la tarjeta del motor"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "La tarjeta del motor está oculta. Vuelve a mostrarla al pie de la barra lateral."
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, one {# sesión en curso} other {# sesiones en curso}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "Junto a ella: {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac ausente"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "En la barra lateral"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "En el espacio libre bajo tus sesiones; flotando sobre la ventana mientras el motor trabaja y la barra lateral no tiene sitio."
+    "defaultMessage": "Al pie de la barra lateral, bajo tus sesiones. Ocúltala desde la propia tarjeta; vuelve desde la fila que deja en su lugar, o desde aquí."
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "El motor de un vistazo"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Conéctate a un servidor goose que se ejecuta en otro lugar (requiere reiniciar la app)"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} caracteres"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, one {# llamada a herramienta en formación} other {# llamadas a herramientas en formación}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "Recibido hasta ahora: {arguments} caracteres de argumentos{reasoning, select, none {} other {, {reasoning} caracteres de razonamiento}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# de ellas es idéntica a una llamada anterior} other {# de ellas son idénticas a llamadas anteriores}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# de ellas es idéntica a una llamada anterior a {tool}} other {# de ellas son idénticas a una llamada anterior a {tool}}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "Texto escrito junto a las llamadas ({chars} caracteres) — no forma parte de la respuesta"
   },
   "goosehintsModal.close": {
     "defaultMessage": "Cerrar"
@@ -2633,21 +2669,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose está compactando la conversación..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} caracteres"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, one {# llamada a herramienta en formación} other {# llamadas a herramientas en formación}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "Recibido hasta ahora: {arguments} caracteres de argumentos{reasoning, select, none {} other {, {reasoning} caracteres de razonamiento}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "Texto escrito junto a las llamadas ({chars} caracteres) — no forma parte de la respuesta"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "Ocultar"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose está trabajando en ello…"
   },
@@ -2656,9 +2677,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "reiniciando sesión..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "Mostrar lo que se está formando"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose está trabajando en ello…"
@@ -8491,57 +8509,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose quiere invocar {toolName}. ¿Permitir?"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "Comprobando si {mac} aún tiene tu respuesta…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {goose no se está ejecutando en {mac} — abre goose allí o ejecuta el chat en este Mac} other {{mac} no responde desde las {time} — puede que goose esté cerrado o que esté sin conexión}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens) — {elapsed} hasta ahora"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens) — {elapsed} de unos {expected} a sus {rate} tok/s medidos"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens) — {percent} %"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "Esperando a que {mac} se vuelva a conectar…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "Sin palabras de {mac} desde hace un momento — comprobando…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "Escribiendo desde hace {elapsed} · {tokens} tokens · {rate} tok/s"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "Escribiendo desde hace {elapsed} · {tokens} tokens"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "comprobando este chat…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {una llamada a {tool}} other {# llamadas a herramientas, la última a {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {# de ellas es idéntica a una llamada anterior} other {# de ellas son idénticas a llamadas anteriores}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {# de ellas es idéntica a una llamada anterior a {tool}} other {# de ellas son idénticas a una llamada anterior a {tool}}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}, {repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "enjambre en pausa — nada se ejecuta hasta que lo reanudes"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "La actualización se descargará automáticamente en segundo plano."

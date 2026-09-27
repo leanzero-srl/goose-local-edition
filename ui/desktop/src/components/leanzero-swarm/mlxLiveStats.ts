@@ -195,6 +195,12 @@ export function mlxActivity(stats: MlxLiveStats): MlxActivity {
   return 'idle';
 }
 
+/** One request's phase in the activity words (a waiting or queued request is `queued`). */
+export function requestActivity(request: MlxLiveRequest): MlxActivity {
+  if (request.status === 'waiting' || request.phase === 'queued') return 'queued';
+  return request.phase === 'prefill' ? 'prefill' : 'generating';
+}
+
 /**
  * The decode rate this instant, from the generating requests' OWN rates — only those that have
  * written at least two tokens, because a rate needs an interval between tokens. The engine's

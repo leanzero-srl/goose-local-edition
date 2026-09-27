@@ -16,7 +16,7 @@ const i18n = defineMessages({
   inAppDesc: {
     id: 'engineGlanceSettings.inAppDesc',
     defaultMessage:
-      'In the empty space under your sessions; floating over the window while the engine works and the sidebar has no room.',
+      'At the foot of the sidebar, under your sessions. Hide it from the card itself; it comes back from the row it leaves in its place, or from here.',
   },
   desktop: { id: 'engineGlanceSettings.desktop', defaultMessage: 'Floating on the desktop' },
   desktopDesc: {

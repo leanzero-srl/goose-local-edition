@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "Hiện cả thẻ"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "Đang viết gì · {count, plural, other {# lệnh gọi công cụ}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "Ẩn nội dung đang viết"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "Động cơ: {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "Ẩn thẻ này — đưa lại từ cuối thanh bên hoặc Cài đặt › Ứng dụng"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# yêu cầu đang chạy}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "tok/s khi đọc prompt này"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "Hiện thẻ công cụ chạy"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "Thẻ công cụ chạy đang ẩn. Hiện lại ở cuối thanh bên."
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, other {# phiên đang chạy}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "Bên cạnh: {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac vắng mặt"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "Trong thanh bên"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "Trong khoảng trống dưới các phiên của bạn; nổi trên cửa sổ khi động cơ làm việc và thanh bên hết chỗ."
+    "defaultMessage": "Ở cuối thanh bên, dưới các phiên của bạn. Ẩn ngay trên thẻ; thẻ quay lại từ dòng để lại ở chỗ cũ, hoặc từ đây."
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Động cơ trong nháy mắt"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Kết nối tới một máy chủ goose đang chạy ở nơi khác (cần khởi động lại ứng dụng)"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} ký tự"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, other {# lệnh gọi công cụ đang hình thành}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "Đã nhận: {arguments} ký tự đối số{reasoning, select, none {} other {, {reasoning} ký tự suy luận}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# trong số đó giống hệt một lệnh gọi trước đó} other {# trong số đó giống hệt các lệnh gọi trước đó}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# trong số đó giống hệt một lệnh gọi {tool} trước đó} other {# trong số đó giống hệt một lệnh gọi {tool} trước đó}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "Văn bản viết bên cạnh các lệnh gọi ({chars} ký tự) — không thuộc câu trả lời"
   },
   "goosehintsModal.close": {
     "defaultMessage": "Đóng"
@@ -2633,21 +2669,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose đang nén cuộc trò chuyện..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} ký tự"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, other {# lệnh gọi công cụ đang hình thành}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "Đã nhận: {arguments} ký tự đối số{reasoning, select, none {} other {, {reasoning} ký tự suy luận}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "Văn bản viết bên cạnh các lệnh gọi ({chars} ký tự) — không thuộc câu trả lời"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "Ẩn"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose đang xử lý…"
   },
@@ -2656,9 +2677,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "đang khởi động lại phiên..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "Hiện nội dung đang hình thành"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose đang xử lý…"
@@ -8491,57 +8509,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose muốn gọi {toolName}. Cho phép?"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "Đang kiểm tra xem {mac} còn giữ câu trả lời của bạn không…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {goose trên {mac} không chạy — hãy mở goose ở đó, hoặc chạy cuộc trò chuyện trên Mac này} other {{mac} chưa phản hồi từ {time} — goose có thể đã đóng, hoặc máy đang ngoại tuyến}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token) — đã {elapsed}"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token) — {elapsed} trên khoảng {expected} ở tốc độ đo được {rate} tok/s"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token) — {percent}%"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "Đang chờ {mac} kết nối lại…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "Một lúc không có chữ nào từ {mac} — đang kiểm tra…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "Đang viết được {elapsed} · {tokens} token · {rate} token/giây"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "Đang viết được {elapsed} · {tokens} token"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "đang kiểm tra cuộc trò chuyện này…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {một lệnh gọi tới {tool}} other {# lệnh gọi công cụ, mới nhất tới {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {# trong số đó giống hệt một lệnh gọi trước đó} other {# trong số đó giống hệt các lệnh gọi trước đó}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {# trong số đó giống hệt một lệnh gọi {tool} trước đó} other {# trong số đó giống hệt một lệnh gọi {tool} trước đó}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}, {repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "swarm đang tạm dừng — không có gì chạy cho tới khi bạn tiếp tục"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose sẽ tải bản cập nhật ở chế độ nền và cài đặt vào lần tiếp theo khi bạn thoát hoặc khởi động lại."

@@ -111,3 +111,69 @@ export function glancePush(
     prefs: { ...DEFAULT_GLANCE_PREFS, ...prefs },
   };
 }
+
+/**
+ * The owner's screenshot 26 (Q-218): the split reading the chat's 77k prompt, 1% in, while goose's
+ * own 174-token side call (a tool label) is read beside it — the older, longer-read request. The
+ * card said "Reading prompt · 174 prompt tokens, reading for 12s · 3.9 tok/s".
+ */
+export const TURN_BESIDE_SIDE_CALL_BODY = {
+  num_running: 2,
+  num_waiting: 0,
+  status: 'generating',
+  generation_tps: null,
+  requests: [
+    {
+      request_id: 'side-label-1',
+      status: 'running',
+      phase: 'prefill',
+      elapsed_s: 12,
+      prompt_tokens: 174,
+      prefilled_tokens: 64,
+      prompt_tokens_per_second: 3.9,
+      completion_tokens: 0,
+      max_tokens: 256,
+      tokens_per_second: null,
+      ttft_s: null,
+      cached_tokens: null,
+    },
+    {
+      request_id: 'turn-77k',
+      status: 'running',
+      phase: 'prefill',
+      elapsed_s: 9,
+      prompt_tokens: 77000,
+      prefilled_tokens: 770,
+      prompt_tokens_per_second: 85.6,
+      completion_tokens: 0,
+      max_tokens: 32768,
+      tokens_per_second: null,
+      ttft_s: null,
+      cached_tokens: null,
+    },
+  ],
+};
+
+/** The same chat's turn WAITING for a slot while goose's side call is the one being read. */
+export const TURN_WAITING_BEHIND_SIDE_CALL_BODY = {
+  ...TURN_BESIDE_SIDE_CALL_BODY,
+  num_running: 1,
+  num_waiting: 1,
+  requests: [
+    TURN_BESIDE_SIDE_CALL_BODY.requests[0],
+    {
+      ...TURN_BESIDE_SIDE_CALL_BODY.requests[1],
+      status: 'waiting',
+      phase: 'queued',
+      prefilled_tokens: null,
+      prompt_tokens_per_second: null,
+    },
+  ],
+};
+
+/** goose's tool-label call for the same chat (Q-185 `work`), running beside its turn. */
+export const TOOL_LABEL_ROW: MlxServingRow = {
+  ...CHAT_ROW,
+  id: 2,
+  work: 'toolLabel',
+};

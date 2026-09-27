@@ -8,9 +8,14 @@ import { __unstable__loadDesignSystem as loadDesignSystem } from '@tailwindcss/n
  * `font-mono` case this system was born from — so the tests refuse it.
  */
 export async function missingUtilities(classes: readonly string[]): Promise<string[]> {
+  const out = await utilityCss(classes);
+  return classes.filter((_, i) => out[i] == null);
+}
+
+/** The rule each class compiles to with the real pipeline, in order; null = it produces none. */
+export async function utilityCss(classes: readonly string[]): Promise<Array<string | null>> {
   const base = resolve(__dirname, '../../styles');
   const css = readFileSync(resolve(base, 'main.css'), 'utf8');
   const design = await loadDesignSystem(css, { base });
-  const out = design.candidatesToCss([...classes]);
-  return classes.filter((_, i) => out[i] == null);
+  return design.candidatesToCss([...classes]);
 }

@@ -177,6 +177,7 @@ import {
   isGlancePipAction,
 } from './engineGlanceDesktop';
 import { createGlanceWindowPort } from './engineGlanceWindow';
+import { gooseInFront } from './utils/engineGlanceRules';
 import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
 import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
 import {
@@ -2237,6 +2238,8 @@ const currentGlancePrefs = (): GlancePrefs => {
 const glanceSessionsByWindow = new Map<number, GlanceSessions>();
 let glanceWebContentsId: number | null = null;
 let lastGlancePush = '';
+// macOS says when goose becomes and stops being the active app (below); it starts in front.
+let gooseAppActive = true;
 const glanceWindowArguments = () => [
   JSON.stringify({ ...appConfig, GOOSE_LOCALE: getConfiguredGooseLocale() }),
 ];
@@ -2253,8 +2256,18 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
       glanceWebContentsId = id;
     },
   }),
-  // goose is the app in front only while one of its windows holds focus; the glance never can.
-  appInFront: () => BrowserWindow.getFocusedWindow() != null,
+  // goose is in front while it is the active app with a window on screen — not "a window holds
+  // focus": goose's own open-folder panel or a menu leaves no window focused, and the card then
+  // floated over goose itself (Q-217). The glance is not a BrowserWindow, so it never counts.
+  appInFront: () =>
+    gooseInFront(
+      process.platform,
+      gooseAppActive,
+      BrowserWindow.getFocusedWindow() != null,
+      BrowserWindow.getAllWindows()
+        .filter((w) => !w.isDestroyed())
+        .map((w) => ({ visible: w.isVisible(), minimized: w.isMinimized() }))
+    ),
   savePrefs: (next) => saveGlancePrefs(next),
   // The glance is a non-activating panel: its click reaches goose with another app still in front,
   // and a window's focus() alone does not activate the app on macOS (measured on the packaged build:
@@ -2309,8 +2322,21 @@ const saveGlancePrefs = (next: GlancePrefs) => {
 const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 0);
 app.on('browser-window-focus', refreshGlanceSoon);
 app.on('browser-window-blur', refreshGlanceSoon);
-app.on('did-resign-active', refreshGlanceSoon);
-app.on('did-become-active', refreshGlanceSoon);
+app.on('did-resign-active', () => {
+  gooseAppActive = false;
+  refreshGlanceSoon();
+});
+app.on('did-become-active', () => {
+  gooseAppActive = true;
+  refreshGlanceSoon();
+});
+// Minimizing or restoring the last window on screen leaves goose active: the rule re-decides then too.
+app.on('browser-window-created', (_event, win) => {
+  win.on('minimize', refreshGlanceSoon);
+  win.on('restore', refreshGlanceSoon);
+  win.on('hide', refreshGlanceSoon);
+  win.on('show', refreshGlanceSoon);
+});
 
 // The engine-phase dot beside a tray state line, in the palette's exact hex (12pt @2x).
 const phaseDots = new Map<EnginePhase, NativeImage>();

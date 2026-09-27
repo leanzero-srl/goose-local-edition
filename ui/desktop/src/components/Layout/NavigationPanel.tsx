@@ -107,8 +107,6 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
   const isActive = useCallback((path: string) => location.pathname === path, [location.pathname]);
 
   const navFocusRef = useRef<HTMLDivElement>(null);
-  const treesScrollRef = useRef<HTMLDivElement>(null);
-  const treesContentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isNavExpanded) {
@@ -145,8 +143,8 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
 
       {/* The three trees, one shape (Mihai 2026-09-22): Projects, then Agent Work desks and
           Benchmark runs, each with its sessions under it. */}
-      <div ref={treesScrollRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <div ref={treesContentRef} className="flex shrink-0 flex-col">
+      <div data-testid="nav-trees" className="flex min-h-[20%] flex-1 flex-col overflow-y-auto">
+        <div className="flex shrink-0 flex-col">
           <ActiveNowSection className="mt-2 shrink-0" />
           <ProjectsSection className="mt-2 shrink-0" />
           {isLocal && <AgentWorkSection className="mt-2 shrink-0" />}
@@ -154,8 +152,10 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
         </div>
       </div>
 
-      {/* The engine glance in the empty space below the trees, while it fits there. */}
-      <EngineGlanceDockSlot scrollRef={treesScrollRef} contentRef={treesContentRef} />
+      {/* The engine card at the foot of the column — its own flex item, so the trees' scroll area
+          above ends where it begins and an expanded tree scrolls instead of drawing under it (Q-216).
+          Hidden by the person, the same slot is the one row that brings it back (Q-218). */}
+      <EngineGlanceDockSlot />
 
       {/* The bottom block under a hairline: the theme switch (System | Light | Dark) on its OWN
           36px row, then Settings as one more full-width nav row. Side by side, the switch left the

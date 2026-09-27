@@ -11,7 +11,7 @@ import { activeSessions, useSessionActivity } from '../sessionActivity/sessionAc
 
 /**
  * main's engine glance in this window — one subscription however many surfaces read it (the docked
- * card, the floating card, the desktop window's root). null until main has built one.
+ * card and the desktop window's root). null until main has built one.
  */
 
 interface GlanceBridge {

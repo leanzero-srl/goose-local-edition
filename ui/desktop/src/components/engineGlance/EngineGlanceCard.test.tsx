@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { FormingStatus } from '@aaif/goose-sdk';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { EngineGlanceCard, type EngineGlanceCardProps } from './EngineGlanceCard';
@@ -8,6 +9,8 @@ import { toMlxDistributedReport } from '../../utils/mlxDistributedReport';
 import {
   CHAT_ROW,
   SPLIT_READING_BODY,
+  TOOL_LABEL_ROW,
+  TURN_BESIDE_SIDE_CALL_BODY,
   figure,
   glancePush,
   measuredRead,
@@ -27,6 +30,28 @@ const splitReading = glancePush(
   { distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 } }
 );
 const writing = glancePush(runningSnapshot(GENERATING_STATUS));
+const sideCall = glancePush(
+  runningSnapshot(TURN_BESIDE_SIDE_CALL_BODY, {
+    engine: 'distributed',
+    modelId: FLASH_MODEL,
+    serving: attributeServing([CHAT_ROW, TOOL_LABEL_ROW], 2, [], null),
+  }),
+  { distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 } }
+);
+const turnWriting = glancePush(
+  runningSnapshot(GENERATING_STATUS, { serving: attributeServing([CHAT_ROW], 3, [], null) })
+);
+const forming: FormingStatus = {
+  calls: [
+    { name: 'developer__text_editor', title: 'edit', argumentChars: 1204 },
+    { name: 'developer__shell', title: 'shell', argumentChars: 88 },
+  ],
+  argumentChars: 1292,
+  reasoningChars: 0,
+  text: 'Now I will update the config.',
+  repeatedCalls: 0,
+  repeatedTitle: null,
+};
 const idle = glancePush(
   runningSnapshot(IDLE_STATUS, { measured: measuredRead({ writing: figure(29.6, 29.6, 29.6, 1) }) })
 );
@@ -168,10 +193,40 @@ describe('EngineGlanceCard — the Engine tile, small', () => {
     expect(props.onOpenEngine).not.toHaveBeenCalled();
   });
 
-  it('the docked card has no pill control; the floating ones do, and the desktop one can close', () => {
+  it('the docked card has no pill control and no close; the desktop one has both', () => {
     renderCard(writing);
     expect(screen.queryByTestId('engine-glance-collapse')).toBeNull();
     expect(screen.queryByTestId('engine-glance-close')).toBeNull();
+  });
+
+  it('Q-218: the docked card hides from its own control, and that click opens nothing', () => {
+    const onHide = vi.fn();
+    const props = renderCard(writing, { onHide });
+    const hide = screen.getByTestId('engine-glance-hide');
+    expect(hide.getAttribute('aria-label')).toMatch(/Hide this card/);
+    fireEvent.click(hide);
+    expect(onHide).toHaveBeenCalledOnce();
+    expect(props.onOpenEngine).not.toHaveBeenCalled();
+  });
+
+  it('negative control: the desktop window has no hide (it closes for the spell instead)', () => {
+    renderCard(writing, { variant: 'desktop', onClose: vi.fn() });
+    expect(screen.queryByTestId('engine-glance-hide')).toBeNull();
+  });
+
+  it('Q-218: the chat’s 77k prompt leads; goose’s tool-label call is named beside it, never as the prompt', () => {
+    renderCard(sideCall);
+    expect(screen.getByTestId('engine-glance-stage').textContent).toBe('Reading prompt');
+    expect(screen.getByTestId('engine-glance-hero').textContent).toBe('77K');
+    expect(screen.getByTestId('engine-glance-progress').getAttribute('aria-valuenow')).toBe('1');
+    expect(screen.getByTestId('engine-glance-chat').textContent).toBe(
+      'Chat · Refactor the auth flow'
+    );
+    expect(screen.getByTestId('engine-glance-side').textContent).toBe(
+      'Beside it: Labeling tool calls'
+    );
+    expect(screen.queryByTestId('engine-glance-others')).toBeNull();
+    expect(document.body.textContent).not.toContain('174');
   });
 
   it('desktop: shrink to a pill, and close', () => {
@@ -196,22 +251,71 @@ describe('EngineGlanceCard — the pill', () => {
   });
 
   it('reading on the split: its reading rate', () => {
-    renderCard(splitReading, { variant: 'float', collapsed: true });
+    renderCard(splitReading, { variant: 'desktop', collapsed: true });
     expect(screen.getByTestId('engine-glance-pill-figure').textContent).toBe('237 tok/s');
   });
 
   it('idle: the word alone — a median is not a live figure', () => {
-    renderCard(idle, { variant: 'float', collapsed: true });
+    renderCard(idle, { variant: 'desktop', collapsed: true });
     expect(screen.queryByTestId('engine-glance-pill-figure')).toBeNull();
   });
 
   it('a question waiting shows as a count on the pill; expand brings the card back', () => {
     const props = renderCard(
       { ...writing, sessions: { running: 1, needsYou: [question] } },
-      { variant: 'float', collapsed: true }
+      { variant: 'desktop', collapsed: true }
     );
     expect(screen.getByTestId('engine-glance-pill-needs').textContent).toBe('1 needs you');
     fireEvent.click(screen.getByTestId('engine-glance-expand'));
     expect(props.onCollapsedChange).toHaveBeenCalledWith(false);
+  });
+});
+
+describe('EngineGlanceCard — what the chat’s turn is forming (Q-215: the disclosure moved here)', () => {
+  it('the chat line is a turn with calls forming: "What it’s writing" opens the calls beside the card', () => {
+    renderCard(turnWriting, { forming });
+    const toggle = screen.getByTestId('engine-glance-forming-toggle');
+    expect(toggle.textContent).toBe('What it’s writing · 2 tool calls');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByTestId('forming-panel')).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const panel = screen.getByTestId('forming-panel');
+    // Portalled out of the sidebar's clipping frame, fixed beside the card.
+    expect(panel.parentElement).toBe(document.body);
+    expect(panel.className).toContain('fixed');
+    expect(within(panel).getByTestId('forming-panel-calls').textContent).toContain('edit');
+    expect(within(panel).getByTestId('forming-panel-text').textContent).toBe(
+      'Now I will update the config.'
+    );
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByTestId('forming-panel')).toBeNull();
+  });
+
+  it('opening it opens nothing else — neither the Engine nor the chat', () => {
+    const props = renderCard(turnWriting, { forming });
+    fireEvent.click(screen.getByTestId('engine-glance-forming-toggle'));
+    expect(props.onOpenEngine).not.toHaveBeenCalled();
+    expect(props.onOpenSession).not.toHaveBeenCalled();
+  });
+
+  it('negative controls: nothing forming, goose’s own call on the chat line, or no chat — no toggle', () => {
+    renderCard(turnWriting, { forming: null });
+    expect(screen.queryByTestId('engine-glance-forming-toggle')).toBeNull();
+  });
+
+  it('negative control: the chat line is goose’s fact check — its forming is not the answer', () => {
+    const check = glancePush(
+      runningSnapshot(GENERATING_STATUS, {
+        serving: attributeServing([{ ...CHAT_ROW, work: 'factCheck' }], 1, [], null),
+      })
+    );
+    renderCard(check, { forming });
+    expect(screen.queryByTestId('engine-glance-forming-toggle')).toBeNull();
+  });
+
+  it('negative control: an engine serving no chat of this app offers nothing', () => {
+    renderCard(writing, { forming });
+    expect(screen.queryByTestId('engine-glance-forming-toggle')).toBeNull();
   });
 });
