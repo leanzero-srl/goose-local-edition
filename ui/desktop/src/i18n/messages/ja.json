@@ -675,7 +675,7 @@
     "defaultMessage": "チャットのみ"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "チャットセッションはこのエンドポイントを使えます。swarm ノードはまだ使えません。"
+    "defaultMessage": "チャットセッションとノードはこのエンドポイントを使えます — 「ノード」で作成してください。swarm のビルドはまだ使えません。"
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "確認に失敗しました"
@@ -687,7 +687,7 @@
     "defaultMessage": "OpenAI 互換"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "OpenAI API を話すあらゆるサーバー — vLLM、llama.cpp、Together、Groq、社内ゲートウェイ。必要なだけ追加できます。チャットセッションで使えますが、swarm ノードはまだ使えません。"
+    "defaultMessage": "OpenAI API を話すあらゆるサーバー — vLLM、llama.cpp、Together、Groq、社内ゲートウェイ。必要なだけ追加できます。設定済みのどのプロバイダーからも「ノード」でノードを作成できます。"
   },
   "cloudProviders.configured": {
     "defaultMessage": "設定済み"
@@ -2847,7 +2847,7 @@
     "defaultMessage": "モデルフォルダを読み取れませんでした。"
   },
   "macs.offThere": {
-    "defaultMessage": "{name} では {what} がオフです — そちらで「他の Mac にこの Mac の使用を許可」をオンにしてください(プロバイダ › マイ Mac)"
+    "defaultMessage": "{name} では {what} がオフです — そちらで「他の Mac にこの Mac の使用を許可」をオンにしてください(LeanZero MLX › マイ Mac)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "一時停止できませんでした。"
@@ -4307,6 +4307,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "ノードを追加"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "ノードとして保存"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "書き込み中"
   },
@@ -5393,6 +5396,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "提供中"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "詳細"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "編集"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "操作に失敗しました"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "「実行」を開く"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "セットアップ"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "起動"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "停止"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "nodes.checking": {
+    "defaultMessage": "{provider} を確認中…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "常に利用可能 · {provider} が課金"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "先にモデルを {mac} にコピーしてください"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "先にモデルをこの Mac に入れてください"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "起動すると {names} が停止します"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "複製"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "スウォームのプールで編集"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Mac を接続してモデルを実行するか、クラウドモデルを追加してください。"
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "ノードはまだありません"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "常に利用可能 · {provider} が提供"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "初回起動はまだ計測されていません"
+  },
+  "nodes.follows": {
+    "defaultMessage": "この Mac のエンジンで実行中のものを提供: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "この Mac のエンジンで実行中のものを提供。現在は何も実行されていません"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "この Mac のエンジンで実行中のものを提供: {model} · {count} 台の Mac に分割"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "スウォームのプールから"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "ノード · {name}"
   },
@@ -5402,11 +5477,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "ノードページで {name} を開く"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "クラウド"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "あなたの Mac · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "swarm のビルドが {node} を使用中です。ビルドが終わると解放されます"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "ロードしたままにする"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "{names} を維持"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "Providers › クラウドプロバイダーで {provider} を設定してください"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "クラウド"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "エンドポイント"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "スウォームのプールから外れました"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{swarm 設定内の LM Studio デバイス {count, number} 台はここに表示されません} other{swarm 設定内の LM Studio デバイス {count, number} 台はここに表示されません}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} / {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "ロード時間を読み取れませんでした: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "クラウドプロバイダーを管理"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac とモデルを管理"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "{mac} のメモリ（予算比）"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "{need} / {budget} GB が必要"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "ピークはまだありません"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} / {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "ピーク {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "{name} のその他の操作"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{両方の Mac} other{# 台の Mac}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "この Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "失敗"
@@ -5420,8 +5561,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "LeanZero MLX エンジンがモデルを読み込んでいます"
   },
+  "nodes.new": {
+    "defaultMessage": "新しいノード"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "戻る"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "閉じる"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "クラウドモデル"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{未設定} one{# 件設定済み} other{# 件設定済み}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "ノードを作成"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "作成して起動"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "{name} を編集"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "エンドポイント"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{追加した OpenAI 互換サーバー · まだありません} one{追加した OpenAI 互換サーバー · # 件追加済み} other{追加した OpenAI 互換サーバー · # 件追加済み}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "モデルを絞り込む"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} / {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "「モデル」で入手"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "目的"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "どう実行しますか？"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "ロードしたままにする: 他のノードのために停止しない"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} はモデル一覧を返しませんでした ({error})。goose が把握しているモデルを表示しています。"
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "{macs} 上"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "{provider} にモデルを問い合わせ中…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} にはモデル一覧がありません。goose が把握しているモデルを表示しています。"
+  },
+  "nodes.newName": {
+    "defaultMessage": "名前"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "名前を付ける"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "次へ"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "Mac にまだモデルがありません。"
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose はこのモデルを Mac で実行する方法を見つけられませんでした。"
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "未設定"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "あなたの Mac で"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "LeanZero MLX エンジン、1 台または分割"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "モデルを選択"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "モデル"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "プロバイダーを読み取れませんでした: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "プロバイダーを読み取り中…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "保存されませんでした"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "再計画"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "ノードを保存"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "別のプロバイダーを設定"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "種類"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "モデル"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "名前"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "ステップ {n} / {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "プロバイダー"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "方法"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "新しいノード"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "{model} の実行方法"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "どこで実行しますか？"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "どのモデル？"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "どのプロバイダー？"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "ノードを保存できませんでした"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose にはこのモデルのプランがまだありません"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "このモデルの goose のプランにその方法はありません"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} は LeanZero Link に接続されていません"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "この Mac には大きすぎるモデルを実行するには、別の Mac を追加してください"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "先に {mac} で「{permission}」をオンにしてください(LeanZero MLX › マイ Mac)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "読み込み中"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "別のロードの完了を待っています"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "方法を固定"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "この方法のプランがありません: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "この方法について Mac を計測中…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "ノードを読み取れませんでした"
+  },
+  "nodes.reading": {
+    "defaultMessage": "ノードを読み取り中…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "現在の提供状況を読み取り中…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "削除されませんでした"
+  },
+  "nodes.remove": {
+    "defaultMessage": "削除"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "削除し、新しいチャットは「任意のノード (自動)」で始める"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "ノードはノード一覧から削除されます。Mac、モデル、プロバイダーはそのままです。"
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "削除"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "それらのストラテジーからも削除する"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "スウォームのプールはデバイスを保持します。このノードは今後ここに表示されません。プール自体は下で編集してください。"
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "{node} を削除しますか？"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# 件のチャットがこのノードに設定されています。次のメッセージで削除されたことが表示されます。} other{# 件のチャットがこのノードに設定されています。次のメッセージで削除されたことが表示されます。}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "再読み込み"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} #番目 · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "保存しました。"
+  },
   "nodes.sections": {
     "defaultMessage": "ノードのセクション"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Mac をセットアップ"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "「実行」で表示"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "{node} を起動"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "起動すると {names} が停止します。"
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "{node} を起動しますか？"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} が提供中です。"
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{約 {duration} で起動 · # 回のロードの中央値} other{約 {duration} で起動 · # 回のロードの中央値}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "実行できません"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "この Mac に追従"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "ビルドが使用中"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "キーがありません"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "前回の呼び出しに失敗"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "読み込み中"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "手順が必要"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "未ロード"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "別の方法が実行中"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "準備完了"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "提供中"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "状態不明"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "ロード待ち"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "{node} を停止"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "ストラテジーでは、どのノードが何を担当するかを決めます。ノードの役割、ノードを試す順番、次のノードに切り替えるタイミングです。それまでは、チャットとswarm のビルドは「ノード」タブのノードを使います。"
@@ -5432,6 +5855,9 @@
   "nodes.subtitle": {
     "defaultMessage": "ノードとは、Mac 上またはクラウドで作業を任せられるモデルです。チャットはノードかストラテジーで始まり、swarm のビルドはストラテジーを使います。"
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "スウォームのプールを読み取れませんでした"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "ノード"
   },
@@ -5440,6 +5866,15 @@
   },
   "nodes.title": {
     "defaultMessage": "ノード"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "使用元"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{分割 · # 台の Mac} other{分割 · # 台の Mac}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "この Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"
@@ -5639,6 +6074,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "操作に失敗しました"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "すでにノードです:「{name}」。"
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "両方の Mac が必要"
   },
@@ -5756,6 +6194,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "詳細"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "ノードで開く"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{他の分割 # 件} other{他の分割 # 件}}"
   },
@@ -5806,6 +6247,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "{nodes} で分割のランナーを更新中…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "ノードとして保存"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose にはこの方法のプランがないため、どの Mac で実行されるか示せません。"
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} はここに表示されたどの方法でも実行されていません — 上で実行中のモデルを選んでください。"
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "この方法をノードとして保存すると、チャットやビルドで選べるようになります"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "保存されませんでした: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "ノード「{name}」として保存しました。"
   },
   "placementCard.short": {
     "defaultMessage": "収まりません：{node} で {gb} 不足"
@@ -7746,7 +8205,10 @@
     "defaultMessage": "通知"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "gooseがタスクを実行中はコンピューターがスリープしないようにします（画面はロックされる場合があります）"
+    "defaultMessage": "gooseを開いている間、コンピューターがスリープしないようにします（画面はオフになりロックされる場合があります）"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "スリープの防止が機能していません: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "スリープを防止"
@@ -7910,6 +8372,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "{elapsed} でこの回答を停止しました · {tokens} トークン"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "バックエンド"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "ビルド"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "チャット"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "フロントエンド"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "計画"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "テスト"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name}プロバイダーが設定されています"
   },
@@ -8029,6 +8509,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "リモートマシンの MLX ノード — プールに保存済み。ノードごとのルーティングが来たら稼働します"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "「ノードを追加」で追加してください — 追加が確定した時点でプールに加わります。"
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "ノードはまだありません"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "スウォームが動かすすべてのノード — 設定済みの行に加え、LM Studio に現在常駐しているもの。重み: 高いほどタスクの取り分が大きくなります。"

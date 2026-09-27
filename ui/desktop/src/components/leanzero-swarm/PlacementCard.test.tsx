@@ -335,7 +335,7 @@ describe('Run across both Macs for a model the split is not set up with', () => 
     await userEvent.click(within(split).getByTestId('placement-run-split'));
     expect(
       await screen.findByText(
-        'Run part of a split model is off on Work’s Mac Studio — turn on “Let my other Macs use this Mac” there (Providers › My Macs)'
+        'Run part of a split model is off on Work’s Mac Studio — turn on “Let my other Macs use this Mac” there (LeanZero MLX › My Macs)'
       )
     ).toBeInTheDocument();
     expect(mockDiscover).not.toHaveBeenCalled();
@@ -729,7 +729,7 @@ describe('Run it on the real 27B plan', () => {
     expect(mockRemoteStart).toHaveBeenCalledWith('wh', MODEL);
     expect(
       await screen.findByText(
-        'Answer chat is off on Work’s Mac Studio — turn on “Let my other Macs use this Mac” there (Providers › My Macs)'
+        'Answer chat is off on Work’s Mac Studio — turn on “Let my other Macs use this Mac” there (LeanZero MLX › My Macs)'
       )
     ).toBeInTheDocument();
   });

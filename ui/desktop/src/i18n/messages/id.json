@@ -675,7 +675,7 @@
     "defaultMessage": "Hanya chat"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "Sesi chat dapat memakai endpoint ini; node swarm belum bisa."
+    "defaultMessage": "Sesi chat dan node dapat memakai endpoint ini — buat satu di Node; build swarm belum bisa."
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Pemeriksaan gagal"
@@ -687,7 +687,7 @@
     "defaultMessage": "Kompatibel dengan OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Server apa pun yang berbicara API OpenAI — vLLM, llama.cpp, Together, Groq, gateway perusahaan. Tambahkan sebanyak yang Anda perlukan. Sesi chat dapat memakainya; node swarm belum bisa."
+    "defaultMessage": "Server apa pun yang berbicara API OpenAI — vLLM, llama.cpp, Together, Groq, gateway perusahaan. Tambahkan sebanyak yang Anda perlukan. Buat node dari penyedia terkonfigurasi mana pun di Node."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Dikonfigurasi"
@@ -2847,7 +2847,7 @@
     "defaultMessage": "Folder model tidak dapat dibaca."
   },
   "macs.offThere": {
-    "defaultMessage": "{what} nonaktif di {name} — aktifkan “Izinkan Mac saya yang lain memakai Mac ini” di sana (Penyedia › Mac Saya)"
+    "defaultMessage": "{what} nonaktif di {name} — aktifkan “Izinkan Mac saya yang lain memakai Mac ini” di sana (LeanZero MLX › Mac Saya)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "Gagal menjeda."
@@ -4307,6 +4307,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "Tambahkan node"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "Simpan sebagai node"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Menulis"
   },
@@ -5393,6 +5396,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "sedang disajikan"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "Detail"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "Edit"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "Tindakan gagal"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "Buka Jalankan"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "Siapkan"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "Mulai"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "Hentikan"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "nodes.checking": {
+    "defaultMessage": "Memeriksa {provider}…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "Selalu tersedia · ditagih oleh {provider}"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "Salin model ke {mac} terlebih dahulu"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "Dapatkan model di Mac ini terlebih dahulu"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "Memulainya akan menghentikan {names}"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "Duplikat"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "Edit di pool swarm Anda"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Hubungkan Mac Anda dan jalankan model, atau tambahkan model cloud."
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "Belum ada node"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "Selalu tersedia · dilayani oleh {provider}"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "Mulai pertama belum diukur"
+  },
+  "nodes.follows": {
+    "defaultMessage": "Melayani apa pun yang dijalankan mesin Mac ini: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "Melayani apa pun yang dijalankan mesin Mac ini; saat ini tidak ada yang berjalan di sana"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "Melayani apa pun yang dijalankan mesin Mac ini: {model} · dibagi ke {count} Mac"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "dari pool swarm Anda"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "Node · {name}"
   },
@@ -5402,11 +5477,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "Buka {name} di halaman Node"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "Di cloud"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "Di Mac Anda · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "Sebuah build swarm sedang memakai {node}; node ini bebas saat build selesai"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "Tetap dimuat"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "Pertahankan {names}"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "Siapkan {provider} di Providers › Penyedia Cloud"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "Cloud"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "Endpoint"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "Tidak lagi ada di pool swarm Anda"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{{count, number} perangkat LM Studio di konfigurasi swarm Anda tidak ditampilkan di sini} other{{count, number} perangkat LM Studio di konfigurasi swarm Anda tidak ditampilkan di sini}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} dari {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "Waktu muat tidak dapat dibaca: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Kelola penyedia cloud"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Kelola Mac dan model"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "Memori di {mac} terhadap anggarannya"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "butuh {need} dari {budget} GB"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "belum ada puncak"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} dari {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "puncak {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "Lainnya untuk {name}"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{kedua Mac} other{# Mac}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "Mac ini"
   },
   "nodes.navFailed": {
     "defaultMessage": "Gagal"
@@ -5420,8 +5561,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "Mesin LeanZero MLX sedang memuat model"
   },
+  "nodes.new": {
+    "defaultMessage": "Node baru"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "Kembali"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "Tutup"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "Model cloud"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{Belum ada yang disiapkan} one{# disiapkan} other{# disiapkan}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "Buat node"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "Buat dan mulai"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "Edit {name}"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "Endpoint"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{Server kompatibel OpenAI apa pun yang Anda tambahkan · belum ada} one{Server kompatibel OpenAI apa pun yang Anda tambahkan · # ditambahkan} other{Server kompatibel OpenAI apa pun yang Anda tambahkan · # ditambahkan}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "Saring model"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} dari {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "Dapatkan satu di Model"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "Tujuan"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "Bagaimana node ini berjalan?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "Tetap dimuat: jangan pernah dihentikan demi node lain"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} tidak mencantumkan modelnya ({error}); ini model yang diketahui goose untuknya."
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "di {macs}"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "Menanyakan model ke {provider}…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} tidak punya daftar model; ini model yang diketahui goose untuknya."
+  },
+  "nodes.newName": {
+    "defaultMessage": "Nama"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "Beri nama"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "Berikutnya"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "Belum ada model di Mac Anda."
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose tidak menemukan cara untuk menjalankan model ini di Mac Anda."
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "Belum ada yang disiapkan"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "Di Mac Anda"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "Mesin LeanZero MLX, satu Mac atau dibagi"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "Pilih model"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "Model"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "Penyedia Anda tidak dapat dibaca: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "Membaca penyedia Anda…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "Tidak disimpan"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "Rencanakan lagi"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "Simpan node"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "Siapkan penyedia lain"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "Jenis"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "Model"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "Nama"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "Langkah {n} dari {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "Penyedia"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "Cara"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "Node baru"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "Cara menjalankan {model}"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "Di mana node ini berjalan?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "Model yang mana?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "Penyedia yang mana?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "Node tidak dapat disimpan"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose belum punya rencana untuk model ini"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "Rencana goose untuk model ini tidak punya cara tersebut"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} tidak terhubung ke LeanZero Link"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "Tambahkan Mac lain untuk menjalankan model yang terlalu besar untuk Mac ini"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "Aktifkan “{permission}” di {mac} terlebih dahulu (LeanZero MLX › Mac Saya)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "Memuat"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "Menunggu pemuatan lain selesai"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "Sematkan cara"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "Tidak ada rencana untuk cara ini: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "Mengukur Mac Anda untuk cara ini…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "Node Anda tidak dapat dibaca"
+  },
+  "nodes.reading": {
+    "defaultMessage": "Membaca node Anda…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "Membaca apa yang melayani sekarang…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "Tidak dihapus"
+  },
+  "nodes.remove": {
+    "defaultMessage": "Hapus"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "Hapus, dan mulai chat baru di Node mana pun (Otomatis)"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "Node dihapus dari node Anda. Mac, model, dan penyedia Anda tetap seperti semula."
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "Hapus"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "Hapus juga dari strategi-strategi itu"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "Pool swarm Anda tetap menyimpan perangkatnya; node ini tidak ditampilkan lagi di sini. Edit pool itu sendiri di bawah."
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "Hapus {node}?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# chat diatur ke node ini. Pesan berikutnya akan menyebutkan bahwa node ini sudah dihapus.} other{# chat diatur ke node ini. Pesan berikutnya akan menyebutkan bahwa node ini sudah dihapus.}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "Baca lagi"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} ke-# · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "Tersimpan."
+  },
   "nodes.sections": {
     "defaultMessage": "Bagian node"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Siapkan Mac Anda"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "Tampilkan di Jalankan"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "Mulai {node}"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "Memulainya akan menghentikan {names}."
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "Mulai {node}?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} sedang melayani."
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{Mulai dalam sekitar {duration} · median dari # pemuatan} other{Mulai dalam sekitar {duration} · median dari # pemuatan}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "Tidak bisa berjalan"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "Mengikuti Mac ini"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "Dipakai sebuah build"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "Kunci tidak ada"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "Panggilan terakhir gagal"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "Memuat"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "Perlu satu langkah"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "Tidak dimuat"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "Cara lain sedang berjalan"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "Siap"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "Melayani"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "Status tidak diketahui"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "Menunggu dimuat"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "Hentikan {node}"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "Strategi akan menentukan node mana yang mengerjakan apa: perannya, urutan node yang dicoba, dan kapan memakai node berikutnya. Sampai saat itu, chat dan build swarm memakai node di tab Node."
@@ -5432,6 +5855,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Node adalah model yang bisa Anda serahi pekerjaan, di Mac Anda atau di cloud. Chat dimulai pada sebuah node atau strategi; build swarm memakai strategi."
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "Pool swarm Anda tidak dapat dibaca"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "Node"
   },
@@ -5440,6 +5866,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Node"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "Dipakai oleh"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{Dibagi · # Mac} other{Dibagi · # Mac}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "Mac ini"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Server mungkin sedang dimulai atau tidak tersedia untuk sementara."
@@ -5639,6 +6074,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "Tindakan gagal"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "Sudah menjadi node: “{name}”."
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "Perlu kedua Mac"
   },
@@ -5756,6 +6194,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "Detail"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "Buka di Node"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# pembagian lain} other{# pembagian lain}}"
   },
@@ -5806,6 +6247,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "Memperbarui runner split di {nodes}…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "Simpan sebagai node"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose tidak punya rencana untuk cara ini, jadi tidak bisa menyebutkan Mac mana yang menjalankannya."
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} tidak berjalan dengan cara mana pun yang ditampilkan di sini — pilih model yang sedang berjalan di atas."
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "Simpan cara ini sebagai node agar chat dan build dapat memilihnya"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "Tidak disimpan: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "Disimpan sebagai node “{name}”."
   },
   "placementCard.short": {
     "defaultMessage": "Tidak muat: kurang {gb} di {node}"
@@ -7746,7 +8205,10 @@
     "defaultMessage": "Notifikasi"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Jaga komputer Anda tetap menyala saat goose menjalankan tugas (layar tetap dapat terkunci)"
+    "defaultMessage": "Cegah komputer Anda tidur selama goose terbuka (layar tetap dapat mati dan terkunci)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Cegah Tidur tidak berfungsi: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Cegah Tidur"
@@ -7910,6 +8372,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Anda menghentikan jawaban ini setelah {elapsed} · {tokens} token"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "Backend"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "Build"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "Chat"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "Frontend"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "Perencanaan"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "Pengujian"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Penyedia {name} telah dikonfigurasi"
   },
@@ -8029,6 +8509,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Node MLX mesin jarak jauh — tersimpan di pool, dilayani saat perutean per node hadir"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "Tambahkan satu dengan “Tambah node” — node langsung bergabung ke pool begitu penambahan tersimpan."
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "Belum ada node"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Setiap node yang dijalankan swarm — baris terkonfigurasi plus apa pun yang residen di LM Studio sekarang. Bobot: makin tinggi, makin besar bagian tugasnya."

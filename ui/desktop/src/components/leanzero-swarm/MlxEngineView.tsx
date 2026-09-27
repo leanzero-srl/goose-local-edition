@@ -116,7 +116,8 @@ import { useFeatures } from '../../contexts/FeaturesContext';
 import { defineMessages, useIntl } from '../../i18n';
 import { mlxEngineServing } from '../chatServedBy/chatServedBy';
 import LeanZeroLinkSection from './LeanZeroLinkSection';
-import { MlxSetupStrip, type SetupFacts, type SetupTarget } from './MlxSetupStrip';
+import { MlxSetupStrip, setupNodeFacts, type SetupFacts, type SetupTarget } from './MlxSetupStrip';
+import { useGlanceNodes } from '../engineGlance/glanceStore';
 import type { MlxTab } from '../../utils/navigationUtils';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { DistributedEngineSection } from './DistributedEngineSection';
@@ -134,13 +135,8 @@ import { useCutGuard } from './cutGuard';
 import { macLine, macStateWord, type MacSummary } from './macSummary';
 import { modelRoleOn, useMacSummary } from './useMacSummary';
 import { routeServesChat } from '../chatServedBy/chatServedBy';
-import {
-  PlacementBadge,
-  PlacementCard,
-  badgesOf,
-  usePlacementPlans,
-  type PickerBadge,
-} from './PlacementCard';
+import { PlacementBadge, PlacementCard, badgesOf, type PickerBadge } from './PlacementCard';
+import { usePlacementPlans } from './usePlacementPlans';
 
 // Formatters stay importable from this module — tests and older callers reach them here.
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
@@ -805,6 +801,9 @@ interface EngineSectionProps {
   distributedCapability: boolean;
   /** The split's own controls, folded under Run it's split row. */
   splitDetails: ReactNode;
+  /** The setup strip's "Save as a node" is waiting for Run it to save the way that runs. */
+  saveRunningPending: boolean;
+  onSaveRunningHandled: () => void;
   /** Which engine owns this Mac, in words — on the tile. */
   modeLabel: string;
   /** The route serving this Mac's chat from a linked Mac's engine, while it is up. */
@@ -853,6 +852,8 @@ function EngineSection(props: EngineSectionProps) {
     distributed,
     distributedCapability,
     splitDetails,
+    saveRunningPending,
+    onSaveRunningHandled,
     modeLabel,
     remote,
     onStopRemote,
@@ -862,6 +863,7 @@ function EngineSection(props: EngineSectionProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Re-planned whenever the model list or what this Mac serves changes: a mount moves every fit.
   const plans = usePlacementPlans(
+    'chat',
     [...models.map((m) => m.id), status?.state ?? '', status?.modelId ?? ''].join('\n')
   );
   const badges = useMemo(() => badgesOf(plans), [plans]);
@@ -1207,6 +1209,8 @@ function EngineSection(props: EngineSectionProps) {
           }
           distributedCapability={distributedCapability}
           splitDetails={splitDetails}
+          saveRunningPending={saveRunningPending}
+          onSaveRunningHandled={onSaveRunningHandled}
         />
       )}
 
@@ -2420,19 +2424,15 @@ interface MlxEngineViewProps {
   /** The inner tab, when the host routes it (Providers writes `mlx=` in the URL); else local state. */
   tab?: MlxTab;
   onTabChange?: (tab: MlxTab) => void;
-  /** Nodes in the swarm pool, for the setup strip's last step; null = not read. */
-  nodeCount?: number | null;
   /** Where the setup strip's Nodes step goes; the host owns navigation. */
   onOpenNodes?: () => void;
 }
 
-function MlxEngineViewBody({
-  tab: routedTab,
-  onTabChange,
-  nodeCount = null,
-  onOpenNodes,
-}: MlxEngineViewProps) {
+function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngineViewProps) {
   const [ownTab, setOwnTab] = useState<MlxTab>('engine');
+  const [saveRunningPending, setSaveRunningPending] = useState(false);
+  const onSaveRunningHandled = useCallback(() => setSaveRunningPending(false), []);
+  const glanceNodes = useGlanceNodes();
   const { mlxDistributed, leanzeroLink } = useFeatures();
   const requestedTab = routedTab ?? ownTab;
   // My Macs exists only where LeanZero Link does; a link to it elsewhere opens the Engine tab.
@@ -3031,11 +3031,16 @@ function MlxEngineViewBody({
     macsOnline: macsCtx.macs.filter((m) => m.online).length,
     models: modelCount,
     running: answering ? servingNow.model : null,
-    nodes: nodeCount,
+    ...setupNodeFacts(glanceNodes, answering),
   };
   const openSetupTarget = (target: SetupTarget) => {
     if (target.kind === 'mlx') setTab(target.tab);
-    else onOpenNodes?.();
+    else if (target.kind === 'nodes') onOpenNodes?.();
+    else {
+      // "Save as a node": Run it holds the running way's row; it saves that way (§8.6).
+      setTab('engine');
+      setSaveRunningPending(true);
+    }
   };
 
   // The page shell (MainPanelLayout, the Providers header, the top-level tab bar and the scroll
@@ -3117,6 +3122,8 @@ function MlxEngineViewBody({
           distributed={distributed.status}
           distributedCapability={mlxDistributed}
           splitDetails={splitDetails}
+          saveRunningPending={saveRunningPending}
+          onSaveRunningHandled={onSaveRunningHandled}
           modeLabel={modeLabel}
           remote={remote}
           onStopRemote={onStopRemote}

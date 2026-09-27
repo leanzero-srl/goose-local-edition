@@ -83,7 +83,18 @@ export interface StartGooseServeOptions extends FindGooseBinaryOptions {
   logger?: Logger;
   diagnosticsDir?: string;
   readinessFetch?: ReadinessFetch;
+  /** The SIGTERM → SIGKILL window; GOOSED_SIGKILL_AFTER_MS unless a test shortens it. */
+  sigkillAfterMs?: number;
 }
+
+// goosed follows the app that started it: this flag arms its stdin watch, and the pipe below
+// is the other end. The kernel closes it however this process ends — a quit whose handlers
+// never ran, a crash, SIGKILL — so goosed tears down and exits instead of living on as an
+// orphan (Q-223: goosed 10891 outlived its app by 1h22m and kept the mesh daemon).
+export const GOOSED_FOLLOWS_PARENT_ARG = '--exit-when-stdin-closes';
+
+/** How a stop ended: goosed EXITED (or was never running), or the stop gave up waiting for it. */
+export type GooseServeStop = 'exited' | 'abandoned';
 
 export interface GooseServeResult {
   acpUrl: string;
@@ -91,7 +102,7 @@ export interface GooseServeResult {
   process: ChildProcess;
   errorLog: string[];
   certFingerprint: string | null;
-  cleanup: () => Promise<void>;
+  cleanup: () => Promise<GooseServeStop>;
   hasExited: () => boolean;
   getExitDetails: () => { code: number | null; signal: GooseServeExitSignal };
   startupDiagnosticsPath: string | null;
@@ -420,6 +431,7 @@ export const startGooseServe = async ({
   logger = defaultLogger,
   diagnosticsDir,
   readinessFetch = fetch,
+  sigkillAfterMs = GOOSED_SIGKILL_AFTER_MS,
 }: StartGooseServeOptions): Promise<GooseServeResult> => {
   const workingDir = dir || process.cwd();
   const startupTrace = createGooseServeStartupDiagnostics(diagnosticsDir, workingDir);
@@ -457,6 +469,7 @@ export const startGooseServe = async ({
     '127.0.0.1',
     '--port',
     String(port),
+    GOOSED_FOLLOWS_PARENT_ARG,
   ];
 
   logger.info(`Starting goose serve from: ${goosePath} on port ${port} in dir ${workingDir}`);
@@ -489,10 +502,15 @@ export const startGooseServe = async ({
     // unref'd), so the group is still fully managed by this process.
     detached: true,
     shell: false as const,
-    stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+    // stdin is a pipe this process NEVER writes to and never ends: its only job is to close when this
+    // process is gone (GOOSED_FOLLOWS_PARENT_ARG). 'ignore' would hand goosed /dev/null — EOF at once.
+    stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'],
   };
 
   const gooseProcess = spawn(goosePath, args, spawnOptions);
+  gooseProcess.stdin?.on('error', (error) =>
+    logger.error(`goose serve stdin (the parent-watch pipe) failed: ${error}`)
+  );
   if (startupTrace) {
     startupTrace.diagnostics.pid = gooseProcess.pid ?? null;
     startupTrace.record('spawn_success', { pid: gooseProcess.pid ?? null });
@@ -633,24 +651,39 @@ export const startGooseServe = async ({
     startupTrace?.record('spawn_error', { message: error.message, name: error.name });
   });
 
-  const cleanup = async (): Promise<void> => {
-    return new Promise<void>((resolve) => {
-      if (exited || gooseProcess.killed) {
-        resolve();
+  // The stop resolves on goosed's own EXIT — its teardown has run by then (the mesh daemon and the
+  // engine stopped) — never on a guess. The SIGKILL leg fires only when that exit has not come within
+  // the supervisors' own summed grace (sigkillAfterMs), and the stop then waits for the exit the
+  // SIGKILL causes. One stop per process: a second caller (a window's release racing the app's quit)
+  // waits on the same exit instead of returning early — the old `gooseProcess.killed` early return
+  // let the quit path finish before goosed had (Q-223).
+  let stopping: Promise<GooseServeStop> | null = null;
+  const cleanup = (): Promise<GooseServeStop> => {
+    if (stopping) return stopping;
+    stopping = new Promise<GooseServeStop>((resolve) => {
+      if (exited || spawnFailed) {
+        resolve('exited');
         return;
       }
-
-      let resolved = false;
-      const finish = () => {
-        if (!resolved) {
-          resolved = true;
-          resolve();
-        }
+      let sigkillTimer: ReturnType<typeof setTimeout> | null = null;
+      gooseProcess.once('exit', () => {
+        if (sigkillTimer) clearTimeout(sigkillTimer);
+        resolve('exited');
+      });
+      // The quit waits on this stop, so it must end even when no exit ever arrives (a SIGKILL
+      // that could not land; taskkill failing on Windows): one more grace window, then the stop
+      // gives up on this goosed — loudly — instead of holding the app open forever.
+      const giveUp = () => {
+        sigkillTimer = setTimeout(() => {
+          if (exited) return;
+          logger.error(
+            `goose serve (pid ${gooseProcess.pid ?? '?'}) never exited; the stop gives up on it and the app goes on without it`
+          );
+          resolve('abandoned');
+        }, sigkillAfterMs);
       };
 
-      gooseProcess.once('close', finish);
-
-      logger.info('Terminating goose serve');
+      logger.info(`Terminating goose serve (pid ${gooseProcess.pid ?? '?'})`);
       try {
         if (process.platform === 'win32') {
           if (gooseProcess.pid) {
@@ -663,13 +696,20 @@ export const startGooseServe = async ({
         logger.error('Error while terminating goose serve process:', error);
       }
 
-      setTimeout(() => {
-        if (!exited && !gooseProcess.killed && process.platform !== 'win32') {
+      if (process.platform === 'win32') {
+        giveUp();
+      } else {
+        sigkillTimer = setTimeout(() => {
+          if (exited) return;
+          logger.error(
+            `goose serve (pid ${gooseProcess.pid ?? '?'}) did not exit within ${sigkillAfterMs} ms of SIGTERM — its teardown outlived every supervisor's grace; sending SIGKILL`
+          );
           killGroupOrProcess(gooseProcess, 'SIGKILL');
-        }
-        finish();
-      }, GOOSED_SIGKILL_AFTER_MS);
+          giveUp();
+        }, sigkillAfterMs);
+      }
     });
+    return stopping;
   };
 
   const ready = await waitForGooseServeReady(statusUrl, errorLog, () => exited || spawnFailed, {

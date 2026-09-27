@@ -3,6 +3,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import { FOCUS, MOTION, RADIUS, TNUM, TONE_FILL, TYPE, WEIGHT, cx, type Tone } from '../lz';
 import { shortModelName } from '../noNodeNotice/mlxMount';
 import type { MlxTab } from '../../utils/navigationUtils';
+import type { GlanceNodesState } from '../engineGlance/glanceStore';
 
 const i18n = defineMessages({
   aria: { id: 'mlxSetup.aria', defaultMessage: 'Setting up LeanZero MLX' },
@@ -24,6 +25,7 @@ const i18n = defineMessages({
     defaultMessage: '{count, plural, one {# node} other {# nodes}}',
   },
   step4Next: { id: 'mlxSetup.step4Next', defaultMessage: 'Add a node' },
+  step4Save: { id: 'mlxSetup.step4Save', defaultMessage: 'Save as a node' },
   next: { id: 'mlxSetup.next', defaultMessage: 'Next' },
   compact: { id: 'mlxSetup.compact', defaultMessage: 'Step {n} of {total} · {label}' },
 });
@@ -40,11 +42,35 @@ export interface SetupFacts {
   models: number;
   /** The model a way serves right now (single, remote single or split); null = nothing answers. */
   running: string | null;
-  /** Nodes in the swarm pool; null = the pool has not been read, so nothing is claimed. */
+  /** Node definitions (`nodes/read`); null = not read yet, so nothing is claimed. */
   nodes: number | null;
+  /**
+   * Whether a node names the way that serves now (`nodes/residency`): false = something runs and no
+   * node is that way, so step 4 is "Save as a node"; null = nothing runs, or residency is unread.
+   */
+  runningHasNode: boolean | null;
 }
 
-export type SetupTarget = { kind: 'mlx'; tab: MlxTab } | { kind: 'nodes' };
+/**
+ * The strip's two node facts from the glance store's read (goosed's `nodes/read` +
+ * `nodes/residency`, refreshed on glance events — no read of its own): how many nodes are defined,
+ * and whether one of them is the way that answers now. Nothing is claimed before the read lands.
+ */
+export function setupNodeFacts(
+  state: GlanceNodesState,
+  answering: boolean
+): Pick<SetupFacts, 'nodes' | 'runningHasNode'> {
+  if (state.kind !== 'read') return { nodes: null, runningHasNode: null };
+  const nodes = state.read.nodes.length;
+  if (!answering || !state.residency.serving) return { nodes, runningHasNode: null };
+  return {
+    nodes,
+    runningHasNode: state.residency.nodes.some((r) => r.residency.kind === 'serving'),
+  };
+}
+
+/** Where a step leads: a LeanZero MLX tab, the Nodes page, or Run it's Save as node for what runs. */
+export type SetupTarget = { kind: 'mlx'; tab: MlxTab } | { kind: 'nodes' } | { kind: 'saveNode' };
 export type SetupStepState = 'done' | 'next' | 'later';
 
 export interface SetupStep {
@@ -59,20 +85,22 @@ const STEP_TONE: Record<SetupStepState, Tone> = { done: 'ok', next: 'accent', la
  * The four steps of the flow the owner asked the UI to imply — connect your Macs, get a model, run
  * it, make it a node — each done or not from the facts. The first step not done is `next`; the ones
  * after it are `later`. A single Mac without Link is a complete step 1: there is nothing to connect.
+ * Step 4 is done only while no running way lacks a node: when something runs and no node is that
+ * way, it reads "Save as a node" and saves the running way (design §8.6).
  */
 export function setupSteps(facts: SetupFacts): SetupStep[] {
   const done = [
     !facts.linkAvailable || facts.linkConnected,
     facts.models > 0,
     facts.running != null,
-    facts.nodes != null && facts.nodes > 0,
+    facts.nodes != null && facts.nodes > 0 && facts.runningHasNode !== false,
   ];
   const firstOpen = done.indexOf(false);
   const targets: SetupTarget[] = [
     { kind: 'mlx', tab: facts.linkAvailable ? 'macs' : 'engine' },
     { kind: 'mlx', tab: 'models' },
     { kind: 'mlx', tab: 'engine' },
-    { kind: 'nodes' },
+    facts.runningHasNode === false ? { kind: 'saveNode' } : { kind: 'nodes' },
   ];
   return targets.map((target, i) => ({
     n: (i + 1) as SetupStep['n'],
@@ -112,6 +140,7 @@ export function MlxSetupStrip({
           ? intl.formatMessage(i18n.step3Done, { model: shortModelName(facts.running) })
           : intl.formatMessage(i18n.step3Next);
       case 4:
+        if (facts.runningHasNode === false) return intl.formatMessage(i18n.step4Save);
         if (facts.nodes == null) return null;
         return done
           ? intl.formatMessage(i18n.step4Done, { count: facts.nodes })

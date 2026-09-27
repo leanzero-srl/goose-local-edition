@@ -66,7 +66,7 @@ const i18n = defineMessages({
   offThere: {
     id: 'macs.offThere',
     defaultMessage:
-      '{what} is off on {name} — turn on “Let my other Macs use this Mac” there (Providers › My Macs)',
+      '{what} is off on {name} — turn on “Let my other Macs use this Mac” there (LeanZero MLX › My Macs)',
   },
   permManage: { id: 'macs.permission.manage', defaultMessage: 'Load and download models' },
   permChat: { id: 'macs.permission.chat', defaultMessage: 'Answer chat' },

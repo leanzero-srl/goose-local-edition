@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import { ScrollArea } from '../ui/scroll-area';
@@ -7,8 +7,6 @@ import CloudProvidersSection from './CloudProvidersSection';
 import { PageHeader, SURFACE, Segmented, cx, type SegmentedOption } from '../lz';
 import { defineMessages, useIntl } from '../../i18n';
 import { MacsProvider } from './useMacs';
-import { useConfig } from '../ConfigContext';
-import type { SwarmConfig } from '../settings/swarm/golden';
 import {
   NODES_ROUTE,
   mlxTabOf,
@@ -30,28 +28,6 @@ const i18n = defineMessages({
 });
 
 /**
- * How many nodes the swarm pool holds — the rows the Nodes page lists from config. No `swarm` key
- * is an empty pool (0); a read that failed is not a count, so it stays null and nothing is claimed.
- */
-function useSwarmNodeCount(): number | null {
-  const { read } = useConfig();
-  const [count, setCount] = useState<number | null>(null);
-  useEffect(() => {
-    let alive = true;
-    read('swarm', false)
-      .then((raw) => {
-        const devices = (raw as SwarmConfig | null)?.devices;
-        if (alive) setCount(Array.isArray(devices) ? devices.length : 0);
-      })
-      .catch(() => alive && setCount(null));
-    return () => {
-      alive = false;
-    };
-  }, [read]);
-  return count;
-}
-
-/**
  * Providers — where models come from (DESIGN-NODES-AND-STRATEGIES.md §5.4):
  *
  *   LeanZero MLX     — your Macs and the engine: Engine (with Run it) · My Macs · Models · Sampling,
@@ -67,7 +43,6 @@ function useSwarmNodeCount(): number | null {
 const LeanZeroSwarmView: React.FC = () => {
   const intl = useIntl();
   const navigate = useNavigate();
-  const nodeCount = useSwarmNodeCount();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = providersTabOf(searchParams.get('tab'));
   const mlxTab = mlxTabOf(searchParams.get('mlx'));
@@ -117,7 +92,6 @@ const LeanZeroSwarmView: React.FC = () => {
                 <MlxEngineView
                   tab={mlxTab}
                   onTabChange={selectMlxTab}
-                  nodeCount={nodeCount}
                   onOpenNodes={() => navigate(NODES_ROUTE)}
                 />
               )}

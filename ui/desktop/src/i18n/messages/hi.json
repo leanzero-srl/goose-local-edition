@@ -675,7 +675,7 @@
     "defaultMessage": "केवल चैट"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "चैट सत्र इस एंडपॉइंट का उपयोग कर सकते हैं; swarm नोड अभी नहीं।"
+    "defaultMessage": "चैट सत्र और नोड इस एंडपॉइंट का उपयोग कर सकते हैं — नोड में एक बनाएँ; swarm बिल्ड अभी नहीं।"
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "जाँच विफल"
@@ -687,7 +687,7 @@
     "defaultMessage": "OpenAI-संगत"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "OpenAI API बोलने वाला कोई भी सर्वर — vLLM, llama.cpp, Together, Groq, कंपनी गेटवे। जितने चाहें जोड़ें। चैट सत्र इनका उपयोग कर सकते हैं; swarm नोड अभी नहीं।"
+    "defaultMessage": "OpenAI API बोलने वाला कोई भी सर्वर — vLLM, llama.cpp, Together, Groq, कंपनी गेटवे। जितने चाहें जोड़ें। नोड में किसी भी कॉन्फ़िगर किए गए प्रदाता से नोड बनाएँ।"
   },
   "cloudProviders.configured": {
     "defaultMessage": "कॉन्फ़िगर किए गए"
@@ -2847,7 +2847,7 @@
     "defaultMessage": "मॉडल फ़ोल्डर पढ़ा नहीं जा सका।"
   },
   "macs.offThere": {
-    "defaultMessage": "{name} पर {what} बंद है — वहाँ “मेरे दूसरे Mac इस Mac का उपयोग कर सकें” चालू करें (प्रदाता › मेरे Mac)"
+    "defaultMessage": "{name} पर {what} बंद है — वहाँ “मेरे दूसरे Mac इस Mac का उपयोग कर सकें” चालू करें (LeanZero MLX › मेरे Mac)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "रोका नहीं जा सका।"
@@ -4307,6 +4307,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "नोड जोड़ें"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "नोड के रूप में सहेजें"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "लिख रहा है"
   },
@@ -5393,6 +5396,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "अभी सर्व हो रहा है"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "विवरण"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "संपादित करें"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "कार्रवाई विफल रही"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "चलाएँ खोलें"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "सेट अप करें"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "शुरू करें"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "रोकें"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "nodes.checking": {
+    "defaultMessage": "{provider} की जाँच हो रही है…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "हमेशा उपलब्ध · बिल {provider} देता है"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "पहले मॉडल को {mac} पर कॉपी करें"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "पहले मॉडल इस Mac पर लाएँ"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "इसे शुरू करने से {names} रुक जाएगा"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "डुप्लिकेट करें"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "अपने स्वार्म पूल में संपादित करें"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "अपने Mac जोड़ें और कोई मॉडल चलाएँ, या कोई क्लाउड मॉडल जोड़ें।"
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "अभी कोई नोड नहीं"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "हमेशा उपलब्ध · सेवा {provider} देता है"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "पहली शुरुआत अभी मापी नहीं गई"
+  },
+  "nodes.follows": {
+    "defaultMessage": "इस Mac का इंजन जो भी चलाता है, उसी से सेवा देता है: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "इस Mac का इंजन जो भी चलाता है, उसी से सेवा देता है; अभी वहाँ कुछ नहीं चल रहा"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "इस Mac का इंजन जो भी चलाता है, उसी से सेवा देता है: {model} · {count} Mac में विभाजित"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "आपके स्वार्म पूल से"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "नोड · {name}"
   },
@@ -5402,11 +5477,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "{name} को नोड पेज पर खोलें"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "क्लाउड में"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "आपके Mac पर · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "एक swarm बिल्ड {node} का उपयोग कर रहा है; बिल्ड खत्म होने पर यह मुक्त हो जाएगा"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "लोड रखें"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "{names} को रखें"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "{provider} को Providers › क्लाउड प्रदाता में सेट अप करें"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "क्लाउड"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "एंडपॉइंट"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "अब आपके स्वार्म पूल में नहीं"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{आपके swarm कॉन्फ़िग का {count, number} LM Studio डिवाइस यहाँ नहीं दिखाया गया है} other{आपके swarm कॉन्फ़िग के {count, number} LM Studio डिवाइस यहाँ नहीं दिखाए गए हैं}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} / {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "लोड समय पढ़े नहीं जा सके: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "क्लाउड प्रदाता प्रबंधित करें"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac और मॉडल प्रबंधित करें"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "{mac} पर मेमोरी उसके बजट के मुकाबले"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "{budget} GB में से {need} चाहिए"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "अभी कोई शिखर नहीं"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} / {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "शिखर {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "{name} के लिए और"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{दोनों Mac} other{# Mac}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "यह Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "विफल"
@@ -5420,8 +5561,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "LeanZero MLX इंजन एक मॉडल लोड कर रहा है"
   },
+  "nodes.new": {
+    "defaultMessage": "नया नोड"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "वापस"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "बंद करें"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "एक क्लाउड मॉडल"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{कोई सेट अप नहीं} one{# सेट अप} other{# सेट अप}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "नोड बनाएँ"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "बनाएँ और शुरू करें"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "{name} संपादित करें"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "एक एंडपॉइंट"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{आपके जोड़े गए कोई भी OpenAI-संगत सर्वर · अभी कोई नहीं} one{आपके जोड़े गए कोई भी OpenAI-संगत सर्वर · # जोड़ा गया} other{आपके जोड़े गए कोई भी OpenAI-संगत सर्वर · # जोड़े गए}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "मॉडल फ़िल्टर करें"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} / {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "मॉडल में से एक लें"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "लक्ष्य"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "यह कैसे चले?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "लोड रखें: किसी दूसरे नोड के लिए इसे कभी न रोकें"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} ने अपने मॉडल सूचीबद्ध नहीं किए ({error}); ये वे मॉडल हैं जिन्हें goose इसके लिए जानता है।"
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "{macs} पर"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "{provider} से उसके मॉडल पूछे जा रहे हैं…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} के पास मॉडल सूची नहीं है; ये वे मॉडल हैं जिन्हें goose इसके लिए जानता है।"
+  },
+  "nodes.newName": {
+    "defaultMessage": "नाम"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "नाम दें"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "आगे"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "आपके Mac पर अभी कोई मॉडल नहीं है।"
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose को आपके Mac पर यह मॉडल चलाने का कोई तरीका नहीं मिला।"
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "कोई सेट अप नहीं"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "आपके Mac पर"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "LeanZero MLX इंजन, एक Mac या विभाजित"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "एक मॉडल चुनें"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "मॉडल"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "आपके प्रदाता पढ़े नहीं जा सके: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "आपके प्रदाता पढ़े जा रहे हैं…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "सहेजा नहीं गया"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "फिर से योजना बनाएँ"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "नोड सहेजें"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "एक और प्रदाता सेट अप करें"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "प्रकार"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "मॉडल"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "नाम"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "चरण {n} / {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "प्रदाता"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "तरीका"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "नया नोड"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "{model} चलाने के तरीके"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "यह कहाँ चले?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "कौन-सा मॉडल?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "कौन-सा प्रदाता?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "नोड सहेजा नहीं जा सका"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose के पास अभी इस मॉडल की कोई योजना नहीं है"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "इस मॉडल के लिए goose की योजना में ऐसा कोई तरीका नहीं है"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} LeanZero Link से जुड़ा नहीं है"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "इस Mac के लिए बहुत बड़े मॉडल चलाने के लिए एक और Mac जोड़ें"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "पहले {mac} पर “{permission}” चालू करें (LeanZero MLX › मेरे Mac)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "किसी दूसरे लोड के पूरा होने की प्रतीक्षा"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "एक तरीका पिन करें"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "इस तरीके के लिए कोई योजना नहीं: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "इस तरीके के लिए आपके Mac मापे जा रहे हैं…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "आपके नोड पढ़े नहीं जा सके"
+  },
+  "nodes.reading": {
+    "defaultMessage": "आपके नोड पढ़े जा रहे हैं…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "अभी कौन सेवा दे रहा है, यह पढ़ा जा रहा है…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "हटाया नहीं गया"
+  },
+  "nodes.remove": {
+    "defaultMessage": "हटाएँ"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "हटाएँ, और नई चैट कोई भी नोड (ऑटो) पर शुरू करें"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "नोड आपके नोड से हटा दिया जाता है। आपके Mac, मॉडल और प्रदाता जैसे हैं वैसे ही रहते हैं।"
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "हटाएँ"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "इसे उन रणनीतियों से भी हटाएँ"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "आपका स्वार्म पूल अपना डिवाइस रखता है; यह नोड यहाँ फिर नहीं दिखेगा। पूल को नीचे खुद संपादित करें।"
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "{node} हटाएँ?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# चैट इस नोड पर सेट है। उसका अगला संदेश बताएगा कि इसे हटा दिया गया।} other{# चैट इस नोड पर सेट हैं। उनका अगला संदेश बताएगा कि इसे हटा दिया गया।}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "फिर से पढ़ें"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} · क्रम # · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "सहेजा गया।"
+  },
   "nodes.sections": {
     "defaultMessage": "नोड अनुभाग"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "अपने Mac सेट अप करें"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "चलाएँ में दिखाएँ"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "{node} शुरू करें"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "इसे शुरू करने से {names} रुक जाएगा।"
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "{node} शुरू करें?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} सेवा दे रहा है।"
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{लगभग {duration} में शुरू होता है · # लोड की माध्यिका} other{लगभग {duration} में शुरू होता है · # लोड की माध्यिका}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "नहीं चल सकता"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "इस Mac का अनुसरण करता है"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "एक बिल्ड के पास"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "कुंजी गायब"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "पिछली कॉल विफल"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "एक चरण बाकी"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "लोड नहीं"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "दूसरा तरीका चल रहा है"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "तैयार"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "सेवा दे रहा है"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "स्थिति अज्ञात"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "लोड होने की प्रतीक्षा में"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "{node} रोकें"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "एक रणनीति बताएगी कि कौन-सा नोड क्या करता है: उसकी भूमिकाएँ, नोड किस क्रम में आज़माए जाएँ, और अगले का उपयोग कब करें। तब तक चैट और swarm बिल्ड नोड टैब के नोड का उपयोग करते हैं।"
@@ -5432,6 +5855,9 @@
   "nodes.subtitle": {
     "defaultMessage": "नोड एक मॉडल है जिसे आप काम सौंप सकते हैं, आपके Mac पर या क्लाउड में। चैट किसी नोड या रणनीति पर शुरू होती हैं; swarm बिल्ड एक रणनीति का उपयोग करते हैं।"
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "आपका स्वार्म पूल पढ़ा नहीं जा सका"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "नोड"
   },
@@ -5440,6 +5866,15 @@
   },
   "nodes.title": {
     "defaultMessage": "नोड"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "इनके द्वारा उपयोग"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{विभाजित · # Mac} other{विभाजित · # Mac}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "यह Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"
@@ -5639,6 +6074,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "कार्रवाई विफल रही"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "पहले से एक नोड: “{name}”।"
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "दोनों Mac चाहिए"
   },
@@ -5756,6 +6194,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "विवरण"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "नोड में खोलें"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# अन्य विभाजन} other{# अन्य विभाजन}}"
   },
@@ -5806,6 +6247,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "{nodes} पर स्प्लिट का रनर अपडेट हो रहा है…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "नोड के रूप में सहेजें"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose के पास इस तरीके की कोई योजना नहीं है, इसलिए वह नहीं बता सकता कि यह किन Mac पर चलता है।"
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} यहाँ दिखाए गए किसी भी तरीके पर नहीं चल रहा — ऊपर चल रहा मॉडल चुनें।"
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "इस तरीके को नोड के रूप में सहेजें ताकि चैट और बिल्ड इसे चुन सकें"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "सहेजा नहीं गया: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "“{name}” नोड के रूप में सहेजा गया।"
   },
   "placementCard.short": {
     "defaultMessage": "नहीं समाता: {node} पर {gb} कम"
@@ -7746,7 +8205,10 @@
     "defaultMessage": "सूचनाएं"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "जब goose कोई कार्य चला रहा हो तो अपने कंप्यूटर को चालू रखें (स्क्रीन अभी भी लॉक हो सकती है)"
+    "defaultMessage": "goose खुला रहने तक आपके कंप्यूटर को स्लीप में जाने से रोकें (स्क्रीन फिर भी बंद और लॉक हो सकती है)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "स्लीप रोकना काम नहीं कर रहा है: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "नींद रोकें"
@@ -7910,6 +8372,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "आपने यह उत्तर {elapsed} के बाद रोक दिया · {tokens} टोकन"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "बैकएंड"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "बिल्ड"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "चैट"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "फ्रंटएंड"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "योजना"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "परीक्षण"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} प्रदाता कॉन्फ़िगर किया गया है"
   },
@@ -8029,6 +8509,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "दूरस्थ मशीन का MLX नोड — पूल में सहेजा गया, प्रति-नोड रूटिंग आने पर सेवा देगा"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "“नोड जोड़ें” से एक जोड़ें — जोड़ पूरा होते ही यह पूल में शामिल हो जाता है।"
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "अभी कोई नोड नहीं"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "स्वार्म द्वारा चलाया जाने वाला हर नोड — कॉन्फ़िगर की गई पंक्तियाँ और वह सब जो LM Studio में अभी मौजूद है। भार: जितना अधिक, कार्यों का उतना बड़ा हिस्सा।"

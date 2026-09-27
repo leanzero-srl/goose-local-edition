@@ -675,7 +675,7 @@
     "defaultMessage": "Chat uniquement"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "Les sessions de chat peuvent utiliser cet endpoint ; les nœuds du swarm pas encore."
+    "defaultMessage": "Les sessions de chat et les nœuds peuvent utiliser cet endpoint — créez-en un dans Nœuds ; les builds de l’essaim pas encore."
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Échec de la vérification"
@@ -687,7 +687,7 @@
     "defaultMessage": "Compatible OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Tout serveur qui parle l’API OpenAI — vLLM, llama.cpp, Together, Groq, une passerelle d’entreprise. Ajoutez-en autant que nécessaire. Les sessions de chat peuvent les utiliser ; les nœuds du swarm pas encore."
+    "defaultMessage": "Tout serveur qui parle l’API OpenAI — vLLM, llama.cpp, Together, Groq, une passerelle d’entreprise. Ajoutez-en autant que nécessaire. Créez un nœud à partir de n’importe quel fournisseur configuré dans Nœuds."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Configurés"
@@ -2847,7 +2847,7 @@
     "defaultMessage": "Le dossier des modèles n’a pas pu être lu."
   },
   "macs.offThere": {
-    "defaultMessage": "{what} est désactivé sur {name} — activez « Autoriser mes autres Mac à utiliser ce Mac » sur celui-ci (Fournisseurs › Mes Mac)"
+    "defaultMessage": "{what} est désactivé sur {name} — activez « Autoriser mes autres Mac à utiliser ce Mac » sur celui-ci (LeanZero MLX › Mes Mac)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "Échec de la pause."
@@ -4307,6 +4307,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "Ajouter un nœud"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "Enregistrer comme nœud"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Écrit"
   },
@@ -5393,6 +5396,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "en service"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "Détails"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "Modifier"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "L’action a échoué"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "Ouvrir Exécuter"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "Configurer"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "Démarrer"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "Arrêter"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "nodes.checking": {
+    "defaultMessage": "Vérification de {provider}…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "Toujours disponible · facturé par {provider}"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "Copiez d’abord le modèle sur {mac}"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "Mettez d’abord le modèle sur ce Mac"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "Le démarrer arrête {names}"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "Dupliquer"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "Modifier dans le pool de l’essaim"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Connectez vos Mac et exécutez un modèle, ou ajoutez un modèle cloud."
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "Aucun nœud pour l’instant"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "Toujours disponible · servi par {provider}"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "Premier démarrage pas encore mesuré"
+  },
+  "nodes.follows": {
+    "defaultMessage": "Sert ce que le moteur de ce Mac exécute : {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "Sert ce que le moteur de ce Mac exécute ; rien n’y tourne pour l’instant"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "Sert ce que le moteur de ce Mac exécute : {model} · réparti sur {count} Mac"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "de votre pool de l’essaim"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "Nœud · {name}"
   },
@@ -5402,11 +5477,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "Ouvrir {name} sur la page Nœuds"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "Dans le cloud"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "Sur vos Mac · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "Un build de l’essaim utilise {node} ; il sera libéré à la fin du build"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "Garder chargé"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "Garder {names}"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "Configurez {provider} dans Providers › Fournisseurs cloud"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "Cloud"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "Endpoint"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "N’est plus dans votre pool de l’essaim"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{{count, number} appareil LM Studio de votre configuration de l’essaim n’est pas affiché ici} other{{count, number} appareils LM Studio de votre configuration de l’essaim ne sont pas affichés ici}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} sur {total} Go"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "Impossible de lire les temps de chargement : {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Gérer les fournisseurs cloud"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Gérer les Mac et les modèles"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "Mémoire sur {mac} face à son budget"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "a besoin de {need} sur {budget} Go"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "pas encore de pic"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} sur {budget} Go"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "pic {peak} Go"
+  },
+  "nodes.more": {
+    "defaultMessage": "Plus pour {name}"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{les deux Mac} other{# Mac}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "ce Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "Échec"
@@ -5420,8 +5561,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "Le moteur LeanZero MLX charge un modèle"
   },
+  "nodes.new": {
+    "defaultMessage": "Nouveau nœud"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "Retour"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "Fermer"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "Un modèle cloud"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{Aucun configuré} one{# configuré} other{# configurés}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "Créer le nœud"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "Créer et démarrer"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "Modifier {name}"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "Un endpoint"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{Tout serveur compatible OpenAI que vous avez ajouté · aucun pour l’instant} one{Tout serveur compatible OpenAI que vous avez ajouté · # ajouté} other{Tout serveur compatible OpenAI que vous avez ajouté · # ajoutés}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "Filtrer les modèles"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} sur {budget} Go"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "En obtenir un dans Modèles"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "Objectif"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "Comment doit-il tourner ?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "Garder chargé : ne jamais l’arrêter pour un autre nœud"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} n’a pas listé ses modèles ({error}) ; voici les modèles que goose connaît pour lui."
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "sur {macs}"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "Demande de ses modèles à {provider}…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} ne liste pas ses modèles ; voici les modèles que goose connaît pour lui."
+  },
+  "nodes.newName": {
+    "defaultMessage": "Nom"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "Nommez-le"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "Suivant"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "Aucun modèle sur vos Mac pour l’instant."
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose n’a trouvé aucune option pour exécuter ce modèle sur vos Mac."
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "Aucun configuré"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "Sur vos Mac"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "Moteur LeanZero MLX, un seul Mac ou réparti"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "Choisissez un modèle"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "Modèle"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "Impossible de lire vos fournisseurs : {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "Lecture de vos fournisseurs…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "Non enregistré"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "Replanifier"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "Enregistrer le nœud"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "Configurer un autre fournisseur"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "Type"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "Modèle"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "Nom"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "Étape {n} sur {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "Fournisseur"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "Option"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "Nouveau nœud"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "Options pour exécuter {model}"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "Où doit-il tourner ?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "Quel modèle ?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "Quel fournisseur ?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "Impossible d’enregistrer le nœud"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose n’a pas encore de plan pour ce modèle"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "Le plan de goose pour ce modèle n’a pas cette option"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} n’est pas connecté à LeanZero Link"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "Ajoutez un autre Mac pour exécuter des modèles trop gros pour celui-ci"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "Activez d’abord « {permission} » sur {mac} (LeanZero MLX › Mes Mac)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "Chargement"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "En attente de la fin d’un autre chargement"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "Épingler une option"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "Aucun plan pour cette option : {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "Mesure de vos Mac pour cette option…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "Impossible de lire vos nœuds"
+  },
+  "nodes.reading": {
+    "defaultMessage": "Lecture de vos nœuds…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "Lecture de ce qui sert actuellement…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "Non supprimé"
+  },
+  "nodes.remove": {
+    "defaultMessage": "Supprimer"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "Supprimer, et démarrer les nouvelles discussions sur N’importe quel nœud (Auto)"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "Le nœud est retiré de vos nœuds. Vos Mac, modèles et fournisseurs restent tels quels."
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "Supprimer"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "Le retirer aussi de ces stratégies"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "Votre pool de l’essaim garde son appareil ; ce nœud n’est plus affiché ici. Modifiez le pool lui-même ci-dessous."
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "Supprimer {node} ?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# discussion utilise ce nœud. Son prochain message indiquera qu’il a été supprimé.} other{# discussions utilisent ce nœud. Leur prochain message indiquera qu’il a été supprimé.}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "Relire"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,one{{role} #er · {strategy}} other{{role} #e · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "Enregistré."
+  },
   "nodes.sections": {
     "defaultMessage": "Sections des nœuds"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Configurer vos Mac"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "Afficher dans Exécuter"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "Démarrer {node}"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "Le démarrer arrête {names}."
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "Démarrer {node} ?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} sert."
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{Démarre en environ {duration} · médiane de # chargement} other{Démarre en environ {duration} · médiane de # chargements}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "Ne peut pas tourner"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "Suit ce Mac"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "Réservé par un build"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "Clé manquante"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "Dernier appel échoué"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "Chargement"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "Une étape manque"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "Non chargé"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "Une autre option tourne"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "Prêt"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "En service"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "État inconnu"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "En attente de chargement"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "Arrêter {node}"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "Une stratégie indiquera quel nœud fait quoi : ses rôles, l'ordre dans lequel essayer les nœuds et quand passer au suivant. D'ici là, les discussions et les builds de l'essaim utilisent les nœuds de l'onglet Nœuds."
@@ -5432,6 +5855,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Un nœud est un modèle auquel vous confiez du travail, sur vos Mac ou dans le cloud. Les discussions démarrent sur un nœud ou une stratégie ; les builds de l'essaim utilisent une stratégie."
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "Impossible de lire votre pool de l’essaim"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "Nœuds"
   },
@@ -5440,6 +5866,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nœuds"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "Utilisé par"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{Réparti · # Mac} other{Réparti · # Mac}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "Ce Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."
@@ -5639,6 +6074,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "L’action a échoué"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "Déjà un nœud : « {name} »."
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "Nécessite les deux Mac"
   },
@@ -5756,6 +6194,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "Détails"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "Ouvrir dans Nœuds"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# autre répartition} other{# autres répartitions}}"
   },
@@ -5806,6 +6247,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "Mise à jour du runner du split sur {nodes}…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "Enregistrer comme nœud"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose n’a pas de plan pour cette option, il ne peut donc pas dire sur quels Mac elle tourne."
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} ne tourne sur aucune des options affichées ici — choisissez le modèle en cours ci-dessus."
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "Enregistrez cette option comme nœud pour que les discussions et les builds puissent la choisir"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "Non enregistré : {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "Enregistré comme le nœud « {name} »."
   },
   "placementCard.short": {
     "defaultMessage": "Ne tient pas : il manque {gb} sur {node}"
@@ -7746,7 +8205,10 @@
     "defaultMessage": "Notifications"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Maintenez votre ordinateur éveillé pendant que goose exécute une tâche (l'écran peut quand même se verrouiller)"
+    "defaultMessage": "Empêche votre ordinateur de se mettre en veille tant que goose est ouvert (l'écran peut toujours s'éteindre et se verrouiller)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Empêcher la mise en veille ne fonctionne pas : {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Empêcher la mise en veille"
@@ -7910,6 +8372,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Vous avez arrêté cette réponse après {elapsed} · {tokens} jetons"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "Backend"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "Build"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "Discussion"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "Frontend"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "Planification"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "Tests"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Le fournisseur {name} est configuré"
   },
@@ -8029,6 +8509,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Nœud MLX d'une machine distante — enregistré dans le pool, servi quand le routage par nœud arrivera"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "Ajoutez-en un avec « Ajouter un nœud » — il rejoint le pool dès que l’ajout est validé."
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "Aucun nœud pour l’instant"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Chaque nœud que l'essaim fait tourner — les lignes configurées plus ce que LM Studio a de résident en ce moment. Poids : plus il est élevé, plus grande est la part des tâches."

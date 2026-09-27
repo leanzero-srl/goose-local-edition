@@ -19,6 +19,7 @@ import type { MacsTrayReport } from './utils/macsTrayReport';
 import type { LinkTrayReport } from './utils/linkTrayReport';
 import type { ProblemReportInput, ProblemReportResult } from './utils/problemReport';
 import type { LocalNetworkTouch } from './localNetwork';
+import type { KeepAwakeState } from './keepAwake';
 import type { GlancePrefs, GlancePush, GlanceSessions } from './utils/engineGlance';
 import type { GlancePipAction } from './engineGlanceDesktop';
 
@@ -395,8 +396,8 @@ type ElectronAPI = {
   setSetting: <K extends SettingKey>(key: K, value: Settings[K]) => Promise<void>;
   getSecretKey: () => Promise<string | null>;
   getAcpUrl: () => Promise<string | null>;
-  setWakelock: (enable: boolean) => Promise<boolean>;
-  getWakelockState: () => Promise<boolean>;
+  setWakelock: (enable: boolean) => Promise<KeepAwakeState>;
+  getWakelockState: () => Promise<KeepAwakeState>;
   setSpellcheck: (enable: boolean) => Promise<boolean>;
   getSpellcheckState: () => Promise<boolean>;
   openNotificationsSettings: () => Promise<boolean>;

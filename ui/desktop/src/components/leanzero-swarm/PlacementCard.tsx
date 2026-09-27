@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Gauge, Loader2, Network, Play, RefreshCw, Square, Zap } from 'lucide-react';
+import { BookmarkPlus, Gauge, Loader2, Network, Play, RefreshCw, Square, Zap } from 'lucide-react';
 import {
   Button,
   Chip,
@@ -23,16 +23,40 @@ import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   goalFigure,
-  linkPeerOf,
-  measuredFigure,
   mlxMeasureSpeed,
   mlxPlacementPlan,
   type PlacementBadge as PlacementBadgeDto,
   type PlacementCandidate,
   type PlacementGoal,
   type PlacementPlan,
-  type SpeedFigure,
 } from '../../acp/mlx-placement';
+import { nodesRead } from '../../acp/nodes';
+import { nodeHref } from '../../utils/navigationUtils';
+import { refreshGlanceNodes } from '../engineGlance/glanceStore';
+import { THIS_MAC } from '../nodes/model';
+import {
+  defaultNodeName,
+  mlxDef,
+  nodeForWay,
+  nodeIdFor,
+  placementOfCandidate,
+  putNode,
+  whereWords,
+  type PinnedPlacement,
+} from '../nodes/nodeDraft';
+import {
+  OtherSplits,
+  PlacementCandidates,
+  gb,
+  shortModel,
+  tps,
+  wayPickable,
+  wayTitle,
+  waysOf,
+  type Way,
+  type WayRowFacts,
+} from './PlacementCandidates';
+import type { PlacementPlansRead } from './usePlacementPlans';
 import { mlxEngineUnmount, type MlxEngineStatus } from '../../acp/mlx-engine';
 import {
   mlxDistributedDiscover,
@@ -61,7 +85,6 @@ import {
 } from './mlxDistributed';
 import { MLX_STATUS_POLL_MS, type MlxActivity } from './mlxLiveStats';
 import { touchLocalNetwork } from './LocalNetworkNotice';
-import { distributedStateWord, linkText } from './mlxModeLabel';
 import { remotePhase, runPhase, singlePhase } from './mlxPhase';
 import { dropRoute } from './routeSwitch';
 import { formatGb } from './primitives';
@@ -99,37 +122,6 @@ const i18n = defineMessages({
     id: 'placementCard.noPlanWays',
     defaultMessage: 'Without a plan there is no speed figure — every way can still be started.',
   },
-  best: { id: 'placementCard.best', defaultMessage: 'Best' },
-  bestNow: { id: 'placementCard.bestNow', defaultMessage: 'Best you can start now' },
-  runHere: { id: 'placementCard.runHere', defaultMessage: 'Run on this Mac' },
-  runOn: { id: 'placementCard.runOn', defaultMessage: 'Run on {name}' },
-  runAcross: {
-    id: 'placementCard.runAcross',
-    defaultMessage: 'Run across {count, plural, =2 {both Macs} other {# Macs}}',
-  },
-  runAcrossAny: { id: 'placementCard.runAcrossAny', defaultMessage: 'Run across your Macs' },
-  tensor: { id: 'placementCard.tensorKind', defaultMessage: 'tensor split · {link}' },
-  pipeline: { id: 'placementCard.pipelineKind', defaultMessage: 'pipeline split · {link}' },
-  splitOver: { id: 'placementCard.splitOver', defaultMessage: 'split {link}' },
-  splitPlain: { id: 'placementCard.splitPlain', defaultMessage: 'split' },
-  writes: { id: 'placementCard.writes', defaultMessage: '~{value} tok/s writing' },
-  reads: { id: 'placementCard.reads', defaultMessage: '~{value} tok/s reading' },
-  readsWholeTurn: {
-    id: 'placementCard.readsWholeTurn',
-    defaultMessage: '~{value} tok/s through a whole document turn, answer included',
-  },
-  total: {
-    id: 'placementCard.total',
-    defaultMessage: '~{value} tok/s total at {concurrency} at once',
-  },
-  range: { id: 'placementCard.range', defaultMessage: '{low}–{high}' },
-  middleHalf: { id: 'placementCard.middleHalf', defaultMessage: '{low}–{high} middle half' },
-  context: { id: 'placementCard.context', defaultMessage: '{tokens} context' },
-  measured: {
-    id: 'placementCard.measured',
-    defaultMessage: '{runs, plural, one {measured · # run} other {measured · # runs}}',
-  },
-  estimated: { id: 'placementCard.estimated', defaultMessage: 'estimated' },
   run: { id: 'placementCard.run', defaultMessage: 'Run' },
   starting: { id: 'placementCard.starting', defaultMessage: 'Starting…' },
   stop: { id: 'placementCard.stop', defaultMessage: 'Stop' },
@@ -180,45 +172,6 @@ const i18n = defineMessages({
     defaultMessage: 'goose planned this split without another Mac — open Details › Set up.',
   },
   refresh: { id: 'placementCard.refresh', defaultMessage: 'Plan again' },
-  others: {
-    id: 'placementCard.others',
-    defaultMessage: '{count, plural, one {# other split} other {# other splits}}',
-  },
-  slower: {
-    id: 'placementCard.slower',
-    defaultMessage: 'Slower for this: ~{mine} vs ~{best} tok/s',
-  },
-  tied: {
-    id: 'placementCard.tied',
-    defaultMessage: 'As fast within the error (~{mine} vs ~{best} tok/s), but needs more Macs',
-  },
-  short: { id: 'placementCard.short', defaultMessage: 'Does not fit: short {gb} on {node}' },
-  shortSplit: { id: 'placementCard.shortSplit', defaultMessage: 'Does not fit: short {gb}' },
-  fitUnknown: { id: 'placementCard.fitUnknown', defaultMessage: 'Fit unknown' },
-  noFigureReason: { id: 'placementCard.noFigureReason', defaultMessage: 'No speed figure' },
-  contextBelowChats: {
-    id: 'placementCard.contextBelowChats',
-    defaultMessage: 'fits only {context} tokens of context — your chats here reach about {need}',
-  },
-  smallerContext: {
-    id: 'placementCard.smallerContext',
-    defaultMessage: 'fits only at {tokens} context',
-  },
-  tradeOffReadsFaster: {
-    id: 'placementCard.tradeOffReadsFaster',
-    defaultMessage:
-      '{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there, and reads prompts {ratio}× faster (~{splitRead} vs ~{singleRead} tok/s) — worth it only when prompts are long and replies short.',
-  },
-  tradeOffReadsSlower: {
-    id: 'placementCard.tradeOffReadsSlower',
-    defaultMessage:
-      '{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there, and reads prompts slower too (~{splitRead} vs ~{singleRead} tok/s).',
-  },
-  tradeOffWritesOnly: {
-    id: 'placementCard.tradeOffWritesOnly',
-    defaultMessage:
-      '{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there.',
-  },
   splitContextFixed: {
     id: 'placementCard.splitContextFixed',
     defaultMessage:
@@ -270,10 +223,6 @@ const i18n = defineMessages({
     id: 'placementCard.refusedUnnamed',
     defaultMessage: 'Refused, and goose named no reason',
   },
-  liveMounting: { id: 'placementCard.live.mounting', defaultMessage: 'Mounting' },
-  liveRunning: { id: 'placementCard.live.running', defaultMessage: 'Running' },
-  liveFailed: { id: 'placementCard.live.failed', defaultMessage: 'Failed' },
-  liveReconnecting: { id: 'placementCard.live.reconnecting', defaultMessage: 'Reconnecting' },
   copyFirst: {
     id: 'placementCard.copyFirst',
     defaultMessage:
@@ -332,9 +281,74 @@ const i18n = defineMessages({
       '{step, select, check {checking} uv {finding uv} venv {making the env} install {installing} done {done} fail {failed} other {starting}}',
   },
   noticeDetails: { id: 'placementCard.noticeDetails', defaultMessage: 'Details' },
+  saveAsNode: { id: 'placementCard.saveAsNode', defaultMessage: 'Save as node' },
+  saveOffer: {
+    id: 'placementCard.saveOffer',
+    defaultMessage: 'Save this way as a node so chats and builds can pick it',
+  },
+  savedAs: { id: 'placementCard.savedAs', defaultMessage: 'Saved as the node “{name}”.' },
+  alreadyNode: {
+    id: 'placementCard.alreadyNode',
+    defaultMessage: 'Already a node: “{name}”.',
+  },
+  openInNodes: { id: 'placementCard.openInNodes', defaultMessage: 'Open in Nodes' },
+  saveRefused: { id: 'placementCard.saveRefused', defaultMessage: 'Not saved: {reason}' },
+  saveNoPlan: {
+    id: 'placementCard.saveNoPlan',
+    defaultMessage: 'goose has no plan for this way, so it cannot say which Macs it runs on.',
+  },
+  saveNothingRunning: {
+    id: 'placementCard.saveNothingRunning',
+    defaultMessage: '{model} is not running on any way shown here — pick the running model above.',
+  },
 });
 
 type NoticeTone = Exclude<Tone, 'secondary'>;
+
+/** "Save as node" on one row: in flight, saved (or already a node), or refused with goose's words. */
+type SaveState =
+  | { kind: 'saving' }
+  | { kind: 'saved'; id: string; name: string; already: boolean }
+  | { kind: 'refused'; text: string };
+
+/**
+ * The way a row names, as a node stores it: the planner's key, or — with no plan — this Mac's
+ * single or the peer's single by its Link id (a split with no plan names no Macs: not saveable).
+ */
+function pinnedPlacementOf(way: Way): PinnedPlacement | null {
+  if (way.candidate) return placementOfCandidate(way.candidate);
+  if (way.kind === 'local') return { kind: 'single', macs: [THIS_MAC] };
+  if (way.kind === 'peer' && way.peerNodeId) {
+    return { kind: 'single', macs: [`link:${way.peerNodeId}`] };
+  }
+  return null;
+}
+
+function SaveAsNodeButton({
+  variant,
+  saving,
+  onClick,
+  testId,
+}: {
+  variant: 'ghost' | 'primary';
+  saving: boolean;
+  onClick: () => void;
+  testId: string;
+}) {
+  const intl = useIntl();
+  return (
+    <Button
+      variant={variant}
+      size="sm"
+      icon={saving ? <Loader2 className="animate-spin" /> : <BookmarkPlus />}
+      disabled={saving}
+      onClick={onClick}
+      data-testid={testId}
+    >
+      {intl.formatMessage(i18n.saveAsNode)}
+    </Button>
+  );
+}
 
 /** Why a start did not happen: the words the card shows, and what stands behind them for Details. */
 interface StartRefusal {
@@ -427,176 +441,6 @@ export function splitBlockerText(intl: IntlShape, blocker: SplitBlocker, modelId
   }
 }
 
-const GIB = 1024 * 1024 * 1024;
-
-function gb(bytes: number): string {
-  return `${(bytes / GIB).toFixed(1)} GB`;
-}
-
-function tps(value: number): string {
-  return value >= 100 ? value.toFixed(0) : value.toFixed(1);
-}
-
-/** A model as the card names it: its folder name, without the publisher. */
-export function shortModel(modelId: string): string {
-  return modelId.split('/').pop() || modelId;
-}
-
-function linkWord(candidate: PlacementCandidate): string {
-  return candidate.key.link === 'jaccl' ? 'JACCL' : (candidate.key.link ?? '');
-}
-
-function figureText(
-  intl: IntlShape,
-  goal: PlacementGoal,
-  figure: SpeedFigure,
-  candidate: PlacementCandidate
-): string {
-  const value = tps(figure.estimate.value);
-  const concurrency = candidate.speed.concurrency;
-  if (goal === 'longDocuments') {
-    return intl.formatMessage(candidate.speed.turn ? i18n.readsWholeTurn : i18n.reads, { value });
-  }
-  if (goal === 'manyRequests')
-    return intl.formatMessage(i18n.total, { value, concurrency: concurrency ?? '—' });
-  return intl.formatMessage(i18n.writes, { value });
-}
-
-/**
- * The range beside a figure: an estimate's error, or — for a measured figure — the runs' middle half,
- * only when there is more than one run and they differ (measuredFigure, the rule the Engine tile and
- * the tray use). One run is never drawn as "29.6–29.6" (Q-129).
- */
-function FigureRange({ figure }: { figure: SpeedFigure }) {
-  const intl = useIntl();
-  if (figure.measured) {
-    const spread = measuredFigure(figure)?.spread;
-    if (!spread) return null;
-    return (
-      <span className={cx(TYPE.meta, TNUM)} data-testid="placement-figure-range">
-        {intl.formatMessage(i18n.middleHalf, { low: tps(spread.low), high: tps(spread.high) })}
-      </span>
-    );
-  }
-  return (
-    <span className={cx(TYPE.meta, TNUM)} data-testid="placement-figure-range">
-      {intl.formatMessage(i18n.range, {
-        low: tps(figure.estimate.low),
-        high: tps(figure.estimate.high),
-      })}
-    </span>
-  );
-}
-
-function SourceChip({ figure }: { figure: SpeedFigure }) {
-  const intl = useIntl();
-  return figure.measured ? (
-    <Chip
-      tone="ok"
-      title={figure.lastMeasuredMs ? new Date(figure.lastMeasuredMs).toLocaleString() : undefined}
-    >
-      {intl.formatMessage(i18n.measured, { runs: figure.runs })}
-    </Chip>
-  ) : (
-    <Chip tone="secondary">{intl.formatMessage(i18n.estimated)}</Chip>
-  );
-}
-
-/** Why a candidate lost, in words; `null` for the winners. */
-export function outcomeText(intl: IntlShape, candidate: PlacementCandidate): string | null {
-  const o = candidate.outcome;
-  switch (o.code) {
-    case 'best':
-    case 'bestAvailableNow':
-      return null;
-    case 'slower':
-      return intl.formatMessage(i18n.slower, { mine: tps(o.mine), best: tps(o.best) });
-    case 'tiedNeedsMoreMacs':
-      return intl.formatMessage(i18n.tied, { mine: tps(o.mine), best: tps(o.best) });
-    case 'doesNotFit': {
-      const short = candidate.fit.shortBytes ?? 0;
-      return candidate.fit.shortNode
-        ? intl.formatMessage(i18n.short, { gb: gb(short), node: candidate.fit.shortNode })
-        : intl.formatMessage(i18n.shortSplit, { gb: gb(short) });
-    }
-    case 'fitUnknown':
-      return `${intl.formatMessage(i18n.fitUnknown)}: ${o.reason}`;
-    case 'notSupported':
-      return o.reason;
-    case 'noFigure':
-      return `${intl.formatMessage(i18n.noFigureReason)}: ${o.reason}`;
-    case 'contextBelowChats':
-      return intl.formatMessage(i18n.contextBelowChats, {
-        context: o.context.toLocaleString(),
-        need: o.need.toLocaleString(),
-      });
-  }
-}
-
-/** A single-Mac candidate goose's fit rule lets one engine hold. */
-function fitsAlone(c: PlacementCandidate): boolean {
-  return (
-    c.key.kind === 'single' &&
-    c.supported &&
-    (c.fit.status === 'fits' || c.fit.status === 'smallerContext')
-  );
-}
-
-/**
- * What the split costs against running the model on ONE Mac, from the plan's own speed figures
- * (measured where goose has runs, else its estimate — never a typed number). Null when no single
- * Mac fits the model, or either side lacks a writing figure. The single compared is the fitting
- * Mac that writes fastest.
- */
-export interface SplitTradeOff {
-  single: PlacementCandidate;
-  splitWrite: number;
-  singleWrite: number;
-  splitRead: number | null;
-  singleRead: number | null;
-}
-
-export function splitTradeOff(
-  plan: PlacementPlan | null,
-  split: PlacementCandidate
-): SplitTradeOff | null {
-  if (split.key.kind === 'single') return null;
-  const splitWrite = split.speed.decode?.estimate.value;
-  if (splitWrite == null) return null;
-  let single: PlacementCandidate | null = null;
-  for (const c of plan?.candidates ?? []) {
-    const write = c.speed.decode?.estimate.value;
-    if (!fitsAlone(c) || write == null) continue;
-    if (single == null || write > (single.speed.decode?.estimate.value ?? 0)) single = c;
-  }
-  if (!single) return null;
-  return {
-    single,
-    splitWrite,
-    singleWrite: single.speed.decode!.estimate.value,
-    splitRead: split.speed.prefill?.estimate.value ?? null,
-    singleRead: single.speed.prefill?.estimate.value ?? null,
-  };
-}
-
-function tradeOffText(intl: IntlShape, t: SplitTradeOff): string {
-  const base = {
-    name: t.single.nodeNames[0] ?? '—',
-    splitWrite: tps(t.splitWrite),
-    singleWrite: tps(t.singleWrite),
-  };
-  if (t.splitRead == null || t.singleRead == null || t.singleRead <= 0) {
-    return intl.formatMessage(i18n.tradeOffWritesOnly, base);
-  }
-  const reads = { ...base, splitRead: tps(t.splitRead), singleRead: tps(t.singleRead) };
-  return t.splitRead > t.singleRead
-    ? intl.formatMessage(i18n.tradeOffReadsFaster, {
-        ...reads,
-        ratio: intl.formatNumber(t.splitRead / t.singleRead, { maximumFractionDigits: 1 }),
-      })
-    : intl.formatMessage(i18n.tradeOffReadsSlower, reads);
-}
-
 function badgeTone(badge: PlacementBadgeDto): Tone | undefined {
   switch (badge.kind) {
     case 'fitsThisMac':
@@ -680,32 +524,14 @@ export function PlacementBadge({ badge: picker }: { badge: PickerBadge }) {
 }
 
 /**
- * Every local model's plan, planned once per change of `modelKey`: the picker's badges read it. A
- * failed plan leaves no entry — the Run it card names the failure.
+ * The picker's badge per model, from a plans read. While the read is in flight, or after it failed,
+ * no model carries a badge: the picker never shows a guessed fit, and the Run it card under the
+ * picker reads the same planner for the picked model and names a failure in goose's words.
  */
-export function usePlacementPlans(modelKey: string): Map<string, PlacementPlan> {
-  const [plans, setPlans] = useState<Map<string, PlacementPlan>>(new Map());
-  useEffect(() => {
-    let cancelled = false;
-    mlxPlacementPlan('chat')
-      .then((response) => {
-        if (cancelled) return;
-        setPlans(new Map(response.plans.map((plan) => [plan.modelId, plan])));
-      })
-      .catch(() => {
-        if (!cancelled) setPlans(new Map());
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [modelKey]);
-  return plans;
-}
-
-/** The picker's badge per model, from the plans. */
-export function badgesOf(plans: Map<string, PlacementPlan>): Map<string, PickerBadge> {
+export function badgesOf(read: PlacementPlansRead): Map<string, PickerBadge> {
   const out = new Map<string, PickerBadge>();
-  for (const [id, plan] of plans) {
+  if (read.kind !== 'read') return out;
+  for (const [id, plan] of read.plans) {
     const badge = pickerBadgeOf(plan);
     if (badge) out.set(id, badge);
   }
@@ -713,89 +539,10 @@ export function badgesOf(plans: Map<string, PlacementPlan>): Map<string, PickerB
 }
 
 // ---------------------------------------------------------------------------------------------
-// The ways
+// The ways (the list itself is PlacementCandidates.tsx; what serves and what a switch stops is here)
 // ---------------------------------------------------------------------------------------------
 
-/** One way to run the model; `candidate` = goose's plan for it (null when no plan could be read). */
-export interface Way {
-  key: string;
-  kind: 'local' | 'peer' | 'split';
-  candidate: PlacementCandidate | null;
-  /** A peer way: the Mac, and the Link node id its single engine is started by. */
-  mac: Mac | null;
-  peerNodeId: string | null;
-}
-
-function splitRank(c: PlacementCandidate): number {
-  if (!c.supported) return 2;
-  return c.action.kind === 'unavailable' ? 1 : 0;
-}
-
-/**
- * The plan's candidates as the ways a person picks between: every single-Mac candidate (this Mac
- * first), then ONE split — the supported, startable one first; the other splits fold away with
- * their reason. With no plan, the ways goose can start anyway: this Mac, each peer that lets this
- * Mac load models, the split when goose offers it.
- */
-export function waysOf(
-  plan: PlacementPlan | null,
-  macs: readonly Mac[],
-  distributedCapability: boolean
-): { ways: Way[]; otherSplits: PlacementCandidate[] } {
-  if (plan && !plan.error && (plan.candidates?.length ?? 0) > 0) {
-    const singles = (plan.candidates ?? []).filter((c) => c.key.kind === 'single');
-    const splits = [...(plan.candidates ?? []).filter((c) => c.key.kind !== 'single')].sort(
-      (a, b) => splitRank(a) - splitRank(b)
-    );
-    const local = singles.filter((c) => c.key.nodes[0] === 'local');
-    const peers = singles.filter((c) => c.key.nodes[0] !== 'local');
-    const ways: Way[] = [
-      ...local.map((c) => ({
-        key: c.id,
-        kind: 'local' as const,
-        candidate: c,
-        mac: null,
-        peerNodeId: null,
-      })),
-      ...peers.map((c) => ({
-        key: c.id,
-        kind: 'peer' as const,
-        candidate: c,
-        mac: macForPlacementNode(macs, c.key.nodes[0] ?? ''),
-        peerNodeId: linkPeerOf(c),
-      })),
-      ...(splits[0]
-        ? [
-            {
-              key: splits[0].id,
-              kind: 'split' as const,
-              candidate: splits[0],
-              mac: null,
-              peerNodeId: null,
-            },
-          ]
-        : []),
-    ];
-    return { ways, otherSplits: splits.slice(1) };
-  }
-  const ways: Way[] = [
-    { key: 'local', kind: 'local', candidate: null, mac: null, peerNodeId: null },
-  ];
-  for (const mac of macs) {
-    if (mac.isSelf || !mac.online || peerRefuses(mac, 'manage') || !mac.nodeId) continue;
-    ways.push({
-      key: `peer:${mac.key}`,
-      kind: 'peer',
-      candidate: null,
-      mac,
-      peerNodeId: mac.nodeId,
-    });
-  }
-  if (distributedCapability) {
-    ways.push({ key: 'split', kind: 'split', candidate: null, mac: null, peerNodeId: null });
-  }
-  return { ways, otherSplits: [] };
-}
+export { waysOf, splitTradeOff, type Way, type SplitTradeOff } from './PlacementCandidates';
 
 /** The live read of the engine that answers chat (the state tile's read), and which engine it is. */
 export interface WayActivity {
@@ -930,53 +677,6 @@ export function tooSmallForLive(
   return candidate.fit.context < liveContextTokens;
 }
 
-/** The splits beside the offered one, each with why goose will not run it — under its Details. */
-function OtherSplits({ splits }: { splits: readonly PlacementCandidate[] }) {
-  const intl = useIntl();
-  return (
-    <div className="flex flex-col gap-2" data-testid="placement-others">
-      <span className={cx(TYPE.meta, WEIGHT.semibold)}>
-        {intl.formatMessage(i18n.others, { count: splits.length })}
-      </span>
-      <ul className="flex flex-col gap-2">
-        {splits.map((c) => (
-          <li key={c.id} className="flex flex-col gap-0.5" data-testid={`placement-other-${c.id}`}>
-            <span className={cx(TYPE.body, WEIGHT.semibold)}>
-              {intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
-                link: linkWord(c),
-              })}
-            </span>
-            <span className={cx('break-words', TYPE.meta)} title={c.fit.detail}>
-              {outcomeText(intl, c)}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function LiveChip({ live }: { live: { phase: EnginePhase; state: string } }) {
-  const intl = useIntl();
-  const word =
-    live.state === 'mounting'
-      ? intl.formatMessage(i18n.liveMounting)
-      : live.state === 'running'
-        ? intl.formatMessage(i18n.liveRunning)
-        : live.state === 'failed'
-          ? intl.formatMessage(i18n.liveFailed)
-          : live.state === 'reconnecting'
-            ? intl.formatMessage(i18n.liveReconnecting)
-            : distributedStateWord(intl, live.state);
-  return (
-    <Chip phase={live.phase}>
-      <span data-testid="placement-live" data-phase={live.phase}>
-        {word}
-      </span>
-    </Chip>
-  );
-}
-
 interface PlacementCardProps {
   modelId: string;
   single: MlxEngineStatus | null;
@@ -992,6 +692,9 @@ interface PlacementCardProps {
   splitDetails?: ReactNode;
   /** The state tile's live read and the engine it came from: the running way's chip colour. */
   liveActivity?: WayActivity | null;
+  /** The setup strip's "Save as a node" asked to save the way that runs now; handled once. */
+  saveRunningPending?: boolean;
+  onSaveRunningHandled?: () => void;
 }
 
 function PlacementCardBody({
@@ -1004,6 +707,8 @@ function PlacementCardBody({
   distributedCapability = false,
   splitDetails,
   liveActivity = null,
+  saveRunningPending = false,
+  onSaveRunningHandled,
 }: PlacementCardProps) {
   const intl = useIntl();
   const macs = useMacs();
@@ -1013,6 +718,13 @@ function PlacementCardBody({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // Ways a start in THIS card launched: once running, that row asks to keep the way as a node.
+  const [startedHere, setStartedHere] = useState<ReadonlySet<string>>(() => new Set());
+  const markStarted = useCallback(
+    (key: string) => setStartedHere((before) => new Set(before).add(key)),
+    []
+  );
+  const [saves, setSaves] = useState<Record<string, SaveState>>({});
   // `follows`: the way a "Starting — this card follows it." notice speaks for; it ends when that way
   // serves or fails (it stayed 25 min after a switch — Q-36).
   // `detail`: what stands behind a refusal (a node's output, pids) — under Details, never inline.
@@ -1266,6 +978,7 @@ function PlacementCardBody({
     // anywhere (Q-119: Run for Flash while the Studio served the 27B).
     if (current.length === 0 && way.kind === 'local') {
       onMountHere();
+      markStarted(way.key);
       return;
     }
     setBusy(`run:${way.key}`);
@@ -1291,11 +1004,13 @@ function PlacementCardBody({
         }
         if (way.kind === 'local') {
           onMountHere();
+          markStarted(way.key);
           setNotice({ tone: 'accent', text: intl.formatMessage(i18n.started), follows: way.key });
           return;
         }
       }
       const refusal = await startWay(way);
+      if (refusal == null) markStarted(way.key);
       setNotice(
         refusal == null
           ? { tone: 'accent', text: intl.formatMessage(i18n.started), follows: way.key }
@@ -1387,6 +1102,60 @@ function PlacementCardBody({
     }
   };
 
+  /**
+   * "Save as node": one def for this model on this way, through `nodes/write` (the only door to the
+   * `nodes` key). A node that already names the model and the way is shown, never duplicated; a
+   * refusal is goose's words.
+   */
+  const saveAsNode = async (way: Way) => {
+    const say = (state: SaveState) => setSaves((before) => ({ ...before, [way.key]: state }));
+    const placement = pinnedPlacementOf(way);
+    if (!placement) {
+      say({ kind: 'refused', text: intl.formatMessage(i18n.saveNoPlan) });
+      return;
+    }
+    say({ kind: 'saving' });
+    try {
+      const read = await nodesRead();
+      const existing = nodeForWay(read.nodes, modelId, placement);
+      if (existing) {
+        say({ kind: 'saved', id: existing.def.id, name: existing.def.name, already: true });
+        return;
+      }
+      const name = defaultNodeName(
+        intl,
+        modelId,
+        whereWords(intl, placement, macs.macs),
+        read.nodes.map((n) => n.def.name)
+      );
+      const id = nodeIdFor(
+        name,
+        read.nodes.map((n) => n.def.id)
+      );
+      const def = mlxDef(id, {
+        name,
+        model: modelId,
+        placement,
+        goal,
+        keepLoaded: false,
+        origin: 'runIt',
+      });
+      const response = await putNode(def, read.config);
+      // The engine card and the setup strip name the node at once, not at the next glance event.
+      if (response.written) refreshGlanceNodes();
+      say(
+        response.written
+          ? { kind: 'saved', id, name, already: false }
+          : {
+              kind: 'refused',
+              text: (response.refusals ?? []).map((r) => r.message).join('; ') || refused,
+            }
+      );
+    } catch (e) {
+      say({ kind: 'refused', text: mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed)) });
+    }
+  };
+
   // The Mac that must receive the model before this way can start: a peer (or the split's other
   // Macs) whose models folder was READ and holds no complete copy — never guessed from a gap.
   const missingOn = (way: Way): Mac | null => {
@@ -1415,7 +1184,8 @@ function PlacementCardBody({
     macs.whenCopied(key, () => {
       setBusy(`run:${way.key}`);
       void startWay(way)
-        .then((refusal) =>
+        .then((refusal) => {
+          if (refusal == null) markStarted(way.key);
           setNotice(
             refusal == null
               ? { tone: 'accent', text: intl.formatMessage(i18n.started), follows: way.key }
@@ -1424,8 +1194,8 @@ function PlacementCardBody({
                   text: macs.describeError(to, refusal.text),
                   detail: refusal.detail,
                 }
-          )
-        )
+          );
+        })
         .catch((e: unknown) =>
           setNotice({
             tone: 'err',
@@ -1441,6 +1211,38 @@ function PlacementCardBody({
 
   const { ways, otherSplits } = waysOf(plan, macs.macs, distributedCapability);
   const serving = servingWays(ways, macs.macs, single, distributed);
+
+  // The setup strip's "Save as a node" saves the way that runs this card's model; a model the card
+  // does not show running is said, never a silent no-op.
+  const saveRunning = () => {
+    const runningWay = ways.find((w) => {
+      const live = wayLive(w, modelId, single, distributed, liveActivity);
+      return live != null && live.state !== 'failed';
+    });
+    if (runningWay) void saveAsNode(runningWay);
+    else {
+      setNotice({
+        tone: 'err',
+        text: intl.formatMessage(i18n.saveNothingRunning, { model: shortModel(modelId) }),
+      });
+    }
+  };
+  const saveRunningNow = useRef(saveRunning);
+  saveRunningNow.current = saveRunning;
+  // Handled once per ask, and only once the plan read has settled: a split's Macs come from its
+  // plan row.
+  const planSettled = !loading && (plan != null || error != null);
+  const saveAsked = useRef(false);
+  useEffect(() => {
+    if (!saveRunningPending) {
+      saveAsked.current = false;
+      return;
+    }
+    if (saveAsked.current || !planSettled) return;
+    saveAsked.current = true;
+    onSaveRunningHandled?.();
+    saveRunningNow.current();
+  }, [saveRunningPending, planSettled, onSaveRunningHandled]);
 
   /** Where a serving way runs, in the words the card's lines use. */
   const servedWhere = (way: Way): string => {
@@ -1468,36 +1270,23 @@ function PlacementCardBody({
         : intl.formatMessage(i18n.stopsFirst, values);
     });
 
-  const title = (way: Way): string => {
-    if (way.kind === 'local') return intl.formatMessage(i18n.runHere);
-    if (way.kind === 'peer') {
-      return intl.formatMessage(i18n.runOn, {
-        name: way.mac?.name ?? way.candidate?.nodeNames[0] ?? '—',
-      });
-    }
-    const count = way.candidate?.key.nodes.length;
-    return count
-      ? intl.formatMessage(i18n.runAcross, { count })
-      : intl.formatMessage(i18n.runAcrossAny);
+  const title = (way: Way): string => wayTitle(intl, way);
+
+  const rowFacts = (way: Way): WayRowFacts => {
+    const servesNow = serving.some((s) => s.way.key === way.key);
+    return {
+      live: wayLive(way, modelId, single, distributed, liveActivity),
+      tooSmall: tooSmallForLive(way.candidate, liveWork?.contextTokens ?? null, servesNow),
+    };
   };
 
-  const renderWay = (way: Way) => {
+  const renderBelow = (way: Way) => {
     const c = way.candidate;
-    const live = wayLive(way, modelId, single, distributed, liveActivity);
+    const { live, tooSmall } = rowFacts(way);
     const running = live != null && live.state !== 'failed';
     const figure = c ? goalFigure(c, goal) : null;
     const action = c?.action ?? null;
-    // "Best" is goose's: the planner ranks long documents by a whole turn's expected time, so a
-    // split that reads faster but writes slower wins only when the turn's answer is short enough.
-    const servesNow = serving.some((s) => s.way.key === way.key);
-    const tooSmall = tooSmallForLive(c, liveWork?.contextTokens ?? null, servesNow);
     const isBest = c != null && plan?.best === c.id && !tooSmall;
-    const isBestNow =
-      c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== plan.best && !tooSmall;
-    // The split beside a Mac the model fits on states what it costs and buys (Q-72) — that line
-    // carries both writing figures, so goose's "Slower for this" would only repeat half of it.
-    const tradeOff = c && way.kind === 'split' ? splitTradeOff(plan, c) : null;
-    const why = tradeOff ? tradeOffText(intl, tradeOff) : c ? outcomeText(intl, c) : null;
     const needsCopy = missingOn(way);
     const copyJob = needsCopy ? macs.copies[copyKey(modelId, needsCopy.key)] : undefined;
     const copyLink = needsCopy ? macs.linkBetween(SELF_KEY, needsCopy.key) : null;
@@ -1520,59 +1309,15 @@ function PlacementCardBody({
     const measuring = busy === `measure:${placementId}`;
     const rate = needsCopy ? macs.copyRate(SELF_KEY, needsCopy.key) : null;
     const minutes = rate && selfModel ? minutesAt(selfModel.sizeBytes, rate) : 0;
+    const pinned = pinnedPlacementOf(way);
+    // A way the planner judged unrunnable (unsupported, does not fit) is not kept as a node.
+    const saveable = pinned != null && (c == null || wayPickable(way));
+    const saved = saves[way.key];
+    // After a start here succeeds, the running row asks once to keep this way as a node (§8.6).
+    const offerSave = running && startedHere.has(way.key) && saved?.kind !== 'saved';
 
     return (
-      <li
-        key={way.key}
-        data-testid={`placement-way-${way.kind}`}
-        data-way={way.key}
-        className={cx('flex flex-col gap-2 p-3', SURFACE.inset, RADIUS.card)}
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={TYPE.h2}>{title(way)}</span>
-          {isBest && <Chip tone="accent">{intl.formatMessage(i18n.best)}</Chip>}
-          {isBestNow && <Chip tone="ok">{intl.formatMessage(i18n.bestNow)}</Chip>}
-          {c && way.kind === 'split' && (
-            // Plain words on the card; the runner and the transport ride the chip's title and the
-            // Details below (Q-174: "tensor split · JACCL" on Run it).
-            <Chip
-              title={intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
-                link: linkWord(c),
-              })}
-            >
-              {linkText(intl, c.key.link)
-                ? intl.formatMessage(i18n.splitOver, { link: linkText(intl, c.key.link) })
-                : intl.formatMessage(i18n.splitPlain)}
-            </Chip>
-          )}
-          {live && <LiveChip live={live} />}
-        </div>
-        {c && (
-          <div className="flex flex-wrap items-center gap-2">
-            {figure && (
-              <>
-                <span className={cx('text-lz-body', WEIGHT.semibold, TNUM, TONE_TEXT.accent)}>
-                  {figureText(intl, goal, figure, c)}
-                </span>
-                <FigureRange figure={figure} />
-                <SourceChip figure={figure} />
-              </>
-            )}
-            {c.fit.context != null && (
-              <Chip>
-                {intl.formatMessage(
-                  c.fit.status === 'smallerContext' ? i18n.smallerContext : i18n.context,
-                  { tokens: c.fit.context.toLocaleString() }
-                )}
-              </Chip>
-            )}
-          </div>
-        )}
-        {why && (
-          <p className={cx('break-words', TYPE.meta)} title={c?.fit.detail}>
-            {why}
-          </p>
-        )}
+      <>
         {startable &&
           stopsFirstLines(way).map((line) => (
             <p
@@ -1665,7 +1410,52 @@ function PlacementCardBody({
                 : intl.formatMessage(i18n.copyFirst, { name: needsCopy.name, kind: copyLink.kind })}
             </Button>
           )}
+          {saveable && !offerSave && saved?.kind !== 'saved' && (
+            <SaveAsNodeButton
+              variant="ghost"
+              saving={saved?.kind === 'saving'}
+              onClick={() => void saveAsNode(way)}
+              testId={`placement-save-node-${way.kind}`}
+            />
+          )}
         </div>
+        {saveable && offerSave && (
+          <div
+            data-testid={`placement-save-offer-${way.kind}`}
+            className="flex flex-wrap items-center gap-2"
+          >
+            <span className={cx('break-words', TYPE.body, WEIGHT.semibold)}>
+              {intl.formatMessage(i18n.saveOffer)}
+            </span>
+            <SaveAsNodeButton
+              variant="primary"
+              saving={saved?.kind === 'saving'}
+              onClick={() => void saveAsNode(way)}
+              testId={`placement-save-offer-button-${way.kind}`}
+            />
+          </div>
+        )}
+        {saved?.kind === 'saved' && (
+          <p
+            data-testid={`placement-saved-${way.kind}`}
+            className={cx('break-words', TYPE.meta, WEIGHT.semibold, TONE_TEXT.ok)}
+          >
+            {intl.formatMessage(saved.already ? i18n.alreadyNode : i18n.savedAs, {
+              name: saved.name,
+            })}{' '}
+            <a className="underline" href={`#${nodeHref(saved.id)}`}>
+              {intl.formatMessage(i18n.openInNodes)}
+            </a>
+          </p>
+        )}
+        {saved?.kind === 'refused' && (
+          <p
+            data-testid={`placement-save-refused-${way.kind}`}
+            className={cx('break-words', TYPE.meta, WEIGHT.semibold, TONE_TEXT.err)}
+          >
+            {intl.formatMessage(i18n.saveRefused, { reason: saved.text })}
+          </p>
+        )}
         {measuring && <p className={TYPE.meta}>{intl.formatMessage(i18n.measuring)}</p>}
         {running && figure && !figure.measured && !measuring && (
           <p className={cx(TYPE.meta, WEIGHT.semibold)}>{intl.formatMessage(i18n.measureFirst)}</p>
@@ -1739,7 +1529,7 @@ function PlacementCardBody({
             </div>
           </Disclosure>
         )}
-      </li>
+      </>
     );
   };
 
@@ -1811,9 +1601,13 @@ function PlacementCardBody({
         />
       )}
       {!(loading && !plan && !error) && (
-        <ul className="flex flex-col gap-2" data-testid="placement-ways">
-          {ways.map(renderWay)}
-        </ul>
+        <PlacementCandidates
+          plan={plan}
+          ways={ways}
+          goal={goal}
+          rowFacts={rowFacts}
+          renderBelow={renderBelow}
+        />
       )}
       {(plan?.notes ?? []).map((note) => (
         <p key={note} className={TYPE.meta}>
