@@ -31,8 +31,9 @@ except Exception: rows=[]
 print(int(statistics.median(rows)) if rows else 0)" 2>/dev/null)
   if [ -n "$run" ] && [ "${med:-0}" -gt 0 ] && [ "$run" -gt $(( med * RATIO )) ]; then
     echo "RUNAWAY: a call has written $run tokens, ${RATIO}× the run's median agent-call output ($med)"; exit 0; fi
-  # Before any median exists: an answer longer than its own prompt is the runaway shape (#3d/#3e: 24k and 221k
-  # tokens on a 40k prompt; a healthy first answer is a few hundred to a few thousand).
+  # Before any median exists: an answer longer than its own prompt is the runaway shape (#3e: 221k tokens on a
+  # 40k prompt; a healthy first answer is a few hundred to a few thousand). NOTE: #3d's 24k on 40k would NOT
+  # trip this — only the median rule, from the second agent call on, sees that size.
   if [ -n "$run" ] && [ "${med:-0}" -eq 0 ] && [ "${prompt:-0}" -gt 0 ] && [ "$run" -gt "$prompt" ]; then
     echo "RUNAWAY: the first call has written $run tokens on a $prompt-token prompt"; exit 0; fi
   sleep 30
