@@ -30,7 +30,7 @@ try: rows=[int(r['output']) for r in csv.DictReader(open('$d/calls.csv')) if r['
 except Exception: rows=[]
 print(int(statistics.median(rows)) if rows else 0)" 2>/dev/null)
   if [ -n "$run" ] && [ "${med:-0}" -gt 0 ] && [ "$run" -gt $(( med * RATIO )) ]; then
-    echo "RUNAWAY: a call has written $run tokens, ${RATIO}× the run's median agent-call output ($med)"; exit 0; fi
+    echo "SIZE ALARM (summons a reader, not a verdict — read the words first; E2E #5b: a legit 12 KB VENDORED.md tripped it): a call has written $run tokens, ${RATIO}× the run's median agent-call output ($med)"; exit 0; fi
   # Before any median exists: an answer longer than its own prompt is the runaway shape (#3e: 221k tokens on a
   # 40k prompt; a healthy first answer is a few hundred to a few thousand). NOTE: #3d's 24k on 40k would NOT
   # trip this — only the median rule, from the second agent call on, sees that size.
