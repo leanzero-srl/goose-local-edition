@@ -173,6 +173,13 @@ describe('DirSwitcher (Studio)', () => {
     assertStudioClean(container);
   });
 
+  // Q-23: the folder chip showed through the Report a problem backdrop — a z-[100] flex item
+  // stacks above any z-50 overlay. The chip lives in the bar; it never paints over a dialog.
+  it('carries no z-index of its own, so no dialog backdrop is painted under it', () => {
+    mount(<DirSwitcher className="" sessionId={undefined} workingDir="/Users/me/proj" />);
+    expect(screen.getByRole('button').className).not.toMatch(/(^|\s)z-/);
+  });
+
   it('while the chooser is open the trigger is solid ink-4 and not-allowed — never an opacity', async () => {
     const { container } = mount(
       <DirSwitcher className="" sessionId={undefined} workingDir="/Users/me/proj" />

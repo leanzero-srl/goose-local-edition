@@ -181,7 +181,7 @@ export const DirSwitcher: React.FC<DirSwitcherProps> = ({
             <DropdownMenuTrigger asChild>
               <button
                 className={cx(
-                  'z-[100] flex items-center pl-1 text-lz-meta [&>svg]:size-4',
+                  'flex items-center pl-1 text-lz-meta [&>svg]:size-4',
                   isDirectoryChooserOpen
                     ? 'cursor-not-allowed text-lz-ink-4'
                     : 'text-lz-ink-3 hover:cursor-pointer hover:text-lz-ink',
