@@ -327,6 +327,7 @@ impl AdversaryInspector {
             .await
             .map_err(|e| anyhow::anyhow!("Could not resolve model config: {}", e))?;
         let (response, _usage) = crate::model_config::complete_helper(
+            crate::background_work::BackgroundWorkKind::SafetyCheck,
             provider.as_ref(),
             &model_config,
             session_id,

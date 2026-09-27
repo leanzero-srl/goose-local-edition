@@ -13368,6 +13368,14 @@
           },
           "description": "User/scheduled sessions whose LAST turn the person stopped (a later completed turn clears it).",
           "default": []
+        },
+        "background": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BackgroundSessionDto"
+          },
+          "description": "User/scheduled sessions goose is doing background work for, oldest call first (Q-185).",
+          "default": []
         }
       },
       "required": [
@@ -13536,6 +13544,90 @@
         "elapsedMs"
       ],
       "description": "A session whose LAST turn the person stopped (Q-169)."
+    },
+    "BackgroundSessionDto": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "sessionName": {
+          "type": "string"
+        },
+        "workingDir": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/BackgroundWorkKind"
+        },
+        "startedAt": {
+          "type": "string",
+          "description": "RFC 3339: when the call began."
+        }
+      },
+      "required": [
+        "sessionId",
+        "sessionName",
+        "workingDir",
+        "kind",
+        "startedAt"
+      ],
+      "description": "A session goose is doing background work for right now (Q-185): a model call in flight on the\nsession's behalf that is not its turn. Listed whether or not a turn also runs; a surface shows it\nas the session's state only while no turn does."
+    },
+    "BackgroundWorkKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "factCheck",
+          "description": "The end-of-turn fact checker (\"goose check:\"), after the reply."
+        },
+        {
+          "type": "string",
+          "const": "memoryReview",
+          "description": "The end-of-turn reviewer that proposes memories, after the reply."
+        },
+        {
+          "type": "string",
+          "const": "title",
+          "description": "The session's title."
+        },
+        {
+          "type": "string",
+          "const": "toolLabel",
+          "description": "The short labels on a turn's tool calls."
+        },
+        {
+          "type": "string",
+          "const": "compaction",
+          "description": "Compaction of the conversation."
+        },
+        {
+          "type": "string",
+          "const": "toolDigest",
+          "description": "A tool call and its result summarized to save tokens."
+        },
+        {
+          "type": "string",
+          "const": "permissionCheck",
+          "description": "The permission judge deciding whether a tool call only reads."
+        },
+        {
+          "type": "string",
+          "const": "safetyCheck",
+          "description": "The adversary inspector reviewing a tool call."
+        },
+        {
+          "type": "string",
+          "const": "sessionSummary",
+          "description": "The orchestrator summarizing a session's conversation."
+        },
+        {
+          "type": "string",
+          "const": "recipe",
+          "description": "A recipe written from the session."
+        }
+      ],
+      "description": "What goose asks the model FOR a session besides the answer being written (Q-185): the call's\nkind, set once where the call is made (`goose::background_work`) and read by every surface that\nnames it — the session lists, the chat, the MLX engine card and the cut guard."
     },
     "ResolveNeedsYouRequest_unstable": {
       "type": "object",

@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 
 use goose_sdk_types::custom_requests::{
-    FailedSessionDto, NeedsYouAction, NeedsYouItemDto, NeedsYouStatus as NeedsYouStatusDto,
-    ResolveNeedsYouRequest, ResolveNeedsYouResponse, RunningSessionDto, SessionActivityRequest,
-    SessionActivityResponse, StoppedSessionDto,
+    BackgroundSessionDto, FailedSessionDto, NeedsYouAction, NeedsYouItemDto,
+    NeedsYouStatus as NeedsYouStatusDto, ResolveNeedsYouRequest, ResolveNeedsYouResponse,
+    RunningSessionDto, SessionActivityRequest, SessionActivityResponse, StoppedSessionDto,
 };
 use tracing::warn;
 
@@ -59,6 +59,39 @@ impl GooseAcpAgent {
             }
         }
         busy
+    }
+
+    /// goose's in-flight calls for user and scheduled sessions (Q-185), one row per call, oldest
+    /// first — the fact check after a reply keeps its session visibly busy.
+    async fn background_sessions(&self) -> Vec<BackgroundSessionDto> {
+        let mut background = Vec::new();
+        for call in crate::background_work::snapshot() {
+            match self
+                .session_manager
+                .get_session(&call.session_id, false)
+                .await
+            {
+                Ok(session)
+                    if matches!(
+                        session.session_type,
+                        SessionType::User | SessionType::Scheduled
+                    ) =>
+                {
+                    background.push(BackgroundSessionDto {
+                        session_id: call.session_id,
+                        session_name: session.name,
+                        working_dir: session.working_dir.to_string_lossy().to_string(),
+                        kind: call.kind,
+                        started_at: call.started_at.to_rfc3339(),
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    warn!(session_id = %call.session_id, %error, "a session goose works for is unreadable in the store");
+                }
+            }
+        }
+        background
     }
 
     pub(super) async fn on_session_activity(
@@ -128,11 +161,13 @@ impl GooseAcpAgent {
                 output_tokens: stopped.stopped.output_tokens,
             })
             .collect();
+        let background = self.background_sessions().await;
         Ok(SessionActivityResponse {
             running,
             needs_you,
             failed,
             stopped,
+            background,
         })
     }
 

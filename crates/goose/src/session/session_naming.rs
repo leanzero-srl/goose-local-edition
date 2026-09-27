@@ -202,6 +202,7 @@ pub(crate) async fn generate_session_name(
     );
     let message = Message::user().with_text(&user_text);
     let result = crate::model_config::complete_fast(
+        crate::background_work::BackgroundWorkKind::Title,
         provider,
         model_config,
         session_id,

@@ -19,6 +19,7 @@ use goose_memory_store::{MemoryStore, Polarity, ProposalKind, ProposalStore, Pro
 use serde::Deserialize;
 
 use crate::agents::Agent;
+use crate::background_work::BackgroundWorkKind;
 use crate::config::Config;
 use crate::conversation::effective_role;
 use crate::conversation::message::{Message, MessageContent};
@@ -273,7 +274,11 @@ fn nearest_memories(store: &MemoryStore, query: &str) -> Vec<String> {
 /// `envelope` is the most tokens the asked-for answer can hold (see [`verdict_envelope`] and
 /// [`assessment_envelope`]): the call ends there instead of at the context window's room. A cut
 /// answer is logged by name; it never parses, so nothing is proposed or shown from it.
+///
+/// `kind` says which reviewer asks (Q-185): the fact check and the memory review are different
+/// work to the person watching the session, and every surface names them apart.
 async fn ask_the_judge(
+    kind: BackgroundWorkKind,
     provider: &dyn Provider,
     model_config: &ModelConfig,
     session_id: &str,
@@ -284,7 +289,15 @@ async fn ask_the_judge(
     let bounded = model_config.clone().with_max_tokens(Some(envelope));
     let messages = [Message::user().with_text(user)];
     let answer = crate::turn_priority::after_user_turns("end-of-turn reviewer", || {
-        crate::model_config::complete_helper(provider, &bounded, session_id, system, &messages, &[])
+        crate::model_config::complete_helper(
+            kind,
+            provider,
+            &bounded,
+            session_id,
+            system,
+            &messages,
+            &[],
+        )
     })
     .await?;
     if answer
@@ -408,6 +421,7 @@ pub async fn assess_turn(
     let system = assessment_system_prompt();
     let user = assessment_user_prompt(&facts, "end_turn", &nearest);
     let reply = match ask_the_judge(
+        BackgroundWorkKind::MemoryReview,
         provider.as_ref(),
         &model_config,
         &session_id,
@@ -1004,6 +1018,7 @@ pub async fn check_turn_answer(
         let system = answer_check_system_prompt(question);
         let envelope = verdict_envelope(&system, &user);
         let reply = match ask_the_judge(
+            BackgroundWorkKind::FactCheck,
             provider.as_ref(),
             &model_config,
             &session_id,
@@ -1038,7 +1053,8 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    /// Records the session id the call runs under, as the swarm router's lease reads it.
+    /// Records the session id and the work kind the call runs under, as the swarm router's lease
+    /// reads them.
     struct SessionEcho;
 
     #[async_trait::async_trait]
@@ -1064,9 +1080,14 @@ mod tests {
             _messages: &[Message],
             _tools: &[rmcp::model::Tool],
         ) -> Result<(Message, ProviderUsage), ProviderError> {
-            let seen = crate::session_context::current_session_id();
+            let seen = format!(
+                "{} {:?}",
+                crate::session_context::current_session_id()
+                    .unwrap_or_else(|| "UNTAGGED".to_string()),
+                crate::background_work::current_kind()
+            );
             Ok((
-                Message::assistant().with_text(seen.unwrap_or_else(|| "UNTAGGED".to_string())),
+                Message::assistant().with_text(seen),
                 ProviderUsage::new("test".to_string(), Default::default()),
             ))
         }
@@ -1096,22 +1117,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_judgement_runs_under_the_chats_session_id_from_a_detached_task() {
-        let judged = tokio::spawn(async {
-            ask_the_judge(
-                &SessionEcho,
-                &ModelConfig::new("test-model"),
-                "20260925_20",
-                "system",
-                "user".to_string(),
-                verdict_envelope("system", "user"),
-            )
+    async fn the_judgement_runs_under_the_chats_session_id_and_its_kind_from_a_detached_task() {
+        for (kind, echoed) in [
+            (BackgroundWorkKind::FactCheck, "20260925_20 Some(FactCheck)"),
+            (
+                BackgroundWorkKind::MemoryReview,
+                "20260925_20 Some(MemoryReview)",
+            ),
+        ] {
+            let judged = tokio::spawn(async move {
+                ask_the_judge(
+                    kind,
+                    &SessionEcho,
+                    &ModelConfig::new("test-model"),
+                    "20260925_20",
+                    "system",
+                    "user".to_string(),
+                    verdict_envelope("system", "user"),
+                )
+                .await
+            })
             .await
-        })
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(judged.0.as_concat_text(), "20260925_20");
+            .unwrap()
+            .unwrap();
+            assert_eq!(judged.0.as_concat_text(), echoed);
+        }
     }
 
     /// Q-132, llm_request.2557c942 (3.0.49, the Flash pipeline split, 14:28:57): the answer check
@@ -1129,6 +1159,7 @@ mod tests {
             let user = answer_check_user_prompt(&inputs, question).unwrap();
             let envelope = verdict_envelope(&system, &user);
             let (answer, _) = ask_the_judge(
+                BackgroundWorkKind::FactCheck,
                 engine.provider.as_ref(),
                 &ModelConfig::new(SERVED),
                 "20260926_5",
@@ -1148,6 +1179,7 @@ mod tests {
         }
         let engine = MlxEndpoint::start().await;
         ask_the_judge(
+            BackgroundWorkKind::MemoryReview,
             engine.provider.as_ref(),
             &ModelConfig::new(SERVED),
             "20260926_5",
