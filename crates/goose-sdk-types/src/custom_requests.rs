@@ -5218,13 +5218,21 @@ pub struct MlxSpeedFigureDto {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxPlacementSpeedDto {
-    /// Writing speed of one conversation (tok/s): measured over this way's timed turns of any
-    /// prompt size (each timed over enough tokens), else estimated at a ~2k-token prompt.
+    /// Writing speed of one conversation (tok/s): measured over this way's timed turns at this
+    /// app's chat prompt size (each timed over enough tokens), else estimated at that size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode: Option<MlxSpeedFigureDto>,
+    /// The prompt size `decode` is for: prompts of up to this many tokens (a power of two — this
+    /// app's typical chat prompt's bucket; the benchmark's 2,048 while no chat is recorded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_bucket: Option<u64>,
     /// Prompt reading speed (tok/s) at the goal's prompt size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefill: Option<MlxSpeedFigureDto>,
+    /// The prompt size `prefill` is for (prompts of up to this many tokens): name it beside the
+    /// rate — reading slows as the prompt grows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_bucket: Option<u64>,
     /// Total tok/s across `concurrency` requests (derived from decode × a measured gain).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub throughput: Option<MlxSpeedFigureDto>,
@@ -5327,12 +5335,31 @@ pub enum MlxPlacementActionDto {
 pub enum MlxPlacementOutcomeDto {
     Best,
     BestAvailableNow,
-    NotSupported { reason: String },
+    NotSupported {
+        reason: String,
+    },
     DoesNotFit,
-    FitUnknown { reason: String },
-    NoFigure { reason: String },
-    Slower { mine: f64, best: f64 },
-    TiedNeedsMoreMacs { mine: f64, best: f64 },
+    FitUnknown {
+        reason: String,
+    },
+    NoFigure {
+        reason: String,
+    },
+    Slower {
+        mine: f64,
+        best: f64,
+    },
+    TiedNeedsMoreMacs {
+        mine: f64,
+        best: f64,
+    },
+    /// It fits, but only at `context` tokens, and this app's measured chats need `need` (their
+    /// typical prompt + answer): never Best, however fast. The plan's notes say how big the chats
+    /// are.
+    ContextBelowChats {
+        context: u64,
+        need: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

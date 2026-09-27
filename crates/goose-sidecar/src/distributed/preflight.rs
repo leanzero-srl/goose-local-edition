@@ -91,6 +91,10 @@ impl Check {
     fn fail(id: &str, message: impl Into<String>) -> Self {
         Self::new(id, CheckVerdict::Fail, message)
     }
+    fn with_detail(mut self, detail: String) -> Self {
+        self.detail = Some(detail);
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -183,6 +187,43 @@ pub struct PreflightReport {
 }
 
 impl PreflightReport {
+    /// Each failing check as a person reads it: the Mac and the check's words, no check id
+    /// (Q-174: the tray read "Last: startFailed — preflight: … foreignEngines: another distri…").
+    pub fn plain_failures(&self) -> Vec<String> {
+        let cluster = self
+            .checks
+            .iter()
+            .filter(|c| c.verdict == CheckVerdict::Fail)
+            .map(|c| c.message.clone());
+        let nodes = self.nodes.iter().flat_map(|n| {
+            n.checks
+                .iter()
+                .filter(|c| c.verdict == CheckVerdict::Fail)
+                .map(move |c| format!("{}: {}", n.name, c.message))
+        });
+        cluster.chain(nodes).collect()
+    }
+
+    /// Each failing check by id with its words AND its evidence (`detail`): what Details show.
+    pub fn failure_details(&self) -> Vec<String> {
+        let with_detail = |c: &Check| match &c.detail {
+            Some(detail) => format!("{}: {} ({detail})", c.id, c.message),
+            None => format!("{}: {}", c.id, c.message),
+        };
+        let cluster = self
+            .checks
+            .iter()
+            .filter(|c| c.verdict == CheckVerdict::Fail)
+            .map(with_detail);
+        let nodes = self.nodes.iter().flat_map(move |n| {
+            n.checks
+                .iter()
+                .filter(|c| c.verdict == CheckVerdict::Fail)
+                .map(move |c| format!("{} {}", n.name, with_detail(c)))
+        });
+        cluster.chain(nodes).collect()
+    }
+
     pub fn failures(&self) -> Vec<String> {
         let cluster = self
             .checks
@@ -1032,11 +1073,9 @@ fn previous_split_check(leftovers: &[probe::GooseRankProcess]) -> Check {
         .collect();
     Check::fail(
         "previousSplit",
-        format!(
-            "goose's previous split still runs here: {}",
-            each.join("; ")
-        ),
+        "the split goose started here before is still running",
     )
+    .with_detail(each.join("; "))
 }
 
 /// A foreign DISTRIBUTED process (mlx.launch, the fork's `pipeline_qwen4 serve|run`, a goose rank
@@ -1051,26 +1090,28 @@ fn foreign_engines_check(foreign: &[(u32, String, probe::ForeignKind)]) -> Check
     if !distributed.is_empty() {
         return Check::fail(
             "foreignEngines",
-            format!(
-                "another distributed MLX process runs on this node (it holds a coordinator port or \
-                 an RDMA queue pair this launch needs): {}",
-                distributed.join("; ")
-            ),
-        );
+            "another split, not started by goose, is running on this Mac — stop it first",
+        )
+        .with_detail(format!(
+            "a distributed MLX process holds a coordinator port or an RDMA queue pair this \
+             launch needs: {}",
+            distributed.join("; ")
+        ));
     }
     if !single.is_empty() {
         return Check::warn(
             "foreignEngines",
-            format!(
-                "a single MLX server shares this node: {} — its memory is already outside the \
-                 available figure the plan is measured against, and is charged against the \
-                 node's GPU ceiling (the memory check names it); it contends for the GPU, so \
-                 decode here slows while it serves",
-                single.join("; ")
-            ),
-        );
+            "another model is running on this Mac: replies here are slower while it works",
+        )
+        .with_detail(format!(
+            "a single MLX server shares this node: {} — its memory is already outside the \
+             available figure the plan is measured against, and is charged against the node's \
+             GPU ceiling (the memory check names it); it contends for the GPU, so decode here \
+             slows while it serves",
+            single.join("; ")
+        ));
     }
-    Check::pass("foreignEngines", "no other MLX engine runs here")
+    Check::pass("foreignEngines", "no other model is running on this Mac")
 }
 
 /// The qwen4_exp split serves through the fork's `pipeline_qwen4 serve` (the rank program calls
@@ -2698,19 +2739,27 @@ pub(crate) mod tests {
         assert_eq!(leftovers, vec![(301, Some(1))]);
         let previous = check(&answer, "previousSplit").unwrap();
         assert_eq!(previous.verdict, CheckVerdict::Fail);
+        assert_eq!(
+            previous.message,
+            "the split goose started here before is still running"
+        );
+        let previous_detail = previous.detail.as_deref().unwrap();
         assert!(
-            previous.message.contains("pid 301 (orphaned"),
-            "{}",
-            previous.message
+            previous_detail.contains("pid 301 (orphaned"),
+            "{previous_detail}"
         );
         let foreign = check(&answer, "foreignEngines").unwrap();
         assert_eq!(foreign.verdict, CheckVerdict::Fail);
+        assert_eq!(
+            foreign.message,
+            "another split, not started by goose, is running on this Mac — stop it first"
+        );
+        let detail = foreign.detail.as_deref().unwrap();
         assert!(
-            !foreign.message.contains("pid 301 ")
-                && foreign.message.contains("pid 9425 ")
-                && foreign.message.contains("pid 303 "),
-            "{}",
-            foreign.message
+            !detail.contains("pid 301 ")
+                && detail.contains("pid 9425 ")
+                && detail.contains("pid 303 "),
+            "{detail}"
         );
         assert_eq!(answer.foreign_splits.len(), 2);
 
@@ -2776,13 +2825,12 @@ pub(crate) mod tests {
         let collided = read_answer(&config, None, 0, Ok(answer(&theirs, "611")), Some("mine"));
         let foreign = check(&collided, "foreignEngines").unwrap();
         assert_eq!(foreign.verdict, CheckVerdict::Fail);
+        let detail = foreign.detail.as_deref().unwrap();
         assert!(
-            foreign.message.contains("pid 611 ")
-                && !foreign.message.contains("52054")
-                && !foreign.message.contains("52057"),
-            "{}",
-            foreign.message
+            detail.contains("pid 611 ") && !detail.contains("52054") && !detail.contains("52057"),
+            "{detail}"
         );
+        assert!(!foreign.message.contains("pid"), "{}", foreign.message);
         assert_eq!(collided.foreign_splits.len(), 1);
         let ports = check(&collided, "ports").unwrap();
         assert_eq!(ports.verdict, CheckVerdict::Fail);

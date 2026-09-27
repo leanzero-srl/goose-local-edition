@@ -7,10 +7,13 @@
 //!
 //! Comparable runs: the same model, the same way (the placement key) and the same serving stack.
 //!
-//! WRITING is every such run's decode rate, whatever its prompt size: a chat turn's prompt is the
-//! whole conversation, so no fixed size is "the chat size" — the figure is this way's typical turn
-//! over its real conversations (measured, the 27B on the Studio: medians of 26–30 tok/s from 128 to
-//! 64k-token prompts, 22.9 at 128k). A run counts when it was timed over ENOUGH TOKENS: the recorder
+//! WRITING is the decode rate of this way's runs at THIS APP'S chat size (`ChatShape`: the prompt
+//! bucket the conversations' reading is spent in — no fixed size is "the chat size", the recorded
+//! chats say what it is). Every prompt size once counted (the 27B on the Studio: medians of 26–30
+//! tok/s from 128 to 64k-token prompts), until the tensor split measured otherwise: goose's own
+//! side calls — ~100–200-token prompts, ~6-token answers, 788 of its 867 timed runs — wrote at 4.7
+//! tok/s, which is start-up, not writing, while its 64k-token turns wrote 10.6 and the live turn
+//! 10.9 (Q-168). A run counts when it was timed over ENOUGH TOKENS: the recorder
 //! times `tokens − 1` intervals between the first and the last streamed token, so one token is a
 //! `1 / (tokens − 1)` step of the rate; a run counts when that step is no coarser than the spread
 //! between this way's runs (the middle half's half-width over the median) — a rate over fewer
@@ -19,11 +22,76 @@
 //!
 //! READING is per prompt bucket: a turn's reading rate is its uncached tokens over its time to the
 //! first token, and reading slows as the context it attends over grows (the Studio: ~131 tok/s over
-//! 64k-token prompts), so only runs of the same bucket compare.
+//! 64k-token prompts), so only runs of the same bucket compare. The headline reading is at the same
+//! chat bucket as writing (Q-168: "18.0 tok/s reading, median of 2 prompts" came from the
+//! benchmark's 2,048 bucket while 49 turns at 64k read ~250 tok/s), and carries that bucket.
 
+use super::bench::Workload;
 use super::planner::{backend_of, Figure};
 use super::predict::Estimate;
-use super::store::{PlacementKey, SpeedRecord};
+use super::store::{context_bucket, PlacementKey, RecordSource, SpeedRecord};
+
+/// The chat turn THIS app's conversations make, from every chat turn goose recorded (any model,
+/// any way — the conversations are the user's, not the engine's): the prompt the typical token of
+/// reading belongs to, and the answer turns of that size write. What "Chat" is sized by in the
+/// planner — the context a way must hold to be Best, the prompt size its rates are read at.
+///
+/// The prompt is the TOKEN-weighted median, not the median turn: goose's own side calls (a title,
+/// a check — measured 2026-09-27: 1,516 chat rows, median prompt 164 tokens) outnumber the
+/// conversation turns, while the conversation turns carry the reading (weighted median 52,976
+/// tokens — the 41k–53k the chat header shows). A prompt counts by the tokens it reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatShape {
+    pub prompt_tokens: u64,
+    pub answer_tokens: u64,
+    /// Chat turns in the prompt's bucket the answer is the median of; 0 = goose has recorded no
+    /// chat turn, and the shape is the "Measure speed" chat workload's own.
+    pub turns: usize,
+}
+
+impl ChatShape {
+    pub fn of(records: &[SpeedRecord]) -> Self {
+        let mut prompts: Vec<u64> = records
+            .iter()
+            .filter(|r| r.source == RecordSource::Chat && r.prompt_tokens > 0)
+            .map(|r| r.prompt_tokens)
+            .collect();
+        prompts.sort_unstable();
+        let total: u64 = prompts.iter().sum();
+        let mut read = 0u64;
+        let Some(prompt_tokens) = prompts.into_iter().find(|p| {
+            read += p;
+            read * 2 >= total
+        }) else {
+            return Self {
+                prompt_tokens: Workload::Chat.prompt_tokens(),
+                answer_tokens: Workload::Chat.answer_tokens(),
+                turns: 0,
+            };
+        };
+        let bucket = context_bucket(prompt_tokens);
+        let answers: Vec<f64> = records
+            .iter()
+            .filter(|r| r.source == RecordSource::Chat && r.context_bucket == bucket)
+            .map(|r| r.completion_tokens as f64)
+            .collect();
+        Self {
+            prompt_tokens,
+            answer_tokens: Estimate::of_measurements(&answers).map_or(0, |e| e.value as u64),
+            turns: answers.len(),
+        }
+    }
+
+    /// The bucket its rates are read at.
+    pub fn bucket(&self) -> u64 {
+        context_bucket(self.prompt_tokens)
+    }
+
+    /// The context a turn of this shape needs: its prompt and its answer.
+    pub fn context_needed(&self) -> u64 {
+        self.prompt_tokens + self.answer_tokens
+    }
+}
 
 /// This model's recorded runs on one way.
 pub struct WayRuns<'a> {
@@ -35,35 +103,60 @@ pub struct WayRuns<'a> {
 pub struct Writing {
     /// `None` when no timed run counts.
     pub figure: Option<Figure>,
-    /// Runs on this way that carry a writing rate.
+    /// The prompt bucket the figure is read at (this app's chat prompt, `ChatShape::bucket`).
+    pub bucket: u64,
+    /// Runs on this way at that bucket that carry a writing rate.
     pub timed: usize,
     /// Of those, the runs timed over too few tokens to count.
     pub too_short: usize,
+    /// Runs on this way timed at OTHER prompt sizes, left out of the figure.
+    pub elsewhere: usize,
     /// The spread a run's one-token step is held against: the middle half's half-width ÷ median.
     pub spread: f64,
 }
 
 impl Writing {
-    /// What the figure rests on, in words; `None` when nothing on this way was timed.
+    /// What the figure rests on, in words; `None` when nothing on this way was timed at all.
     pub fn basis(&self) -> Option<String> {
-        if self.timed == 0 {
+        if self.timed == 0 && self.elsewhere == 0 {
             return None;
         }
+        let at = format!(
+            "prompts up to {} tokens",
+            super::planner::tokens_words(self.bucket)
+        );
         let spread = format!("±{:.0}%", self.spread * 100.0);
-        Some(match &self.figure {
+        let counted = match &self.figure {
             Some(f) if self.too_short == 0 => {
-                format!("writing: the median of this way's {} timed run(s)", f.runs)
+                format!(
+                    "writing: the median of this way's {} timed run(s) at {at}",
+                    f.runs
+                )
             }
             Some(f) => format!(
-                "writing: the median of {} of this way's {} timed runs — {} wrote too few tokens \
-                 to time finer than the runs' own spread ({spread})",
+                "writing: the median of {} of this way's {} timed runs at {at} — {} wrote too few \
+                 tokens to time finer than the runs' own spread ({spread})",
                 f.runs, self.timed, self.too_short
             ),
+            None if self.timed == 0 => format!(
+                "writing: estimated — none of this way's {} timed run(s) read {at}, the size of \
+                 this app's chats",
+                self.elsewhere
+            ),
             None => format!(
-                "writing: estimated — this way's {} timed run(s) each wrote too few tokens to time \
-                 finer than their spread ({spread})",
+                "writing: estimated — this way's {} timed run(s) at {at} each wrote too few tokens \
+                 to time finer than their spread ({spread})",
                 self.timed
             ),
+        };
+        Some(if self.elsewhere > 0 && self.figure.is_some() {
+            format!(
+                "{counted}; {} timed at other prompt sizes are left out (a short side call's rate \
+                 is mostly its start-up)",
+                self.elsewhere
+            )
+        } else {
+            counted
         })
     }
 }
@@ -83,12 +176,22 @@ impl<'a> WayRuns<'a> {
         self.runs.len()
     }
 
-    pub fn writing(&self) -> Writing {
-        let timed: Vec<(&SpeedRecord, f64)> = self
+    /// Writing at prompts of `bucket` tokens — this app's chat size (`ChatShape::bucket`). Runs at
+    /// other sizes are left out: goose's own side calls (a title, a check) read ~100–200 tokens and
+    /// write ~6, so their rate is mostly the request's start-up (Q-168: the tensor split's 788
+    /// such runs made "4.7 tok/s writing" while its 64k-token turns wrote 10.6 and the live turn
+    /// 10.9).
+    pub fn writing(&self, bucket: u64) -> Writing {
+        let all_timed: Vec<(&SpeedRecord, f64)> = self
             .runs
             .iter()
             .filter_map(|r| r.decode_tps.map(|d| (*r, d)))
             .filter(|(_, d)| d.is_finite())
+            .collect();
+        let timed: Vec<(&SpeedRecord, f64)> = all_timed
+            .iter()
+            .copied()
+            .filter(|(r, _)| r.context_bucket == bucket)
             .collect();
         let rates: Vec<f64> = timed.iter().map(|(_, d)| *d).collect();
         let spread = Estimate::of_measurements(&rates)
@@ -101,8 +204,10 @@ impl<'a> WayRuns<'a> {
             .collect();
         Writing {
             figure: figure_of(&counted, |r| r.decode_tps),
+            bucket,
             timed: timed.len(),
             too_short: timed.len() - counted.len(),
+            elsewhere: all_timed.len() - timed.len(),
             spread,
         }
     }
@@ -180,35 +285,108 @@ mod tests {
     }
 
     #[test]
-    fn writing_reads_every_bucket_not_only_the_benchmark_size() {
+    fn writing_reads_this_apps_chat_size_not_the_benchmarks() {
         let records = fixture();
         let runs = WayRuns::of(&records, MODEL, &studio());
         assert_eq!(runs.recorded(), 60);
+        let chat = ChatShape::of(&records);
+        assert_eq!(chat.bucket(), 65_536, "{chat:?}");
         let at_2048 = records
             .iter()
             .filter(|r| r.placement == studio() && r.context_bucket == 2048)
             .count();
-        assert_eq!(at_2048, 1, "the old reader's whole sample");
-        let writing = runs.writing();
+        assert_eq!(at_2048, 1, "the old benchmark-size reader's whole sample");
+        let writing = runs.writing(chat.bucket());
         let figure = writing.figure.clone().unwrap();
-        assert_eq!(writing.timed, 55, "rows carrying a decode rate");
-        assert!(
-            figure.runs as usize > at_2048 * 10,
-            "the real turns reach the figure: {writing:?}"
+        assert_eq!(writing.timed, 12, "rows at 64k carrying a decode rate");
+        assert_eq!(
+            writing.timed + writing.elsewhere,
+            55,
+            "every timed row is accounted"
         );
         assert_eq!(figure.runs as usize + writing.too_short, writing.timed);
         assert!(figure.measured);
         assert!(figure.estimate.low <= figure.estimate.value);
         assert!(figure.estimate.value <= figure.estimate.high);
+        let basis = writing.basis().unwrap();
+        assert!(
+            basis.contains("at prompts up to 66k tokens")
+                && basis.contains("43 timed at other prompt sizes are left out"),
+            "{basis}"
+        );
+    }
+
+    /// Q-168, the tensor split as the live store held it on 2026-09-27: 788 of its 867 timed runs
+    /// were goose's own side calls (prompts of 103–164 tokens, ~6-token answers) writing at ~4.7
+    /// tok/s, while its 64k-token turns wrote ~10.6 (the live turn: 10.9) and read ~250 tok/s; the
+    /// 2,048 bucket held two runs reading 18 tok/s. The headline was 4.7 writing / 18.0 reading.
+    fn tensor_side_calls_and_turns() -> Vec<SpeedRecord> {
+        let row = |prompt: u64, answer: u64, decode: f64, prefill: f64, at: u64| SpeedRecord {
+            model_id: MODEL.into(),
+            placement: split(),
+            node_names: vec!["Mihai Macbook".into(), "Studio".into()],
+            chips: vec![None, None],
+            backend: "mlx_lm".into(),
+            context_bucket: crate::placement::store::context_bucket(prompt),
+            prompt_tokens: prompt,
+            completion_tokens: answer,
+            prefill_tps: Some(prefill),
+            decode_tps: Some(decode),
+            ttft_ms: None,
+            recorded_at_ms: at,
+            source: RecordSource::Chat,
+            workload: None,
+            kv_cache: None,
+        };
+        let mut rows = Vec::new();
+        for i in 0..788u64 {
+            rows.push(row(
+                103 + (i % 2) * 61,
+                6 + i % 3,
+                2.8 + (i % 15) as f64 * 0.3,
+                1.8,
+                i,
+            ));
+        }
+        for i in 0..49u64 {
+            rows.push(row(
+                52_976 + i * 10,
+                512,
+                10.3 + (i % 7) as f64 * 0.1,
+                250.0,
+                1_000 + i,
+            ));
+        }
+        rows.push(row(1_500, 33, 10.4, 18.0, 2_000));
+        rows.push(row(1_600, 34, 10.4, 18.0, 2_001));
+        rows
+    }
+
+    #[test]
+    fn side_calls_stay_out_of_the_writing_figure_and_reading_is_headlined_at_the_chats_size() {
+        let records = tensor_side_calls_and_turns();
+        let chat = ChatShape::of(&records);
+        assert_eq!(chat.bucket(), 65_536);
+        let runs = WayRuns::of(&records, MODEL, &split());
+        let writing = runs.writing(chat.bucket());
+        let value = writing.figure.as_ref().unwrap().estimate.value;
+        assert!((10.3..=10.9).contains(&value), "{writing:?}");
+        assert_eq!(writing.elsewhere, 790);
+        let reading = runs.reading_at(chat.bucket()).unwrap();
+        assert_eq!(reading.estimate.value, 250.0);
+        assert_eq!(reading.runs, 49);
     }
 
     #[test]
     fn a_rate_over_too_few_tokens_does_not_count_and_the_basis_says_so() {
         let records = fixture();
-        let writing = WayRuns::of(&records, MODEL, &studio()).writing();
+        let writing = WayRuns::of(&records, MODEL, &studio()).writing(256);
         assert!(writing.too_short > 0, "{writing:?}");
         let counted_floor = 1.0 / writing.spread + 1.0;
-        for r in records.iter().filter(|r| r.placement == studio()) {
+        for r in records
+            .iter()
+            .filter(|r| r.placement == studio() && r.context_bucket == 256)
+        {
             if r.decode_tps.is_some() && (r.completion_tokens as f64) < counted_floor.floor() {
                 assert!(one_token_step(r) > writing.spread);
             }
@@ -242,7 +420,7 @@ mod tests {
         let mut records = fixture();
         records.retain(|r| r.placement == studio() && r.decode_tps.is_some());
         records.truncate(1);
-        let writing = WayRuns::of(&records, MODEL, &studio()).writing();
+        let writing = WayRuns::of(&records, MODEL, &studio()).writing(records[0].context_bucket);
         assert_eq!(writing.spread, 0.0);
         let figure = writing.figure.unwrap();
         assert_eq!(figure.runs, 1);

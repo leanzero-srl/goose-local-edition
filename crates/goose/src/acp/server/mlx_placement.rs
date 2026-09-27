@@ -587,7 +587,72 @@ mod imp {
         /// (its placement node id, model id, bytes, the Mac's name). Every other placement of that
         /// model on that Mac gets it back, because Run switches rather than adds a copy.
         pub peer_footprint: Option<(String, String, u64, String)>,
+        /// The split this goose runs: its model and what stopping it gives back on each Mac.
+        pub split_footprint: Option<(String, Vec<SplitFree>)>,
         pub notes: Vec<String>,
+    }
+
+    /// What stopping the split gives back on one of its Macs.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) struct SplitFree {
+        /// The placement node id (`local`, or the configured host).
+        pub node_id: String,
+        pub name: String,
+        pub bytes: u64,
+    }
+
+    /// Per Mac of the split: the Metal memory its part holds — MLX's active + cache bytes the
+    /// part reports, the same two counters a linked Mac's single engine is charged by
+    /// (`peer_engine_held_bytes`) — which Run gets back, because it stops the split before it
+    /// starts anything (Q-167: those bytes were "not counted as free", so the Studio read "fits
+    /// only at 38,669 context" beside the split that held them). A part that has not reported
+    /// its memory is named in plain words, never guessed.
+    pub(super) fn split_frees(
+        model: &str,
+        nodes: &[goose_sidecar::distributed::NodeStatus],
+    ) -> (Vec<SplitFree>, Vec<String>) {
+        let mut frees = Vec::new();
+        let mut gaps = Vec::new();
+        for node in nodes {
+            match (node.active_bytes, node.cache_bytes) {
+                (Some(active), Some(cache)) => frees.push(SplitFree {
+                    node_id: node.host.clone().unwrap_or_else(|| LOCAL.to_string()),
+                    name: node.name.clone(),
+                    bytes: active + cache,
+                }),
+                _ => gaps.push(format!(
+                    "{model} has not said yet how much memory it uses on {}, so that memory is \
+                     not counted as free there until it does",
+                    node.name
+                )),
+            }
+        }
+        (frees, gaps)
+    }
+
+    /// Count `bytes` Run gives back on `node_id` as free there (a switch replaces, never adds).
+    pub(super) fn count_as_freed(
+        measured: &mut [Measured],
+        node_id: &str,
+        model_id: &str,
+        bytes: u64,
+    ) {
+        let Some(Ok(memory)) = measured
+            .iter_mut()
+            .find(|m| m.input.id == node_id)
+            .map(|m| m.input.memory.as_mut())
+        else {
+            return;
+        };
+        match memory.freed_by_switch.as_mut() {
+            Some(frees) => frees.bytes += bytes,
+            None => {
+                memory.freed_by_switch = Some(SwitchFrees {
+                    model_id: model_id.to_string(),
+                    bytes,
+                })
+            }
+        }
     }
 
     async fn serving(settings: &EngineSettings) -> Serving {
@@ -595,6 +660,7 @@ mod imp {
             running: Vec::new(),
             single_footprint: None,
             peer_footprint: None,
+            split_footprint: None,
             notes: Vec::new(),
         };
         let single = global_manager().status().await;
@@ -631,10 +697,9 @@ mod imp {
                 };
                 out.running
                     .push((model.clone(), key.id(), dist.context_limit));
-                out.notes.push(format!(
-                    "the distributed engine is running {model}; its ranks' memory is not counted as \
-                     free for other placements"
-                ));
+                let (frees, gaps) = split_frees(&model, &dist.nodes);
+                out.notes.extend(gaps);
+                out.split_footprint = Some((model, frees));
             }
         }
         if let Some(route) = crate::providers::mlx_remote::read().live() {
@@ -690,13 +755,11 @@ mod imp {
                 .push(format!("no other Mac could be asked: {why}"));
         }
         if let Some((model, bytes)) = &serving.single_footprint {
-            if let Some(local) = measured.iter_mut().find(|m| m.input.id == LOCAL) {
-                if let Ok(memory) = local.input.memory.as_mut() {
-                    memory.freed_by_switch = Some(SwitchFrees {
-                        model_id: model.clone(),
-                        bytes: *bytes,
-                    });
-                }
+            count_as_freed(&mut measured, LOCAL, model, *bytes);
+        }
+        if let Some((model, frees)) = &serving.split_footprint {
+            for free in frees {
+                count_as_freed(&mut measured, &free.node_id, model, free.bytes);
             }
         }
         let read = speed_store()
@@ -843,6 +906,15 @@ mod imp {
             } else {
                 replaced_note(served, *bytes, mac)
             });
+        }
+        if let Some((served, frees)) = &ctx.serving.split_footprint {
+            for free in frees {
+                dto.notes.push(if served == model_id {
+                    moved_from_peer_note(&free.name, free.bytes)
+                } else {
+                    replaced_note(served, free.bytes, &free.name)
+                });
+            }
         }
         dto.notes.extend(ctx.serving.notes.iter().cloned());
         Ok(dto)
@@ -1243,6 +1315,88 @@ mod tests {
         assert!(!here.contains("GiB"));
     }
 
+    /// Q-167 (a): the split's memory was "not counted as free for other placements", although Run
+    /// stops the split before it starts anything. Each Mac's part now counts: MLX's active + cache
+    /// bytes, added to what that Mac has free for every other placement.
+    #[test]
+    fn the_memory_the_split_holds_counts_as_free_where_it_holds_it() {
+        use goose_sidecar::placement::planner::{NodeInput, NodeMemory};
+        let gib = goose_sidecar::GIB;
+        let rank = |name: &str, host: Option<&str>, active: Option<u64>, cache: Option<u64>| {
+            serde_json::from_value::<goose_sidecar::distributed::NodeStatus>(serde_json::json!({
+                "name": name, "rank": 0, "role": "worker", "host": host, "state": "ready",
+                "active_bytes": active, "cache_bytes": cache, "backend": "jaccl",
+                "tb_ip": "10.0.0.1", "tb_interface": "en2",
+            }))
+            .unwrap()
+        };
+        let model = "Qwen3.8-27B";
+        let (frees, gaps) = imp::split_frees(
+            model,
+            &[
+                rank("Mihai Macbook", None, Some(14 * gib), Some(gib)),
+                rank(
+                    "Work's Mac Studio",
+                    Some("link:studio"),
+                    Some(15 * gib),
+                    Some(gib / 2),
+                ),
+            ],
+        );
+        assert!(gaps.is_empty());
+        assert_eq!(
+            frees,
+            vec![
+                imp::SplitFree {
+                    node_id: "local".into(),
+                    name: "Mihai Macbook".into(),
+                    bytes: 15 * gib,
+                },
+                imp::SplitFree {
+                    node_id: "link:studio".into(),
+                    name: "Work's Mac Studio".into(),
+                    bytes: 15 * gib + gib / 2,
+                },
+            ]
+        );
+
+        let node = |id: &str, available: u64| imp::Measured {
+            input: NodeInput {
+                id: id.into(),
+                name: id.into(),
+                chip: Err("n/a".into()),
+                memory: Ok(NodeMemory {
+                    total_bytes: 96 * gib,
+                    available_bytes: available,
+                    ceiling_bytes: Ok(80 * gib),
+                    freed_by_switch: None,
+                }),
+                has_model: Ok(true),
+                remote_single: Ok(()),
+                split_refusal: None,
+            },
+            dto: MlxPlacementNodeDto::default(),
+            models: None,
+        };
+        let mut measured = vec![node("local", 20 * gib), node("link:studio", 41 * gib)];
+        for free in &frees {
+            imp::count_as_freed(&mut measured, &free.node_id, model, free.bytes);
+        }
+        let after = |m: &imp::Measured| m.input.memory.as_ref().unwrap().available_after_switch();
+        assert_eq!(after(&measured[0]), 35 * gib);
+        assert_eq!(after(&measured[1]), 56 * gib + gib / 2);
+
+        let (_, gaps) = imp::split_frees(model, &[rank("Work's Mac Studio", None, None, None)]);
+        assert_eq!(
+            gaps,
+            vec![
+                "Qwen3.8-27B has not said yet how much memory it uses on Work's Mac Studio, so \
+                 that memory is not counted as free there until it does"
+                    .to_string()
+            ]
+        );
+    }
+
     #[test]
     fn every_planner_variant_mirrors_onto_its_wire_dto() {
         for action in [
@@ -1280,9 +1434,21 @@ mod tests {
                 mine: 1.0,
                 best: 1.1,
             },
+            Outcome::ContextBelowChats {
+                context: 38_669,
+                need: 53_488,
+            },
         ] {
             let _: MlxPlacementOutcomeDto = mirror(&outcome);
         }
+        assert_eq!(
+            serde_json::to_value(Outcome::ContextBelowChats {
+                context: 38_669,
+                need: 53_488
+            })
+            .unwrap(),
+            serde_json::json!({"code": "contextBelowChats", "context": 38_669, "need": 53_488})
+        );
         let tied = serde_json::to_value(Outcome::TiedNeedsMoreMacs {
             mine: 1.0,
             best: 1.1,

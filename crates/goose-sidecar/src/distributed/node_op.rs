@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use super::config::{Backend, DistributedConfig, NodeConfig, Runner};
 use super::launch::RANK_MARKER;
 use super::provision::{EnvSpec, ENVS_DIR};
-use super::{compaction, preflight, supervisor};
+use super::{compaction, preflight, probe, supervisor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -143,7 +143,7 @@ impl NodeOp {
             // nothing to prove it goose's, and the requester's next `pidRow` observes it gone.
             NodeOp::Signal { pid, .. } => match command_of(*pid)? {
                 None => bail!("pid {pid} runs no process on this Mac; nothing was signalled"),
-                Some(command) if command.contains(RANK_MARKER) => Ok(()),
+                Some(command) if probe::carries_rank_marker(&command) => Ok(()),
                 Some(command) => bail!(
                     "pid {pid} is not a goose rank (its command line carries no \
                      '{RANK_MARKER}': {}); a Link requester may signal goose ranks only",

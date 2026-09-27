@@ -310,51 +310,132 @@ fn shown(command: &str) -> String {
     command.chars().take(160).collect()
 }
 
-/// Whether a row naming the fork's pipeline joins a distributed group. Of
-/// `pipeline_qwen4 {plan,serve,run}` only `serve` and `run` call `mx.distributed.init` (fork
-/// `_cmd_run` / `pipeline_qwen4_serve.serve`); `plan` is the dry run "from index/headers only"
-/// goose itself runs on every pick and every preflight, and `--help` is the preflight's runner
-/// probe — neither opens a coordinator socket or a queue pair (Q-126: two of goose's own
-/// `plan --json` probes, gone seconds later, refused its own Run as a foreign split). A row that
-/// names the pipeline some other way (`pipeline_qwen4_serve`, a wrapper) is not provably a
-/// planner and stays a group member.
-fn pipeline_joins_group(command: &str) -> bool {
-    const GROUP_SUBCOMMANDS: [&str; 2] = ["serve", "run"];
-    let args: Vec<&str> = command
+/// A `ps` command line as argv: split on whitespace, shell quotes trimmed (a carrier's remote
+/// script quotes every argument).
+fn argv(command: &str) -> Vec<&str> {
+    command
         .split_whitespace()
         .map(|arg| arg.trim_matches(|c| c == '\'' || c == '"'))
-        .collect();
-    let program = args.iter().position(|arg| {
-        *arg == "rapid_mlx.distributed.pipeline_qwen4"
-            || arg.rsplit('/').next() == Some("pipeline_qwen4.py")
-    });
+        .collect()
+}
+
+/// Whether a command line carries the goose rank marker as one of its own arguments — the whole
+/// argument, never a substring of another. Every rank classifier (this module, the Link host's
+/// reclaim, a Link requester's signal licence) asks this one question.
+pub fn carries_rank_marker(command: &str) -> bool {
+    argv(command).contains(&super::launch::RANK_MARKER)
+}
+
+/// What a python interpreter's argv runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PyProgram<'a> {
+    /// `-m <module>`.
+    Module(&'a str),
+    /// A script, by its path as given.
+    Script(&'a str),
+    /// `-c <source>`: its words are Python code, not arguments. goose's own env and GPU checks
+    /// (`import json, importlib.metadata as md, mlx.core as mx, …,
+    /// rapid_mlx.distributed.pipeline_qwen4, …`) name the modules they IMPORT, and an import is not
+    /// a server (Q-166: the comma in `pipeline_qwen4,` made goose's own env check a foreign split).
+    Inline,
+}
+
+/// The interpreter's short flags that take no value; python lets them precede `m`/`c` in one token
+/// (`-um mlx_lm.server`, `-Bc '…'`).
+const PY_BARE_FLAGS: &str = "bBdEhiIOPqsSuvVxR";
+
+/// The program a python argv runs and the arguments after it; `None` when it runs none
+/// (`python --version`, a bare interpreter).
+fn python_program<'a>(args: &[&'a str]) -> Option<(PyProgram<'a>, Vec<&'a str>)> {
+    let mut i = 1;
+    while let Some(arg) = args.get(i).copied() {
+        let program_flag = arg
+            .strip_prefix('-')
+            .filter(|flags| !flags.is_empty() && !flags.starts_with('-'))
+            .and_then(|flags| {
+                let (bare, last) = flags.split_at(flags.len() - 1);
+                bare.chars()
+                    .all(|c| PY_BARE_FLAGS.contains(c))
+                    .then_some(last)
+            });
+        match (arg, program_flag) {
+            (_, Some("m")) => {
+                let module = args.get(i + 1).copied()?;
+                return Some((PyProgram::Module(module), args[i + 2..].to_vec()));
+            }
+            (_, Some("c")) => return Some((PyProgram::Inline, Vec::new())),
+            ("-W" | "-X", _) => i += 2,
+            ("--", _) => {
+                let script = args.get(i + 1).copied()?;
+                return Some((PyProgram::Script(script), args[i + 2..].to_vec()));
+            }
+            (flag, _) if flag.starts_with('-') => i += 1,
+            (script, _) => return Some((PyProgram::Script(script), args[i + 1..].to_vec())),
+        }
+    }
+    None
+}
+
+/// The fork's pipeline program. Of `pipeline_qwen4 {plan,serve,run}` only `serve` and `run` call
+/// `mx.distributed.init` (fork `_cmd_run` / `pipeline_qwen4_serve.serve`); `plan` is the dry run
+/// "from index/headers only" goose itself runs on every pick and every preflight, and `--help` is
+/// the preflight's runner probe — neither opens a coordinator socket or a queue pair (Q-126: two
+/// of goose's own `plan --json` probes, gone seconds later, refused its own Run as a foreign
+/// split). A program that names the pipeline some other way (`pipeline_qwen4_serve`, a wrapper)
+/// is not provably a planner and stays a group member.
+fn pipeline_kind(planner: bool, subcommand: Option<&str>) -> Option<ForeignKind> {
+    const GROUP_SUBCOMMANDS: [&str; 2] = ["serve", "run"];
+    let joins = !planner || subcommand.is_some_and(|sub| GROUP_SUBCOMMANDS.contains(&sub));
+    joins.then_some(ForeignKind::Distributed)
+}
+
+/// What a python process's argv serves, judged on the PROGRAM it runs — the module after `-m`, the
+/// script's file name, the subcommand after it — by whole tokens, never by a substring of the line.
+fn python_engine_kind(args: &[&str]) -> Option<ForeignKind> {
+    if args.contains(&super::launch::RANK_MARKER) {
+        return Some(ForeignKind::Distributed);
+    }
+    let (program, rest) = python_program(args)?;
+    let subcommand = rest.first().copied();
     match program {
-        Some(at) => args
-            .get(at + 1)
-            .is_some_and(|sub| GROUP_SUBCOMMANDS.contains(sub)),
-        None => true,
+        PyProgram::Inline => None,
+        PyProgram::Module(module) => match module {
+            "mlx.launch" => Some(ForeignKind::Distributed),
+            "mlx_lm.server" => Some(ForeignKind::SingleServer),
+            "mlx_lm" if subcommand == Some("server") => Some(ForeignKind::SingleServer),
+            m if m.contains("pipeline_qwen4") => {
+                pipeline_kind(m == "rapid_mlx.distributed.pipeline_qwen4", subcommand)
+            }
+            m if (m == "rapid_mlx" || m.starts_with("rapid_mlx."))
+                && subcommand == Some("serve") =>
+            {
+                Some(ForeignKind::SingleServer)
+            }
+            _ => None,
+        },
+        PyProgram::Script(path) => match path.rsplit('/').next().unwrap_or(path) {
+            "mlx.launch" => Some(ForeignKind::Distributed),
+            "mlx_lm.server" => Some(ForeignKind::SingleServer),
+            "server.py" if path.ends_with("mlx_lm/server.py") => Some(ForeignKind::SingleServer),
+            "mlx_lm" if subcommand == Some("server") => Some(ForeignKind::SingleServer),
+            "rapid-mlx" if subcommand == Some("serve") => Some(ForeignKind::SingleServer),
+            name if name.contains("pipeline_qwen4") => {
+                pipeline_kind(name == "pipeline_qwen4.py", subcommand)
+            }
+            _ => None,
+        },
     }
 }
 
 /// [`foreign_engine_processes`] with each row's [`ForeignKind`].
 pub fn classify_foreign_engines(text: &str, own: &[u32]) -> Vec<(u32, String, ForeignKind)> {
-    const GROUP_PROGRAMS: [&str; 2] = ["mlx.launch", super::launch::RANK_MARKER];
-    const SINGLE: [&str; 3] = ["mlx_lm.server", "mlx_lm/server", "rapid-mlx serve"];
     ps_rows(text)
         .filter_map(|(pid, command)| {
             let interpreter = argv0_name(command).is_some_and(|name| name.starts_with("python"));
             if !interpreter || own.contains(&pid) {
                 return None;
             }
-            let joins_group = GROUP_PROGRAMS.iter().any(|m| command.contains(m))
-                || (command.contains("pipeline_qwen4") && pipeline_joins_group(command));
-            let kind = if joins_group {
-                ForeignKind::Distributed
-            } else if SINGLE.iter().any(|m| command.contains(m)) {
-                ForeignKind::SingleServer
-            } else {
-                return None;
-            };
+            let kind = python_engine_kind(&argv(command))?;
             Some((pid, shown(command), kind))
         })
         .collect()
@@ -422,7 +503,7 @@ pub fn goose_rank_processes(
     own: &[u32],
 ) -> Vec<GooseRankProcess> {
     ps_rows(text)
-        .filter(|(pid, command)| !own.contains(pid) && command.contains(super::launch::RANK_MARKER))
+        .filter(|(pid, command)| !own.contains(pid) && carries_rank_marker(command))
         .filter_map(|(pid, command)| {
             let name = argv0_name(command)?;
             let carrier = match name.as_str() {
@@ -430,9 +511,8 @@ pub fn goose_rank_processes(
                 n if n.starts_with("python") => false,
                 _ => return None,
             };
-            let owner = command
-                .split_whitespace()
-                .map(|arg| arg.trim_matches(|c| c == '\'' || c == '"'))
+            let owner = argv(command)
+                .into_iter()
                 .find_map(|arg| arg.strip_prefix(super::launch::OWNER_ARG_PREFIX))
                 .map(str::to_string);
             Some(GooseRankProcess {
@@ -750,6 +830,63 @@ Pages occupied by compressor:                 649325.
                 (406, ForeignKind::Distributed),
             ]
         );
+    }
+
+    /// Q-166, 3.0.57: goose's own env check on Work's Mac Studio (`python -c import json,
+    /// importlib.metadata as md, mlx.core …, rapid_mlx.distributed.pipeline_qwen4, …`) was named
+    /// "another MLX split (not goose's)" — `pipeline_qwen4,` carries a comma, so the old token
+    /// search found no program and called the row a group member. Every `-c` check goose runs on a
+    /// node (the env proofs, the preflight's mlx and GPU probes) imports modules; none serves.
+    #[test]
+    fn gooses_own_inline_checks_are_never_an_engine() {
+        use super::super::provision::EnvSpec;
+        let fork = "/Users/workhorse/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python";
+        let tensor = "/Users/workhorse/.goose/distributed/mlx-py3.12/bin/python";
+        let ps = format!(
+            "71001 {fork} -c {}
+71002 {tensor} -c {}
+71003 {tensor} -c import mlx.core as mx, mlx_lm; print(mx.__version__, mlx_lm.__version__)
+71004 {fork} -u -c import rapid_mlx.distributed.pipeline_qwen4_serve as s
+71005 {fork} --version
+71006 {fork} -um mlx_lm.server --model /m --port 8091
+71007 {fork} -X utf8 -m rapid_mlx.distributed.pipeline_qwen4 serve --model /m
+71008 {fork} -m rapid_mlx.distributed.pipeline_qwen4, serve
+71009 /x/bin/python /x/bin/mlx_lm server --model /m
+71010 /x/bin/python /x/site-packages/mlx_lm/server.py --model /m
+71011 /x/bin/python /x/tools/rapid-mlx-helper.py serve
+",
+            EnvSpec::pipeline().check,
+            EnvSpec::tensor().check
+        );
+        let kinds: Vec<(u32, ForeignKind)> = classify_foreign_engines(&ps, &[])
+            .into_iter()
+            .map(|(p, _, k)| (p, k))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (71006, ForeignKind::SingleServer),
+                (71007, ForeignKind::Distributed),
+                (71008, ForeignKind::Distributed),
+                (71009, ForeignKind::SingleServer),
+                (71010, ForeignKind::SingleServer),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_rank_marker_is_a_whole_argument_never_a_substring() {
+        let marker = super::super::launch::RANK_MARKER;
+        assert!(carries_rank_marker(&format!(
+            "/x/python -c boot a b {marker}"
+        )));
+        assert!(carries_rank_marker(&format!(
+            "/usr/bin/ssh studio exec '/x/python' '-c' 'b' '{marker}'"
+        )));
+        assert!(!carries_rank_marker(&format!(
+            "/x/python -c boot {marker}s"
+        )));
+        assert!(!carries_rank_marker(&format!("/x/python /x/{marker}.log")));
     }
 
     /// Q-77's shapes. A real rank's marker and owner token sit after the program's base64, far

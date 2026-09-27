@@ -12,7 +12,7 @@ use super::bench::Workload;
 use super::chip::ChipIdentity;
 use super::model::ModelFacts;
 use super::predict::{self, Calibration, Estimate, PlacedNode};
-use super::runs::WayRuns;
+use super::runs::{ChatShape, WayRuns};
 use super::store::{PlacementKey, PlacementKind, RecordSource, SpeedRecord};
 use crate::distributed::plan::TensorModelFacts;
 use crate::distributed::Runner;
@@ -212,7 +212,15 @@ pub struct Figure {
 #[serde(rename_all = "camelCase")]
 pub struct Speed {
     pub decode: Option<Figure>,
+    /// The prompt bucket `decode` is measured or estimated at: this app's chat size
+    /// (`ChatShape::bucket`). `None` with no decode figure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_bucket: Option<u64>,
     pub prefill: Option<Figure>,
+    /// The prompt bucket `prefill` is measured or estimated at, so a surface names the size a
+    /// reading rate is for (Q-168). `None` with no prefill figure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_bucket: Option<u64>,
     pub throughput: Option<Figure>,
     /// Long documents only: a whole long-document turn as a rate — the document's tokens over the
     /// seconds to read it AND write the answer (`turn_figure`), so ranking by it is ranking by the
@@ -267,6 +275,13 @@ pub enum Outcome {
     TiedNeedsMoreMacs {
         mine: f64,
         best: f64,
+    },
+    /// It fits, but only at `context` tokens, and this app's chats need `need` (`ChatShape`: the
+    /// typical turn's prompt and answer) — never Best, however fast (Q-167: "Best … fits only at
+    /// 38,669 context" beside chats of 41k–53k).
+    ContextBelowChats {
+        context: u64,
+        need: u64,
     },
 }
 
@@ -351,6 +366,15 @@ pub struct Plan {
     pub badge_after_stopping: Vec<String>,
     /// Things the plan could not consider, in words ("no second Mac is set up").
     pub notes: Vec<String>,
+}
+
+/// A token count the way the chat header writes one: "53k" from a thousand up, else whole.
+pub fn tokens_words(tokens: u64) -> String {
+    if tokens >= 1000 {
+        format!("{}k", (tokens + 500) / 1000)
+    } else {
+        tokens.to_string()
+    }
 }
 
 fn gib(bytes: u64) -> String {
@@ -823,10 +847,10 @@ fn estimated(estimate: Option<Estimate>) -> Option<Figure> {
 /// seed runs). `None` until goose has measured this model on the single engine.
 fn single_engine_factor(
     input: &PlanInput,
+    bucket: u64,
     pick: fn(&SpeedRecord) -> Option<f64>,
     figure: fn(&predict::SpeedEstimate) -> Option<Estimate>,
 ) -> Option<(f64, usize)> {
-    let bucket = Workload::Chat.bucket();
     let ratios: Vec<f64> = input
         .records
         .iter()
@@ -864,10 +888,20 @@ fn kv_per_token(input: &PlanInput) -> u64 {
         .unwrap_or(0)
 }
 
-fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares: &[f64]) -> Speed {
+/// `chat_bucket`: this app's chat prompt size (`ChatShape::bucket`) — what the chat figures are
+/// measured, estimated and labelled at.
+fn speed_for(
+    input: &PlanInput,
+    key: &PlacementKey,
+    nodes: &[&NodeInput],
+    shares: &[f64],
+    chat_bucket: u64,
+) -> Speed {
     let runs = WayRuns::of(input.records, input.model_id, key);
-    let chat_bucket = Workload::Chat.bucket();
-    let goal_bucket = input.goal.workload().bucket();
+    let goal_bucket = match input.goal {
+        Goal::LongDocuments => Workload::LongDocument.bucket(),
+        Goal::Chat | Goal::ManyRequests => chat_bucket,
+    };
     let mut speed = Speed::default();
     let chips: Result<Vec<PlacedNode>, String> = nodes
         .iter()
@@ -909,7 +943,7 @@ fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares
     let mut decode_estimate = formula.as_ref().and_then(|f| f.decode);
     let mut prefill_estimate = formula.as_ref().and_then(|f| f.prefill);
     if key.kind == PlacementKind::Single {
-        match single_engine_factor(input, |r| r.decode_tps, |f| f.decode) {
+        match single_engine_factor(input, chat_bucket, |r| r.decode_tps, |f| f.decode) {
             Some((factor, runs)) => {
                 decode_estimate = decode_estimate.map(|e| Estimate { value: e.value * factor, low: e.low * factor, high: e.high * factor });
                 speed.basis.push(format!(
@@ -920,7 +954,9 @@ fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares
                 "estimated from mlx_lm runs; the single engine (Rapid-MLX, MTP drafting) has not been measured with this model yet".to_string(),
             ),
         }
-        if let Some((factor, _)) = single_engine_factor(input, |r| r.prefill_tps, |f| f.prefill) {
+        if let Some((factor, _)) =
+            single_engine_factor(input, chat_bucket, |r| r.prefill_tps, |f| f.prefill)
+        {
             prefill_estimate = prefill_estimate.map(|e| Estimate {
                 value: e.value * factor,
                 low: e.low * factor,
@@ -932,12 +968,18 @@ fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares
         speed.basis.extend(f.basis.iter().cloned());
         speed.concurrency = f.concurrency;
     }
-    let writing = runs.writing();
+    let writing = runs.writing(chat_bucket);
     speed.basis.extend(writing.basis());
     speed.decode = writing.figure.or_else(|| estimated(decode_estimate));
-    speed.prefill = runs
-        .reading_at(goal_bucket)
-        .or_else(|| estimated(prefill_estimate));
+    speed.decode_bucket = speed.decode.as_ref().map(|_| chat_bucket);
+    (speed.prefill, speed.prefill_bucket) = match runs.reading_at(goal_bucket) {
+        Some(measured) => (Some(measured), Some(goal_bucket)),
+        None => {
+            let estimate = estimated(prefill_estimate);
+            let at = estimate.as_ref().map(|_| chat_bucket);
+            (estimate, at)
+        }
+    };
     // Many requests: one stream's decode × the concurrency gain we measured for this stack.
     let gain = match (&formula, &speed.decode) {
         (Some(f), Some(_)) => f.throughput.zip(f.decode).map(|(t, d)| t.value / d.value),
@@ -989,6 +1031,7 @@ fn missing_model(nodes: &[&NodeInput]) -> Option<String> {
 /// Plan one model.
 pub fn plan(input: &PlanInput) -> Plan {
     let min_useful = Workload::Chat.context_needed();
+    let chat = ChatShape::of(input.records);
     let mut notes = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
 
@@ -1011,7 +1054,7 @@ pub fn plan(input: &PlanInput) -> Plan {
                 None => Action::RemoteSingle,
             }
         };
-        let speed = speed_for(input, &key, &[node], &[1.0]);
+        let speed = speed_for(input, &key, &[node], &[1.0], chat.bucket());
         candidates.push(Candidate {
             id,
             key,
@@ -1063,10 +1106,17 @@ pub fn plan(input: &PlanInput) -> Plan {
                     })
                 } else if kind == PlacementKind::Tensor && cluster.link.as_deref() != Some("jaccl") {
                     Some(match &cluster.link {
+                        // Plain words on the card (Q-174); why: tensor parallel runs two
+                        // all-sums per layer per token, which only JACCL's RDMA link carries fast
+                        // enough.
                         Some(link) => format!(
-                            "not offered: tensor parallel needs JACCL (two all-sums per layer per token); these Macs are linked over {link}"
+                            "not offered: sharing every layer between the Macs needs their fast \
+                             Thunderbolt link, and these Macs are joined by the slower {link} link"
                         ),
-                        None => "not offered: tensor parallel needs JACCL, and no distributed setup on this Mac names the link yet".to_string(),
+                        None => "not offered: sharing every layer between the Macs needs their \
+                                 fast Thunderbolt link, and no split set up on this Mac names its \
+                                 link yet"
+                            .to_string(),
                     })
                 } else if kind == PlacementKind::Tensor {
                     match input.tensor {
@@ -1114,7 +1164,7 @@ pub fn plan(input: &PlanInput) -> Plan {
                 };
                 let shares = shares
                     .unwrap_or_else(|| vec![1.0 / input.nodes.len() as f64; input.nodes.len()]);
-                let speed = speed_for(input, &key, &all, &shares);
+                let speed = speed_for(input, &key, &all, &shares, chat.bucket());
                 let refusals: Vec<&str> = all
                     .iter()
                     .filter_map(|n| n.split_refusal.as_deref())
@@ -1184,7 +1234,18 @@ pub fn plan(input: &PlanInput) -> Plan {
             c.speed.turn = Some(turn);
         }
     }
-    let (best, best_available) = pick(&mut candidates, input.goal);
+    let chat_need = (input.context.is_none() && chat.turns > 0).then(|| chat.context_needed());
+    if let Some(need) = chat_need {
+        notes.push(format!(
+            "Your chats are about {} tokens long and their answers about {} ({} chats of that \
+             size measured), so a way that holds less than {} is not offered as Best",
+            tokens_words(chat.prompt_tokens),
+            tokens_words(chat.answer_tokens),
+            chat.turns,
+            tokens_words(need)
+        ));
+    }
+    let (best, best_available) = pick(&mut candidates, input.goal, chat_need);
     let (badge, badge_after_stopping) = badge(&candidates);
     Plan {
         model_id: input.model_id.to_string(),
@@ -1241,11 +1302,27 @@ fn winner(candidates: &[Candidate], eligible: &[usize], goal: Goal) -> Option<us
         })
 }
 
-fn pick(candidates: &mut Vec<Candidate>, goal: Goal) -> (Option<String>, Option<String>) {
+/// The context a fitting candidate holds when that is less than `chat_need`.
+fn below_chats(c: &Candidate, chat_need: Option<u64>) -> Option<(u64, u64)> {
+    let need = chat_need?;
+    let context = c.fit.context.filter(|_| c.fit.status.fits())?;
+    (context < need).then_some((context, need))
+}
+
+/// `chat_need`: the context this app's chats need (`ChatShape::context_needed`) when the plan is
+/// sized by them; a candidate holding less is never Best.
+fn pick(
+    candidates: &mut Vec<Candidate>,
+    goal: Goal,
+    chat_need: Option<u64>,
+) -> (Option<String>, Option<String>) {
     let eligible: Vec<usize> = (0..candidates.len())
         .filter(|i| {
             let c = &candidates[*i];
-            c.supported && c.fit.status.fits() && c.metric(goal).is_some()
+            c.supported
+                && c.fit.status.fits()
+                && below_chats(c, chat_need).is_none()
+                && c.metric(goal).is_some()
         })
         .collect();
     let best = winner(candidates, &eligible, goal);
@@ -1272,6 +1349,8 @@ fn pick(candidates: &mut Vec<Candidate>, goal: Goal) -> (Option<String>, Option<
                 }
             } else if !c.fit.status.fits() {
                 Outcome::DoesNotFit
+            } else if let Some((context, need)) = below_chats(c, chat_need) {
+                Outcome::ContextBelowChats { context, need }
             } else if let (Some(mine), Some(best)) = (c.metric(goal), best_value) {
                 if overlaps(&mine.estimate, &best) {
                     Outcome::TiedNeedsMoreMacs {
@@ -1306,7 +1385,7 @@ fn pick(candidates: &mut Vec<Candidate>, goal: Goal) -> (Option<String>, Option<
             Outcome::Best => 0,
             Outcome::BestAvailableNow => 1,
             Outcome::TiedNeedsMoreMacs { .. } | Outcome::Slower { .. } => 2,
-            Outcome::NoFigure { .. } => 3,
+            Outcome::NoFigure { .. } | Outcome::ContextBelowChats { .. } => 3,
             Outcome::DoesNotFit | Outcome::FitUnknown { .. } => 4,
             Outcome::NotSupported { .. } => 5,
         };
@@ -1646,8 +1725,8 @@ mod tests {
     }
 
     /// Q-129: the Studio's chat turns reached the plan only when their prompt fell in the 2,048
-    /// bucket — 1 of 428 on the real store. Every timed turn timed over enough tokens counts now,
-    /// whatever its prompt size, and the split's turns (none at 2,048) reach its figure too.
+    /// bucket — 1 of 428 on the real store. Q-168: the figures are read at THIS APP'S chat size
+    /// (the recorded chats' bucket, 64k on this store), where the real turns are, and say so.
     #[test]
     fn the_plan_reads_the_ways_real_turns_not_one_bucket() {
         let mut f = the_27b();
@@ -1655,13 +1734,18 @@ mod tests {
         let plan = f.plan(Goal::Chat);
         let studio = by_id(&plan, "single:link:worksmacstudio");
         let decode = studio.speed.decode.as_ref().unwrap();
-        let expected = WayRuns::of(&f.records, "m", &studio.key).writing();
+        let chat_bucket = ChatShape::of(&f.records).bucket();
+        assert_eq!(chat_bucket, 65_536);
+        let expected = WayRuns::of(&f.records, "m", &studio.key).writing(chat_bucket);
         assert!(decode.measured);
         assert_eq!(Some(decode), expected.figure.as_ref());
-        assert_eq!(
-            decode.runs, 36,
-            "of 55 timed rows; the 2,048-bucket reader counted 1"
+        assert!(
+            decode.runs > 1,
+            "the 2,048-bucket reader counted 1: {decode:?}"
         );
+        assert_eq!(studio.speed.decode_bucket, Some(chat_bucket));
+        assert_eq!(studio.speed.prefill_bucket, Some(chat_bucket));
+        assert!(studio.speed.prefill.as_ref().unwrap().measured);
         assert!(
             studio
                 .speed
@@ -2019,6 +2103,101 @@ mod tests {
             by_id(&plan, split).fit.after_stopping,
             vec![THE_27B.to_string()]
         );
+    }
+
+    /// Q-167 (3.0.57): "Run on Work's Mac Studio · Best … fits only at 38,669 context" while this
+    /// app's chats read 41k–53k tokens. "Chat" was the benchmark's ~2k-token prompt, so any way
+    /// that held 2,304 tokens could be Best. Now the chats goose measured size it: a way that holds
+    /// less than a typical chat turn is named for that and never Best.
+    #[test]
+    fn a_way_that_cannot_hold_this_apps_chats_is_never_best() {
+        let studio_id = "single:link:worksmacstudio";
+        let mut tight = the_27b();
+        tight.nodes = macs(60.0, 41.8);
+
+        let benchmark_sized = tight.plan(Goal::Chat);
+        let studio = by_id(&benchmark_sized, studio_id);
+        let context = studio.fit.context.unwrap();
+        assert_eq!(studio.fit.status, FitStatus::SmallerContext);
+        assert!(context > 30_000 && context < 45_000, "{context}");
+        assert_eq!(
+            benchmark_sized.best.as_deref(),
+            Some(studio_id),
+            "no chat measured: the benchmark's shape, as before"
+        );
+
+        tight.records = (0..9).map(|i| long_turn(52_976, 512, i)).collect();
+        tight
+            .records
+            .extend((0..40).map(|i| long_turn(164, 6, 100 + i)));
+        let sized = tight.plan(Goal::Chat);
+        let studio = by_id(&sized, studio_id);
+        assert_eq!(
+            studio.outcome,
+            Outcome::ContextBelowChats {
+                context,
+                need: 52_976 + 512
+            }
+        );
+        let best = sized.best.as_deref().unwrap();
+        assert_ne!(best, studio_id);
+        assert!(by_id(&sized, best).fit.context.unwrap() >= 52_976 + 512);
+        assert_eq!(sized.best_available.as_deref(), Some(best));
+        assert!(
+            sized.notes.iter().any(|n| n
+                == "Your chats are about 53k tokens long and their answers about 512 (9 chats of \
+                    that size measured), so a way that holds less than 53k is not offered as Best"),
+            "{:?}",
+            sized.notes
+        );
+
+        // The split this goose runs holds its part of the 27B on the Studio; Run stops it first, so
+        // that memory is the Studio's for the switch (Q-167 a), and the Studio holds the chats.
+        let mut switching = Fixture {
+            nodes: macs(60.0, 41.8),
+            records: tight.records.clone(),
+            ..the_27b()
+        };
+        if let Ok(memory) = switching.nodes[1].memory.as_mut() {
+            memory.freed_by_switch = Some(SwitchFrees {
+                model_id: "m".into(),
+                bytes: gib(15.5),
+            });
+        }
+        let switched = switching.plan(Goal::Chat);
+        let studio = by_id(&switched, studio_id);
+        assert!(
+            studio.fit.context.unwrap() >= 52_976 + 512,
+            "{:?}",
+            studio.fit
+        );
+        assert_eq!(switched.best.as_deref(), Some(studio_id));
+
+        let roomy = Fixture {
+            nodes: macs(60.0, 74.0),
+            ..tight
+        };
+        assert_eq!(roomy.plan(Goal::Chat).best.as_deref(), Some(studio_id));
+    }
+
+    #[test]
+    fn this_apps_chat_is_its_token_weighted_prompt_not_its_median_call() {
+        let chats: Vec<SpeedRecord> = (0..9)
+            .map(|i| long_turn(52_976, 512, i))
+            .chain((0..400).map(|i| long_turn(164, 6, 100 + i)))
+            .collect();
+        let shape = ChatShape::of(&chats);
+        assert_eq!(shape.prompt_tokens, 52_976);
+        assert_eq!(shape.answer_tokens, 512);
+        assert_eq!(shape.turns, 9);
+        assert_eq!(shape.bucket(), 65_536);
+
+        let none = ChatShape::of(&[]);
+        assert_eq!(none.turns, 0);
+        assert_eq!(none.bucket(), Workload::Chat.bucket());
+
+        let real = ChatShape::of(&real_turns());
+        assert!(real.turns > 0 && real.prompt_tokens > 30_000, "{real:?}");
     }
 
     #[test]

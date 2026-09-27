@@ -2576,12 +2576,12 @@ async fn supervise(
                         preflight = report;
                     }
                     Ok(report) => {
-                        let failures = report.failures().join("; ");
+                        let failures = report.plain_failures().join("; ");
                         ctx.update(|s| {
                             s.status.last_preflight = Some(report);
                             s.status.state = RunState::Failed;
                             s.status.last_error =
-                                Some(format!("restart refused by preflight: {failures}"));
+                                Some(format!("the split did not restart: {failures}"));
                         });
                         return StopReport::default();
                     }
@@ -3049,13 +3049,15 @@ impl DistributedManager {
             });
         }
         if !report.ok {
-            let failures = report.failures().join("; ");
+            // Plain words reach the tray and the cards (Q-174); the check ids and the evidence
+            // stay in `last_preflight` and the refusal's `detail`.
+            let failures = report.plain_failures().join("; ");
             shared.status.state = RunState::Stopped;
-            shared.status.last_error = Some(format!("preflight refused the start: {failures}"));
+            shared.status.last_error = Some(format!("the split did not start: {failures}"));
             shared.event(
                 EventKind::StartFailed,
                 None,
-                format!("preflight: {failures}"),
+                format!("the split did not start: {failures}"),
             );
             let foreign = report.nodes.iter().find(|n| !n.foreign_splits.is_empty());
             let loading = report.nodes.iter().find_map(|n| {
@@ -3067,8 +3069,8 @@ impl DistributedManager {
                 (Some(node), _) => StartOutcome::Refused {
                     code: RefusalCode::ForeignSplit,
                     message: format!(
-                        "Another MLX split (not goose's) is running on {} — stop it to start this \
-                         one",
+                        "Another split, not started by goose, is running on {} — stop it to \
+                         start this one",
                         node.name
                     ),
                     node: Some(node.name.clone()),
@@ -3085,9 +3087,9 @@ impl DistributedManager {
                 (None, None) => StartOutcome::Refused {
                     code: RefusalCode::PreflightFailed,
                     message: failures,
+                    detail: Some(report.failure_details().join("; ")),
                     preflight: Some(report),
                     node: None,
-                    detail: None,
                 },
             });
         }
@@ -4895,7 +4897,7 @@ mod tests {
             1,
             preflight::tests::rank_row(9425, None),
         )]);
-        let (_manager, outcome) = start_on(&nodes).await;
+        let (manager, outcome) = start_on(&nodes).await;
         let StartOutcome::Refused {
             code,
             message,
@@ -4906,11 +4908,29 @@ mod tests {
         else {
             panic!("{outcome:?}")
         };
+        // Q-174: the tray read "Last: startFailed — preflight: … foreignEngines: another distri…";
+        // what it and the card show now is words, with the ids and pids kept for Details.
+        let failed = events(&manager, EventKind::StartFailed).join("; ");
+        let last_error = manager.status().last_error.unwrap_or_default();
+        for shown in [&failed, &last_error] {
+            assert!(
+                shown.starts_with("the split did not start: ")
+                    && shown.contains(
+                        "MacBook Pro: another split, not started by goose, is running on this \
+                         Mac — stop it first"
+                    )
+                    && !shown.contains("foreignEngines")
+                    && !shown.contains("preflight")
+                    && !shown.contains("pid "),
+                "{shown}"
+            );
+        }
         assert_eq!(code, RefusalCode::ForeignSplit);
         assert_eq!(node.as_deref(), Some("MacBook Pro"));
         assert_eq!(
             message,
-            "Another MLX split (not goose's) is running on MacBook Pro — stop it to start this one"
+            "Another split, not started by goose, is running on MacBook Pro — stop it to start \
+             this one"
         );
         assert!(detail
             .unwrap()

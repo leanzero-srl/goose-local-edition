@@ -913,14 +913,16 @@ mod tests {
     }
 
     /// The census reads the kernel, and sees what the preflight's classifier sees: a python
-    /// interpreter whose command line serves `rapid-mlx serve` on a port.
+    /// interpreter running the `rapid-mlx` program with `serve` on a port. The stand-in is a
+    /// script of that name: an inline `-c` program is code, never an engine (Q-166).
     #[tokio::test]
     async fn the_census_names_an_engine_and_a_stop_needs_its_exact_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("rapid-mlx");
+        std::fs::write(&program, "import time; time.sleep(60)\n").unwrap();
         let mut stand_in = std::process::Command::new("/usr/bin/python3")
             .args([
-                "-c",
-                "import time; time.sleep(60)",
-                "rapid-mlx",
+                program.to_str().unwrap(),
                 "serve",
                 "/tmp/q106-stand-in-model",
                 "--port",
