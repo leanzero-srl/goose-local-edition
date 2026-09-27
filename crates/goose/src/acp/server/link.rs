@@ -1170,22 +1170,26 @@ fn link_err(error: LinkError) -> agent_client_protocol::Error {
 }
 
 /// A Connect failure's text, with the one step the user can take appended where the
-/// crate's refusal already names a pid. The "a tailscaled already answers on socket …
-/// (listener pid N)" refusal is a daemon a previous goosed left behind when it was ended
-/// before its teardown (measured 2026-09-02: pid 14022, PPID 1, after every relaunch —
-/// `goose serve` now stops its own daemon on SIGTERM). The refusal STANDS: nothing is
-/// adopted; the text tells the user which pid to stop, per-pid, before connecting again.
+/// crate's refusal already names a pid. An orphan a dead goosed left on the socket no
+/// longer reaches here: the start stops it per pid on proof (Q-223). What remains is a
+/// holder the start may NOT stop, and the refusal says why: another goose whose goosed is
+/// alive (the step is to quit that goose — Q-223's 3.0.61 goosed 10891 was such a one,
+/// orphaned but alive, and the desktop now reaps those at launch), or a daemon that failed
+/// the proof (the step is a per-pid stop). The refusal STANDS: nothing is adopted.
 fn connect_failure_text(error: &LinkError) -> String {
     let text = error.to_string();
     match error {
         LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
-            listener_pid: Some(pid),
+            live_goosed: Some(goosed),
             ..
         }) => format!(
-            "{text}. That daemon was left behind by a goosed that exited without its teardown; \
-             stop it per-pid (`kill {pid}`), then Connect again — goosed now stops its own \
-             daemon when it quits."
+            "{text}. Another goose on this Mac (goosed pid {goosed}) runs LeanZero Link; quit \
+             that goose, then Connect again."
         ),
+        LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
+            listener_pid: Some(pid),
+            ..
+        }) => format!("{text}. Stop that daemon per-pid (`kill {pid}`), then Connect again."),
         _ => text,
     }
 }
@@ -3028,13 +3032,17 @@ mod tests {
         );
     }
 
-    /// The socket-occupied refusal keeps the crate's text (no adoption) and gains the
-    /// per-pid step; every other connect failure passes through verbatim.
+    /// The socket-occupied refusal keeps the crate's text (no adoption, and why the start did
+    /// not stop the holder itself) and gains the ONE step that fits: quit the other goose when
+    /// its goosed is alive, stop the daemon per pid otherwise; every other connect failure
+    /// passes through verbatim.
     #[test]
     fn connect_refusal_for_a_stale_daemon_names_the_pid_and_the_per_pid_step() {
         let refused = LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
             socket: PathBuf::from("/Users/me/.leanzero/tailscale/tailscaled.sock"),
             listener_pid: Some(14022),
+            not_reaped_because: "its command line is not the one this goosed spawns".to_string(),
+            live_goosed: None,
         });
         let text = connect_failure_text(&refused);
         assert!(text.contains("listener pid 14022"), "{text}");
@@ -3042,12 +3050,27 @@ mod tests {
             text.contains("never adopts a daemon it did not spawn"),
             "{text}"
         );
+        assert!(text.contains("its command line is not the one"), "{text}");
         assert!(text.contains("`kill 14022`"), "{text}");
-        assert!(text.contains("goosed now stops its own daemon"), "{text}");
+
+        let other_goose = LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
+            socket: PathBuf::from("/Users/me/.leanzero/tailscale/tailscaled.sock"),
+            listener_pid: Some(11275),
+            not_reaped_because: "its goosed (pid 10891) is alive".to_string(),
+            live_goosed: Some(10891),
+        });
+        let text = connect_failure_text(&other_goose);
+        assert!(text.contains("goosed pid 10891"), "{text}");
+        assert!(
+            !text.contains("`kill"),
+            "a live goose's daemon is never the thing to kill: {text}"
+        );
 
         let unreadable = LinkError::Mesh(leanzero_link::mesh::MeshError::AlreadyRunning {
             socket: PathBuf::from("/x/tailscaled.sock"),
             listener_pid: None,
+            not_reaped_because: "who holds the socket could not be read".to_string(),
+            live_goosed: None,
         });
         let text = connect_failure_text(&unreadable);
         assert!(text.contains("listener pid unknown"), "{text}");

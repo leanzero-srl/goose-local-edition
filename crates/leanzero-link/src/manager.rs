@@ -1601,7 +1601,10 @@ impl LinkManager {
     /// second window's backend) owns the mesh: `Skipped`, nothing to do here — the old
     /// path minted a key, spawned, and failed with advice to kill a healthy daemon. A
     /// daemon whose spawner is gone → the orphan a goosed killed before its teardown
-    /// leaves: `Failed`, naming the pid to stop. Never adopted either way.
+    /// leaves: the reconnect is due, and the connect's `MeshEngine::start` stops it per
+    /// pid on `orphan_daemon_proof` (Q-223 — it used to be `Failed` with a `kill` for the
+    /// user to type). A holder that fails the proof is refused there and the reconnect
+    /// records that refusal. Never adopted either way.
     fn mesh_socket_verdict(&self, now: DateTime<Utc>) -> Result<(), ReconnectState> {
         let socket = &self.core.config.mesh.socket_path;
         match crate::mesh::socket_holder(socket) {
@@ -1616,18 +1619,16 @@ impl LinkManager {
                         .map_or("unknown".to_string(), |p| p.to_string())
                 ),
             }),
-            Ok(Some(holder)) => Err(ReconnectState::Failed {
-                reason: format!(
-                    "a tailscaled left behind by a goose that exited without its teardown \
-                     holds the mesh socket '{}' (pid {}, its parent is gone); LeanZero Link \
-                     never adopts a daemon it did not spawn — stop it per-pid (`kill {}`), \
-                     then Retry",
-                    socket.display(),
-                    holder.listener_pid,
-                    holder.listener_pid
-                ),
-                at: now,
-            }),
+            Ok(Some(holder)) => {
+                tracing::warn!(
+                    listener_pid = holder.listener_pid,
+                    parent_pid = ?holder.parent_pid,
+                    socket = %socket.display(),
+                    "leanzero_link_reconnect: a tailscaled whose goosed is gone holds the mesh \
+                     socket; the connect stops it per pid on proof, then starts a fresh one"
+                );
+                Ok(())
+            }
             Err(err) => Err(ReconnectState::Failed {
                 reason: format!(
                     "cannot tell who holds the mesh socket '{}': {err}",
