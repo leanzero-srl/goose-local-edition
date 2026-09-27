@@ -212,7 +212,15 @@ pub struct Figure {
 #[serde(rename_all = "camelCase")]
 pub struct Speed {
     pub decode: Option<Figure>,
+    /// The prompt bucket `decode` is measured or estimated at: this app's chat size
+    /// (`ChatShape::bucket`). `None` with no decode figure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_bucket: Option<u64>,
     pub prefill: Option<Figure>,
+    /// The prompt bucket `prefill` is measured or estimated at, so a surface names the size a
+    /// reading rate is for (Q-168). `None` with no prefill figure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_bucket: Option<u64>,
     pub throughput: Option<Figure>,
     /// Long documents only: a whole long-document turn as a rate — the document's tokens over the
     /// seconds to read it AND write the answer (`turn_figure`), so ranking by it is ranking by the
@@ -839,10 +847,10 @@ fn estimated(estimate: Option<Estimate>) -> Option<Figure> {
 /// seed runs). `None` until goose has measured this model on the single engine.
 fn single_engine_factor(
     input: &PlanInput,
+    bucket: u64,
     pick: fn(&SpeedRecord) -> Option<f64>,
     figure: fn(&predict::SpeedEstimate) -> Option<Estimate>,
 ) -> Option<(f64, usize)> {
-    let bucket = Workload::Chat.bucket();
     let ratios: Vec<f64> = input
         .records
         .iter()
@@ -880,10 +888,20 @@ fn kv_per_token(input: &PlanInput) -> u64 {
         .unwrap_or(0)
 }
 
-fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares: &[f64]) -> Speed {
+/// `chat_bucket`: this app's chat prompt size (`ChatShape::bucket`) — what the chat figures are
+/// measured, estimated and labelled at.
+fn speed_for(
+    input: &PlanInput,
+    key: &PlacementKey,
+    nodes: &[&NodeInput],
+    shares: &[f64],
+    chat_bucket: u64,
+) -> Speed {
     let runs = WayRuns::of(input.records, input.model_id, key);
-    let chat_bucket = Workload::Chat.bucket();
-    let goal_bucket = input.goal.workload().bucket();
+    let goal_bucket = match input.goal {
+        Goal::LongDocuments => Workload::LongDocument.bucket(),
+        Goal::Chat | Goal::ManyRequests => chat_bucket,
+    };
     let mut speed = Speed::default();
     let chips: Result<Vec<PlacedNode>, String> = nodes
         .iter()
@@ -925,7 +943,7 @@ fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares
     let mut decode_estimate = formula.as_ref().and_then(|f| f.decode);
     let mut prefill_estimate = formula.as_ref().and_then(|f| f.prefill);
     if key.kind == PlacementKind::Single {
-        match single_engine_factor(input, |r| r.decode_tps, |f| f.decode) {
+        match single_engine_factor(input, chat_bucket, |r| r.decode_tps, |f| f.decode) {
             Some((factor, runs)) => {
                 decode_estimate = decode_estimate.map(|e| Estimate { value: e.value * factor, low: e.low * factor, high: e.high * factor });
                 speed.basis.push(format!(
@@ -936,7 +954,9 @@ fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares
                 "estimated from mlx_lm runs; the single engine (Rapid-MLX, MTP drafting) has not been measured with this model yet".to_string(),
             ),
         }
-        if let Some((factor, _)) = single_engine_factor(input, |r| r.prefill_tps, |f| f.prefill) {
+        if let Some((factor, _)) =
+            single_engine_factor(input, chat_bucket, |r| r.prefill_tps, |f| f.prefill)
+        {
             prefill_estimate = prefill_estimate.map(|e| Estimate {
                 value: e.value * factor,
                 low: e.low * factor,
@@ -948,12 +968,18 @@ fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares
         speed.basis.extend(f.basis.iter().cloned());
         speed.concurrency = f.concurrency;
     }
-    let writing = runs.writing();
+    let writing = runs.writing(chat_bucket);
     speed.basis.extend(writing.basis());
     speed.decode = writing.figure.or_else(|| estimated(decode_estimate));
-    speed.prefill = runs
-        .reading_at(goal_bucket)
-        .or_else(|| estimated(prefill_estimate));
+    speed.decode_bucket = speed.decode.as_ref().map(|_| chat_bucket);
+    (speed.prefill, speed.prefill_bucket) = match runs.reading_at(goal_bucket) {
+        Some(measured) => (Some(measured), Some(goal_bucket)),
+        None => {
+            let estimate = estimated(prefill_estimate);
+            let at = estimate.as_ref().map(|_| chat_bucket);
+            (estimate, at)
+        }
+    };
     // Many requests: one stream's decode × the concurrency gain we measured for this stack.
     let gain = match (&formula, &speed.decode) {
         (Some(f), Some(_)) => f.throughput.zip(f.decode).map(|(t, d)| t.value / d.value),
@@ -1005,6 +1031,7 @@ fn missing_model(nodes: &[&NodeInput]) -> Option<String> {
 /// Plan one model.
 pub fn plan(input: &PlanInput) -> Plan {
     let min_useful = Workload::Chat.context_needed();
+    let chat = ChatShape::of(input.records);
     let mut notes = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
 
@@ -1027,7 +1054,7 @@ pub fn plan(input: &PlanInput) -> Plan {
                 None => Action::RemoteSingle,
             }
         };
-        let speed = speed_for(input, &key, &[node], &[1.0]);
+        let speed = speed_for(input, &key, &[node], &[1.0], chat.bucket());
         candidates.push(Candidate {
             id,
             key,
@@ -1137,7 +1164,7 @@ pub fn plan(input: &PlanInput) -> Plan {
                 };
                 let shares = shares
                     .unwrap_or_else(|| vec![1.0 / input.nodes.len() as f64; input.nodes.len()]);
-                let speed = speed_for(input, &key, &all, &shares);
+                let speed = speed_for(input, &key, &all, &shares, chat.bucket());
                 let refusals: Vec<&str> = all
                     .iter()
                     .filter_map(|n| n.split_refusal.as_deref())
@@ -1207,7 +1234,6 @@ pub fn plan(input: &PlanInput) -> Plan {
             c.speed.turn = Some(turn);
         }
     }
-    let chat = ChatShape::of(input.records);
     let chat_need = (input.context.is_none() && chat.turns > 0).then(|| chat.context_needed());
     if let Some(need) = chat_need {
         notes.push(format!(
@@ -1699,8 +1725,8 @@ mod tests {
     }
 
     /// Q-129: the Studio's chat turns reached the plan only when their prompt fell in the 2,048
-    /// bucket — 1 of 428 on the real store. Every timed turn timed over enough tokens counts now,
-    /// whatever its prompt size, and the split's turns (none at 2,048) reach its figure too.
+    /// bucket — 1 of 428 on the real store. Q-168: the figures are read at THIS APP'S chat size
+    /// (the recorded chats' bucket, 64k on this store), where the real turns are, and say so.
     #[test]
     fn the_plan_reads_the_ways_real_turns_not_one_bucket() {
         let mut f = the_27b();
@@ -1708,13 +1734,18 @@ mod tests {
         let plan = f.plan(Goal::Chat);
         let studio = by_id(&plan, "single:link:worksmacstudio");
         let decode = studio.speed.decode.as_ref().unwrap();
-        let expected = WayRuns::of(&f.records, "m", &studio.key).writing();
+        let chat_bucket = ChatShape::of(&f.records).bucket();
+        assert_eq!(chat_bucket, 65_536);
+        let expected = WayRuns::of(&f.records, "m", &studio.key).writing(chat_bucket);
         assert!(decode.measured);
         assert_eq!(Some(decode), expected.figure.as_ref());
-        assert_eq!(
-            decode.runs, 36,
-            "of 55 timed rows; the 2,048-bucket reader counted 1"
+        assert!(
+            decode.runs > 1,
+            "the 2,048-bucket reader counted 1: {decode:?}"
         );
+        assert_eq!(studio.speed.decode_bucket, Some(chat_bucket));
+        assert_eq!(studio.speed.prefill_bucket, Some(chat_bucket));
+        assert!(studio.speed.prefill.as_ref().unwrap().measured);
         assert!(
             studio
                 .speed

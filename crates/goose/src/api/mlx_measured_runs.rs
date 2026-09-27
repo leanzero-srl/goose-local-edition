@@ -44,10 +44,19 @@ pub struct MeasuredRunsResponse {
     pub way_error: Option<String>,
     /// Runs recorded on this way, timed or not.
     pub recorded: usize,
+    /// The prompt size `writing` and `reading` are for: prompts of up to this many tokens — the
+    /// bucket of this app's typical chat prompt (`chatPromptTokens`), the benchmark's 2,048 while
+    /// no chat is recorded. The tray names it beside the rates (Q-168).
+    pub prompt_bucket: u64,
+    /// This app's typical chat prompt in tokens (the token-weighted median of every recorded chat
+    /// turn); `None` = no chat turn is recorded yet, and `promptBucket` is the benchmark's.
+    pub chat_prompt_tokens: Option<u64>,
+    /// Writing at `promptBucket`: goose's own side calls (a title, a check — tiny prompts, a
+    /// handful of tokens written) are left out, their rate is mostly start-up.
     pub writing: Option<goose_sidecar::placement::planner::Figure>,
     /// How the writing figure was counted, in words (the plan's basis line for it).
     pub writing_basis: Option<String>,
-    /// Reading at the chat goal's prompt size — the figure the Run it card's chat plan shows.
+    /// Reading at `promptBucket` — the figure the Run it card's chat plan shows.
     pub reading: Option<goose_sidecar::placement::planner::Figure>,
     /// Reading per prompt bucket, smallest first: a prompt's reading time is estimated from ITS size.
     pub reading_by_bucket: Vec<BucketFigure>,
@@ -60,9 +69,10 @@ fn answer(
     read: goose_sidecar::placement::store::StoreRead,
     way: Result<crate::providers::mlx_speed::ServingWay, String>,
 ) -> MeasuredRunsResponse {
-    use goose_sidecar::placement::bench::Workload;
-    use goose_sidecar::placement::runs::WayRuns;
+    use goose_sidecar::placement::runs::{ChatShape, WayRuns};
 
+    let chat = ChatShape::of(&read.records);
+    let chat_prompt_tokens = (chat.turns > 0).then_some(chat.prompt_tokens);
     let way = match way {
         Ok(way) => way,
         Err(why) => {
@@ -70,6 +80,8 @@ fn answer(
                 way: None,
                 way_error: Some(why),
                 recorded: 0,
+                prompt_bucket: chat.bucket(),
+                chat_prompt_tokens,
                 writing: None,
                 writing_basis: None,
                 reading: None,
@@ -79,12 +91,14 @@ fn answer(
         }
     };
     let runs = WayRuns::of(&read.records, &way.model_id, &way.key);
-    let writing = runs.writing();
+    let writing = runs.writing(chat.bucket());
     MeasuredRunsResponse {
         recorded: runs.recorded(),
+        prompt_bucket: chat.bucket(),
+        chat_prompt_tokens,
         writing_basis: writing.basis(),
         writing: writing.figure,
-        reading: runs.reading_at(Workload::Chat.bucket()),
+        reading: runs.reading_at(chat.bucket()),
         reading_by_bucket: runs
             .reading_by_bucket()
             .into_iter()
@@ -153,9 +167,10 @@ mod tests {
     #[test]
     fn the_tray_reads_the_same_figure_the_plan_counts() {
         let read = real_rows();
+        let bucket = goose_sidecar::placement::runs::ChatShape::of(&read.records).bucket();
         let expected =
             goose_sidecar::placement::runs::WayRuns::of(&read.records, MODEL, &studio().key)
-                .writing();
+                .writing(bucket);
         let json = serde_json::to_value(answer(real_rows(), Ok(studio()))).unwrap();
         assert_eq!(json["way"]["placementId"], "single:link:studio-peer");
         assert_eq!(json["recorded"], 60);
@@ -174,10 +189,89 @@ mod tests {
         assert!(buckets
             .iter()
             .all(|b| b["bucket"].is_u64() && b["figure"]["runs"].is_u64()));
-        assert!(
-            json["reading"].is_null(),
-            "no chat-size reading run on this way"
+        assert_eq!(json["promptBucket"], 65_536);
+        assert!(json["chatPromptTokens"].as_u64().unwrap() > 32_768);
+        let at_64k = buckets.iter().find(|b| b["bucket"] == 65_536).unwrap();
+        assert_eq!(
+            json["reading"], at_64k["figure"],
+            "the headline is the bucket of this app's chats"
         );
+    }
+
+    /// Q-168 (3.0.57): the tray and the Engine card read "4.7 tok/s writing" and "18.0 tok/s
+    /// reading, median of 2 prompts" for the tensor split. The reading was the benchmark's 2,048
+    /// bucket (2 runs) while the split's 49 turns at 64k — where this app's chats are — read ~250;
+    /// the writing median was dragged by 788 side calls (~6 tokens written each) to 4.7 while its
+    /// turns wrote ~10.6 and the live turn 10.9.
+    #[test]
+    fn the_headline_is_this_apps_chat_size_and_side_calls_do_not_write_it() {
+        use goose_sidecar::placement::store::{
+            context_bucket, PlacementKind, RecordSource, SpeedRecord,
+        };
+        let split = PlacementKey {
+            kind: PlacementKind::Tensor,
+            nodes: vec!["local".into(), "link:studio-peer".into()],
+            link: Some("jaccl".into()),
+        };
+        let row = |prompt: u64, answer: u64, decode: f64, prefill: f64, at: u64| SpeedRecord {
+            model_id: MODEL.into(),
+            placement: split.clone(),
+            node_names: vec!["Mihai Macbook".into(), "Studio".into()],
+            chips: vec![None, None],
+            backend: "mlx_lm".into(),
+            context_bucket: context_bucket(prompt),
+            prompt_tokens: prompt,
+            completion_tokens: answer,
+            prefill_tps: Some(prefill),
+            decode_tps: Some(decode),
+            ttft_ms: None,
+            recorded_at_ms: at,
+            source: RecordSource::Chat,
+            workload: None,
+            kv_cache: None,
+        };
+        let mut records = Vec::new();
+        for i in 0..788u64 {
+            records.push(row(
+                103 + (i % 2) * 61,
+                5 + i % 3,
+                4.4 + (i % 7) as f64 * 0.1,
+                1.8,
+                i,
+            ));
+        }
+        for i in 0..49u64 {
+            records.push(row(
+                52_976 + i * 10,
+                512,
+                10.3 + (i % 7) as f64 * 0.1,
+                250.0,
+                900 + i,
+            ));
+        }
+        records.push(row(1_500, 33, 10.4, 18.0, 2_000));
+        records.push(row(1_600, 34, 10.4, 18.0, 2_001));
+        let way = ServingWay {
+            key: split.clone(),
+            model_id: MODEL.into(),
+            node_names: vec!["Mihai Macbook".into(), "Studio".into()],
+            peers: 1,
+        };
+        let json = serde_json::to_value(answer(
+            StoreRead {
+                records,
+                unreadable: Vec::new(),
+            },
+            Ok(way),
+        ))
+        .unwrap();
+        let reading = json["reading"]["estimate"]["value"].as_f64().unwrap();
+        let writing = json["writing"]["estimate"]["value"].as_f64().unwrap();
+        assert_eq!(reading, 250.0, "{json}");
+        assert!((10.3..=10.9).contains(&writing), "{json}");
+        assert_eq!(json["reading"]["runs"], 49);
+        assert_eq!(json["promptBucket"], 65_536);
+        assert!(json["chatPromptTokens"].as_u64().unwrap() >= 52_976);
     }
 
     #[test]
