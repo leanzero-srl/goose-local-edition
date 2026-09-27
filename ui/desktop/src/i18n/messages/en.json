@@ -5456,6 +5456,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Stop"
   },
+  "nodes.auto": {
+    "defaultMessage": "Any node (Auto)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "checking…"
+  },
   "nodes.cancel": {
     "defaultMessage": "Cancel"
   },
@@ -5503,6 +5509,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Serves whatever this Mac’s engine runs: {model} · split across {count} Macs"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Swarm builds use:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "New chats start on:"
   },
   "nodes.fromPool": {
     "defaultMessage": "from your swarm pool"
@@ -5756,6 +5768,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Add another Mac to run models too big for this one"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (node)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (strategy)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Turn on “{permission}” on {mac} first (LeanZero MLX › My Macs)"
   },
@@ -5773,6 +5791,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Measuring your Macs for this way…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Your swarm pool"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Your swarm pool · used by swarm builds while “Swarm builds use” is “Your swarm pool”"
   },
   "nodes.readFailed": {
     "defaultMessage": "Your nodes could not be read"
@@ -5885,14 +5909,8 @@
   "nodes.stopAction": {
     "defaultMessage": "Stop {node}"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "A strategy will say which node does what: its roles, the order to try nodes in, and when to use the next one. Until then, chats and swarm builds use the nodes on the Nodes tab."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "Strategies are coming in this release"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "A node is a model you can hand work to, on your Macs or in the cloud. Chats start on a node or a strategy; swarm builds use a strategy."
+    "defaultMessage": "A node is a model you can hand work to, on your Macs or in the cloud. Chats start on a node or a strategy; swarm builds use a strategy or your swarm pool."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Your swarm pool could not be read"
@@ -5905,6 +5923,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodes"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "The change could not be saved"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (no longer defined)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Not changed"
   },
   "nodes.usedBy": {
     "defaultMessage": "Used by"
@@ -8411,6 +8438,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "You stopped this answer after {elapsed} · {tokens} tokens"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "The change could not be saved"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Add a node"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Swarm builds use this"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "New chats start here"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "Whether swarm builds can use it is checked when you save."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Swarm builds can use this strategy."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Swarm builds can’t use this strategy:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Checking whether swarm builds can use it…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "Planning on {node}: the engine replaces a cloud planner with a model LM Studio has loaded"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "LM Studio models loaded on your fleet also join this build"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Swarm builds on this Mac’s engine run {model}; choose {node}’s model in Run it first"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} runs on {mac}; swarm builds reach LeanZero MLX only through this Mac’s single engine"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} is a split; swarm builds reach LeanZero MLX only through this Mac’s single engine"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Swarm builds"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Whether swarm builds can use it could not be read: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: always available"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "If not loaded"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Nodes in order"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "When to use the next"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "New strategy"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Each delegate call swaps twice: to {build} and back to {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Close"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Duplicate"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "Try {node} earlier"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Edit"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "Edit {name}"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Make one to say which node chats use first, which node takes over when it can’t run, and which nodes swarm builds use."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "No strategies yet"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: serves whatever this Mac’s engine runs; never loads"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Link"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,one{about {duration}, # load measured} other{about {duration}, # loads measured}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "load not measured yet"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Load it and wait"
+  },
+  "strategies.more": {
+    "defaultMessage": "More for {name}"
+  },
+  "strategies.name": {
+    "defaultMessage": "Strategy"
+  },
+  "strategies.new": {
+    "defaultMessage": "New strategy"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "New strategy"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "There are no nodes yet. Make one on the Nodes tab first."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "There is no strategy “{id}”. It may have been removed."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "one way ({node}), no swaps"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "nothing loads: every node here is in the cloud or follows this Mac’s engine"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Nothing loads on your Macs for this strategy."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: node {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Not removed"
+  },
+  "strategies.note": {
+    "defaultMessage": "Note (your words)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "On your Macs"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "On your Macs"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "One way at a time serves your chats: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "One MLX way serves this Mac’s goose at a time, across all your Macs. Two different ways in one strategy have to take turns."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: overflowing from {a} to {b} would stop one to load the other whenever {a} is busy"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Pick a node"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Your strategies could not be read"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Reading your strategies…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Not saved"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Remove"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Remove, and start new chats on Any node (Auto)"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Remove, and let swarm builds use your swarm pool"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "The strategy is removed. Its nodes stay as they are."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Remove"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "Take {node} out of {role}"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "Remove {name}?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Read again"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Backend"
   },
@@ -8420,6 +8636,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Chat"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Frontend"
   },
@@ -8428,6 +8647,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Testing"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "Same as {role}"
+  },
+  "strategies.save": {
+    "defaultMessage": "Save strategy"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Saved."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} runs on {first}. If it can’t run, on {rest}."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} runs on {first}."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{If {node} isn’t loaded, it loads and your turn waits (about {duration}).} other{If {node} isn’t loaded, it loads and the task waits (about {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{If {node} isn’t loaded, it loads and your turn waits; its first load is not measured yet.} other{If {node} isn’t loaded, it loads and the task waits; its first load is not measured yet.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} runs on {first}; when it is busy, the extra work goes to {rest}."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} runs on {first}; when it is busy, the work waits for it."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} is shared: {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} runs on {first}."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,one{{node} # part} other{{node} # parts}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, then {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "If {node} isn’t loaded, no node after it can take the work, so it is refused with the reason."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "If {node} isn’t loaded, {next} takes the work meanwhile and nothing is loaded."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Set its own nodes"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: sharing between {a} and {b} would stop one to load the other on every turn"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "A strategy says which node does what: its roles, the order to try nodes in, and when to use the next one."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: each switch between them stops one and loads the other."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,other{# ways, one at a time: each switch stops one and loads the other}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (the next when busy)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (share {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} is not a node any more"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Use for swarm builds"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Use for new chats"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Use the next meanwhile"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Same as {role} instead"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Used by swarm builds."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "share of {node}"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Build tasks that write the server side (APIs, services, data)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Writing the code for each task"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "Your turns in a chat: answers, edits, tool calls"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Build tasks that write the user interface (pages, components, styles)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "Reading the request, asking questions, researching and writing the plan"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Running and checking the result, and fixing what the check finds"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "can’t run"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "busy"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "share"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} provider is configured"

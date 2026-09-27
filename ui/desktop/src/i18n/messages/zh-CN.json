@@ -5456,6 +5456,12 @@
   "nodes.actionStop": {
     "defaultMessage": "停止"
   },
+  "nodes.auto": {
+    "defaultMessage": "任意节点（自动）"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "检查中…"
+  },
   "nodes.cancel": {
     "defaultMessage": "取消"
   },
@@ -5503,6 +5509,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "提供这台 Mac 的引擎正在运行的模型：{model} · 拆分到 {count} 台 Mac"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "swarm 构建使用："
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "新聊天从这里开始："
   },
   "nodes.fromPool": {
     "defaultMessage": "来自你的蜂群节点池"
@@ -5756,6 +5768,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "再添加一台 Mac，就能运行这台 Mac 放不下的模型"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name}（节点）"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name}（策略）"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "请先在 {mac} 上打开“{permission}”（LeanZero MLX › 我的 Mac）"
   },
@@ -5773,6 +5791,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "正在为此方式测量你的 Mac…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "你的蜂群节点池"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "你的蜂群节点池 · 当“swarm 构建使用”为“你的蜂群节点池”时，供 swarm 构建使用"
   },
   "nodes.readFailed": {
     "defaultMessage": "无法读取你的节点"
@@ -5885,14 +5909,8 @@
   "nodes.stopAction": {
     "defaultMessage": "停止 {node}"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "策略将决定哪个节点做什么：它的角色、尝试节点的顺序，以及何时改用下一个。在此之前，聊天和swarm 构建使用“节点”标签页中的节点。"
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "策略将在本版本推出"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "节点是你可以交付工作的模型，运行在你的 Mac 上或云端。聊天从某个节点或策略开始；swarm 构建使用策略。"
+    "defaultMessage": "节点是你可以交付工作的模型，运行在你的 Mac 上或云端。聊天从某个节点或策略开始；swarm 构建使用策略或你的蜂群节点池。"
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "无法读取你的蜂群节点池"
@@ -5905,6 +5923,15 @@
   },
   "nodes.title": {
     "defaultMessage": "节点"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "此更改无法保存"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id}（已不再定义）"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "未更改"
   },
   "nodes.usedBy": {
     "defaultMessage": "使用方"
@@ -8411,6 +8438,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "你在 {elapsed} 后停止了这个回答 · {tokens} 个令牌"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "此更改无法保存"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "添加节点"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "swarm 构建在使用"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "新聊天从此开始"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "swarm 构建能否使用它，会在你保存时检查。"
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "swarm 构建可以使用此策略。"
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "swarm 构建无法使用此策略："
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "正在检查 swarm 构建能否使用它…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "在 {node} 上规划：引擎会用 LM Studio 已加载的模型替换云端规划器"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "你的舰队中 LM Studio 已加载的模型也会加入此次构建"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "这台 Mac 引擎上的 swarm 构建运行的是 {model}；请先在“运行”中选择 {node} 的模型"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} 运行在 {mac} 上；swarm 构建只能通过这台 Mac 的单一引擎访问 LeanZero MLX"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} 是一个拆分；swarm 构建只能通过这台 Mac 的单一引擎访问 LeanZero MLX"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "swarm 构建"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "无法读取 swarm 构建能否使用它：{error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "取消"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}：始终可用"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "未加载时"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "按顺序排列的节点"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "何时改用下一个"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "新策略"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "每次委派调用会切换两次：切到 {build}，再切回 {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "关闭"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "复制"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "提前尝试 {node}"
+  },
+  "strategies.edit": {
+    "defaultMessage": "编辑"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "编辑 {name}"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "创建一个策略，说明聊天首先使用哪个节点、它无法运行时由哪个节点接管，以及 swarm 构建使用哪些节点。"
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "还没有策略"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}：提供这台 Mac 的引擎正在运行的内容；从不加载"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "链接"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,other{约 {duration}，已测量 # 次加载}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "加载尚未测量"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "加载并等待"
+  },
+  "strategies.more": {
+    "defaultMessage": "{name} 的更多操作"
+  },
+  "strategies.name": {
+    "defaultMessage": "策略"
+  },
+  "strategies.new": {
+    "defaultMessage": "新策略"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "新策略"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "还没有节点。请先在“节点”标签页中创建一个。"
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "没有名为“{id}”的策略。它可能已被移除。"
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "一种方式（{node}），无需切换"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "不会加载任何内容：这里的每个节点都在云端，或跟随这台 Mac 的引擎"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "此策略不会在你的 Mac 上加载任何内容。"
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}：第 {rank} 个节点"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "未移除"
+  },
+  "strategies.note": {
+    "defaultMessage": "备注（你的说明）"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "在你的 Mac 上"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "在你的 Mac 上"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "同一时间只有一种方式为你的聊天提供服务：{node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "在你所有的 Mac 上，同一时间只有一种 MLX 方式为这台 Mac 的 goose 提供服务。同一策略中的两种不同方式只能轮流运行。"
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}：从 {a} 溢出到 {b} 会在 {a} 忙碌时每次都停止一个以加载另一个"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "选择一个节点"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "无法读取你的策略"
+  },
+  "strategies.reading": {
+    "defaultMessage": "正在读取你的策略…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "未保存"
+  },
+  "strategies.remove": {
+    "defaultMessage": "移除"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "移除，并在“任意节点（自动）”上开始新聊天"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "移除，并让 swarm 构建使用你的蜂群节点池"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "该策略已被移除。其节点保持不变。"
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "移除"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "将 {node} 从 {role} 中移除"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "移除 {name}？"
+  },
+  "strategies.retry": {
+    "defaultMessage": "重新读取"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "后端"
   },
@@ -8420,6 +8636,9 @@
   "strategies.roleChat": {
     "defaultMessage": "聊天"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}：{field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "前端"
   },
@@ -8428,6 +8647,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "测试"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "与 {role} 相同"
+  },
+  "strategies.save": {
+    "defaultMessage": "保存策略"
+  },
+  "strategies.saved": {
+    "defaultMessage": "已保存。"
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} 运行在 {first} 上。若它无法运行，则运行在 {rest} 上。"
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} 运行在 {first} 上。"
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main}{clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{如果 {node} 未加载，它会加载，你的这一轮会等待（约 {duration}）。} other{如果 {node} 未加载，它会加载，任务会等待（约 {duration}）。}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{如果 {node} 未加载，它会加载，你的这一轮会等待；它的首次加载尚未测量。} other{如果 {node} 未加载，它会加载，任务会等待；它的首次加载尚未测量。}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} 运行在 {first} 上；当它繁忙时，多余的工作会交给 {rest}。"
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} 运行在 {first} 上；当它繁忙时，工作会等待它。"
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} 是共享的：{parts}。"
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} 运行在 {first} 上。"
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,other{{node} # 份}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}，然后 {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "如果 {node} 未加载，它之后没有节点可以接手工作，因此会附带原因被拒绝。"
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "如果 {node} 未加载，{next} 会暂时接手工作，且不会加载任何内容。"
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "设置它自己的节点"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}：在 {a} 和 {b} 之间共享，会导致每一轮都停止一个来加载另一个"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "策略说明哪个节点做什么：它的角色、尝试节点的顺序，以及何时改用下一个。"
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}：每次在两者之间切换都会停止一个并加载另一个。"
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,other{# 种方式，同一时间只用一种：每次切换都会停止一个并加载另一个}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain}（繁忙时的下一个）"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain}（共享 {ratio}）"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} 已不再是节点"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "用于 swarm 构建"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "用于新聊天"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "同时使用下一个"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "改为与 {role} 相同"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "由 swarm 构建使用。"
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node}（{load}）"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}：{load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "{node} 的份额"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "编写服务端代码的构建任务（API、服务、数据）"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "为每个任务编写代码"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "你在聊天中的每一轮：回答、编辑、工具调用"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "编写用户界面的构建任务（页面、组件、样式）"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "阅读请求、提出问题、研究并撰写计划"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "运行并检查结果，并修复检查中发现的问题"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "无法运行"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "繁忙"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "共享"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} 提供商已配置"

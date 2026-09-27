@@ -14389,6 +14389,14 @@
             "null"
           ],
           "description": "The node, strategy or device the refusal is about, when it names one."
+        },
+        "liveSessions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "`liveSessionsNotAcknowledged` only: how many live chats are set to the node. The removal\ngoes through when the caller passes this same number as `acknowledgedSessions`.",
+          "minimum": 0
         }
       },
       "required": [

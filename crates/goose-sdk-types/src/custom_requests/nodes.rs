@@ -320,6 +320,10 @@ pub struct NodesRefusal {
     /// The node, strategy or device the refusal is about, when it names one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// `liveSessionsNotAcknowledged` only: how many live chats are set to the node. The removal
+    /// goes through when the caller passes this same number as `acknowledgedSessions`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_sessions: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

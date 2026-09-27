@@ -5456,6 +5456,12 @@
   "nodes.actionStop": {
     "defaultMessage": "रोकें"
   },
+  "nodes.auto": {
+    "defaultMessage": "कोई भी नोड (ऑटो)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "जाँच हो रही है…"
+  },
   "nodes.cancel": {
     "defaultMessage": "रद्द करें"
   },
@@ -5503,6 +5509,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "इस Mac का इंजन जो भी चलाता है, उसी से सेवा देता है: {model} · {count} Mac में विभाजित"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Swarm बिल्ड इसका उपयोग करते हैं:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "नई चैट यहाँ शुरू होती हैं:"
   },
   "nodes.fromPool": {
     "defaultMessage": "आपके स्वार्म पूल से"
@@ -5756,6 +5768,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "इस Mac के लिए बहुत बड़े मॉडल चलाने के लिए एक और Mac जोड़ें"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (नोड)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (रणनीति)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "पहले {mac} पर “{permission}” चालू करें (LeanZero MLX › मेरे Mac)"
   },
@@ -5773,6 +5791,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "इस तरीके के लिए आपके Mac मापे जा रहे हैं…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "आपका स्वार्म पूल"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "आपका स्वार्म पूल · जब तक “Swarm बिल्ड इसका उपयोग करते हैं” “आपका स्वार्म पूल” है, तब तक swarm बिल्ड द्वारा उपयोग किया जाता है"
   },
   "nodes.readFailed": {
     "defaultMessage": "आपके नोड पढ़े नहीं जा सके"
@@ -5885,14 +5909,8 @@
   "nodes.stopAction": {
     "defaultMessage": "{node} रोकें"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "एक रणनीति बताएगी कि कौन-सा नोड क्या करता है: उसकी भूमिकाएँ, नोड किस क्रम में आज़माए जाएँ, और अगले का उपयोग कब करें। तब तक चैट और swarm बिल्ड नोड टैब के नोड का उपयोग करते हैं।"
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "रणनीतियाँ इसी रिलीज़ में आ रही हैं"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "नोड एक मॉडल है जिसे आप काम सौंप सकते हैं, आपके Mac पर या क्लाउड में। चैट किसी नोड या रणनीति पर शुरू होती हैं; swarm बिल्ड एक रणनीति का उपयोग करते हैं।"
+    "defaultMessage": "नोड एक मॉडल है जिसे आप काम सौंप सकते हैं, आपके Mac पर या क्लाउड में। चैट किसी नोड या रणनीति पर शुरू होती हैं; swarm बिल्ड किसी रणनीति या आपके स्वार्म पूल का उपयोग करते हैं।"
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "आपका स्वार्म पूल पढ़ा नहीं जा सका"
@@ -5905,6 +5923,15 @@
   },
   "nodes.title": {
     "defaultMessage": "नोड"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "बदलाव सहेजा नहीं जा सका"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (अब परिभाषित नहीं)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "नहीं बदला गया"
   },
   "nodes.usedBy": {
     "defaultMessage": "इनके द्वारा उपयोग"
@@ -8411,6 +8438,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "आपने यह उत्तर {elapsed} के बाद रोक दिया · {tokens} टोकन"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "बदलाव सहेजा नहीं जा सका"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "एक नोड जोड़ें"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Swarm बिल्ड इसका उपयोग करते हैं"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "नई चैट यहाँ शुरू होती हैं"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "क्या swarm बिल्ड इसे उपयोग कर सकते हैं, यह आपके सहेजने पर जाँचा जाता है।"
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Swarm बिल्ड इस रणनीति का उपयोग कर सकते हैं।"
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Swarm बिल्ड इस रणनीति का उपयोग नहीं कर सकते:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "जाँच रहे हैं कि क्या swarm बिल्ड इसे उपयोग कर सकते हैं…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "{node} पर योजना बनाना: इंजन क्लाउड प्लानर को उस मॉडल से बदल देता है जिसे LM Studio ने लोड किया है"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "आपके सभी डिवाइस पर लोड किए गए LM Studio मॉडल भी इस बिल्ड में शामिल होते हैं"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "इस Mac के इंजन पर swarm बिल्ड {model} चलाते हैं; पहले {node} का मॉडल चलाएँ में चुनें"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node}, {mac} पर चलता है; swarm बिल्ड LeanZero MLX तक केवल इस Mac के एकमात्र इंजन के ज़रिए पहुँचते हैं"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} एक विभाजन है; swarm बिल्ड LeanZero MLX तक केवल इस Mac के एकमात्र इंजन के ज़रिए पहुँचते हैं"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Swarm बिल्ड"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "क्या swarm बिल्ड इसे उपयोग कर सकते हैं, यह पढ़ा नहीं जा सका: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: हमेशा उपलब्ध"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "अगर लोड नहीं है"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "क्रम में नोड"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "अगले का उपयोग कब करें"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "नई रणनीति"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "हर डेलिगेट कॉल दो बार स्विच करती है: {build} पर और वापस {chat} पर"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "बंद करें"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "डुप्लिकेट करें"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "{node} को पहले आज़माएँ"
+  },
+  "strategies.edit": {
+    "defaultMessage": "संपादित करें"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "{name} संपादित करें"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "एक बनाएँ यह बताने के लिए कि चैट पहले कौन-सा नोड उपयोग करती हैं, जब वह नहीं चल सकता तो कौन-सा नोड संभालता है, और swarm बिल्ड कौन-से नोड उपयोग करते हैं।"
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "अभी कोई रणनीति नहीं"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: इस Mac का इंजन जो भी चलाता है, उसी से सेवा देता है; कभी लोड नहीं होता"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "लिंक"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,one{लगभग {duration}, # लोड मापा गया} other{लगभग {duration}, # लोड मापे गए}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "लोड अभी मापा नहीं गया"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "लोड करें और प्रतीक्षा करें"
+  },
+  "strategies.more": {
+    "defaultMessage": "{name} के लिए और"
+  },
+  "strategies.name": {
+    "defaultMessage": "रणनीति"
+  },
+  "strategies.new": {
+    "defaultMessage": "नई रणनीति"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "नई रणनीति"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "अभी कोई नोड नहीं है। पहले नोड टैब पर एक बनाएँ।"
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "“{id}” नाम की कोई रणनीति नहीं है। हो सकता है इसे हटा दिया गया हो।"
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "एक तरीका ({node}), कोई स्वैप नहीं"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "कुछ लोड नहीं होता: यहाँ हर नोड या तो क्लाउड में है या इस Mac के इंजन का अनुसरण करता है"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "इस रणनीति के लिए आपके Mac पर कुछ लोड नहीं होता।"
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: नोड {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "हटाया नहीं गया"
+  },
+  "strategies.note": {
+    "defaultMessage": "टिप्पणी (आपके शब्दों में)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "आपके Mac पर"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "आपके Mac पर"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "एक समय में एक ही तरीका आपकी चैट को सेवा देता है: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "आपके सभी Mac में, एक समय में केवल एक MLX तरीका इस Mac के goose को सेवा देता है। एक रणनीति के दो अलग-अलग तरीकों को बारी-बारी से चलना पड़ता है।"
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: जब भी {a} व्यस्त हो, {a} से {b} पर अतिरिक्त काम भेजने से एक को रोककर दूसरे को लोड करना पड़ेगा"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "एक नोड चुनें"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "आपकी रणनीतियाँ पढ़ी नहीं जा सकीं"
+  },
+  "strategies.reading": {
+    "defaultMessage": "आपकी रणनीतियाँ पढ़ी जा रही हैं…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "सहेजा नहीं गया"
+  },
+  "strategies.remove": {
+    "defaultMessage": "हटाएँ"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "हटाएँ, और नई चैट कोई भी नोड (ऑटो) पर शुरू करें"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "हटाएँ, और swarm बिल्ड को आपके स्वार्म पूल का उपयोग करने दें"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "रणनीति हटा दी जाती है। इसके नोड जैसे हैं वैसे ही रहते हैं।"
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "हटाएँ"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "{node} को {role} से हटाएँ"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "{name} हटाएँ?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "फिर से पढ़ें"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "बैकएंड"
   },
@@ -8420,6 +8636,9 @@
   "strategies.roleChat": {
     "defaultMessage": "चैट"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "फ्रंटएंड"
   },
@@ -8428,6 +8647,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "परीक्षण"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "{role} जैसा ही"
+  },
+  "strategies.save": {
+    "defaultMessage": "रणनीति सहेजें"
+  },
+  "strategies.saved": {
+    "defaultMessage": "सहेजा गया।"
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role}, {first} पर चलता है। अगर वह नहीं चल सकता, तो {rest} पर।"
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role}, {first} पर चलता है।"
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{अगर {node} लोड नहीं है, तो वह लोड होता है और आपकी बारी प्रतीक्षा करती है (लगभग {duration})।} other{अगर {node} लोड नहीं है, तो वह लोड होता है और कार्य प्रतीक्षा करता है (लगभग {duration})।}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{अगर {node} लोड नहीं है, तो वह लोड होता है और आपकी बारी प्रतीक्षा करती है; इसकी पहली लोडिंग अभी मापी नहीं गई है।} other{अगर {node} लोड नहीं है, तो वह लोड होता है और कार्य प्रतीक्षा करता है; इसकी पहली लोडिंग अभी मापी नहीं गई है।}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role}, {first} पर चलता है; जब वह व्यस्त होता है, तो अतिरिक्त काम {rest} पर जाता है।"
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role}, {first} पर चलता है; जब वह व्यस्त होता है, तो काम उसका इंतज़ार करता है।"
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} साझा किया जाता है: {parts}।"
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role}, {first} पर चलता है।"
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,one{{node} # हिस्सा} other{{node} # हिस्से}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, फिर {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "अगर {node} लोड नहीं है, तो उसके बाद कोई भी नोड यह काम नहीं ले सकता, इसलिए इसे कारण के साथ अस्वीकार कर दिया जाता है।"
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "अगर {node} लोड नहीं है, तो इस बीच काम {next} लेता है और कुछ भी लोड नहीं होता।"
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "अपने खुद के नोड सेट करें"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: {a} और {b} के बीच साझा करने से हर बार एक को रोककर दूसरे को लोड करना पड़ेगा"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "एक रणनीति बताती है कि कौन-सा नोड क्या करता है: उसकी भूमिकाएँ, नोड किस क्रम में आज़माए जाएँ, और अगले का उपयोग कब करें।"
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: इनके बीच हर बदलाव एक को रोकता है और दूसरे को लोड करता है।"
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,one{# तरीका, एक बार में एक: हर स्विच एक को रोकता है और दूसरे को लोड करता है} other{# तरीके, एक बार में एक: हर स्विच एक को रोकता है और दूसरे को लोड करता है}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (व्यस्त होने पर अगला)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (हिस्सा {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} अब नोड नहीं है"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Swarm बिल्ड के लिए उपयोग करें"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "नई चैट के लिए उपयोग करें"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "इस बीच अगला उपयोग करें"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "इसके बजाय {role} जैसा ही"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Swarm बिल्ड द्वारा उपयोग किया जाता है।"
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "{node} का हिस्सा"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "बिल्ड कार्य जो सर्वर साइड लिखते हैं (API, सेवाएँ, डेटा)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "हर कार्य के लिए कोड लिखना"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "चैट में आपकी बारी: जवाब, संपादन, टूल कॉल"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "बिल्ड कार्य जो यूज़र इंटरफ़ेस लिखते हैं (पेज, कॉम्पोनेंट, स्टाइल)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "अनुरोध पढ़ना, सवाल पूछना, शोध करना और योजना लिखना"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "परिणाम चलाना और जाँचना, और जाँच में मिली समस्याओं को ठीक करना"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "नहीं चल सकता"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "व्यस्त"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "साझा"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} प्रदाता कॉन्फ़िगर किया गया है"

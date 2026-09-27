@@ -5456,6 +5456,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Parar"
   },
+  "nodes.auto": {
+    "defaultMessage": "Qualquer nó (Auto)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "verificando…"
+  },
   "nodes.cancel": {
     "defaultMessage": "Cancelar"
   },
@@ -5503,6 +5509,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Atende com o que o motor deste Mac executa: {model} · dividido entre {count} Macs"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Os builds do enxame usam:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "Novos chats começam em:"
   },
   "nodes.fromPool": {
     "defaultMessage": "do seu pool do enxame"
@@ -5756,6 +5768,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Adicione outro Mac para executar modelos grandes demais para este"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (nó)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (estratégia)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Ative primeiro “{permission}” em {mac} (LeanZero MLX › Meus Macs)"
   },
@@ -5773,6 +5791,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Medindo seus Macs para esta opção…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Seu pool do enxame"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Seu pool do enxame · usado pelos builds do enxame enquanto “Os builds do enxame usam” for “Seu pool do enxame”"
   },
   "nodes.readFailed": {
     "defaultMessage": "Não foi possível ler seus nós"
@@ -5885,14 +5909,8 @@
   "nodes.stopAction": {
     "defaultMessage": "Parar {node}"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "Uma estratégia dirá qual nó faz o quê: seus papéis, a ordem em que os nós são tentados e quando usar o próximo. Até lá, os chats e os builds do enxame usam os nós da aba Nós."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "As estratégias chegam nesta versão"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "Um nó é um modelo para o qual você pode passar trabalho, nos seus Macs ou na nuvem. Os chats começam em um nó ou em uma estratégia; os builds do enxame usam uma estratégia."
+    "defaultMessage": "Um nó é um modelo ao qual você pode entregar trabalho, nos seus Macs ou na nuvem. Chats começam num nó ou numa estratégia; os builds do enxame usam uma estratégia ou seu pool do enxame."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Não foi possível ler seu pool do enxame"
@@ -5905,6 +5923,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nós"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "Não foi possível salvar a alteração"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (já não está definido)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Não alterado"
   },
   "nodes.usedBy": {
     "defaultMessage": "Usado por"
@@ -8411,6 +8438,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Você interrompeu esta resposta após {elapsed} · {tokens} tokens"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "Não foi possível salvar a alteração"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Adicionar um nó"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Os builds do enxame usam isto"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "Novos chats começam aqui"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "Se os builds do enxame podem usá-la é verificado ao salvar."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Os builds do enxame podem usar esta estratégia."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Os builds do enxame não podem usar esta estratégia:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Verificando se os builds do enxame podem usá-la…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "Planejamento em {node}: o motor substitui um planejador na nuvem por um modelo que o LM Studio carregou"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "Os modelos do LM Studio carregados na sua frota também participam deste build"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Os builds do enxame no motor deste Mac executam {model}; escolha primeiro o modelo de {node} em Executar"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} é executado em {mac}; os builds do enxame só alcançam o LeanZero MLX através do motor único deste Mac"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} é uma divisão; os builds do enxame só alcançam o LeanZero MLX através do motor único deste Mac"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Builds do enxame"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Não foi possível ler se os builds do enxame podem usá-la: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: sempre disponível"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "Se não carregado"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Nós em ordem"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "Quando usar o próximo"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "Nova estratégia"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Cada chamada de delegação alterna duas vezes: para {build} e de volta a {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Fechar"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Duplicar"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "Tentar {node} antes"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Editar"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "Editar {name}"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Crie uma para dizer qual nó os chats usam primeiro, qual nó assume quando ele não pode ser executado, e quais nós os builds do enxame usam."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "Ainda não há estratégias"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: serve o que o motor deste Mac estiver executando; nunca carrega"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Link"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,one{cerca de {duration}, # carregamento medido} other{cerca de {duration}, # carregamentos medidos}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "carregamento ainda não medido"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Carregar e esperar"
+  },
+  "strategies.more": {
+    "defaultMessage": "Mais sobre {name}"
+  },
+  "strategies.name": {
+    "defaultMessage": "Estratégia"
+  },
+  "strategies.new": {
+    "defaultMessage": "Nova estratégia"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "Nova estratégia"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "Ainda não há nós. Crie um primeiro na aba Nós."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "Não existe a estratégia “{id}”. Ela pode ter sido removida."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "uma opção ({node}), sem trocas"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "nada carrega: todo nó aqui está na nuvem ou segue o motor deste Mac"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Nada carrega nos seus Macs para esta estratégia."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: nó {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Não removido"
+  },
+  "strategies.note": {
+    "defaultMessage": "Nota (suas palavras)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "Nos seus Macs"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "Nos seus Macs"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "Uma opção de cada vez serve seus chats: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "Uma única opção de MLX serve o goose neste Mac por vez, em todos os seus Macs. Duas opções diferentes numa estratégia precisam se revezar."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: transbordar de {a} para {b} pararia um para carregar o outro sempre que {a} estiver ocupado"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Escolher um nó"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Não foi possível ler suas estratégias"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Lendo suas estratégias…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Não salvo"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Remover"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Remover e iniciar novos chats em Qualquer nó (Auto)"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Remover, e deixar os builds do enxame usarem seu pool do enxame"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "A estratégia é removida. Seus nós permanecem como estão."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Remover"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "Tirar {node} de {role}"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "Remover {name}?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Ler novamente"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Backend"
   },
@@ -8420,6 +8636,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Chat"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Frontend"
   },
@@ -8428,6 +8647,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Testes"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "Igual a {role}"
+  },
+  "strategies.save": {
+    "defaultMessage": "Salvar estratégia"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Salvo."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} é executado em {first}. Se não puder ser executado, em {rest}."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} é executado em {first}."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{Se {node} não estiver carregado, ele carrega e sua mensagem espera (cerca de {duration}).} other{Se {node} não estiver carregado, ele carrega e a tarefa espera (cerca de {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{Se {node} não estiver carregado, ele carrega e sua mensagem espera; seu primeiro carregamento ainda não é medido.} other{Se {node} não estiver carregado, ele carrega e a tarefa espera; seu primeiro carregamento ainda não é medido.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} é executado em {first}; quando está ocupado, o trabalho extra vai para {rest}."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} é executado em {first}; quando está ocupado, o trabalho espera por ele."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} é compartilhado: {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} é executado em {first}."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,one{{node} # parte} other{{node} # partes}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, depois {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "Se {node} não estiver carregado, nenhum nó depois dele pode assumir o trabalho, então ele é recusado com o motivo."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "Se {node} não estiver carregado, {next} assume o trabalho nesse meio-tempo e nada é carregado."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Definir seus próprios nós"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: compartilhar entre {a} e {b} pararia um para carregar o outro a cada vez"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "Uma estratégia diz qual nó faz o quê: seus papéis, a ordem em que os nós são tentados, e quando usar o próximo."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: cada troca entre eles para um e carrega o outro."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,other{# opções, uma de cada vez: cada troca para uma e carrega a outra}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (o próximo quando ocupado)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (compartilha {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} não é mais um nó"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Usar para builds do enxame"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Usar para novos chats"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Usar o próximo nesse meio-tempo"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Igual a {role} em vez disso"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Usada pelos builds do enxame."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "parte de {node}"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Tarefas de build que escrevem o lado do servidor (APIs, serviços, dados)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Escrever o código de cada tarefa"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "Suas mensagens em um chat: respostas, edições, chamadas de ferramentas"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Tarefas de build que escrevem a interface do usuário (páginas, componentes, estilos)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "Ler o pedido, fazer perguntas, pesquisar e escrever o plano"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Executar e verificar o resultado, e corrigir o que a verificação encontrar"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "não inicia"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "ocupado"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "compartilhar"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "O fornecedor {name} está configurado"

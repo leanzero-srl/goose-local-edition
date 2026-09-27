@@ -5456,6 +5456,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Durdur"
   },
+  "nodes.auto": {
+    "defaultMessage": "Herhangi bir düğüm (Otomatik)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "denetleniyor…"
+  },
   "nodes.cancel": {
     "defaultMessage": "İptal"
   },
@@ -5503,6 +5509,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Bu Mac’in motoru ne çalıştırıyorsa onu sunar: {model} · {count} Mac’e bölünmüş"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Swarm derlemeleri şunu kullanır:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "Yeni sohbetler şurada başlar:"
   },
   "nodes.fromPool": {
     "defaultMessage": "sürü havuzunuzdan"
@@ -5756,6 +5768,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Bu Mac için fazla büyük modelleri çalıştırmak için başka bir Mac ekleyin"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (düğüm)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (strateji)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Önce {mac} üzerinde “{permission}” seçeneğini açın (LeanZero MLX › Mac’lerim)"
   },
@@ -5773,6 +5791,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Mac’leriniz bu yol için ölçülüyor…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Sürü havuzunuz"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Sürü havuzunuz · “Swarm derlemeleri şunu kullanır” “Sürü havuzunuz” olduğu sürece swarm derlemeleri tarafından kullanılır"
   },
   "nodes.readFailed": {
     "defaultMessage": "Düğümleriniz okunamadı"
@@ -5885,14 +5909,8 @@
   "nodes.stopAction": {
     "defaultMessage": "{node} düğümünü durdur"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "Bir strateji hangi düğümün ne yapacağını belirleyecek: rolleri, düğümlerin denenme sırası ve bir sonrakine ne zaman geçileceği. O zamana kadar sohbetler ve swarm derlemeleri Düğümler sekmesindeki düğümleri kullanır."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "Stratejiler bu sürümde geliyor"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "Düğüm, Mac’lerinizde ya da bulutta iş devredebileceğiniz bir modeldir. Sohbetler bir düğümde ya da stratejide başlar; swarm derlemeleri bir strateji kullanır."
+    "defaultMessage": "Düğüm, Mac'lerinizde ya da bulutta iş devredebileceğiniz bir modeldir. Sohbetler bir düğümde ya da stratejide başlar; swarm derlemeleri bir strateji ya da sürü havuzunuzu kullanır."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Sürü havuzunuz okunamadı"
@@ -5905,6 +5923,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Düğümler"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "Değişiklik kaydedilemedi"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (artık tanımlı değil)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Değiştirilmedi"
   },
   "nodes.usedBy": {
     "defaultMessage": "Kullananlar"
@@ -8411,6 +8438,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Bu yanıtı {elapsed} sonra durdurdunuz · {tokens} token"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "Değişiklik kaydedilemedi"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Bir düğüm ekle"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Swarm derlemeleri bunu kullanır"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "Yeni sohbetler burada başlar"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "Swarm derlemelerinin bunu kullanıp kullanamayacağı, kaydettiğinizde denetlenir."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Swarm derlemeleri bu stratejiyi kullanabilir."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Swarm derlemeleri bu stratejiyi kullanamaz:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Swarm derlemelerinin bunu kullanıp kullanamayacağı denetleniyor…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "{node} üzerinde planlama: motor, bulut planlayıcısının yerine LM Studio'nun yüklediği bir modeli koyar"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "Tüm cihazlarınızda yüklü LM Studio modelleri de bu derlemeye katılır"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Bu Mac'in motorundaki swarm derlemeleri {model} çalıştırır; önce {node}'ün modelini Çalıştır'da seçin"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node}, {mac} üzerinde çalışır; swarm derlemeleri LeanZero MLX'e yalnızca bu Mac'in tek motoru üzerinden ulaşır"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} bir bölme; swarm derlemeleri LeanZero MLX'e yalnızca bu Mac'in tek motoru üzerinden ulaşır"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Swarm derlemeleri"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Swarm derlemelerinin bunu kullanıp kullanamayacağı okunamadı: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: her zaman kullanılabilir"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "Yüklü değilse"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Sırayla düğümler"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "Sıradakine ne zaman geçilir"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "Yeni strateji"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Her devretme çağrısı iki kez geçiş yapar: {build}'e ve geri {chat}'e"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Çoğalt"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "{node}'ü daha erken dene"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Düzenle"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "{name} düzenle"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Sohbetlerin önce hangi düğümü kullanacağını, o çalışamadığında hangi düğümün devralacağını ve swarm derlemelerinin hangi düğümleri kullanacağını söylemek için bir tane oluşturun."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "Henüz strateji yok"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: bu Mac'in motoru ne çalıştırıyorsa onu sunar; asla yüklenmez"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Bağlantı"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,one{yaklaşık {duration}, # yükleme ölçüldü} other{yaklaşık {duration}, # yükleme ölçüldü}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "yükleme henüz ölçülmedi"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Yükle ve bekle"
+  },
+  "strategies.more": {
+    "defaultMessage": "{name} için daha fazlası"
+  },
+  "strategies.name": {
+    "defaultMessage": "Strateji"
+  },
+  "strategies.new": {
+    "defaultMessage": "Yeni strateji"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "Yeni strateji"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "Henüz düğüm yok. Önce Düğümler sekmesinde bir tane oluşturun."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "“{id}” adında bir strateji yok. Kaldırılmış olabilir."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "tek yol ({node}), geçiş yok"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "hiçbir şey yüklenmez: buradaki her düğüm bulutta ya da bu Mac'in motorunu izliyor"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Bu strateji için Mac'lerinizde hiçbir şey yüklenmiyor."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: düğüm {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Kaldırılmadı"
+  },
+  "strategies.note": {
+    "defaultMessage": "Not (kendi ifadenizle)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "Mac'lerinizde"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "Mac'lerinizde"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "Sohbetlerinize aynı anda tek bir yol hizmet verir: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "Tüm Mac'leriniz genelinde, bu Mac'in goose'unu aynı anda yalnızca bir MLX yolu besler. Bir stratejideki iki farklı yol sırayla çalışmak zorundadır."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: {a} her meşgul olduğunda fazla işi {b} düğümüne aktarmak, birini durdurup diğerini yükler"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Bir düğüm seç"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Stratejileriniz okunamadı"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Stratejileriniz okunuyor…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Kaydedilmedi"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Kaldır"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Kaldır ve yeni sohbetleri Herhangi bir düğüm (Otomatik) üzerinde başlat"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Kaldır ve swarm derlemelerinin sürü havuzunuzu kullanmasına izin ver"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "Strateji kaldırılır. Düğümleri olduğu gibi kalır."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Kaldır"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "{node}'ü {role}'den çıkar"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "{name} kaldırılsın mı?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Yeniden oku"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Arka uç"
   },
@@ -8420,6 +8636,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Sohbet"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Ön uç"
   },
@@ -8428,6 +8647,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Test"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "{role} ile aynı"
+  },
+  "strategies.save": {
+    "defaultMessage": "Stratejiyi kaydet"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Kaydedildi."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role}, {first} üzerinde çalışır. Çalışamazsa {rest} üzerinde."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role}, {first} üzerinde çalışır."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{{node} yüklü değilse yüklenir ve mesajınız bekler (yaklaşık {duration}).} other{{node} yüklü değilse yüklenir ve görev bekler (yaklaşık {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{{node} yüklü değilse yüklenir ve mesajınız bekler; ilk yüklemesi henüz ölçülmedi.} other{{node} yüklü değilse yüklenir ve görev bekler; ilk yüklemesi henüz ölçülmedi.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role}, {first} üzerinde çalışır; o meşgulken fazladan iş {rest}'e gider."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role}, {first} üzerinde çalışır; o meşgulken iş onu bekler."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} paylaştırılır: {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role}, {first} üzerinde çalışır."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,one{{node} # pay} other{{node} # pay}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, ardından {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "{node} yüklü değilse ondan sonra hiçbir düğüm işi devralamaz, bu yüzden iş nedeniyle birlikte reddedilir."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "{node} yüklü değilse, bu arada işi {next} üstlenir ve hiçbir şey yüklenmez."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Kendi düğümlerini ayarla"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: {a} ile {b} arasında paylaşım, her seferinde birini durdurup diğerini yüklerdi"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "Bir strateji hangi düğümün ne yapacağını söyler: rolleri, düğümlerin denenme sırası ve bir sonrakine ne zaman geçileceği."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: aralarındaki her geçiş birini durdurur ve diğerini yükler."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,one{# yol, sırayla birer birer: her geçiş birini durdurup diğerini yükler} other{# yol, sırayla birer birer: her geçiş birini durdurup diğerini yükler}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (meşgulken sıradaki)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (pay {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} artık bir düğüm değil"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Swarm derlemeleri için kullan"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Yeni sohbetler için kullan"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Bu arada sıradakini kullan"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Bunun yerine {role} ile aynı"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Swarm derlemeleri tarafından kullanılır."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "{node} payı"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Sunucu tarafını yazan derleme görevleri (API'ler, servisler, veri)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Her görev için kodu yazmak"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "Sohbetteki mesajlarınız: yanıtlar, düzenlemeler, araç çağrıları"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Kullanıcı arayüzünü yazan derleme görevleri (sayfalar, bileşenler, stiller)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "İsteği okumak, sorular sormak, araştırmak ve planı yazmak"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Sonucu çalıştırıp denetlemek ve denetimde bulunanları düzeltmek"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "çalışamaz"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "meşgul"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "paylaşım"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} sağlayıcısı yapılandırıldı"

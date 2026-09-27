@@ -5456,6 +5456,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Остановить"
   },
+  "nodes.auto": {
+    "defaultMessage": "Любой узел (Авто)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "проверка…"
+  },
   "nodes.cancel": {
     "defaultMessage": "Отмена"
   },
@@ -5503,6 +5509,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Обслуживает то, что запущено в движке этого Mac: {model} · разделено на {count} Mac"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Сборки swarm используют:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "Новые чаты начинаются на:"
   },
   "nodes.fromPool": {
     "defaultMessage": "из вашего пула роя"
@@ -5756,6 +5768,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Добавьте ещё один Mac, чтобы запускать модели, слишком большие для этого"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (узел)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (стратегия)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Сначала включите «{permission}» на {mac} (LeanZero MLX › Мои Mac)"
   },
@@ -5773,6 +5791,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Измеряем ваши Mac для этого способа…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Ваш пул роя"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Ваш пул роя · используется сборками swarm, пока «Сборки swarm используют» — «Ваш пул роя»"
   },
   "nodes.readFailed": {
     "defaultMessage": "Не удалось прочитать ваши узлы"
@@ -5885,14 +5909,8 @@
   "nodes.stopAction": {
     "defaultMessage": "Остановить {node}"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "Стратегия будет определять, какой узел что делает: его роли, порядок, в котором пробуются узлы, и когда переходить к следующему. До тех пор чаты и сборки swarm используют узлы со вкладки «Узлы»."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "Стратегии появятся в этом выпуске"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "Узел — это модель, которой можно передать работу, на ваших Mac или в облаке. Чаты начинаются на узле или стратегии; сборки swarm используют стратегию."
+    "defaultMessage": "Узел — это модель, которой можно передать работу, на ваших Mac или в облаке. Чаты начинаются на узле или стратегии; сборки swarm используют стратегию или ваш пул роя."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Не удалось прочитать ваш пул роя"
@@ -5905,6 +5923,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Узлы"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "Изменение не удалось сохранить"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (больше не определён)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Не изменено"
   },
   "nodes.usedBy": {
     "defaultMessage": "Используется в"
@@ -8411,6 +8438,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Вы остановили этот ответ через {elapsed} · {tokens} токенов"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "Изменение не удалось сохранить"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Добавить узел"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Сборки swarm используют это"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "Новые чаты начинаются здесь"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "Может ли она использоваться сборками swarm, проверяется при сохранении."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Сборки swarm могут использовать эту стратегию."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Сборки swarm не могут использовать эту стратегию:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Проверяем, могут ли сборки swarm её использовать…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "Планирование на {node}: движок заменяет облачный планировщик моделью, загруженной в LM Studio"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "Модели LM Studio, загруженные на всех ваших устройствах, тоже подключаются к этой сборке"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Сборки swarm на движке этого Mac запускают {model}; сначала выберите модель {node} в «Запуске»"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} работает на {mac}; сборки swarm обращаются к LeanZero MLX только через единственный движок этого Mac"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} — это разделение; сборки swarm обращаются к LeanZero MLX только через единственный движок этого Mac"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Сборки swarm"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Не удалось узнать, могут ли сборки swarm её использовать: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: всегда доступен"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "Если не загружен"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Узлы по порядку"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "Когда переходить к следующему"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "Новая стратегия"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Каждый делегированный вызов переключается дважды: на {build} и обратно на {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Закрыть"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Дублировать"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "Попробовать {node} раньше"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Изменить"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "Изменить {name}"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Создайте её, чтобы указать, какой узел чаты используют первым, какой узел подхватывает, когда тот не может работать, и какие узлы используют сборки swarm."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "Стратегий пока нет"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: обслуживает то, что запущено в движке этого Mac; никогда не загружается"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Ссылка"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,one{примерно {duration}, измерена # загрузка} few{примерно {duration}, измерено # загрузки} many{примерно {duration}, измерено # загрузок} other{примерно {duration}, измерено # загрузки}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "загрузка ещё не измерена"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Загрузить и подождать"
+  },
+  "strategies.more": {
+    "defaultMessage": "Ещё для {name}"
+  },
+  "strategies.name": {
+    "defaultMessage": "Стратегия"
+  },
+  "strategies.new": {
+    "defaultMessage": "Новая стратегия"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "Новая стратегия"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "Узлов пока нет. Сначала создайте узел на вкладке «Узлы»."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "Стратегии «{id}» не существует. Возможно, она была удалена."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "один способ ({node}), без переключений"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "ничего не загружается: каждый узел здесь либо в облаке, либо следует за движком этого Mac"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Для этой стратегии на ваших Mac ничего не загружается."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: узел {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Не удалено"
+  },
+  "strategies.note": {
+    "defaultMessage": "Заметка (ваши слова)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "На ваших Mac"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "На ваших Mac"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "Один способ одновременно обслуживает ваши чаты: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "Одновременно только один способ MLX обслуживает goose этого Mac, среди всех ваших Mac. Двум разным способам в одной стратегии приходится сменять друг друга."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: перенос лишней работы с {a} на {b} останавливал бы один, чтобы загрузить другой, каждый раз, когда {a} занят"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Выберите узел"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Не удалось прочитать ваши стратегии"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Читаем ваши стратегии…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Не сохранено"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Удалить"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Удалить и начинать новые чаты на «Любом узле (Авто)»"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Удалить и позволить сборкам swarm использовать ваш пул роя"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "Стратегия удаляется. Её узлы остаются как есть."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Удалить"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "Убрать {node} из «{role}»"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "Удалить {name}?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Прочитать снова"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Бэкенд"
   },
@@ -8420,6 +8636,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Чат"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Фронтенд"
   },
@@ -8428,6 +8647,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Тестирование"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "Так же, как {role}"
+  },
+  "strategies.save": {
+    "defaultMessage": "Сохранить стратегию"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Сохранено."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} работает на {first}. Если он не может работать — на {rest}."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} работает на {first}."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{Если {node} не загружен, он загружается, и ваше сообщение ждёт (примерно {duration}).} other{Если {node} не загружен, он загружается, и задача ждёт (примерно {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{Если {node} не загружен, он загружается, и ваше сообщение ждёт; его первая загрузка ещё не измерена.} other{Если {node} не загружен, он загружается, и задача ждёт; его первая загрузка ещё не измерена.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} работает на {first}; когда он занят, лишняя работа уходит на {rest}."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} работает на {first}; когда он занят, работа ждёт его."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} разделяется: {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} работает на {first}."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,one{{node} # часть} few{{node} # части} many{{node} # частей} other{{node} # части}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, затем {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "Если {node} не загружен, ни один следующий узел не может взять эту работу, поэтому она отклоняется с указанием причины."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "Если {node} не загружен, тем временем работу берёт {next}, и ничего не загружается."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Задать собственные узлы"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: разделение между {a} и {b} на каждом ходе останавливало бы один узел ради загрузки другого"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "Стратегия определяет, какой узел что делает: его роли, порядок, в котором пробуются узлы, и когда переходить к следующему."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: каждое переключение между ними останавливает один и загружает другой."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,one{# способ, один за раз: каждое переключение останавливает один и загружает другой} few{# способа, по одному за раз: каждое переключение останавливает один и загружает другой} many{# способов, по одному за раз: каждое переключение останавливает один и загружает другой} other{# способа, по одному за раз: каждое переключение останавливает один и загружает другой}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (следующий при занятости)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (доля {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} больше не является узлом"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Использовать для сборок swarm"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Использовать для новых чатов"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Пока использовать следующий"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Вместо этого — так же, как {role}"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Используется сборками swarm."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "доля {node}"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Задачи сборки, которые пишут серверную часть (API, сервисы, данные)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Написание кода для каждой задачи"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "Ваши сообщения в чате: ответы, правки, вызовы инструментов"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Задачи сборки, которые пишут пользовательский интерфейс (страницы, компоненты, стили)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "Чтение запроса, вопросы, исследование и написание плана"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Запуск и проверка результата, исправление найденного при проверке"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "не может работать"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "занят"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "доля"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Провайдер {name} настроен"

@@ -5456,6 +5456,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Arresta"
   },
+  "nodes.auto": {
+    "defaultMessage": "Qualsiasi nodo (Auto)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "verifica in corso…"
+  },
   "nodes.cancel": {
     "defaultMessage": "Annulla"
   },
@@ -5503,6 +5509,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Serve ciò che esegue il motore di questo Mac: {model} · suddiviso su {count} Mac"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Le build dello sciame usano:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "Le nuove chat iniziano su:"
   },
   "nodes.fromPool": {
     "defaultMessage": "dal tuo pool dello sciame"
@@ -5756,6 +5768,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Aggiungi un altro Mac per eseguire modelli troppo grandi per questo"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (nodo)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (strategia)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Attiva prima «{permission}» su {mac} (LeanZero MLX › I miei Mac)"
   },
@@ -5773,6 +5791,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Misurazione dei tuoi Mac per questa via…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Il tuo pool dello sciame"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Il tuo pool dello sciame · usato dalle build dello sciame finché «Le build dello sciame usano» è «Il tuo pool dello sciame»"
   },
   "nodes.readFailed": {
     "defaultMessage": "Impossibile leggere i tuoi nodi"
@@ -5885,14 +5909,8 @@
   "nodes.stopAction": {
     "defaultMessage": "Arresta {node}"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "Una strategia dirà quale nodo fa cosa: i suoi ruoli, l'ordine in cui provare i nodi e quando passare al successivo. Fino ad allora, le chat e le build dello sciame usano i nodi della scheda Nodi."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "Le strategie arrivano in questa versione"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "Un nodo è un modello a cui affidare lavoro, sui tuoi Mac o nel cloud. Le chat partono da un nodo o da una strategia; le build dello sciame usano una strategia."
+    "defaultMessage": "Un nodo è un modello a cui puoi affidare del lavoro, sui tuoi Mac o nel cloud. Le chat iniziano su un nodo o una strategia; le build dello sciame usano una strategia o il tuo pool dello sciame."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Impossibile leggere il tuo pool dello sciame"
@@ -5905,6 +5923,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodi"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "Impossibile salvare la modifica"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (non più definito)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Non modificato"
   },
   "nodes.usedBy": {
     "defaultMessage": "Usato da"
@@ -8411,6 +8438,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Hai interrotto questa risposta dopo {elapsed} · {tokens} token"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "Impossibile salvare la modifica"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Aggiungi un nodo"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Le build dello sciame usano questa"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "Le nuove chat iniziano qui"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "Se le build dello sciame possono usarla viene verificato al salvataggio."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Le build dello sciame possono usare questa strategia."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Le build dello sciame non possono usare questa strategia:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Verifica se le build dello sciame possono usarla…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "Pianificazione su {node}: il motore sostituisce un pianificatore cloud con un modello caricato da LM Studio"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "Anche i modelli LM Studio caricati sulla tua flotta partecipano a questa build"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Le build dello sciame sul motore di questo Mac eseguono {model}; scegli prima il modello di {node} in Esegui"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} è in esecuzione su {mac}; le build dello sciame raggiungono LeanZero MLX solo tramite l’unico motore di questo Mac"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} è una divisione; le build dello sciame raggiungono LeanZero MLX solo tramite l’unico motore di questo Mac"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Build dello sciame"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Impossibile leggere se le build dello sciame possono usarla: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "Annulla"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: sempre disponibile"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "Se non caricato"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Nodi in ordine"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "Quando usare il successivo"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "Nuova strategia"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Ogni chiamata di delega cambia due volte: a {build} e di nuovo a {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Chiudi"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Duplica"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "Prova {node} prima"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Modifica"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "Modifica {name}"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Creane una per dire quale nodo usano prima le chat, quale nodo subentra quando non può essere eseguito, e quali nodi usano le build dello sciame."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "Ancora nessuna strategia"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: serve qualunque cosa esegua il motore di questo Mac; non si carica mai"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Link"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,one{circa {duration}, # caricamento misurato} other{circa {duration}, # caricamenti misurati}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "caricamento non ancora misurato"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Caricare e aspettare"
+  },
+  "strategies.more": {
+    "defaultMessage": "Altro su {name}"
+  },
+  "strategies.name": {
+    "defaultMessage": "Strategia"
+  },
+  "strategies.new": {
+    "defaultMessage": "Nuova strategia"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "Nuova strategia"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "Non ci sono ancora nodi. Creane uno prima nella scheda Nodi."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "Non esiste la strategia «{id}». Potrebbe essere stata rimossa."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "una via ({node}), nessun cambio"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "niente si carica: qui ogni nodo è nel cloud o segue il motore di questo Mac"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Per questa strategia non si carica nulla sui tuoi Mac."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: nodo {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Non rimosso"
+  },
+  "strategies.note": {
+    "defaultMessage": "Nota (con parole tue)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "Sui tuoi Mac"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "Sui tuoi Mac"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "Una sola via alla volta serve le tue chat: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "Una sola via MLX serve goose su questo Mac alla volta, su tutti i tuoi Mac. Due vie diverse in una strategia devono alternarsi."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: il debordamento da {a} a {b} fermerebbe uno per caricare l’altro ogni volta che {a} è occupato"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Scegli un nodo"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Impossibile leggere le tue strategie"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Lettura delle tue strategie…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Non salvato"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Rimuovi"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Rimuovi e avvia le nuove chat su Qualsiasi nodo (Auto)"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Rimuovi, e lascia che le build dello sciame usino il tuo pool dello sciame"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "La strategia viene rimossa. I suoi nodi restano come sono."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Rimuovi"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "Togli {node} da {role}"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "Rimuovere {name}?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Rileggi"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Backend"
   },
@@ -8420,6 +8636,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Chat"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Frontend"
   },
@@ -8428,6 +8647,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Test"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "Come {role}"
+  },
+  "strategies.save": {
+    "defaultMessage": "Salva strategia"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Salvato."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} è eseguito su {first}. Se non può essere eseguito, su {rest}."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} è eseguito su {first}."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{Se {node} non è caricato, si carica e il tuo turno attende (circa {duration}).} other{Se {node} non è caricato, si carica e l’attività attende (circa {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{Se {node} non è caricato, si carica e il tuo turno attende; il suo primo caricamento non è ancora misurato.} other{Se {node} non è caricato, si carica e l’attività attende; il suo primo caricamento non è ancora misurato.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} è eseguito su {first}; quando è occupato, il lavoro extra va a {rest}."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} è eseguito su {first}; quando è occupato, il lavoro lo attende."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} è condiviso: {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} è eseguito su {first}."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,one{{node} # parte} other{{node} # parti}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, poi {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "Se {node} non è caricato, nessun nodo dopo di esso può prendere il lavoro, quindi viene rifiutato con il motivo."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "Se {node} non è caricato, {next} prende il lavoro nel frattempo e nulla viene caricato."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Imposta i propri nodi"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: condividere tra {a} e {b} fermerebbe uno per caricare l’altro a ogni turno"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "Una strategia dice quale nodo fa cosa: i suoi ruoli, l’ordine in cui provare i nodi, e quando usare il successivo."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: ogni cambio tra loro ferma uno e carica l’altro."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,other{# vie, una alla volta: ogni cambio ferma una e carica l’altra}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (il successivo se occupato)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (condivide {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} non è più un nodo"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Usa per le build dello sciame"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Usa per le nuove chat"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Usare il successivo nel frattempo"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Invece come {role}"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Usata dalle build dello sciame."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "quota di {node}"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Attività di build che scrivono il lato server (API, servizi, dati)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Scrivere il codice per ogni attività"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "I tuoi turni in una chat: risposte, modifiche, chiamate a strumenti"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Attività di build che scrivono l’interfaccia utente (pagine, componenti, stili)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "Leggere la richiesta, fare domande, fare ricerche e scrivere il piano"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Eseguire e controllare il risultato, e correggere ciò che il controllo trova"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "non parte"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "occupato"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "condividi"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Il provider {name} è configurato"

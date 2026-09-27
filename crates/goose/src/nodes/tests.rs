@@ -874,6 +874,23 @@ fn removing_a_node_a_strategy_uses_or_live_chats_are_set_to_needs_consent() {
         .refusals
         .iter()
         .any(|r| r.message.contains("3 chats are")));
+    let live: Vec<_> = in_use
+        .refusals
+        .iter()
+        .map(|r| (r.code, r.live_sessions))
+        .collect();
+    assert!(
+        live.contains(&(NodesRefusalCode::LiveSessionsNotAcknowledged, Some(3))),
+        "{live:?}"
+    );
+    assert!(
+        in_use
+            .refusals
+            .iter()
+            .filter(|r| r.code != NodesRefusalCode::LiveSessionsNotAcknowledged)
+            .all(|r| r.live_sessions.is_none()),
+        "{live:?}"
+    );
 
     let done = remove_node(
         &t.config,
