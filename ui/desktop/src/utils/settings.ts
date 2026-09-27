@@ -1,3 +1,5 @@
+import type { GlancePrefs } from './engineGlance';
+
 export interface ExternalGoosedConfig {
   enabled: boolean;
   url: string;
@@ -53,6 +55,9 @@ export interface Settings {
    *  hidden by default — flip in Settings > App to bring them back. Nothing is deleted. */
   showLmStudioFleet: boolean;
   seenAnnouncementIds: string[];
+  /** The engine glance (utils/engineGlance.ts `GlancePrefs`); absent = its defaults. Written by main
+   *  through `engine-glance-prefs-set`, never through set-setting. */
+  engineGlance?: GlancePrefs;
 
   // Goose Swarm (edition value 'local') — the local/swarm-model UX skin (presentation only, never
   // gates capability). OPTIONAL on purpose: absence means "never explicitly chosen", which lets the

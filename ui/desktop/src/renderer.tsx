@@ -7,6 +7,7 @@ import SuspenseLoader from './suspense-loader';
 import { applyThemeTokens } from './theme/theme-tokens';
 import { applyEditionToDocument, getCachedEdition } from './contexts/EditionContext';
 import { currentLocale, currentMessageLocale, loadMessages } from './i18n';
+import { ThemeProvider } from './contexts/ThemeContext';
 
 // Apply theme tokens + the Local Edition class to :root before first paint (no flash).
 applyThemeTokens();
@@ -28,8 +29,37 @@ function handleIntlError(err: { code: string; message?: string }) {
   console.error(err);
 }
 
+// The desktop engine glance (engineGlanceWindow.ts) loads this same entry at `#/engine-glance`: it
+// renders only the glance card — no app, no goosed connection, no router.
+const EngineGlanceDesktopRoot = lazy(() =>
+  import('./components/engineGlance/EngineGlanceDesktopRoot').then((m) => ({
+    default: m.EngineGlanceDesktopRoot,
+  }))
+);
+const isEngineGlanceWindow = window.location.hash.startsWith('#/engine-glance');
+
 (async () => {
   const messages = await loadMessages(currentMessageLocale);
+
+  if (isEngineGlanceWindow) {
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <React.StrictMode>
+        <IntlProvider
+          locale={currentLocale}
+          defaultLocale="en"
+          messages={messages}
+          onError={handleIntlError}
+        >
+          <ThemeProvider>
+            <Suspense fallback={null}>
+              <EngineGlanceDesktopRoot />
+            </Suspense>
+          </ThemeProvider>
+        </IntlProvider>
+      </React.StrictMode>
+    );
+    return;
+  }
 
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

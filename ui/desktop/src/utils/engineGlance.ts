@@ -1,0 +1,500 @@
+import { mlxActivity, type MlxActivity } from '../components/leanzero-swarm/mlxLiveStats';
+import {
+  engineFigures,
+  promptProgress,
+  type EngineFigure,
+  type MeasuredPair,
+} from '../components/leanzero-swarm/engineFigures';
+import type { LoadProgress, MlxModeSummary } from '../components/leanzero-swarm/mlxDistributed';
+import {
+  hostingPhase,
+  nodePhase,
+  remotePhase,
+  runPhase,
+} from '../components/leanzero-swarm/mlxPhase';
+import type { EnginePhase } from '../components/lz/tokens';
+import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
+import type { MlxDistributedReport } from './mlxDistributedReport';
+import type { MlxRemoteReport } from './mlxRemoteReport';
+import { measuredFigure, type MlxMeasuredRead } from './mlxMeasuredRuns';
+import { leaveCause } from './leaveCause';
+import { routeContactLost, routePeerGone } from './routeContact';
+import { MLX_DISTRIBUTED_STALE_MS, snapshotPhase } from './mlxTray';
+
+/**
+ * THE ENGINE GLANCE — the Engine tab's live state tile made small enough to carry everywhere: the
+ * sidebar's empty space, a floating card over the window, and a floating mini window on the desktop
+ * while goose is in the background.
+ *
+ * ONE source: main's engine read (utils/mlxEngineMonitor.ts — the loop the menu-bar tray and the
+ * composer's "served by" already read, which keeps reading while goose is hidden or minimized) and the
+ * split/route reports main already holds for the tray. Built ONCE, in main, and pushed to every
+ * window on `ENGINE_GLANCE_CHANNEL`, so the sidebar card and the desktop window can never disagree.
+ * Every figure is the tile's own fact (engineFigures.ts); every colour is the tile's engine phase
+ * (mlxPhase.ts). Pure and React-free: it carries facts, and each surface says them in its locale.
+ */
+
+export const ENGINE_GLANCE_CHANNEL = 'engine-glance';
+
+/**
+ * What the engine is doing, as the glance headlines it. The tile's activity words while it is up
+ * and read; otherwise the state that explains why there is no activity to show.
+ */
+export type GlanceStage =
+  | MlxActivity
+  /** Up, not read yet (or the read failed — `detail` says why). */
+  | 'running'
+  /** Weights going in, a split starting, a route mounting on its Mac. */
+  | 'loading'
+  | 'failed'
+  | 'reconnecting'
+  /** The route's Mac is away, not a blip (routeContact.ts `routePeerGone`). */
+  | 'away'
+  /** The split serves, and no live read of its rank 0 says what it does. */
+  | 'serving'
+  /** This Mac serves a rank of ANOTHER Mac's split. */
+  | 'hosting'
+  /** The split's admission is held by the memory watchdog. */
+  | 'held'
+  /** The split's report is older than three polls: nothing live is claimed. */
+  | 'stale'
+  | 'off';
+
+/** Which engine serves chat, in the tile's mode vocabulary (mlxModeLabel.ts formats it). */
+export type GlanceEngine = MlxModeSummary | { mode: 'remote'; peerName: string };
+
+export interface GlanceNode {
+  name: string;
+  phase: EnginePhase;
+  peakGb: number | null;
+  budgetGb: number | null;
+  load: LoadProgress | null;
+}
+
+export interface EngineGlance {
+  /** There is an engine to speak of (not off, not unknown). */
+  present: boolean;
+  /** Reading, writing, queued, loading or reconnecting — work a person waits on. */
+  busy: boolean;
+  phase: EnginePhase;
+  stage: GlanceStage;
+  engine: GlanceEngine;
+  modelId: string | null;
+  hero: EngineFigure | null;
+  second: EngineFigure | null;
+  /** How far the read / the load is; `indeterminate` when it moves with no measured figure. */
+  progress: { done: number; total: number; unit: 'tokens' | 'bytes' } | 'indeterminate' | null;
+  /** Requests the engine holds waiting; null = no live read to count them from. */
+  waiting: number | null;
+  /** The split's in-flight count when no live read of its rank 0 exists. */
+  inflight: number | null;
+  /** The chat of this app the engine serves (it opens that session). */
+  chat: { sessionId: string; name: string } | null;
+  /** Everyone else it serves: other clients, and requests from another app. */
+  otherClients: number;
+  ranges: {
+    writing: { low: number; high: number } | null;
+    reading: { low: number; high: number } | null;
+  };
+  nodes: GlanceNode[];
+  /** The engine's own words for a failure, a stale read or a lost Mac; null = nothing to say. */
+  detail: string | null;
+}
+
+export interface GlanceNeedsYou {
+  sessionId: string;
+  sessionName: string;
+  question: string;
+}
+
+/** The session-state store's running / needs-you, as the window that holds it reported them. */
+export interface GlanceSessions {
+  running: number;
+  needsYou: GlanceNeedsYou[];
+}
+
+export type GlanceDesktopMode = 'off' | 'away' | 'busy';
+export type GlanceCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+/** The person's choices, stored in settings.json under `engineGlance`. */
+export interface GlancePrefs {
+  /** The card in the sidebar (and floating over the window when the sidebar has no room). */
+  inApp: boolean;
+  /**
+   * The desktop mini window: never; while goose is in the background and something is live
+   * (the default); or whenever something is live.
+   */
+  desktop: GlanceDesktopMode;
+  /** The desktop window shows as a pill (stage + rate) instead of the card. */
+  desktopCollapsed: boolean;
+  /** Where the desktop window sits: a corner of a display, by the display's id. */
+  desktopPlace: { displayId: number; corner: GlanceCorner } | null;
+}
+
+export const DEFAULT_GLANCE_PREFS: GlancePrefs = {
+  inApp: true,
+  desktop: 'away',
+  desktopCollapsed: false,
+  desktopPlace: null,
+};
+
+export interface GlancePush {
+  engine: EngineGlance;
+  sessions: GlanceSessions;
+  prefs: GlancePrefs;
+}
+
+export interface EngineGlanceOptions {
+  distributed: { report: MlxDistributedReport; ageMs: number } | null;
+  remote: MlxRemoteReport | null;
+}
+
+const NO_RANGES: EngineGlance['ranges'] = { writing: null, reading: null };
+
+export function measuredPairOf(read: MlxMeasuredRead): MeasuredPair {
+  if (read.kind !== 'read') return { writing: null, reading: null };
+  return {
+    writing: measuredFigure(read.answer.writing),
+    reading: measuredFigure(read.answer.reading),
+  };
+}
+
+function rangesOf(pair: MeasuredPair): EngineGlance['ranges'] {
+  return { writing: pair.writing?.spread ?? null, reading: pair.reading?.spread ?? null };
+}
+
+const BUSY_STAGES: ReadonlySet<GlanceStage> = new Set<GlanceStage>([
+  'generating',
+  'prefill',
+  'queued',
+  'loading',
+  'reconnecting',
+  'serving',
+  'held',
+]);
+
+function servingOf(snapshot: MlxEngineSnapshot): Pick<EngineGlance, 'chat' | 'otherClients'> {
+  const serving = snapshot.serving;
+  if (!serving) return { chat: null, otherClients: 0 };
+  const chatClient = serving.clients.find((c) => c.kind === 'chat');
+  const chat =
+    chatClient && chatClient.kind === 'chat'
+      ? { sessionId: chatClient.sessionId, name: chatClient.sessionName || chatClient.sessionId }
+      : null;
+  return {
+    chat,
+    otherClients: serving.clients.length - (chat ? 1 : 0) + serving.unattributed,
+  };
+}
+
+/** The glance of an engine that is up and read: the tile's figures, activity and phase. */
+function liveParts(
+  snapshot: MlxEngineSnapshot,
+  pair: MeasuredPair
+): Pick<
+  EngineGlance,
+  'stage' | 'hero' | 'second' | 'progress' | 'waiting' | 'chat' | 'otherClients'
+> & { activity: MlxActivity | null } {
+  const stats = snapshot.stats;
+  if (!stats) {
+    return {
+      activity: null,
+      stage: 'running',
+      hero: pair.writing
+        ? { kind: 'writingMedian', median: pair.writing.median, runs: pair.writing.runs }
+        : null,
+      second: null,
+      progress: null,
+      waiting: null,
+      ...servingOf(snapshot),
+    };
+  }
+  const activity = mlxActivity(stats);
+  const { hero, second } = engineFigures(stats, pair);
+  const read = activity === 'prefill' ? promptProgress(stats) : null;
+  return {
+    activity,
+    stage: activity,
+    hero,
+    second,
+    progress: read ? { ...read, unit: 'tokens' } : null,
+    waiting: stats.numWaiting ?? stats.requests.filter((r) => r.status === 'waiting').length,
+    ...servingOf(snapshot),
+  };
+}
+
+function glance(parts: Omit<EngineGlance, 'busy'>): EngineGlance {
+  return { ...parts, busy: parts.present && BUSY_STAGES.has(parts.stage) };
+}
+
+/** The split's start: every rank's measured load summed, or indeterminate while any is unmeasured. */
+function splitLoad(report: MlxDistributedReport): EngineGlance['progress'] {
+  const loads = report.nodes.map((n) => n.load);
+  if (loads.length === 0 || loads.some((l) => l == null)) return 'indeterminate';
+  const done = loads.reduce((sum, l) => sum + (l as LoadProgress).done, 0);
+  const total = loads.reduce((sum, l) => sum + (l as LoadProgress).total, 0);
+  return total > 0 ? { done, total, unit: 'bytes' } : 'indeterminate';
+}
+
+export function buildEngineGlance(
+  snapshot: MlxEngineSnapshot,
+  options: EngineGlanceOptions
+): EngineGlance {
+  const pair = measuredPairOf(snapshot.measured);
+  const distributed = options.distributed;
+  const stale = distributed != null && distributed.ageMs > MLX_DISTRIBUTED_STALE_MS;
+  const hosting = distributed?.report.mode === 'single' ? distributed.report.hosting : null;
+
+  if (hosting) {
+    const loading = hosting.state === 'loading';
+    return glance({
+      present: true,
+      phase: stale ? 'idle' : hostingPhase(hosting.state),
+      stage: stale ? 'stale' : loading ? 'loading' : 'hosting',
+      engine: {
+        mode: 'hosting',
+        rank: hosting.rank,
+        requester: hosting.requester,
+        modelId: hosting.modelId,
+        backend: hosting.backend,
+      },
+      modelId: hosting.modelId,
+      hero: null,
+      second: null,
+      progress: loading && !stale ? (hosting.load ?? 'indeterminate') : null,
+      waiting: null,
+      inflight: null,
+      chat: null,
+      otherClients: 0,
+      ranges: NO_RANGES,
+      nodes: [],
+      detail: null,
+    });
+  }
+
+  if (distributed?.report.mode === 'distributed') {
+    const report = distributed.report;
+    const up = report.state === 'ready' || report.state === 'serving';
+    const live =
+      up && snapshot.engine === 'distributed' && snapshot.mode === 'running' && snapshot.stats
+        ? liveParts(snapshot, pair)
+        : null;
+    const nodes: GlanceNode[] = report.nodes.map((n) => ({
+      name: n.name,
+      phase: nodePhase(n.startWord),
+      peakGb: n.peakGb,
+      budgetGb: n.budgetGb,
+      load: n.state === 'loading' && n.startWord !== 'makingRoom' ? n.load : null,
+    }));
+    const starting = ['preflight', 'starting'].includes(report.state);
+    const stage: GlanceStage = stale
+      ? 'stale'
+      : report.state === 'failed'
+        ? 'failed'
+        : up && !report.admissionOpen
+          ? 'held'
+          : live
+            ? live.stage
+            : starting || report.state === 'stopping'
+              ? 'loading'
+              : report.state === 'serving'
+                ? 'serving'
+                : report.state === 'ready'
+                  ? 'running'
+                  : 'off';
+    return glance({
+      present: report.state !== 'stopped',
+      phase: stale ? 'idle' : runPhase(report.state, report.admissionOpen, live?.activity ?? null),
+      stage,
+      engine: { mode: 'distributed', nodeNames: report.nodeNames, backend: report.backend },
+      modelId: report.modelId,
+      hero: live?.hero ?? null,
+      second: live?.second ?? null,
+      progress: live ? live.progress : starting && !stale ? splitLoad(report) : null,
+      waiting: live?.waiting ?? null,
+      inflight: live ? null : up ? report.inflight : null,
+      chat: live?.chat ?? null,
+      otherClients: live?.otherClients ?? 0,
+      ranges: rangesOf(pair),
+      nodes,
+      detail: report.state === 'failed' ? report.lastError : null,
+    });
+  }
+
+  const route = options.remote;
+  if (route) {
+    // The composer bar's rule (routeContact.ts): main's own read of the route decides "back"; a
+    // lagging "reconnecting" mark while main reads the Mac answering is the route up (Q-64).
+    const lost =
+      route.state === 'ready' || route.state === 'reconnecting'
+        ? routeContactLost(route, null, snapshot)
+        : null;
+    const state = route.state === 'reconnecting' && !lost ? 'ready' : route.state;
+    const cause = lost ? leaveCause(route.lastError ?? snapshot.statusDetail) : null;
+    const gone = lost
+      ? routePeerGone(snapshot.engine === 'remote' ? snapshot.contact : null, cause)
+      : null;
+    const live =
+      !lost && state === 'ready' && snapshot.engine === 'remote' && snapshot.mode === 'running'
+        ? liveParts(snapshot, pair)
+        : null;
+    const stage: GlanceStage = gone
+      ? 'away'
+      : lost
+        ? 'reconnecting'
+        : state === 'mounting'
+          ? 'loading'
+          : state === 'failed'
+            ? 'failed'
+            : (live?.stage ?? 'running');
+    return glance({
+      present: true,
+      phase: gone ? 'held' : lost ? 'loading' : remotePhase(state, live?.activity ?? null),
+      stage,
+      engine: { mode: 'remote', peerName: route.peerName },
+      modelId: route.modelId ?? snapshot.modelId,
+      hero: live?.hero ?? null,
+      second: live?.second ?? null,
+      progress: live ? live.progress : state === 'mounting' ? 'indeterminate' : null,
+      waiting: live?.waiting ?? null,
+      inflight: null,
+      chat: live?.chat ?? null,
+      otherClients: live?.otherClients ?? 0,
+      ranges: rangesOf(pair),
+      nodes: [],
+      detail: lost ? (lost.why ?? null) : state === 'failed' ? route.lastError : null,
+    });
+  }
+
+  // A read of the split's rank 0 never speaks for the single engine (a run that just stopped).
+  const single = snapshot.engine === 'single' ? snapshot : INITIAL_SNAPSHOT;
+  const phase = snapshotPhase(single) ?? 'unloaded';
+  const base = {
+    engine: { mode: 'single' } as GlanceEngine,
+    modelId: single.modelId,
+    inflight: null,
+    ranges: rangesOf(pair),
+    nodes: [],
+  };
+  if (single.mode === 'running') {
+    const live = liveParts(single, pair);
+    return glance({
+      ...base,
+      present: true,
+      phase,
+      stage: live.stage,
+      hero: live.hero,
+      second: live.second,
+      progress: live.progress,
+      waiting: live.waiting,
+      chat: live.chat,
+      otherClients: live.otherClients,
+      detail: single.stats ? null : single.statusDetail,
+    });
+  }
+  const stage: GlanceStage =
+    single.mode === 'mounting'
+      ? 'loading'
+      : single.mode === 'failed'
+        ? 'failed'
+        : single.mode === 'reconnecting'
+          ? 'reconnecting'
+          : 'off';
+  return glance({
+    ...base,
+    present: stage !== 'off',
+    phase,
+    stage,
+    hero: null,
+    second: null,
+    progress: stage === 'loading' ? 'indeterminate' : null,
+    waiting: null,
+    chat: null,
+    otherClients: 0,
+    detail: single.mode === 'failed' ? single.failedError : null,
+  });
+}
+
+const DESKTOP_MODES: ReadonlySet<string> = new Set<GlanceDesktopMode>(['off', 'away', 'busy']);
+const CORNERS: ReadonlySet<string> = new Set<GlanceCorner>([
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+]);
+
+/** A stored value is the person's prefs only if every field is one this build writes. */
+export function isGlancePrefs(value: unknown): value is GlancePrefs {
+  if (value == null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  const place = v.desktopPlace as Record<string, unknown> | null | undefined;
+  return (
+    typeof v.inApp === 'boolean' &&
+    typeof v.desktop === 'string' &&
+    DESKTOP_MODES.has(v.desktop) &&
+    typeof v.desktopCollapsed === 'boolean' &&
+    (place === null ||
+      (place != null &&
+        typeof place === 'object' &&
+        typeof place.displayId === 'number' &&
+        typeof place.corner === 'string' &&
+        CORNERS.has(place.corner)))
+  );
+}
+
+/** The stored prefs, each field that is not one this build writes read as its default. */
+export function glancePrefsOf(stored: unknown): GlancePrefs {
+  if (isGlancePrefs(stored)) return stored;
+  if (stored == null || typeof stored !== 'object') return DEFAULT_GLANCE_PREFS;
+  const merged = { ...DEFAULT_GLANCE_PREFS, ...(stored as Partial<GlancePrefs>) };
+  return isGlancePrefs(merged) ? merged : DEFAULT_GLANCE_PREFS;
+}
+
+export function isGlanceSessions(value: unknown): value is GlanceSessions {
+  if (value == null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.running === 'number' &&
+    Number.isFinite(v.running) &&
+    Array.isArray(v.needsYou) &&
+    v.needsYou.every(
+      (n) =>
+        n != null &&
+        typeof n === 'object' &&
+        typeof (n as GlanceNeedsYou).sessionId === 'string' &&
+        typeof (n as GlanceNeedsYou).sessionName === 'string' &&
+        typeof (n as GlanceNeedsYou).question === 'string'
+    )
+  );
+}
+
+export const NO_SESSIONS: GlanceSessions = { running: 0, needsYou: [] };
+
+/** Every window runs its own goosed: its sessions add up, a question asked twice counts once. */
+export function mergeGlanceSessions(reports: Iterable<GlanceSessions>): GlanceSessions {
+  let running = 0;
+  const needsYou = new Map<string, GlanceNeedsYou>();
+  for (const r of reports) {
+    running += r.running;
+    for (const n of r.needsYou) {
+      const key = `${n.sessionId}\n${n.question}`;
+      if (!needsYou.has(key)) needsYou.set(key, n);
+    }
+  }
+  return { running, needsYou: [...needsYou.values()] };
+}
+
+export function isGlancePush(value: unknown): value is GlancePush {
+  if (value == null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  const engine = v.engine as Record<string, unknown> | undefined;
+  return (
+    engine != null &&
+    typeof engine === 'object' &&
+    typeof engine.present === 'boolean' &&
+    typeof engine.stage === 'string' &&
+    typeof engine.phase === 'string' &&
+    isGlanceSessions(v.sessions) &&
+    isGlancePrefs(v.prefs)
+  );
+}

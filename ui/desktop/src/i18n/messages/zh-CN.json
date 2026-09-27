@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "正在等待你的回复（剩余 {timeRemaining}）"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "聊天 · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "隐藏，直到引擎再次空闲"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "缩成胶囊"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "显示完整卡片"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "引擎：{stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, other {# 个请求处理中}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "隐藏速率和内存"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "显示速率和内存"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, other {# 个等你处理}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "{node} 的内存（相对预算）"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "尚无峰值"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "峰值 {peak} / {budget} GB"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "峰值 {peak} GB"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "打开它正在服务的聊天 — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "打开引擎"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "打开 {name} — 它问：{question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, other {另有 # 个客户端}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count} 个等待中"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "已加载的权重"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "已读取的提示词"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "个提示词 token，已读取 {elapsed}"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, other {个请求等待中}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, other {tok/s 读取，# 个提示词的中位数}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "读取 {low}–{high} tok/s，运行的中间一半"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "读取此提示词的 tok/s"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, other {# 个会话运行中}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac 不在线"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "失败"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "正在写入"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "已暂停 · 内存不足"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "正在提供一个分片"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "空闲"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "加载中"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "未加载模型"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "关闭"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "正在读取提示词"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "排队中"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "重新连接中"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "运行中"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "服务中"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "未刷新"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "未命名会话"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count} 个等待中"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, other {tok/s 写入，# 次运行的中位数}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "写入 {low}–{high} tok/s，运行的中间一半"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s 写入"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "引擎实时卡片的小尺寸版：正在读或写什么、速度多快、服务哪个聊天。点击即可打开引擎。"
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "悬浮在桌面上"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "当 goose 在后台时"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "只要引擎在工作"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "关闭"
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "一个浮在其他应用上方的小窗口，停在你拖到的角落。它从不抢占焦点，关闭后会隐藏到引擎再次空闲。"
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "在侧边栏中"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "显示在会话列表下方的空白处；当引擎在工作且侧边栏没有空间时，浮在窗口上方。"
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "引擎一览"
+  },
   "envVarsSection.add": {
     "defaultMessage": "添加"
   },

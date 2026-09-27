@@ -7,8 +7,8 @@ import {
   measuredPrefillTps,
   mlxActivity,
   readingNowTps,
-  type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
+import { readingRequest } from '../components/leanzero-swarm/engineFigures';
 import { measuredFigure, type MeasuredFigure, type MlxMeasuredRead } from './mlxMeasuredRuns';
 import {
   linkWords,
@@ -338,13 +338,6 @@ function stopItems(
 
 function plural(n: number, one: string, many: string): string {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`;
-}
-
-/** The request still reading its prompt that has waited longest — what the title names. */
-function readingRequest(stats: MlxLiveStats) {
-  return stats.requests
-    .filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
-    .sort((a, b) => (b.elapsedS ?? 0) - (a.elapsedS ?? 0))[0];
 }
 
 export function mlxTrayTitle(snapshot: MlxEngineSnapshot): string {

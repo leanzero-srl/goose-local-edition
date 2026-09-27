@@ -18,6 +18,8 @@ import type { MlxRestoreReport } from './utils/mlxRestoreReport';
 import type { MacsTrayReport } from './utils/macsTrayReport';
 import type { LinkTrayReport } from './utils/linkTrayReport';
 import type { LocalNetworkTouch } from './localNetwork';
+import type { GlancePrefs, GlancePush, GlanceSessions } from './utils/engineGlance';
+import type { GlancePipAction } from './engineGlanceDesktop';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
 const localStorageKeyMap: Partial<Record<SettingKey, string>> = {
@@ -508,6 +510,14 @@ type ElectronAPI = {
   linkReport: (report: LinkTrayReport | null) => void;
   /** Hand MAIN one line per linked Mac (My Macs's words and colours); null = not on the mesh. */
   macsReport: (report: MacsTrayReport | null) => void;
+  /** MAIN's latest engine glance (utils/engineGlance.ts); null before main built one. */
+  engineGlanceRead: () => Promise<GlancePush | null>;
+  /** Hand MAIN this window's session-state store (running / needs you) for the glance. */
+  engineGlanceSessions: (report: GlanceSessions) => void;
+  /** The desktop glance asks main to open, snooze, collapse, move or size it. */
+  engineGlancePip: (action: GlancePipAction) => void;
+  /** Store the glance prefs; main pushes the new glance to every window. */
+  engineGlancePrefsSet: (prefs: GlancePrefs) => Promise<void>;
 };
 
 type AppConfigAPI = {
@@ -590,6 +600,12 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.send('mlx-restore-report', report),
   linkReport: (report: LinkTrayReport | null) => ipcRenderer.send('link-report', report),
   macsReport: (report: MacsTrayReport | null) => ipcRenderer.send('macs-report', report),
+  engineGlanceRead: () => ipcRenderer.invoke('engine-glance-read'),
+  engineGlanceSessions: (report: GlanceSessions) =>
+    ipcRenderer.send('engine-glance-sessions', report),
+  engineGlancePip: (action: GlancePipAction) => ipcRenderer.send('engine-glance-pip', action),
+  engineGlancePrefsSet: (prefs: GlancePrefs) =>
+    ipcRenderer.invoke('engine-glance-prefs-set', prefs),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>

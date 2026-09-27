@@ -23,6 +23,7 @@ import { LMSTUDIO_FLEET_SETTING_CHANGED } from '../../../hooks/useLmStudioFleetV
 import BlockLogoBlack from './icons/block-lockup_black.png';
 import BlockLogoWhite from './icons/block-lockup_white.png';
 import TelemetrySettings from './TelemetrySettings';
+import { EngineGlanceSettings } from '../../engineGlance/EngineGlanceSettings';
 import { trackSettingToggled } from '../../../utils/analytics';
 import { LEANZERO_ISSUES_NEW_URL } from '../../../branding';
 import type { LanguageSetting } from '../../../utils/settings';
@@ -529,6 +530,8 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
           </div>
         </CardContent>
       </Card>
+
+      <EngineGlanceSettings />
 
       {SHOW_EDITION_CARD && (
       <Card className="rounded-lg">

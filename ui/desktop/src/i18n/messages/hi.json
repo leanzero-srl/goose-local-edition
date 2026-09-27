@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "आपकी प्रतिक्रिया की प्रतीक्षा में ({timeRemaining} शेष)"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "चैट · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "इंजन के शांत होने तक छिपाएँ"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "गोली जितना छोटा करें"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "पूरा कार्ड दिखाएँ"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "इंजन: {stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, one {# अनुरोध चल रहा है} other {# अनुरोध चल रहे हैं}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "दरें और मेमोरी छिपाएँ"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "दरें और मेमोरी दिखाएँ"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, one {# को आपकी ज़रूरत है} other {# को आपकी ज़रूरत है}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "{node} पर मेमोरी उसके बजट के मुकाबले"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "अभी कोई शिखर नहीं"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "शिखर {peak} / {budget} GB"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "शिखर {peak} GB"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "जिस चैट को सेवा दे रहा है उसे खोलें — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "इंजन खोलें"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "{name} खोलें — पूछा: {question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, one {+# अन्य क्लाइंट} other {+# अन्य क्लाइंट}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count} प्रतीक्षा में"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "अब तक लोड हुए वेट्स"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "अब तक पढ़ा गया प्रॉम्प्ट"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "प्रॉम्प्ट टोकन, {elapsed} से पढ़ रहा है"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, one {अनुरोध प्रतीक्षा में} other {अनुरोध प्रतीक्षा में}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, one {tok/s पढ़ना, # प्रॉम्प्ट} other {tok/s पढ़ना, # प्रॉम्प्ट का माध्यिका}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "पढ़ना {low}–{high} tok/s, रन का मध्य आधा"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "इस प्रॉम्प्ट को पढ़ते हुए tok/s"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, one {# सत्र चल रहा है} other {# सत्र चल रहे हैं}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac दूर है"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "विफल"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "लिख रहा है"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "रोका गया · मेमोरी कम"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "एक रैंक परोस रहा है"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "निष्क्रिय"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "कोई मॉडल लोड नहीं"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "बंद"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "प्रॉम्प्ट पढ़ रहा है"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "कतार में"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "फिर से जुड़ रहा है"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "चल रहा है"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "सेवा दे रहा है"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "ताज़ा नहीं"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "बिना शीर्षक का सत्र"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count} प्रतीक्षा में"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, one {tok/s लिखना, # रन} other {tok/s लिखना, # रन का माध्यिका}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "लिखना {low}–{high} tok/s, रन का मध्य आधा"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s लिखना"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "इंजन का लाइव कार्ड, छोटे रूप में: यह क्या पढ़ या लिख रहा है, कितनी तेज़ी से, और किस चैट को सेवा दे रहा है। इंजन खोलने के लिए क्लिक करें।"
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "डेस्कटॉप पर तैरता हुआ"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "जब goose पृष्ठभूमि में हो"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "जब भी इंजन काम करे"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "बंद"
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "आपके अन्य ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप उसे खींचें। यह कभी फ़ोकस नहीं लेती, और बंद करने पर इंजन के शांत होने तक छिपी रहती है।"
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "साइडबार में"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "आपके सत्रों के नीचे की खाली जगह में; जब इंजन काम कर रहा हो और साइडबार में जगह न हो तो विंडो के ऊपर तैरता है।"
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "इंजन एक नज़र में"
+  },
   "envVarsSection.add": {
     "defaultMessage": "जोड़ें"
   },
