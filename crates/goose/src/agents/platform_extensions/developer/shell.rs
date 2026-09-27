@@ -1093,13 +1093,61 @@ mod tests {
         assert_eq!(with_tool_shims_last(shims, shims), shims);
     }
 
+    /// Runs `command` through `ShellTool::new(true)` in a child test process whose environment is
+    /// this one's with `set` applied and `unset` removed, and returns what the tool produced. The
+    /// login-shell tests need GOOSE_SHELL, PATH and GOOSE_TOOL_SHIM_DIR of their own; setting them
+    /// in this process hands them to every shell spawn running beside the test (Q-163).
+    #[cfg(unix)]
+    fn shell_tool_output_in_child(
+        command: &str,
+        set: &[(&str, &str)],
+        unset: &[&str],
+    ) -> ShellOutput {
+        let mut set = set.to_vec();
+        set.push((CHILD_COMMAND_ENV, command));
+        let stdout = crate::test_env_child::run_ignored_test_in_child(
+            &crate::test_env_child::test_name(module_path!(), "shell_tool_in_a_child_env"),
+            &set,
+            unset,
+        );
+        let json = stdout
+            .lines()
+            .find_map(|line| line.split_once(CHILD_OUTPUT_PREFIX).map(|(_, json)| json))
+            .unwrap_or_else(|| {
+                panic!("the child printed no {CHILD_OUTPUT_PREFIX} line:\n{stdout}")
+            });
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[cfg(unix)]
+    const CHILD_COMMAND_ENV: &str = "GOOSE_TEST_CHILD_SHELL_COMMAND";
+    #[cfg(unix)]
+    const CHILD_OUTPUT_PREFIX: &str = "GOOSE_TEST_CHILD_SHELL_OUTPUT=";
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "runs only as the child of shell_tool_output_in_child, which sets its environment"]
+    async fn shell_tool_in_a_child_env() {
+        let command = std::env::var(CHILD_COMMAND_ENV)
+            .expect("started by shell_tool_output_in_child, which names the command");
+        let tool = ShellTool::new(true).unwrap();
+        let result = tool
+            .shell(ShellParams {
+                command,
+                timeout_secs: None,
+            })
+            .await;
+        let output = result.structured_content.expect("shell structured content");
+        println!("{CHILD_OUTPUT_PREFIX}{output}");
+    }
+
     /// The Q-102 path end to end: goose serve's PATH starts with the shim dir, the login profile
     /// adds the user's runtime, and `node` in the shell tool must be the user's — or goose's when
     /// the user has none. The fake login shell prints the PATH it was handed with the "profile"
     /// entry prepended, so it also proves the probe never saw the shim dir.
     #[cfg(unix)]
-    #[tokio::test]
-    async fn shell_tool_prefers_the_users_node_and_falls_back_to_goose_shims() {
+    #[test]
+    fn shell_tool_prefers_the_users_node_and_falls_back_to_goose_shims() {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = tempfile::tempdir().unwrap();
@@ -1140,20 +1188,16 @@ mod tests {
         let fake_shell_s = fake_shell.to_string_lossy().into_owned();
         for (profile_bin, expected) in [(&user_bin, "user-node"), (&empty_bin, "goose-node")] {
             let profile_bin_s = profile_bin.to_string_lossy().into_owned();
-            let _guard = env_lock::lock_env([
-                ("GOOSE_SHELL", Some(fake_shell_s.as_str())),
-                ("PROFILE_BIN", Some(profile_bin_s.as_str())),
-                (TOOL_SHIM_DIR_ENV, Some(shims_s.as_str())),
-                ("PATH", Some(inherited.as_str())),
-            ]);
-            let tool = ShellTool::new(true).unwrap();
-            let result = tool
-                .shell(ShellParams {
-                    command: "node; echo \"$PATH\"".to_string(),
-                    timeout_secs: None,
-                })
-                .await;
-            let output = extract_shell_output(&result);
+            let output = shell_tool_output_in_child(
+                "node; echo \"$PATH\"",
+                &[
+                    ("GOOSE_SHELL", fake_shell_s.as_str()),
+                    ("PROFILE_BIN", profile_bin_s.as_str()),
+                    (TOOL_SHIM_DIR_ENV, shims_s.as_str()),
+                    ("PATH", inherited.as_str()),
+                ],
+                &[],
+            );
             assert_eq!(
                 output.stdout,
                 format!("{expected}\n{profile_bin_s}:/usr/bin:/bin:{shims_s}"),
@@ -1167,28 +1211,23 @@ mod tests {
     /// `node` the desktop shell tool resolves. Run with
     /// `cargo test -p goose --lib live_shell_tool_node -- --ignored --nocapture`.
     #[cfg(unix)]
-    #[tokio::test]
+    #[test]
     #[ignore]
-    async fn live_shell_tool_node_is_the_users() {
+    fn live_shell_tool_node_is_the_users() {
         let shims = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../ui/desktop/src/bin")
             .canonicalize()
             .unwrap();
         let shims = shims.to_string_lossy().into_owned();
         let inherited = format!("{shims}:/usr/bin:/bin:/usr/sbin:/sbin");
-        let _guard = env_lock::lock_env([
-            ("GOOSE_SHELL", None),
-            (TOOL_SHIM_DIR_ENV, Some(shims.as_str())),
-            ("PATH", Some(inherited.as_str())),
-        ]);
-        let tool = ShellTool::new(true).unwrap();
-        let result = tool
-            .shell(ShellParams {
-                command: "command -v node; node -v".to_string(),
-                timeout_secs: None,
-            })
-            .await;
-        let output = extract_shell_output(&result);
+        let output = shell_tool_output_in_child(
+            "command -v node; node -v",
+            &[
+                (TOOL_SHIM_DIR_ENV, shims.as_str()),
+                ("PATH", inherited.as_str()),
+            ],
+            &["GOOSE_SHELL"],
+        );
         println!("stdout:\n{}stderr:\n{}", output.stdout, output.stderr);
         assert!(!output.stdout.starts_with(&shims), "{}", output.stdout);
     }
@@ -1203,7 +1242,7 @@ mod tests {
             })
             .await;
 
-        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.is_error, Some(false), "{}", extract_text(&result));
         assert!(extract_text(&result).contains("hello"));
     }
 
@@ -1314,7 +1353,7 @@ mod tests {
             })
             .await;
 
-        assert_eq!(result.is_error, Some(true));
+        assert_eq!(result.is_error, Some(true), "{}", extract_text(&result));
         assert!(extract_text(&result).contains("Command exited with code 7"));
     }
 
@@ -1333,7 +1372,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.is_error, Some(false), "{}", extract_text(&result));
         let observed = std::fs::canonicalize(extract_text(&result)).unwrap();
         let expected = std::fs::canonicalize(dir.path()).unwrap();
         assert_eq!(observed, expected);
@@ -1511,7 +1550,7 @@ mod tests {
             start.elapsed().as_secs() < 10,
             "shell tool should return quickly, not wait for backgrounded sleep"
         );
-        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.is_error, Some(false), "{}", extract_text(&result));
         let text = extract_text(&result);
         let shell_output = extract_shell_output(&result);
         let background_pid = text
@@ -1566,7 +1605,7 @@ mod tests {
             start.elapsed().as_secs() < 10,
             "shell should return shortly after the timeout, not wait for the command"
         );
-        assert_eq!(result.is_error, Some(true));
+        assert_eq!(result.is_error, Some(true), "{}", extract_text(&result));
         let shell_output = extract_shell_output(&result);
         assert!(shell_output.timed_out, "command should be marked timed_out");
         assert!(

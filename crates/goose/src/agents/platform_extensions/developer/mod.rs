@@ -303,7 +303,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(write.is_error, Some(false));
+        assert_eq!(write.is_error, Some(false), "{}", first_text(&write));
         assert_eq!(
             fs::read_to_string(cwd.join("notes.txt")).unwrap(),
             "first line"
@@ -322,7 +322,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(edit.is_error, Some(false));
+        assert_eq!(edit.is_error, Some(false), "{}", first_text(&edit));
         assert_eq!(
             fs::read_to_string(cwd.join("notes.txt")).unwrap(),
             "updated line"
@@ -349,7 +349,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.is_error, Some(false), "{}", first_text(&result));
         let observed = std::fs::canonicalize(first_text(&result)).unwrap();
         let expected = std::fs::canonicalize(&cwd).unwrap();
         assert_eq!(observed, expected);
