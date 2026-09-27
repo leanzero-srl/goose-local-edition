@@ -276,9 +276,9 @@ function lineTone(glance: NodeGlance): string {
     case 'heldByBuild':
     case 'keyMissing':
     case 'failing':
-      return cx(TONE_TEXT.err, WEIGHT.semibold);
+      return cx('text-lz-body', TONE_TEXT.err, WEIGHT.semibold);
     case 'needsStep':
-      return cx(TONE_TEXT.warn, WEIGHT.semibold);
+      return cx('text-lz-body', TONE_TEXT.warn, WEIGHT.semibold);
     default:
       return TYPE.body;
   }
@@ -563,7 +563,7 @@ export function NodeCard({
       <div className="flex flex-wrap items-center gap-1.5">
         <KindChip kind={def.kind} />
         {glance.where && <WhereChip where={glance.where} />}
-        <span className="ml-auto">
+        <span className="ml-auto inline-flex">
           <StateChip state={glance.state} />
         </span>
       </div>
@@ -670,7 +670,7 @@ export function NodeCard({
             {intl.formatMessage(i18n.actionEdit)}
           </Button>
         )}
-        <span className="ml-auto">
+        <span className="ml-auto inline-flex">
           <MoreMenu node={node} onAction={onAction} />
         </span>
       </div>
