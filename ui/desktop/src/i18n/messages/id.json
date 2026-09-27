@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Sembunyikan sampai mesin tenang lagi"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Kecilkan jadi pil"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Sembunyikan kartu ini — kembalikan dari bagian bawah bilah samping atau Pengaturan › Aplikasi"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Sembunyikan atau matikan jendela mengambang"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Sembunyikan untuk sekarang"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Kembali saat mesin bekerja lagi"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Anda bisa mematikan ini dari sini"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Mengerti"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# permintaan berjalan}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Tidak diperbarui"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Matikan jendela mengambang"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Nyalakan lagi di Pengaturan › Aplikasi"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Jendela mengambang dimatikan"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Nyalakan lagi di Pengaturan › Aplikasi."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Sesi tanpa judul"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Mati"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Jendela kecil di atas aplikasi lain, di sudut tempat Anda menyeretnya. Tidak pernah mengambil fokus, dan menutupnya menyembunyikannya sampai mesin tenang lagi."
+    "defaultMessage": "Jendela kecil di atas aplikasi lain, di sudut tempat Anda menyeretnya. Tidak pernah mengambil fokus. Tombol tutupnya menyembunyikannya sampai mesin bekerja lagi, atau mematikannya."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Di bilah samping"

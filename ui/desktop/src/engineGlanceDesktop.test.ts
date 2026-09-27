@@ -67,14 +67,21 @@ function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
   const saved: GlancePrefs[] = [];
   const openEngine = vi.fn();
   const openSession = vi.fn();
+  // The goose window in front hears "turned off" only while goose IS in front (main's rule).
+  const told: string[] = [];
   const desktop = new EngineGlanceDesktop({
     port,
     appInFront: () => facts.inFront,
     savePrefs: (p) => saved.push(p),
     openEngine,
     openSession,
+    tellTurnedOff: () => {
+      if (!facts.inFront) return false;
+      told.push('turned-off');
+      return true;
+    },
   });
-  return { desktop, state, facts, saved, openEngine, openSession };
+  return { desktop, state, facts, saved, told, openEngine, openSession };
 }
 
 const writing = glancePush(runningSnapshot(GENERATING_STATUS));
@@ -192,9 +199,10 @@ describe('EngineGlanceDesktop — the floating window’s life', () => {
     const { desktop, saved } = setup();
     desktop.update(writing);
     desktop.handle({ type: 'size', width: 300, height: 180 });
+    const before = saved.length;
     desktop.handle({ type: 'drag-start', screenX: 10, screenY: 10 });
     desktop.handle({ type: 'drag-end' });
-    expect(saved).toHaveLength(0);
+    expect(saved).toHaveLength(before);
   });
 
   it('a remembered display that is gone: the same corner of the primary display', () => {
@@ -229,9 +237,96 @@ describe('EngineGlanceDesktop — the floating window’s life', () => {
   });
 });
 
+describe('EngineGlanceDesktop — Q-224: turned off from the window itself', () => {
+  it('"Turn off the floating window": the setting to Off through the one save, the window destroyed', () => {
+    const { desktop, state, saved } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(true);
+    desktop.handle({ type: 'turn-off' });
+    const last = saved[saved.length - 1];
+    expect(last).toEqual({ ...writing.prefs, desktopHintSeen: true, desktop: 'off' });
+    expect(state.visible).toBe(false);
+    expect(state.exists).toBe(false);
+    // main republishes with the saved prefs: nothing comes back while it is Off, live or not.
+    desktop.update(withPrefs(writing, last));
+    expect(state.calls.filter((c) => c === 'ensure')).toHaveLength(1);
+  });
+
+  it('"Hide for now" writes nothing: the setting stays as it was', () => {
+    const { desktop, saved } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    const before = saved.length;
+    desktop.handle({ type: 'close' });
+    expect(saved).toHaveLength(before);
+  });
+
+  it('goose in the background at the click: the notice waits for a goose window in front, once', () => {
+    const { desktop, facts, told } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    desktop.handle({ type: 'turn-off' });
+    expect(told).toEqual([]);
+    // Every snapshot re-decides; the person is still in the other app.
+    desktop.refresh();
+    expect(told).toEqual([]);
+    facts.inFront = true;
+    desktop.refresh();
+    expect(told).toEqual(['turned-off']);
+    desktop.refresh();
+    expect(told).toEqual(['turned-off']);
+  });
+
+  it('goose in front at the click ("whenever the engine works"): told at once', () => {
+    const { desktop, told } = setup({ inFront: true });
+    desktop.update(withPrefs(writing, { desktop: 'busy' }));
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    desktop.handle({ type: 'turn-off' });
+    expect(told).toEqual(['turned-off']);
+  });
+
+  it('turned off from Settings › App: no notice — the person is already looking at the way back', () => {
+    const { desktop, facts, told } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    desktop.update(withPrefs(writing, { desktop: 'off' }));
+    facts.inFront = true;
+    desktop.refresh();
+    expect(told).toEqual([]);
+  });
+});
+
+describe('EngineGlanceDesktop — Q-224: the one-time hint', () => {
+  it('the first time the window ever appears, it is marked seen — once, and not before it shows', () => {
+    const { desktop, facts, saved } = setup({ inFront: true });
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    // Made warm and hidden while goose is in front: not seen yet.
+    expect(saved.filter((p) => p.desktopHintSeen)).toHaveLength(0);
+    facts.inFront = false;
+    desktop.refresh();
+    expect(saved.filter((p) => p.desktopHintSeen)).toHaveLength(1);
+    // Shown again later: nothing more to mark.
+    facts.inFront = true;
+    desktop.refresh();
+    facts.inFront = false;
+    desktop.refresh();
+    expect(saved.filter((p) => p.desktopHintSeen)).toHaveLength(1);
+  });
+
+  it('already seen (stored): nothing is written when it shows', () => {
+    const { desktop, saved } = setup();
+    desktop.update(withPrefs(writing, { desktopHintSeen: true }));
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(saved).toHaveLength(0);
+  });
+});
+
 describe('isGlancePipAction — what the window may ask', () => {
   it('accepts the actions it sends and nothing else', () => {
     expect(isGlancePipAction({ type: 'size', width: 300, height: 120 })).toBe(true);
+    expect(isGlancePipAction({ type: 'turn-off' })).toBe(true);
     expect(isGlancePipAction({ type: 'size', width: 0, height: 120 })).toBe(false);
     expect(isGlancePipAction({ type: 'open-session', sessionId: '' })).toBe(false);
     expect(isGlancePipAction({ type: 'drag-move', screenX: Number.NaN, screenY: 1 })).toBe(false);

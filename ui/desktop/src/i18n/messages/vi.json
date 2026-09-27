@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Trò chuyện · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Ẩn cho đến khi động cơ yên lại"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Thu nhỏ thành viên thuốc"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ẩn thẻ này — đưa lại từ cuối thanh bên hoặc Cài đặt › Ứng dụng"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Ẩn hoặc tắt cửa sổ nổi"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Ẩn tạm thời"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Hiện lại vào lần tới động cơ làm việc"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Bạn có thể tắt cửa sổ này từ đây"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Đã hiểu"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# yêu cầu đang chạy}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Chưa làm mới"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Tắt cửa sổ nổi"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Bật lại trong Cài đặt › Ứng dụng"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Đã tắt cửa sổ nổi"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Bật lại trong Cài đặt › Ứng dụng."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Phiên chưa đặt tên"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Tắt"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Một cửa sổ nhỏ trên các ứng dụng khác, ở góc bạn kéo tới. Nó không bao giờ giành tiêu điểm, và đóng nó sẽ ẩn cho đến khi động cơ yên lại."
+    "defaultMessage": "Một cửa sổ nhỏ trên các ứng dụng khác, ở góc bạn kéo tới. Nó không bao giờ giành tiêu điểm. Nút đóng của nó ẩn nó cho đến khi động cơ làm việc lại, hoặc tắt nó."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Trong thanh bên"

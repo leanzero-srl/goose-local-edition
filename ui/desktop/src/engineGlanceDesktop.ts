@@ -1,4 +1,5 @@
 import {
+  DEFAULT_GLANCE_CORNER,
   ENGINE_GLANCE_CHANNEL,
   type GlanceCorner,
   type GlancePrefs,
@@ -27,7 +28,10 @@ export type GlancePipAction =
   | { type: 'open-engine' }
   | { type: 'open-session'; sessionId: string }
   | { type: 'collapse'; collapsed: boolean }
+  /** "Hide for now": snoozed for this live spell. */
   | { type: 'close' }
+  /** "Turn off the floating window": the setting to Off, as Settings › App writes it (Q-224). */
+  | { type: 'turn-off' }
   | { type: 'drag-start'; screenX: number; screenY: number }
   | { type: 'drag-move'; screenX: number; screenY: number }
   | { type: 'drag-end' }
@@ -42,6 +46,7 @@ export function isGlancePipAction(value: unknown): value is GlancePipAction {
   switch (v.type) {
     case 'open-engine':
     case 'close':
+    case 'turn-off':
     case 'drag-end':
       return true;
     case 'open-session':
@@ -90,6 +95,12 @@ export interface GlanceDesktopDeps {
   savePrefs(next: GlancePrefs): void;
   openEngine(): void;
   openSession(sessionId: string): void;
+  /**
+   * Tell the goose window in front that the person turned the desktop window off from it (Q-224).
+   * false = no goose window is in front to say it (goose is in the background); asked again the
+   * next time something is re-decided, which is when a goose window comes to the front.
+   */
+  tellTurnedOff(): boolean;
 }
 
 /** px from the work area's edges — the gap macOS leaves around its own Picture in Picture. */
@@ -98,6 +109,7 @@ export const GLANCE_MARGIN = 16;
 export class EngineGlanceDesktop {
   private push: GlancePush | null = null;
   private snoozed = false;
+  private turnedOffUntold = false;
   private size: { width: number; height: number } | null = null;
   private drag: { pointerX: number; pointerY: number; bounds: Rect; moved: boolean } | null = null;
 
@@ -113,6 +125,7 @@ export class EngineGlanceDesktop {
 
   /** Re-decide after a fact the glance does not carry changed (goose came to the front, or left). */
   refresh(): void {
+    if (this.turnedOffUntold && this.deps.tellTurnedOff()) this.turnedOffUntold = false;
     const { port } = this.deps;
     const push = this.push;
     const visible =
@@ -139,6 +152,8 @@ export class EngineGlanceDesktop {
     if (!port.isVisible() && this.drag == null) {
       port.setBounds(this.placedBounds(), false);
       port.showInactive();
+      // It has appeared: its one-time "you can turn this off from here" has had its showing.
+      if (!push.prefs.desktopHintSeen) this.savePrefs({ ...push.prefs, desktopHintSeen: true });
     }
   }
 
@@ -161,6 +176,13 @@ export class EngineGlanceDesktop {
         return;
       case 'close':
         this.snoozed = true;
+        this.refresh();
+        return;
+      case 'turn-off':
+        if (!this.push) return;
+        this.turnedOffUntold = true;
+        // main's save republishes the glance, whose refresh hides and destroys the window.
+        this.savePrefs({ ...this.push.prefs, desktop: 'off' });
         this.refresh();
         return;
       case 'size': {
@@ -240,6 +262,6 @@ export class EngineGlanceDesktop {
     const display =
       (place && this.deps.port.displays().find((d) => d.id === place.displayId)) ||
       this.deps.port.primaryDisplay();
-    return this.boundsIn(display, place?.corner ?? 'bottom-right');
+    return this.boundsIn(display, place?.corner ?? DEFAULT_GLANCE_CORNER);
   }
 }

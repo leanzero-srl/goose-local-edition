@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Чат · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Скрыть, пока движок снова не затихнет"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Свернуть в пилюлю"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Скрыть эту карточку — вернуть её можно внизу боковой панели или в Настройки › Приложение"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Скрыть или выключить плавающее окно"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Скрыть пока"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Вернётся, когда движок снова заработает"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Это можно выключить отсюда"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Понятно"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# запрос в работе} few {# запроса в работе} many {# запросов в работе} other {# запроса в работе}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Не обновлено"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Выключить плавающее окно"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Включить снова: Настройки › Приложение"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Плавающее окно выключено"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Включить его снова можно в Настройки › Приложение."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Сеанс без названия"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Выкл."
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус, а закрытие скрывает его, пока движок не затихнет."
+    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус. Кнопка закрытия скрывает его, пока движок снова не заработает, или выключает его."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "В боковой панели"

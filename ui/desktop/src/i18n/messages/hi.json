@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "चैट · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "इंजन के शांत होने तक छिपाएँ"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "गोली जितना छोटा करें"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "यह कार्ड छिपाएँ — साइडबार के नीचे से या Settings › ऐप से वापस लाएँ"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "फ़्लोटिंग विंडो छिपाएँ या बंद करें"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "अभी के लिए छिपाएँ"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "अगली बार इंजन के काम करने पर वापस आएगी"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "आप इसे यहीं से बंद कर सकते हैं"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "समझ गया"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# अनुरोध चल रहा है} other {# अनुरोध चल रहे हैं}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "ताज़ा नहीं"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "फ़्लोटिंग विंडो बंद करें"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Settings › ऐप में फिर से चालू करें"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "फ़्लोटिंग विंडो बंद की गई"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Settings › ऐप में इसे फिर से चालू करें।"
+  },
   "engineGlance.untitled": {
     "defaultMessage": "बिना शीर्षक का सत्र"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "बंद"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "आपके अन्य ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप उसे खींचें। यह कभी फ़ोकस नहीं लेती, और बंद करने पर इंजन के शांत होने तक छिपी रहती है।"
+    "defaultMessage": "आपके अन्य ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप उसे खींचें। यह कभी फ़ोकस नहीं लेती। इसका बंद करने वाला बटन इसे इंजन के फिर से काम करने तक छिपाता है, या इसे बंद कर देता है।"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "साइडबार में"

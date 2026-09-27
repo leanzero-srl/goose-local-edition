@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "チャット · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "エンジンが落ち着くまで隠す"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "ピルに縮小"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "このカードを隠す — サイドバーの下部か 設定 › アプリ から戻せます"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "フローティングウィンドウを隠すかオフにする"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "今は隠す"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "次にエンジンが動くときに戻ります"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "ここからオフにできます"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "OK"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# 件のリクエストを処理中}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "未更新"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "フローティングウィンドウをオフにする"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "設定 › アプリ で再びオンにできます"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "フローティングウィンドウをオフにしました"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "設定 › アプリ で再びオンにできます。"
+  },
   "engineGlance.untitled": {
     "defaultMessage": "無題のセッション"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "オフ"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "他のアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に留まります。フォーカスを奪わず、閉じるとエンジンが落ち着くまで隠れます。"
+    "defaultMessage": "他のアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に留まります。フォーカスを奪いません。閉じるボタンで、エンジンが再び動くまで隠すか、オフにできます。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "サイドバー内"

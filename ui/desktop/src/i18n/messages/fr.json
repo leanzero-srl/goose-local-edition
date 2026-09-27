@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Masquer jusqu’à ce que le moteur soit calme"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Réduire en pastille"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Masquer cette carte — la retrouver au pied de la barre latérale ou dans Paramètres › Application"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Masquer ou désactiver la fenêtre flottante"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Masquer pour l’instant"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "De retour la prochaine fois que le moteur travaille"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Vous pouvez désactiver ceci d’ici"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Compris"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# requête en cours} other {# requêtes en cours}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Non actualisé"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Désactiver la fenêtre flottante"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Réactivez-la dans Paramètres › Application"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Fenêtre flottante désactivée"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Réactivez-la dans Paramètres › Application."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Session sans titre"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Désactivé"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Une petite fenêtre au-dessus de vos autres apps, dans le coin où vous la déposez. Elle ne prend jamais le focus, et la fermer la masque jusqu’à ce que le moteur soit calme."
+    "defaultMessage": "Une petite fenêtre au-dessus de vos autres apps, dans le coin où vous la déposez. Elle ne prend jamais le focus. Son bouton de fermeture la masque jusqu’à ce que le moteur travaille de nouveau, ou la désactive."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Dans la barre latérale"

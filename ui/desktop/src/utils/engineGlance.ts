@@ -43,6 +43,11 @@ import { MLX_DISTRIBUTED_STALE_MS, snapshotPhase } from './mlxTray';
  */
 
 export const ENGINE_GLANCE_CHANNEL = 'engine-glance';
+/**
+ * main → the focused goose window: the person turned the desktop window off from the window itself
+ * (Q-224), so the app says it happened and where it comes back from.
+ */
+export const ENGINE_GLANCE_TURNED_OFF_CHANNEL = 'engine-glance-turned-off';
 
 /**
  * What the engine is doing, as the glance headlines it. The tile's activity words while it is up
@@ -149,13 +154,22 @@ export interface GlancePrefs {
   desktopCollapsed: boolean;
   /** Where the desktop window sits: a corner of a display, by the display's id. */
   desktopPlace: { displayId: number; corner: GlanceCorner } | null;
+  /**
+   * The desktop window has appeared at least once, so its one-time "you can turn this off from
+   * here" hint has had its showing (Q-224). Set by main the first time it shows the window.
+   */
+  desktopHintSeen: boolean;
 }
+
+/** The corner the desktop window takes before the person drags it anywhere. */
+export const DEFAULT_GLANCE_CORNER: GlanceCorner = 'bottom-right';
 
 export const DEFAULT_GLANCE_PREFS: GlancePrefs = {
   inApp: true,
   desktop: 'away',
   desktopCollapsed: false,
   desktopPlace: null,
+  desktopHintSeen: false,
 };
 
 export interface GlancePush {
@@ -490,6 +504,7 @@ export function isGlancePrefs(value: unknown): value is GlancePrefs {
     typeof v.desktop === 'string' &&
     DESKTOP_MODES.has(v.desktop) &&
     typeof v.desktopCollapsed === 'boolean' &&
+    typeof v.desktopHintSeen === 'boolean' &&
     (place === null ||
       (place != null &&
         typeof place === 'object' &&

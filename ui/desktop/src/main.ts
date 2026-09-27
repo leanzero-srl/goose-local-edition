@@ -161,6 +161,7 @@ import { isMlxRemoteReport, remoteLiveBase, type MlxRemoteReport } from './utils
 import { MLX_ENGINE_SNAPSHOT_CHANNEL } from './utils/mlxEngineMonitor';
 import {
   ENGINE_GLANCE_CHANNEL,
+  ENGINE_GLANCE_TURNED_OFF_CHANNEL,
   NO_SESSIONS,
   buildEngineGlance,
   glancePrefsOf,
@@ -2282,6 +2283,15 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
     app.focus({ steal: true });
     if (mlxActionWindow()) openTraySession(sessionId);
     else void createNewWindow(app);
+  },
+  // Turned off from the floating window (Q-224): the goose window in front says so, with the way
+  // back. The window is a non-activating panel, so goose is usually in the background at that
+  // click; the controller asks again on the refresh a goose window's focus brings (below).
+  tellTurnedOff: () => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (!win || win.isDestroyed()) return false;
+    win.webContents.send(ENGINE_GLANCE_TURNED_OFF_CHANNEL);
+    return true;
   },
 });
 const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
