@@ -837,11 +837,16 @@ impl SwarmProvider {
             ));
         }
 
-        let strategy = match strategy_build(
-            crate::config::Config::global(),
-            crate::nodes::acp::this_mac_name().await,
-            &model_config.model_name,
-        ) {
+        let strategy = match crate::nodes::parse_route_model(&model_config.model_name) {
+            // A plain `swarm-build` reads nothing of the nodes (byte-identical to before).
+            Some(RouteModel::BuildStrategy { .. }) => strategy_build(
+                crate::config::Config::global(),
+                crate::nodes::acp::this_mac_name().await,
+                &model_config.model_name,
+            ),
+            _ => Ok(None),
+        };
+        let strategy = match strategy {
             Ok(strategy) => strategy,
             Err(refusal) => {
                 return Ok(stream_from_single_message(
