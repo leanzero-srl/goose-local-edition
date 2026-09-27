@@ -136,8 +136,18 @@ pub enum RankProgram {
     /// peer whose wrapper evicts by mlx_lm's type counts alone would reuse a different prefix and
     /// run a different number of prefill steps. `mlxLmServerRowProcessors` (a 3.0.59 requester)
     /// still reads, with `keep_newest_prefix` off: that requester's ranks evict upstream's way.
+    ///
+    /// Tagged `mlxLmServerPrefillYield` since Q-231: `prefill_step_yields` ends mlx_lm's step loop
+    /// after every step that read prompt tokens, so rows whose client left are removed and a new
+    /// request is taken between prompt slices, not after the loop's whole count of them. Which step
+    /// each rank runs next changes, and every rank must end the loop at the same step (a peer that
+    /// ran on would be in the model's collectives while this Mac shares the removals), so a peer
+    /// whose wrapper keeps upstream's loop must refuse the rank. `mlxLmServerNewestPrefix` (a 3.0.60
+    /// requester) still reads, with `prefill_step_yields` off: that requester's ranks loop upstream's
+    /// way alike.
     #[serde(
-        rename = "mlxLmServerNewestPrefix",
+        rename = "mlxLmServerPrefillYield",
+        alias = "mlxLmServerNewestPrefix",
         alias = "mlxLmServerRowProcessors",
         alias = "mlxLmServerSkeletonGuard",
         alias = "mlxLmServerTransientTail",
@@ -201,6 +211,11 @@ pub enum RankProgram {
         /// left (`rank_boundary.py` `pop_keeping_newest_prefix`, Q-182).
         #[serde(default)]
         keep_newest_prefix: bool,
+        /// Every rank ends mlx_lm's step loop after a step that read prompt tokens
+        /// (`rank_wrapper.py` `PromptStepBudget`, Q-231): the loop's removals and the next request
+        /// are handled between prompt slices.
+        #[serde(default)]
+        prefill_step_yields: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -408,6 +423,7 @@ pub fn rank_specs(
             xml_skeleton_guard: true,
             row_processors: true,
             keep_newest_prefix: true,
+            prefill_step_yields: true,
             sampling_defaults: Box::default(),
         }
     })
@@ -1051,6 +1067,7 @@ pub(crate) mod tests {
                 xml_skeleton_guard: true,
                 row_processors: true,
                 keep_newest_prefix: true,
+                prefill_step_yields: true,
                 sampling_defaults: _,
             }
         ));
@@ -1839,6 +1856,14 @@ assert cached["cached_tokens"] == 48647 and cached["prefilled_tokens"] == 50695
 restored_whole = live_request("r", 0.0, 1.0, prompt_tokens=48648, cached_tokens=48647,
                               prefill_started=0.5, prefilled=48647)
 assert restored_whole["prompt_tokens_per_second"] is None, "nothing read yet: no rate"
+# Q-231, E2E #3m: a fact check goose dropped (POST 20:16:14.250Z, its stop named 3.642 s later)
+# still holds the batch; the user's call waits behind it without being held for room.
+dropped = row_handling("127.0.0.1:50003", {"reason": "cancelled_by_client"}, 3.892, True, 0.25, False)
+assert dropped == {"client": "127.0.0.1:50003", "held_for_room": False,
+                   "stopped": {"reason": "cancelled_by_client"}, "stopped_after_s": 3.642,
+                   "leaving": True}, dropped
+waiting = row_handling("127.0.0.1:50100", None, None, False, 0.0, True)
+assert waiting["stopped_after_s"] is None and waiting["held_for_room"] and not waiting["leaving"]
 print("ok")
 "#;
         let out = std::process::Command::new("/usr/bin/python3")
@@ -4265,6 +4290,410 @@ print("GOOSE_TEST " + json.dumps({"arms": arms, "upstream": upstream, "cap": CAP
         );
     }
 
+    /// Q-231 through the REAL mlx_lm 0.31.3 generation loop (`ResponseGenerator._generate` as the
+    /// wrapper runs it, a one-layer model on the CPU, the budget a group's COUNT of steps): E2E #3m
+    /// turn 3 replayed in its order. Three end-of-turn fact checks are admitted together (#3m:
+    /// 1,775 / 1,770 / 5,453 tokens at 20:16:14Z; here 60 / 60 / 80 read four tokens a step),
+    /// goose drops all three before the engine's first prompt step reports (turn_priority,
+    /// 20:16:17.067Z), and the user's call arrives while that step runs (20:16:20.9Z). With
+    /// `prefill_step_yields` the three rows are in ONE prompt step and never generate; the loop
+    /// removes them at that step's end and the user's row is read next. NEGATIVE CONTROL, the
+    /// 3.0.63 program (`prefill_step_yields` off): mlx_lm's loop runs its whole count — the three
+    /// dropped rows are read to their end and generate, #3m's `steps` frozen at 1116 and uid 29
+    /// "generated 1, removed" — and only then takes the user's row. In both, /v1/status lists every
+    /// row the batch holds: while the loop keeps the dropped rows, each is `leaving`, names its
+    /// client and its `cancelled_by_client` stop, the user's row says it waits unheld, and the
+    /// rank's state names each row's request; a request rank 0 holds for room says
+    /// `held_for_room`. When the rows are gone the table is empty.
+    #[test]
+    fn a_dropped_request_leaves_the_batch_at_the_next_prompt_step_and_is_listed_until_it_does() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+import socket as sk
+from mlx_lm.models import llama
+
+# MLX's CPU reports no working-set size; BatchGenerator asks for it only to wire memory.
+mx.metal.is_available = lambda: False
+VOCAB = 64
+END = VOCAB - 1
+SYSTEM = 12
+
+
+class Detokenizer:
+    last_segment = ""
+
+    def add_token(self, token):
+        self.last_segment = "w"
+
+
+class Tokenizer:
+    has_tool_calling = False
+    has_thinking = False
+    tool_parser = None
+    eos_token_ids = {END}
+    eos_token_id = END
+
+    def encode(self, text, add_special_tokens=False):
+        return [1]
+
+    def convert_ids_to_tokens(self, ids):
+        return "<end>"
+
+    @property
+    def detokenizer(self):
+        return Detokenizer()
+
+
+tok = Tokenizer()
+model = llama.Model(llama.ModelArgs(model_type="llama", hidden_size=16, num_hidden_layers=1,
+    intermediate_size=32, num_attention_heads=2, rms_norm_eps=1e-5, vocab_size=VOCAB, num_key_value_heads=2))
+mx.eval(model.parameters())
+
+provider = responses.model_provider
+provider.tokenizer = tok
+provider.is_batchable = True
+provider.load_default = lambda: None
+provider.load = lambda *names: (model, tok)
+cli.prefill_step_size = 4
+responses.prompt_cache = server.LRUPromptCache(cli.prompt_cache_size)
+responses._state_machine_cache = {}
+responses._stop = False
+responses._rank = 0
+# A group's budget (TimeBudget on a distributed group): a count of steps, re-fitted every ten loops,
+# at mlx_lm's own defaults. Built without its __init__, which asks mx.distributed.init() for the
+# group — under the spec's JACCL env that waits for a peer this stand-in group never has.
+responses._time_budget = server.TimeBudget.__new__(server.TimeBudget)
+defaults = inspect.signature(server.TimeBudget.__init__).parameters
+responses._time_budget.__dict__.update(
+    _is_distributed=True, _budget=defaults["budget"].default,
+    _iterations=defaults["iterations"].default, _sync_frequency=defaults["sync_frequency"].default,
+    _start=None, _current_iterations=None, _loops=0, _time_spent=0)
+original_tokenize = lambda self, tokenizer, request, args: (list(request.ids), None, None, None)
+responses._tokenize = lambda tokenizer, request, args: (
+    list(request.ids), [list(request.ids[:SYSTEM]), list(request.ids[SYSTEM:])], ["system", "user"], "normal")
+
+
+def arguments(max_tokens):
+    return server.GenerationArguments(
+        model=server.ModelDescription("goose-test", None, None),
+        sampling=server.SamplingArguments(0.0, 1.0, 0, 0.0, 0.0, 0.0),
+        # The stand-in model never ends an answer itself: every row runs to what the loop decides.
+        logits=server.LogitsProcessorArguments({END: -1e9}, 1.0, 20, 0.0, 20, 0.0, 20),
+        stop_words=[], max_tokens=max_tokens, num_draft_tokens=0, logprobs=False, top_logprobs=0,
+        seed=None, chat_template_kwargs=None)
+
+
+steps, hooks, uid_request, generated = [], {}, {}, {}
+wrapper_prompt = mlx_generate.PromptProcessingBatch.prompt
+
+
+def hooked(self, tokens):
+    if tokens:
+        steps.append([batch_rows.get(uid) for uid in self.uids])
+        uid_request.update({uid: batch_rows.get(uid) for uid in self.uids})
+        hook = hooks.pop(len(steps), None)
+        if hook is not None:
+            hook()
+    return wrapper_prompt(self, tokens)
+
+
+mlx_generate.PromptProcessingBatch.prompt = hooked
+tracked_next = server.BatchGenerator.next
+
+
+def counting_next(self):
+    stepped = tracked_next(self)
+    for r in stepped[1]:
+        generated[uid_request.get(r.uid)] = generated.get(uid_request.get(r.uid), 0) + 1
+    return stepped
+
+
+server.BatchGenerator.next = counting_next
+
+
+def ask(length, first, max_tokens, port):
+    ours, theirs = sk.socketpair()
+    call = {"theirs": theirs, "started": threading.Event(), "done": threading.Event(), "pieces": 0,
+            "gone": None, "request": types.SimpleNamespace(
+                ids=[(first + i) % (VOCAB - 2) + 1 for i in range(length)], tools=None, request_type="chat")}
+    waiting = responses.requests.qsize()
+
+    def run():
+        try:
+            ctx, tokens = responses.generate(call["request"], arguments(max_tokens), None,
+                                             client=ours, address=("127.0.0.1", port))
+            call["started"].set()
+            for _ in tokens:
+                call["pieces"] += 1
+        except ClientGone as gone:
+            call["gone"] = str(gone)
+        finally:
+            call["started"].set()
+            call["done"].set()
+
+    threading.Thread(target=run, daemon=True).start()
+    while responses.requests.qsize() == waiting and not call["started"].is_set():
+        time.sleep(0.001)
+    return call
+
+
+def status():
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/status"
+    with urllib.request.urlopen(url, timeout=10) as reply:
+        return json.loads(reply.read())
+
+
+seen = {}
+checks = [ask(60, 0, 50, 50001), ask(60, 20, 50, 50002), ask(80, 40, 50, 50003)]
+user = {}
+
+
+user_sent = threading.Event()
+
+
+def first_step():
+    # goose drops the three calls (the sockets close) once the engine has them, before its first
+    # prompt step reports; the user's call arrives while that step runs.
+    for call in checks:
+        assert call["started"].wait(30)
+        call["theirs"].close()
+    user["call"] = ask(30, 7, 3, 50100)
+    user_sent.set()
+
+
+def second_step():
+    for call in checks:
+        assert call["done"].wait(30)
+    seen["second_step"] = status()
+    seen["second_step_state"] = published_state[0]
+
+
+hooks[1] = first_step
+hooks[2] = second_step
+engine = threading.Thread(target=responses._generate, daemon=True)
+engine.start()
+assert user_sent.wait(60), "the engine reached its first prompt step"
+assert user["call"]["done"].wait(60), "the user's call is answered"
+ids = {call["request"].goose_request_id for call in checks}
+user_id = user["call"]["request"].goose_request_id
+check_steps = [i + 1 for i, rows in enumerate(steps) if ids & set(rows)]
+user_steps = [i + 1 for i, rows in enumerate(steps) if user_id in rows]
+seen.update(
+    check_steps=len(check_steps), last_check_step=max(check_steps), user_first_step=min(user_steps),
+    check_generated=sum(generated.get(i, 0) for i in ids), user_pieces=user["call"]["pieces"],
+    gone=[call["gone"] for call in checks], check_ids=sorted(ids), user_id=user_id,
+)
+
+if spec.get("prefill_step_yields"):
+    # A request rank 0 takes while the batch has no room for it waits HELD: its row says so.
+    limit = prompt_cache_limit
+
+    def take_the_room():
+        global prompt_cache_limit
+        prompt_cache_limit = 1
+        seen["held_call"] = ask(20, 3, 2, 50300)
+
+    def held_step():
+        global prompt_cache_limit
+        seen["held"] = status()
+        prompt_cache_limit = limit
+
+    hooks[len(steps) + 1] = take_the_room
+    hooks[len(steps) + 2] = held_step
+    long_call = ask(40, 11, 2, 50200)
+    assert long_call["done"].wait(60)
+    held_call = seen.pop("held_call")
+    assert held_call["done"].wait(60)
+    seen["held_id"] = held_call["request"].goose_request_id
+
+seen["final"] = status()
+responses._stop = True
+engine.join(30)
+print("GOOSE_TEST " + json.dumps(seen))
+"#;
+        let plan = |program: &mut RankProgram, yields: bool| {
+            if let RankProgram::MlxLmServer {
+                prompt_cache_limit_bytes,
+                prefill_step_yields,
+                ..
+            } = program
+            {
+                // The 27B split's KV plan (Q-182's E2E #3h figure): three fact checks and the
+                // user's call fit beside each other, as on #3m (rows 3, then the user's alone).
+                *prompt_cache_limit_bytes = Some(17_333_813_248);
+                *prefill_step_yields = yields;
+            }
+        };
+        let (fixed, fixed_printed) =
+            run_wrapper_checks_with(&python, checks, |program| plan(program, true));
+        let (upstream, upstream_printed) =
+            run_wrapper_checks_with(&python, checks, |program| plan(program, false));
+
+        for (arm, seen) in [("yields", &fixed), ("3.0.63", &upstream)] {
+            assert_eq!(
+                seen["gone"],
+                serde_json::json!(["eof", "eof", "eof"]),
+                "{arm}: each dropped call was told its client left: {seen}"
+            );
+            assert_eq!(
+                seen["user_pieces"], 3,
+                "{arm}: the user's call answered: {seen}"
+            );
+            let last = &seen["final"];
+            assert_eq!(
+                last["requests"],
+                serde_json::json!([]),
+                "{arm}: once every row has left, no request is listed: {last}"
+            );
+            assert_eq!(last["num_running"], 0, "{arm}: {last}");
+            assert_eq!(
+                last["last_engine_stop"]["reason"], "cancelled_by_client",
+                "{arm}: {last}"
+            );
+        }
+
+        assert_eq!(
+            fixed["check_steps"], 1,
+            "the dropped calls are in the one prompt step that was running when they left: {fixed}"
+        );
+        assert_eq!(
+            fixed["check_generated"], 0,
+            "they never reach generation: {fixed}"
+        );
+        assert_eq!(
+            fixed["user_first_step"], 2,
+            "the user's call is read at the very next step: {fixed}"
+        );
+        let second = &fixed["second_step"];
+        let listed: Vec<&str> = second["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["request_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            listed,
+            [fixed["user_id"].as_str().unwrap()],
+            "at the user's first step the dropped rows are gone: {second}"
+        );
+
+        let reads = upstream["check_steps"].as_u64().unwrap();
+        assert!(
+            reads >= 15,
+            "negative control: mlx_lm's loop reads the dropped prompts to their end (80 tokens, 4 a \
+             step, after a 12-token system segment): {upstream}"
+        );
+        assert!(
+            upstream["check_generated"].as_u64().unwrap() >= 3,
+            "negative control: the dropped rows reach generation before the loop ends: {upstream}"
+        );
+        assert!(
+            upstream["user_first_step"].as_u64().unwrap()
+                > upstream["last_check_step"].as_u64().unwrap(),
+            "negative control: the user's call is read only after them: {upstream}"
+        );
+
+        // What the 3.0.63 loop held the user's call behind is now on /v1/status.
+        let second = &upstream["second_step"];
+        let rows = second["requests"].as_array().unwrap();
+        let leaving: Vec<&serde_json::Value> =
+            rows.iter().filter(|r| r["leaving"] == true).collect();
+        assert_eq!(
+            leaving.len(),
+            3,
+            "every row the batch still holds is listed: {second}"
+        );
+        let mut clients: Vec<&str> = leaving
+            .iter()
+            .map(|r| r["client"].as_str().unwrap())
+            .collect();
+        clients.sort();
+        assert_eq!(
+            clients,
+            ["127.0.0.1:50001", "127.0.0.1:50002", "127.0.0.1:50003"]
+        );
+        for row in &leaving {
+            assert_eq!(row["stopped"]["reason"], "cancelled_by_client", "{row}");
+            assert_eq!(row["stopped"]["phase"], "prefill", "{row}");
+            assert!(row["stopped_after_s"].is_number(), "{row}");
+            assert_eq!(row["status"], "running", "{row}");
+        }
+        let waiting = rows
+            .iter()
+            .find(|r| r["request_id"] == upstream["user_id"])
+            .unwrap_or_else(|| panic!("the user's call is listed: {second}"));
+        assert_eq!(
+            (
+                &waiting["phase"],
+                &waiting["held_for_room"],
+                &waiting["leaving"]
+            ),
+            (
+                &serde_json::json!("queued"),
+                &serde_json::json!(false),
+                &serde_json::json!(false)
+            ),
+            "the user's call waits for the engine's step, not for room: {waiting}"
+        );
+        assert_eq!(waiting["client"], "127.0.0.1:50100");
+        assert_eq!(
+            second["num_running"], 3,
+            "the rows still held count as running (no HTTP handler is in flight here): {second}"
+        );
+        assert_eq!(second["status"], "generating");
+        let named: std::collections::BTreeSet<&str> = second_state_requests(&upstream);
+        let ids: std::collections::BTreeSet<&str> = upstream["check_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            named, ids,
+            "GOOSE_RANK_STATE names the request of every row: {}",
+            upstream["second_step_state"]
+        );
+        let left: Vec<serde_json::Value> = upstream_printed
+            .lines()
+            .filter_map(|l| l.strip_prefix("GOOSE_RANK_ROW_LEFT "))
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(left.len(), 3, "{upstream_printed}");
+        for row in &left {
+            assert_eq!(row["stopped"], "cancelled_by_client", "{row}");
+            assert_eq!(row["how"], "removed", "{row}");
+            assert!(row["held_after_answer_s"].is_number(), "{row}");
+        }
+
+        let held = &fixed["held"];
+        let row = held["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["request_id"] == fixed["held_id"])
+            .unwrap_or_else(|| panic!("the held request is listed: {held}"));
+        assert_eq!(
+            (&row["phase"], &row["held_for_room"]),
+            (&serde_json::json!("queued"), &serde_json::json!(true)),
+            "a request rank 0 holds for room says so: {row}"
+        );
+        assert!(
+            fixed_printed.contains("GOOSE_RANK_ADMISSION"),
+            "{fixed_printed}"
+        );
+    }
+
+    fn second_state_requests(seen: &serde_json::Value) -> std::collections::BTreeSet<&str> {
+        seen["second_step_state"]["requests"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|v| v.as_str().unwrap())
+            .collect()
+    }
+
     /// Q-161: the skeleton guard (rank_xml_guard.py) built from a tokenizer that splits the wire's
     /// markers as the Qwen3.5 tokenizer does, against the real qwen3.8 chat template. At each fixed
     /// position only the template's continuation (or the end of the turn) is left; `</parameter>`
@@ -5787,12 +6216,59 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerNewestPrefix");
+        assert_eq!(json["program"], "mlxLmServerPrefillYield");
+        assert_eq!(json["prefill_step_yields"], true);
         assert_eq!(json["keep_newest_prefix"], true);
         assert_eq!(json["row_processors"], true);
         assert_eq!(json["xml_skeleton_guard"], true);
         assert_eq!(json["transient_tail_boundary"], true);
         assert_eq!(json["formation"]["rounds"], FORMATION_ROUNDS);
+
+        // A 3.0.60 requester's spec (the newest-prefix tag, no prefill_step_yields) runs mlx_lm's
+        // own step loop here: its own ranks run it too.
+        let mut newest = json.clone();
+        newest["program"] = "mlxLmServerNewestPrefix".into();
+        newest
+            .as_object_mut()
+            .unwrap()
+            .remove("prefill_step_yields");
+        let read: RankSpec = serde_json::from_value(newest).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                prefill_step_yields: false,
+                keep_newest_prefix: true,
+                ..
+            }
+        ));
+
+        // A 3.0.60 peer's goosed (its enum knows the newest-prefix tag, not this one) refuses this
+        // spec: its rank would run on in the model's collectives where this Mac's ends the loop.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum NewestPrefixProgram {
+            #[serde(
+                rename = "mlxLmServerNewestPrefix",
+                alias = "mlxLmServerRowProcessors",
+                alias = "mlxLmServerSkeletonGuard",
+                alias = "mlxLmServerTransientTail",
+                alias = "mlxLmServerFormation",
+                alias = "mlxLmServerPrefill",
+                alias = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<NewestPrefixProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
 
         // A 3.0.59 requester's spec (the row-processors tag, no keep_newest_prefix) evicts by
         // mlx_lm's type counts here: its own ranks evict that way too.
@@ -6220,9 +6696,14 @@ print("ok")
              \x20   def __init__(self):\n\
              \x20       self._generation_batch, self._prompt_batch = _Rows(), _Rows()\n\
              \x20       self._unprocessed_sequences, self._currently_processing = [], []\n\
+             \x20       self._prompt_tokens_counter = 0\n\
              \x20   def close(self): pass\n\
              \x20   def remove(self, uids): pass\n\
+             \x20   def insert_segments(self, segments, *a, **k): return []\n\
              \x20   def next(self): return [], []\n\
+             class GenerationContext:\n\
+             \x20   def stop(self): pass\n\
+             class TimeBudget: pass\n\
              class ResponseGenerator:\n\
              \x20   def _next_request(self, timeout=None): pass\n\
              \x20   def generate(self, request, args, progress_callback=None): pass\n\
