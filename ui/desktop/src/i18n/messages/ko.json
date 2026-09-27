@@ -2615,17 +2615,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "로그인하여 기기를 비공개 메시로 연결하세요. 비밀번호 없이 이메일로 받은 코드만 있으면 됩니다."
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "스웜 전체를 한곳에서: 자체 MLX 엔진, 클라우드 제공자 자격 증명, 스웜이 빌드에 쓰는 노드 풀."
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "클라우드 제공자"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "내 Mac"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "스웜 설정"
   },
   "linkDropNotice.details": {
     "defaultMessage": "세부 정보"
@@ -4061,6 +4052,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "{engine} 기반"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "엔진 섹션"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "엔진"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "내 Mac"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "모델"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "샘플링"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "채팅은 {peer}의 엔진이 응답합니다. 그 수치는 위 타일에 있습니다. 이 행들은 이 Mac 자체 엔진의 것입니다."
   },
@@ -4363,6 +4372,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "이전 분할이 {node}에서 아직 종료 중입니다 — 끝나면 goose가 복원합니다"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "LeanZero MLX 설정"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "{total}단계 중 {n}단계 · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "다음"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "내 Mac"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {Mac #대} other {#대 연결됨}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "다른 Mac 연결"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "모델"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "Mac에 {count}개"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "모델 받기"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "실행"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} 실행 중"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "모델 실행"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "노드"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, other {노드 #개}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "노드 추가"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "작성 중"
@@ -5264,6 +5318,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "노드"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "설정"
   },
@@ -5428,6 +5485,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "지금 제공 중"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "클라우드 제공자 관리"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Mac 및 모델 관리"
+  },
+  "nodes.sections": {
+    "defaultMessage": "노드 섹션"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "전략은 어떤 노드가 무엇을 맡는지 정합니다. 노드의 역할, 노드를 시도하는 순서, 다음 노드로 넘어가는 시점입니다. 그 전까지 채팅과 swarm 빌드는 노드 탭의 노드를 사용합니다."
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "전략은 이번 릴리스에서 제공됩니다"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "노드는 Mac이나 클라우드에서 작업을 맡길 수 있는 모델입니다. 채팅은 노드나 전략에서 시작하고, swarm 빌드는 전략을 사용합니다."
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "노드"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "전략"
+  },
+  "nodes.title": {
+    "defaultMessage": "노드"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."
@@ -6430,6 +6514,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "저장하고 연결 확인"
+  },
+  "providers.sections": {
+    "defaultMessage": "Providers 섹션"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "모델이 실행되는 곳: Mac의 LeanZero MLX 엔진과 로그인한 클라우드 제공자입니다. 노드에서 노드로 만드세요."
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "레시피 채팅 창에 표시되는 상단 프롬프트와 활동 버튼입니다."

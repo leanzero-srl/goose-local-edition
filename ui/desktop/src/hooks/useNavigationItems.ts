@@ -1,4 +1,4 @@
-import { Brain, Plug, Settings, Zap } from 'lucide-react';
+import { Brain, Network, Plug, Settings, Zap } from 'lucide-react';
 import { Goose } from '../components/icons';
 import type React from 'react';
 import { defineMessages, type IntlShape, type MessageDescriptor } from 'react-intl';
@@ -10,6 +10,9 @@ export interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   getTag?: () => string;
   tagAlign?: 'left' | 'right';
+  /** Shown only in the local edition or while the agent advertises the MLX engine — the swarm and
+   *  engine places have nothing to manage in an upstream-flavoured build without either. */
+  requires?: 'localOrMlx';
 }
 
 /**
@@ -33,12 +36,23 @@ export interface NavItem {
  * 2026-09-23 (owner): Agent Work and Benchmark left the pinned rows — each already has its own
  * sidebar section (desks / runs), and the section's title is what opens the view. Two doors to one
  * view read as duplication.
+ *
+ * 2026-09-27 (owner, Q-193): Nodes is the FIRST row — the models you hand work to, which a session
+ * starts from — and Swarm Settings left Providers for it. Providers keeps where models come from
+ * (LeanZero MLX, Cloud Providers).
  */
 export const NAV_ITEMS: NavItem[] = [
+  { id: 'nodes', path: '/nodes', label: 'Nodes', icon: Network, requires: 'localOrMlx' },
   { id: 'extensions', path: '/extensions', label: 'MCPs', icon: Plug },
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
   { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
-  { id: 'leanzero-swarm', path: '/leanzero-swarm', label: 'Providers', icon: Goose },
+  {
+    id: 'leanzero-swarm',
+    path: '/leanzero-swarm',
+    label: 'Providers',
+    icon: Goose,
+    requires: 'localOrMlx',
+  },
 ];
 
 /** Settings is rendered separately, pinned to the bottom of the sidebar. */
@@ -52,6 +66,7 @@ export const SETTINGS_NAV_ITEM: NavItem = {
 // Translation descriptors for nav labels. Kept here next to NAV_ITEMS so the two
 // stay in sync.
 const navItemMessages = defineMessages({
+  nodes: { id: 'navigation.itemNodes', defaultMessage: 'Nodes' },
   extensions: { id: 'navigation.itemMcps', defaultMessage: 'MCPs' },
   skills: {
     id: 'navigation.itemSkills',

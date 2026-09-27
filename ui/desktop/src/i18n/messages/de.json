@@ -2615,17 +2615,8 @@
   "leanzeroLink.tagline": {
     "defaultMessage": "Melde dich an, um deine Geräte zu einem privaten Mesh zu verbinden — kein Passwort, nur ein Code per E-Mail."
   },
-  "leanzeroSwarm.subtitle": {
-    "defaultMessage": "Ein Ort für den ganzen Schwarm: die hauseigene MLX-Engine, Cloud-Zugangsdaten und der Node-Pool, mit dem der Schwarm baut."
-  },
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Cloud-Anbieter"
-  },
-  "leanzeroSwarm.tabMacs": {
-    "defaultMessage": "Meine Macs"
-  },
-  "leanzeroSwarm.tabSwarm": {
-    "defaultMessage": "Schwarm-Einstellungen"
   },
   "linkDropNotice.details": {
     "defaultMessage": "Details"
@@ -4061,6 +4052,24 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngine.poweredBy": {
+    "defaultMessage": "Bereitgestellt von {engine}"
+  },
+  "mlxEngine.sections": {
+    "defaultMessage": "Engine-Bereiche"
+  },
+  "mlxEngine.tabEngine": {
+    "defaultMessage": "Engine"
+  },
+  "mlxEngine.tabMacs": {
+    "defaultMessage": "Meine Macs"
+  },
+  "mlxEngine.tabModels": {
+    "defaultMessage": "Modelle"
+  },
+  "mlxEngine.tabSampling": {
+    "defaultMessage": "Sampling"
+  },
   "mlxEngineView.detailsElsewhereRemote": {
     "defaultMessage": "Der Chat wird von der Engine auf {peer} bedient — ihre Werte stehen in der Kachel oben. Diese Zeilen gehören zur Engine dieses Mac."
   },
@@ -4363,6 +4372,51 @@
   },
   "mlxRestore.waitingPrevious": {
     "defaultMessage": "Die vorherige Aufteilung wird auf {node} noch beendet — goose stellt sie wieder her, sobald das abgeschlossen ist"
+  },
+  "mlxSetup.aria": {
+    "defaultMessage": "LeanZero MLX einrichten"
+  },
+  "mlxSetup.compact": {
+    "defaultMessage": "Schritt {n} von {total} · {label}"
+  },
+  "mlxSetup.next": {
+    "defaultMessage": "Als Nächstes"
+  },
+  "mlxSetup.step1": {
+    "defaultMessage": "Deine Macs"
+  },
+  "mlxSetup.step1Done": {
+    "defaultMessage": "{count, plural, =1 {# Mac} other {# verbunden}}"
+  },
+  "mlxSetup.step1Next": {
+    "defaultMessage": "Verbinde deine anderen Macs"
+  },
+  "mlxSetup.step2": {
+    "defaultMessage": "Modelle"
+  },
+  "mlxSetup.step2Done": {
+    "defaultMessage": "{count} auf deinen Macs"
+  },
+  "mlxSetup.step2Next": {
+    "defaultMessage": "Hol dir ein Modell"
+  },
+  "mlxSetup.step3": {
+    "defaultMessage": "Ausführen"
+  },
+  "mlxSetup.step3Done": {
+    "defaultMessage": "{model} läuft"
+  },
+  "mlxSetup.step3Next": {
+    "defaultMessage": "Starte ein Modell"
+  },
+  "mlxSetup.step4": {
+    "defaultMessage": "Nodes"
+  },
+  "mlxSetup.step4Done": {
+    "defaultMessage": "{count, plural, one {# Node} other {# Nodes}}"
+  },
+  "mlxSetup.step4Next": {
+    "defaultMessage": "Node hinzufügen"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Schreibt"
@@ -5264,6 +5318,9 @@
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
+  "navigation.itemNodes": {
+    "defaultMessage": "Nodes"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Einstellungen"
   },
@@ -5428,6 +5485,33 @@
   },
   "nodeModelCell.servingNow": {
     "defaultMessage": "läuft gerade"
+  },
+  "nodes.manageCloud": {
+    "defaultMessage": "Cloud-Anbieter verwalten"
+  },
+  "nodes.manageMacs": {
+    "defaultMessage": "Macs und Modelle verwalten"
+  },
+  "nodes.sections": {
+    "defaultMessage": "Nodes-Bereiche"
+  },
+  "nodes.strategiesSoonBody": {
+    "defaultMessage": "Eine Strategie wird festlegen, welcher Node was übernimmt: seine Rollen, die Reihenfolge, in der Nodes versucht werden, und wann der nächste dran ist. Bis dahin nutzen Chats und Schwarm-Builds die Nodes im Tab Nodes."
+  },
+  "nodes.strategiesSoonTitle": {
+    "defaultMessage": "Strategien kommen in diesem Release"
+  },
+  "nodes.subtitle": {
+    "defaultMessage": "Ein Node ist ein Modell, dem du Arbeit übergeben kannst, auf deinen Macs oder in der Cloud. Chats starten auf einem Node oder einer Strategie; Schwarm-Builds nutzen eine Strategie."
+  },
+  "nodes.tabNodes": {
+    "defaultMessage": "Nodes"
+  },
+  "nodes.tabStrategies": {
+    "defaultMessage": "Strategien"
+  },
+  "nodes.title": {
+    "defaultMessage": "Nodes"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Der Server startet möglicherweise gerade oder ist vorübergehend nicht verfügbar."
@@ -6430,6 +6514,18 @@
   },
   "providerSetupActions.submit": {
     "defaultMessage": "Speichern und Verbindung prüfen"
+  },
+  "providers.sections": {
+    "defaultMessage": "Providers-Bereiche"
+  },
+  "providers.subtitle": {
+    "defaultMessage": "Wo deine Modelle laufen: die LeanZero MLX-Engine auf deinen Macs und die Cloud-Anbieter, bei denen du angemeldet bist. Mach sie unter Nodes zu Nodes."
+  },
+  "providers.tabMlx": {
+    "defaultMessage": "LeanZero MLX"
+  },
+  "providers.title": {
+    "defaultMessage": "Providers"
   },
   "recipeActivityEditor.activitiesDescription": {
     "defaultMessage": "Die einleitenden Prompts und Aktivitätsschaltflächen, die im Rezept-Chatfenster angezeigt werden."
