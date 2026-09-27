@@ -27,3 +27,4 @@
 | E2E #3f | 3.0.57 | split tensor 27B, sampled, Q-161 guard armed | jira-migration-readiness | 0 | stopped at ~6 min: a write call (1,692 chars) then 3,251 chars of `!
 </parameter>
 </function>` looping outside the call (Q-161 reopened) | — | — | — | livecheck GREEN all turn (running session marked, Q-147 live); the Q-151 line "Writing for 5m 5s · 1.9k tokens · 10.9 tok/s — a tool call to write" + the forming disclosure showed the loop in words (Q-151 live); runwatch missed it (size rules only) → words rule added |
+| E2E #5b | 3.0.58 | split PIPELINE Flash, sampled | python-stdlib-backport | 0 | stopped at ~29 min mid-turn: 17 agent calls; 97% cached until a 6,885-token VENDORED.md write (a legit 12 KB file), then 0 cached per 60k call (~4 min each, Q-179); the forming panel showed 1 char of a 4.6k-token write (Q-178) | 17 | 40,058→46,926 then 0 | sampled | livecheck green (after the harness title fix); runwatch size alarm = a legit write (reworded as an alarm) |
