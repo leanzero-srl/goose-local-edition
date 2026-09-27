@@ -12,6 +12,7 @@ pub mod cli;
 pub mod commands;
 pub mod edition;
 pub mod logging;
+pub mod parent_watch;
 pub mod project_tracker;
 pub mod recipes;
 pub mod scenario_tests;

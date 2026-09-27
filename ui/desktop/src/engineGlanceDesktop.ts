@@ -123,8 +123,30 @@ export class EngineGlanceDesktop {
   /** Where it is showing: the display and corner it was placed in, kept while it stays up. */
   private place: { displayId: number; corner: GlanceCorner } | null = null;
   private drag: { pointerX: number; pointerY: number; bounds: Rect; moved: boolean } | null = null;
+  /**
+   * The app is quitting (Q-229). Electron's quit closes every window and finishes only when the
+   * window list is EMPTY; this controller used to make the window again on the very next refresh
+   * — the goose window's close/blur, or the next engine snapshot — so the quit never finished, and
+   * since Electron's quit was already under way every later quit (and SIGTERM, which is a quit)
+   * returned at once. While quitting, nothing here makes or shows a window.
+   */
+  private quitting = false;
 
   constructor(private readonly deps: GlanceDesktopDeps) {}
+
+  /** The quit began: the window goes now, and nothing makes it again. */
+  suspendForQuit(): void {
+    this.quitting = true;
+    this.drag = null;
+    if (this.deps.port.exists()) this.deps.port.destroy();
+  }
+
+  /** The quit was refused (a live run's close guard): the window may come back. */
+  resumeAfterRefusedQuit(): void {
+    if (!this.quitting) return;
+    this.quitting = false;
+    this.refresh();
+  }
 
   /** The latest glance: pushed to the window, then shown or hidden by the rules. */
   update(push: GlancePush): void {
@@ -136,6 +158,7 @@ export class EngineGlanceDesktop {
 
   /** Re-decide after a fact the glance does not carry changed (a goose window was covered, or not). */
   refresh(): void {
+    if (this.quitting) return;
     if (this.turnedOffUntold && this.deps.tellTurnedOff()) this.turnedOffUntold = false;
     const { port } = this.deps;
     const push = this.push;

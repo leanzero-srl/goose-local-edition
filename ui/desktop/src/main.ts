@@ -70,7 +70,8 @@ import os from 'node:os';
 import { execFileSync, spawn, execFile, type ChildProcess } from 'child_process';
 import 'dotenv/config';
 import { checkBackendStatus } from './backendStatus';
-import { startGooseServe, findGooseBinaryPath } from './gooseServe';
+import { startGooseServe, findGooseBinaryPath, GOOSED_SIGKILL_AFTER_MS } from './gooseServe';
+import { reapOrphanedGoosed } from './utils/orphanGoosedReap';
 import { LOCAL_NETWORK_SETTINGS_URL, touchLocalNetwork } from './localNetwork';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
@@ -1131,6 +1132,28 @@ const appWindows = new Map<string, BrowserWindow>();
 
 const gooseServeLeases = new GooseServeLeaseRegistry(log);
 
+// Once per launch (every window's goosed is this app's child, so later windows find nothing new).
+// A failed scan is logged and the launch goes on: the new goosed then meets the old one's mesh
+// daemon and Link names it, as before this reaper existed.
+let orphanedGoosedReap: Promise<void> | null = null;
+const reapOrphanedGoosedOnce = (): Promise<void> => {
+  orphanedGoosedReap ??= (async () => {
+    try {
+      await reapOrphanedGoosed({
+        goosePath: findGooseBinaryPath({
+          isPackaged: app.isPackaged,
+          resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+        }),
+        logger: log,
+        sigkillAfterMs: GOOSED_SIGKILL_AFTER_MS,
+      });
+    } catch (error) {
+      log.error('[orphan-goosed] the scan for orphaned goosed failed:', error);
+    }
+  })();
+  return orphanedGoosedReap;
+};
+
 // Track pending initial messages per window
 const pendingInitialMessages = new Map<number, string>(); // windowId -> initialMessage
 const pendingInitialMessageNoAutoSubmit = new Set<number>(); // windowIds whose initialMessage should NOT auto-submit
@@ -1301,6 +1324,9 @@ const createChat = async (
       return;
     }
   } else {
+    // Before the first goosed of this launch: a goosed an earlier run of this app left orphaned
+    // still holds its mesh daemon (Q-223) — stop it, per pid on proof, and wait for it to exit.
+    await reapOrphanedGoosedOnce();
     const localCertificateTrust = trustBackendCertificate('127.0.0.1', null);
 
     let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
@@ -1356,7 +1382,7 @@ const createChat = async (
     const cleanupGooseServe = gooseServeResult.cleanup;
     gooseServeResult.cleanup = async () => {
       try {
-        await cleanupGooseServe();
+        return await cleanupGooseServe();
       } finally {
         localCertificateTrust.release();
       }
@@ -1668,6 +1694,8 @@ const createChat = async (
     });
     if (verdict === 'pass') return;
     event.preventDefault();
+    // A refused close refuses the quit it may belong to: the floating window comes back (Q-229).
+    engineGlanceDesktop.resumeAfterRefusedQuit();
     const payload: CloseRunPayload = { runs: windowLiveRuns(mainWindow) };
     contents.send(CONFIRM_CLOSE_RUN_CHANNEL, payload);
   });
@@ -2307,6 +2335,11 @@ const saveGlancePrefs = (next: GlancePrefs) => {
 // A goose window covered, uncovered, minimized, restored or focused re-decides the desktop window;
 // deferred one turn so focus passing between two goose windows never flashes it.
 const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 0);
+// Q-229: the floating window is a window, and Electron's quit ends only when EVERY window is closed.
+// It goes first, and nothing re-makes it while the quit runs — a quit, Cmd+Q, osascript's quit Apple
+// Event, the tray's Quit and SIGTERM all start here. A refused quit (a live run's close guard) gives
+// it back: see mainWindow.on('close').
+app.on('before-quit', () => engineGlanceDesktop.suspendForQuit());
 app.on('browser-window-focus', refreshGlanceSoon);
 app.on('browser-window-blur', refreshGlanceSoon);
 app.on('browser-window-created', (_event, win) => {
@@ -6720,21 +6753,46 @@ async function getAllowList(): Promise<string[]> {
 
 // Set by the renderer's restart-app request; read once the quit is really happening (will-quit).
 let relaunchOnQuit = false;
+// will-quit runs twice when backends are still up: the first pass holds the quit until every
+// goosed has EXITED, then quits again. The one-shot work below runs on the first pass only.
+let quitWorkDone = false;
+let backendsStopped = false;
 
-app.on('will-quit', async () => {
-  mlxMonitor.stop();
-  // A benchmark run cannot outlive the app that owns it: the same per-pid cancel as the button,
-  // synchronous so it lands before Electron finishes quitting (U-M8).
-  if (activeBenchRun !== null) {
-    cancelActiveBenchRun('app quitting');
-    activeBenchRun?.releasePower();
+app.on('will-quit', (event) => {
+  if (!quitWorkDone) {
+    quitWorkDone = true;
+    mlxMonitor.stop();
+    // A benchmark run cannot outlive the app that owns it: the same per-pid cancel as the button,
+    // synchronous so it lands before Electron finishes quitting (U-M8).
+    if (activeBenchRun !== null) {
+      cancelActiveBenchRun('app quitting');
+      activeBenchRun?.releasePower();
+    }
+    if (relaunchOnQuit) app.relaunch();
   }
-  if (relaunchOnQuit) app.relaunch();
 
-  const gooseServeLeaseCount = gooseServeLeases.activeLeaseCount();
-  if (gooseServeLeaseCount > 0) {
-    log.info(`App quitting, cleaning up ${gooseServeLeaseCount} backend lease(s)`);
-    await gooseServeLeases.cleanupAll();
+  // Electron does not await a will-quit listener: the old `async` handler's `await cleanupAll()`
+  // returned control to Electron, which exited without waiting — every quit in main.log logs
+  // "Terminating goose serve" and never goosed's exit, so the SIGKILL leg could never run and a
+  // slow teardown was simply abandoned (Q-223). Hold the quit, wait for every goosed to EXIT
+  // (its own teardown stops the mesh daemon and the engine), then quit for real.
+  if (!backendsStopped && gooseServeLeases.hasBackendsToStop()) {
+    event.preventDefault();
+    log.info(
+      `App quitting: waiting for ${gooseServeLeases.activeLeaseCount()} attached backend(s) and any stop already under way to exit`
+    );
+    void gooseServeLeases.stopAllAndWait().then(({ abandoned }) => {
+      backendsStopped = true;
+      if (abandoned > 0) {
+        log.error(
+          `App quitting: ${abandoned} goose serve backend(s) did not exit (logged above); quitting without them — their own stdin watch ends them once this process is gone`
+        );
+      } else {
+        log.info('App quitting: every goose serve backend has exited');
+      }
+      app.quit();
+    });
+    return;
   }
 
   globalShortcut.unregisterAll();
