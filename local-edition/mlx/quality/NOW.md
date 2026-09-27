@@ -15,6 +15,9 @@ Updated: 2026-09-27 20:53 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - Green again from dc701189c on (the title-test flake fixed at the cause, fa15f595d).
 
 ## Agents
+- Q-185 MERGED 96bcc680e (every background call carries its kind; card/Run it/sidebar/chat say 'Checking the
+  reply'); gate: tsc, vitest 3,184, eslint ts/tsx, i18n, wincheck green. Ships in 3.0.62 → prove live on #3j's
+  successor (livecheck counts the background state as marked).
 - OWNER BATCH 2026-09-27 (Q-189..196): lane D ARCHITECT (read-only + CDP walk + research) → DESIGN-NODES-AND-STRATEGIES.md:
   Swarm Settings → left nav, My Macs → LeanZero MLX tab, node cards at a glance, virtual node definitions,
   STRATEGIES (roles planning/execution/testing/frontend/backend, primary/secondary, weights, MLX load/unload).
