@@ -122,7 +122,22 @@ vi.mock('../Layout/MainPanelLayout', () => ({
 vi.mock('../../acp/nodes', () => ({
   nodesRead: vi.fn(async () => ({
     config: { version: 1 },
-    nodes: [{ def: { id: 'mihai-mlx', name: 'Mihai Macbook engine', kind: 'mlx', origin: 'pool' } }],
+    // A whole ResolvedNodeDef: the Nodes step now lands on the real node cards (S6), which read
+    // every field goosed sends.
+    nodes: [
+      {
+        def: {
+          id: 'mihai-mlx',
+          name: 'Mihai Macbook engine',
+          kind: 'mlx',
+          placement: { kind: 'follows' },
+          poolDevice: 'mihai-mlx',
+          origin: 'pool',
+        },
+        model: 'qwen3.8-27b',
+        modelFrom: { kind: 'pool' },
+      },
+    ],
     stored: false,
     lmStudioHidden: 0,
   })),
