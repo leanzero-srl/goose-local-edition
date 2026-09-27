@@ -420,6 +420,57 @@ describe('EngineGlanceDesktop — Q-226: only when goose cannot be seen, where t
   });
 });
 
+// Q-229: installing 3.0.63, the quit closed the goose window and ended goosed, and the app then lived
+// on with two floating windows until SIGKILL. Electron's quit finishes only when every window is
+// closed, and each close/blur and each engine snapshot re-decided the floating window — which, with
+// goose out of sight and the engine live, MADE it again.
+describe('EngineGlanceDesktop — Q-229: the quit is never held open by the floating window', () => {
+  it('the quit begins with it up: destroyed at once', () => {
+    const { desktop, state } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(true);
+    desktop.suspendForQuit();
+    expect(state.exists).toBe(false);
+    expect(state.calls[state.calls.length - 1]).toBe('destroy');
+  });
+
+  it('while quitting, the goose window closing and every later snapshot make nothing', () => {
+    const { desktop, state, facts } = setup({ inFront: true });
+    desktop.update(writing);
+    desktop.suspendForQuit();
+    const before = state.calls.length;
+    // The goose window closes (out of sight), the engine keeps writing, a drag was mid-way.
+    facts.inFront = false;
+    facts.windows = [];
+    desktop.refresh();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    desktop.displaysChanged();
+    expect(state.calls.slice(before)).toEqual([]);
+    expect(state.exists).toBe(false);
+  });
+
+  it('the quit is refused (a live run’s close guard): it comes back by the same rules', () => {
+    const { desktop, state } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    desktop.suspendForQuit();
+    desktop.resumeAfterRefusedQuit();
+    expect(state.visible).toBe(true);
+    expect(state.calls.slice(-3)).toEqual(['destroy', 'ensure', 'showInactive']);
+  });
+
+  it('a refused close that was not part of a quit changes nothing', () => {
+    const { desktop, state } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    const before = [...state.calls];
+    desktop.resumeAfterRefusedQuit();
+    expect(state.calls).toEqual(before);
+  });
+});
+
 describe('isGlancePipAction — what the window may ask', () => {
   it('accepts the actions it sends and nothing else', () => {
     expect(isGlancePipAction({ type: 'size', width: 300, height: 120 })).toBe(true);

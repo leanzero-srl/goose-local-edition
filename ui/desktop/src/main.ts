@@ -1694,6 +1694,8 @@ const createChat = async (
     });
     if (verdict === 'pass') return;
     event.preventDefault();
+    // A refused close refuses the quit it may belong to: the floating window comes back (Q-229).
+    engineGlanceDesktop.resumeAfterRefusedQuit();
     const payload: CloseRunPayload = { runs: windowLiveRuns(mainWindow) };
     contents.send(CONFIRM_CLOSE_RUN_CHANNEL, payload);
   });
@@ -2349,6 +2351,11 @@ const saveGlancePrefs = (next: GlancePrefs) => {
 // A goose window covered, uncovered, minimized, restored or focused re-decides the desktop window;
 // deferred one turn so focus passing between two goose windows never flashes it.
 const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 0);
+// Q-229: the floating window is a window, and Electron's quit ends only when EVERY window is closed.
+// It goes first, and nothing re-makes it while the quit runs — a quit, Cmd+Q, osascript's quit Apple
+// Event, the tray's Quit and SIGTERM all start here. A refused quit (a live run's close guard) gives
+// it back: see mainWindow.on('close').
+app.on('before-quit', () => engineGlanceDesktop.suspendForQuit());
 app.on('browser-window-focus', refreshGlanceSoon);
 app.on('browser-window-blur', refreshGlanceSoon);
 app.on('browser-window-created', (_event, win) => {
