@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
+import { OverlayDialog, OverlayDialogTitle } from '../ui/OverlayDialog';
 import { Button, FOCUS, MOTION, RADIUS, SURFACE, TONE_FILL, TONE_TEXT, TYPE, cx } from '../lz';
 
 /**
@@ -75,100 +76,101 @@ export function RecipeWizard({
   };
 
   return (
-    <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-4">
-      <div
-        className={cx('flex w-[560px] max-h-[88vh] flex-col', SURFACE.overlay)}
-        data-testid="recipe-wizard"
-      >
-        <div className="flex items-center justify-between border-b border-lz-border px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span
-              className={cx(
-                'flex h-6 w-6 items-center justify-center',
-                RADIUS.control,
-                TONE_FILL.accent
-              )}
-            >
-              <LeanZero className="h-4 w-4 text-white" />
-            </span>
-            <h3 className={TYPE.h2}>Draft a recipe</h3>
-          </div>
-          <button
-            onClick={onClose}
-            className={cx('text-lz-ink-3 hover:text-lz-ink', MOTION, FOCUS)}
-            aria-label="Close"
+    <OverlayDialog
+      open
+      onClose={onClose}
+      layerClassName="z-[75]"
+      panelClassName={cx('flex w-[560px] max-h-[88vh] flex-col', SURFACE.overlay)}
+      data-testid="recipe-wizard"
+    >
+      <div className="flex items-center justify-between border-b border-lz-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span
+            className={cx(
+              'flex h-6 w-6 items-center justify-center',
+              RADIUS.control,
+              TONE_FILL.accent
+            )}
           >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="space-y-4 overflow-y-auto px-4 py-3">
-          <p className={cx('flex items-center gap-1.5', TYPE.bodyMuted)}>
-            <Wand2 className="h-3.5 w-3.5 shrink-0" /> Answer a few questions and Goose saves a
-            recipe your agent can run in a loop.
-          </p>
-
-          <Field
-            label="What should your agent do, every run?"
-            hint="The task it repeats each iteration — this becomes the recipe instructions."
-          >
-            <textarea
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              rows={5}
-              placeholder="e.g. Check the CI dashboard for failed jobs, open the logs, and post a summary of any new failures to #alerts."
-              className={cx(FIELD, 'resize-y')}
-              autoFocus
-            />
-          </Field>
-
-          <Field label="Short title" hint="A name for this recipe.">
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. CI failure watcher"
-              className={FIELD}
-            />
-          </Field>
-
-          <Field label="One-line description" hint="Optional — defaults to the title.">
-            <input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="e.g. Watches CI and summarizes new failures."
-              className={FIELD}
-            />
-          </Field>
-
-          {error && (
-            <div
-              className={cx(
-                'border border-lz-err px-3 py-2 text-lz-meta',
-                TONE_TEXT.err,
-                RADIUS.control
-              )}
-            >
-              {error}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between border-t border-lz-border px-4 py-3">
-          <span className="text-lz-meta text-lz-ink-3">
-            Saved to Recipes — then create a loop from it.
+            <LeanZero className="h-4 w-4 text-white" />
           </span>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => void save()}
-            disabled={!canSave || saving}
-            icon={saving ? <Loader2 className="animate-spin" /> : <Check />}
-          >
-            Save recipe
-          </Button>
+          <OverlayDialogTitle className={TYPE.h2}>Draft a recipe</OverlayDialogTitle>
         </div>
+        <button
+          onClick={onClose}
+          className={cx('text-lz-ink-3 hover:text-lz-ink', MOTION, FOCUS)}
+          aria-label="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
-    </div>
+
+      <div className="space-y-4 overflow-y-auto px-4 py-3">
+        <p className={cx('flex items-center gap-1.5', TYPE.bodyMuted)}>
+          <Wand2 className="h-3.5 w-3.5 shrink-0" /> Answer a few questions and Goose saves a recipe
+          your agent can run in a loop.
+        </p>
+
+        <Field
+          label="What should your agent do, every run?"
+          hint="The task it repeats each iteration — this becomes the recipe instructions."
+        >
+          <textarea
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+            rows={5}
+            placeholder="e.g. Check the CI dashboard for failed jobs, open the logs, and post a summary of any new failures to #alerts."
+            className={cx(FIELD, 'resize-y')}
+            autoFocus
+          />
+        </Field>
+
+        <Field label="Short title" hint="A name for this recipe.">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. CI failure watcher"
+            className={FIELD}
+          />
+        </Field>
+
+        <Field label="One-line description" hint="Optional — defaults to the title.">
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="e.g. Watches CI and summarizes new failures."
+            className={FIELD}
+          />
+        </Field>
+
+        {error && (
+          <div
+            className={cx(
+              'border border-lz-err px-3 py-2 text-lz-meta',
+              TONE_TEXT.err,
+              RADIUS.control
+            )}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between border-t border-lz-border px-4 py-3">
+        <span className="text-lz-meta text-lz-ink-3">
+          Saved to Recipes — then create a loop from it.
+        </span>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => void save()}
+          disabled={!canSave || saving}
+          icon={saving ? <Loader2 className="animate-spin" /> : <Check />}
+        >
+          Save recipe
+        </Button>
+      </div>
+    </OverlayDialog>
   );
 }
 

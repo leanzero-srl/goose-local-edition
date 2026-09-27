@@ -2,12 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { X, Send, Loader2, Check, Sparkles, Pencil, ChevronDown } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
 import { useFleet } from './useFleet';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
+import { OverlayDialog, OverlayDialogTitle } from '../ui/OverlayDialog';
 import {
   Button,
   DISABLED,
@@ -119,7 +125,8 @@ export function RecipeChatWizard({
   const model = (picked && models.includes(picked) ? picked : null) ?? autoModel;
   // The host that serves the picked model: the sidecar's own base URL for its alias, LM Studio's
   // configured endpoint for everything else (fleetChat takes the origin of either).
-  const chatEndpoint = model != null && model === mlxModel && mlxBaseUrl ? mlxBaseUrl : fleet.endpoint;
+  const chatEndpoint =
+    model != null && model === mlxModel && mlxBaseUrl ? mlxBaseUrl : fleet.endpoint;
   const online = models.length > 0 && (model === mlxModel || fleet.online);
 
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -170,7 +177,11 @@ export function RecipeChatWizard({
   if (!isOpen) return null;
 
   // One chat completion. `format` optionally forces structured JSON output (used to draft the recipe).
-  const complete = async (system: string, history: ChatMsg[], format?: unknown): Promise<string> => {
+  const complete = async (
+    system: string,
+    history: ChatMsg[],
+    format?: unknown
+  ): Promise<string> => {
     if (!model) throw new Error('no-model');
     const r = await window.electron.fleetChat(chatEndpoint, {
       model,
@@ -247,12 +258,17 @@ export function RecipeChatWizard({
       const title = (o.title ?? '').trim();
       const instructions = (o.instructions ?? '').trim();
       if (!title || !instructions) {
-        throw new Error('the fleet returned an incomplete recipe — add a bit more detail and retry');
+        throw new Error(
+          'the fleet returned an incomplete recipe — add a bit more detail and retry'
+        );
       }
       setDraft({ title, description: (o.description ?? '').trim() || title, instructions });
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: 'Drafted your recipe — review and edit it below, then save.' },
+        {
+          role: 'assistant',
+          content: 'Drafted your recipe — review and edit it below, then save.',
+        },
       ]);
     } catch (e) {
       if (genRef.current !== gen) return;
@@ -285,185 +301,214 @@ export function RecipeChatWizard({
   };
 
   return (
-    <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-4">
-      <div
-        className={cx('flex w-[620px] max-h-[88vh] flex-col', SURFACE.overlay)}
-        data-testid="recipe-chat-wizard"
-      >
-        <div className="flex items-center justify-between border-b border-lz-border px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className={cx('flex h-6 w-6 items-center justify-center', RADIUS.control, TONE_FILL.accent)}>
-              <LeanZero className="h-4 w-4 text-white" />
-            </span>
-            <h3 className={TYPE.h2}>Build a recipe with the fleet</h3>
-          </div>
-          <div className="flex items-center gap-2">
-            {online ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    className={cx(
-                      'hidden sm:flex items-center gap-1 border border-lz-accent px-1.5 py-0.5 font-mono text-lz-mono text-lz-accent',
-                      RADIUS.control,
-                      MOTION,
-                      FOCUS
-                    )}
-                    title={model ? `${model} — click to switch node` : 'pick a node'}
-                  >
-                    <StatusDot tone="ok" label="fleet online" size={8} />
-                    {model ? model.split('-')[0] : 'model'}
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {models.map((m) => (
-                    <DropdownMenuItem key={m} onClick={() => setPicked(m)} className="text-xs font-mono">
-                      {m === model && <Check className={cx('h-3 w-3 mr-1 shrink-0', TONE_TEXT.accent)} />}
-                      {m}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <span
-                className={cx(
-                  'hidden sm:flex items-center gap-1 border border-lz-border-strong px-1.5 py-0.5 font-mono text-lz-mono text-lz-ink-3',
-                  RADIUS.control
-                )}
-              >
-                <StatusDot tone="err" label="fleet offline" size={8} />
-                offline
-              </span>
+    <OverlayDialog
+      open
+      onClose={onClose}
+      layerClassName="z-[75]"
+      panelClassName={cx('flex w-[620px] max-h-[88vh] flex-col', SURFACE.overlay)}
+      data-testid="recipe-chat-wizard"
+    >
+      <div className="flex items-center justify-between border-b border-lz-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span
+            className={cx(
+              'flex h-6 w-6 items-center justify-center',
+              RADIUS.control,
+              TONE_FILL.accent
             )}
-            <button
-              onClick={onClose}
-              className={cx('text-lz-ink-3 hover:text-lz-ink', MOTION, FOCUS)}
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          >
+            <LeanZero className="h-4 w-4 text-white" />
+          </span>
+          <OverlayDialogTitle className={TYPE.h2}>Build a recipe with the fleet</OverlayDialogTitle>
         </div>
-
-        {/* Conversation */}
-        <div ref={scrollRef} className="min-h-[220px] flex-1 space-y-3 overflow-y-auto px-4 py-3">
-          {messages.map((m, i) => (
-            <div key={i} className={cx('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
-              <div
-                className={cx(
-                  'max-w-[80%] whitespace-pre-wrap break-words px-3 py-2 text-lz-body',
-                  RADIUS.control,
-                  m.role === 'user'
-                    ? TONE_FILL.accent
-                    : 'border border-lz-border bg-lz-surface-2 text-lz-ink'
-                )}
-              >
-                {m.role === 'assistant' && (
-                  <span className="mb-1 flex items-center gap-1 text-lz-zone uppercase text-lz-ink-3">
-                    <Sparkles className="h-3 w-3" /> fleet
-                  </span>
-                )}
-                <span>{m.content}</span>
-              </div>
-            </div>
-          ))}
-          {busy && (
-            <div className="flex justify-start">
-              <div className="flex items-center gap-2 px-3 py-2 text-lz-meta text-lz-ink-3">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> the fleet is thinking…
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Draft review card */}
-        {draft && (
-          <div className={cx('mx-4 mb-2 overflow-hidden border border-lz-border', RADIUS.control)}>
-            <div className={cx('flex items-center gap-1.5 px-3 py-1.5 text-lz-meta', WEIGHT.semibold, TONE_FILL.accent)}>
-              <Pencil className="h-3.5 w-3.5" /> Draft recipe — review &amp; edit before saving
-            </div>
-            <div className="space-y-2 p-3">
-              <input
-                value={draft.title}
-                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                placeholder="Title"
-                className={FIELD}
-              />
-              <input
-                value={draft.description}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                placeholder="One-line description"
-                className={FIELD}
-              />
-              <textarea
-                value={draft.instructions}
-                onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
-                rows={5}
-                placeholder="Instructions the agent follows every run"
-                className={cx(FIELD, 'resize-y')}
-              />
-            </div>
-          </div>
-        )}
-
-        {error && (
-          <div className={cx('mx-4 mb-2 border border-lz-err px-3 py-2 text-lz-meta', TONE_TEXT.err, RADIUS.control)}>
-            {error}
-          </div>
-        )}
-
-        {/* Input + actions */}
-        <div className="space-y-2 border-t border-lz-border px-4 py-3">
-          <div className="flex items-end gap-2">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-              rows={1}
-              placeholder="Answer the fleet…  (Enter to send)"
-              className={cx(FIELD, 'flex-1 resize-none')}
-            />
-            <Button variant="primary" onClick={send} disabled={busy || !input.trim()} icon={<Send />}>
-              Send
-            </Button>
-          </div>
-          <div className="flex items-center justify-between">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void draftNow()}
-              disabled={busy || messages.length < 2}
-              icon={<Sparkles />}
-            >
-              Draft the recipe now
-            </Button>
-            {/* The ok fill once a draft exists (a status-tone action, like "Run agent now"); the solid
-                disabled state before that — never a hand-written grey, never an opacity. */}
-            <button
-              onClick={() => void save()}
-              disabled={!draft || saving}
+        <div className="flex items-center gap-2">
+          {online ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className={cx(
+                    'hidden sm:flex items-center gap-1 border border-lz-accent px-1.5 py-0.5 font-mono text-lz-mono text-lz-accent',
+                    RADIUS.control,
+                    MOTION,
+                    FOCUS
+                  )}
+                  title={model ? `${model} — click to switch node` : 'pick a node'}
+                >
+                  <StatusDot tone="ok" label="fleet online" size={8} />
+                  {model ? model.split('-')[0] : 'model'}
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {models.map((m) => (
+                  <DropdownMenuItem
+                    key={m}
+                    onClick={() => setPicked(m)}
+                    className="text-xs font-mono"
+                  >
+                    {m === model && (
+                      <Check className={cx('h-3 w-3 mr-1 shrink-0', TONE_TEXT.accent)} />
+                    )}
+                    {m}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <span
               className={cx(
-                'flex items-center gap-1.5 border border-lz-ok-solid px-3 py-1.5 text-lz-meta',
-                WEIGHT.semibold,
-                TONE_FILL.ok,
-                RADIUS.control,
-                MOTION,
-                FOCUS,
-                DISABLED
+                'hidden sm:flex items-center gap-1 border border-lz-border-strong px-1.5 py-0.5 font-mono text-lz-mono text-lz-ink-3',
+                RADIUS.control
               )}
             >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              Save recipe
-            </button>
-          </div>
+              <StatusDot tone="err" label="fleet offline" size={8} />
+              offline
+            </span>
+          )}
+          <button
+            onClick={onClose}
+            className={cx('text-lz-ink-3 hover:text-lz-ink', MOTION, FOCUS)}
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       </div>
-    </div>
+
+      {/* Conversation */}
+      <div ref={scrollRef} className="min-h-[220px] flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        {messages.map((m, i) => (
+          <div key={i} className={cx('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+            <div
+              className={cx(
+                'max-w-[80%] whitespace-pre-wrap break-words px-3 py-2 text-lz-body',
+                RADIUS.control,
+                m.role === 'user'
+                  ? TONE_FILL.accent
+                  : 'border border-lz-border bg-lz-surface-2 text-lz-ink'
+              )}
+            >
+              {m.role === 'assistant' && (
+                <span className="mb-1 flex items-center gap-1 text-lz-zone uppercase text-lz-ink-3">
+                  <Sparkles className="h-3 w-3" /> fleet
+                </span>
+              )}
+              <span>{m.content}</span>
+            </div>
+          </div>
+        ))}
+        {busy && (
+          <div className="flex justify-start">
+            <div className="flex items-center gap-2 px-3 py-2 text-lz-meta text-lz-ink-3">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> the fleet is thinking…
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Draft review card */}
+      {draft && (
+        <div className={cx('mx-4 mb-2 overflow-hidden border border-lz-border', RADIUS.control)}>
+          <div
+            className={cx(
+              'flex items-center gap-1.5 px-3 py-1.5 text-lz-meta',
+              WEIGHT.semibold,
+              TONE_FILL.accent
+            )}
+          >
+            <Pencil className="h-3.5 w-3.5" /> Draft recipe — review &amp; edit before saving
+          </div>
+          <div className="space-y-2 p-3">
+            <input
+              value={draft.title}
+              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+              placeholder="Title"
+              className={FIELD}
+            />
+            <input
+              value={draft.description}
+              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+              placeholder="One-line description"
+              className={FIELD}
+            />
+            <textarea
+              value={draft.instructions}
+              onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
+              rows={5}
+              placeholder="Instructions the agent follows every run"
+              className={cx(FIELD, 'resize-y')}
+            />
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div
+          className={cx(
+            'mx-4 mb-2 border border-lz-err px-3 py-2 text-lz-meta',
+            TONE_TEXT.err,
+            RADIUS.control
+          )}
+        >
+          {error}
+        </div>
+      )}
+
+      {/* Input + actions */}
+      <div className="space-y-2 border-t border-lz-border px-4 py-3">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={1}
+            placeholder="Answer the fleet…  (Enter to send)"
+            className={cx(FIELD, 'flex-1 resize-none')}
+          />
+          <Button variant="primary" onClick={send} disabled={busy || !input.trim()} icon={<Send />}>
+            Send
+          </Button>
+        </div>
+        <div className="flex items-center justify-between">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void draftNow()}
+            disabled={busy || messages.length < 2}
+            icon={<Sparkles />}
+          >
+            Draft the recipe now
+          </Button>
+          {/* The ok fill once a draft exists (a status-tone action, like "Run agent now"); the solid
+                disabled state before that — never a hand-written grey, never an opacity. */}
+          <button
+            onClick={() => void save()}
+            disabled={!draft || saving}
+            className={cx(
+              'flex items-center gap-1.5 border border-lz-ok-solid px-3 py-1.5 text-lz-meta',
+              WEIGHT.semibold,
+              TONE_FILL.ok,
+              RADIUS.control,
+              MOTION,
+              FOCUS,
+              DISABLED
+            )}
+          >
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Check className="h-3.5 w-3.5" />
+            )}
+            Save recipe
+          </button>
+        </div>
+      </div>
+    </OverlayDialog>
   );
 }
 
