@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link इस Mac का नाम नहीं बता सका ({error}) — नोड इसी Mac के लिए बनेगा; नीचे उसका नाम दें।"
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "केवल यह Mac जुड़ा है — आपके दूसरे Mac LeanZero Link से जुड़ते ही यहाँ दिखेंगे (प्रदाता › मेरे Mac)।"
+    "defaultMessage": "केवल यह Mac जुड़ा है — आपके दूसरे Mac LeanZero Link से जुड़ते ही यहाँ दिखेंगे (LeanZero MLX › मेरे Mac)।"
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "एक Mac चुनें…"
@@ -523,12 +523,6 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "छोड़ी गई फ़ाइलें संसाधित हो रही हैं..."
-  },
-  "chatInput.recipesAndLoops": {
-    "defaultMessage": "रेसिपी और लूप"
-  },
-  "chatInput.recipesAndLoopsTitle": {
-    "defaultMessage": "एक रेसिपी बनाएँ, फिर उसे शेड्यूल पर लूप में चलाएँ"
   },
   "chatInput.recording": {
     "defaultMessage": "रिकॉर्डिंग..."
@@ -1703,9 +1697,6 @@
   "engineGlance.chat": {
     "defaultMessage": "चैट · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "इंजन के शांत होने तक छिपाएँ"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "गोली जितना छोटा करें"
   },
@@ -1723,6 +1714,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "यह कार्ड छिपाएँ — साइडबार के नीचे से या Settings › ऐप से वापस लाएँ"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "फ़्लोटिंग विंडो छिपाएँ या बंद करें"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "अभी के लिए छिपाएँ"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "अगली बार इंजन के काम करने पर वापस आएगी"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "आप इसे यहीं से बंद कर सकते हैं"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "समझ गया"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# अनुरोध चल रहा है} other {# अनुरोध चल रहे हैं}}"
@@ -1847,6 +1853,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "ताज़ा नहीं"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "फ़्लोटिंग विंडो बंद करें"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Settings › ऐप में फिर से चालू करें"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "फ़्लोटिंग विंडो बंद की गई"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Settings › ऐप में इसे फिर से चालू करें।"
+  },
   "engineGlance.untitled": {
     "defaultMessage": "बिना शीर्षक का सत्र"
   },
@@ -1878,7 +1896,7 @@
     "defaultMessage": "बंद"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "आपके अन्य ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप उसे खींचें। यह कभी फ़ोकस नहीं लेती, और बंद करने पर इंजन के शांत होने तक छिपी रहती है।"
+    "defaultMessage": "आपके अन्य ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप उसे खींचें। यह कभी फ़ोकस नहीं लेती। इसका बंद करने वाला बटन इसे इंजन के फिर से काम करने तक छिपाता है, या इसे बंद कर देता है।"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "साइडबार में"
@@ -2779,150 +2797,6 @@
   },
   "localNetwork.open": {
     "defaultMessage": "गोपनीयता और सुरक्षा खोलें"
-  },
-  "loopModal.browseYaml": {
-    "defaultMessage": "Browse for YAML file..."
-  },
-  "loopModal.cancel": {
-    "defaultMessage": "Cancel"
-  },
-  "loopModal.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopModal.createNewLoop": {
-    "defaultMessage": "Create New Loop"
-  },
-  "loopModal.creating": {
-    "defaultMessage": "Creating..."
-  },
-  "loopModal.deepLink": {
-    "defaultMessage": "Deep link"
-  },
-  "loopModal.deepLinkPlaceholder": {
-    "defaultMessage": "Paste goose://recipe link here..."
-  },
-  "loopModal.failedParseRecipe": {
-    "defaultMessage": "Failed to parse recipe from file."
-  },
-  "loopModal.failedReadFile": {
-    "defaultMessage": "Failed to read the selected file."
-  },
-  "loopModal.invalidDeepLink": {
-    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
-  },
-  "loopModal.invalidFileType": {
-    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
-  },
-  "loopModal.loopIdRequired": {
-    "defaultMessage": "Loop name is required."
-  },
-  "loopModal.maxIterationsHelp": {
-    "defaultMessage": "Hard cap on iterations regardless of the stop check."
-  },
-  "loopModal.maxIterationsLabel": {
-    "defaultMessage": "Max iterations:"
-  },
-  "loopModal.maxIterationsRequired": {
-    "defaultMessage": "Max iterations must be at least 1."
-  },
-  "loopModal.nameLabel": {
-    "defaultMessage": "Name:"
-  },
-  "loopModal.namePlaceholder": {
-    "defaultMessage": "e.g., nightly-refine-loop"
-  },
-  "loopModal.provideValidRecipe": {
-    "defaultMessage": "Please provide a valid recipe source."
-  },
-  "loopModal.recipeDescription": {
-    "defaultMessage": "Description: {description}"
-  },
-  "loopModal.recipeParsed": {
-    "defaultMessage": "Recipe parsed successfully"
-  },
-  "loopModal.recipeTitle": {
-    "defaultMessage": "Title: {title}"
-  },
-  "loopModal.scheduleLabel": {
-    "defaultMessage": "Schedule:"
-  },
-  "loopModal.selected": {
-    "defaultMessage": "Selected: {path}"
-  },
-  "loopModal.sourceLabel": {
-    "defaultMessage": "Recipe:"
-  },
-  "loopModal.stateArtifactHelp": {
-    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
-  },
-  "loopModal.stateArtifactLabel": {
-    "defaultMessage": "State artifact:"
-  },
-  "loopModal.stateArtifactPlaceholder": {
-    "defaultMessage": "e.g., state.md"
-  },
-  "loopModal.stopCheckHelp": {
-    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
-  },
-  "loopModal.stopCheckLabel": {
-    "defaultMessage": "Stop check command:"
-  },
-  "loopModal.stopCheckPlaceholder": {
-    "defaultMessage": "e.g., test -f done.flag"
-  },
-  "loopModal.subtitle": {
-    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
-  },
-  "loopModal.yaml": {
-    "defaultMessage": "YAML"
-  },
-  "loopView.confirmDelete": {
-    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
-  },
-  "loopView.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopView.deleteConfirm": {
-    "defaultMessage": "Remove"
-  },
-  "loopView.deleteTitle": {
-    "defaultMessage": "Remove loop"
-  },
-  "loopView.description": {
-    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
-  },
-  "loopView.errorPrefix": {
-    "defaultMessage": "Error: {error}"
-  },
-  "loopView.lastRun": {
-    "defaultMessage": "Last run: {date}"
-  },
-  "loopView.loop": {
-    "defaultMessage": "Loop"
-  },
-  "loopView.loopCreated": {
-    "defaultMessage": "Loop Created"
-  },
-  "loopView.loopCreatedMsg": {
-    "defaultMessage": "Successfully created loop \"{id}\""
-  },
-  "loopView.maxIterations": {
-    "defaultMessage": "{count} max iterations"
-  },
-  "loopView.noLoops": {
-    "defaultMessage": "No loops yet"
-  },
-  "loopView.refresh": {
-    "defaultMessage": "Refresh"
-  },
-  "loopView.refreshing": {
-    "defaultMessage": "Refreshing..."
-  },
-  "loopView.stateArtifact": {
-    "defaultMessage": "State: {file}"
-  },
-  "loopView.stopCheck": {
-    "defaultMessage": "Stop check: {command}"
   },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "रद्द नहीं हो सका।"
@@ -3993,7 +3867,7 @@
     "defaultMessage": "दूसरा Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "{name} पर “मेरे दूसरे Mac इस Mac का उपयोग कर सकें › विभाजित मॉडल का एक हिस्सा चलाना” चालू करें (वहाँ प्रदाता › मेरे Mac में)।"
+    "defaultMessage": "{name} पर “मेरे दूसरे Mac इस Mac का उपयोग कर सकें › विभाजित मॉडल का एक हिस्सा चलाना” चालू करें (वहाँ LeanZero MLX › मेरे Mac में)।"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "इसका goose सेवा नहीं दे सकता"
@@ -5222,6 +5096,12 @@
   "myMacs.account": {
     "defaultMessage": "खाता"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "अपने दूसरे Mac पर उसी खाते से LeanZero Link में साइन इन करें। वह यहाँ दिखेगा, और आप एक Mac के लिए बहुत बड़े मॉडल दोनों पर चला सकेंगे।"
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "दूसरा Mac जोड़ें"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“मॉडल लोड और डाउनलोड करना” तब लागू होगा जब यह Mac LeanZero Link से दोबारा जुड़ेगा।"
   },
@@ -5294,14 +5174,26 @@
   "myMacs.models": {
     "defaultMessage": "मॉडल"
   },
-  "myMacs.none": {
-    "defaultMessage": "आपके LeanZero Link खाते में अभी कोई दूसरा Mac नहीं है — उसे यहाँ देखने के लिए उस पर साइन इन करें।"
+  "myMacs.nodeLoading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "सेवा दे रहा है"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "आपके Mac पर नोड पढ़े नहीं जा सके: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {इस Mac पर नोड} other {{name} पर नोड}}"
   },
   "myMacs.off": {
     "defaultMessage": "बंद"
   },
   "myMacs.on": {
     "defaultMessage": "चालू"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "{name} को नोड पेज पर खोलें"
   },
   "myMacs.reconnect": {
     "defaultMessage": "अभी दोबारा जोड़ें"
@@ -5501,11 +5393,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "अभी सर्व हो रहा है"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "नोड · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "कौन-सा नोड सेवा दे रहा है, यह पता नहीं: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "{name} को नोड पेज पर खोलें"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "क्लाउड प्रदाता प्रबंधित करें"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac और मॉडल प्रबंधित करें"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "विफल"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "LeanZero MLX इंजन विफल हुआ — इंजन कार्ड कारण बताता है"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "LeanZero MLX इंजन एक मॉडल लोड कर रहा है"
   },
   "nodes.sections": {
     "defaultMessage": "नोड अनुभाग"

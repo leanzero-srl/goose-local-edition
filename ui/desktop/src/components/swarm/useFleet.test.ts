@@ -1,7 +1,6 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
-  chatCompletionsUrl,
   deviceFromModelId,
   fetchSwarmContextLimit,
   modelsUrl,
@@ -81,14 +80,10 @@ describe('probe URLs derive from the configured swarm endpoint (a host base)', (
   it('appends the LM Studio routes to the endpoint ORIGIN, whatever path or slash it carries', () => {
     expect(modelsUrl('http://192.168.8.220:1234/')).toBe('http://192.168.8.220:1234/api/v0/models');
     expect(modelsUrl('http://192.168.8.220:1234/v1')).toBe('http://192.168.8.220:1234/api/v0/models');
-    expect(chatCompletionsUrl('http://192.168.8.220:1234')).toBe(
-      'http://192.168.8.220:1234/v1/chat/completions'
-    );
   });
 
   it('probes the live default `http://localhost:1234` at 127.0.0.1 — the URL the meta CSP allows', () => {
     expect(modelsUrl('http://localhost:1234')).toBe('http://127.0.0.1:1234/api/v0/models');
-    expect(chatCompletionsUrl('http://localhost:1234')).toBe('http://127.0.0.1:1234/v1/chat/completions');
     expect(modelsUrl('http://127.0.0.1:1234')).toBe('http://127.0.0.1:1234/api/v0/models');
   });
 

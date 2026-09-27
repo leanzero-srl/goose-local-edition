@@ -36,8 +36,10 @@ use serde_json::Value;
 use super::base::{
     stream_from_single_message, ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata,
 };
+pub use super::swarm_router::cloud_registry_name;
 use crate::config::ExtensionConfig;
 use crate::conversation::message::{Message, MessageContent};
+use crate::nodes::RouteModel;
 use crate::providers::api_client::TlsConfig;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
@@ -51,8 +53,10 @@ const SWARM_CHAT_MODEL: &str = "swarm";
 pub(crate) const SWARM_BUILD_MODEL: &str = "swarm-build";
 const SWARM_DEFAULT_MODEL: &str = SWARM_CHAT_MODEL;
 
-/// Which of the two paths a model id selects. Anything that is not the build id is chat — the
-/// default is the one the registry advertises first.
+/// Which of the two paths a model id selects. The build ids (`swarm-build`, and
+/// `swarm-build:strategy:<id>` for a build a strategy drives) are the build; anything else is chat
+/// — the default is the one the registry advertises first, and `node:` / `strategy:` ids are
+/// routed chat too (the router reads them).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Route {
     Chat,
@@ -60,11 +64,74 @@ enum Route {
 }
 
 fn route_for(model_name: &str) -> Route {
-    if model_name == SWARM_BUILD_MODEL {
-        Route::Build
-    } else {
-        Route::Chat
+    match crate::nodes::parse_route_model(model_name) {
+        Some(RouteModel::Build | RouteModel::BuildStrategy { .. }) => Route::Build,
+        _ => Route::Chat,
     }
+}
+
+/// The env var the CLI's config read takes before `config.yaml` for the `swarm` key
+/// (`Config::get_param` reads the uppercased key first).
+const SWARM_BLOCK_ENV: &str = "SWARM";
+
+/// A build a strategy drives (Tier A, design §7.2): the `swarm` block the strategy projects to,
+/// handed to the spawned run ONLY, through [`SWARM_BLOCK_ENV`] on the child. The global block is
+/// never written, so the Benchmark view and `bench_dispatch.mjs` keep measuring the untouched pool.
+#[derive(Debug)]
+struct StrategyBuild {
+    name: String,
+    /// The projected block, as the JSON the child's config read parses.
+    block: String,
+    /// What Tier A cannot express, stated at the head of the reply.
+    notes: Vec<String>,
+}
+
+/// `Ok(None)` for every model but `swarm-build:strategy:<id>`; `Err` = the words of every reason
+/// the strategy cannot drive a build (the build is refused, nothing spawns).
+fn strategy_build(
+    config: &crate::config::Config,
+    this_mac: Result<String, String>,
+    model_name: &str,
+) -> Result<Option<StrategyBuild>, String> {
+    let Some(RouteModel::BuildStrategy { id }) = crate::nodes::parse_route_model(model_name) else {
+        return Ok(None);
+    };
+    let read = crate::nodes::read(config, this_mac)
+        .map_err(|e| format!("**This build did not start.** {e:#}"))?;
+    let engine = crate::nodes::acp::engine_settings(config);
+    let inputs = crate::nodes::project::BuildInputs::from_reads(
+        config.get_param::<Value>(crate::nodes::SWARM_KEY),
+        &engine,
+        &read.config,
+    );
+    let name = read
+        .config
+        .strategies
+        .iter()
+        .find(|s| s.id == id)
+        .map_or_else(|| id.clone(), |s| s.name.clone());
+    let refused = |reasons: Vec<goose_sdk_types::custom_requests::BuildRefusalDto>| {
+        format!(
+            "**Swarm builds can't use the strategy \"{name}\", so this build did not start.**\n\n{}",
+            reasons
+                .into_iter()
+                .map(|r| format!("{}.", r.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+    let planned = crate::nodes::project::build_eligibility(&inputs, &id).map_err(refused)?;
+    let block = crate::nodes::project::project(&inputs, &id).map_err(refused)?;
+    let block = serde_json::to_string(&block).map_err(|e| {
+        format!(
+            "**This build did not start.** The projected swarm block could not be written ({e})"
+        )
+    })?;
+    Ok(Some(StrategyBuild {
+        name,
+        block,
+        notes: planned.notes,
+    }))
 }
 const SWARM_DOC_URL: &str = "https://leanzero.net/portfolio/goose-local-edition";
 
@@ -616,19 +683,26 @@ impl Provider for SwarmProvider {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Chat: the pool's smallest reported context window — the last pick's, or measured now by the
-    /// pick's probes when no pick has run in this goosed — so goose's compaction fires before the
-    /// node's wall. When no node can say it, the answer is an error naming why: the model config's
-    /// limit is never read here, because for "swarm" it is the default for an unknown model name
-    /// (128,000), which the first turn of every fresh goosed used to run on (Q-18). Build: the model
-    /// config's own limit, unchanged.
+    /// Chat: the smallest reported context window of what the model routes to — the pool's for
+    /// `swarm` (the last pick's, or measured now by the pick's probes when no pick has run in this
+    /// goosed), the node's own for `node:<id>`, the smallest in the chain for a strategy — so
+    /// goose's compaction fires before the smallest node's wall. When nothing can say it, the
+    /// answer is an error naming why: the model config's limit is never read here, because for
+    /// these names it is the default for an unknown model name (128,000), which the first turn of
+    /// every fresh goosed used to run on (Q-18). Build: the model config's own limit, unchanged.
     async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
         match self.observe_route(model_config) {
-            Route::Chat => super::swarm_router::pool_context_window()
+            Route::Chat => super::swarm_router::route_context_window(&model_config.model_name)
                 .await
                 .map_err(|reason| {
+                    let whose = match crate::nodes::parse_route_model(&model_config.model_name) {
+                        Some(RouteModel::Node { .. } | RouteModel::Strategy { .. }) => {
+                            format!("{}'s", model_config.model_name)
+                        }
+                        _ => "the pool's".to_string(),
+                    };
                     ProviderError::ExecutionError(format!(
-                        "swarm chat: the pool's context window is unknown — {reason}"
+                        "swarm chat: {whose} context window is unknown — {reason}"
                     ))
                 }),
             Route::Build => Ok(model_config.context_limit()),
@@ -654,6 +728,7 @@ impl Provider for SwarmProvider {
                         messages,
                         tools,
                         &self.mlx_template_kwargs,
+                        false,
                     ),
                     &model_config.model_name,
                     messages,
@@ -675,6 +750,7 @@ impl Provider for SwarmProvider {
                     messages,
                     tools,
                     &self.mlx_template_kwargs,
+                    true,
                 )
                 .await
             }
@@ -695,29 +771,18 @@ impl SwarmProvider {
         route
     }
 
-    /// The BUILD path (`swarm-build`): the last user message is the brief, `goose swarm run` is spawned
-    /// against the session's working directory, and its report is the reply. Byte-identical to the
-    /// provider's one path before `swarm` became a routed chat model.
-    async fn run_build(
+    /// The `goose swarm run` child for `brief`: the session's working directory, the run window's
+    /// sampling knobs, and — for a build a strategy drives — the projected `swarm` block on the
+    /// CHILD's env only (this process's env and the global config are never touched).
+    fn build_command(
         &self,
-        model_config: &ModelConfig,
-        messages: &[Message],
-    ) -> Result<MessageStream, ProviderError> {
-        let brief = Self::extract_brief(messages);
-        if brief.trim().is_empty() {
-            let msg = Message::assistant().with_text(
-                "Give the swarm a build brief (what to build) and it will run your fleet.",
-            );
-            return Ok(stream_from_single_message(
-                msg,
-                ProviderUsage::new(self.name.clone(), Usage::default()),
-            ));
-        }
-
+        brief: &str,
+        strategy: Option<&StrategyBuild>,
+    ) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new(&self.command);
         cmd.arg("swarm")
             .arg("run")
-            .arg(&brief)
+            .arg(brief)
             .arg("--output-format")
             .arg("json");
         // ELECTRON PARITY (2026-07-22): this block used to force SMOKE/SPLIT/SPLIT_SECS/CONTRACTS/COMPLETE/
@@ -745,6 +810,52 @@ impl SwarmProvider {
         for (key, val) in run_sampling_env(self.working_dir.as_deref()) {
             cmd.env(key, val);
         }
+        if let Some(strategy) = strategy {
+            cmd.env(SWARM_BLOCK_ENV, &strategy.block);
+        }
+        cmd
+    }
+
+    /// The BUILD path (`swarm-build`): the last user message is the brief, `goose swarm run` is spawned
+    /// against the session's working directory, and its report is the reply. Byte-identical to the
+    /// provider's one path before `swarm` became a routed chat model. `swarm-build:strategy:<id>`
+    /// is the same spawn with the strategy's projected `swarm` block on the child (see
+    /// [`StrategyBuild`]); a strategy a build cannot use is refused with its reasons, unspawned.
+    async fn run_build(
+        &self,
+        model_config: &ModelConfig,
+        messages: &[Message],
+    ) -> Result<MessageStream, ProviderError> {
+        let brief = Self::extract_brief(messages);
+        if brief.trim().is_empty() {
+            let msg = Message::assistant().with_text(
+                "Give the swarm a build brief (what to build) and it will run your fleet.",
+            );
+            return Ok(stream_from_single_message(
+                msg,
+                ProviderUsage::new(self.name.clone(), Usage::default()),
+            ));
+        }
+
+        let strategy = match crate::nodes::parse_route_model(&model_config.model_name) {
+            // A plain `swarm-build` reads nothing of the nodes (byte-identical to before).
+            Some(RouteModel::BuildStrategy { .. }) => strategy_build(
+                crate::config::Config::global(),
+                crate::nodes::acp::this_mac_name().await,
+                &model_config.model_name,
+            ),
+            _ => Ok(None),
+        };
+        let strategy = match strategy {
+            Ok(strategy) => strategy,
+            Err(refusal) => {
+                return Ok(stream_from_single_message(
+                    Message::assistant().with_text(refusal),
+                    ProviderUsage::new(self.name.clone(), Usage::default()),
+                ));
+            }
+        };
+        let mut cmd = self.build_command(&brief, strategy.as_ref());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         // TEE THE ENGINE'S STDERR TO DISK, AS IT STREAMS.
@@ -858,6 +969,19 @@ impl SwarmProvider {
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             self.failure_summary(output.status.code(), &stderr)
+        };
+        let summary = match &strategy {
+            Some(strategy) => format!(
+                "This build ran on the strategy \"{}\". {}\n\n{summary}",
+                strategy.name,
+                strategy
+                    .notes
+                    .iter()
+                    .map(|n| format!("{n}."))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+            None => summary,
         };
 
         let message = Message::assistant().with_text(summary);
@@ -1237,5 +1361,169 @@ mod tests {
         assert!(!out.contains("GOOSE_SWARM_JUDGE=0 to disable\n▸ run cli") || out.len() < 900);
         let exited = p.failure_summary(Some(2), "");
         assert!(exited.contains("error code 2"));
+    }
+
+    /// A strategy's build is the build path; `node:` and `strategy:` ids are routed chat.
+    #[test]
+    fn a_strategy_build_is_the_build_path_and_node_and_strategy_ids_are_chat() {
+        assert_eq!(route_for("swarm-build:strategy:daily"), Route::Build);
+        assert_eq!(route_for("node:flash"), Route::Chat);
+        assert_eq!(route_for("strategy:daily"), Route::Chat);
+        assert_eq!(route_for("strategy:daily@build"), Route::Chat);
+        // A malformed build id is not a build; the router refuses it by name (never Auto).
+        assert_eq!(route_for("swarm-build:oops"), Route::Chat);
+    }
+
+    const STRATEGY_CONFIG: &str = r#"swarm:
+  endpoint: http://localhost:1234
+  planner_model: qwen-27b
+  future_field: kept
+  devices:
+  - id: gabee
+    model_id: qwen-27b
+    weight: 1
+    enabled: true
+    instances: 1
+mlx_engine:
+  model_id: rapid-mlx/Qwen3.8-Flash-Next-4bit
+  served_model_name: mihai-flash
+nodes:
+  version: 1
+  defs:
+  - id: flash
+    name: Flash · this Mac
+    kind: mlx
+    model: rapid-mlx/Qwen3.8-Flash-Next-4bit
+    placement: {kind: single, macs: [local]}
+    origin: user
+  - id: split
+    name: 27B · both Macs
+    kind: mlx
+    model: Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx
+    placement: {kind: pipeline, macs: [local, "link:studio"], link: jaccl}
+    origin: runIt
+  strategies:
+  - id: daily
+    name: Daily
+    roles:
+      chat: {chain: [{node: flash, weight: 1}]}
+  - id: everyday
+    name: Everyday
+    roles:
+      chat: {chain: [{node: split, weight: 1}]}
+"#;
+
+    fn provider_at(command: &str) -> SwarmProvider {
+        SwarmProvider {
+            name: "swarm".into(),
+            build_route_seen: std::sync::atomic::AtomicBool::new(false),
+            command: command.into(),
+            working_dir: None,
+            mlx_template_kwargs: Default::default(),
+        }
+    }
+
+    /// Tier A's one door: the projected block rides the CHILD's env only. This process's env and
+    /// the config file are untouched, so the Benchmark view and the control arm read the pool as
+    /// it is; a plain build carries no block at all.
+    #[test]
+    fn a_strategy_build_hands_the_projected_block_to_the_child_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, STRATEGY_CONFIG).unwrap();
+        let config =
+            crate::config::Config::new_with_file_secrets(&path, dir.path().join("secrets.yaml"))
+                .unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let build = strategy_build(
+            &config,
+            Ok("Mihai Macbook".into()),
+            "swarm-build:strategy:daily",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(build.name, "Daily");
+        assert!(
+            build
+                .notes
+                .iter()
+                .any(|n| n.contains("LM Studio models loaded on your fleet also join")),
+            "{:?}",
+            build.notes
+        );
+        let cmd = provider_at("/no/such/goose").build_command("build a thing", Some(&build));
+        let envs: std::collections::HashMap<_, _> = cmd.as_std().get_envs().collect();
+        let block = envs
+            .get(std::ffi::OsStr::new(SWARM_BLOCK_ENV))
+            .copied()
+            .flatten()
+            .expect("the child carries the projected block");
+        let block: Value = serde_json::from_str(block.to_str().unwrap()).unwrap();
+        assert_eq!(block["planner_model"], "mihai-flash");
+        assert_eq!(block["future_field"], "kept", "every other field kept");
+        let devices = block["devices"].as_array().unwrap();
+        let flash = devices.iter().find(|d| d["id"] == "flash").unwrap();
+        assert_eq!(flash["enabled"], true);
+        assert_eq!(flash["engine"], "mlx-sidecar");
+        let gabee = devices.iter().find(|d| d["id"] == "gabee").unwrap();
+        assert_eq!(
+            gabee["enabled"], true,
+            "LM Studio devices are left as they are"
+        );
+
+        assert!(
+            std::env::var_os(SWARM_BLOCK_ENV).is_none(),
+            "this process's env is never written"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "config.yaml is untouched"
+        );
+
+        let plain = provider_at("/no/such/goose").build_command("build a thing", None);
+        assert!(plain
+            .as_std()
+            .get_envs()
+            .all(|(k, _)| k != std::ffi::OsStr::new(SWARM_BLOCK_ENV)));
+        assert!(matches!(
+            strategy_build(&config, Ok("Mac".into()), SWARM_BUILD_MODEL),
+            Ok(None)
+        ));
+
+        // A strategy a build cannot reach is refused with its reason, and nothing is built.
+        let refused =
+            strategy_build(&config, Ok("Mac".into()), "swarm-build:strategy:everyday").unwrap_err();
+        assert!(
+            refused.contains("can't use the strategy \"Everyday\""),
+            "{refused}"
+        );
+        assert!(refused.contains("27B · both Macs is a split"), "{refused}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    /// A strategy build that cannot run answers with the reason and spawns nothing (the command
+    /// does not exist, so a spawn would have failed the call).
+    #[tokio::test]
+    async fn a_refused_strategy_build_answers_with_its_reason_and_spawns_nothing() {
+        let p = provider_at("/no/such/goose/binary");
+        let stream = p
+            .stream(
+                &ModelConfig::new("swarm-build:strategy:ghost"),
+                "You are goose.",
+                &[Message::user().with_text("build a thing")],
+                &[],
+            )
+            .await
+            .unwrap();
+        let (message, _) = super::super::base::collect_stream(stream).await.unwrap();
+        let text = message.as_concat_text();
+        assert!(text.contains("can't use the strategy"), "{text}");
+        assert!(text.contains("there is no strategy 'ghost'"), "{text}");
+        assert!(
+            p.manages_own_context(),
+            "a strategy build is the build route"
+        );
     }
 }

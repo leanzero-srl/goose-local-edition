@@ -1,6 +1,6 @@
 import { AppEvents } from '../constants/events';
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowUp, Bug, ScrollText, Repeat } from 'lucide-react';
+import { ArrowUp, Bug, ScrollText } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
 import type { View } from '../utils/navigationUtils';
@@ -45,7 +45,6 @@ import {
   type KnownWindow,
   type MeasuredPrompt,
 } from './chatServedBy/contextFloor';
-import AgentSetupWizard from './swarm/AgentSetupWizard';
 import { defineMessages, useIntl } from '../i18n';
 import { Button as StudioButton, Chip, StatusDot, TYPE, cx } from './lz';
 import TurndownService from 'turndown';
@@ -174,14 +173,6 @@ const i18n = defineMessages({
   placeholder: {
     id: 'chatInput.placeholder',
     defaultMessage: 'Ask goose to build, fix or explain something',
-  },
-  recipesAndLoops: {
-    id: 'chatInput.recipesAndLoops',
-    defaultMessage: 'Recipes & loops',
-  },
-  recipesAndLoopsTitle: {
-    id: 'chatInput.recipesAndLoopsTitle',
-    defaultMessage: 'Build a recipe, then run it in a loop on a schedule',
   },
 });
 
@@ -325,7 +316,6 @@ export default function ChatInput({
   );
   const effectiveModel = modelOverride?.model ?? sessionModel ?? configModel;
   const effectiveProvider = modelOverride?.provider ?? sessionProvider ?? configProvider;
-  const isSwarmProvider = effectiveProvider === 'swarm';
   // Where chat goes — ONE derivation for the chip, the readiness bar and the counter's MLX window.
   // Before the session's first read there is no turn — only a chat being opened (Q-158): nothing
   // here may say a turn runs (no Stop, no "0 /" counter, no turn attributed on the engine).
@@ -333,7 +323,6 @@ export default function ChatInput({
   const chatServing = useChatServedBy(effectiveProvider, sessionId, isLoading && !checkingSession);
   const servedRef = useRef(chatServing.served);
   servedRef.current = chatServing.served;
-  const [agentWizardOpen, setAgentWizardOpen] = useState(false);
 
   // Clear override when the underlying data catches up (session props for
   // active chats, config defaults for Hub / no-session contexts).
@@ -1778,29 +1767,6 @@ export default function ChatInput({
             />
           </Chip>
         </Tooltip>
-
-        {/* Left: the one launcher for recipes and loops (Local Edition swarm only). A "Coding · Agent"
-            toggle stood here and changed nothing a send does (Q-6) — no mode, just the launcher. */}
-        {isSwarmProvider && !isBottomBarNarrow && (
-          <StudioButton
-            variant="ghost"
-            size="sm"
-            icon={<Repeat />}
-            data-testid="recipes-and-loops"
-            onClick={() => setAgentWizardOpen(true)}
-            title={intl.formatMessage(i18n.recipesAndLoopsTitle)}
-          >
-            {intl.formatMessage(i18n.recipesAndLoops)}
-          </StudioButton>
-        )}
-        {agentWizardOpen && (
-          <AgentSetupWizard
-            isOpen={agentWizardOpen}
-            onClose={() => setAgentWizardOpen(false)}
-            setView={setView}
-            workingDir={currentWorkingDir}
-          />
-        )}
 
         {/* Left: working directory (leaf folder name only) */}
         {!isBottomBarNarrow && (

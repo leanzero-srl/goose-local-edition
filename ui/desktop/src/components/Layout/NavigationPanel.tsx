@@ -9,6 +9,8 @@ import { BenchmarkSection } from './BenchmarkSection';
 import { ThemeSwitch } from './ThemeSwitch';
 import ActiveNowSection from '../sessionActivity/ActiveNowSection';
 import { EngineGlanceDockSlot } from '../engineGlance/EngineGlanceInApp';
+import { useEngineGlance } from '../engineGlance/glanceStore';
+import { nodesNavChip } from '../../utils/engineGlance';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
   NAV_ITEMS,
@@ -16,9 +18,62 @@ import {
   getNavItemLabel,
   type NavItem,
 } from '../../hooks/useNavigationItems';
-import { FOCUS, MOTION, RADIUS, ROW, SURFACE, TNUM, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
+import {
+  FOCUS,
+  MOTION,
+  PHASE_FILL,
+  RADIUS,
+  ROW,
+  SURFACE,
+  TNUM,
+  TONE_FILL,
+  TYPE,
+  WEIGHT,
+  cx,
+} from '../lz';
 import { LeanZeroGlyph } from '../ProjectLanding';
-import { useIntl } from '../../i18n';
+import { defineMessages, useIntl } from '../../i18n';
+
+const i18n = defineMessages({
+  navLoading: { id: 'nodes.navLoading', defaultMessage: 'Loading' },
+  navFailed: { id: 'nodes.navFailed', defaultMessage: 'Failed' },
+  navLoadingTitle: {
+    id: 'nodes.navLoadingTitle',
+    defaultMessage: 'The LeanZero MLX engine is loading a model',
+  },
+  navFailedTitle: {
+    id: 'nodes.navFailedTitle',
+    defaultMessage: 'The LeanZero MLX engine failed — the engine card says why',
+  },
+});
+
+/**
+ * The Nodes row's chip (design §5.1, §8.1): only while something is worth saying, read from the
+ * app-wide engine glance main pushes to every window — "Loading" in the load phase's amber, "Failed"
+ * in the failed red. No Mac or plan data, so no poller of its own.
+ */
+const NodesNavChip: React.FC = () => {
+  const intl = useIntl();
+  const chip = nodesNavChip(useEngineGlance()?.engine);
+  if (!chip) return null;
+  const title = intl.formatMessage(chip === 'loading' ? i18n.navLoadingTitle : i18n.navFailedTitle);
+  return (
+    <span
+      data-testid="nav-nodes-chip"
+      data-state={chip}
+      title={title}
+      className={cx(
+        'inline-flex h-5 shrink-0 items-center whitespace-nowrap px-1.5 text-lz-meta',
+        WEIGHT.semibold,
+        RADIUS.control,
+        PHASE_FILL[chip === 'loading' ? 'loading' : 'failed']
+      )}
+    >
+      {intl.formatMessage(chip === 'loading' ? i18n.navLoading : i18n.navFailed)}
+      <span className="sr-only"> — {title}</span>
+    </span>
+  );
+};
 
 // A 36px icon+label row. Selected = the accent fill with accent ink (never a rail); hover = a
 // solid step to surface-2. Studio classes are joined with cx — cn/twMerge deletes text-lz-* steps.
@@ -37,9 +92,11 @@ interface NavRowProps {
   item: NavItem;
   active: boolean;
   onClick: () => void;
+  /** A state chip at the row's end (the Nodes row's Loading / Failed). */
+  chip?: React.ReactNode;
 }
 
-export const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
+export const NavRow: React.FC<NavRowProps> = ({ item, active, onClick, chip }) => {
   const intl = useIntl();
   const Icon = item.icon;
   return (
@@ -59,6 +116,7 @@ export const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
           {item.getTag()}
         </span>
       )}
+      {chip}
     </button>
   );
 };
@@ -137,6 +195,7 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
             item={item}
             active={isActive(item.path)}
             onClick={() => navigate(item.path)}
+            chip={item.id === 'nodes' ? <NodesNavChip /> : undefined}
           />
         ))}
       </nav>

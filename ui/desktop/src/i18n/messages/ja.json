@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link がこの Mac の名前を取得できませんでした({error}) — ノードはこの Mac 用に作成されます。下で名前を付けてください。"
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "リンクされているのはこの Mac だけです — 他の Mac は LeanZero Link に参加するとここに表示されます(プロバイダ › マイ Mac)。"
+    "defaultMessage": "リンクされているのはこの Mac だけです — 他の Mac は LeanZero Link に参加するとここに表示されます(LeanZero MLX › マイ Mac)。"
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Mac を選択…"
@@ -523,12 +523,6 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "ドロップしたファイルを処理中..."
-  },
-  "chatInput.recipesAndLoops": {
-    "defaultMessage": "レシピとループ"
-  },
-  "chatInput.recipesAndLoopsTitle": {
-    "defaultMessage": "レシピを作成し、スケジュールに沿ってループで実行します"
   },
   "chatInput.recording": {
     "defaultMessage": "録音中..."
@@ -1703,9 +1697,6 @@
   "engineGlance.chat": {
     "defaultMessage": "チャット · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "エンジンが落ち着くまで隠す"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "ピルに縮小"
   },
@@ -1723,6 +1714,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "このカードを隠す — サイドバーの下部か 設定 › アプリ から戻せます"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "フローティングウィンドウを隠すかオフにする"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "今は隠す"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "次にエンジンが動くときに戻ります"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "ここからオフにできます"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "OK"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# 件のリクエストを処理中}}"
@@ -1847,6 +1853,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "未更新"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "フローティングウィンドウをオフにする"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "設定 › アプリ で再びオンにできます"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "フローティングウィンドウをオフにしました"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "設定 › アプリ で再びオンにできます。"
+  },
   "engineGlance.untitled": {
     "defaultMessage": "無題のセッション"
   },
@@ -1878,7 +1896,7 @@
     "defaultMessage": "オフ"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "他のアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に留まります。フォーカスを奪わず、閉じるとエンジンが落ち着くまで隠れます。"
+    "defaultMessage": "他のアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に留まります。フォーカスを奪いません。閉じるボタンで、エンジンが再び動くまで隠すか、オフにできます。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "サイドバー内"
@@ -2779,150 +2797,6 @@
   },
   "localNetwork.open": {
     "defaultMessage": "プライバシーとセキュリティを開く"
-  },
-  "loopModal.browseYaml": {
-    "defaultMessage": "Browse for YAML file..."
-  },
-  "loopModal.cancel": {
-    "defaultMessage": "Cancel"
-  },
-  "loopModal.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopModal.createNewLoop": {
-    "defaultMessage": "Create New Loop"
-  },
-  "loopModal.creating": {
-    "defaultMessage": "Creating..."
-  },
-  "loopModal.deepLink": {
-    "defaultMessage": "Deep link"
-  },
-  "loopModal.deepLinkPlaceholder": {
-    "defaultMessage": "Paste goose://recipe link here..."
-  },
-  "loopModal.failedParseRecipe": {
-    "defaultMessage": "Failed to parse recipe from file."
-  },
-  "loopModal.failedReadFile": {
-    "defaultMessage": "Failed to read the selected file."
-  },
-  "loopModal.invalidDeepLink": {
-    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
-  },
-  "loopModal.invalidFileType": {
-    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
-  },
-  "loopModal.loopIdRequired": {
-    "defaultMessage": "Loop name is required."
-  },
-  "loopModal.maxIterationsHelp": {
-    "defaultMessage": "Hard cap on iterations regardless of the stop check."
-  },
-  "loopModal.maxIterationsLabel": {
-    "defaultMessage": "Max iterations:"
-  },
-  "loopModal.maxIterationsRequired": {
-    "defaultMessage": "Max iterations must be at least 1."
-  },
-  "loopModal.nameLabel": {
-    "defaultMessage": "Name:"
-  },
-  "loopModal.namePlaceholder": {
-    "defaultMessage": "e.g., nightly-refine-loop"
-  },
-  "loopModal.provideValidRecipe": {
-    "defaultMessage": "Please provide a valid recipe source."
-  },
-  "loopModal.recipeDescription": {
-    "defaultMessage": "Description: {description}"
-  },
-  "loopModal.recipeParsed": {
-    "defaultMessage": "Recipe parsed successfully"
-  },
-  "loopModal.recipeTitle": {
-    "defaultMessage": "Title: {title}"
-  },
-  "loopModal.scheduleLabel": {
-    "defaultMessage": "Schedule:"
-  },
-  "loopModal.selected": {
-    "defaultMessage": "Selected: {path}"
-  },
-  "loopModal.sourceLabel": {
-    "defaultMessage": "Recipe:"
-  },
-  "loopModal.stateArtifactHelp": {
-    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
-  },
-  "loopModal.stateArtifactLabel": {
-    "defaultMessage": "State artifact:"
-  },
-  "loopModal.stateArtifactPlaceholder": {
-    "defaultMessage": "e.g., state.md"
-  },
-  "loopModal.stopCheckHelp": {
-    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
-  },
-  "loopModal.stopCheckLabel": {
-    "defaultMessage": "Stop check command:"
-  },
-  "loopModal.stopCheckPlaceholder": {
-    "defaultMessage": "e.g., test -f done.flag"
-  },
-  "loopModal.subtitle": {
-    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
-  },
-  "loopModal.yaml": {
-    "defaultMessage": "YAML"
-  },
-  "loopView.confirmDelete": {
-    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
-  },
-  "loopView.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopView.deleteConfirm": {
-    "defaultMessage": "Remove"
-  },
-  "loopView.deleteTitle": {
-    "defaultMessage": "Remove loop"
-  },
-  "loopView.description": {
-    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
-  },
-  "loopView.errorPrefix": {
-    "defaultMessage": "Error: {error}"
-  },
-  "loopView.lastRun": {
-    "defaultMessage": "Last run: {date}"
-  },
-  "loopView.loop": {
-    "defaultMessage": "Loop"
-  },
-  "loopView.loopCreated": {
-    "defaultMessage": "Loop Created"
-  },
-  "loopView.loopCreatedMsg": {
-    "defaultMessage": "Successfully created loop \"{id}\""
-  },
-  "loopView.maxIterations": {
-    "defaultMessage": "{count} max iterations"
-  },
-  "loopView.noLoops": {
-    "defaultMessage": "No loops yet"
-  },
-  "loopView.refresh": {
-    "defaultMessage": "Refresh"
-  },
-  "loopView.refreshing": {
-    "defaultMessage": "Refreshing..."
-  },
-  "loopView.stateArtifact": {
-    "defaultMessage": "State: {file}"
-  },
-  "loopView.stopCheck": {
-    "defaultMessage": "Stop check: {command}"
   },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "キャンセルできませんでした。"
@@ -3993,7 +3867,7 @@
     "defaultMessage": "もう一台の Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "{name} で「他の Mac にこの Mac の使用を許可 › 分割モデルの一部を実行」をオンにしてください(そちらのプロバイダ › マイ Mac)。"
+    "defaultMessage": "{name} で「他の Mac にこの Mac の使用を許可 › 分割モデルの一部を実行」をオンにしてください(そちらのLeanZero MLX › マイ Mac)。"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "その goose は対応していません"
@@ -5222,6 +5096,12 @@
   "myMacs.account": {
     "defaultMessage": "アカウント"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "もう一台の Mac で同じアカウントで LeanZero Link にサインインしてください。ここに表示され、1 台の Mac には大きすぎるモデルを両方で実行できます。"
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "別の Mac を追加"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "「モデルの読み込みとダウンロード」は、この Mac が LeanZero Link に再接続したときに有効になります。"
   },
@@ -5294,14 +5174,26 @@
   "myMacs.models": {
     "defaultMessage": "モデル"
   },
-  "myMacs.none": {
-    "defaultMessage": "LeanZero Link アカウントに他の Mac はまだありません — その Mac でサインインするとここに表示されます。"
+  "myMacs.nodeLoading": {
+    "defaultMessage": "読み込み中"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "提供中"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Mac 上のノードを読み取れませんでした: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {この Mac のノード} other {{name} のノード}}"
   },
   "myMacs.off": {
     "defaultMessage": "オフ"
   },
   "myMacs.on": {
     "defaultMessage": "オン"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "ノードページで {name} を開く"
   },
   "myMacs.reconnect": {
     "defaultMessage": "今すぐ再接続"
@@ -5501,11 +5393,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "提供中"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "ノード · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "どのノードが提供中か分かりません: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "ノードページで {name} を開く"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "クラウドプロバイダーを管理"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac とモデルを管理"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "失敗"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "LeanZero MLX エンジンが失敗しました — 理由はエンジンカードにあります"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "読み込み中"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "LeanZero MLX エンジンがモデルを読み込んでいます"
   },
   "nodes.sections": {
     "defaultMessage": "ノードのセクション"
