@@ -14,7 +14,6 @@ import SettingsView from './SettingsView';
 
 // Section bodies are out of scope here — the test targets the tab list. Each mock renders a marker.
 vi.mock('./models/ModelsSection', () => ({ default: () => <div data-testid="models-body" /> }));
-vi.mock('./swarm/SwarmSettingsSection', () => ({ default: () => <div data-testid="swarm-body" /> }));
 vi.mock('./import/ImportView', () => ({ default: () => <div data-testid="import-body" /> }));
 vi.mock('./chat/ChatSettingsSection', () => ({ default: () => <div data-testid="chat-body" /> }));
 vi.mock('./app/ExternalBackendSection', () => ({ default: () => <div /> }));
