@@ -4,6 +4,7 @@ import { Gauge } from 'lucide-react';
 import { EngineGlanceCard, StageIcon, stageWord } from './EngineGlanceCard';
 import { setGlancePrefs, useEngineGlance } from './glanceStore';
 import { dockRestorable, dockShown } from '../../utils/engineGlanceRules';
+import { nodeHref } from '../../utils/navigationUtils';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   listedTitleOf,
@@ -43,6 +44,7 @@ function useOpeners() {
   return {
     openEngine: () => navigate('/leanzero-swarm?tab=mlx'),
     openSession: (sessionId: string) => navigate(sessionHref(sessionId)),
+    openNode: (nodeId: string) => navigate(nodeHref(nodeId)),
   };
 }
 
@@ -51,7 +53,7 @@ export function EngineGlanceDockSlot() {
   const push = useEngineGlance();
   useListedNamesVersion();
   const [expanded, setExpanded] = useState(false);
-  const { openEngine, openSession } = useOpeners();
+  const { openEngine, openSession, openNode } = useOpeners();
   const forming = useFormingOf(push?.engine.chat?.sessionId ?? null);
 
   if (!push) return null;
@@ -66,6 +68,7 @@ export function EngineGlanceDockSlot() {
         expanded={expanded}
         onOpenEngine={openEngine}
         onOpenSession={openSession}
+        onOpenNode={openNode}
         onToggleExpanded={() => setExpanded((v) => !v)}
         onCollapsedChange={() => undefined}
         onHide={() => void setGlancePrefs({ ...push.prefs, inApp: false })}

@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link tidak bisa menamai Mac ini ({error}) — node dibuat untuk Mac ini; beri nama di bawah."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Hanya Mac ini yang tertaut — Mac Anda yang lain muncul di sini setelah bergabung dengan LeanZero Link (Penyedia › Mac Saya)."
+    "defaultMessage": "Hanya Mac ini yang tertaut — Mac Anda yang lain muncul di sini setelah bergabung dengan LeanZero Link (LeanZero MLX › Mac Saya)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Pilih Mac…"
@@ -3993,7 +3993,7 @@
     "defaultMessage": "Mac yang lain"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Aktifkan “Izinkan Mac saya yang lain memakai Mac ini › Menjalankan bagian dari model terbagi” di {name} (Penyedia › Mac Saya di sana)."
+    "defaultMessage": "Aktifkan “Izinkan Mac saya yang lain memakai Mac ini › Menjalankan bagian dari model terbagi” di {name} (LeanZero MLX › Mac Saya di sana)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "goose-nya tidak dapat melayani"
@@ -5222,6 +5222,12 @@
   "myMacs.account": {
     "defaultMessage": "Akun"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Masuk ke LeanZero Link dengan akun yang sama di Mac Anda yang lain. Mac itu muncul di sini, dan Anda dapat menjalankan model yang terlalu besar untuk satu Mac di keduanya."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Tambahkan Mac lain"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“Memuat dan mengunduh model” berlaku saat Mac ini tersambung kembali ke LeanZero Link."
   },
@@ -5294,14 +5300,26 @@
   "myMacs.models": {
     "defaultMessage": "Model"
   },
-  "myMacs.none": {
-    "defaultMessage": "Belum ada Mac lain di akun LeanZero Link Anda — masuk di Mac itu untuk melihatnya di sini."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Memuat"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Melayani"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Node di Mac Anda tidak dapat dibaca: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Node di Mac ini} other {Node di {name}}}"
   },
   "myMacs.off": {
     "defaultMessage": "nonaktif"
   },
   "myMacs.on": {
     "defaultMessage": "aktif"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "Buka {name} di halaman Node"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Sambungkan ulang sekarang"
@@ -5501,11 +5519,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "sedang disajikan"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Node · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "Node mana yang melayani tidak diketahui: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "Buka {name} di halaman Node"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Kelola penyedia cloud"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Kelola Mac dan model"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Gagal"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "Mesin LeanZero MLX gagal — kartu mesin menjelaskan alasannya"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Memuat"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "Mesin LeanZero MLX sedang memuat model"
   },
   "nodes.sections": {
     "defaultMessage": "Bagian node"

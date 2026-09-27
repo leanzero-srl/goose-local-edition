@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link가 이 Mac의 이름을 가져오지 못했습니다({error}) — 노드는 이 Mac용으로 만들어집니다. 아래에서 이름을 지정하세요."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "이 Mac만 연결되어 있습니다 — 다른 Mac은 LeanZero Link에 참여하면 여기에 나타납니다(제공자 › 내 Mac)."
+    "defaultMessage": "이 Mac만 연결되어 있습니다 — 다른 Mac은 LeanZero Link에 참여하면 여기에 나타납니다(LeanZero MLX › 내 Mac)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Mac 선택…"
@@ -3993,7 +3993,7 @@
     "defaultMessage": "다른 Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "{name}에서 “내 다른 Mac이 이 Mac 사용 허용 › 분할 모델의 일부 실행”을 켜세요(그 Mac의 제공자 › 내 Mac)."
+    "defaultMessage": "{name}에서 “내 다른 Mac이 이 Mac 사용 허용 › 분할 모델의 일부 실행”을 켜세요(그 Mac의 LeanZero MLX › 내 Mac)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "그쪽 goose가 지원하지 않음"
@@ -5222,6 +5222,12 @@
   "myMacs.account": {
     "defaultMessage": "계정"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "다른 Mac에서 같은 계정으로 LeanZero Link에 로그인하세요. 여기에 나타나며, Mac 한 대에 너무 큰 모델을 두 대에 걸쳐 실행할 수 있습니다."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "다른 Mac 추가"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“모델 로드 및 다운로드”는 이 Mac이 LeanZero Link에 다시 연결되면 적용됩니다."
   },
@@ -5294,14 +5300,26 @@
   "myMacs.models": {
     "defaultMessage": "모델"
   },
-  "myMacs.none": {
-    "defaultMessage": "아직 LeanZero Link 계정에 다른 Mac이 없습니다 — 그 Mac에서 로그인하면 여기에 표시됩니다."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "불러오는 중"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "제공 중"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Mac의 노드를 읽을 수 없습니다: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {이 Mac의 노드} other {{name}의 노드}}"
   },
   "myMacs.off": {
     "defaultMessage": "끔"
   },
   "myMacs.on": {
     "defaultMessage": "켬"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "노드 페이지에서 {name} 열기"
   },
   "myMacs.reconnect": {
     "defaultMessage": "지금 다시 연결"
@@ -5501,11 +5519,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "지금 제공 중"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "노드 · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "어느 노드가 제공 중인지 알 수 없습니다: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "노드 페이지에서 {name} 열기"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "클라우드 제공자 관리"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac 및 모델 관리"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "실패"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "LeanZero MLX 엔진이 실패했습니다 — 엔진 카드에 이유가 있습니다"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "불러오는 중"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "LeanZero MLX 엔진이 모델을 불러오는 중입니다"
   },
   "nodes.sections": {
     "defaultMessage": "노드 섹션"

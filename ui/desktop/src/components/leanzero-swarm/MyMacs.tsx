@@ -1,12 +1,16 @@
 import { useState } from 'react';
-import { Link2Off, Loader2, LogOut, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Laptop, Link2Off, Loader2, LogOut, Network, RefreshCw } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   Button,
   Checkbox,
   Chip,
   Disclosure,
+  FOCUS,
   KeyValue,
+  MOTION,
+  RADIUS,
   StatusDot,
   SURFACE,
   TNUM,
@@ -22,10 +26,20 @@ import { StudioSwitch, ToneBanner } from './studio';
 import { formatGb } from './primitives';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
-import { PERMISSIONS, PERMISSION_KEY, allowsOf, type Mac, type Permission } from './macs';
+import {
+  PERMISSIONS,
+  PERMISSION_KEY,
+  allowsOf,
+  macForPlacementNode,
+  type Mac,
+  type Permission,
+} from './macs';
 import { macLine, macStateWord } from './macSummary';
 import { useMacSummary } from './useMacSummary';
 import { PERMISSION_LABEL, useMacs, type MacFacts } from './useMacs';
+import { useGlanceNodes } from '../engineGlance/glanceStore';
+import type { NodesRead, Residency } from '../../acp/nodes';
+import { nodeHref } from '../../utils/navigationUtils';
 
 /**
  * MY MACS — one card per Mac on LeanZero Link, each called by the ONE name its owner gave it, its
@@ -101,12 +115,124 @@ const i18n = defineMessages({
     id: 'myMacs.reconnecting',
     defaultMessage: 'Reconnecting… (lost contact with this Mac’s goose)',
   },
-  none: {
-    id: 'myMacs.none',
+  nodesHere: {
+    id: 'myMacs.nodesHere',
+    defaultMessage: '{self, select, true {Nodes on this Mac} other {Nodes on {name}}}',
+  },
+  openNode: { id: 'myMacs.openNode', defaultMessage: 'Open {name} on the Nodes page' },
+  nodeServing: { id: 'myMacs.nodeServing', defaultMessage: 'Serving' },
+  nodeLoading: { id: 'myMacs.nodeLoading', defaultMessage: 'Loading' },
+  nodesFailed: {
+    id: 'myMacs.nodesFailed',
+    defaultMessage: 'The nodes on your Macs could not be read: {reason}',
+  },
+  addAnotherTitle: { id: 'myMacs.addAnotherTitle', defaultMessage: 'Add another Mac' },
+  addAnotherBody: {
+    id: 'myMacs.addAnotherBody',
     defaultMessage:
-      'No other Mac is on your LeanZero Link account yet — sign in on it to see it here.',
+      'Sign in to LeanZero Link with the same account on your other Mac. It appears here, and you can run models too big for one Mac across both.',
   },
 });
+
+type NodeEntry = NodesRead['nodes'][number];
+
+/**
+ * The MLX nodes whose way runs on `mac` (design §8.6): a pinned way names its Macs by placement key
+ * (`local`, `link:<id>` — macs.ts `macForPlacementNode`), so a split is on every Mac it spans; a node
+ * that follows this Mac's engine is this Mac's. A placement key no Mac on the roster answers to (an
+ * ssh alias, a Mac signed out) is on none of these cards — the Nodes page says it is not connected.
+ */
+export function nodesOnMac(read: NodesRead, macs: readonly Mac[], mac: Mac): NodeEntry[] {
+  return read.nodes.filter(({ def }) => {
+    if (def.kind !== 'mlx') return false;
+    const placement = def.placement;
+    if (placement == null || placement.kind === 'follows') return mac.isSelf;
+    return placement.macs.some((key) => macForPlacementNode(macs, key)?.key === mac.key);
+  });
+}
+
+function residencyOf(residency: Residency, id: string): string | null {
+  return residency.nodes.find((r) => r.node === id)?.residency.kind ?? null;
+}
+
+/** "Nodes on this Mac": each node a link to its card on the Nodes page, its live state beside it. */
+function NodesOnMac({ mac }: { mac: Mac }) {
+  const intl = useIntl();
+  const navigate = useNavigate();
+  const { macs } = useMacs();
+  const state = useGlanceNodes();
+  if (state.kind !== 'read') return null;
+  const nodes = nodesOnMac(state.read, macs, mac);
+  if (nodes.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5" data-testid={`my-mac-nodes-${mac.key}`}>
+      <span className={cx(TYPE.meta, WEIGHT.semibold)}>
+        {intl.formatMessage(i18n.nodesHere, { self: String(mac.isSelf), name: mac.name })}
+      </span>
+      <ul className="flex flex-wrap items-center gap-1.5">
+        {nodes.map(({ def }) => {
+          const live = residencyOf(state.residency, def.id);
+          return (
+            <li key={def.id} className="flex items-center gap-1">
+              <button
+                type="button"
+                data-testid="my-mac-node"
+                data-node={def.id}
+                title={intl.formatMessage(i18n.openNode, { name: def.name })}
+                onClick={() => navigate(nodeHref(def.id))}
+                className={cx(
+                  'inline-flex h-6 max-w-full items-center gap-1 border-2 border-lz-ink bg-lz-surface px-2 text-lz-meta text-lz-ink [&_svg]:size-3 [&_svg]:shrink-0',
+                  WEIGHT.semibold,
+                  RADIUS.control,
+                  SURFACE.hover,
+                  FOCUS,
+                  MOTION
+                )}
+              >
+                <Network aria-hidden />
+                <span className="truncate">{def.name}</span>
+              </button>
+              {live === 'serving' && (
+                <Chip phase="writing">{intl.formatMessage(i18n.nodeServing)}</Chip>
+              )}
+              {live === 'loading' && (
+                <Chip phase="loading">{intl.formatMessage(i18n.nodeLoading)}</Chip>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/** With one Mac on the account: how to add the second, and what it buys (design §8.6). */
+function AddAnotherMac() {
+  const intl = useIntl();
+  return (
+    <section
+      data-testid="my-macs-add-another"
+      aria-label={intl.formatMessage(i18n.addAnotherTitle)}
+      className={cx('flex min-w-0 items-start gap-3 p-4', SURFACE.card)}
+    >
+      <span
+        aria-hidden
+        className={cx(
+          'flex size-8 shrink-0 items-center justify-center bg-lz-accent text-lz-accent-ink [&_svg]:size-4',
+          RADIUS.control
+        )}
+      >
+        <Laptop />
+      </span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className={TYPE.h2}>{intl.formatMessage(i18n.addAnotherTitle)}</span>
+        <p className={cx(TYPE.body, 'break-words')}>
+          {intl.formatMessage(i18n.addAnotherBody)}
+        </p>
+      </div>
+    </section>
+  );
+}
 
 function chipText(
   intl: ReturnType<typeof useIntl>,
@@ -423,6 +549,7 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
         </p>
       )}
       {mac.online && summary.state !== 'off' && <FactsGrid mac={mac} facts={facts} />}
+      <NodesOnMac mac={mac} />
       {mac.isSelf ? (
         <LetOthersUseThisMac
           linkState={linkState}
@@ -468,6 +595,7 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
 export function MyMacs(props: MyMacsProps) {
   const intl = useIntl();
   const { macs } = useMacs();
+  const nodes = useGlanceNodes();
   return (
     <div className="flex flex-col gap-4 pb-8" data-testid="link-connected">
       {props.stale && (
@@ -490,16 +618,20 @@ export function MyMacs(props: MyMacsProps) {
         <StatusDot tone="ok" label={intl.formatMessage(i18n.mesh)} />
         <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.intro)}</p>
       </div>
+      {nodes.kind === 'failed' && (
+        <ToneBanner
+          tone="err"
+          label={intl.formatMessage(i18n.title)}
+          text={intl.formatMessage(i18n.nodesFailed, { reason: nodes.error })}
+          testId="my-macs-nodes-failed"
+        />
+      )}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" data-testid="my-macs">
         {macs.map((mac) => (
           <MacCard key={mac.key} mac={mac} props={props} />
         ))}
+        {macs.length === 1 && <AddAnotherMac />}
       </div>
-      {macs.length === 1 && (
-        <p className={TYPE.bodyMuted} data-testid="link-peers-empty">
-          {intl.formatMessage(i18n.none)}
-        </p>
-      )}
     </div>
   );
 }

@@ -36,7 +36,7 @@ import {
 } from '../components/leanzero-swarm/mlxDistributed.fixtures';
 import type { MlxRemoteReport } from './mlxRemoteReport';
 
-const NONE = { distributed: null, remote: null };
+const NONE = { distributed: null, remote: null, served: [] };
 
 describe('buildEngineGlance — the single engine', () => {
   it('writing: green, the live writing rate leads, the reading rate beside it, the chat it serves', () => {
@@ -153,6 +153,7 @@ describe('buildEngineGlance — the split across Macs', () => {
   const fresh = (status = FLASH_READY) => ({
     distributed: { report: toMlxDistributedReport(status), ageMs: 0 },
     remote: null,
+    served: [],
   });
 
   it('the owner’s screenshot: reading an 80.3K prompt for 3m 11s at 237 tok/s, with the bar', () => {
@@ -190,6 +191,7 @@ describe('buildEngineGlance — the split across Macs', () => {
         ageMs: MLX_DISTRIBUTED_STALE_MS + 1,
       },
       remote: null,
+      served: [],
     });
     expect(g).toMatchObject({ stage: 'stale', phase: 'idle', busy: false });
   });
@@ -201,6 +203,7 @@ describe('buildEngineGlance — the split across Macs', () => {
         ageMs: 0,
       },
       remote: null,
+      served: [],
     });
     expect(g).toMatchObject({ stage: 'held', phase: 'held', busy: true });
   });
@@ -209,6 +212,7 @@ describe('buildEngineGlance — the split across Macs', () => {
     const g = buildEngineGlance(INITIAL_SNAPSHOT, {
       distributed: { report: toMlxDistributedReport(HOSTING_RANK_1), ageMs: 0 },
       remote: null,
+      served: [],
     });
     expect(g.engine.mode).toBe('hosting');
     expect(g.present).toBe(true);
@@ -230,6 +234,7 @@ describe('buildEngineGlance — chat routed to a linked Mac', () => {
     const g = buildEngineGlance(runningSnapshot(GENERATING_STATUS, { engine: 'remote' }), {
       distributed: null,
       remote: route(),
+      served: [],
     });
     expect(g).toMatchObject({
       engine: { mode: 'remote', peerName: 'Work’s Mac Studio' },
@@ -246,7 +251,7 @@ describe('buildEngineGlance — chat routed to a linked Mac', () => {
         mode: 'reconnecting',
         statusDetail: 'connection refused',
       },
-      { distributed: null, remote: route() }
+      { distributed: null, remote: route(), served: [] }
     );
     expect(g).toMatchObject({
       stage: 'reconnecting',
@@ -271,7 +276,7 @@ describe('buildEngineGlance — chat routed to a linked Mac', () => {
           pollMs: 2000,
         },
       },
-      { distributed: null, remote: route({ state: 'reconnecting' }) }
+      { distributed: null, remote: route({ state: 'reconnecting' }), served: [] }
     );
     expect(g).toMatchObject({ stage: 'away', phase: 'held', busy: false });
   });
@@ -285,7 +290,11 @@ describe('buildEngineGlance — which request the card leads with (Q-218)', () =
         modelId: FLASH_MODEL,
         serving: attributeServing(rows, 2, [], null),
       }),
-      { distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 }, remote: null }
+      {
+        distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 },
+        remote: null,
+        served: [],
+      }
     );
 
   it('screenshot 26: the chat’s 77k prompt leads, 1% read at ITS rate — the 174-token side call is named by its kind', () => {

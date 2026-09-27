@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link не смог назвать этот Mac ({error}) — узел создаётся для этого Mac; задайте имя ниже."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Связан только этот Mac — другие ваши Mac появятся здесь, когда присоединятся к LeanZero Link (Провайдеры › Мои Mac)."
+    "defaultMessage": "Связан только этот Mac — другие ваши Mac появятся здесь, когда присоединятся к LeanZero Link (LeanZero MLX › Мои Mac)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Выберите Mac…"
@@ -3993,7 +3993,7 @@
     "defaultMessage": "Другой Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Включите «Разрешить другим моим Mac использовать этот Mac › Выполнять часть разделённой модели» на {name} (там: Провайдеры › Мои Mac)."
+    "defaultMessage": "Включите «Разрешить другим моим Mac использовать этот Mac › Выполнять часть разделённой модели» на {name} (там: LeanZero MLX › Мои Mac)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "Его goose не умеет обслуживать"
@@ -5222,6 +5222,12 @@
   "myMacs.account": {
     "defaultMessage": "Аккаунт"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Войдите в LeanZero Link с той же учётной записью на другом Mac. Он появится здесь, и вы сможете запускать на обоих модели, слишком большие для одного Mac."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Добавить ещё один Mac"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "«Загружать и скачивать модели» вступит в силу, когда этот Mac заново подключится к LeanZero Link."
   },
@@ -5294,14 +5300,26 @@
   "myMacs.models": {
     "defaultMessage": "Модели"
   },
-  "myMacs.none": {
-    "defaultMessage": "В вашем аккаунте LeanZero Link пока нет другого Mac — войдите на нём, чтобы увидеть его здесь."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Загрузка"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Обслуживает"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Не удалось прочитать узлы на ваших Mac: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Узлы на этом Mac} other {Узлы на {name}}}"
   },
   "myMacs.off": {
     "defaultMessage": "выкл."
   },
   "myMacs.on": {
     "defaultMessage": "вкл."
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "Открыть {name} на странице «Узлы»"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Переподключить"
@@ -5501,11 +5519,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "обслуживается сейчас"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Узел · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "Неизвестно, какой узел обслуживает: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "Открыть {name} на странице «Узлы»"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Управлять облачными провайдерами"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Управлять Mac и моделями"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Сбой"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "Движок LeanZero MLX дал сбой — причина на карточке движка"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Загрузка"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "Движок LeanZero MLX загружает модель"
   },
   "nodes.sections": {
     "defaultMessage": "Разделы узлов"
