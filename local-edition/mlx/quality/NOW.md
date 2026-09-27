@@ -5,12 +5,11 @@ Updated: 2026-09-27 20:53 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 ## Live
 - Installed on both Macs: 3.0.61 (engine glance + Q-183) — VERIFIED post-swap pids (studio 97418, macbook 10693);
   the split restored itself on launch and answered "OK." (split-start now waits for a restore in flight).
-- E2E #3h STOPPED at the turn-12 boundary (13/30 turns on 3.0.59; turn 5 alone 8,352 s) to install 3.0.60.
-- E2E #3i RUNNING on 3.0.60 (27B tensor, jira brief, fresh session) ·  Turn 0 done 336 s (answer reused
-  40,238 of 40,819 cached). LIVE at 17:23: Q-185 (fact check shown as an answer + session idle) → agent. The
-  view was moved to the Engine page 17:21:47 and r1 stalled (Q-186, fixed in r1 cfe43fb81 for the next run;
-  this r1 keeps old code — if VIEW_AWAY is last and the engine idles, navigate back by hand). runwatch bb4mz1ngg. Prove: no 0-cached
-  full re-reads (Q-182), Q-181/161/164/177, livecheck green.
+- E2E #3h stopped at turn 12 (3.0.59) · #3i stopped at turn 3 (3.0.60: 336/53/666/681 s; Q-185 found live; the
+  view was moved to the Engine page twice → Q-186).
+- E2E #3j RUNNING on 3.0.61 (27B tensor, jira brief; r1 with VIEW_RETURNED + inode call keys) · runwatch b7snujtmq.
+  Prove: no 0-cached full re-reads (Q-182), Q-181/161/164/177, livecheck green; then the live critic round on the
+  engine glance (dock, float, desktop mini window over another app).
 
 ## CI
 - Red on 3a3…/NOW commit: tool_results_do_not_spend_the_title_window ("missing model") — flaky, the title tests read
