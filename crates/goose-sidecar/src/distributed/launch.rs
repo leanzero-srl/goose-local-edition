@@ -1355,6 +1355,7 @@ pub(crate) mod tests {
              class _Job:\n\
              \x20   row: object\n\
              \x20   produced: int = 0\n\
+             \x20   stream: object = None\n\
              @dataclass\n\
              class _State:\n\
              \x20   waiting: list = None\n\
@@ -1648,8 +1649,10 @@ print("ok")
         std::fs::write(
             site.join("rapid_mlx/distributed/pipeline_qwen4_serve.py"),
             "from dataclasses import dataclass\n\
+             @dataclass\n\
              class _Job:\n\
-             \x20   def __init__(self, row): self.row = row\n\
+             \x20   row: object\n\
+             \x20   stream: object = None\n\
              @dataclass\n\
              class _State:\n\
              \x20   waiting: list = None\n\
@@ -2184,6 +2187,10 @@ state.active = [job]
 # Q-145: rank 0 moves queued jobs to `waiting`; the queue holds what it has not taken yet.
 state.waiting = [serve._Job(serve._Row([2] * 6, 4, 0.0, 1.0), loop, asyncio.Queue())]
 state.jobs.put(serve._Job(serve._Row([1] * 5, 4, 0.0, 1.0), loop, asyncio.Queue()))
+# Q-178: a streamed chat job carries the fork's StreamWatch; goose's row carries its report.
+from rapid_mlx.distributed.pipeline_stream import StreamWatch
+job.stream = StreamWatch(lambda tag, payload: None, job.id)
+job.stream.take("tool", "<tool_call>\n<function=write>")
 status = client.get("/v1/status").json()
 print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "walked": walked,
       "first_token": job.first_token is not None, "prefilled": job.prefilled, "status": status,
@@ -2282,6 +2289,19 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
             status["sampling_defaults"]["generation_config_error"].is_string(),
             "a state built with no checkpoint names it: {status}"
         );
+        // Q-178: the streamed job's row carries what its client has and has not been sent; a job
+        // that is not a streamed chat says so with null; the fork's own body names the last answer
+        // the engine ended itself (none yet).
+        let stream = &status["requests"][0]["stream"];
+        assert_eq!(stream["parser_state"], "tool", "{status}");
+        assert_eq!(stream["tail"], "<tool_call>\n<function=write>");
+        assert_eq!(
+            (&stream["generated_chars"], &stream["sent_chars"]),
+            (&serde_json::json!(28), &serde_json::json!(0))
+        );
+        assert_eq!(stream["tool_call"]["streamed"], false, "{stream}");
+        assert_eq!(status["requests"][1]["stream"], serde_json::Value::Null);
+        assert_eq!(status["last_engine_stop"], serde_json::Value::Null);
     }
 
     /// Q-135: the same request and the same setting render the SAME prompt on every way, through

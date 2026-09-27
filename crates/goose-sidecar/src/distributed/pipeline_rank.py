@@ -61,6 +61,16 @@ if "sampling" not in pipeline_qwen4_serve._Row.__dataclass_fields__:
         "against fork lz-pipeline-qwen4.9 (Q-159)"
     )
 
+# Q-178 (fork lz-pipeline-qwen4.13): a streamed chat job carries what its client has and has not
+# been sent (`_Job.stream`, the fork's pipeline_stream.StreamWatch, Q-146's shape); each
+# /v1/status row carries its report. The fork's own body names the last answer the engine ended
+# itself (`last_engine_stop`, Q-161).
+if "stream" not in pipeline_qwen4_serve._Job.__dataclass_fields__:
+    raise SystemExit(
+        "goose pipeline rank: the fork's _Job carries no stream; the status rows were written "
+        "against fork lz-pipeline-qwen4.13 (Q-178)"
+    )
+
 jobs_by_row = weakref.WeakValueDictionary()
 
 
@@ -95,8 +105,10 @@ fork_prefill = fork_engine.prefill
 fork_build_app = pipeline_qwen4_serve._build_app
 
 
-def _start(engine, row):
-    fork_start(engine, row)
+def _start(engine, row, *directives):
+    # Since lz-pipeline-qwen4.13 (Q-179) the plan's evictions ride along: a restore whose entry is
+    # evicted in the same plan moves it.
+    fork_start(engine, row, *directives)
     # Rank 0 admits the row object its job carries; other ranks rebuild rows from the plan.
     job = jobs_by_row.get(id(row)) if engine.stage.is_first else None
     if job is not None:
@@ -132,6 +144,9 @@ def live_row(job, now):
     # Every sampling field the row runs with and its layer; the fork marks a penalty its sampler
     # cannot apply `applied: false`.
     row["sampling"] = job.row.sampling
+    # Q-178: a streamed chat answer's parser state, generated vs sent characters, what it
+    # withholds and why, the call being written, and its last words (null: not a streamed chat).
+    row["stream"] = None if job.stream is None else job.stream.report()
     return row
 
 

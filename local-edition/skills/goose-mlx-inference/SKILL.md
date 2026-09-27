@@ -122,7 +122,7 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   state machine is in "tool" (`gen.state != "tool"`, server.py:1478) — E2E #3c's rank 0 generated 21,910 tokens of one
   call (RANK_STATE uid 15, ended "removed") with zero chunks at goose. rank_tool_stream.py + the relay in
   rank_wrapper.py (`StreamedToolCalls`, wraps mlx_lm's own handle_completion) send the open frame (id, name, `{`) and
-  argument fragments as OpenAI `tool_calls` deltas, like Rapid-MLX and the pipeline; the end reconciles against
+  argument fragments as OpenAI `tool_calls` deltas (the pipeline did NOT, until lz-pipeline-qwen4.13 — below); the end reconciles against
   `qwen3_coder.parse_tool_call` on the whole text and sends the remainder, so the call is byte-identical; on a
   refusal nothing more is sent (the client fails the call; rank log `GOOSE_RANK_TOOL_CALL_UNPARSED`). Only
   string-typed values stream before their close (typed ones are converted whole); a call whose text never forms
@@ -143,6 +143,23 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   withholding-path table (which paths Q-141 covers) is in FINDINGS-LEDGER Q-146. Test:
   `the_status_names_what_a_streamed_answer_withholds`. Test runs against the live venv: prefix
   `PYTHONDONTWRITEBYTECODE=1` so nothing is written into ~/.goose/distributed.
+- THE PIPELINE'S OWN STREAM (Q-178/Q-179, fork lz-pipeline-qwen4.13 = 1b43e84a0, 2026-09-27). Its route-layer
+  StreamingPostProcessor sends a qwen3_coder_xml call's header + `{` then — once a string value is unquoted
+  (`_legacy_raw_stream`, upstream #1515) — NOTHING until the answer ends (E2E #5b: "1 chars of arguments" for 4,624
+  tokens; reproduce on CPU with the Flash tokenizer from ~/.goose/models + the fork's postprocessor). The fork's
+  `pipeline_stream.py` StreamRelay reads the checkpoint's single-token markers by ID (a BPE-held space arrives with
+  the marker: ' <tool_call>'), owns a declared call (streamed, verified at close against `extract_tool_calls`), hands
+  undeclared/unreadable calls to the postprocessor unchanged, and carries the Q-146 `stream` report (`_Job.stream`;
+  pipeline_rank.py puts it on each /v1/status row) + the Q-161 repeat/text-cycle stops (`last_engine_stop`). Its
+  reader is Rapid-MLX's parser, NOT mlx_lm's: a value ends at the LAST `</parameter>` before the next DECLARED
+  parameter; a JSON-string value is decoded. PREFIX CACHE, one copy: a row keeps a boundary record (GDN states + QSA
+  rings, 42/74 MB on Flash) and its own cache cut to the boundary becomes the entry when it leaves; the old copy
+  beside the batch stopped fitting at 53k (rank 1 room 0.91 GB beside a second full-context row). The step after a
+  big answer still reads that answer once (goose's transient tail sits after the boundary). TRAPS: goose's
+  pipeline_rank.py `_start` wrapper must pass the fork's extra args through (`*directives`); fork tests that
+  import `test_pipeline_qwen4_serve.py` launch ranks — the in-process ones live in `_stream_parity`, `_prefix_adopt`,
+  `_row_guard`, `_continuous`, `_srpf`; the real-fork goose tests need `GOOSE_TEST_PIPELINE_PYTHON` = a venv at the
+  pin (never the live ~/.goose/distributed env while a split runs).
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
