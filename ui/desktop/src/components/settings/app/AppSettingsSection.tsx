@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import ThemeSelector from '../../GooseSidebar/ThemeSelector';
 import EditionSelector from '../../GooseSidebar/EditionSelector';
 import FanInCard from '../../swarm/FanInCard';
+import type { KeepAwakeState } from '../../../keepAwake';
 import { useFleet } from '../../swarm/useFleet';
 import { LMSTUDIO_FLEET_SETTING_CHANGED } from '../../../hooks/useLmStudioFleetVisible';
 import BlockLogoBlack from './icons/block-lockup_black.png';
@@ -61,7 +62,11 @@ const i18n = defineMessages({
   preventSleepDesc: {
     id: 'settings.preventSleep.description',
     defaultMessage:
-      'Keep your computer awake while goose is running a task (screen can still lock)',
+      'Keep your computer from going to sleep while goose is open (the screen can still turn off and lock)',
+  },
+  preventSleepFailed: {
+    id: 'settings.preventSleep.failed',
+    defaultMessage: 'Prevent Sleep is not working: {reason}',
   },
   costTracking: { id: 'settings.costTracking.title', defaultMessage: 'Cost Tracking' },
   costTrackingDesc: {
@@ -218,7 +223,8 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
   const [menuBarIconEnabled, setMenuBarIconEnabled] = useState(true);
   const [reportProblemOpen, setReportProblemOpen] = useState(false);
   const [dockIconEnabled, setDockIconEnabled] = useState(true);
-  const [wakelockEnabled, setWakelockEnabled] = useState(true);
+  const [keepAwake, setKeepAwake] = useState<KeepAwakeState | null>(null);
+  const [keepAwakeCallError, setKeepAwakeCallError] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [isMacOS, setIsMacOS] = useState(false);
   const [isDockSwitchDisabled, setIsDockSwitchDisabled] = useState(false);
@@ -269,9 +275,11 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
       setMenuBarIconEnabled(enabled);
     });
 
-    window.electron.getWakelockState().then((enabled) => {
-      setWakelockEnabled(enabled);
-    });
+    window.electron
+      .getWakelockState()
+      .then(setKeepAwake, (error: unknown) =>
+        setKeepAwakeCallError(error instanceof Error ? error.message : String(error))
+      );
 
     window.electron.getSetting('enableNotifications').then((enabled) => {
       setNotificationsEnabled(enabled ?? true);
@@ -327,13 +335,18 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
   };
 
   const handleWakelockToggle = async () => {
-    const newState = !wakelockEnabled;
-    const success = await window.electron.setWakelock(newState);
-    if (success) {
-      setWakelockEnabled(newState);
-      trackSettingToggled('prevent_sleep', newState);
+    const newState = !(keepAwake?.enabled ?? false);
+    try {
+      const result = await window.electron.setWakelock(newState);
+      setKeepAwake(result);
+      setKeepAwakeCallError(null);
+      trackSettingToggled('prevent_sleep', result.enabled);
+    } catch (error) {
+      setKeepAwakeCallError(error instanceof Error ? error.message : String(error));
     }
   };
+
+  const keepAwakeProblem = keepAwakeCallError ?? keepAwake?.error ?? null;
 
   const handleNotificationsToggle = async (checked: boolean) => {
     setNotificationsEnabled(checked);
@@ -482,11 +495,17 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
               <p className="text-xs text-text-secondary max-w-md mt-[2px]">
                 {intl.formatMessage(i18n.preventSleepDesc)}
               </p>
+              {keepAwakeProblem && (
+                <p role="alert" className="text-xs text-red-600 max-w-md mt-[2px]">
+                  {intl.formatMessage(i18n.preventSleepFailed, { reason: keepAwakeProblem })}
+                </p>
+              )}
             </div>
             <div className="flex items-center">
               <Switch
-                checked={wakelockEnabled}
+                checked={keepAwake?.enabled ?? false}
                 onCheckedChange={handleWakelockToggle}
+                data-testid="prevent-sleep-toggle"
                 variant="mono"
               />
             </div>

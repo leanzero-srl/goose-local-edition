@@ -7746,7 +7746,10 @@
     "defaultMessage": "Notificaciones"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Mantén tu computadora despierta mientras goose ejecuta una tarea (la pantalla aún puede bloquearse)"
+    "defaultMessage": "Evita que tu ordenador entre en reposo mientras goose está abierto (la pantalla aún puede apagarse y bloquearse)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Evitar suspensión no funciona: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Evitar suspensión"

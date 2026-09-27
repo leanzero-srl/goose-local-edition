@@ -7746,7 +7746,10 @@
     "defaultMessage": "Bildirimler"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "goose bir görevi çalıştırırken bilgisayarınızı uyanık tutun (ekran hala kilitlenebilir)"
+    "defaultMessage": "goose açıkken bilgisayarınızın uyku moduna geçmesini engeller (ekran yine de kapanıp kilitlenebilir)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Uykuyu engelleme çalışmıyor: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Uykuyu Önleyin"

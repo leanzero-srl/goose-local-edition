@@ -48,7 +48,7 @@ beforeEach(() => {
   fleetCalls = [];
   const e = electron();
   e.getMenuBarIconState = vi.fn(async () => true);
-  e.getWakelockState = vi.fn(async () => false);
+  e.getWakelockState = vi.fn(async () => ({ enabled: false, holding: false, error: null }));
   e.getDockIconState = vi.fn(async () => true);
   e.openNotificationsSettings = vi.fn(async () => {});
   (window as unknown as { appConfig: { get: (k: string) => unknown } }).appConfig = {

@@ -7746,7 +7746,10 @@
     "defaultMessage": "通知"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "在 goose 執行工作時讓電腦保持喚醒狀態（螢幕仍可鎖定）"
+    "defaultMessage": "在 goose 開啟期間防止電腦進入睡眠（螢幕仍可關閉並鎖定）"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "防止睡眠未生效：{reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "防止睡眠"

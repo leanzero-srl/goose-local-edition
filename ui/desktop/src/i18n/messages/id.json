@@ -7746,7 +7746,10 @@
     "defaultMessage": "Notifikasi"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Jaga komputer Anda tetap menyala saat goose menjalankan tugas (layar tetap dapat terkunci)"
+    "defaultMessage": "Cegah komputer Anda tidur selama goose terbuka (layar tetap dapat mati dan terkunci)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Cegah Tidur tidak berfungsi: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Cegah Tidur"

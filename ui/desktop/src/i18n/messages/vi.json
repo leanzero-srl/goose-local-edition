@@ -7746,7 +7746,10 @@
     "defaultMessage": "Thông báo"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Giữ máy tính của bạn luôn hoạt động trong khi goose đang chạy một tác vụ (màn hình vẫn có thể khóa)"
+    "defaultMessage": "Ngăn máy tính chuyển sang chế độ ngủ khi goose đang mở (màn hình vẫn có thể tắt và khóa)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Ngăn ngủ không hoạt động: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Ngăn chế độ ngủ"

@@ -7746,7 +7746,10 @@
     "defaultMessage": "सूचनाएं"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "जब goose कोई कार्य चला रहा हो तो अपने कंप्यूटर को चालू रखें (स्क्रीन अभी भी लॉक हो सकती है)"
+    "defaultMessage": "goose खुला रहने तक आपके कंप्यूटर को स्लीप में जाने से रोकें (स्क्रीन फिर भी बंद और लॉक हो सकती है)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "स्लीप रोकना काम नहीं कर रहा है: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "नींद रोकें"

@@ -7746,7 +7746,10 @@
     "defaultMessage": "通知"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "gooseがタスクを実行中はコンピューターがスリープしないようにします（画面はロックされる場合があります）"
+    "defaultMessage": "gooseを開いている間、コンピューターがスリープしないようにします（画面はオフになりロックされる場合があります）"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "スリープの防止が機能していません: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "スリープを防止"

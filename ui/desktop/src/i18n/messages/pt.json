@@ -7746,7 +7746,10 @@
     "defaultMessage": "Notificações"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Manter o computador ativo enquanto o goose executa uma tarefa (o ecrã ainda pode ser bloqueado)"
+    "defaultMessage": "Impede que o computador entre em repouso enquanto o goose está aberto (a tela ainda pode desligar e bloquear)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Impedir repouso não está funcionando: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Impedir Suspensão"

@@ -7746,7 +7746,10 @@
     "defaultMessage": "Benachrichtigungen"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Halten Sie Ihren Computer wach, während goose eine Aufgabe ausführt (der Bildschirm kann sich weiterhin sperren)"
+    "defaultMessage": "Verhindert, dass Ihr Computer in den Ruhezustand wechselt, solange goose geöffnet ist (der Bildschirm kann sich weiterhin ausschalten und sperren)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Energiesparmodus verhindern funktioniert nicht: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Energiesparmodus verhindern"

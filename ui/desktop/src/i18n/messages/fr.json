@@ -7746,7 +7746,10 @@
     "defaultMessage": "Notifications"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Maintenez votre ordinateur éveillé pendant que goose exécute une tâche (l'écran peut quand même se verrouiller)"
+    "defaultMessage": "Empêche votre ordinateur de se mettre en veille tant que goose est ouvert (l'écran peut toujours s'éteindre et se verrouiller)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Empêcher la mise en veille ne fonctionne pas : {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Empêcher la mise en veille"
