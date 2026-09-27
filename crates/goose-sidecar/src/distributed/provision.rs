@@ -91,8 +91,21 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// review entry, the code byte-identical: the single engine's lz.10 (Q-103) is this line's own
 /// SRPF + KV admission ported to the one-row engine, recorded `equivalent`, so the fork's audit and
 /// [`PIPELINE_SINGLE_LINE_REVIEWED_THROUGH`] move to lz.10 with the single-engine pin.
+/// 1b43e84a0 (branch lz/pipeline-stream-parity, tag lz-pipeline-qwen4.13, Q-178 + Q-179) brings
+/// the tensor wrapper's streaming fixes to this runner: a qwen3_coder_xml call named with a
+/// declared tool is streamed as `tool_calls` deltas while it is written (the post-processor sent
+/// `{` and nothing more once a string value arrived unquoted — E2E #5b's "1 chars of arguments"
+/// for 4,624 tokens), each streamed chat job carries Q-146's `stream` report (`_Job.stream`,
+/// pipeline_rank.py puts it on the job's /v1/status row), a call written again word for word or
+/// text written over and over ends the answer (Q-161, `last_engine_stop` on the fork's body), and
+/// a request field the split cannot honour is a named 400 (Q-177; top_k past the vocabulary and
+/// min_p outside [0, 1] used to raise in the sampling rank and end the pair, Q-164's class). And
+/// a finished row's cache BECOMES its prefix-cache entry (Q-179): the copy beside the batch
+/// stopped fitting rank 1's 0.91 GB of room at 53,409 tokens, so every later agent call re-read
+/// 60k tokens (~4 min). `_Engine._start` now takes the plan's evictions; the rank program passes
+/// them through.
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "a18e14fd464adbddd487025aa767cab480bf4226";
+pub const PIPELINE_FORK_COMMIT: &str = "1b43e84a0bfecaaa94ec8b913ddfd77cb020003f";
 /// The newest single-engine tag (`v*-lz.*`) whose fixes the pipeline fork at
 /// [`PIPELINE_FORK_COMMIT`] carries or has reviewed as not applying — the fork's
 /// `tests/pipeline_single_line_ports.json` `reviewed_through`. The pipeline line branched from the
@@ -102,7 +115,7 @@ pub const PIPELINE_FORK_COMMIT: &str = "a18e14fd464adbddd487025aa767cab480bf4226
 pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.10";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@a18e14fd464adbddd487025aa767cab480bf4226";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@1b43e84a0bfecaaa94ec8b913ddfd77cb020003f";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.
