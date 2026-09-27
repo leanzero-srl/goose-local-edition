@@ -1,3 +1,4 @@
+import type { MlxPlacementKeyDto } from '@aaif/goose-sdk';
 import type { IntlShape } from 'react-intl';
 import { defineMessages } from '../../i18n';
 import type { PlacementCandidate, PlacementGoal } from '../../acp/mlx-placement';
@@ -30,9 +31,14 @@ const i18n = defineMessages({
 /** A pinned way: the planner's `PlacementKey` as a node stores it. */
 export type PinnedPlacement = Exclude<NodePlacement, { kind: 'follows' }>;
 
-export function placementOfCandidate(candidate: PlacementCandidate): PinnedPlacement {
-  const { kind, nodes, link } = candidate.key;
+/** A planner key (`PlacementKey`: kind, node ids in rank order, a split's link) as a placement. */
+export function placementOfKey(key: MlxPlacementKeyDto): PinnedPlacement {
+  const { kind, nodes, link } = key;
   return link ? { kind, macs: [...nodes], link } : { kind, macs: [...nodes] };
+}
+
+export function placementOfCandidate(candidate: PlacementCandidate): PinnedPlacement {
+  return placementOfKey(candidate.key);
 }
 
 /** Two placements name the same way: kind, Macs in rank order and (for a split) the link. */
@@ -52,7 +58,11 @@ export function modelShortName(modelId: string): string {
 }
 
 /** Where a pinned way runs, as a node's default name says it. */
-export function whereWords(intl: IntlShape, placement: PinnedPlacement, macs: readonly Mac[]): string {
+export function whereWords(
+  intl: IntlShape,
+  placement: PinnedPlacement,
+  macs: readonly Mac[]
+): string {
   if (placement.kind !== 'single') {
     return intl.formatMessage(i18n.whereBothMacs, { count: placement.macs.length });
   }
