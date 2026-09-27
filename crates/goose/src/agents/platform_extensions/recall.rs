@@ -244,6 +244,15 @@ impl RecallClient {
     /// named knowledge source. Both halves answer false on a knowledge-blind agent — a benchmark
     /// (frame 1.14 §2.6): the score must not depend on what this machine has learned, and the
     /// run's own corrections must not land in the store the next benchmark reads.
+    async fn history_tool(&self, session_id: &str) -> Option<String> {
+        let manager = self
+            .context
+            .extension_manager
+            .as_ref()
+            .and_then(|weak| weak.upgrade())?;
+        history_tool(&manager, session_id).await
+    }
+
     async fn extension_enabled(&self, name: &str) -> bool {
         match self
             .context
@@ -258,6 +267,50 @@ impl RecallClient {
             None => false,
         }
     }
+}
+
+/// The name under which this session lists the tool that opens a past session — `None` when the
+/// chatrecall extension is not enabled here. Measured (Q-14, 2026-09-25): with chatrecall
+/// `enabled: false` the `<past-session>` block still said "chatrecall(session_id) loads it", and
+/// "Write three sentences about the Alps." became "Let me check the previous session to avoid
+/// repeating what I already wrote" and 26 shell calls over 9 minutes looking for a tool that was
+/// not there.
+pub async fn history_tool(
+    manager: &crate::agents::extension_manager::ExtensionManager,
+    session_id: &str,
+) -> Option<String> {
+    if !manager
+        .is_extension_enabled(super::chatrecall::EXTENSION_NAME)
+        .await
+    {
+        return None;
+    }
+    let tools = match manager
+        .get_prefixed_tools(
+            session_id,
+            Some(super::chatrecall::EXTENSION_NAME.to_string()),
+        )
+        .await
+    {
+        Ok(tools) => tools,
+        Err(err) => {
+            tracing::warn!(%err, "recall: chatrecall is enabled but its tools are unreadable; the past session names no tool");
+            return None;
+        }
+    };
+    let own = super::chatrecall::TOOL_NAME;
+    let prefixed = format!("{}__{own}", super::chatrecall::EXTENSION_NAME);
+    let found = tools
+        .iter()
+        .map(|tool| tool.name.to_string())
+        .find(|name| name == own || *name == prefixed);
+    if found.is_none() {
+        tracing::warn!(
+            listed = tools.len(),
+            "recall: chatrecall is enabled but lists no {own} tool; the past session names no tool"
+        );
+    }
+    found
 }
 
 /// The one predicate behind recall's three gates (memory read, skills read, correction write):
@@ -910,6 +963,9 @@ pub struct Extras {
     pub autoloaded: Option<(String, String)>,
     pub correction_of: Option<String>,
     pub answered: Option<(String, String)>,
+    /// The tool that opens a past session, as this session lists it (`history_tool`) — `None` when
+    /// chatrecall is not enabled, and then the `<past-session>` block names no tool.
+    pub history_tool: Option<String>,
 }
 
 /// The turn-context part. None when there is nothing to say.
@@ -969,9 +1025,20 @@ pub fn render_with(
         sections.push(block);
     }
     if let Some(past) = past {
+        let how = match &extras.history_tool {
+            Some(tool) => format!(
+                "{tool} with session_id \"{}\" loads it if the history matters.",
+                past.session_id
+            ),
+            None => {
+                "That line is all goose has of it: no tool in this chat opens that session, so \
+                     do not go looking for it — answer this request as asked."
+                    .to_string()
+            }
+        };
         sections.push(format!(
             "<past-session>\nThis was discussed before — session {} (\"{}\", {}), the {} said: \"{}\". \
-             chatrecall(session_id) loads it if the history matters.\n</past-session>",
+             {how}\n</past-session>",
             past.session_id, past.description, past.when, past.role, past.headline
         ));
     }
@@ -1152,6 +1219,9 @@ impl McpClientTrait for RecallClient {
             }
         };
 
+        if past.is_some() {
+            extras.history_tool = self.history_tool(session_id).await;
+        }
         let part = render_with(&memories, &skills, past.as_ref(), &extras);
         let recalled: Vec<String> = memories
             .iter()
@@ -2281,6 +2351,7 @@ mod tests {
             autoloaded: Some(("jira-api".to_string(), "BODY".to_string())),
             correction_of: Some("Deleted the tests".to_string()),
             answered: Some(("Which config?".to_string(), "prod".to_string())),
+            history_tool: None,
         };
         let out = render_with(&[], &[], None, &extras).unwrap();
         assert!(out.starts_with("<recall-line>recalled:  · loaded jira-api · correction noticed · answer noticed</recall-line>"), "{out}");
