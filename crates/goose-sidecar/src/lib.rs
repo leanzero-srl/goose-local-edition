@@ -33,6 +33,8 @@ pub mod distributed;
 pub mod engine;
 pub mod fit;
 pub mod hf;
+#[cfg(unix)]
+pub mod holders;
 pub mod kv_cache;
 pub mod machine;
 mod memory;
@@ -167,6 +169,12 @@ impl std::error::Error for StartCancelled {}
 #[derive(Debug, Default)]
 pub struct StartupWatch {
     seen: StdMutex<StartupSeen>,
+    /// Names the phase a stderr tail shows; with it, each phase's first sighting is marked.
+    phase_of: Option<fn(&[String]) -> &'static str>,
+    /// Each phase the start showed, with the instant it was first seen — a load's phase times
+    /// (design §6.4 step 10). Marked at the startup loop's own looks, so a phase's start is known
+    /// to within one look: a measurement for display, never a decision.
+    phase_marks: StdMutex<Vec<(&'static str, Instant)>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -176,8 +184,21 @@ pub struct StartupSeen {
 }
 
 impl StartupWatch {
+    /// A watch that marks when each phase `phase_of` names first shows in the stderr tail.
+    pub fn with_phases(phase_of: fn(&[String]) -> &'static str) -> Self {
+        Self {
+            phase_of: Some(phase_of),
+            ..Self::default()
+        }
+    }
+
     pub fn seen(&self) -> StartupSeen {
         self.seen.lock().unwrap().clone()
+    }
+
+    /// The phases seen so far, in order, each with its first sighting.
+    pub fn phase_marks(&self) -> Vec<(&'static str, Instant)> {
+        self.phase_marks.lock().unwrap().clone()
     }
 
     fn publish(&self, mark: &ProgressMark, handle: &ChildHandle) {
@@ -185,6 +206,13 @@ impl StartupWatch {
             resident_bytes: mark.tree.iter().map(|(_, _, memory)| *memory).max(),
             stderr_tail: handle.stderr_tail.lock().unwrap().iter().cloned().collect(),
         };
+        if let Some(phase_of) = self.phase_of {
+            let phase = phase_of(&seen.stderr_tail);
+            let mut marks = self.phase_marks.lock().unwrap();
+            if !marks.iter().any(|(seen_phase, _)| *seen_phase == phase) {
+                marks.push((phase, Instant::now()));
+            }
+        }
         *self.seen.lock().unwrap() = seen;
     }
 }
