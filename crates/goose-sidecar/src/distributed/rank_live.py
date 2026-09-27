@@ -57,10 +57,32 @@ def live_request(
     }
 
 
+def row_handling(client, stopped, stopped_at, handler_left, arrived, held_for_room):
+    """What the tensor split's rank 0 adds to a request's row (Q-231): the fields that say what a
+    turn is waiting on when it waits. E2E #3m turn 3 sat `queued` for 38.6 s while three end-of-turn
+    fact checks goose had already dropped held the batch and the table listed none of them.
+    - `client`: the HTTP peer ("host:port") that sent the request;
+    - `held_for_room`: a queued request rank 0 has taken and holds until the batch it would join
+      has room for it (rank_prefill.py `admits`); False for one the engine has not taken yet;
+    - `stopped`: the engine's named stop of the answer (the `last_engine_stop` shape:
+      cancelled_by_client, tool_call_repeated, text_cycle), None while it runs;
+    - `stopped_after_s`: when, from the request's arrival, it was stopped;
+    - `leaving`: the answer has ended — nobody is answered any more — but its row still holds the
+      engine's batch until the generation loop's next removal lets it go."""
+    return {
+        "client": client,
+        "held_for_room": held_for_room,
+        "stopped": stopped,
+        "stopped_after_s": None if stopped_at is None else round(stopped_at - arrived, 3),
+        "leaving": handler_left,
+    }
+
+
 def live_status(base, requests):
     """The runner's own `/v1/status` fields (counters, slots, KV) plus the request table.
     `status` is Rapid-MLX's word: "generating" while any request is in flight (queued ones
-    included — the counters count them too), else "idle". `generation_tps` sums the decode
+    included — the counters count them too) or any row still holds the batch (`leaving`), else
+    "idle". `generation_tps` sums the decode
     rates of the requests generating now — None when none is, never a stale figure."""
     rates = [
         r["tokens_per_second"]

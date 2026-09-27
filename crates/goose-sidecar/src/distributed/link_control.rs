@@ -627,11 +627,12 @@ pub async fn spawn_link_rank(
 
 /// A peer whose goosed predates the runners' current programs (Q-66's doorbell, Q-79's bounded
 /// prompt cache, Q-104's planned prefill, Q-136's group formation, Q-142's stable-prefix
-/// boundary, Q-161's tool-call skeleton guard and per-row logits processors, Q-182's kept prefix)
-/// cannot read this Mac's rank spec (its serde names the unknown program tag). Said as what to
-/// do, not as a parse error.
+/// boundary, Q-161's tool-call skeleton guard and per-row logits processors, Q-182's kept prefix,
+/// Q-231's prompt-step yield) cannot read this Mac's rank spec (its serde names the unknown
+/// program tag). Said as what to do, not as a parse error.
 pub fn older_peer_refusal(error: &str) -> Option<&'static str> {
     [
+        "mlxLmServerPrefillYield",
         "mlxLmServerNewestPrefix",
         "mlxLmServerRowProcessors",
         "mlxLmServerSkeletonGuard",

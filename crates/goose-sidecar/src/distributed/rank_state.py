@@ -17,6 +17,8 @@
 #   one place goosed's hang rule reads the rank's CPU time as progress, Q-162);
 # - `mode`: `busy` while mlx_lm runs a batch (`timeout` None), `idle` otherwise — the decision
 #   the doorbell keys on; `rings`: rings rank 0 sent / a worker received; `rows`, `width`: the batch;
+# - `requests`: which request each row of the batch serves (uid → rank 0's request id, Q-231: E2E
+#   #3m's log said "rows 3" for 44 s and nothing named them);
 # - per generating row, its token trail (`TokenTrail`): two ranks that sampled the same tokens hold
 #   the same trails, so a batch that ended on one rank only is visible as a trail that stops there.
 import zlib
@@ -62,6 +64,7 @@ class LoopState:
         self.rows = 0
         self.width = 0
         self.held = 0
+        self.requests = {}
         self.trails = {}
         self.ended = None
 
@@ -92,6 +95,7 @@ class LoopState:
             "rows": self.rows,
             "width": self.width,
             "held": self.held,
+            "requests": {str(uid): request_id for uid, request_id in self.requests.items()},
             "trails": [trail.report(uid) for uid, trail in self.trails.items()],
             "ended": self.ended,
         }

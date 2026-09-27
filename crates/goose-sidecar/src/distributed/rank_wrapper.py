@@ -125,6 +125,14 @@
 #   its generation context (rank 0 shares the row's removal with every rank at the next step, as
 #   for any stop), and /v1/status's `last_engine_stop` and a GOOSE_RANK_CANCELLED_BY_CLIENT line
 #   name it.
+# - a dropped request leaves the batch at the next prompt step, and every row the batch holds is
+#   listed (Q-231, `PromptStepBudget` / `DepartureContext` / `row_left`): mlx_lm removed stopped
+#   rows and took new requests only after its whole step loop — about five steps on a group, each a
+#   prompt slice of seconds — so E2E #3m's user turn waited 38.9 s behind three fact checks goose
+#   had already dropped, while /v1/status listed none of them (a request left the table when its
+#   handler did). Each row now names its client, its engine stop, whether it is held for room, and
+#   stays listed (`leaving`) until its batch row is gone; GOOSE_RANK_STATE names each row's request
+#   and GOOSE_RANK_ROW_LEFT says how long a stopped row held the batch.
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -248,6 +256,10 @@ for owner, name in (
     (server, "BatchGenerator"),
     (server.BatchGenerator, "close"),
     (server.BatchGenerator, "remove"),
+    (server.BatchGenerator, "insert_segments"),
+    (server, "GenerationContext"),
+    (server.GenerationContext, "stop"),
+    (server, "TimeBudget"),
     (server.BatchGenerator, "prompt_cache_nbytes"),
     (ArraysCache, "advance"),
 ):
@@ -307,6 +319,55 @@ live_ids = iter(range(1, 1 << 62))
 watches = {}
 # The same requests' `sampling` rows (rank_sampling.py `sampling_row`).
 samplings = {}
+# The same requests' handling (Q-231, rank_live.py `row_handling`): the client that sent each, the
+# engine's named stop of its answer, and whether its handler and its batch row have left. A
+# request whose answer ended while its row still holds the batch stays listed until the row leaves.
+handling = {}
+# Which request each row of the batch serves (uid → request id), kept by the generation thread of
+# every rank (the id rides the shared request, `goose_request_id`), and the request
+# `_next_request` handed the loop last: mlx_lm inserts it before it takes another. `in_batch` is the
+# same requests' ids, read under `lock` by the handlers: a request is kept listed after its answer
+# ended only while its id is here — never on an absence of word from the loop.
+batch_rows = {}
+in_batch = set()
+arriving = [None]
+loop.requests = batch_rows
+# Rank 0's requests held for room (`rank0_request`), by id, as a tuple replaced whole each time.
+held_ids = [()]
+# Whether the batch's last step read prompt tokens (`TrackedBatchGenerator.next`): the same on every
+# rank, since every rank steps the same batch (`PromptStepBudget` ends the step loop on it).
+last_step = {"read_prompt": False}
+
+
+def row_left(uid, how):
+    """The generation thread, as a row leaves the batch (it finished, or the loop removed it). A
+    request whose handler has already left is unlisted now — it held the batch until here — and
+    the rank's log says how long it held it after its answer ended (RANK_ROW_LEFT)."""
+    request_id = batch_rows.pop(uid, None)
+    now = time.monotonic()
+    with lock:
+        in_batch.discard(request_id)
+        handled = handling.get(request_id)
+        if handled is None or not handled["handler_left"]:
+            return
+        live.pop(request_id, None)
+        watches.pop(request_id, None)
+        samplings.pop(request_id, None)
+        handling.pop(request_id, None)
+    stopped = handled["stopped"]
+    emit(
+        "RANK_ROW_LEFT",
+        {
+            "request_id": request_id,
+            "uid": uid,
+            "how": how,
+            "stopped": None if stopped is None else stopped["reason"],
+            "held_after_stop_s": None
+            if handled["stopped_at"] is None
+            else round(now - handled["stopped_at"], 3),
+            "held_after_answer_s": round(now - handled["handler_left_at"], 3),
+        },
+    )
 
 
 def apply_caps():
@@ -442,12 +503,28 @@ ArraysCache.advance = advance
 class TrackedBatchGenerator(server.BatchGenerator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if not isinstance(getattr(self, "_prompt_tokens_counter", None), int):
+            raise SystemExit(
+                f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s BatchGenerator counts no "
+                "`_prompt_tokens_counter`; a step's prompt reading was written against mlx_lm 0.31.3"
+            )
         live_batch[:] = [self]
         loop.new_batch()
 
+    def insert_segments(self, *args, **kwargs):
+        uids = super().insert_segments(*args, **kwargs)
+        with lock:
+            for uid in uids:
+                batch_rows[uid] = arriving[0]
+                in_batch.add(arriving[0])
+        return uids
+
     def remove(self, uids, *args, **kwargs):
         loop.drop(uids)
-        return super().remove(uids, *args, **kwargs)
+        caches = super().remove(uids, *args, **kwargs)
+        for uid in uids:
+            row_left(uid, "removed")
+        return caches
 
     def close(self):
         if live_batch and live_batch[0] is self:
@@ -465,10 +542,14 @@ class TrackedBatchGenerator(server.BatchGenerator):
         return max(held, batch_kv_charge(prefill, *batch_shape(self)))
 
     def next(self):
+        read_before = self._prompt_tokens_counter
         responses = super().next()
+        last_step["read_prompt"] = self._prompt_tokens_counter > read_before
         settle_counters()
         for response in responses[1]:
             loop.fold(response.uid, response.token, response.finish_reason)
+            if response.finish_reason is not None:
+                row_left(response.uid, response.finish_reason)
         # Generation grows every row one token a step, past what the last admission charged: the
         # cache yields before the batch outgrows the plan's KV charge. Every rank holds the same
         # batch and the same cache, so every rank evicts alike.
@@ -480,6 +561,83 @@ class TrackedBatchGenerator(server.BatchGenerator):
 
 
 server.BatchGenerator = TrackedBatchGenerator
+
+
+# Q-231: a row whose client has left leaves at the loop's next removal, and a request that arrives
+# while a prompt is read is taken at the next prompt step — not after mlx_lm's whole step loop.
+#
+# mlx_lm 0.31.3's `_generate` runs `batch_generator.next()` in a loop bounded by its TimeBudget, and
+# only after the loop does it remove the rows whose context says stop and take the next request. On
+# a distributed group the budget is a COUNT of steps, the same on every rank, re-fitted every ten
+# loops to 0.5 s of the steps it measured — decode steps (~0.1 s on the 27B split): about five. A
+# step that reads a prompt slice (up to `--prefill-step-size` tokens per row) costs seconds, so five
+# of them held everything else out. E2E #3m turn 3 (2026-09-27): goose's end-of-turn fact checker
+# sent three requests (1,775 / 1,770 / 5,453 tokens, POST 20:16:14Z); goose dropped all three at
+# 20:16:17.067Z for the user's turn (turn_priority), rank 0 named the departures at 20:16:17.892Z
+# (GOOSE_RANK_CANCELLED_BY_CLIENT, 380 tokens read), and the loop then read the three prompts to
+# their end — `steps` 1116 on both ranks from 20:16:14Z to 20:16:59Z, the cache +3 user segments —
+# before it removed them; the user's 88,660-token call (sent 20:16:20.9Z) waited 38.9 s. Two changes:
+# - `PromptStepBudget`: the step loop ends after a step that read prompt tokens, so its removals
+#   and the next request are handled between prompt slices. It changes which step each rank runs
+#   when (every rank must end the loop at the same step, or the collectives no longer pair), so
+#   only a launch whose every rank runs it asks for it (`prefill_step_yields`). A step that only
+#   decodes runs under mlx_lm's budget unchanged, and a loop ended here is not counted in the
+#   budget's fit (every rank skips it alike), so decode keeps its measured step count.
+# - `DepartureContext`: rank 0's generation loop reads a context's stop flag right after it hands
+#   the request a piece; the flag now also reads the client's socket (`client_left`), so a client
+#   that has already gone is removed at that loop's end instead of the handler's next reading, and
+#   the handler — which may already be waiting for a piece that will never come — is woken on its
+#   answer queue to name the stop. Rank 0 decides and shares the removal (server.py
+#   `_share_object`), so it needs no tag.
+class PromptStepBudget(server.TimeBudget):
+    def __iter__(self):
+        last_step["read_prompt"] = False
+        return super().__iter__()
+
+    def __next__(self):
+        if last_step["read_prompt"]:
+            raise StopIteration()
+        return super().__next__()
+
+
+if spec.get("prefill_step_yields"):
+    server.TimeBudget = PromptStepBudget
+
+
+class DepartureContext(server.GenerationContext):
+    """mlx_lm's GenerationContext whose stop flag is also true once the client the handler set
+    (`client`) has left. Every other rank's context has no client: its removals are rank 0's."""
+
+    client = None
+    answers = None
+
+    @property
+    def _should_stop(self):
+        if self.__dict__.get("stopped") or self.__dict__.get("departed"):
+            return True
+        client = self.client
+        if client is None:
+            return False
+        try:
+            how = client_left(client)
+        except (ValueError, OSError):
+            # The handler closed the socket after the answer ended: the handler itself ended the
+            # request (and, if the client left, named it), so no departure is left to read here.
+            return False
+        if how is None:
+            return False
+        # The row leaves at this loop's end and nothing more reaches its answer queue: a handler
+        # already waiting on it is woken to name the stop (`ClientDeparted`).
+        self.__dict__["departed"] = how
+        self.answers.put(ClientDeparted(how))
+        return True
+
+    @_should_stop.setter
+    def _should_stop(self, value):
+        self.__dict__["stopped"] = value
+
+
+server.GenerationContext = DepartureContext
 
 if prefill is not None:
     upstream_prompt = mlx_generate.PromptProcessingBatch.prompt
@@ -662,12 +820,17 @@ def room_for(prompt_tokens):
     return admits(prefill, prompt_cache_limit, rows, width, prompt_tokens)
 
 
+def publish_held():
+    held_ids[0] = tuple(getattr(request[1], "goose_request_id", None) for request, _ in held)
+
+
 def rank0_request(self, timeout):
     """The request rank 0 shares now, or None: the oldest held one once the batch has room for
     it, else the next arrival — held instead when the batch it would join cannot fit it (behind
     any request already held, so arrivals keep their order)."""
     if held and room_for(held[0][1]):
         request, tokens = held.popleft()
+        publish_held()
         emit("RANK_ADMISSION", {"released_tokens": tokens, "still_held": len(held)})
         return request
     try:
@@ -683,6 +846,7 @@ def rank0_request(self, timeout):
     if not held and room_for(tokens):
         return request
     held.append((request, tokens))
+    publish_held()
     rows, width = batch_shape(live_batch[0]) if live_batch else (0, 0)
     emit(
         "RANK_ADMISSION",
@@ -743,6 +907,8 @@ def _next_request(self, timeout=None):
     loop.steps = state["steps"]
     loop.publish("batch" if timeout is None or request is not None else "idle")
     mark_tool_request(request)
+    if request is not None:
+        arriving[0] = getattr(request[1], "goose_request_id", None)
     return request
 
 
@@ -754,6 +920,34 @@ original_generate = server.ResponseGenerator.generate
 class ClientGone(BaseException):
     """The client closed the connection while its answer was being generated (Q-181). A
     BaseException, so mlx_lm's handler (`except Exception`) lets it through to do_POST."""
+
+
+class ClientDeparted(Exception):
+    """Put on a request's answer queue by rank 0's generation loop when it found the client gone
+    (`DepartureContext`, Q-231): the loop removes the row, so no further piece will come, and
+    mlx_lm's `_inner` raises this to the handler waiting for one, which names the stop."""
+
+    def __init__(self, how):
+        super().__init__(how)
+        self.how = how
+
+
+class RequestTap:
+    """The response generator as mlx_lm's own `generate` uses it (`self.requests.put` only),
+    keeping the answer queue it creates: the handler hands it to its context, so the generation
+    loop can wake a handler whose client it found gone (Q-231)."""
+
+    def __init__(self, generator):
+        self.generator = generator
+        self.answers = None
+
+    @property
+    def requests(self):
+        return self
+
+    def put(self, item):
+        self.answers = item[0]
+        self.generator.requests.put(item)
 
 
 def client_left(connection):
@@ -771,12 +965,18 @@ def client_left(connection):
     return None if peeked else "eof"
 
 
-def generate(self, request, generation_args, progress_callback=None, watch=None, client=None):
+def generate(
+    self, request, generation_args, progress_callback=None, watch=None, client=None, address=None
+):
     # `watch` (rank_stream_watch.py): a streamed chat request's account of what its client has
     # been sent, passed by the Q-141 relay below; None for every other request. `client`: the
-    # handler's connection, read for the client's departure at every piece (Q-181).
+    # handler's connection, read for the client's departure at every piece (Q-181); `address`: its
+    # peer, listed on the request's /v1/status row (Q-231).
     with lock:
         request_id = f"req-{next(live_ids)}"
+        # Rides the shared request to every rank's generation loop (`_next_request`), which names
+        # the batch row it becomes (`batch_rows`).
+        request.goose_request_id = request_id
         watches[request_id] = watch
         samplings[request_id] = sampling_row(
             generation_args, getattr(request, "sampling_sources", None)
@@ -793,6 +993,13 @@ def generate(self, request, generation_args, progress_callback=None, watch=None,
             "completion": 0,
         }
         live[request_id] = entry
+        handling[request_id] = {
+            "client": None if address is None else f"{address[0]}:{address[1]}",
+            "stopped": None,
+            "stopped_at": None,
+            "handler_left": False,
+            "handler_left_at": None,
+        }
 
     # The generation context, once mlx_lm hands it back: every piece arrives after it.
     started = []
@@ -802,8 +1009,10 @@ def generate(self, request, generation_args, progress_callback=None, watch=None,
         if client is None:
             return
         how = client_left(client)
-        if how is None:
-            return
+        if how is not None:
+            departed(how, phase)
+
+    def departed(how, phase):
         stop = {
             "request_id": request_id,
             "reason": "cancelled_by_client",
@@ -833,13 +1042,22 @@ def generate(self, request, generation_args, progress_callback=None, watch=None,
             progress_callback(processed, total)
 
     def leave():
+        # A row still in the batch keeps the request listed (`leaving`) until the generation loop
+        # removes it (`row_left`): until then it holds the engine as any other row does.
         with lock:
+            if request_id in in_batch:
+                handled = handling[request_id]
+                handled["handler_left"] = True
+                handled["handler_left_at"] = time.monotonic()
+                return
             live.pop(request_id, None)
             watches.pop(request_id, None)
             samplings.pop(request_id, None)
+            handling.pop(request_id, None)
 
+    tap = RequestTap(self)
     try:
-        ctx, tokens = original_generate(self, request, generation_args, progress)
+        ctx, tokens = original_generate(tap, request, generation_args, progress)
     except ContextFull as full:
         leave()
         raise Refused(400, str(full), "context_length_exceeded") from None
@@ -849,6 +1067,8 @@ def generate(self, request, generation_args, progress_callback=None, watch=None,
     except BaseException:
         leave()
         raise
+    ctx.answers = tap.answers
+    ctx.client = client
     started.append(ctx)
     entry["max_tokens"] = generation_args.max_tokens
     # The generation thread hands back the context as it takes the request into its batch: from
@@ -874,6 +1094,10 @@ def generate(self, request, generation_args, progress_callback=None, watch=None,
                     response = next(pieces)
                 except StopIteration:
                     break
+                except ClientDeparted as departure:
+                    departed(
+                        departure.how, "prefill" if entry["first_token"] is None else "generation"
+                    )
                 now = time.monotonic()
                 if entry["first_token"] is None:
                     entry["first_token"] = now
@@ -1081,23 +1305,41 @@ def do_GET(self):
             },
         )
     if self.path == "/v1/status":
-        # Every accepted-and-unfinished request is counted in num_running; mlx_lm does not split
+        # Every accepted-and-unfinished request is counted in num_running, and every row whose
+        # answer has ended but which still holds the batch (`leaving`, Q-231); mlx_lm does not split
         # queued from batched, so num_waiting carries none of them (the sum is the busy fact). The
         # request table tells prefill from generation per request.
         # A streamed chat request's row carries `stream` (rank_stream_watch.py, Q-146): what its
         # client has and has not been sent, and the last words written; null for any other request.
+        # Each row says who sent it and, when it waits or has ended, on what (rank_live.py
+        # `row_handling`, Q-231).
         now = time.monotonic()
+        held_for_room = set(held_ids[0])
         with lock:
             rows = [
                 live_request(request_id, now=now, **entry)
                 for request_id, entry in live.items()
             ]
+            leaving = 0
             for row in rows:
-                watch = watches.get(row["request_id"])
+                request_id = row["request_id"]
+                watch = watches.get(request_id)
                 row["stream"] = None if watch is None else watch.report()
-                row["sampling"] = samplings.get(row["request_id"])
+                row["sampling"] = samplings.get(request_id)
+                handled = handling[request_id]
+                row.update(
+                    row_handling(
+                        handled["client"],
+                        handled["stopped"],
+                        handled["stopped_at"],
+                        handled["handler_left"],
+                        live[request_id]["arrived"],
+                        request_id in held_for_room,
+                    )
+                )
+                leaving += handled["handler_left"]
             last_stop = engine_stops["last"]
-        body = live_status({"num_running": state["inflight"], "num_waiting": 0}, rows)
+        body = live_status({"num_running": state["inflight"] + leaving, "num_waiting": 0}, rows)
         body["sampling_defaults"] = sampling_defaults.report()
         # The last answer the engine ended itself (Q-161, Q-181): its row leaves /v1/status with it.
         body["last_engine_stop"] = last_stop
@@ -1290,6 +1532,10 @@ engine_stops = {"last": None}
 def record_stop(stop):
     with lock:
         engine_stops["last"] = stop
+        handled = handling.get(stop["request_id"])
+        if handled is not None:
+            handled["stopped"] = stop
+            handled["stopped_at"] = time.monotonic()
     emit(f"RANK_{stop['reason'].upper()}", stop)
 
 
@@ -1351,6 +1597,7 @@ class StreamedToolCalls:
             progress_callback,
             watch=self.watch,
             client=self.handler.connection,
+            address=self.handler.client_address,
         )
         if not ctx.has_tool_calling:
             return ctx, tokens
@@ -1505,16 +1752,20 @@ class ClientBound:
     """The response generator as any other request's handler sees it: its connection is read for
     the client's departure at every piece (Q-181)."""
 
-    def __init__(self, upstream, client):
+    def __init__(self, upstream, handler):
         self.upstream = upstream
-        self.client = client
+        self.handler = handler
 
     def __getattr__(self, name):
         return getattr(self.upstream, name)
 
     def generate(self, request, generation_args, progress_callback=None):
         return self.upstream.generate(
-            request, generation_args, progress_callback, client=self.client
+            request,
+            generation_args,
+            progress_callback,
+            client=self.handler.connection,
+            address=self.handler.client_address,
         )
 
 
@@ -1523,7 +1774,7 @@ def handle_completion(self, request, stop_words):
     request.sampling_sources = self.sampling_sources
     if not (self.stream and self.object_type.startswith("chat.completion")):
         upstream = self.response_generator
-        self.response_generator = ClientBound(upstream, self.connection)
+        self.response_generator = ClientBound(upstream, self)
         try:
             return original_handle_completion(self, request, stop_words)
         finally:

@@ -173,6 +173,27 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   split still generating with no ESTABLISHED client on its port is this bug back. Fork CPU tests: force
   `mx.set_default_device(mx.cpu)` with a `-p` plugin and skip `test_pipeline_qwen4.py`, `_serve.py`, `_vision.py`
   (they launch ranks); a scratch dir holding a `bisect.py` shadows the stdlib — run scratch scripts from a subdir.
+- A DROPPED ROW LEAVES AT THE NEXT PROMPT STEP, AND EVERY HELD ROW IS LISTED (Q-231, 2026-09-27; tensor
+  tag `mlxLmServerPrefillYield`, spec `prefill_step_yields`). Q-181's "every rank removes the row next
+  step" was FALSE on a group: mlx_lm 0.31.3 removes stopped rows and takes new requests only after its
+  TimeBudget loop, and on a distributed group that budget is a COUNT of steps fitted to 0.5 s of DECODE
+  (~5 on the 27B split) — five prefill slices of seconds each. E2E #3m: goose's turn_priority dropped
+  three end-of-turn fact checks (1,775/1,770/5,453 tok) at 20:16:17.067Z; the loop read them to the end
+  (`steps` 1116 frozen on BOTH ranks 20:16:14→20:16:59Z, prompt cache +3 user segments, uid 29
+  "generated 1, removed") and the user's 88,660-tok call queued 38.9 s while /v1/status listed nothing
+  but it. Now `PromptStepBudget` ends the loop after any step that read prompt tokens (every rank alike —
+  hence the tag: a peer on the older tag REFUSES the rank, so BOTH Macs need the new goose), and
+  `DepartureContext` makes the loop's own `_should_stop` read the client socket and wake a handler
+  already waiting (`ClientDeparted` on its answer queue, captured by `RequestTap`) so the stop is still
+  named. /v1/status rows add `client` ("host:port"), `held_for_room`, `stopped` (last_engine_stop shape),
+  `stopped_after_s`, `leaving` (answer ended, row still in the batch); `num_running` counts leaving rows;
+  GOOSE_RANK_STATE `requests` {uid: req id}; GOOSE_RANK_ROW_LEFT {request_id, uid, how, stopped,
+  held_after_stop_s, held_after_answer_s} — the live prove's number (expect < one prefill slice). A
+  request stays listed after its handler left ONLY while its id is in `in_batch` (never on an absence of
+  word from the loop — the first version ghosted every stand-in request). TRAPS: a test that builds
+  mlx_lm's `TimeBudget()` hangs forever in `jaccl::TCPSocket::accept` (mx.distributed.init under the
+  spec's JACCL env) — build it with `__new__` at its signature's defaults; the stand-in mlx_lm module
+  in launch.rs's rank-program tests must grow every seam the wrapper's guard list checks.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
