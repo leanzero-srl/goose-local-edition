@@ -339,6 +339,7 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
     const reviewer = {
       key: 'session:row-7',
       kind: 'session' as const,
+      work: null,
       sessionId: null,
       sessionName: null,
       sessionType: null,
@@ -347,6 +348,7 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
     const hidden = {
       key: 'session:h1',
       kind: 'session' as const,
+      work: null,
       sessionId: 'h1',
       sessionName: null,
       sessionType: 'hidden',
@@ -355,6 +357,7 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
     const mine = {
       key: 'chat:s-mine',
       kind: 'chat' as const,
+      work: null,
       sessionId: 's-mine',
       sessionName: 'story',
       count: 1,
@@ -382,6 +385,7 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
     const mine = {
       key: 'c1',
       kind: 'chat' as const,
+      work: null,
       sessionId: 's-mine',
       sessionName: 'a',
       count: 1,
@@ -389,6 +393,7 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
     const theirs = {
       key: 'c2',
       kind: 'chat' as const,
+      work: null,
       sessionId: 's-other',
       sessionName: 'b',
       count: 1,
@@ -646,6 +651,7 @@ describe('THIS turn on the engine (Q-13) and the Mac that said it is leaving (Q-
   const mine = {
     key: 'chat:s-mine',
     kind: 'chat' as const,
+    work: null,
     sessionId: 's-mine',
     sessionName: 'story',
     count: 1,
@@ -653,6 +659,7 @@ describe('THIS turn on the engine (Q-13) and the Mac that said it is leaving (Q-
   const reviewer = {
     key: 'session:row-7',
     kind: 'session' as const,
+    work: null,
     sessionId: null,
     sessionName: null,
     sessionType: null,
@@ -782,6 +789,7 @@ describe('deriveChatServedBy — the chip is THIS chat’s request (Q-124)', () 
   const mine = {
     key: 'chat:s-mine',
     kind: 'chat' as const,
+    work: null,
     sessionId: 's-mine',
     sessionName: 'story',
     count: 1,
@@ -789,6 +797,7 @@ describe('deriveChatServedBy — the chip is THIS chat’s request (Q-124)', () 
   const titleCall = {
     key: 'session:h1',
     kind: 'session' as const,
+    work: null,
     sessionId: 'h1',
     sessionName: null,
     sessionType: 'hidden',

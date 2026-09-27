@@ -2,6 +2,7 @@ import { useSyncExternalStore, type ReactNode } from 'react';
 import {
   Bot,
   CircleHelp,
+  ListChecks,
   Loader2,
   MessageSquare,
   Network,
@@ -13,7 +14,12 @@ import {
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
 import { FOCUS, PHASE_FILL, RADIUS, TNUM, WEIGHT, cx, type EnginePhase } from '../lz';
-import { openSessionFromAnywhere } from '../sessionActivity/sessionActivityStore';
+import {
+  listedTitleOf,
+  openSessionFromAnywhere,
+  useListedNamesVersion,
+} from '../sessionActivity/sessionActivityStore';
+import { backgroundWorkFor } from '../sessionActivity/backgroundWorkText';
 import type { MlxEngineState } from '../../acp/mlx-engine';
 import {
   latestLocalMlxEngineStatus,
@@ -532,19 +538,32 @@ function RequestRow({ request }: { request: MlxLiveRequest }) {
   );
 }
 
+/**
+ * A client in the words the rest of the app uses: the chat by the name its sidebar row shows (with
+ * its " · 5", so two same-titled chats are told apart), and goose's own call for a session by what
+ * it is — "Checking the reply · …", never "Chat · …" (Q-185).
+ */
 function clientText(intl: IntlShape, client: MlxClient): string {
   switch (client.kind) {
-    case 'chat':
-      return intl.formatMessage(i18n.clientChat, {
-        name: client.sessionName || client.sessionId,
-      });
+    case 'chat': {
+      const name = listedTitleOf(client.sessionId, client.sessionName || client.sessionId);
+      return client.work
+        ? backgroundWorkFor(intl, client.work, name)
+        : intl.formatMessage(i18n.clientChat, { name });
+    }
     case 'external':
       return intl.formatMessage(i18n.clientExternal, { model: client.model });
-    case 'session':
-      return intl.formatMessage(i18n.clientSession, {
-        type: client.sessionType ? client.sessionType.replace(/_/g, ' ') : '—',
-        name: client.sessionName || client.sessionId || '—',
-      });
+    case 'session': {
+      const name = client.sessionId
+        ? listedTitleOf(client.sessionId, client.sessionName || client.sessionId)
+        : '—';
+      return client.work
+        ? backgroundWorkFor(intl, client.work, name)
+        : intl.formatMessage(i18n.clientSession, {
+            type: client.sessionType ? client.sessionType.replace(/_/g, ' ') : '—',
+            name,
+          });
+    }
   }
 }
 
@@ -553,6 +572,7 @@ const CLIENT_ICON = { chat: MessageSquare, external: PlugZap, session: Bot } as 
 /** WHO the engine is serving — only what goose listed; the rest is a count beside the live runs. */
 function ServingList({ serving }: { serving: MlxServing }) {
   const intl = useIntl();
+  useListedNamesVersion();
   const rows: Array<{
     key: string;
     icon: ReactNode;
@@ -560,14 +580,18 @@ function ServingList({ serving }: { serving: MlxServing }) {
     extra?: string;
     /** A chat in this app: the row opens that exact session. */
     sessionId?: string;
+    /** goose's own call for the session (Q-185); absent = its turn or not a session's. */
+    work?: string;
   }> = serving.clients.map((c) => {
-    const Icon = CLIENT_ICON[c.kind];
+    const work = c.kind === 'external' ? null : c.work;
+    const Icon = work ? ListChecks : CLIENT_ICON[c.kind];
     return {
       key: c.key,
       icon: <Icon />,
       text: clientText(intl, c),
       extra: c.count > 1 ? intl.formatMessage(i18n.clientTimes, { count: c.count }) : undefined,
       sessionId: c.kind === 'chat' ? c.sessionId : undefined,
+      work: work ?? undefined,
     };
   });
   if (serving.unattributed > 0) {
@@ -600,6 +624,7 @@ function ServingList({ serving }: { serving: MlxServing }) {
           <li
             key={r.key}
             data-testid="mlx-serving-row"
+            data-work={r.work}
             className={cx('flex min-w-0 items-center gap-2 [&_svg]:size-4', LINE)}
           >
             <span aria-hidden>{r.icon}</span>

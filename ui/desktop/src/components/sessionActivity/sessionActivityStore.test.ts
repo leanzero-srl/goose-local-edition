@@ -62,7 +62,15 @@ function running(sessionId: string, startedAt: string) {
 }
 
 function snapshotWith(partial: Partial<SessionActivitySnapshot>): SessionActivitySnapshot {
-  return { running: [], needsYou: [], failed: [], stopped: [], elicitations: [], ...partial };
+  return {
+    running: [],
+    needsYou: [],
+    failed: [],
+    stopped: [],
+    background: [],
+    elicitations: [],
+    ...partial,
+  };
 }
 
 describe('session activity: the one source of running / needs-you / failed / idle', () => {

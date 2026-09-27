@@ -7,6 +7,10 @@ import { measuredPlan, type MeasuredRunsFixture } from './placement.fixtures';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { attributeServing, type MlxServingRow } from '../../utils/mlxServing';
+import {
+  publishListedNames,
+  resetListedNamesForTests,
+} from '../sessionActivity/sessionActivityStore';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 import {
@@ -340,6 +344,41 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     fireEvent.click(open);
     expect(window.location.hash).toBe('#/pair?resumeSessionId=20260923_7');
     expect(screen.getAllByTestId('mlx-serving-open-session')).toHaveLength(1);
+  });
+
+  it('Q-185, E2E #3i: goose’s fact check after the reply is named as that, by the chat’s listed name', () => {
+    publishListedNames([
+      {
+        id: '20260927_5',
+        base: 'Jira Migration Kickoff Notes',
+        label: 'Jira Migration Kickoff Notes · 5',
+      },
+    ]);
+    const check: MlxServingRow = {
+      ...ROW_BASE,
+      id: 7,
+      via: 'swarmRouter',
+      sessionId: '20260927_5',
+      work: 'factCheck',
+      provider: 'omlx',
+      model: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+      nodeId: 'mlx-distributed',
+      sessionName: 'Jira Migration Kickoff Notes',
+      sessionType: 'user',
+    };
+    const turn: MlxServingRow = { ...check, id: 8, work: null };
+    tile({
+      live: parseMlxLiveStatus(GENERATING_STATUS),
+      serving: attributeServing([check, turn], 2, [], null),
+    });
+    const rows = screen.getAllByTestId('mlx-serving-row');
+    expect(rows.map((r) => r.textContent)).toEqual([
+      'Checking the reply · Jira Migration Kickoff Notes · 5',
+      'Chat · Jira Migration Kickoff Notes · 5',
+    ]);
+    expect(rows[0].dataset.work).toBe('factCheck');
+    expect(rows[1].dataset.work).toBeUndefined();
+    resetListedNamesForTests();
   });
 
   it('serving list unreadable: says so, never an empty "nobody"', () => {

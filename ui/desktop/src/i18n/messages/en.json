@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "Back"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "Compacting the conversation"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "Checking the reply"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "Reviewing the turn for memories"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "Checking a tool’s permission"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "Writing a recipe"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "Inspecting a tool call"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "Summarizing the conversation"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "Compacting"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "Checking"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "Reviewing"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "Checking"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "Writing"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "Inspecting"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "Summarizing"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "Naming"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "Summarizing"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "Labeling"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "Naming the chat"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "Summarizing a tool result"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "Labeling tool calls"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "search extensions..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed,select,none{Busy for ‘{name}’: {work}} other{Busy for ‘{name}’: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named,select,yes{{elapsed,select,none{Busy in ‘{name}’} other{Busy in ‘{name}’ · {elapsed}}}} other{{elapsed,select,none{Busy in another chat} other{Busy in another chat · {elapsed}}}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "A message sent now waits until the engine has room for it."
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "A message sent now goes first: goose sets this check aside and runs it again after."
   },
   "cardButtons.configure": {
     "defaultMessage": "Configure"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "Keep it writing"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "Let it finish"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action} cuts {count} requests in flight ({names}) — the longest {figures}."
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action} cuts the answer being written in “{name}” — {figures}."
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action} cuts goose’s background work for “{name}”: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action} cuts a request goose could not name — {figures}."
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "Cut the answer being written?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "Cut goose’s background work?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "Cut {count} requests in flight?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose is still working for this chat: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "Failed"

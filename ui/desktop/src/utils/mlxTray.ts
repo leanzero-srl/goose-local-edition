@@ -41,7 +41,7 @@ import {
   servingKey,
   type MlxRestoreReport,
 } from './mlxRestoreReport';
-import { TRAY_ACTION_ENGINES, trayCutLine, workCutBy } from './mlxInFlight';
+import { BACKGROUND_WORK_EN, TRAY_ACTION_ENGINES, trayCutLine, workCutBy } from './mlxInFlight';
 
 /**
  * The menu-bar presence of the local LeanZero MLX engine, as a PURE function of main's snapshot:
@@ -403,14 +403,21 @@ function headline(snapshot: MlxEngineSnapshot): string {
 export function clientLabel(client: MlxClient): string {
   const times = client.count > 1 ? ` (×${client.count})` : '';
   switch (client.kind) {
-    case 'chat':
-      return clip(`Serving chat: ${client.sessionName || client.sessionId}${times}`);
+    case 'chat': {
+      const name = client.sessionName || client.sessionId;
+      // goose's own call for the chat (Q-185) is named as that, never as the chat's answer.
+      return client.work
+        ? clip(`Serving: ${BACKGROUND_WORK_EN[client.work]} · ${name}${times}`)
+        : clip(`Serving chat: ${name}${times}`);
+    }
     case 'external':
       return clip(`Serving an external client via /v1: ${client.model}${times}`);
     case 'session': {
       const type = client.sessionType ? client.sessionType.replace(/_/g, ' ') : 'goose';
       const name = client.sessionName || client.sessionId || 'no session';
-      return clip(`Serving a ${type} session: ${name}${times}`);
+      return client.work
+        ? clip(`Serving: ${BACKGROUND_WORK_EN[client.work]} · ${name}${times}`)
+        : clip(`Serving a ${type} session: ${name}${times}`);
     }
   }
 }

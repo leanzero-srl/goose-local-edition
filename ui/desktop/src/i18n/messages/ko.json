@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "뒤로"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "대화 압축 중"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "답변 확인 중"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "메모리를 위해 턴 검토 중"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "도구 권한 확인 중"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "레시피 작성 중"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "도구 호출 검사 중"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "대화 요약 중"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "압축 중"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "확인 중"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "검토 중"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "확인 중"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "작성 중"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "검사 중"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "요약 중"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "이름 짓는 중"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "요약 중"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "레이블 지정 중"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "채팅 이름 짓는 중"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "도구 결과 요약 중"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "도구 호출에 레이블 지정 중"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "익스텐션 검색..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {‘{name}’ 작업 중: {work}} other {‘{name}’ 작업 중: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {‘{name}’에서 작업 중} other {다른 채팅에서 작업 중}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "지금 보낸 메시지는 엔진에 여유가 생길 때까지 기다립니다."
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "지금 보낸 메시지가 먼저 처리됩니다. goose는 이 확인을 잠시 미뤘다가 나중에 다시 실행합니다."
   },
   "cardButtons.configure": {
     "defaultMessage": "구성"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "계속 작성하게 두기"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "끝까지 두기"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action}을(를) 하면 진행 중인 요청 {count}개({names})가 중단됩니다 — 가장 긴 요청 {figures}."
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action}을(를) 하면 “{name}”에서 작성 중인 답변이 중단됩니다 — {figures}."
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action}은(는) “{name}”을(를) 위한 goose의 백그라운드 작업을 중단합니다: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action}을(를) 하면 goose가 식별하지 못한 요청이 중단됩니다 — {figures}."
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "작성 중인 답변을 중단할까요?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "goose의 백그라운드 작업을 중단할까요?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "진행 중인 요청 {count}개를 중단할까요?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "세션 JSON 보기"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose가 아직 이 채팅을 위해 작업 중입니다: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "실패"

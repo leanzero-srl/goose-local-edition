@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "Kembali"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "Memampatkan perbualan"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "Menyemak balasan"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "Menyemak giliran untuk memori"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "Menyemak kebenaran alat"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "Menulis resipi"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "Memeriksa panggilan alat"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "Meringkaskan perbualan"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "Memampatkan"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "Menyemak"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "Menyemak"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "Menyemak"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "Menulis"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "Memeriksa"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "Meringkaskan"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "Menamakan"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "Meringkaskan"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "Melabel"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "Menamakan sembang"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "Meringkaskan hasil alat"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "Melabel panggilan alat"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "cari sambungan..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {Sibuk untuk ‘{name}’: {work}} other {Sibuk untuk ‘{name}’: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Sibuk dalam ‘{name}’} other {Sibuk dalam sembang lain}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Mesej yang dihantar sekarang menunggu sehingga enjin ada ruang untuknya."
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "Mesej yang dihantar sekarang didahulukan: goose mengetepikan semakan ini dan menjalankannya semula selepas itu."
   },
   "cardButtons.configure": {
     "defaultMessage": "Konfigurasi"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "Biarkan ia terus menulis"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "Biarkan selesai"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action} memotong {count} permintaan yang sedang berjalan ({names}) — yang paling lama {figures}."
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action} memotong jawapan yang sedang ditulis dalam “{name}” — {figures}."
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action} memotong kerja latar goose untuk “{name}”: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action} memotong permintaan yang goose tidak dapat namakan — {figures}."
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "Potong jawapan yang sedang ditulis?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "Potong kerja latar goose?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "Potong {count} permintaan yang sedang berjalan?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Lihat JSON sesi"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose masih bekerja untuk sembang ini: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "Gagal"

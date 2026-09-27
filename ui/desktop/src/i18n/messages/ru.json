@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "Назад"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "Сжатие беседы"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "Проверка ответа"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "Разбор хода для воспоминаний"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "Проверка разрешения инструмента"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "Написание рецепта"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "Проверка вызова инструмента"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "Краткое изложение беседы"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "Сжатие"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "Проверка"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "Разбор"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "Проверка"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "Написание"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "Проверка"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "Сводка"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "Название"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "Сводка"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "Подписи"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "Придумываем название чата"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "Краткое описание результата инструмента"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "Подписываем вызовы инструментов"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "поиск расширений..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {Занят для «{name}»: {work}} other {Занят для «{name}»: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Занят в «{name}»} other {Занят в другом чате}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Сообщение, отправленное сейчас, подождёт, пока у движка появится место."
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "Сообщение, отправленное сейчас, идёт первым: goose откладывает эту проверку и повторяет её потом."
   },
   "cardButtons.configure": {
     "defaultMessage": "Настроить"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "Пусть пишет дальше"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "Дать закончить"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action} оборвёт {count} выполняемых запросов ({names}) — самый долгий {figures}."
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action} оборвёт ответ, который пишется в «{name}», — {figures}."
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action} прерывает фоновую работу goose для «{name}»: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action} оборвёт запрос, который goose не смог назвать, — {figures}."
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "Оборвать ответ, который сейчас пишется?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "Прервать фоновую работу goose?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "Оборвать {count} выполняемых запросов?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose всё ещё работает для этого чата: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "Сбой"

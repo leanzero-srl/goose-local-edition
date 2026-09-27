@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "戻る"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "会話を圧縮中"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "返信を確認中"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "メモリ用にターンを確認中"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "ツールの権限を確認中"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "レシピを作成中"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "ツール呼び出しを検査中"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "会話を要約中"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "圧縮中"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "確認中"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "レビュー中"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "確認中"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "作成中"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "検査中"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "要約中"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "命名中"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "要約中"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "ラベル付け中"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "チャットに名前を付けています"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "ツール結果を要約中"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "ツール呼び出しにラベルを付けています"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "拡張機能を検索..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {「{name}」の処理中: {work}} other {「{name}」の処理中: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {「{name}」で処理中} other {別のチャットで処理中}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "今送信したメッセージは、エンジンに空きができるまで待機します。"
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "今送信したメッセージが優先されます。goose はこの確認をいったん中断し、後でもう一度実行します。"
   },
   "cardButtons.configure": {
     "defaultMessage": "設定"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "書き続けさせる"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "完了させる"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action}で実行中の {count} 件のリクエスト({names})が中断されます — 最長のもの {figures}。"
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action}で「{name}」で書かれている回答が中断されます — {figures}。"
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action}は「{name}」のための goose のバックグラウンド処理を中断します: {work} — {figures}。"
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action}で goose が特定できなかったリクエストが中断されます — {figures}。"
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "書かれている回答を中断しますか?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "goose のバックグラウンド処理を中断しますか?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "実行中の {count} 件のリクエストを中断しますか?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "セッションJSONを表示"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose はまだこのチャットのために作業しています: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "失敗"

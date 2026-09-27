@@ -1,3 +1,4 @@
+import type { BackgroundWorkKind } from '@aaif/goose-sdk';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
 import { foreignOwner, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
@@ -62,6 +63,8 @@ export type ChatEngine = 'single' | 'remote' | 'split' | 'none';
 export interface ChatBusyIn {
   sessionId: string;
   sessionName: string | null;
+  /** goose's own call for that chat, when that is all it runs there (the fact check, Q-185). */
+  work: BackgroundWorkKind | null;
   /** The engine's own age of that chat's request (seconds since it arrived); null = unreported. */
   elapsedS: number | null;
   /** The engine holds a request WAITING: a message sent now waits too, rather than running beside. */
@@ -449,10 +452,10 @@ function liveStatsOf(main: MlxEngineSnapshot | null, engine: ChatEngine): MlxLiv
 }
 
 /**
- * goose's own background call on the engine — the end-of-turn reviewer, a title, a recall: a
- * router lease with no session (the reviewer is a detached task outside any session's context,
- * crates/goose/src/turn_assessment.rs) or a hidden one. Never "another request" (Q-39): the chat
- * the user is in caused it.
+ * goose's own call on the engine with no chat to name: a router lease with no session or a hidden
+ * one. Never "another request" (Q-39). A call goose makes FOR a chat (the fact check, a title)
+ * carries that chat's session and its `work` (Q-185): it counts as that chat's, and `busyIn` names
+ * the work — another chat's compaction holds the whole conversation, so it is never waved through.
  */
 function gooseBackground(client: MlxServing['clients'][number]): boolean {
   return (
@@ -613,15 +616,18 @@ function busyInOf(
   const serving = main.serving;
   if (!serving || serving.error || serving.unattributed > 0) return null;
   const others = new Map<string, string | null>();
+  const worksOf = new Map<string, Array<BackgroundWorkKind | null>>();
   for (const client of serving.clients) {
     if (client.kind === 'external') return null;
     if (gooseBackground(client) || client.sessionId == null || client.sessionId === sessionId) {
       continue;
     }
     others.set(client.sessionId, client.sessionName);
+    worksOf.set(client.sessionId, [...(worksOf.get(client.sessionId) ?? []), client.work]);
   }
   if (others.size !== 1) return null;
   const [[otherId, otherName]] = others;
+  const works = worksOf.get(otherId) ?? [];
   const request = stats.requests.reduce<MlxLiveRequest | null>(
     (best, r) => (best == null || (r.promptTokens ?? 0) > (best.promptTokens ?? 0) ? r : best),
     null
@@ -629,6 +635,8 @@ function busyInOf(
   return {
     sessionId: otherId,
     sessionName: otherName,
+    // Only goose's own work for that chat, none of it a turn: say what it is (Q-185).
+    work: works.length > 0 && works.every((w) => w != null) ? works[0] : null,
     elapsedS: request?.elapsedS ?? null,
     waits: holdsARequestWaiting(stats),
   };

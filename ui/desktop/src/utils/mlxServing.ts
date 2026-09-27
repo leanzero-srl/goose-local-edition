@@ -1,3 +1,4 @@
+import type { BackgroundWorkKind } from '@aaif/goose-sdk';
 import type { FetchLike } from './fleetProbe';
 
 /**
@@ -17,6 +18,12 @@ export interface MlxServingRow {
   id: number;
   via: 'swarmRouter' | 'openaiApi';
   sessionId: string | null;
+  /**
+   * What goose asked FOR the session when it is not the answer being written (Q-185): the fact
+   * check after a reply, a title, a tool label. Null = the session's own turn; absent = a backend
+   * older than the field, which tagged nothing (read as the turn, as before).
+   */
+  work?: BackgroundWorkKind | null;
   provider: string;
   model: string;
   nodeId: string | null;
@@ -34,8 +41,18 @@ export interface MlxServingRow {
 }
 
 export type MlxClient =
-  /** A chat in this app, routed to the engine by the swarm router. */
-  | { key: string; kind: 'chat'; sessionId: string; sessionName: string | null; count: number }
+  /**
+   * A chat in this app, routed to the engine by the swarm router: its turn (`work` null) or goose's
+   * own call for it (`work` names it — the fact check after the reply is never "the chat").
+   */
+  | {
+      key: string;
+      kind: 'chat';
+      sessionId: string;
+      sessionName: string | null;
+      work: BackgroundWorkKind | null;
+      count: number;
+    }
   /** An external client's `POST /v1/chat/completions` whose turn runs on the engine. */
   | { key: string; kind: 'external'; model: string; count: number }
   /** Any other goose session on the engine (a sub-agent, a scheduled job) — named by its own type. */
@@ -45,6 +62,7 @@ export type MlxClient =
       sessionId: string | null;
       sessionName: string | null;
       sessionType: string | null;
+      work: BackgroundWorkKind | null;
       count: number;
     };
 
@@ -105,24 +123,29 @@ export function attributeServing(
   for (const row of rows) {
     if (row.via !== 'swarmRouter') continue;
     const api = row.sessionId ? apiBySession.get(row.sessionId) : undefined;
+    const work = row.work ?? null;
+    // One client per session AND work: a chat's turn and goose's check of its reply are two rows.
+    const workKey = work ? `:${work}` : '';
     if (api && row.sessionId) {
       routedApiSessions.add(row.sessionId);
       add({ key: `external:${row.sessionId}`, kind: 'external', model: modelRef(api), count: 1 });
     } else if (row.sessionId && row.sessionType === 'user') {
       add({
-        key: `chat:${row.sessionId}`,
+        key: `chat:${row.sessionId}${workKey}`,
         kind: 'chat',
         sessionId: row.sessionId,
         sessionName: row.sessionName,
+        work,
         count: 1,
       });
     } else {
       add({
-        key: `session:${row.sessionId ?? `row-${row.id}`}`,
+        key: `session:${row.sessionId ?? `row-${row.id}`}${workKey}`,
         kind: 'session',
         sessionId: row.sessionId,
         sessionName: row.sessionName,
         sessionType: row.sessionType,
+        work,
         count: 1,
       });
     }

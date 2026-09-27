@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "Kembali"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "Memadatkan percakapan"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "Memeriksa balasan"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "Meninjau giliran untuk memori"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "Memeriksa izin alat"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "Menulis resep"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "Memeriksa panggilan alat"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "Meringkas percakapan"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "Memadatkan"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "Memeriksa"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "Meninjau"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "Memeriksa"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "Menulis"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "Memeriksa"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "Meringkas"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "Menamai"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "Meringkas"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "Melabeli"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "Memberi nama chat"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "Meringkas hasil alat"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "Memberi label panggilan alat"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "cari ekstensi..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {Sibuk untuk ‘{name}’: {work}} other {Sibuk untuk ‘{name}’: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Sibuk di ‘{name}’} other {Sibuk di obrolan lain}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Pesan yang dikirim sekarang menunggu sampai mesin punya ruang untuknya."
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "Pesan yang dikirim sekarang didahulukan: goose menyisihkan pemeriksaan ini dan menjalankannya lagi setelahnya."
   },
   "cardButtons.configure": {
     "defaultMessage": "Konfigurasi"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "Biarkan tetap menulis"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "Biarkan selesai"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action} memotong {count} permintaan yang sedang berjalan ({names}) — yang terlama {figures}."
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action} memotong jawaban yang sedang ditulis di “{name}” — {figures}."
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action} memotong pekerjaan latar goose untuk “{name}”: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action} memotong permintaan yang tidak dapat dinamai goose — {figures}."
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "Potong jawaban yang sedang ditulis?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "Potong pekerjaan latar goose?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "Potong {count} permintaan yang sedang berjalan?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Lihat JSON sesi"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose masih bekerja untuk chat ini: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "Gagal"
