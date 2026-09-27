@@ -234,8 +234,8 @@ mod tests {
         for i in 0..788u64 {
             records.push(row(
                 103 + (i % 2) * 61,
-                5 + i % 3,
-                4.4 + (i % 7) as f64 * 0.1,
+                6 + i % 3,
+                2.8 + (i % 15) as f64 * 0.3,
                 1.8,
                 i,
             ));
