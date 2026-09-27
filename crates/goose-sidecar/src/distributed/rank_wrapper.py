@@ -98,7 +98,12 @@
 #   call's skeleton on a launch that asks for it (rank_xml_guard.py — the single engine's lz.7 guard;
 #   the checkpoint writes `!` where its turn should end), and a streamed answer that writes a call
 #   word for word again ends there, the repeat unsent (`StreamedToolCalls`) — E2E #3e's turn 0 was
-#   one 221,604-token answer of the same write + mkdir pair, 324 times.
+#   one 221,604-token answer of the same write + mkdir pair, 324 times. Reopened on 3.0.57 (E2E
+#   #3f): mlx_lm's GenerationBatch handed the tool request a departed tool-less row's processor
+#   list, so the guard ran on one token; each row now keeps its own (`row_processors`,
+#   rank_batch.py), and a streamed answer whose text outside its calls has become one span written
+#   over and over ends there (`verbatim_cycle`, rank_stream_watch.py) — /v1/status names the last
+#   such stop (`last_engine_stop`).
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -938,6 +943,14 @@ if xml_skeleton_guard:
 
     server._make_logits_processors = _make_logits_processors
 
+# Q-161 (rank_batch.py `row_processors`): each generating row runs its own logits processors — the
+# guard above ran on one token of E2E #3f's tool request, because mlx_lm's GenerationBatch.filter
+# left a departed tool-less row's `[]` in front of it. Which row runs which processors decides what
+# is sampled, so only a launch whose every rank runs it asks for it (`row_processors`).
+if spec.get("row_processors"):
+    mlx_generate.GenerationBatch.__init__ = generation_init(mlx_generate.GenerationBatch.__init__)
+    mlx_generate.GenerationBatch.filter = generation_filter(mlx_generate.GenerationBatch.filter)
+
 
 # A BaseException so mlx_lm's handle_completion (`except Exception` → 404) lets it through to
 # do_POST, which answers with the status it names.
@@ -990,8 +1003,11 @@ def do_GET(self):
                 watch = watches.get(row["request_id"])
                 row["stream"] = None if watch is None else watch.report()
                 row["sampling"] = samplings.get(row["request_id"])
+            last_stop = engine_stops["last"]
         body = live_status({"num_running": state["inflight"], "num_waiting": 0}, rows)
         body["sampling_defaults"] = sampling_defaults.report()
+        # The last answer the engine ended itself (Q-161): its row leaves /v1/status with it.
+        body["last_engine_stop"] = last_stop
         return send_json(self, 200, body)
     if self.path.startswith("/v1/models"):
         return send_json(
@@ -1140,6 +1156,19 @@ def delivered(tool_text, tools):
     return []
 
 
+# The last answer the engine ended itself (Q-161), for /v1/status once its row has left: the
+# request, why (`tool_call_repeated` / `text_cycle`), and the words.
+engine_stops = {"last": None}
+
+
+def engine_stop(watch, reason, detail):
+    stop = {"request_id": watch.request_id, "reason": reason, **detail}
+    watch.stop = stop
+    with lock:
+        engine_stops["last"] = stop
+    emit(f"RANK_{reason.upper()}", stop)
+
+
 class StreamedCall:
     """One call of a streamed answer: its streamer, its id, and — until the relay sends it — the
     frames built for it (`index` is None while the call is held, Q-161)."""
@@ -1179,6 +1208,8 @@ class StreamedToolCalls:
         self.index = 0
         # The text of every call this answer closed, in order (the streamer's, between the markers).
         self.closed = []
+        # The answer's text outside its calls and its reasoning, as written.
+        self.outside = ""
 
     def __getattr__(self, name):
         return getattr(self.upstream, name)
@@ -1221,9 +1252,43 @@ class StreamedToolCalls:
                     self.ctx.stop()
                     tokens.close()
                     return
+            if gen.state == "normal" and self.cycled(gen.text):
+                # The piece that completed the cycle is not handed on; the handler ends the answer
+                # on what it has sent (finish `stop`, or `tool_calls` when a call closed before).
+                self.ctx.stop()
+                tokens.close()
+                return
             yield gen
         if call is not None:
             self.finish(call)
+
+    def cycled(self, text):
+        """True when the answer's text outside its calls has become one span written over and over
+        (rank_stream_watch.py `verbatim_cycle`): the engine names it and the answer ends. Q-161:
+        E2E #3f turn 0 left its one `write` call and wrote `!\\n</parameter>\\n</function>\\n`,
+        then `!\\n</function>\\n`, 3,251 chars and counting, never another call — the call-repeat
+        stop has nothing to compare. A span holds a line break, so the text is read when one
+        arrives."""
+        self.outside += text
+        if "\n" not in text:
+            return False
+        cycle = verbatim_cycle(self.outside)
+        if cycle is None:
+            return False
+        unit, copies = cycle
+        engine_stop(
+            self.watch,
+            "text_cycle",
+            {
+                "unit": unit,
+                "copies": copies,
+                "outside_chars": len(self.outside),
+                "calls": len(self.closed),
+                "generated_chars": self.watch.generated_chars,
+                "tail": self.watch.tail,
+            },
+        )
+        return True
 
     def repeat_of(self, text, whole):
         """The 1-based position of the first call this answer closed whose text `text` is (whole) or
@@ -1271,8 +1336,9 @@ class StreamedToolCalls:
         position = self.repeat_of(stream.text, whole=True)
         self.closed.append(stream.text)
         if position is not None:
-            emit(
-                "RANK_TOOL_CALL_REPEATED",
+            engine_stop(
+                self.watch,
+                "tool_call_repeated",
                 {
                     "name": stream.name,
                     "repeat_of": position,

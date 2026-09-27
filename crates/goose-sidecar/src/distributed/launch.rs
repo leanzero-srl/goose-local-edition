@@ -119,8 +119,17 @@ pub enum RankProgram {
     /// sampled, and every rank samples the same token from the same logits, so a peer whose wrapper
     /// does not mask would sample differently and the ranks would diverge. `mlxLmServerTransientTail`
     /// (a Q-142 requester) still reads, with the guard off: that requester's ranks mask nothing.
+    ///
+    /// Tagged `mlxLmServerRowProcessors` since Q-161's reopening: `row_processors` keeps each
+    /// generating row's own logits processors where mlx_lm 0.31.3 hands a joining row the list of
+    /// a row that already left (E2E #3f: the guard ran on one token of the tool answer). Which row
+    /// runs which processors decides what is sampled, so a peer whose wrapper keeps upstream's
+    /// lists would sample differently and the ranks would diverge. `mlxLmServerSkeletonGuard` (a
+    /// 3.0.57 requester) still reads, with `row_processors` off: that requester's ranks keep
+    /// upstream's lists alike.
     #[serde(
-        rename = "mlxLmServerSkeletonGuard",
+        rename = "mlxLmServerRowProcessors",
+        alias = "mlxLmServerSkeletonGuard",
         alias = "mlxLmServerTransientTail",
         alias = "mlxLmServerFormation",
         alias = "mlxLmServerPrefill",
@@ -172,6 +181,11 @@ pub enum RankProgram {
         /// `</tool_call>`, only the template's own continuation (or the end of the turn) may come.
         #[serde(default)]
         xml_skeleton_guard: bool,
+        /// Every rank keeps each generating row's own logits processors (`rank_batch.py`
+        /// `row_processors`): mlx_lm 0.31.3's `GenerationBatch.filter` leaves the lists of rows
+        /// that left whenever the rows kept carry none, and the next row to join reads one of them.
+        #[serde(default)]
+        row_processors: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -377,6 +391,7 @@ pub fn rank_specs(
             prefill: Some(launch.prefill),
             transient_tail_boundary: true,
             xml_skeleton_guard: true,
+            row_processors: true,
             sampling_defaults: Box::default(),
         }
     })
@@ -1018,6 +1033,7 @@ pub(crate) mod tests {
                 prefill: Some(_),
                 transient_tail_boundary: true,
                 xml_skeleton_guard: true,
+                row_processors: true,
                 sampling_defaults: _,
             }
         ));
@@ -3479,6 +3495,15 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
     /// (the doorbell's server would accept a worker that never comes). Returns the GOOSE_TEST
     /// line and every line printed.
     fn run_wrapper_checks(python: &str, checks: &str) -> (serde_json::Value, String) {
+        run_wrapper_checks_with(python, checks, |_| {})
+    }
+
+    /// `run_wrapper_checks` under a spec `edit` changes first (a requester's older program).
+    fn run_wrapper_checks_with(
+        python: &str,
+        checks: &str,
+        edit: impl FnOnce(&mut RankProgram),
+    ) -> (serde_json::Value, String) {
         let mut spec = rank_specs(
             &two_mac_config(),
             &ServedNames::only("node-alias"),
@@ -3490,6 +3515,7 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
         if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
             *doorbell = false;
         }
+        edit(&mut spec.program);
         run_against_real_packages_printing(python, &wrapper_program(checks), &spec)
     }
 
@@ -3570,6 +3596,186 @@ def post(path, body):
 def token(text, state, match=None, finish=None):
     return server.Response(text, 7, state, match, 0.0, finish, ())
 "#;
+
+    /// Q-161 reopened through the REAL mlx_lm 0.31.3 handler: E2E #3f turn 0's words, streamed. The
+    /// stand-in generation writes one `write` call, `</tool_call>`, then what goose's forming panel
+    /// showed beside it — `!\n\n</parameter>\n</function>\n!\n</parameter>\n</function>\n!…` — and
+    /// /v1/status's tail cycle `!\n</function>\n` up to the panel's 3,251 chars, never another
+    /// call. Through the wrapper the write reaches the client whole, the text stops once one span
+    /// written back to back covers most of the text outside the calls, the generation is told to
+    /// stop there, the rank's log names it (GOOSE_RANK_TEXT_CYCLE, the span and its copies) and
+    /// /v1/status keeps it after the request left (`last_engine_stop`). An answer that says a line
+    /// twice in passing runs to its end. NEGATIVE CONTROL: mlx_lm's own handle_completion streams
+    /// all 3,251 chars.
+    #[test]
+    fn text_written_over_and_over_beside_the_calls_ends_the_answer() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r##"
+import re
+
+TOOLS = [{"type": "function", "function": {"name": "write", "parameters": {"type": "object", "properties": {
+    "path": {"type": "string"}, "content": {"type": "string"}}}}}]
+NOTES = "# Kickoff\n\n## Decisions\n- Confluence is out of scope for now\n- inactive = no login in 24 months\n"
+WRITE = f"\n<function=write>\n<parameter=path>\n/w/notes/kickoff.md\n</parameter>\n<parameter=content>\n{NOTES}\n</parameter>\n</function>\n"
+PANEL = ("!\n\n</parameter>\n</function>\n!\n</parameter>\n</function>\n!\n</parameter>\n!\n</function>\n"
+         "!\n</parameter>\n!\n</function>\n!\n</parameter>\n</function>\n!\n</parameter>\n</function>\n"
+         "!\n</parameter>\n!\n</function>\n!\n</function>\n!\n</parameter>\n!\n</function>\n")
+CYCLE = "!\n</function>\n"
+RUNAWAY = PANEL + CYCLE * ((3251 - len(PANEL)) // len(CYCLE))
+PASSING = ("Wrote notes/kickoff.md.\n- TBD\n- TBD\nDecisions, actions and open questions are in it; "
+           "the two TBD lines are the owners Aoife has not named yet.\n")
+ANSWERS = {"runaway": RUNAWAY, "passing": PASSING}
+PIECE = re.compile(r"</|<|parameter|function|>|\n\n|\n|!|[^<>\n!]+")
+fed = {}
+
+def generation_thread():
+    while True:
+        rqueue, request, args = responses.requests.get()
+        answer = request.messages[-1]["content"]
+        gets = {"n": 0}
+        read = threading.Condition()
+        real_get = rqueue.get
+
+        def counted_get(*a, **k):
+            with read:
+                gets["n"] += 1
+                read.notify_all()
+            return real_get(*a, **k)
+
+        rqueue.get = counted_get
+        ctx = server.GenerationContext(
+            has_tool_calling=True, has_thinking=False, tool_parser=qwen3_coder.parse_tool_call,
+            sequences={(1,): "<tool_call>", (2,): "</tool_call>", (3,): "<|im_end|>"},
+            prompt=[0] * 8, prompt_cache_count=0,
+        )
+        puts = [0]
+
+        def put(item):
+            puts[0] += 1
+            rqueue.put(item)
+            # Until the handler has done all it does with this piece — it asks for the one after
+            # (its read of the context began before the count did) — or was told to stop.
+            deadline = time.monotonic() + 10
+            with read:
+                while not (gets["n"] > puts[0] or ctx._should_stop) and time.monotonic() < deadline:
+                    read.wait(0.01)
+
+        rqueue.put(ctx)
+        put(token("<tool_call>", "tool", (1,)))
+        for i in range(0, len(WRITE), 3):
+            put(token(WRITE[i:i + 3], "tool"))
+        put(token("", "normal", (2,)))
+        fed[answer] = ""
+        for piece in PIECE.findall(ANSWERS[answer]):
+            if ctx._should_stop:
+                break
+            put(token(piece, "normal"))
+            fed[answer] += piece
+        else:
+            rqueue.put(token("", None, (3,), "stop"))
+        rqueue.put(None)
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def stream(answer):
+    body = {"model": served, "stream": True, "tools": TOOLS, "messages": [{"role": "user", "content": answer}]}
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/chat/completions"
+    calls, content, finish = {}, "", None
+    with urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(body).encode()), timeout=60) as reply:
+        for raw in reply:
+            line = raw.decode().strip()
+            if not line.startswith("data: ") or line == "data: [DONE]":
+                continue
+            frame = json.loads(line[len("data: "):])
+            if not frame["choices"]:
+                continue
+            choice = frame["choices"][0]
+            finish = choice["finish_reason"] or finish
+            content += choice["delta"].get("content") or ""
+            for delta in choice["delta"].get("tool_calls", []):
+                entry = calls.setdefault(delta["index"], {"names": [], "arguments": ""})
+                if "name" in delta["function"]:
+                    entry["names"].append(delta["function"]["name"])
+                entry["arguments"] += delta["function"].get("arguments", "")
+    return {"calls": [calls[i] for i in sorted(calls)], "content": content, "finish": finish,
+            "fed": fed[answer], "total": ANSWERS[answer]}
+
+def status():
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/status"
+    with urllib.request.urlopen(url, timeout=10) as reply:
+        return json.loads(reply.read())
+
+runaway = stream("runaway")
+after_runaway = status()["last_engine_stop"]
+passing = stream("passing")
+server.APIHandler.handle_completion = original_handle_completion
+upstream = stream("runaway")
+print("GOOSE_TEST " + json.dumps({"runaway": runaway, "status": after_runaway, "passing": passing,
+    "upstream": upstream, "write": json.dumps(qwen3_coder.parse_tool_call(WRITE, TOOLS)["arguments"], ensure_ascii=False)}))
+"##;
+        let (seen, printed) = run_wrapper_checks(&python, checks);
+        let runaway = &seen["runaway"];
+        let (fed, total) = (
+            runaway["fed"].as_str().unwrap(),
+            runaway["total"].as_str().unwrap(),
+        );
+        assert!(
+            fed.len() < total.len() / 10,
+            "the generation was told to stop early in #3f's {} chars, not at their end: fed {fed:?}",
+            total.len()
+        );
+        assert!(total.starts_with(fed));
+        assert!(
+            fed.starts_with(runaway["content"].as_str().unwrap()),
+            "the client got only text the model wrote: {runaway}"
+        );
+        assert_eq!(runaway["calls"].as_array().unwrap().len(), 1);
+        assert_eq!(runaway["calls"][0]["names"], serde_json::json!(["write"]));
+        assert_eq!(runaway["calls"][0]["arguments"], seen["write"]);
+        assert_eq!(
+            runaway["finish"], "tool_calls",
+            "mlx_lm names the answer by the call it closed: {runaway}"
+        );
+        let cycle = printed
+            .lines()
+            .find_map(|l| l.strip_prefix("GOOSE_RANK_TEXT_CYCLE "))
+            .unwrap_or_else(|| panic!("the stop is named in the rank's log: {printed}"));
+        let cycle: serde_json::Value = serde_json::from_str(cycle).unwrap();
+        assert_eq!(cycle["reason"], "text_cycle");
+        assert_eq!(cycle["unit"], "</parameter>\n</function>\n!\n");
+        assert_eq!(cycle["copies"], 2);
+        assert_eq!(cycle["calls"], 1);
+        let outside = &total[..cycle["outside_chars"].as_u64().unwrap() as usize];
+        assert!(
+            outside.ends_with(&"</parameter>\n</function>\n!\n".repeat(2)),
+            "the stop read #3f's own words: {outside:?}"
+        );
+        let content = runaway["content"].as_str().unwrap();
+        assert!(
+            outside.starts_with(content) && content.len() < outside.len(),
+            "the piece that completed the cycle is not handed on: {content:?}"
+        );
+        assert_eq!(
+            seen["status"], cycle,
+            "/v1/status keeps the stop after the request left"
+        );
+
+        let passing = &seen["passing"];
+        assert_eq!(
+            passing["fed"], passing["total"],
+            "a line said twice in passing is no cycle: {passing}"
+        );
+        assert_eq!(passing["content"], passing["total"]);
+
+        let upstream = &seen["upstream"];
+        assert_eq!(
+            upstream["fed"], upstream["total"],
+            "negative control: unpatched mlx_lm streams the whole runaway"
+        );
+        assert_eq!(upstream["content"], upstream["total"]);
+    }
 
     /// Q-161 through the REAL mlx_lm 0.31.3 handler: E2E #3e's turn 0 was ONE streamed answer of
     /// 649 calls — the same `write` of notes/kickoff.md and the same `mkdir -p …/notes`, 324 times
@@ -3889,6 +4095,189 @@ print("GOOSE_TEST " + json.dumps({
                 .unwrap()
                 .contains("does not render the XML tool call"),
             "{printed}"
+        );
+    }
+
+    /// Q-161 reopened, E2E #3f turn 0 (3.0.57) replayed through the REAL mlx_lm 0.31.3
+    /// BatchGenerator as the wrapper runs it (on the CPU, a one-layer model): goose's title request
+    /// (no tools, POST 11:52:24) generates and leaves, then the tool request (POST 11:52:27)
+    /// joins. The tool request's model WANTS #3f's words — a scripted processor puts them first:
+    /// one `write` call, `</tool_call>`, then `!\n\n</parameter>\n</function>\n!…` — and the
+    /// wrapper's own processors for a tool request (the XML skeleton guard) follow it. With
+    /// `row_processors` the guard runs on every token of the row and masks the `!` after
+    /// `</tool_call>`: the answer ends there (`<|im_end|>`). NEGATIVE CONTROL, the 3.0.57 program
+    /// (`row_processors` off): mlx_lm's GenerationBatch.filter kept the title row's `[]`, the tool
+    /// row reads it, its processors run on its first token only and #3f's words come out. Second
+    /// shape: a tool-less row that PREFILLED beside the tool row (its `None` kept) and then left
+    /// raises `TypeError` in the generation thread upstream; with `row_processors` it is `[]`.
+    #[test]
+    fn a_joining_row_runs_its_own_logits_processors() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models import llama
+
+# MLX's CPU reports no working-set size; BatchGenerator asks for it only to wire memory.
+mx.metal.is_available = lambda: False
+VOCAB = 64
+
+class PieceTokenizer:
+    PIECES = ["<tool_call>", "</tool_call>", "<think>", "</think>", "<|im_end|>", "</", "<",
+              "parameter", "function", ">", "=", "\n\n", "\n", "!"]
+
+    def __init__(self, chat_template):
+        self.chat_template = chat_template
+        self.vocab = {p: i for i, p in enumerate(self.PIECES)}
+        self.inverse = dict(enumerate(self.PIECES))
+        self.eos_token_ids = {self.vocab["<|im_end|>"]}
+
+    def encode(self, text, add_special_tokens=False):
+        ids, i = [], 0
+        while i < len(text):
+            piece = next((p for p in sorted(self.PIECES, key=len, reverse=True) if text.startswith(p, i)), text[i])
+            if piece not in self.vocab:
+                self.vocab[piece] = len(self.vocab)
+                self.inverse[self.vocab[piece]] = piece
+            ids.append(self.vocab[piece])
+            i += len(piece)
+        return ids
+
+    def decode(self, ids, **_):
+        return "".join(self.inverse.get(int(i), "") for i in ids)
+
+    def __len__(self):
+        return VOCAB
+
+tok = PieceTokenizer(QWEN38)
+arm_skeleton_guard(tok)
+END = tok.vocab["<|im_end|>"]
+WORDS = ("<tool_call>\n<function=write>\n<parameter=path>\n/w/notes/kickoff.md\n</parameter>\n</function>\n</tool_call>"
+         "!\n\n</parameter>\n</function>\n!\n</parameter>\n</function>\n!\n</parameter>\n!\n</function>\n"
+         "!\n</function>\n!\n</function>\n")
+SCRIPT = tok.encode(WORDS)
+TITLE = tok.encode("title please\n")
+TURN0 = tok.encode("turn it into notes\n")
+assert max(SCRIPT + TITLE + TURN0) < VOCAB
+
+class Wants:
+    # The model #3f's tool request had: SCRIPT's next word on top, everything else far below.
+    def __init__(self, prompt):
+        self.prompt = len(prompt)
+
+    def __call__(self, tokens, logits):
+        written = tokens.shape[0] - self.prompt
+        top = SCRIPT[written] if written < len(SCRIPT) else END
+        return mx.where(mx.arange(logits.shape[-1]) == top, 0.0, -1e9)[None].astype(logits.dtype)
+
+class Counted:
+    def __init__(self, inner):
+        self.inner, self.calls = inner, 0
+
+    def __call__(self, tokens, logits):
+        self.calls += 1
+        return self.inner(tokens, logits)
+
+def processors(tools):
+    args = types.SimpleNamespace(logits=server.LogitsProcessorArguments(None, 0.0, 20, 0.0, 20, 0.0, 20))
+    mark_tool_request((Queue(), types.SimpleNamespace(tools=tools), args))
+    return server._make_logits_processors(args)
+
+TOOLS = [{"type": "function", "function": {"name": "write"}}]
+model = llama.Model(llama.ModelArgs(model_type="llama", hidden_size=16, num_hidden_layers=1,
+    intermediate_size=32, num_attention_heads=2, rms_norm_eps=1e-5, vocab_size=VOCAB, num_key_value_heads=2))
+mx.eval(model.parameters())
+
+def run(generator, uid):
+    written, finish = [], None
+    for _ in range(4 * len(SCRIPT)):
+        for r in generator.next()[1]:
+            if r.uid == uid:
+                written.append(r.token)
+                finish = r.finish_reason or finish
+        if finish:
+            break
+    return written, finish
+
+def turn0(title_first):
+    generator = server.BatchGenerator(model, max_tokens=4 * len(SCRIPT), stop_tokens=[[END]])
+    guard = Counted(processors(TOOLS)[0])
+    if title_first:
+        (title,) = generator.insert([TITLE], max_tokens=[3], logits_processors=[processors(None)])
+        run(generator, title)
+    (tool,) = generator.insert([TURN0], logits_processors=[[Wants(TURN0), guard]])
+    written, finish = run(generator, tool)
+    return {"text": tok.decode(written), "finish": finish, "guard_calls": guard.calls, "tokens": len(written)}
+
+def beside():
+    # The title arrives while the tool request still prefills: PromptProcessingBatch.extend gives
+    # the title's row `None`, the title reaches generation first and leaves, the tool row joins.
+    generator = server.BatchGenerator(model, max_tokens=4 * len(SCRIPT), stop_tokens=[[END]], prefill_step_size=4)
+    long_prompt = TURN0 * 6
+    (tool,) = generator.insert([long_prompt], logits_processors=[[Wants(long_prompt), Counted(processors(TOOLS)[0])]])
+    generator.next()
+    (title,) = generator.insert([TITLE], max_tokens=[2], logits_processors=[processors(None)])
+    try:
+        written, finish = run(generator, tool)
+        return {"text": tok.decode(written), "finish": finish}
+    except TypeError as error:
+        return {"raised": f"TypeError: {error}"}
+
+print("GOOSE_TEST " + json.dumps({"alone": turn0(False), "after_title": turn0(True), "beside": beside(),
+    "script_after_call": WORDS[WORDS.index("</tool_call>") + len("</tool_call>"):]}))
+"#;
+        let (fixed, _) = run_wrapper_checks(&python, checks);
+        let (upstream, _) = run_wrapper_checks_with(&python, checks, |program| {
+            if let RankProgram::MlxLmServer { row_processors, .. } = program {
+                *row_processors = false;
+            }
+        });
+        let call = "<tool_call>\n<function=write>\n<parameter=path>\n/w/notes/kickoff.md\n\
+                    </parameter>\n</function>\n</tool_call>";
+        for (arm, seen) in [("row_processors", &fixed), ("3.0.57", &upstream)] {
+            assert_eq!(
+                seen["alone"]["text"],
+                format!("{call}<|im_end|>"),
+                "{arm}: a tool request alone in the batch is guarded on every token: {seen}"
+            );
+        }
+        let after_title = &fixed["after_title"];
+        assert_eq!(
+            after_title["text"],
+            format!("{call}<|im_end|>"),
+            "the `!` after `</tool_call>` is masked, and the turn ends: {after_title}"
+        );
+        assert_eq!(after_title["finish"], "stop");
+        assert_eq!(
+            after_title["guard_calls"].as_u64().unwrap(),
+            after_title["tokens"].as_u64().unwrap() + 1,
+            "the guard ran on every token the row wrote (and on the one mlx_lm samples a step ahead \
+             of the answer's end): {after_title}"
+        );
+        let unguarded = &upstream["after_title"];
+        assert_eq!(
+            unguarded["guard_calls"], 1,
+            "negative control: upstream ran the row's processors on its first token only: {unguarded}"
+        );
+        assert!(
+            !unguarded["text"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{call}<|im_end|>")),
+            "negative control: #3f's words were not what the unguarded row wrote: {unguarded}"
+        );
+        assert_eq!(
+            fixed["beside"]["text"],
+            format!("{call}<|im_end|>"),
+            "{}",
+            fixed["beside"]
+        );
+        assert!(
+            upstream["beside"]["raised"]
+                .as_str()
+                .is_some_and(|e| e.contains("'NoneType' object is not iterable")),
+            "negative control: {}",
+            upstream["beside"]
         );
     }
 
@@ -4905,10 +5294,52 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerSkeletonGuard");
+        assert_eq!(json["program"], "mlxLmServerRowProcessors");
+        assert_eq!(json["row_processors"], true);
         assert_eq!(json["xml_skeleton_guard"], true);
         assert_eq!(json["transient_tail_boundary"], true);
         assert_eq!(json["formation"]["rounds"], FORMATION_ROUNDS);
+
+        // A 3.0.57 requester's spec (the skeleton-guard tag, no row_processors) keeps upstream's
+        // processor lists here: its own ranks keep them too.
+        let mut guard = json.clone();
+        guard["program"] = "mlxLmServerSkeletonGuard".into();
+        guard.as_object_mut().unwrap().remove("row_processors");
+        let read: RankSpec = serde_json::from_value(guard).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                row_processors: false,
+                xml_skeleton_guard: true,
+                ..
+            }
+        ));
+
+        // A 3.0.57 peer's goosed (its enum knows the skeleton-guard tag, not this one) refuses this
+        // spec: its wrapper would run a departed row's processors where this Mac runs the row's own.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum SkeletonGuardProgram {
+            #[serde(
+                rename = "mlxLmServerSkeletonGuard",
+                alias = "mlxLmServerTransientTail",
+                alias = "mlxLmServerFormation",
+                alias = "mlxLmServerPrefill",
+                alias = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<SkeletonGuardProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
 
         // A Q-142 requester's spec (the transient-tail tag, no guard) masks nothing here: its own
         // ranks sample from the unmasked logits too.
@@ -5226,6 +5657,10 @@ print("ok")
             "class PromptProcessingBatch:\n\
              \x20   def prompt(self, tokens): pass\n\
              \x20   def split(self, indices): pass\n\
+             \x20   def filter(self, keep): pass\n\
+             class GenerationBatch:\n\
+             \x20   def __init__(self, model, uids, inputs, prompt_cache, tokens, samplers,\n\
+             \x20                fallback_sampler, logits_processors, state_machines, max_tokens): pass\n\
              \x20   def filter(self, keep): pass\n",
         )
         .unwrap();

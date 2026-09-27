@@ -1,6 +1,8 @@
 # goose distributed tensor rank: reading mlx_lm 0.31.3's batch (models/cache.py, generate.py) for
 # the prefill plan (rank_prefill.py). Concatenated after rank_prefill.py, before rank_wrapper.py,
 # which installs it; importable on its own beside a real mlx_lm (launch.rs's tests run it there).
+import inspect  # noqa: E402
+
 from mlx_lm.models.cache import ArraysCache, BatchKVCache, KVCache  # noqa: E402
 
 
@@ -66,3 +68,51 @@ def moving_split(batch, indices, upstream_split):
     batch.prompt_cache = []
     batch.filter([])
     return moved
+
+
+# Q-161: each generating row runs ITS OWN logits processors. mlx_lm 0.31.3's GenerationBatch.filter
+# filters `logits_processors` only `if any(self.logits_processors)`: when every row left carries
+# none (a tool-less request's `[]`, or the `None` PromptProcessingBatch.extend fills in for one),
+# the departed rows' entries stay. The next request to join is appended AFTER them, so its row
+# reads a departed row's list, and its own processors run only on the token its own
+# GenerationBatch sampled on arrival. E2E #3f turn 0 (2026-09-27, 3.0.57): goose's title request
+# (474 tokens, no tools, POST 11:52:24) generated and left; the tool request (40,537 tokens, POST
+# 11:52:27) joined, read the title's `[]`, and the XML skeleton guard never ran again — the answer
+# left its call as `</tool_call>` + `!` into 3,251 chars of `!\n</parameter>\n</function>\n…`.
+# A departed `None` beside a row that carries processors is iterated instead:
+# `TypeError: 'NoneType' object is not iterable` in the generation thread.
+def row_processors(processors, uids):
+    """One list per row: `[]` for a row that has none."""
+    if not processors:
+        return [[] for _ in uids]
+    return [row or [] for row in processors]
+
+
+def generation_init(upstream_init):
+    """GenerationBatch.__init__, handed `row_processors` of its logits processors."""
+    signature = inspect.signature(upstream_init)
+    if not {"logits_processors", "uids"} <= signature.parameters.keys():
+        raise SystemExit(
+            f"goose rank wrapper: mlx_lm's GenerationBatch.__init__{signature} takes no "
+            "logits_processors/uids; the per-row processors were written against mlx_lm 0.31.3"
+        )
+
+    def __init__(self, *args, **kwargs):
+        bound = signature.bind(self, *args, **kwargs)
+        bound.arguments["logits_processors"] = row_processors(
+            bound.arguments.get("logits_processors"), bound.arguments["uids"]
+        )
+        upstream_init(*bound.args, **bound.kwargs)
+
+    return __init__
+
+
+def generation_filter(upstream_filter):
+    """GenerationBatch.filter, keeping exactly the kept rows' processors."""
+
+    def filter(self, keep):
+        kept = [self.logits_processors[i] for i in keep]
+        upstream_filter(self, keep)
+        self.logits_processors = kept
+
+    return filter
