@@ -9,10 +9,16 @@
 //! AND a pool device is tagged for it, so an untagged pool stays byte-identical.
 
 use anyhow::{anyhow, bail, Context, Result};
+use goose::custom_requests::{NodesServingKind, NodesServingWayDto};
+use goose::nodes::{NodeDefKind, ResolvedNodeDef};
 use goose_sidecar::engine::{EngineSettings, MlxEngineManager};
+use goose_sidecar::holders::{self, HolderEntry, HolderKind, Registration};
+use goose_sidecar::machine::{LoadLock, LoadLockAttempt};
+use goose_sidecar::placement::store::PlacementKey;
 use goose_swarm::{DeviceCfg, DispatchRequest, EventSink};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::process::Command as ProcCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1093,6 +1099,100 @@ pub struct SidecarEngine {
     /// as "cannot answer" (see `note_probe_failure`).
     probe_failed_said: AtomicBool,
     absences: Mutex<Vec<serde_json::Value>>,
+    /// This Mac's MLX holder directory (`holders::holders_dir`, S8): where the run registers as a
+    /// holder of the engine, and where a mount reads who else holds it. `Err` names why the
+    /// directory is unknown — then who holds the engine is unknown, never "nobody".
+    holders_dir: std::result::Result<PathBuf, String>,
+    /// goose's `nodes` config, read at a mount: a `keepLoaded` MLX node the engine serves refuses
+    /// a mount that would displace it. A fn so a test reads fixture nodes, never the real config.
+    nodes: fn() -> std::result::Result<Vec<ResolvedNodeDef>, String>,
+    /// This run's `HolderKind::SwarmRun` record, kept for the engine object's life — the run's.
+    /// Dropped with the engine it withdraws; a crash frees it through its flock.
+    holder: Mutex<Option<Registration>>,
+}
+
+/// Why this build must not mount on this Mac's engine because a goose window holds it: the first
+/// live goosed reply that is not waiting in its loader (a reply is listed only once it leased a
+/// way, so it names one), or an unreadable record — which window's replies use the engine is then
+/// unknown, and nothing is displaced on a guess. A stale record (its process proven gone) and this
+/// process's own record hold nothing.
+fn goosed_reply_refusal(entries: &[HolderEntry], own_pid: u32) -> std::result::Result<(), String> {
+    for entry in entries {
+        match entry {
+            HolderEntry::Unreadable { path, error } => {
+                return Err(format!(
+                    "holders-unknown: the MLX holder record {} is unreadable ({error}); which \
+                     goose window's replies use this Mac's engine is unknown",
+                    path.display()
+                ))
+            }
+            HolderEntry::Live(record) if record.pid != own_pid => {
+                let HolderKind::Goosed { replies } = &record.kind else {
+                    continue;
+                };
+                if let Some(reply) = replies.iter().find(|r| !r.waiting) {
+                    let way = reply
+                        .way
+                        .as_ref()
+                        .map_or_else(|| "no way leased yet".to_string(), PlacementKey::id);
+                    return Err(format!(
+                        "held-by-goosed: goose (pid {}) has a reply open on {way} (session {}); \
+                         the mount would cut it",
+                        record.pid, reply.session
+                    ));
+                }
+            }
+            HolderEntry::Live(_) | HolderEntry::Stale { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+/// Why this build must not mount on this Mac's engine because a `keepLoaded` node is what it
+/// serves: `kept` are the kept-loaded MLX nodes, `served` the ids the engine's catalog answers,
+/// each read as this Mac's single the way goosed's residency reads a port it does not own
+/// (`served_repo` maps the configured alias back to its model), and matched by the residency
+/// rule itself (`names_way`).
+fn kept_loaded_refusal(
+    kept: &[ResolvedNodeDef],
+    served: &[String],
+    settings: &EngineSettings,
+) -> std::result::Result<(), String> {
+    for id in served {
+        let way = NodesServingWayDto {
+            kind: NodesServingKind::Single,
+            macs: vec![goose::nodes::THIS_MAC.to_string()],
+            link: None,
+            model_id: goose_sidecar::model_identity::served_repo(settings, id),
+            served_model_id: id.clone(),
+            mac_names: Vec::new(),
+            load_phase: None,
+        };
+        if let Some(node) = kept
+            .iter()
+            .find(|n| goose::nodes::residency::names_way(n, &way))
+        {
+            return Err(format!(
+                "kept-loaded: {} is kept loaded and this Mac's engine serves it as {id}; the \
+                 mount would unload it",
+                node.def.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The production nodes read: goose's `nodes` config as `nodes/read` resolves it. This Mac's name
+/// only names adopted pool nodes (never kept loaded); a failure to read it rides into the read as
+/// its named note.
+fn configured_nodes() -> std::result::Result<Vec<ResolvedNodeDef>, String> {
+    let this_mac = match block_on_engine(goose::nodes::acp::this_mac_name()) {
+        Ok(name) => name,
+        Err(e) => Err(format!("this Mac's name could not be read: {e}")),
+    };
+    goose::nodes::read(goose::config::Config::global(), this_mac)
+        .map(|read| read.nodes)
+        .map_err(|e| format!("the nodes config could not be read: {e:#}"))
 }
 
 /// One `curl -sS --max-time 6 <url>` run against the sidecar's `/v1/models`, classified into the
@@ -1123,44 +1223,210 @@ fn classify_v1_models_output(url: &str, out: &std::process::Output) -> Result<se
     })
 }
 
+/// (served id, context_window) per entry of a catalog answer that parsed. An answer with no `data`
+/// list is the engine answering that it serves nothing: a proven negative, empty.
+fn catalog_entries(json: &serde_json::Value) -> Vec<(String, Option<u64>)> {
+    let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|m| {
+            let id = m.get("id").and_then(|v| v.as_str())?.to_string();
+            Some((id, m.get("context_window").and_then(|v| v.as_u64())))
+        })
+        .collect()
+}
+
 impl SidecarEngine {
     pub fn new(manager: Arc<MlxEngineManager>) -> Self {
+        Self::with_holders(
+            manager,
+            holders::holders_dir().map_err(|e| format!("{e:#}")),
+            configured_nodes,
+        )
+    }
+
+    fn with_holders(
+        manager: Arc<MlxEngineManager>,
+        holders_dir: std::result::Result<PathBuf, String>,
+        nodes: fn() -> std::result::Result<Vec<ResolvedNodeDef>, String>,
+    ) -> Self {
         let base_url = format!("http://127.0.0.1:{}", manager.settings().port);
         Self {
             manager,
             base_url,
             probe_failed_said: AtomicBool::new(false),
             absences: Mutex::new(Vec::new()),
+            holders_dir,
+            nodes,
+            holder: Mutex::new(None),
         }
+    }
+
+    /// Register this run as a holder of this Mac's engine (S8, design §7.2) for the engine
+    /// object's life — the run's: goosed's loader reads the record and refuses to switch this
+    /// Mac's goose while the build holds it (`HeldByBuild`). `aliases` are the pool ids of the
+    /// engine's devices, the names it serves under. A failure is loud — the yellow stderr line and
+    /// `swarm-holder-unregistered{dir, what, error}`, drained to run.jsonl with the probe absences:
+    /// goose windows then cannot see this build and could switch the engine under it.
+    fn register_as_holder(&self, aliases: &[String]) {
+        let pid = std::process::id();
+        let served_as = aliases.join(", ");
+        let (model, what) = match self.manager.settings().model_id {
+            Some(model) => {
+                let what =
+                    format!("swarm build (goose pid {pid}) on {model}, served as {served_as}");
+                (model, what)
+            }
+            None => {
+                let what = format!(
+                    "swarm build (goose pid {pid}) on {served_as} as this Mac's engine serves it \
+                     (mlx_engine.model_id is not set, so the build mounts nothing)"
+                );
+                (served_as, what)
+            }
+        };
+        let kind = HolderKind::SwarmRun {
+            way: PlacementKey::single(goose::nodes::THIS_MAC),
+            model,
+            what: what.clone(),
+        };
+        let registered = match &self.holders_dir {
+            Ok(dir) => Registration::register(dir, kind).map_err(|e| format!("{e:#}")),
+            Err(e) => Err(format!("this Mac's MLX holder directory is unknown: {e}")),
+        };
+        match registered {
+            Ok(registration) => {
+                eprintln!(
+                    "  · swarm-holder-registered: {what} holds this Mac's engine until the run \
+                     ends ({})",
+                    registration.dir().display()
+                );
+                *self.holder.lock().unwrap() = Some(registration);
+            }
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "swarm-holder-unregistered: {what} could not register as a holder of \
+                         this Mac's engine ({error}) — goose windows cannot see this build and \
+                         could switch the engine under it"
+                    ))
+                    .yellow()
+                    .bold()
+                );
+                self.absences.lock().unwrap().push(serde_json::json!({
+                    "event": "swarm-holder-unregistered",
+                    "dir": self.holders_dir.as_ref().ok().map(|d| d.display().to_string()),
+                    "what": what,
+                    "error": error,
+                }));
+            }
+        }
+    }
+
+    /// Whether this build may mount on this Mac's engine now, read from the Mac-wide holder
+    /// records (S5's `holders.rs`) instead of racing goosed's loader. `Ok` is the swap claim, held
+    /// by the caller through the mount so no goosed loader switches the engine meanwhile. `Err` is
+    /// the named reason the mount is refused: a goosed loader holds the swap claim (it is
+    /// switching); a goosed reply that is not waiting holds a way; a `keepLoaded` node is what the
+    /// engine serves; or one of those is UNKNOWN (an unreadable directory, record, nodes config or
+    /// catalog) — nothing is displaced on a guess.
+    fn clear_to_mount(
+        &self,
+        model_id: &str,
+        hf_dir: &str,
+    ) -> std::result::Result<LoadLock, String> {
+        let dir = self.holders_dir.as_ref().map_err(|e| {
+            format!(
+                "holders-unknown: this Mac's MLX holder directory is unknown ({e}), so who holds \
+                 its engine is unknown"
+            )
+        })?;
+        let what = format!(
+            "swarm build (goose pid {}) mounting {hf_dir} as {model_id} on this Mac's engine",
+            std::process::id()
+        );
+        let claim = match holders::try_claim_swap(dir, &what, hf_dir) {
+            Ok(LoadLockAttempt::Acquired(lock)) => lock,
+            Ok(LoadLockAttempt::Held(held)) => {
+                let by = held
+                    .holder
+                    .as_ref()
+                    .map_or_else(|| held.message(), |h| h.what.clone());
+                return Err(format!(
+                    "swap-in-progress: a goose loader is switching this Mac's goose ({by})"
+                ));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "holders-unknown: this Mac's swap claim under {} could not be taken ({e:#})",
+                    dir.display()
+                ))
+            }
+        };
+        let entries = holders::read_all(dir).map_err(|e| {
+            format!(
+                "holders-unknown: the MLX holder records under {} could not be read ({e:#})",
+                dir.display()
+            )
+        })?;
+        goosed_reply_refusal(&entries, std::process::id())?;
+        let kept: Vec<ResolvedNodeDef> = (self.nodes)()
+            .map_err(|e| format!("holders-unknown: which nodes are kept loaded is unknown ({e})"))?
+            .into_iter()
+            .filter(|n| n.def.kind == NodeDefKind::Mlx && n.def.keep_loaded)
+            .collect();
+        if !kept.is_empty() {
+            let served = self.served_ids_or_nothing_listening().map_err(|e| {
+                let names: Vec<&str> = kept.iter().map(|n| n.def.name.as_str()).collect();
+                format!(
+                    "holders-unknown: {} kept loaded, and what this Mac's engine serves is \
+                     unknown ({e:#})",
+                    names.join(", ")
+                )
+            })?;
+            kept_loaded_refusal(&kept, &served, &self.manager.settings())?;
+        }
+        Ok(claim)
     }
 
     /// GET {base_url}/v1/models via curl — the same subprocess idiom as the LM Studio probes
     /// (a blocking HTTP client inside the async runtime is the trap both avoid). `Err` carries
     /// the named reason the catalog could not answer (`classify_v1_models_output`).
     fn v1_models(&self) -> Result<serde_json::Value> {
+        let (url, out) = self.v1_models_output()?;
+        classify_v1_models_output(&url, &out)
+    }
+
+    fn v1_models_output(&self) -> Result<(String, std::process::Output)> {
         let url = format!("{}/v1/models", self.base_url.trim_end_matches('/'));
         let out = ProcCommand::new("curl")
             .args(["-sS", "--max-time", "6", &url])
             .output()
             .with_context(|| format!("spawning curl for {url}"))?;
-        classify_v1_models_output(&url, &out)
+        Ok((url, out))
+    }
+
+    /// The ids this Mac's engine serves now. Nothing listening on its port (curl exit 7, a refused
+    /// connection) is a proven "serves nothing", `Ok(empty)`; any other failure is `Err`.
+    fn served_ids_or_nothing_listening(&self) -> Result<Vec<String>> {
+        let (url, out) = self.v1_models_output()?;
+        if out.status.code() == Some(7) {
+            return Ok(Vec::new());
+        }
+        let json = classify_v1_models_output(&url, &out)?;
+        Ok(catalog_entries(&json)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
     }
 
     /// (served id, context_window) per catalog entry. `Ok(empty)` = the engine ANSWERED and serves
     /// nothing (or its answer carries no `data` list) — a proven negative; `Err` = it could not
     /// answer, with the reason.
     fn served_entries(&self) -> Result<Vec<(String, Option<u64>)>> {
-        let json = self.v1_models()?;
-        let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
-            return Ok(Vec::new());
-        };
-        Ok(arr
-            .iter()
-            .filter_map(|m| {
-                let id = m.get("id").and_then(|v| v.as_str())?.to_string();
-                Some((id, m.get("context_window").and_then(|v| v.as_u64())))
-            })
-            .collect())
+        Ok(catalog_entries(&self.v1_models()?))
     }
 
     /// `served_entries` for the callers whose contract has no Err arm (servability, the instance
@@ -1270,6 +1536,21 @@ impl SwarmEngine for SidecarEngine {
             eprintln!("{why}");
             bail!(why);
         };
+        // A goose window may hold this Mac's engine (S8, design §7.2): the mount is refused by name
+        // rather than racing goosed's loader, and the device leaves the pool through the
+        // MountFailure path (`engine-mount-failed` + `sidecar-device-excluded`). The swap claim is
+        // held until this function returns — through the mount — so no loader switches meanwhile.
+        let _swap_claim = match self.clear_to_mount(model_id, &hf_dir) {
+            Ok(claim) => claim,
+            Err(reason) => {
+                let why = format!(
+                    "engine-mount-refused: {reason} — not mounting '{hf_dir}' as '{model_id}' on \
+                     this Mac's engine"
+                );
+                eprintln!("{}", style(&why).yellow().bold());
+                bail!(why);
+            }
+        };
         // The swarm-facing alias: the server advertises the requested pool model_id, so the
         // fleet's node-prefix identity convention needs zero goose changes.
         settings.served_model_name = Some(model_id.to_string());
@@ -1351,20 +1632,39 @@ impl SwarmEngine for SidecarEngine {
 
 /// Step-C registry construction — the ONE construction site's body. LM Studio always; the MLX
 /// sidecar iff the config declares `mlx_engine` settings AND a pool device is tagged for it.
-/// Neither condition -> the step-B registry, byte-identical.
+/// Neither condition -> the step-B registry, byte-identical, and no holder record is written.
+/// A registered sidecar registers the run as a holder of this Mac's engine (S8) for its life.
 pub(super) fn engines_for_run(devices: &[SwarmDevice]) -> Engines {
+    engines_for_run_with(
+        devices,
+        || {
+            goose::config::Config::global()
+                .get_param::<EngineSettings>("mlx_engine")
+                .map_err(|e| e.to_string())
+        },
+        SidecarEngine::new,
+    )
+}
+
+fn engines_for_run_with(
+    devices: &[SwarmDevice],
+    engine_settings: impl FnOnce() -> std::result::Result<EngineSettings, String>,
+    sidecar_for: impl FnOnce(Arc<MlxEngineManager>) -> SidecarEngine,
+) -> Engines {
     let mut engines = Engines::new();
-    if !devices
+    let aliases: Vec<String> = devices
         .iter()
-        .any(|d| d.enabled && d.engine == Some(EngineKind::MlxSidecar))
-    {
+        .filter(|d| d.enabled && d.engine == Some(EngineKind::MlxSidecar))
+        .map(|d| d.model_id.clone())
+        .collect();
+    if aliases.is_empty() {
         return engines;
     }
-    match goose::config::Config::global().get_param::<EngineSettings>("mlx_engine") {
+    match engine_settings() {
         Ok(settings) => {
             let manager = Arc::new(MlxEngineManager::new());
             manager.set_settings(settings);
-            let sidecar = SidecarEngine::new(manager);
+            let sidecar = sidecar_for(manager);
             // The LMSTUDIO_HOST idiom from step A: exported before the dispatcher constructs any
             // provider, so the declarative `omlx` provider resolves to THIS sidecar.
             std::env::set_var("OMLX_HOST", sidecar.http_host());
@@ -1372,6 +1672,7 @@ pub(super) fn engines_for_run(devices: &[SwarmDevice]) -> Engines {
                 "  · mlx-sidecar engine registered at {} (provider omlx)",
                 sidecar.http_host()
             );
+            sidecar.register_as_holder(&aliases);
             engines.register_sidecar("mlx-sidecar", Arc::new(sidecar));
         }
         Err(e) => eprintln!(
@@ -2320,12 +2621,18 @@ mod tests {
         assert!(engine.take_probe_absences().is_empty());
     }
 
+    /// A sidecar on `port` that never touches this Mac's real holder directory: a test that
+    /// reaches the holder read is refused `holders-unknown`, never reads or writes the Mac's.
     fn sidecar_on(port: u16) -> SidecarEngine {
         let manager = Arc::new(MlxEngineManager::new());
         let mut settings = manager.settings();
         settings.port = port;
         manager.set_settings(settings);
-        SidecarEngine::new(manager)
+        SidecarEngine::with_holders(manager, Err("a test engine has none".into()), no_nodes)
+    }
+
+    fn no_nodes() -> std::result::Result<Vec<ResolvedNodeDef>, String> {
+        Ok(Vec::new())
     }
 
     /// Every SidecarEngine probe is a read of the LIVE catalog: ids, loaded state, context
@@ -3518,5 +3825,414 @@ mod tests {
         let e: SwarmDevice =
             serde_yaml::from_str(&format!("{yaml}engine: mlx-sidecar\n")).expect("tagged parses");
         assert_eq!(e.engine, Some(EngineKind::MlxSidecar));
+    }
+
+    // ---- S8 (Q-196): the run as a holder of this Mac's engine, and the mount's refusals ----
+
+    const FLASH_DIR: &str = "rapid-mlx/Qwen3.8-Flash-Next-4bit";
+
+    /// A sidecar whose model dir is configured (so a mount would be attempted) on `port`, with
+    /// its holder records under `dir` and `nodes` as goose's nodes config.
+    fn mountable_sidecar(
+        port: u16,
+        dir: &std::path::Path,
+        nodes: fn() -> std::result::Result<Vec<ResolvedNodeDef>, String>,
+    ) -> Arc<SidecarEngine> {
+        let manager = Arc::new(MlxEngineManager::new());
+        let mut settings = manager.settings();
+        settings.port = port;
+        settings.model_id = Some(FLASH_DIR.to_string());
+        manager.set_settings(settings);
+        Arc::new(SidecarEngine::with_holders(
+            manager,
+            Ok(dir.to_path_buf()),
+            nodes,
+        ))
+    }
+
+    fn kept_node(
+        id: &str,
+        model: &str,
+        placement: Option<goose::nodes::NodePlacement>,
+    ) -> ResolvedNodeDef {
+        ResolvedNodeDef {
+            def: goose::nodes::NodeDef {
+                id: id.into(),
+                name: format!("{id} (kept loaded)"),
+                kind: NodeDefKind::Mlx,
+                model: Some(model.into()),
+                placement,
+                goal: None,
+                provider: None,
+                keep_loaded: true,
+                pool_device: None,
+                origin: goose::nodes::NodeOrigin::User,
+            },
+            model: Some(model.into()),
+            provider: None,
+            model_from: goose::nodes::NodeModelFrom::Own,
+            pending_adoption: false,
+        }
+    }
+
+    fn here() -> Option<goose::nodes::NodePlacement> {
+        Some(goose::nodes::NodePlacement::Single {
+            macs: vec![goose::nodes::THIS_MAC.into()],
+            link: None,
+        })
+    }
+
+    /// The node GOLDEN_V1_MODELS's engine serves, kept loaded on this Mac.
+    fn kept_coder_here() -> std::result::Result<Vec<ResolvedNodeDef>, String> {
+        Ok(vec![kept_node(
+            "coder",
+            "workhorse-qwen3-coder-30b-mlx",
+            here(),
+        )])
+    }
+
+    /// A goose window's holder record, written as another live process (this test's parent) so
+    /// it is not this process's own: a reply open on this Mac's single, `waiting` as given.
+    fn goosed_record_elsewhere(dir: &std::path::Path, waiting: bool) {
+        let pid = std::os::unix::process::parent_id();
+        let (started_at, _) =
+            goose_sidecar::machine::process_start(pid).expect("the parent process is alive");
+        let record = holders::HolderRecord {
+            pid,
+            started_at,
+            since: started_at,
+            kind: HolderKind::Goosed {
+                replies: vec![holders::ReplyHold {
+                    reply: 1,
+                    session: "chat-7".into(),
+                    root_session: "chat-7".into(),
+                    way: Some(PlacementKey::single(goose::nodes::THIS_MAC)),
+                    waiting,
+                    kind: holders::ReplyKind::User,
+                }],
+            },
+        };
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{pid}-{started_at}.json")),
+            serde_json::to_string(&record).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// The refusal as the pre-warm seam receives it: one MountFailure for the device, its error
+    /// named, and nothing mounted — the manager still stopped, its settings untouched.
+    fn refused_through_prewarm(sidecar: &Arc<SidecarEngine>) -> MountFailure {
+        let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        engines.register_sidecar("mlx-sidecar", sidecar.clone());
+        let pool = vec![dev(
+            "mac-mlx",
+            "mac-other-mlx",
+            Some(EngineKind::MlxSidecar),
+        )];
+        let failures = prewarm_pool(&engines, &pool, "mac-other-mlx");
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        let status = tokio::runtime::Runtime::new()
+            .expect("test runtime")
+            .block_on(sidecar.manager.status());
+        assert_eq!(status.state, "stopped", "a refused mount never starts one");
+        assert_eq!(
+            sidecar.manager.settings().served_model_name,
+            None,
+            "a refused mount leaves the settings untouched"
+        );
+        let mut pool = pool;
+        let events = exclude_mount_failed_devices(&mut pool, &failures);
+        assert!(pool.is_empty(), "the device leaves the pool by name");
+        assert_eq!(events[0]["event"], "engine-mount-failed");
+        assert_eq!(events[1]["event"], "sidecar-device-excluded");
+        failures.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn a_registered_sidecar_holds_this_macs_engine_for_the_run_and_withdraws_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let holders_dir = dir.path().join("mlx-holders");
+        let devices = vec![
+            dev("mac", "qwen/qwen3.6-35b-a3b", None),
+            dev("mac-mlx", "mac-flash-mlx", Some(EngineKind::MlxSidecar)),
+        ];
+        let settings = || {
+            Ok(EngineSettings {
+                model_id: Some(FLASH_DIR.to_string()),
+                ..EngineSettings::default()
+            })
+        };
+        let hd = holders_dir.clone();
+        let engines = engines_for_run_with(&devices, settings, move |m| {
+            SidecarEngine::with_holders(m, Ok(hd), no_nodes)
+        });
+        assert!(engines.for_kind(EngineKind::MlxSidecar).is_some());
+        assert!(
+            engines.take_probe_absences().is_empty(),
+            "registered: no absence"
+        );
+        let entries = holders::read_all(&holders_dir).unwrap();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        let HolderEntry::Live(record) = &entries[0] else {
+            panic!("the run's record is live: {entries:?}");
+        };
+        assert_eq!(record.pid, std::process::id());
+        let HolderKind::SwarmRun { way, model, what } = &record.kind else {
+            panic!("a swarm run's record: {record:?}");
+        };
+        assert_eq!(*way, PlacementKey::single("local"));
+        assert_eq!(model, FLASH_DIR);
+        assert!(
+            what.contains(FLASH_DIR) && what.contains("served as mac-flash-mlx"),
+            "{what}"
+        );
+        // The run is still going: the record stays while the registry lives.
+        assert_eq!(holders::read_all(&holders_dir).unwrap().len(), 1);
+        drop(engines);
+        assert!(
+            holders::read_all(&holders_dir).unwrap().is_empty(),
+            "the run's end withdraws its record"
+        );
+    }
+
+    #[test]
+    fn a_holder_registration_that_fails_is_a_named_event_never_a_silent_continue() {
+        let devices = vec![dev(
+            "mac-mlx",
+            "mac-flash-mlx",
+            Some(EngineKind::MlxSidecar),
+        )];
+        let engines = engines_for_run_with(
+            &devices,
+            || Ok(EngineSettings::default()),
+            |m| SidecarEngine::with_holders(m, Err("no account home".into()), no_nodes),
+        );
+        let absences = engines.take_probe_absences();
+        assert_eq!(absences.len(), 1, "{absences:?}");
+        assert_eq!(absences[0]["event"], "swarm-holder-unregistered");
+        assert!(absences[0]["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("no account home")));
+        assert!(absences[0]["what"]
+            .as_str()
+            .is_some_and(|w| w.contains("mlx_engine.model_id is not set")));
+    }
+
+    /// The benchmark configuration: the golden pool (r6h, `golden.generated.json`) is LM Studio
+    /// devices with no `engine` key, and the isolated sb-7.1 export refuses any enabled
+    /// mlx-sidecar device (`benchmark_config::validate_isolated_device`). Such a pool — a disabled
+    /// sidecar device included (Tier A's projection writes `enabled: false`) — never reads the
+    /// `mlx_engine` config, never builds a SidecarEngine, so no holder record is written and no
+    /// mount can be refused.
+    #[test]
+    fn the_golden_lm_studio_pool_registers_no_holder_and_builds_no_sidecar() {
+        let mut disabled = dev("mac-mlx", "mac-flash-mlx", Some(EngineKind::MlxSidecar));
+        disabled.enabled = false;
+        let golden = vec![
+            dev("mac", "qwen/qwen3.6-35b-a3b", None),
+            dev(
+                "macbook",
+                "qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx",
+                None,
+            ),
+            disabled,
+        ];
+        let engines = engines_for_run_with(
+            &golden,
+            || panic!("the golden pool never reads mlx_engine"),
+            |_| panic!("the golden pool never builds a sidecar"),
+        );
+        assert!(engines.for_kind(EngineKind::MlxSidecar).is_none());
+        assert!(engines.take_probe_absences().is_empty());
+    }
+
+    #[test]
+    fn a_goosed_reply_that_is_not_waiting_refuses_the_mount_through_mount_failure() {
+        let port = serve_stub(GOLDEN_V1_MODELS);
+        let dir = tempfile::tempdir().unwrap();
+        goosed_record_elsewhere(dir.path(), false);
+        let sidecar = mountable_sidecar(port, dir.path(), no_nodes);
+        let failure = refused_through_prewarm(&sidecar);
+        assert_eq!(failure.device_id, "mac-mlx");
+        assert!(
+            failure
+                .error
+                .starts_with("engine-mount-refused: held-by-goosed: goose (pid ")
+                && failure.error.contains("single:local")
+                && failure.error.contains("chat-7"),
+            "{}",
+            failure.error
+        );
+        // The refusal released the swap claim: a loader can take it now.
+        assert!(matches!(
+            holders::try_claim_swap(dir.path(), "a loader", FLASH_DIR).unwrap(),
+            LoadLockAttempt::Acquired(_)
+        ));
+    }
+
+    #[test]
+    fn a_kept_loaded_node_the_engine_serves_refuses_the_mount_through_mount_failure() {
+        let port = serve_stub(GOLDEN_V1_MODELS);
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = mountable_sidecar(port, dir.path(), kept_coder_here);
+        let failure = refused_through_prewarm(&sidecar);
+        assert!(
+            failure.error.starts_with(
+                "engine-mount-refused: kept-loaded: coder (kept loaded) is kept loaded and this \
+                 Mac's engine serves it as workhorse-qwen3-coder-30b-mlx"
+            ),
+            "{}",
+            failure.error
+        );
+    }
+
+    #[test]
+    fn a_goose_loader_holding_the_swap_claim_refuses_the_mount_through_mount_failure() {
+        let port = serve_stub(GOLDEN_V1_MODELS);
+        let dir = tempfile::tempdir().unwrap();
+        let LoadLockAttempt::Acquired(_loader) = holders::try_claim_swap(
+            dir.path(),
+            "goose (pid 4242) is switching this Mac's goose to 27B · both Macs",
+            "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+        )
+        .unwrap() else {
+            panic!("the test's loader takes the free claim");
+        };
+        let sidecar = mountable_sidecar(port, dir.path(), no_nodes);
+        let failure = refused_through_prewarm(&sidecar);
+        assert!(
+            failure.error.starts_with(
+                "engine-mount-refused: swap-in-progress: a goose loader is switching this Mac's \
+                 goose (goose (pid 4242) is switching this Mac's goose to 27B · both Macs)"
+            ),
+            "{}",
+            failure.error
+        );
+    }
+
+    #[test]
+    fn an_unknown_holder_state_refuses_the_mount_by_name_never_on_a_guess() {
+        let port = serve_stub(GOLDEN_V1_MODELS);
+        // No holder directory at all.
+        let settings = EngineSettings {
+            port,
+            model_id: Some(FLASH_DIR.to_string()),
+            ..EngineSettings::default()
+        };
+        let manager = Arc::new(MlxEngineManager::new());
+        manager.set_settings(settings);
+        let no_dir = Arc::new(SidecarEngine::with_holders(
+            manager,
+            Err("no account home".into()),
+            no_nodes,
+        ));
+        let failure = refused_through_prewarm(&no_dir);
+        assert!(
+            failure
+                .error
+                .starts_with("engine-mount-refused: holders-unknown: this Mac's MLX holder directory is unknown (no account home)"),
+            "{}",
+            failure.error
+        );
+        // A torn record: which window's replies use the engine is unknown.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("77-1.json"), "{\"pid\": 77").unwrap();
+        let torn = mountable_sidecar(port, dir.path(), no_nodes);
+        let failure = refused_through_prewarm(&torn);
+        assert!(
+            failure.error.contains("holders-unknown")
+                && failure.error.contains("77-1.json")
+                && failure.error.contains("is unreadable"),
+            "{}",
+            failure.error
+        );
+        // An unreadable nodes config: which nodes are kept loaded is unknown.
+        let dir = tempfile::tempdir().unwrap();
+        let no_nodes_config = mountable_sidecar(port, dir.path(), || {
+            Err("the nodes config could not be read: bad yaml".into())
+        });
+        let failure = refused_through_prewarm(&no_nodes_config);
+        assert!(
+            failure.error.contains(
+                "holders-unknown: which nodes are kept loaded is unknown (the nodes config could \
+                 not be read: bad yaml)"
+            ),
+            "{}",
+            failure.error
+        );
+    }
+
+    /// With no holder in the way, the mount is cleared exactly as before S8, and the swap claim
+    /// is HELD while the caller mounts — a goose loader trying meanwhile reads it Held — then freed.
+    #[test]
+    fn with_no_holder_the_mount_is_cleared_and_holds_the_swap_claim_until_it_ends() {
+        let port = serve_stub(GOLDEN_V1_MODELS);
+        let dir = tempfile::tempdir().unwrap();
+        // A waiting goosed reply holds nothing; a kept node on ANOTHER model is not served here.
+        goosed_record_elsewhere(dir.path(), true);
+        fn kept_elsewhere() -> std::result::Result<Vec<ResolvedNodeDef>, String> {
+            Ok(vec![kept_node("flash", FLASH_DIR, here())])
+        }
+        let sidecar = mountable_sidecar(port, dir.path(), kept_elsewhere);
+        let claim = sidecar
+            .clear_to_mount("mac-other-mlx", FLASH_DIR)
+            .expect("nothing holds the engine: cleared");
+        let held = holders::try_claim_swap(dir.path(), "a goose loader", FLASH_DIR).unwrap();
+        let LoadLockAttempt::Held(held) = held else {
+            panic!("the build holds the swap claim through its mount");
+        };
+        assert!(held.holder.is_some_and(|h| h
+            .what
+            .contains("mounting rapid-mlx/Qwen3.8-Flash-Next-4bit as mac-other-mlx")));
+        drop(claim);
+        assert!(matches!(
+            holders::try_claim_swap(dir.path(), "a goose loader", FLASH_DIR).unwrap(),
+            LoadLockAttempt::Acquired(_)
+        ));
+    }
+
+    #[test]
+    fn the_holder_rules_read_only_what_holds_this_macs_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        // A reply waiting in its loader and this process's own record hold nothing.
+        goosed_record_elsewhere(dir.path(), true);
+        let own = Registration::register(
+            dir.path(),
+            HolderKind::Goosed {
+                replies: Vec::new(),
+            },
+        )
+        .unwrap();
+        let entries = holders::read_all(dir.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(goosed_reply_refusal(&entries, std::process::id()), Ok(()));
+        drop(own);
+        assert_eq!(goosed_reply_refusal(&[], std::process::id()), Ok(()));
+        // keepLoaded: only a node naming what serves on THIS Mac's single refuses.
+        let settings = EngineSettings::default();
+        let served = vec!["workhorse-qwen3-coder-30b-mlx".to_string()];
+        let on_studio = kept_node(
+            "coder-studio",
+            "workhorse-qwen3-coder-30b-mlx",
+            Some(goose::nodes::NodePlacement::Single {
+                macs: vec!["link:studio".into()],
+                link: None,
+            }),
+        );
+        assert_eq!(
+            kept_loaded_refusal(&[on_studio], &served, &settings),
+            Ok(())
+        );
+        let follows = kept_node("follows", "anything", None);
+        assert!(
+            kept_loaded_refusal(std::slice::from_ref(&follows), &served, &settings)
+                .is_err_and(|e| e.starts_with("kept-loaded: follows (kept loaded)"))
+        );
+        assert_eq!(
+            kept_loaded_refusal(&[follows], &[], &settings),
+            Ok(()),
+            "nothing served"
+        );
     }
 }
