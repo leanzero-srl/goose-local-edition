@@ -2977,14 +2977,24 @@ export type MlxNodeFitDto = {
 
 export type MlxPlacementSpeedDto = {
     /**
-     * Writing speed of one conversation (tok/s): measured over this way's timed turns of any
-     * prompt size (each timed over enough tokens), else estimated at a ~2k-token prompt.
+     * Writing speed of one conversation (tok/s): measured over this way's timed turns at this
+     * app's chat prompt size (each timed over enough tokens), else estimated at that size.
      */
     decode?: MlxSpeedFigureDto | null;
+    /**
+     * The prompt size `decode` is for: prompts of up to this many tokens (a power of two — this
+     * app's typical chat prompt's bucket; the benchmark's 2,048 while no chat is recorded).
+     */
+    decodeBucket?: number | null;
     /**
      * Prompt reading speed (tok/s) at the goal's prompt size.
      */
     prefill?: MlxSpeedFigureDto | null;
+    /**
+     * The prompt size `prefill` is for (prompts of up to this many tokens): name it beside the
+     * rate — reading slows as the prompt grows.
+     */
+    prefillBucket?: number | null;
     /**
      * Total tok/s across `concurrency` requests (derived from decode × a measured gain).
      */
@@ -3062,6 +3072,10 @@ export type MlxPlacementOutcomeDto = {
     mine: number;
     best: number;
     code: 'tiedNeedsMoreMacs';
+} | {
+    context: number;
+    need: number;
+    code: 'contextBelowChats';
 };
 
 /**

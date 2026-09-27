@@ -3107,8 +3107,16 @@ export const zMlxPlacementSpeedDto = z.object({
         zMlxSpeedFigureDto,
         z.null()
     ]).optional(),
+    decodeBucket: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
     prefill: z.union([
         zMlxSpeedFigureDto,
+        z.null()
+    ]).optional(),
+    prefillBucket: z.union([
+        z.number().int().gte(0),
         z.null()
     ]).optional(),
     throughput: z.union([
@@ -3180,6 +3188,11 @@ export const zMlxPlacementOutcomeDto = z.union([
         mine: z.number(),
         best: z.number(),
         code: z.literal('tiedNeedsMoreMacs')
+    }),
+    z.object({
+        context: z.number().int().gte(0),
+        need: z.number().int().gte(0),
+        code: z.literal('contextBelowChats')
     })
 ]);
 
