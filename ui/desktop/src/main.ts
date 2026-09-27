@@ -133,6 +133,7 @@ import { fetchMlxMeasuredRuns, type MeasuredRunsFetch } from './utils/mlxMeasure
 import {
   MLX_DISTRIBUTED_STALE_MS,
   buildMlxTrayModel,
+  standingRestore,
   trayTitleText,
   type MlxTrayAction,
   type MlxTrayItem,
@@ -2307,6 +2308,15 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   const distributed = mlxDistributed
     ? { report: mlxDistributed.report, ageMs: Date.now() - mlxDistributed.atMs }
     : null;
+  // A failed restore an engine chose afterwards superseded is gone for good, as in the renderer —
+  // not back the moment that engine stops (Q-166).
+  mlxRestore = standingRestore(snapshot, {
+    canAct: false,
+    mountModelId: null,
+    distributed,
+    remote: mlxRemote,
+    restore: mlxRestore,
+  });
   // No engine configured, none reported and no distributed run: the tray says nothing about one.
   const silent =
     snapshot.mode === 'unknown' &&

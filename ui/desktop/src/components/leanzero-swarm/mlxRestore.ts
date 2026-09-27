@@ -6,7 +6,7 @@ import type {
 } from '../../acp/mlx-remote-single';
 import type { LinkState } from '../../acp/leanzero-link';
 import type { MlxServingIntent, MlxServingIntentRead } from '../../acp/mlx-serving-intent';
-import type { MlxRestoreReport } from '../../utils/mlxRestoreReport';
+import { restoreSuperseded, servingKey, type MlxRestoreReport } from '../../utils/mlxRestoreReport';
 import { linkStateSettling } from '../../hooks/useLinkTrayReporter';
 import { ownsTheMac } from './mlxDistributed';
 import { singleLoad } from './mlxLiveStats';
@@ -284,8 +284,16 @@ export async function restoreServing(
 export type RestoreLine =
   | { phase: 'idle' }
   | { phase: 'restoring'; what: RestoreWhat; waitingOn?: string }
-  /** `what` null = the record itself could not be read. */
-  | { phase: 'failed'; what: RestoreWhat | null; reason: RestoreReason };
+  /**
+   * `what` null = the record itself could not be read. `servingAtFailure`: what goose served when
+   * the restore gave up (`servingKey`s); absent = not read, so any serving engine supersedes.
+   */
+  | {
+      phase: 'failed';
+      what: RestoreWhat | null;
+      reason: RestoreReason;
+      servingAtFailure?: string[];
+    };
 
 let current: RestoreLine = { phase: 'idle' };
 const listeners = new Set<() => void>();
@@ -322,6 +330,9 @@ export function toRestoreReport(line: RestoreLine): MlxRestoreReport | null {
         : line.waitingOn
           ? `The previous split is still shutting down on ${line.waitingOn} — goose restores it when that finishes`
           : null,
+    ...(line.phase === 'failed' && line.servingAtFailure
+      ? { servingAtFailure: line.servingAtFailure }
+      : {}),
   };
 }
 
@@ -345,30 +356,62 @@ export function publishRestoreLine(line: RestoreLine): void {
 let running: Promise<void> | null = null;
 let lastDeps: RestoreDeps | null = null;
 
-/**
- * A failed line whose engine serves now says something false — measured on 3.0.31: "Could not
- * restore … on Work's Mac Studio" stayed up beside the Studio's engine serving this Mac's chat. The
- * Engine view hands its reads here on every change; a line whose model serves the way it names is
- * cleared, never left as a claim the tile below contradicts.
- */
-export function settleRestoreLine(serving: {
+export interface ServingReads {
   single: MlxEngineStatus | null;
   remote: MlxRemoteSingleStatus | null;
   distributed: MlxDistributedStatus | null;
-}): void {
+}
+
+/** What goose serves chat with right now, as `servingKey`s (the tray derives the same in main). */
+export function servingKeysOf(serving: ServingReads): string[] {
+  const keys: string[] = [];
+  if (serving.single?.state === 'running') {
+    keys.push(servingKey('single', serving.single.modelId ?? null));
+  }
+  if (serving.remote?.state === 'ready') {
+    keys.push(servingKey('remoteSingle', serving.remote.modelId ?? null));
+  }
+  const split = serving.distributed;
+  if (split && ownsTheMac(split) && (split.state === 'ready' || split.state === 'serving')) {
+    keys.push(servingKey('split', split.modelId ?? null));
+  }
+  return keys;
+}
+
+/**
+ * A failed line beside a serving engine says something false. Measured twice: on 3.0.31 "Could not
+ * restore … on Work's Mac Studio" stayed up beside the Studio serving this Mac's chat; on 3.0.57
+ * "Could not restore Qwen3.8-Flash-Next-4bit …" stayed up 20 minutes above the 27B split the owner
+ * started afterwards, because only the SAME model serving cleared it (Q-166). Any engine the owner
+ * chose after the failure supersedes it (`restoreSuperseded`); an engine already serving when the
+ * restore gave up does not, so a "the saved split serves X" failure still says why.
+ */
+export function settleRestoreLine(serving: ServingReads): void {
   const line = current;
-  if (line.phase !== 'failed' || !line.what) return;
-  const { kind, modelId } = line.what;
-  const served =
-    kind === 'single'
-      ? serving.single?.state === 'running' && serving.single.modelId === modelId
-      : kind === 'remoteSingle'
-        ? serving.remote?.state === 'ready' && serving.remote.modelId === modelId
-        : serving.distributed != null &&
-          ownsTheMac(serving.distributed) &&
-          (serving.distributed.state === 'ready' || serving.distributed.state === 'serving') &&
-          serving.distributed.modelId === modelId;
-  if (served) publishRestoreLine({ phase: 'idle' });
+  if (line.phase !== 'failed') return;
+  if (restoreSuperseded(line, servingKeysOf(serving))) publishRestoreLine({ phase: 'idle' });
+}
+
+async function readServing(deps: RestoreDeps): Promise<ServingReads> {
+  const [single, remote, distributed] = await Promise.all([
+    deps.singleStatus().catch(() => null),
+    deps.remoteStatus().catch(() => null),
+    deps.distributedStatus().catch(() => null),
+  ]);
+  return { single, remote, distributed };
+}
+
+/**
+ * The failed line settles by itself, not only while the Engine view is open: the composer strip and
+ * the tray read the same line. It watches on the restore's own poll until the line is no longer this
+ * one — superseded, dismissed or retried.
+ */
+async function watchFailedLine(deps: RestoreDeps, line: RestoreLine): Promise<void> {
+  while (current === line) {
+    await deps.wait();
+    if (current !== line) return;
+    settleRestoreLine(await readServing(deps));
+  }
 }
 
 /** Run one restore and keep the line current; a second call while one runs joins it. */
@@ -380,7 +423,17 @@ export function runRestore(deps: RestoreDeps): Promise<void> {
       waitingOn ? { phase: 'restoring', what, waitingOn } : { phase: 'restoring', what }
     )
   )
-    .then((result) => publishRestoreLine(result))
+    .then(async (result) => {
+      if (result.phase !== 'failed') {
+        publishRestoreLine(result);
+        return;
+      }
+      // A read that fails leaves the baseline unknown: then any serving engine supersedes.
+      const before = await readServing(deps).then(servingKeysOf, () => undefined);
+      const line: RestoreLine = before ? { ...result, servingAtFailure: before } : result;
+      publishRestoreLine(line);
+      void watchFailedLine(deps, line);
+    })
     .catch((error: unknown) =>
       publishRestoreLine({
         phase: 'failed',

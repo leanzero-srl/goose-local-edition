@@ -35,7 +35,12 @@ import type { MlxClient, MlxServing } from './mlxServing';
 import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
 import { leaveCause, type LeaveCause } from './leaveCause';
 import { routeContactLost, routePeerGone, type PeerGone } from './routeContact';
-import { restoreTrayLine, type MlxRestoreReport } from './mlxRestoreReport';
+import {
+  restoreSuperseded,
+  restoreTrayLine,
+  servingKey,
+  type MlxRestoreReport,
+} from './mlxRestoreReport';
 import { TRAY_ACTION_ENGINES, trayCutLine, workCutBy } from './mlxInFlight';
 
 /**
@@ -673,6 +678,37 @@ export function hostingLine(hosting: MlxDistributedReportHosting): string {
 }
 
 /**
+ * What serves chat as main reads it, in the restore's `servingKey`s — the same derivation the
+ * renderer's line settles by (mlxRestore.ts `servingKeysOf`), from main's own facts.
+ */
+export function trayServingKeys(snapshot: MlxEngineSnapshot, options: MlxTrayOptions): string[] {
+  const keys: string[] = [];
+  if (snapshot.engine === 'single' && snapshot.mode === 'running') {
+    keys.push(servingKey('single', snapshot.modelId));
+  }
+  if (options.remote?.state === 'ready')
+    keys.push(servingKey('remoteSingle', options.remote.modelId));
+  const split = options.distributed?.report;
+  if (split?.mode === 'distributed' && (split.state === 'ready' || split.state === 'serving')) {
+    keys.push(servingKey('split', split.modelId));
+  }
+  return keys;
+}
+
+/**
+ * The restore report the tray should still show: a failed restore an engine chose afterwards has
+ * superseded is gone (Q-166 — the tray said "Could not restore …" beside "split across 2 Macs, ready").
+ */
+export function standingRestore(
+  snapshot: MlxEngineSnapshot,
+  options: MlxTrayOptions
+): MlxRestoreReport | null {
+  const restore = options.restore ?? null;
+  if (!restore) return null;
+  return restoreSuperseded(restore, trayServingKeys(snapshot, options)) ? null : restore;
+}
+
+/**
  * The tray model with the restore's line on top: amber while the launch brings back what served,
  * red with goose's reason when it could not. A title that says nothing yet says so.
  */
@@ -681,7 +717,7 @@ export function buildMlxTrayModel(
   options: MlxTrayOptions
 ): MlxTrayModel {
   const model = buildEngineTrayModel(snapshot, options);
-  const restore = options.restore ?? null;
+  const restore = standingRestore(snapshot, options);
   if (!restore) return model;
   const phase: EnginePhase = restore.phase === 'restoring' ? 'loading' : 'failed';
   const line: MlxTrayItem = { type: 'info', label: clip(restoreTrayLine(restore)), phase };
