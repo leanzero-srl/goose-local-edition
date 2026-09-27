@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rango {rank} de la división de {requester} · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "por la red"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "por Thunderbolt"
+  },
   "mlxMode.remote": {
     "defaultMessage": "Servido desde {peer}"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose no encontró forma de dividir {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "división {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "división"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Iniciando {model} en {nodes}…"

@@ -11,12 +11,7 @@ import {
   subscribeMlxDistributedStatus,
   type MlxDistributedStatus,
 } from '../../acp/mlx-distributed';
-import {
-  backendName,
-  modeSummary,
-  ownsTheMac,
-  type MlxModeSummary,
-} from '../leanzero-swarm/mlxDistributed';
+import { modeSummary, ownsTheMac, type MlxModeSummary } from '../leanzero-swarm/mlxDistributed';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
 import { mlxServingIntent, type MlxServingIntent } from '../../acp/mlx-serving-intent';
 import { mlxModelShort } from '../leanzero-swarm/nodes';
@@ -187,7 +182,7 @@ export function distributedSummary(distributed: MlxDistributedStatus): MlxModeSu
     return {
       mode: 'distributed',
       nodeNames: foreign.nodeNames ?? [],
-      backend: backendName(foreign.backend),
+      backend: foreign.backend ?? null,
     };
   }
   return modeSummary(distributed);

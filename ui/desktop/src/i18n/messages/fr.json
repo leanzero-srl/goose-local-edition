@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rang {rank} de la répartition de {requester} · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "via le réseau"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "via Thunderbolt"
+  },
   "mlxMode.remote": {
     "defaultMessage": "Servi depuis {peer}"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose n’a trouvé aucun moyen de répartir {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "répartition {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "répartition"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Démarrage de {model} sur {nodes}…"

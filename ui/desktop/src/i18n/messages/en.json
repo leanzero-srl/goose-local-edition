@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} of {requester}''s split · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "over the network"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "over Thunderbolt"
+  },
   "mlxMode.remote": {
     "defaultMessage": "Serving from {peer}"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose found no way to split {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "split {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "split"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Starting {model} across {nodes}…"

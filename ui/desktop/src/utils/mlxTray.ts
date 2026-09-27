@@ -11,7 +11,7 @@ import {
 } from '../components/leanzero-swarm/mlxLiveStats';
 import { measuredFigure, type MeasuredFigure, type MlxMeasuredRead } from './mlxMeasuredRuns';
 import {
-  backendName,
+  linkWords,
   gb1,
   gib,
   layerSpanShort,
@@ -544,11 +544,11 @@ function shortModel(id: string): string {
   return id.split('/').pop() || id;
 }
 
-/** "Split across MacBook Pro + workhorse · JACCL" — the mode line the tile and the tab say too. */
+/** "Split across MacBook Pro + workhorse · over Thunderbolt" — the mode line the tile says too. */
 export function distributedModeLine(report: MlxDistributedReport): string {
   const nodes =
     report.nodeNames.length > 0 ? report.nodeNames.join(' + ') : `${report.nodes.length} nodes`;
-  const backend = backendName(report.backend);
+  const backend = linkWords(report.backend);
   return clip([`Split across ${nodes}`, backend].filter(Boolean).join(' · '));
 }
 
@@ -652,13 +652,7 @@ function distributedItems(
   if (report.restarts > 0) {
     items.push({ type: 'info', label: `Restarts: ${report.restarts.toLocaleString()}` });
   }
-  if (report.lastAlarm) {
-    const where = report.lastAlarm.node ? ` on ${report.lastAlarm.node}` : '';
-    items.push({
-      type: 'info',
-      label: clip(`Last: ${report.lastAlarm.kind}${where} — ${report.lastAlarm.message}`),
-    });
-  }
+  if (report.lastAlarm) items.push({ type: 'info', label: clip(alarmLine(report.lastAlarm)) });
   if (report.lastError) items.push({ type: 'info', label: clip(`Error: ${report.lastError}`) });
   if (distributedStale(d)) {
     items.push({
@@ -669,9 +663,76 @@ function distributedItems(
   return items;
 }
 
-/** "Rank 1 of MacBook Pro's split · JACCL" (the model has its own line below). */
+/**
+ * The supervisor's event kinds as a person says them. The tray has no Details: the kind's id and the
+ * preflight's check ids ("startFailed", "foreignEngines") stay in the split's event log (Q-174). A
+ * kind this build does not know is shown as sent, never mapped onto a known one.
+ */
+const ALARM_WORDS: Record<string, string> = {
+  startFailed: 'The split did not start',
+  localNetworkBlocked: 'macOS blocked the local network',
+  rankDied: 'A Mac in the split stopped',
+  rankFrozen: 'A Mac in the split stopped answering',
+  hang: 'The split stopped answering',
+  streamWithoutDone: 'An answer ended before it finished',
+  breakerOpen: 'The split kept failing, so goose stopped restarting it',
+  watchdogCritical: 'Memory ran too low',
+  runnerUpdateFailed: 'Updating the split’s software failed',
+  restart: 'The split restarted',
+  linkRepaired: 'goose repaired the Thunderbolt link',
+  watchdogWarn: 'Memory is getting low',
+  watchdogBlind: 'goose could not read a Mac’s memory',
+  admissionClosed: 'New requests wait: a Mac’s memory is low',
+  orphanReclaimed: 'goose cleared a split left from before',
+  compactionSkipped: 'goose could not make room',
+};
+
+/** The preflight's check ids (goose-sidecar preflight.rs `Check::id`), never shown in the tray. */
+const PREFLIGHT_CHECK_IDS = [
+  'reachable',
+  'foreignEngines',
+  'memory',
+  'modelManifest',
+  'model',
+  'python',
+  'tbIpv4',
+  'ping',
+  'rdmaGid',
+  'portRange',
+  'ports',
+  'runnerEnv',
+  'runner',
+  'plan',
+  'localNetworkPermission',
+  'linkRepair',
+  'loadLock',
+];
+const CHECK_IDS = PREFLIGHT_CHECK_IDS.join('|');
+/** A cluster check leads its clause: "memory: …" alone, or after "; ". */
+const LEADING_CHECK = new RegExp(`(^|; )(?:${CHECK_IDS}): `, 'g');
+/** A node's check follows its name at the head of its clause: "Work’s Mac Studio foreignEngines: …". */
+const NODE_CHECK = new RegExp(`(^|; )([^:;]*?) (?:${CHECK_IDS}): `, 'g');
+
+/**
+ * The alarm's message without its machine words: "preflight: Work’s Mac Studio foreignEngines:
+ * another distri…" → "Work’s Mac Studio: another distri…".
+ */
+export function plainAlarmMessage(message: string): string {
+  return message
+    .replace(/^(?:restart )?(?:refused by )?preflight(?: refused the start)?: /, '')
+    .replace(LEADING_CHECK, '$1')
+    .replace(NODE_CHECK, '$1$2: ');
+}
+
+/** "Last: The split did not start — Work’s Mac Studio: another MLX split …". */
+export function alarmLine(alarm: { kind: string; node: string | null; message: string }): string {
+  const where = alarm.node ? ` on ${alarm.node}` : '';
+  return `Last: ${ALARM_WORDS[alarm.kind] ?? alarm.kind}${where} — ${plainAlarmMessage(alarm.message)}`;
+}
+
+/** "Rank 1 of MacBook Pro's split · over Thunderbolt" (the model has its own line below). */
 export function hostingLine(hosting: MlxDistributedReportHosting): string {
-  const backend = backendName(hosting.backend);
+  const backend = linkWords(hosting.backend);
   return clip(
     [`Rank ${hosting.rank} of ${hosting.requester}'s split`, backend].filter(Boolean).join(' · ')
   );

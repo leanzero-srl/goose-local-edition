@@ -294,7 +294,7 @@ describe('NoNodeNotice', () => {
     const onRetry = vi.fn();
     wrap(<NoNodeNotice rows={rows} live retryText="hello" onRetry={onRetry} />);
     const cell = await screen.findByTestId('no-node-distributed-mihai-mlx');
-    expect(cell.textContent).toBe('Split across 2 Macs · JACCL · Starting');
+    expect(cell.textContent).toBe('Split across 2 Macs · over Thunderbolt · Starting');
     expect(screen.queryByTestId('no-node-mount-mihai-mlx')).toBeNull();
     expect(screen.getByTestId('no-node-retry')).toBeDisabled();
 
@@ -303,7 +303,7 @@ describe('NoNodeNotice', () => {
       await mlxDistributedStatus();
     });
     expect(screen.getByTestId('no-node-distributed-mihai-mlx').textContent).toBe(
-      'Split across 2 Macs · JACCL · Ready'
+      'Split across 2 Macs · over Thunderbolt · Ready'
     );
     await user.click(screen.getByTestId('no-node-retry'));
     expect(onRetry).toHaveBeenCalledWith('hello');

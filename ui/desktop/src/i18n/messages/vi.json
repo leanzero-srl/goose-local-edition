@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "qua mạng"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "qua Thunderbolt"
+  },
   "mlxMode.remote": {
     "defaultMessage": "Đang phục vụ từ {peer}"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose không tìm được cách chia {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "chia tách {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "chia tách"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Đang khởi động {model} trên {nodes}…"

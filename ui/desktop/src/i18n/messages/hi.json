@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "नेटवर्क पर"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "Thunderbolt पर"
+  },
   "mlxMode.remote": {
     "defaultMessage": "{peer} से सर्व हो रहा है"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose को {model} को बाँटने का कोई तरीका नहीं मिला।"
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "विभाजन {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "विभाजन"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{nodes} पर {model} शुरू हो रहा है…"

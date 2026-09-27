@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} 拆分的第 {rank} 个分片 · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "通过网络"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "通过 Thunderbolt"
+  },
   "mlxMode.remote": {
     "defaultMessage": "由 {peer} 提供"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose 找不到拆分 {model} 的方式。"
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "拆分 {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "拆分"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "正在 {nodes} 上启动 {model}…"

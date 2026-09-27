@@ -2922,11 +2922,11 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     mockDistributedStatus.mockResolvedValue(FLASH_READY);
     render(<MlxEngineView />);
     await waitFor(() =>
-      expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent('Split across 2 Macs · JACCL')
+      expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent('Split across 2 Macs · over Thunderbolt')
     );
     const tile = screen.getByTestId('mlx-state-badge');
     expect(tile).toHaveAttribute('data-mode', 'distributed');
-    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Split across 2 Macs · JACCL');
+    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Split across 2 Macs · over Thunderbolt');
     expect(within(tile).queryByRole('button', { name: 'Mount' })).toBeNull();
     expect(screen.getByTestId('mlx-distributed-owns')).toBeInTheDocument();
     // The nodes live in the split's Details under Run it, which renders once its own reads land.

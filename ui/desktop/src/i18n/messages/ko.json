@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} 분할의 랭크 {rank} · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "네트워크 경유"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "Thunderbolt 경유"
+  },
   "mlxMode.remote": {
     "defaultMessage": "{peer}에서 제공 중"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose가 {model}을(를) 분할할 방법을 찾지 못했습니다."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "분할 {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "분할"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{nodes}에서 {model} 시작 중…"

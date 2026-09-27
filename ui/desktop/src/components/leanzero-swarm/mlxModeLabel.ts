@@ -27,7 +27,21 @@ const i18n = defineMessages({
     id: 'mlxMode.hostingNoBackend',
     defaultMessage: "Rank {rank} of {requester}'s split · {model}",
   },
+  overThunderbolt: { id: 'mlxMode.overThunderbolt', defaultMessage: 'over Thunderbolt' },
+  overNetwork: { id: 'mlxMode.overNetwork', defaultMessage: 'over the network' },
 });
+
+/**
+ * The link a split runs over, in plain words: "over Thunderbolt", never "JACCL" on a surface a
+ * person reads (Q-174); the transport's name stays in the split's details. An id this build does
+ * not know is shown as sent.
+ */
+export function linkText(intl: IntlShape, backend: string | null | undefined): string | null {
+  if (!backend) return null;
+  if (backend === 'jaccl') return intl.formatMessage(i18n.overThunderbolt);
+  if (backend === 'ring') return intl.formatMessage(i18n.overNetwork);
+  return backend;
+}
 
 /** The distributed run's and each rank's state words (the backend's own vocabulary). */
 const STATE_WORDS = defineMessages({
@@ -60,19 +74,20 @@ export function formatMlxMode(
 ): string {
   if (peerHost != null) return intl.formatMessage(i18n.singlePeer, { host: peerHost });
   if (summary.mode === 'single') return intl.formatMessage(i18n.single);
+  const backend = linkText(intl, summary.backend);
   if (summary.mode === 'hosting') {
     const values = {
       rank: summary.rank,
       requester: summary.requester,
       model: summary.modelId.split('/').pop() || summary.modelId,
     };
-    return summary.backend
-      ? intl.formatMessage(i18n.hosting, { ...values, backend: summary.backend })
+    return backend
+      ? intl.formatMessage(i18n.hosting, { ...values, backend })
       : intl.formatMessage(i18n.hostingNoBackend, values);
   }
   const count = summary.nodeNames.length;
-  return summary.backend
-    ? intl.formatMessage(i18n.distributed, { count, backend: summary.backend })
+  return backend
+    ? intl.formatMessage(i18n.distributed, { count, backend })
     : intl.formatMessage(i18n.distributedNoBackend, { count });
 }
 

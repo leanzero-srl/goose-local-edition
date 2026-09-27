@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "melalui rangkaian"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "melalui Thunderbolt"
+  },
   "mlxMode.remote": {
     "defaultMessage": "Dihidangkan dari {peer}"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose tidak menemui cara untuk membahagikan {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "pembahagian {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "pembahagian"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Memulakan {model} merentas {nodes}…"

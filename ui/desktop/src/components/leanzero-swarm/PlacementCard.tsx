@@ -61,7 +61,7 @@ import {
 } from './mlxDistributed';
 import { MLX_STATUS_POLL_MS, type MlxActivity } from './mlxLiveStats';
 import { touchLocalNetwork } from './LocalNetworkNotice';
-import { distributedStateWord } from './mlxModeLabel';
+import { distributedStateWord, linkText } from './mlxModeLabel';
 import { remotePhase, runPhase, singlePhase } from './mlxPhase';
 import { dropRoute } from './routeSwitch';
 import { formatGb } from './primitives';
@@ -110,6 +110,8 @@ const i18n = defineMessages({
   runAcrossAny: { id: 'placementCard.runAcrossAny', defaultMessage: 'Run across your Macs' },
   tensor: { id: 'placementCard.tensorKind', defaultMessage: 'tensor split · {link}' },
   pipeline: { id: 'placementCard.pipelineKind', defaultMessage: 'pipeline split · {link}' },
+  splitOver: { id: 'placementCard.splitOver', defaultMessage: 'split {link}' },
+  splitPlain: { id: 'placementCard.splitPlain', defaultMessage: 'split' },
   writes: { id: 'placementCard.writes', defaultMessage: '~{value} tok/s writing' },
   reads: { id: 'placementCard.reads', defaultMessage: '~{value} tok/s reading' },
   readsWholeTurn: {
@@ -1522,10 +1524,16 @@ function PlacementCardBody({
           {isBest && <Chip tone="accent">{intl.formatMessage(i18n.best)}</Chip>}
           {isBestNow && <Chip tone="ok">{intl.formatMessage(i18n.bestNow)}</Chip>}
           {c && way.kind === 'split' && (
-            <Chip>
-              {intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
+            // Plain words on the card; the runner and the transport ride the chip's title and the
+            // Details below (Q-174: "tensor split · JACCL" on Run it).
+            <Chip
+              title={intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
                 link: linkWord(c),
               })}
+            >
+              {linkText(intl, c.key.link)
+                ? intl.formatMessage(i18n.splitOver, { link: linkText(intl, c.key.link) })
+                : intl.formatMessage(i18n.splitPlain)}
             </Chip>
           )}
           {live && <LiveChip live={live} />}

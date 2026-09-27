@@ -500,7 +500,10 @@ describe('Run it on the real 27B plan', () => {
     const split = screen.getByTestId('placement-way-split');
     expect(within(split).getByText('Run across both Macs')).toBeInTheDocument();
     expect(within(split).getByText('Best you can start now')).toBeInTheDocument();
-    expect(within(split).getByText('tensor split · JACCL')).toBeInTheDocument();
+    // Q-174: plain words on the card; the runner and transport ride the chip's title.
+    const kind = within(split).getByText('split over Thunderbolt');
+    expect(kind).toHaveAttribute('title', 'tensor split · JACCL');
+    expect(kind.parentElement?.textContent).not.toMatch(/JACCL|tensor/);
     expect(within(split).getByText('fits only at 72,704 context')).toBeInTheDocument();
 
     // Q-25: the pipeline split goose cannot run for this model is no option at the card's top level

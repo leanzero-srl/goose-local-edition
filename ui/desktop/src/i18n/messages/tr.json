@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "ağ üzerinden"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "Thunderbolt üzerinden"
+  },
   "mlxMode.remote": {
     "defaultMessage": "{peer} üzerinden sunuluyor"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose, {model} modelini bölmenin bir yolunu bulamadı."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "bölme {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "bölme"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{model}, {nodes} üzerinde başlatılıyor…"

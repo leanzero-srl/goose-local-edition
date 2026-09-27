@@ -3956,6 +3956,12 @@
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} の分割のランク {rank} · {model}"
   },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "ネットワーク経由"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "Thunderbolt 経由"
+  },
   "mlxMode.remote": {
     "defaultMessage": "{peer} から提供中"
   },
@@ -5575,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose は {model} を分割する方法を見つけられませんでした。"
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "分割 {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "分割"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{nodes} で {model} を起動中…"
