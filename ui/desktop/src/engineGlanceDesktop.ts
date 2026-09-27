@@ -6,18 +6,28 @@ import {
   type GlancePush,
 } from './utils/engineGlance';
 import {
+  clearOfGoose,
   cornerBounds,
   desktopGlanceVisible,
   glanceLive,
+  gooseOnScreen,
   nearestCorner,
+  placeGlance,
   snoozeAfter,
+  workingDisplay,
+  type GlanceDisplay,
+  type GlancePlacement,
+  type GooseWindowFacts,
   type Rect,
 } from './utils/engineGlanceRules';
 
+export type { GlanceDisplay };
+
 /**
- * The engine glance as a SYSTEM-LEVEL floating mini window: shown while something is live and goose
- * is in the background (or whenever something is live, by choice), in a corner of a display, over
- * every app and every full-screen Space, never taking focus.
+ * The engine glance as a SYSTEM-LEVEL floating mini window: shown while something is live and no
+ * goose window can be seen (or whenever something is live, by choice), in a corner of the display
+ * the person is working on, over every app and every full-screen Space, never taking focus and
+ * never over a goose window that can be seen (Q-226).
  *
  * The controller is Electron-free — main hands it a `GlanceWindowPort` (engineGlanceWindow.ts) — so
  * every transition (show inactive, snooze, snap, remember the display) is tested as data.
@@ -65,11 +75,6 @@ export function isGlancePipAction(value: unknown): value is GlancePipAction {
   }
 }
 
-export interface GlanceDisplay {
-  id: number;
-  workArea: Rect;
-}
-
 /** The Electron side, as the controller needs it. */
 export interface GlanceWindowPort {
   /** Creates the window (hidden) the first time; later calls are no-ops. */
@@ -86,12 +91,16 @@ export interface GlanceWindowPort {
   /** The displays now, and the one a rect sits on most. */
   displays(): GlanceDisplay[];
   displayMatching(rect: Rect): GlanceDisplay;
-  primaryDisplay(): GlanceDisplay;
+  /** Where the pointer is, in screen coordinates. */
+  cursorPoint(): { x: number; y: number };
 }
 
 export interface GlanceDesktopDeps {
   port: GlanceWindowPort;
-  appInFront(): boolean;
+  /** `process.platform`: occlusion is read on macOS only (engineGlanceRules.ts `gooseOnScreen`). */
+  platform: string;
+  /** Every goose window (never the glance): can it be seen, is it focused, where is it. */
+  gooseWindows(): GooseWindowFacts[];
   savePrefs(next: GlancePrefs): void;
   openEngine(): void;
   openSession(sessionId: string): void;
@@ -111,6 +120,8 @@ export class EngineGlanceDesktop {
   private snoozed = false;
   private turnedOffUntold = false;
   private size: { width: number; height: number } | null = null;
+  /** Where it is showing: the display and corner it was placed in, kept while it stays up. */
+  private place: { displayId: number; corner: GlanceCorner } | null = null;
   private drag: { pointerX: number; pointerY: number; bounds: Rect; moved: boolean } | null = null;
 
   constructor(private readonly deps: GlanceDesktopDeps) {}
@@ -123,20 +134,24 @@ export class EngineGlanceDesktop {
     this.refresh();
   }
 
-  /** Re-decide after a fact the glance does not carry changed (goose came to the front, or left). */
+  /** Re-decide after a fact the glance does not carry changed (a goose window was covered, or not). */
   refresh(): void {
     if (this.turnedOffUntold && this.deps.tellTurnedOff()) this.turnedOffUntold = false;
     const { port } = this.deps;
     const push = this.push;
+    const windows = this.deps.gooseWindows();
     const visible =
       push != null &&
-      desktopGlanceVisible(push, { appInFront: this.deps.appInFront(), snoozed: this.snoozed });
+      desktopGlanceVisible(push, {
+        gooseOnScreen: gooseOnScreen(this.deps.platform, windows),
+        snoozed: this.snoozed,
+      });
     if (!visible) {
       if (port.exists() && port.isVisible()) port.hide();
       // Turned off: nothing floats and nothing is kept alive for it.
       if (push?.prefs.desktop === 'off' && port.exists()) port.destroy();
-      // Live while goose is in front: the window is made (hidden) now, so it shows the moment goose
-      // leaves the front instead of after a cold renderer loads (measured ~4 s on the packaged build).
+      // Live while goose is in sight: the window is made (hidden) now, so it shows the moment goose
+      // is covered instead of after a cold renderer loads (measured ~4 s on the packaged build).
       else if (push != null && push.prefs.desktop !== 'off' && glanceLive(push) && !port.exists()) {
         port.ensure();
         port.send(ENGINE_GLANCE_CHANNEL, push);
@@ -149,11 +164,23 @@ export class EngineGlanceDesktop {
     }
     // First show waits for the renderer's measured size: a window shown at a guessed size jumps.
     if (this.size == null) return;
-    if (!port.isVisible() && this.drag == null) {
-      port.setBounds(this.placedBounds(), false);
+    if (this.drag != null) return;
+    if (!port.isVisible()) {
+      const placement = this.placement(windows);
+      // Every spot is over a goose window that can be seen (only by choice, "whenever the engine
+      // works"): it waits hidden until one is clear.
+      if (!placement) return;
+      this.placeAt(placement, false);
       port.showInactive();
       // It has appeared: its one-time "you can turn this off from here" has had its showing.
       if (!push.prefs.desktopHintSeen) this.savePrefs({ ...push.prefs, desktopHintSeen: true });
+      return;
+    }
+    // Up, and a goose window came into view under it: it moves off, or goes.
+    if (!clearOfGoose(port.getBounds(), windows)) {
+      const placement = this.placement(windows);
+      if (placement) this.placeAt(placement, true);
+      else port.hide();
     }
   }
 
@@ -193,8 +220,9 @@ export class EngineGlanceDesktop {
           this.refresh();
           return;
         }
-        // A grown or shrunk card keeps its corner: the far edges move, the anchored ones stay.
-        port.setBounds(this.placedBounds(), false);
+        // A grown or shrunk card keeps its display and corner: the far edges move, the anchored
+        // ones stay — even when the pointer has since gone to another display.
+        this.keepPlace(false);
         return;
       }
       case 'drag-start':
@@ -229,6 +257,7 @@ export class EngineGlanceDesktop {
         const display = port.displayMatching(bounds);
         const corner = nearestCorner(bounds, display.workArea);
         this.savePrefs({ ...this.push.prefs, desktopPlace: { displayId: display.id, corner } });
+        this.place = { displayId: display.id, corner };
         port.setBounds(this.boundsIn(display, corner), true);
         return;
       }
@@ -238,7 +267,7 @@ export class EngineGlanceDesktop {
   /** A display went away or changed its work area: the window goes back to a corner that exists. */
   displaysChanged(): void {
     if (this.deps.port.exists() && this.deps.port.isVisible() && this.size != null) {
-      this.deps.port.setBounds(this.placedBounds(), false);
+      this.keepPlace(false);
     }
   }
 
@@ -256,12 +285,36 @@ export class EngineGlanceDesktop {
     );
   }
 
-  /** The remembered corner of the remembered display — the primary display's when that one is gone. */
-  private placedBounds(): Rect {
-    const place = this.push?.prefs.desktopPlace ?? null;
-    const display =
-      (place && this.deps.port.displays().find((d) => d.id === place.displayId)) ||
-      this.deps.port.primaryDisplay();
-    return this.boundsIn(display, place?.corner ?? DEFAULT_GLANCE_CORNER);
+  /** Where it shows now: the working display, the remembered corner, clear of goose (rules). */
+  private placement(windows: GooseWindowFacts[]): GlancePlacement | null {
+    const { port } = this.deps;
+    const displays = port.displays();
+    return placeGlance({
+      displays,
+      working: workingDisplay(displays, windows, port.cursorPoint()),
+      remembered: this.push?.prefs.desktopPlace ?? null,
+      defaultCorner: DEFAULT_GLANCE_CORNER,
+      windows,
+      size: this.size ?? { width: 1, height: 1 },
+      margin: GLANCE_MARGIN,
+    });
+  }
+
+  private placeAt(placement: GlancePlacement, animate: boolean): void {
+    this.place = { displayId: placement.displayId, corner: placement.corner };
+    this.deps.port.setBounds(placement.bounds, animate);
+  }
+
+  /** Re-fit in the display and corner it shows in; placed afresh only when that display is gone. */
+  private keepPlace(animate: boolean): void {
+    const { port } = this.deps;
+    const display = this.place && port.displays().find((d) => d.id === this.place?.displayId);
+    if (display && this.place) {
+      port.setBounds(this.boundsIn(display, this.place.corner), animate);
+      return;
+    }
+    const placement = this.placement(this.deps.gooseWindows());
+    if (placement) this.placeAt(placement, animate);
+    else port.hide();
   }
 }

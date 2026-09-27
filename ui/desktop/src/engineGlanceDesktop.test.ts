@@ -7,7 +7,7 @@ import {
   type GlanceWindowPort,
 } from './engineGlanceDesktop';
 import { ENGINE_GLANCE_CHANNEL, type GlancePrefs, type GlancePush } from './utils/engineGlance';
-import type { Rect } from './utils/engineGlanceRules';
+import type { GooseWindowFacts, Rect } from './utils/engineGlanceRules';
 import { glancePush, runningSnapshot } from './utils/engineGlance.fixtures';
 import { GENERATING_STATUS, IDLE_STATUS } from './components/leanzero-swarm/mlxLiveStatus.fixtures';
 
@@ -22,6 +22,7 @@ function fakePort(displays: GlanceDisplay[] = [MAIN]) {
     sent: [] as unknown[],
     calls: [] as string[],
     displays,
+    cursor: { x: 700, y: 400 },
   };
   const port: GlanceWindowPort = {
     ensure: () => {
@@ -56,14 +57,22 @@ function fakePort(displays: GlanceDisplay[] = [MAIN]) {
         (d) =>
           r.x + r.width / 2 >= d.workArea.x && r.x + r.width / 2 < d.workArea.x + d.workArea.width
       ) ?? state.displays[0],
-    primaryDisplay: () => state.displays[0],
+    cursorPoint: () => state.cursor,
   };
   return { port, state };
 }
 
+/** goose's window, in the middle of MAIN: every corner of MAIN stays clear of it. */
+const GOOSE_BOUNDS: Rect = { x: 400, y: 200, width: 600, height: 500 };
+
 function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
   const { port, state } = fakePort(opts.displays);
-  const facts = { inFront: opts.inFront ?? false };
+  // inFront: goose's window in view and focused; else it is out of sight (covered, another Space,
+  // minimized). `windows` overrides both for the Q-226 cases.
+  const facts: { inFront: boolean; windows: GooseWindowFacts[] | null } = {
+    inFront: opts.inFront ?? false,
+    windows: null,
+  };
   const saved: GlancePrefs[] = [];
   const openEngine = vi.fn();
   const openSession = vi.fn();
@@ -71,7 +80,9 @@ function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
   const told: string[] = [];
   const desktop = new EngineGlanceDesktop({
     port,
-    appInFront: () => facts.inFront,
+    platform: 'darwin',
+    gooseWindows: () =>
+      facts.windows ?? [{ onScreen: facts.inFront, focused: facts.inFront, bounds: GOOSE_BOUNDS }],
     savePrefs: (p) => saved.push(p),
     openEngine,
     openSession,
@@ -205,7 +216,7 @@ describe('EngineGlanceDesktop — the floating window’s life', () => {
     expect(saved).toHaveLength(before);
   });
 
-  it('a remembered display that is gone: the same corner of the primary display', () => {
+  it('a remembered display that is gone: the same corner of the display the person works on', () => {
     const { desktop, state } = setup();
     desktop.update(withPrefs(writing, { desktopPlace: { displayId: 99, corner: 'top-left' } }));
     desktop.handle({ type: 'size', width: 300, height: 180 });
@@ -320,6 +331,92 @@ describe('EngineGlanceDesktop — Q-224: the one-time hint', () => {
     desktop.update(withPrefs(writing, { desktopHintSeen: true }));
     desktop.handle({ type: 'size', width: 300, height: 180 });
     expect(saved).toHaveLength(0);
+  });
+});
+
+describe('EngineGlanceDesktop — Q-226: only when goose cannot be seen, where the person works', () => {
+  it('the owner’s screenshot: goose in plain view, another app focused on another display — no card', () => {
+    const { desktop, state, facts } = setup({ displays: [MAIN, SIDE] });
+    facts.windows = [{ onScreen: true, focused: false, bounds: GOOSE_BOUNDS }];
+    state.cursor = { x: 2400, y: 500 };
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(false);
+  });
+
+  it('goose covered (occlusion): shown — on the display under the pointer, in the remembered corner', () => {
+    const { desktop, state, facts } = setup({ displays: [MAIN, SIDE] });
+    facts.windows = [{ onScreen: false, focused: false, bounds: GOOSE_BOUNDS }];
+    state.cursor = { x: 2400, y: 500 };
+    desktop.update(withPrefs(writing, { desktopPlace: { displayId: 1, corner: 'top-left' } }));
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(true);
+    expect(state.bounds).toEqual({
+      x: 1512 + GLANCE_MARGIN,
+      y: GLANCE_MARGIN,
+      width: 300,
+      height: 180,
+    });
+  });
+
+  it('goose uncovered again: the card goes', () => {
+    const { desktop, state, facts } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(true);
+    facts.windows = [{ onScreen: true, focused: false, bounds: GOOSE_BOUNDS }];
+    desktop.refresh();
+    expect(state.visible).toBe(false);
+  });
+
+  it('it grows while up: it keeps the display it showed on, though the pointer moved on', () => {
+    const { desktop, state } = setup({ displays: [MAIN, SIDE] });
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.bounds.x).toBeLessThan(1512);
+    state.cursor = { x: 2400, y: 500 };
+    desktop.handle({ type: 'size', width: 300, height: 320 });
+    expect(state.bounds.x).toBeLessThan(1512);
+    expect(state.bounds.y + state.bounds.height).toBe(25 + 920 - GLANCE_MARGIN);
+  });
+
+  it('"whenever the engine works" with goose in view: never over goose — the next clear corner', () => {
+    const { desktop, state, facts } = setup({ inFront: true });
+    // goose's window covers MAIN's bottom-right quarter.
+    facts.windows = [
+      { onScreen: true, focused: true, bounds: { x: 756, y: 470, width: 756, height: 475 } },
+    ];
+    desktop.update(withPrefs(writing, { desktop: 'busy' }));
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(true);
+    expect(state.bounds).toEqual({
+      x: 1512 - GLANCE_MARGIN - 300,
+      y: 25 + GLANCE_MARGIN,
+      width: 300,
+      height: 180,
+    });
+  });
+
+  it('"whenever" and goose fills every display: it waits hidden; room again: it shows', () => {
+    const { desktop, state, facts } = setup({ inFront: true });
+    facts.windows = [{ onScreen: true, focused: true, bounds: MAIN.workArea }];
+    desktop.update(withPrefs(writing, { desktop: 'busy' }));
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(false);
+    facts.windows = [{ onScreen: true, focused: true, bounds: GOOSE_BOUNDS }];
+    desktop.refresh();
+    expect(state.visible).toBe(true);
+  });
+
+  it('"whenever", up, and a goose window comes into view under it: it moves off', () => {
+    const { desktop, state, facts } = setup({ inFront: true });
+    desktop.update(withPrefs(writing, { desktop: 'busy' }));
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    const first = state.bounds;
+    facts.windows = [{ onScreen: true, focused: true, bounds: { ...first } }];
+    desktop.refresh();
+    expect(state.visible).toBe(true);
+    expect(state.bounds).not.toEqual(first);
   });
 });
 
