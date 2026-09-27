@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 08:50 · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
+Updated: 2026-09-27 09:15 · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
 
 ## Live
 - Installed on both Macs: 3.0.56 (3.0.55 + engine/chat surfaces Q-148..Q-158, Q-160 slots, Q-162, open chat pinned).
@@ -14,7 +14,9 @@ Updated: 2026-09-27 08:50 · heartbeat cron 90b0083a (silent 00:35→07:50!) + r
 ## Agents (worktree)
 - Q-161 runaway answer on the tensor split — GPU replay on 8091, find the mechanism (restarted answer vs in-answer loop).
 - Q-163 DONE (a test swapped GOOSE_SHELL process-wide; now in a child process + a guard test).
-- Ledger reconciliation: 48 rows say "open" while their notes say fixed/proven → truth + BACKLOG rewrite.
+- Ledger RECONCILED (167 rows: 55 proven · 83 awaiting · 2 cutting · 18 open); every open row now has an agent:
+  composer/chat (Q-6,7,9,21,23,60) · Engine/Run it/Link/tray (Q-20,22,25,26,28,37,38) · core (Q-14,18,24) ·
+  single-engine short-request wait (Q-103, fork lz.10). Q-146 remainder rides on Q-161.
 - Q-161 agent also owns Q-164 (a /v1/completions request crashed both ranks).
 
 ## Next actions (in order)
