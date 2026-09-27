@@ -21,9 +21,72 @@
 //! first token, and reading slows as the context it attends over grows (the Studio: ~131 tok/s over
 //! 64k-token prompts), so only runs of the same bucket compare.
 
+use super::bench::Workload;
 use super::planner::{backend_of, Figure};
 use super::predict::Estimate;
-use super::store::{PlacementKey, SpeedRecord};
+use super::store::{context_bucket, PlacementKey, RecordSource, SpeedRecord};
+
+/// The chat turn THIS app's conversations make, from every chat turn goose recorded (any model,
+/// any way — the conversations are the user's, not the engine's): the prompt the typical token of
+/// reading belongs to, and the answer turns of that size write. What "Chat" is sized by in the
+/// planner — the context a way must hold to be Best, the prompt size its rates are read at.
+///
+/// The prompt is the TOKEN-weighted median, not the median turn: goose's own side calls (a title,
+/// a check — measured 2026-09-27: 1,516 chat rows, median prompt 164 tokens) outnumber the
+/// conversation turns, while the conversation turns carry the reading (weighted median 52,976
+/// tokens — the 41k–53k the chat header shows). A prompt counts by the tokens it reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatShape {
+    pub prompt_tokens: u64,
+    pub answer_tokens: u64,
+    /// Chat turns in the prompt's bucket the answer is the median of; 0 = goose has recorded no
+    /// chat turn, and the shape is the "Measure speed" chat workload's own.
+    pub turns: usize,
+}
+
+impl ChatShape {
+    pub fn of(records: &[SpeedRecord]) -> Self {
+        let mut prompts: Vec<u64> = records
+            .iter()
+            .filter(|r| r.source == RecordSource::Chat && r.prompt_tokens > 0)
+            .map(|r| r.prompt_tokens)
+            .collect();
+        prompts.sort_unstable();
+        let total: u64 = prompts.iter().sum();
+        let mut read = 0u64;
+        let Some(prompt_tokens) = prompts.into_iter().find(|p| {
+            read += p;
+            read * 2 >= total
+        }) else {
+            return Self {
+                prompt_tokens: Workload::Chat.prompt_tokens(),
+                answer_tokens: Workload::Chat.answer_tokens(),
+                turns: 0,
+            };
+        };
+        let bucket = context_bucket(prompt_tokens);
+        let answers: Vec<f64> = records
+            .iter()
+            .filter(|r| r.source == RecordSource::Chat && r.context_bucket == bucket)
+            .map(|r| r.completion_tokens as f64)
+            .collect();
+        Self {
+            prompt_tokens,
+            answer_tokens: Estimate::of_measurements(&answers).map_or(0, |e| e.value as u64),
+            turns: answers.len(),
+        }
+    }
+
+    /// The bucket its rates are read at.
+    pub fn bucket(&self) -> u64 {
+        context_bucket(self.prompt_tokens)
+    }
+
+    /// The context a turn of this shape needs: its prompt and its answer.
+    pub fn context_needed(&self) -> u64 {
+        self.prompt_tokens + self.answer_tokens
+    }
+}
 
 /// This model's recorded runs on one way.
 pub struct WayRuns<'a> {

@@ -5327,12 +5327,31 @@ pub enum MlxPlacementActionDto {
 pub enum MlxPlacementOutcomeDto {
     Best,
     BestAvailableNow,
-    NotSupported { reason: String },
+    NotSupported {
+        reason: String,
+    },
     DoesNotFit,
-    FitUnknown { reason: String },
-    NoFigure { reason: String },
-    Slower { mine: f64, best: f64 },
-    TiedNeedsMoreMacs { mine: f64, best: f64 },
+    FitUnknown {
+        reason: String,
+    },
+    NoFigure {
+        reason: String,
+    },
+    Slower {
+        mine: f64,
+        best: f64,
+    },
+    TiedNeedsMoreMacs {
+        mine: f64,
+        best: f64,
+    },
+    /// It fits, but only at `context` tokens, and this app's measured chats need `need` (their
+    /// typical prompt + answer): never Best, however fast. The plan's notes say how big the chats
+    /// are.
+    ContextBelowChats {
+        context: u64,
+        need: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

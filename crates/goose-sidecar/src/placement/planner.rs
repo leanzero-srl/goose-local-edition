@@ -12,7 +12,7 @@ use super::bench::Workload;
 use super::chip::ChipIdentity;
 use super::model::ModelFacts;
 use super::predict::{self, Calibration, Estimate, PlacedNode};
-use super::runs::WayRuns;
+use super::runs::{ChatShape, WayRuns};
 use super::store::{PlacementKey, PlacementKind, RecordSource, SpeedRecord};
 use crate::distributed::plan::TensorModelFacts;
 use crate::distributed::Runner;
@@ -268,6 +268,13 @@ pub enum Outcome {
         mine: f64,
         best: f64,
     },
+    /// It fits, but only at `context` tokens, and this app's chats need `need` (`ChatShape`: the
+    /// typical turn's prompt and answer) — never Best, however fast (Q-167: "Best … fits only at
+    /// 38,669 context" beside chats of 41k–53k).
+    ContextBelowChats {
+        context: u64,
+        need: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -351,6 +358,15 @@ pub struct Plan {
     pub badge_after_stopping: Vec<String>,
     /// Things the plan could not consider, in words ("no second Mac is set up").
     pub notes: Vec<String>,
+}
+
+/// A token count the way the chat header writes one: "53k" from a thousand up, else whole.
+pub fn tokens_words(tokens: u64) -> String {
+    if tokens >= 1000 {
+        format!("{}k", (tokens + 500) / 1000)
+    } else {
+        tokens.to_string()
+    }
 }
 
 fn gib(bytes: u64) -> String {
@@ -1184,7 +1200,19 @@ pub fn plan(input: &PlanInput) -> Plan {
             c.speed.turn = Some(turn);
         }
     }
-    let (best, best_available) = pick(&mut candidates, input.goal);
+    let chat = ChatShape::of(input.records);
+    let chat_need = (input.context.is_none() && chat.turns > 0).then(|| chat.context_needed());
+    if let Some(need) = chat_need {
+        notes.push(format!(
+            "Your chats are about {} tokens long and their answers about {} ({} chats of that \
+             size measured), so a way that holds less than {} is not offered as Best",
+            tokens_words(chat.prompt_tokens),
+            tokens_words(chat.answer_tokens),
+            chat.turns,
+            tokens_words(need)
+        ));
+    }
+    let (best, best_available) = pick(&mut candidates, input.goal, chat_need);
     let (badge, badge_after_stopping) = badge(&candidates);
     Plan {
         model_id: input.model_id.to_string(),
@@ -1241,11 +1269,27 @@ fn winner(candidates: &[Candidate], eligible: &[usize], goal: Goal) -> Option<us
         })
 }
 
-fn pick(candidates: &mut Vec<Candidate>, goal: Goal) -> (Option<String>, Option<String>) {
+/// The context a fitting candidate holds when that is less than `chat_need`.
+fn below_chats(c: &Candidate, chat_need: Option<u64>) -> Option<(u64, u64)> {
+    let need = chat_need?;
+    let context = c.fit.context.filter(|_| c.fit.status.fits())?;
+    (context < need).then_some((context, need))
+}
+
+/// `chat_need`: the context this app's chats need (`ChatShape::context_needed`) when the plan is
+/// sized by them; a candidate holding less is never Best.
+fn pick(
+    candidates: &mut Vec<Candidate>,
+    goal: Goal,
+    chat_need: Option<u64>,
+) -> (Option<String>, Option<String>) {
     let eligible: Vec<usize> = (0..candidates.len())
         .filter(|i| {
             let c = &candidates[*i];
-            c.supported && c.fit.status.fits() && c.metric(goal).is_some()
+            c.supported
+                && c.fit.status.fits()
+                && below_chats(c, chat_need).is_none()
+                && c.metric(goal).is_some()
         })
         .collect();
     let best = winner(candidates, &eligible, goal);
@@ -1272,6 +1316,8 @@ fn pick(candidates: &mut Vec<Candidate>, goal: Goal) -> (Option<String>, Option<
                 }
             } else if !c.fit.status.fits() {
                 Outcome::DoesNotFit
+            } else if let Some((context, need)) = below_chats(c, chat_need) {
+                Outcome::ContextBelowChats { context, need }
             } else if let (Some(mine), Some(best)) = (c.metric(goal), best_value) {
                 if overlaps(&mine.estimate, &best) {
                     Outcome::TiedNeedsMoreMacs {
@@ -1306,7 +1352,7 @@ fn pick(candidates: &mut Vec<Candidate>, goal: Goal) -> (Option<String>, Option<
             Outcome::Best => 0,
             Outcome::BestAvailableNow => 1,
             Outcome::TiedNeedsMoreMacs { .. } | Outcome::Slower { .. } => 2,
-            Outcome::NoFigure { .. } => 3,
+            Outcome::NoFigure { .. } | Outcome::ContextBelowChats { .. } => 3,
             Outcome::DoesNotFit | Outcome::FitUnknown { .. } => 4,
             Outcome::NotSupported { .. } => 5,
         };
@@ -2019,6 +2065,101 @@ mod tests {
             by_id(&plan, split).fit.after_stopping,
             vec![THE_27B.to_string()]
         );
+    }
+
+    /// Q-167 (3.0.57): "Run on Work's Mac Studio · Best … fits only at 38,669 context" while this
+    /// app's chats read 41k–53k tokens. "Chat" was the benchmark's ~2k-token prompt, so any way
+    /// that held 2,304 tokens could be Best. Now the chats goose measured size it: a way that holds
+    /// less than a typical chat turn is named for that and never Best.
+    #[test]
+    fn a_way_that_cannot_hold_this_apps_chats_is_never_best() {
+        let studio_id = "single:link:worksmacstudio";
+        let mut tight = the_27b();
+        tight.nodes = macs(60.0, 41.8);
+
+        let benchmark_sized = tight.plan(Goal::Chat);
+        let studio = by_id(&benchmark_sized, studio_id);
+        let context = studio.fit.context.unwrap();
+        assert_eq!(studio.fit.status, FitStatus::SmallerContext);
+        assert!(context > 30_000 && context < 45_000, "{context}");
+        assert_eq!(
+            benchmark_sized.best.as_deref(),
+            Some(studio_id),
+            "no chat measured: the benchmark's shape, as before"
+        );
+
+        tight.records = (0..9).map(|i| long_turn(52_976, 512, i)).collect();
+        tight
+            .records
+            .extend((0..40).map(|i| long_turn(164, 6, 100 + i)));
+        let sized = tight.plan(Goal::Chat);
+        let studio = by_id(&sized, studio_id);
+        assert_eq!(
+            studio.outcome,
+            Outcome::ContextBelowChats {
+                context,
+                need: 52_976 + 512
+            }
+        );
+        let best = sized.best.as_deref().unwrap();
+        assert_ne!(best, studio_id);
+        assert!(by_id(&sized, best).fit.context.unwrap() >= 52_976 + 512);
+        assert_eq!(sized.best_available.as_deref(), Some(best));
+        assert!(
+            sized.notes.iter().any(|n| n
+                == "Your chats are about 53k tokens long and their answers about 512 (9 chats of \
+                    that size measured), so a way that holds less than 53k is not offered as Best"),
+            "{:?}",
+            sized.notes
+        );
+
+        // The split this goose runs holds its part of the 27B on the Studio; Run stops it first, so
+        // that memory is the Studio's for the switch (Q-167 a), and the Studio holds the chats.
+        let mut switching = Fixture {
+            nodes: macs(60.0, 41.8),
+            records: tight.records.clone(),
+            ..the_27b()
+        };
+        if let Ok(memory) = switching.nodes[1].memory.as_mut() {
+            memory.freed_by_switch = Some(SwitchFrees {
+                model_id: "m".into(),
+                bytes: gib(15.5),
+            });
+        }
+        let switched = switching.plan(Goal::Chat);
+        let studio = by_id(&switched, studio_id);
+        assert!(
+            studio.fit.context.unwrap() >= 52_976 + 512,
+            "{:?}",
+            studio.fit
+        );
+        assert_eq!(switched.best.as_deref(), Some(studio_id));
+
+        let roomy = Fixture {
+            nodes: macs(60.0, 74.0),
+            ..tight
+        };
+        assert_eq!(roomy.plan(Goal::Chat).best.as_deref(), Some(studio_id));
+    }
+
+    #[test]
+    fn this_apps_chat_is_its_token_weighted_prompt_not_its_median_call() {
+        let chats: Vec<SpeedRecord> = (0..9)
+            .map(|i| long_turn(52_976, 512, i))
+            .chain((0..400).map(|i| long_turn(164, 6, 100 + i)))
+            .collect();
+        let shape = ChatShape::of(&chats);
+        assert_eq!(shape.prompt_tokens, 52_976);
+        assert_eq!(shape.answer_tokens, 512);
+        assert_eq!(shape.turns, 9);
+        assert_eq!(shape.bucket(), 65_536);
+
+        let none = ChatShape::of(&[]);
+        assert_eq!(none.turns, 0);
+        assert_eq!(none.bucket(), Workload::Chat.bucket());
+
+        let real = ChatShape::of(&real_turns());
+        assert!(real.turns > 0 && real.prompt_tokens > 30_000, "{real:?}");
     }
 
     #[test]
