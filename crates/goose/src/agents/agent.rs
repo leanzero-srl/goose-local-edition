@@ -458,7 +458,7 @@ impl Agent {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    fn is_swarm_worker(&self) -> bool {
+    pub(crate) fn is_swarm_worker(&self) -> bool {
         self.swarm_worker.load(std::sync::atomic::Ordering::Relaxed)
     }
 

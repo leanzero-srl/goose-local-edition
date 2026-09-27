@@ -621,12 +621,15 @@ impl Agent {
             .and_then(|pn| self.accumulate_cost(session.accumulated_cost, usage, pn))
             .or(session.accumulated_cost);
 
-        let current_usage = if is_compaction_usage {
-            // After compaction: summary output becomes new input context
+        let current_usage = if !is_compaction_usage {
+            usage.usage
+        } else if self.is_swarm_worker() {
+            // The golden swarm engine keeps its measured behaviour byte-identical.
             let new_input = usage.usage.output_tokens;
             Usage::new(new_input, None, new_input)
         } else {
-            usage.usage
+            let context = Some(self.context_after_compaction(session_id).await?);
+            Usage::new(context, None, context)
         };
 
         manager
@@ -639,6 +642,32 @@ impl Agent {
             .await?;
 
         Ok(())
+    }
+
+    /// Q-175: what the next request carries once the conversation is compacted — the system prompt,
+    /// the tools and the compacted messages, counted by goose's tokenizer (the count the usage
+    /// estimator and the compaction guard use when a provider reports none), until the next call
+    /// reports its own. The summary's output tokens are not the context: session 20260926_20
+    /// (1,361 messages) compacted to a 2,000-token summary, every later turn failed before a call
+    /// completed, and its counter read "2k / 262k" for requests that carry the whole system
+    /// prompt and tool list.
+    async fn context_after_compaction(&self, session_id: &str) -> Result<i32> {
+        let session = self
+            .config
+            .session_manager
+            .get_session(session_id, true)
+            .await?;
+        let conversation = session
+            .conversation
+            .ok_or_else(|| anyhow::anyhow!("Session {session_id} has no conversation"))?;
+        let (tools, _, system_prompt, _) = self
+            .prepare_tools_and_prompt(session_id, &session.working_dir)
+            .await?;
+        let counter = crate::token_counter::create_token_counter()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create token counter: {e}"))?;
+        let counted = counter.count_chat_tokens(&system_prompt, conversation.messages(), &tools);
+        Ok(i32::try_from(counted)?)
     }
 
     fn accumulate_cost(

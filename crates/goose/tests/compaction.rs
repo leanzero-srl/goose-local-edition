@@ -245,6 +245,23 @@ async fn setup_test_session(
     Ok(session)
 }
 
+/// What the next request carries after a compaction, counted the way the agent records it.
+async fn counted_next_request(agent: &Agent, session_id: &str) -> Result<i32> {
+    let session = agent
+        .config
+        .session_manager
+        .get_session(session_id, true)
+        .await?;
+    let (tools, _, system_prompt, _) = agent
+        .prepare_tools_and_prompt(session_id, &session.working_dir)
+        .await?;
+    let counter = goose::token_counter::create_token_counter()
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let conversation = session.conversation.expect("a compacted conversation");
+    Ok(counter.count_chat_tokens(&system_prompt, conversation.messages(), &tools) as i32)
+}
+
 /// Helper: Assert conversation has been compacted with proper message visibility
 fn assert_conversation_compacted(conversation: &Conversation) {
     let messages = conversation.messages();
@@ -363,30 +380,21 @@ async fn test_manual_compaction_updates_token_counts_and_conversation() -> Resul
         .get_session(&session.id, true)
         .await?;
 
-    // Expected token calculation for compaction:
-    // During compaction, the 4 messages are embedded in the system prompt template
-    // - Input: system prompt with embedded conversation + "Please summarize" message
-    // - Output: summary (200 tokens)
-    //
-    // From mock provider calculation:
-    // - System prompt (with 4 embedded messages): varies based on template + content
-    // - Single "summarize" message: 100 tokens
-    // - Total input observed: ~6100 tokens
-    //
-    // After compaction:
-    // - current input_tokens = summary output (200) - the new compact context
-    // - current output_tokens = None (compaction doesn't produce new output)
-    // - current total_tokens = 200
-    // - accumulated_total = initial (1000) + compaction cost
-    let expected_summary_output = 200; // compact summary
-
-    // Verify the key invariants after manual compaction:
-    // After compaction, the current context is ONLY the summary (200 tokens)
-    // This is the new agent-visible input context
+    // Q-175: after compaction the session's current context is what the NEXT request carries —
+    // the system prompt, the tools and the compacted messages, counted by goose's tokenizer —
+    // never the summary's own output tokens (200 here): a session whose later turns never complete
+    // a call would otherwise show its summary's size as its context.
+    let expected_summary_output = 200;
+    let next_request = counted_next_request(&agent, &session.id).await?;
+    assert_ne!(
+        updated_session.usage.total_tokens,
+        Some(expected_summary_output),
+        "the summary's output tokens are not the context in use"
+    );
     assert_eq!(
         updated_session.usage.input_tokens,
-        Some(expected_summary_output),
-        "Input tokens should be exactly the summary output (200 tokens)"
+        Some(next_request),
+        "input is the counted size of the next request"
     );
     assert_eq!(
         updated_session.usage.output_tokens, None,
@@ -394,8 +402,8 @@ async fn test_manual_compaction_updates_token_counts_and_conversation() -> Resul
     );
     assert_eq!(
         updated_session.usage.total_tokens,
-        Some(expected_summary_output),
-        "Total should equal input (200 tokens) after compaction"
+        Some(next_request),
+        "total is the counted size of the next request"
     );
 
     // Accumulated tokens increased by the compaction cost
@@ -435,15 +443,6 @@ async fn test_auto_compaction_during_reply() -> Result<()> {
 
     let session = setup_test_session(&agent, &temp_dir, "auto-compact-test", messages).await?;
 
-    // Capture initial context size before triggering reply
-    // Should be: system (6000) + 40 messages (4000) = ~10000 tokens
-    let initial_session = agent
-        .config
-        .session_manager
-        .get_session(&session.id, true)
-        .await?;
-    let initial_input_tokens = initial_session.usage.input_tokens.unwrap_or(0);
-
     // Setup mock provider (no context limit enforcement)
     let provider = Arc::new(MockCompactionProvider::new());
     agent
@@ -469,6 +468,7 @@ async fn test_auto_compaction_during_reply() -> Result<()> {
     // Track compaction and context size changes
     let mut compaction_occurred = false;
     let mut input_tokens_after_compaction: Option<i32> = None;
+    let mut counted_after_compaction: Option<i32> = None;
 
     while let Some(event_result) = reply_stream.next().await {
         match event_result {
@@ -482,6 +482,7 @@ async fn test_auto_compaction_during_reply() -> Result<()> {
                     .get_session(&session.id, true)
                     .await?;
                 input_tokens_after_compaction = session_after_compact.usage.input_tokens;
+                counted_after_compaction = Some(counted_next_request(&agent, &session.id).await?);
             }
             Ok(_) => {}
             Err(e) => return Err(e),
@@ -499,21 +500,14 @@ async fn test_auto_compaction_during_reply() -> Result<()> {
         let tokens_after =
             input_tokens_after_compaction.expect("Should have captured tokens after compaction");
 
-        // Before compaction: system (6000) + 40 messages (4000) = 10,000 tokens
-        // After compaction: only the summary (200 tokens) - this becomes the new input
-        assert!(
-            tokens_after < initial_input_tokens,
-            "Input tokens should decrease after compaction. Before: {}, After: {}",
-            initial_input_tokens,
-            tokens_after
-        );
-
-        // After compaction, input should be exactly the summary: 200 tokens
+        // Q-175: after compaction the context is the counted next request, not the summary's 200.
         assert_eq!(
-            tokens_after, 200,
-            "Input tokens after compaction should be exactly 200 (summary). Got: {}",
+            Some(tokens_after),
+            counted_after_compaction,
+            "Input tokens after compaction are the counted next request. Got: {}",
             tokens_after
         );
+        assert_ne!(tokens_after, 200, "the summary's output is not the context");
 
         // After the subsequent reply, the current window includes:
         // - system (6000) + summary (200) + new user message (100) + reply (100) = 6400
@@ -629,6 +623,7 @@ async fn test_context_limit_recovery_compaction() -> Result<()> {
     let mut compaction_occurred = false;
     let mut got_response = false;
     let mut input_tokens_after_compaction: Option<i32> = None;
+    let mut counted_after_compaction: Option<i32> = None;
 
     while let Some(event_result) = reply_stream.next().await {
         match event_result {
@@ -642,6 +637,7 @@ async fn test_context_limit_recovery_compaction() -> Result<()> {
                     .get_session(&session.id, true)
                     .await?;
                 input_tokens_after_compaction = session_after_compact.usage.input_tokens;
+                counted_after_compaction = Some(counted_next_request(&agent, &session.id).await?);
             }
             Ok(AgentEvent::Message(msg)) => {
                 // Check if we got a real response (not just a notification)
@@ -689,14 +685,15 @@ async fn test_context_limit_recovery_compaction() -> Result<()> {
     let tokens_after =
         input_tokens_after_compaction.expect("Should have captured tokens after compaction");
 
-    // After compaction, the input context should be ONLY the summary: 200 tokens
-    // Before: system (6000) + long_tool_call messages (~15,400) = 21,400 (exceeded limit!)
-    // After: only summary (200 tokens)
+    // Q-175: after compaction the context is the counted next request (system prompt, tools and
+    // the compacted messages), not the summary's 200 output tokens.
     assert_eq!(
-        tokens_after, 200,
-        "Input tokens after compaction should be exactly 200 (summary only). Got: {}",
+        Some(tokens_after),
+        counted_after_compaction,
+        "Input tokens after compaction are the counted next request. Got: {}",
         tokens_after
     );
+    assert_ne!(tokens_after, 200, "the summary's output is not the context");
 
     // The compacted context is now well under the 20k limit
     assert!(
