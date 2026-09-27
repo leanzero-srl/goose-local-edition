@@ -275,7 +275,7 @@ describe('NodesTab', () => {
     expect(mockRefresh).toHaveBeenCalled();
   });
 
-  it('the live-chat count is the refusal\'s number, never read out of its words', async () => {
+  it("the live-chat count is the refusal's number, never read out of its words", async () => {
     mockRemove.mockResolvedValueOnce({
       written: false,
       refusals: [

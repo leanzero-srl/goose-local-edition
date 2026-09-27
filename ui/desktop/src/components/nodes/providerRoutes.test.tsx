@@ -44,6 +44,22 @@ vi.mock('../leanzero-swarm/SwarmNodesSection', () => ({
 }));
 vi.mock('../leanzero-swarm/useMacs', () => ({
   MacsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  WithMacs: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+// The tab bodies have their own suites (NodesTab, StrategiesTab, NodesView); here each is a marker.
+vi.mock('./NodesTab', () => ({
+  NodesTab: ({ onEditInPool }: { onEditInPool: () => void }) => (
+    <div data-testid="nodes-cards">
+      <button onClick={onEditInPool}>stub: edit in pool</button>
+    </div>
+  ),
+}));
+vi.mock('./StrategiesTab', () => ({
+  StrategiesTab: () => <div data-testid="strategies-body" />,
+}));
+vi.mock('../engineGlance/glanceStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../engineGlance/glanceStore')>()),
+  useGlanceNodes: () => ({ kind: 'unread' }),
 }));
 vi.mock('../Layout/MainPanelLayout', () => ({
   MainPanelLayout: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -95,26 +111,29 @@ const radio = (group: string, name: string) =>
 afterEach(cleanup);
 
 describe('§5.2 — the Nodes page', () => {
-  it.each(['/nodes', '/nodes?tab=nodes'])('%s opens the Nodes tab hosting the pool', (path) => {
-    renderAt(path);
-    expect(screen.getByRole('heading', { name: 'Nodes' })).toBeInTheDocument();
-    expect(radio('Nodes sections', 'Nodes')).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByTestId('swarm-nodes-section')).toBeInTheDocument();
-    expect(screen.queryByTestId('strategies-tab')).not.toBeInTheDocument();
-  });
+  it.each(['/nodes', '/nodes?tab=nodes'])(
+    '%s opens the Nodes tab: the node cards, then the pool',
+    (path) => {
+      renderAt(path);
+      expect(screen.getByRole('heading', { name: 'Nodes' })).toBeInTheDocument();
+      expect(radio('Nodes sections', 'Nodes')).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByTestId('nodes-cards')).toBeInTheDocument();
+      expect(screen.getByTestId('swarm-nodes-section')).toBeInTheDocument();
+      expect(screen.queryByTestId('strategies-tab')).not.toBeInTheDocument();
+    }
+  );
 
-  it('/nodes?tab=strategies opens the Strategies tab with its honest empty state — no fake editor', () => {
+  it('/nodes?tab=strategies opens the Strategies tab — the strategies, not the cards or the pool', () => {
     renderAt('/nodes?tab=strategies');
     expect(radio('Nodes sections', 'Strategies')).toHaveAttribute('aria-checked', 'true');
-    const tab = screen.getByTestId('strategies-tab');
     expect(
-      within(tab).getByRole('heading', { name: 'Strategies are coming in this release' })
+      within(screen.getByTestId('strategies-tab')).getByTestId('strategies-body')
     ).toBeInTheDocument();
-    expect(within(tab).queryByRole('button')).toBeNull();
+    expect(screen.queryByTestId('nodes-cards')).not.toBeInTheDocument();
     expect(screen.queryByTestId('swarm-nodes-section')).not.toBeInTheDocument();
   });
 
-  it('a node= or strategy= deep link opens its tab and keeps the id in the URL for S2/S6', () => {
+  it('a node= or strategy= deep link opens its tab and keeps the id in the URL', () => {
     renderAt('/nodes?tab=nodes&node=mihai-mlx');
     expect(screen.getByTestId('swarm-nodes-section')).toBeInTheDocument();
     expect(where()).toBe('/nodes?tab=nodes&node=mihai-mlx');
@@ -134,15 +153,7 @@ describe('§5.2 — the Nodes page', () => {
     expect(radio('Nodes sections', 'Strategies')).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('the page links to where its resources are managed: My Macs and Cloud Providers', async () => {
-    renderAt('/nodes');
-    await userEvent.click(screen.getByRole('button', { name: 'Manage Macs and models' }));
-    expect(where()).toBe('/leanzero-swarm?tab=mlx&mlx=macs');
-    cleanup();
-    renderAt('/nodes');
-    await userEvent.click(screen.getByRole('button', { name: 'Manage cloud providers' }));
-    expect(where()).toBe('/leanzero-swarm?tab=cloud');
-    cleanup();
+  it("the pool's no-key link opens Cloud Providers", async () => {
     renderAt('/nodes');
     await userEvent.click(screen.getByText('stub: no key, open Cloud Providers'));
     expect(where()).toBe('/leanzero-swarm?tab=cloud');

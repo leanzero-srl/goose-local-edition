@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { NodeLoadGroupDto, NodeResidency } from '@aaif/goose-sdk';
 import { useMacs } from '../leanzero-swarm/useMacs';
+import type { Mac } from '../leanzero-swarm/macs';
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
 import { usePlacementPlans } from '../leanzero-swarm/usePlacementPlans';
 import { nodesLoadHistory } from '../../acp/nodes';
@@ -32,6 +33,8 @@ export interface NodeFactsView {
   servingNode: ResolvedNodeDef | null;
   /** The measured loads per pinned MLX node id. */
   loads: Record<string, Read<NodeLoadGroupDto[]>>;
+  /** The roster as useMacs reads it (a placement Mac's name is looked up here). */
+  macs: readonly Mac[];
   macCount: number;
   factsFor: (node: ResolvedNodeDef) => NodeFacts;
   glanceOf: (node: ResolvedNodeDef) => NodeGlance;
@@ -154,6 +157,7 @@ export function useNodeFacts(): NodeFactsView {
     nodes,
     servingNode,
     loads,
+    macs: macs.macs,
     macCount: macs.macs.length,
     factsFor,
     glanceOf: (node) => nodeGlance(node, factsFor(node)),
