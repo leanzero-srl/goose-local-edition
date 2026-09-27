@@ -81,7 +81,9 @@ for (let turn = 0; turn < maxTurns; turn++) {
     if (!chatUrl && (Date.now() - start) > 8000) chatUrl = p.url();
     // Every ~minute: does every surface agree that this session is live? (livecheck.mjs, Q-147)
     if (polls++ % 30 === 0) {
-      if (!title) title = await p.evaluate(() => document.querySelector('[data-testid=session-title-trigger]')?.innerText.trim() ?? '').catch(() => '');
+      // Re-read every time: goose retitles a chat after its first answer, and a title read once at the start
+      // ('New Session') made every later check report the live session as not listed (E2E #5b).
+      title = await p.evaluate(() => document.querySelector('[data-testid=session-title-trigger]')?.innerText.trim() ?? '').catch(() => title);
       const lc = await liveCheck(p, { title }).catch((e) => ({ findings: [{ kind: 'PROBE_ERROR', says: String(e) }] }));
       appendFileSync(`${dir}/live.jsonl`, JSON.stringify({ turn, ...lc }) + '\n');
       for (const f of lc.findings) if (!liveSeen.has(f.kind)) { liveSeen.add(f.kind); await p.screenshot({ path: `${dir}/live-${turn}-${f.kind}.png` }); appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} LIVE ${f.kind} ${JSON.stringify(f).slice(0, 300)}\n`); }
