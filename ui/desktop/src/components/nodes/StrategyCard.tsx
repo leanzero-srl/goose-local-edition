@@ -364,7 +364,7 @@ export function StrategyCard({
       className={cx(
         'flex min-w-0 flex-col gap-3 p-4',
         SURFACE.card,
-        highlighted && 'ring-2 ring-lz-accent'
+        highlighted && SURFACE.selectedRing
       )}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
