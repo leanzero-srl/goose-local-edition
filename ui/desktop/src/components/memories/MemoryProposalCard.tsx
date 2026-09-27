@@ -144,7 +144,8 @@ export function ProposalCard({
           {intl.formatMessage(i18n.cut, { max: PROPOSAL_CARD_MAX_CHARS })}
         </p>
       )}
-      {proposal.why && (
+      {/* A stump was filed before Q-93, when every card carried a stock why; it is not shown. */}
+      {proposal.why && !stump && (
         <p className={cx(TYPE.meta, 'mt-1')}>
           {intl.formatMessage(i18n.why, { why: proposal.why })}
         </p>

@@ -209,6 +209,7 @@ describe('MemoryProposalCards — a stored stump and a days-old project card (Q-
     expect(screen.getByTestId('memory-proposal-cut').textContent).toContain('Cut off at 350');
     expect(screen.queryByTestId('memory-proposal-save')).toBeNull();
     expect(screen.queryByTestId('memory-proposal-edit')).toBeNull();
+    expect(card.textContent).not.toContain('grounded by a lookup this turn');
     fireEvent.click(screen.getByTestId('memory-proposal-dismiss'));
     await waitFor(() =>
       expect(answer).toHaveBeenCalledWith(
