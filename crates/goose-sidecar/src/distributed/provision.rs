@@ -104,8 +104,15 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// stopped fitting rank 1's 0.91 GB of room at 53,409 tokens, so every later agent call re-read
 /// 60k tokens (~4 min). `_Engine._start` now takes the plan's evictions; the rank program passes
 /// them through.
+/// 8c0007054 (branch lz/pipeline-client-cancel, tag lz-pipeline-qwen4.14, Q-181) is 1b43e84a0
+/// plus: a client that leaves cancels its row at the next plan. Every chat request awaits its
+/// client's `http.disconnect` beside the answer (uvicorn reads the socket's EOF, no write needed);
+/// before, a non-streamed answer ran on for a client that was gone (measured: 201 tokens at the
+/// close, 3,087 three seconds later) and a streamed one was cancelled only by Starlette's own
+/// listener, unnamed. The stop is `last_engine_stop` {reason `cancelled_by_client`, phase} and a
+/// RANK_CANCELLED_BY_CLIENT line — the tensor wrapper's shape (rank_wrapper.py `client_left`).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "1b43e84a0bfecaaa94ec8b913ddfd77cb020003f";
+pub const PIPELINE_FORK_COMMIT: &str = "8c000705422c314b2f7acd81ae9e398db0ae9320";
 /// The newest single-engine tag (`v*-lz.*`) whose fixes the pipeline fork at
 /// [`PIPELINE_FORK_COMMIT`] carries or has reviewed as not applying — the fork's
 /// `tests/pipeline_single_line_ports.json` `reviewed_through`. The pipeline line branched from the
@@ -115,7 +122,7 @@ pub const PIPELINE_FORK_COMMIT: &str = "1b43e84a0bfecaaa94ec8b913ddfd77cb020003f
 pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.10";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@1b43e84a0bfecaaa94ec8b913ddfd77cb020003f";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@8c000705422c314b2f7acd81ae9e398db0ae9320";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.
