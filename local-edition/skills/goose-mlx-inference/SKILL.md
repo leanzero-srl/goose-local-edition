@@ -524,3 +524,24 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   `engine.joining = …` failed ("property 'joining' … has no setter") — the companion branch had not run it.
   TRAP: a scratch script named `attrs.py` or `bisect.py` on sys.path shadows the stdlib/attrs package and breaks
   pytest/fastapi imports — name scratch files `m_*.py`.
+- 2026-09-27 Q-103 (fork f0a3cd07b = tag v0.14.3-lz.10, branch lz/single-srpf; pipeline review a18e14fd4 = tag
+  lz-pipeline-qwen4.12, JSON-only on 7d3327202): THE SINGLE ENGINE'S ONE-ROW ORDER. Cause: under MTP
+  `_max_running_sequences()` is 1 (vendored B=1 verifier) and admission kept one request for its whole life, prefill
+  included. Fix = the pipeline's SRPF without ever batching two rows: at a chunk boundary a waiting request with fewer
+  prompt tokens left takes the engine and the prefilling row is PARKED — `BatchGenerator.remove(uid,
+  return_prompt_caches=True)` → its `prompt_cache` with `cached_tokens` advanced (the prefix-hit shape), resumed on
+  the hit path; `_srpf_parked_tokens` keeps parked tokens out of usage `cached_tokens`. Aging is MEASURED ENGINE
+  SECONDS of later arrivals' steps (a jumper also DECODES before the parked row resumes), converted at the measured
+  full-chunk prefill rate. Memory gate = cap vs active + parked copy + jumper horizon, priced from the live row's
+  buffers (the 27B's config projection is 0). Knob: `serve --singleton-prefill-order srpf|fifo` (default srpf; fifo =
+  lz.9 for A/B). Read it live: `/v1/status` → `singleton_prefill_order` {parks, refused{no_memory_cap|kv_budget|
+  unverifiable_cache|row_not_in_a_lone_prefill}, prefill_seconds_per_token, parked[]}, status rows phase "parked".
+  Residuals: a request arriving during a DECODE waits it; `kv_cache` int8/int4 profiles refuse parks (batched
+  offsets are arrays). OFFLINE METHOD (no GPU): the REAL Scheduler + BatchGenerator + vendored MTP on a tiny
+  `mlx_lm.models.qwen3_5.TextModel` (full_attention_interval=2 → ArraysCache + KVCache) with
+  `inject_mtp_support(model, allow_random_init=True)`, `mx.set_default_device(mx.cpu)` and
+  `mx.metal.is_available = lambda: False` (BatchGenerator reads the Metal working set otherwise); stub
+  `_resolve_metal_cap_bytes`/`_current_metal_active_bytes`, drive `_srpf_clock`. full_attention_interval=1 breaks
+  the MTP injector (create_ssm_mask on a KVCache) — use a tiny llama at max_num_seqs=1 for the pure-attention case.
+  Fork regression on CPU: a pytest plugin module doing `mx.set_default_device(mx.cpu)` passed with `-p`, same file
+  list on the new branch and the base tag, compare FAILED sets (the base fails the same model-fixture tests on CPU).

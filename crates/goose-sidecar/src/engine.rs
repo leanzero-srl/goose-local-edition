@@ -61,6 +61,17 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.10 = lz.9 + shortest-remaining-prefill-first on the one-row engine (fork
+/// lz/single-srpf f0a3cd07b, Q-103; `serve --singleton-prefill-order srpf`, the default). The MTP
+/// verifier decodes one request at a time and lz.9 kept that request alone for its whole life,
+/// prefill included, so a short request (a helper call, a chat turn on a warm prefix) waited for
+/// every earlier prompt's prefill AND decode: a 1-token canary 161.5 s median on the Studio under
+/// 3x17k prompts. lz.10: at each prefill chunk boundary a waiting request with fewer prompt tokens
+/// left takes the engine and the prefilling one is parked with its cache and resumes where it
+/// stopped; no later request takes more than half an earlier one's slack (the pipeline's Q-145
+/// rule, aged in measured engine seconds); a park happens only when the measured memory holds both
+/// (Q-110). Decode stays batch-1 MTP and is never interrupted; `/v1/status`
+/// `singleton_prefill_order` shows parks and refusals. Proven on the CPU device only.
 /// v0.14.3-lz.9 = lz.8 + `serve --served-model-alias NAME` (repeatable; fork lz/served-names, goose
 /// Q-131): the served model answers to every name goose's one identity gives it
 /// (`model_identity::ServedNames`). lz.8 answered only `--served-model-name`, so a model served
@@ -112,7 +123,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.9",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
     "rapid-mlx",
 ];
 
@@ -185,6 +196,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.8",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.9",
         "rapid-mlx",
     ],
 ];
@@ -2030,7 +2047,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.9",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -2367,7 +2384,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.9",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.10",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),

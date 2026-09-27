@@ -87,18 +87,22 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// a row is priced as the padded batch holds it until its own last step (prompt + max_tokens), the
 /// plan header's rows are derived from the budgets on every rank, and `--max-batch` is gone — the
 /// argv drops it in the same pin, or the fork's parser refuses it.
+/// a18e14fd4 (branch lz/pipeline-review-lz10, tag lz-pipeline-qwen4.12) is 7d3327202 plus one
+/// review entry, the code byte-identical: the single engine's lz.10 (Q-103) is this line's own
+/// SRPF + KV admission ported to the one-row engine, recorded `equivalent`, so the fork's audit and
+/// [`PIPELINE_SINGLE_LINE_REVIEWED_THROUGH`] move to lz.10 with the single-engine pin.
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "7d3327202c7692ce0f616571b6c89f610b157b8f";
+pub const PIPELINE_FORK_COMMIT: &str = "a18e14fd464adbddd487025aa767cab480bf4226";
 /// The newest single-engine tag (`v*-lz.*`) whose fixes the pipeline fork at
 /// [`PIPELINE_FORK_COMMIT`] carries or has reviewed as not applying — the fork's
 /// `tests/pipeline_single_line_ports.json` `reviewed_through`. The pipeline line branched from the
 /// single one at lz.2 and missed lz.6..lz.8 silently (Q-143, Q-144); a test pins this equal to
 /// [`crate::engine::ENGINE_LAUNCHER`]'s tag, so bumping the single engine without reviewing the
 /// pipeline fails `cargo test -p goose-sidecar`.
-pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.9";
+pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.10";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@7d3327202c7692ce0f616571b6c89f610b157b8f";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@a18e14fd464adbddd487025aa767cab480bf4226";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.
