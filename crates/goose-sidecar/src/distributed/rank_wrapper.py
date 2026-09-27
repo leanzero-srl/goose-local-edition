@@ -104,6 +104,11 @@
 #   rank_batch.py), and a streamed answer whose text outside its calls has become one span written
 #   over and over ends there (`verbatim_cycle`, rank_stream_watch.py) — /v1/status names the last
 #   such stop (`last_engine_stop`).
+# - a request field the engine cannot honour is a named 400 on rank 0, before any rank sees the
+#   request (Q-177, rank_request.py): mlx_lm's validator raised a bare ValueError its do_POST never
+#   caught, so `top_logprobs` 12 closed the connection with no reply; `n`, `response_format`, a
+#   `seed`, a malformed `stop` or `stream_options` are refused by name; and any other exception that
+#   escapes the handler before a response began is a 500 naming it, never a dropped connection.
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -955,11 +960,12 @@ if spec.get("row_processors"):
 # A BaseException so mlx_lm's handle_completion (`except Exception` → 404) lets it through to
 # do_POST, which answers with the status it names.
 class Refused(BaseException):
-    def __init__(self, status, message, code=None):
+    def __init__(self, status, message, code=None, param=None):
         super().__init__(message)
         self.status = status
         self.message = message
         self.code = code
+        self.param = param
 
 
 def send_json(handler, status, payload):
@@ -1068,7 +1074,18 @@ def do_POST(self):
         if refusal.code is not None:
             error["code"] = refusal.code
             error["type"] = "invalid_request_error"
+        if refusal.param is not None:
+            error["param"] = refusal.param
         send_json(self, refusal.status, {"error": error})
+    except Exception as failure:
+        # Q-177: http.server answers an escaped exception by closing the socket. Before any status
+        # line was written (`_headers_buffer` exists from the first send_response) the client is
+        # told what failed; after it, the response already begun is all there is.
+        if hasattr(self, "_headers_buffer"):
+            raise
+        named = f"{type(failure).__name__}: {failure}"
+        emit("RANK_REQUEST_FAILED", {"path": self.path, "error": named})
+        send_json(self, 500, {"error": {"message": named, "type": "server_error"}})
     finally:
         with lock:
             state["inflight"] -= 1
@@ -1088,7 +1105,23 @@ def apply_sampling(handler):
     return layers
 
 
+def refuse_request(refusal):
+    raise Refused(400, str(refusal), refusal.code, refusal.param) from None
+
+
 def validate_model_parameters(self):
+    # rank_request.py (Q-177): a field refused here never reaches `_share_request`.
+    try:
+        refused_request_fields(self.path, self.body)
+    except RequestRefused as refusal:
+        refuse_request(refusal)
+    if self.stream_options is not None:
+        # OpenAI's meaning of an absent include_usage; mlx_lm indexes the key after the last
+        # token, so `{}` ended a streamed answer on a KeyError, with no [DONE].
+        self.stream_options = {
+            **self.stream_options,
+            "include_usage": bool(self.stream_options.get("include_usage")),
+        }
     # rank_sampling.py (Q-159): before mlx_lm validates, so a null resolves instead of failing.
     self.sampling_sources = apply_sampling(self)
     # mlx_lm read an absent max_tokens as its `--max-tokens` default; the absence is kept instead
@@ -1098,7 +1131,10 @@ def validate_model_parameters(self):
     )
     if absent:
         self.max_tokens = spec["context_window"]
-    original_validate(self)
+    try:
+        original_validate(self)
+    except ValueError as invalid:
+        refuse_request(validator_refusal(self.body, invalid))
     if absent:
         self.max_tokens = None
     if self.requested_model not in (*served_names, "default_model"):
