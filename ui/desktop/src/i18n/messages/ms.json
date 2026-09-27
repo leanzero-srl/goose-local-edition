@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose telah menyelesaikan tugasan."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Sediakan ejen"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Konfigurasikan ejen autonomi: gelung, resipi dan kemahirannya"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Tetingkap konteks"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Memproses fail yang dilepaskan..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Resipi & gelung"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Bina resipi, kemudian jalankannya dalam gelung berjadual"
   },
   "chatInput.recording": {
     "defaultMessage": "Merakam..."

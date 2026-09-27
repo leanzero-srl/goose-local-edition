@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose завершил задачу."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Настроить агента"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Настройте автономного агента: цикл, рецепт и навыки"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Контекстное окно"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Обработка перетащенных файлов..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Рецепты и циклы"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Создайте рецепт и запускайте его в цикле по расписанию"
   },
   "chatInput.recording": {
     "defaultMessage": "Запись..."

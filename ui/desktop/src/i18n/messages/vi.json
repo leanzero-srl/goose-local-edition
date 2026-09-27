@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose đã hoàn thành tác vụ."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Thiết lập tác tử"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Cấu hình tác tử tự động: vòng lặp, công thức và kỹ năng"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Cửa sổ ngữ cảnh"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Đang xử lý các tệp đã thả..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Công thức & vòng lặp"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Tạo công thức, rồi chạy nó trong vòng lặp theo lịch"
   },
   "chatInput.recording": {
     "defaultMessage": "Đang ghi âm..."

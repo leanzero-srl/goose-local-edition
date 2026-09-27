@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose görevi tamamladı."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Ajanı kur"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Otonom ajanı yapılandırın: döngüsü, tarifi ve becerileri"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Bağlam penceresi"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Bırakılan dosyalar işleniyor..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Tarifler ve döngüler"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Bir tarif oluşturun, ardından zamanlanmış bir döngüde çalıştırın"
   },
   "chatInput.recording": {
     "defaultMessage": "Kaydediliyor..."

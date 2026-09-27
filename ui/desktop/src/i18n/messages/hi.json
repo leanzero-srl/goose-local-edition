@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose ने कार्य पूरा किया।"
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "एजेंट सेट करें"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "स्वायत्त एजेंट कॉन्फ़िगर करें: उसका लूप, रेसिपी और स्किल्स"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "प्रसंग विंडो"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "छोड़ी गई फ़ाइलें संसाधित हो रही हैं..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "रेसिपी और लूप"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "एक रेसिपी बनाएँ, फिर उसे शेड्यूल पर लूप में चलाएँ"
   },
   "chatInput.recording": {
     "defaultMessage": "रिकॉर्डिंग..."

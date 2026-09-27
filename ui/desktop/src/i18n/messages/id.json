@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose telah menyelesaikan tugas."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Siapkan agen"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Konfigurasikan agen otonom: loop, resep, dan skill-nya"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Jendela konteks"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Memproses berkas yang dijatuhkan..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Resep & perulangan"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Buat resep, lalu jalankan dalam perulangan terjadwal"
   },
   "chatInput.recording": {
     "defaultMessage": "Merekam..."

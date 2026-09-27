@@ -194,4 +194,21 @@ describe('the url helpers are shared verbatim with the renderer', () => {
     expect(modelsUrl('http://192.168.8.220:1234/v1')).toBe('http://192.168.8.220:1234/api/v0/models');
     expect(chatCompletionsUrl(LIVE)).toBe('http://127.0.0.1:1234/v1/chat/completions');
   });
+
+  // Q-7: the recipe interview follows chat onto a linked Mac — through the route's relay, whose
+  // capability lives in the PATH. The origin alone reached nothing.
+  it('an engine base keeps its own path; a host base and a /v1 base are unchanged', () => {
+    expect(chatCompletionsUrl('http://localhost:1234')).toBe(
+      'http://127.0.0.1:1234/v1/chat/completions'
+    );
+    expect(chatCompletionsUrl('http://127.0.0.1:9600/v1')).toBe(
+      'http://127.0.0.1:9600/v1/chat/completions'
+    );
+    expect(chatCompletionsUrl('http://127.0.0.1:9600/v1/')).toBe(
+      'http://127.0.0.1:9600/v1/chat/completions'
+    );
+    expect(chatCompletionsUrl('http://127.0.0.1:8095/relay/cap')).toBe(
+      'http://127.0.0.1:8095/relay/cap/v1/chat/completions'
+    );
+  });
 });

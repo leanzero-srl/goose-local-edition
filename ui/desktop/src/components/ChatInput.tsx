@@ -1,6 +1,6 @@
 import { AppEvents } from '../constants/events';
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowUp, Bug, ScrollText, Settings2 } from 'lucide-react';
+import { ArrowUp, Bug, ScrollText, Repeat } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
 import type { View } from '../utils/navigationUtils';
@@ -25,7 +25,7 @@ import { DroppedFile, useFileDrop } from '../hooks/useFileDrop';
 import { Recipe } from '../recipe';
 import { MessageQueue, QueuedMessage } from './MessageQueue';
 import { detectInterruption } from '../utils/interruptionDetector';
-import { DiagnosticsModal } from './ui/Diagnostics';
+import { DiagnosticsModal, reportProblemMessage } from './ui/Diagnostics';
 import type { Message } from '../types/message';
 import { getInitialWorkingDir } from '../utils/workingDir';
 import { getPredefinedModelsFromEnv } from './settings/models/predefinedModelsUtils';
@@ -40,12 +40,12 @@ import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
 import type { ChatServedBy } from './chatServedBy/chatServedBy';
 import {
+  heldContextLimit,
   nextMeasuredPrompt,
   shownContextTokens,
+  type KnownWindow,
   type MeasuredPrompt,
 } from './chatServedBy/contextFloor';
-import { PersonaChooser } from './swarm/PersonaChooser';
-import { usePersona } from './swarm/usePersona';
 import AgentSetupWizard from './swarm/AgentSetupWizard';
 import { defineMessages, useIntl } from '../i18n';
 import { Button as StudioButton, Chip, StatusDot, TYPE, cx } from './lz';
@@ -176,13 +176,13 @@ const i18n = defineMessages({
     id: 'chatInput.placeholder',
     defaultMessage: 'Ask goose to build, fix or explain something',
   },
-  agentSetup: {
-    id: 'chatInput.agentSetup',
-    defaultMessage: 'Set up agent',
+  recipesAndLoops: {
+    id: 'chatInput.recipesAndLoops',
+    defaultMessage: 'Recipes & loops',
   },
-  agentSetupTitle: {
-    id: 'chatInput.agentSetupTitle',
-    defaultMessage: 'Configure the autonomous agent: its loop, recipe and skills',
+  recipesAndLoopsTitle: {
+    id: 'chatInput.recipesAndLoopsTitle',
+    defaultMessage: 'Build a recipe, then run it in a loop on a schedule',
   },
 });
 
@@ -343,7 +343,6 @@ export default function ChatInput({
   useEffect(() => {
     onServedChange?.(chatServing.served);
   }, [chatServing.served, onServedChange]);
-  const { persona, setPersona } = usePersona();
   const [agentWizardOpen, setAgentWizardOpen] = useState(false);
 
   // Clear override when the underlying data catches up (session props for
@@ -623,6 +622,19 @@ export default function ChatInput({
     }
   }, [textAreaRef]);
 
+  const knownWindowRef = useRef<KnownWindow | null>(null);
+  const holdMeasuredLimit = (provider: string, model: string, read: number | null) => {
+    const held = heldContextLimit(
+      knownWindowRef.current,
+      sessionId ?? null,
+      `${provider}:${model}`,
+      read
+    );
+    knownWindowRef.current = held.known;
+    setTokenLimit(held.limit);
+    setIsTokenLimitLoaded(true);
+  };
+
   // Load providers and get current model's token limit
   const loadProviderDetails = async () => {
     try {
@@ -654,20 +666,19 @@ export default function ChatInput({
       // every engine the POOL runs on and take the min (an MLX-only pool used to fall to the 128k default).
       // A pool whose engines report no window yet shows NO limit (the indicator hides) — never the
       // generic 128k, which read as a fact about a model with 262,144.
+      // An engine that stopped (a dead split, every pool engine down) reports no window: the last
+      // one measured for this chat on this model holds (Q-60, chatServedBy/contextFloor.ts).
       if (provider === 'swarm') {
-        const swarmLimit = await fetchSwarmPoolContextLimit();
-        setTokenLimit(swarmLimit ?? 0);
-        setIsTokenLimitLoaded(true);
+        holdMeasuredLimit(provider, model, await fetchSwarmPoolContextLimit());
         return;
       }
 
       // Leanzero MLX engine: same rule as swarm — the engine that serves chat (this Mac's, a
       // linked Mac's through the route, or the split) reports the window its model mounted with.
-      // No window reported yet shows NO limit — never the generic default: a route to the Studio
+      // No window ever reported shows NO limit — never the generic default: a route to the Studio
       // used to ask only this Mac's stopped engine and fall to 128k (Q-18).
       if (provider === MLX_PROVIDER_ID) {
-        setTokenLimit(servedRef.current.contextWindow ?? 0);
-        setIsTokenLimitLoaded(true);
+        holdMeasuredLimit(provider, model, servedRef.current.contextWindow);
         return;
       }
 
@@ -1778,26 +1789,18 @@ export default function ChatInput({
           </Chip>
         </Tooltip>
 
-        {/* Left: persona chooser (Local Edition swarm only) */}
+        {/* Left: the one launcher for recipes and loops (Local Edition swarm only). A "Coding · Agent"
+            toggle stood here and changed nothing a send does (Q-6) — no mode, just the launcher. */}
         {isSwarmProvider && !isBottomBarNarrow && (
-          <PersonaChooser
-            value={persona}
-            onChange={(p) => {
-              setPersona(p);
-              if (p === 'agent') setAgentWizardOpen(true);
-            }}
-          />
-        )}
-        {isSwarmProvider && persona === 'agent' && !isBottomBarNarrow && (
           <StudioButton
             variant="ghost"
             size="sm"
-            icon={<Settings2 />}
-            data-testid="agent-setup"
+            icon={<Repeat />}
+            data-testid="recipes-and-loops"
             onClick={() => setAgentWizardOpen(true)}
-            title={intl.formatMessage(i18n.agentSetupTitle)}
+            title={intl.formatMessage(i18n.recipesAndLoopsTitle)}
           >
-            {intl.formatMessage(i18n.agentSetup)}
+            {intl.formatMessage(i18n.recipesAndLoops)}
           </StudioButton>
         )}
         {agentWizardOpen && (
@@ -1861,7 +1864,7 @@ export default function ChatInput({
               />
             )}
 
-            {/* Right: diagnostics */}
+            {/* Right: report a problem — the button, its tooltip and the dialog share one name (Q-9) */}
             {sessionId && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1869,7 +1872,7 @@ export default function ChatInput({
                     variant="ghost"
                     size="sm"
                     className="w-7"
-                    aria-label="Generate diagnostics bundle"
+                    aria-label={intl.formatMessage(reportProblemMessage)}
                     onClick={() => {
                       trackDiagnosticsOpened();
                       setDiagnosticsOpen(true);
@@ -1877,7 +1880,7 @@ export default function ChatInput({
                     icon={<Bug />}
                   />
                 </TooltipTrigger>
-                <TooltipContent>Generate diagnostics bundle</TooltipContent>
+                <TooltipContent>{intl.formatMessage(reportProblemMessage)}</TooltipContent>
               </Tooltip>
             )}
 

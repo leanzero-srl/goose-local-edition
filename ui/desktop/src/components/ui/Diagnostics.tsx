@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Download, Github } from 'lucide-react';
 import { Button } from './button';
+import { OverlayDialog, OverlayDialogTitle } from './OverlayDialog';
 import { toastError } from '../../toasts';
 import { defineMessages, useIntl } from '../../i18n';
 import { getDiagnosticsReport } from '../../acp/diagnostics';
@@ -9,7 +10,7 @@ import { LEANZERO_ISSUES_NEW_URL } from '../../branding';
 const i18n = defineMessages({
   reportProblem: {
     id: 'diagnosticsModal.reportProblem',
-    defaultMessage: 'Report a Problem',
+    defaultMessage: 'Report a problem',
   },
   description: {
     id: 'diagnosticsModal.description',
@@ -78,6 +79,12 @@ const i18n = defineMessages({
     defaultMessage: 'Failed to get system information',
   },
 });
+
+/**
+ * The action's ONE name (Q-9): the composer's button, its tooltip and this dialog's title all read
+ * it, so the bug icon can no longer say "Generate diagnostics bundle" and open "Report a Problem".
+ */
+export const reportProblemMessage = i18n.reportProblem;
 
 interface DiagnosticsModalProps {
   isOpen: boolean;
@@ -201,62 +208,62 @@ Add any other context about the problem here.
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-background-primary border border-border-primary rounded-lg p-6 max-w-md mx-4">
-        <div className="flex items-start gap-3 mb-4">
-          <AlertTriangle className="text-orange-500 flex-shrink-0 mt-1" size={20} />
-          <div>
-            <h3 className="text-lg font-semibold text-text-primary mb-2">{intl.formatMessage(i18n.reportProblem)}</h3>
-            <p className="text-sm text-text-secondary mb-3">
-              {intl.formatMessage(i18n.description)}
-            </p>
-            <ul className="text-sm text-text-secondary list-disc list-inside space-y-1 mb-3">
-              <li>{intl.formatMessage(i18n.systemInfo)}</li>
-              <li>{intl.formatMessage(i18n.sessionMessages)}</li>
-              <li>{intl.formatMessage(i18n.logFiles)}</li>
-              <li>{intl.formatMessage(i18n.configSettings)}</li>
-            </ul>
-            <p className="text-sm text-text-secondary">
-              <strong>Warning:</strong> {intl.formatMessage(i18n.sensitiveWarning)}
-            </p>
-            <p className="text-sm text-text-secondary">
-              {intl.formatMessage(i18n.attachHint)}
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-2 justify-end">
-          <Button
-            onClick={onClose}
-            variant="outline"
-            size="sm"
-            disabled={isDownloading || isFilingBug}
-          >
-            {intl.formatMessage(i18n.cancel)}
-          </Button>
-          <Button
-            onClick={handleDownload}
-            variant="outline"
-            size="sm"
-            disabled={isDownloading || isFilingBug}
-          >
-            <Download size={16} className="mr-1" />
-            {isDownloading ? intl.formatMessage(i18n.downloading) : intl.formatMessage(i18n.download)}
-          </Button>
-          <Button
-            onClick={handleFileGitHubIssue}
-            variant="outline"
-            size="sm"
-            disabled={isDownloading || isFilingBug}
-            className="bg-slate-600 text-white hover:bg-slate-700"
-          >
-            <Github size={16} className="mr-1" />
-            {isFilingBug ? intl.formatMessage(i18n.opening) : intl.formatMessage(i18n.fileBug)}
-          </Button>
+    <OverlayDialog
+      open={isOpen}
+      onClose={onClose}
+      panelClassName="w-[28rem] bg-background-primary border border-border-primary rounded-lg p-6"
+    >
+      <div className="flex items-start gap-3 mb-4">
+        <AlertTriangle className="text-orange-500 flex-shrink-0 mt-1" size={20} />
+        <div>
+          <OverlayDialogTitle asChild>
+            <h3 className="text-lg font-semibold text-text-primary mb-2">
+              {intl.formatMessage(i18n.reportProblem)}
+            </h3>
+          </OverlayDialogTitle>
+          <p className="text-sm text-text-secondary mb-3">{intl.formatMessage(i18n.description)}</p>
+          <ul className="text-sm text-text-secondary list-disc list-inside space-y-1 mb-3">
+            <li>{intl.formatMessage(i18n.systemInfo)}</li>
+            <li>{intl.formatMessage(i18n.sessionMessages)}</li>
+            <li>{intl.formatMessage(i18n.logFiles)}</li>
+            <li>{intl.formatMessage(i18n.configSettings)}</li>
+          </ul>
+          <p className="text-sm text-text-secondary">
+            <strong>Warning:</strong> {intl.formatMessage(i18n.sensitiveWarning)}
+          </p>
+          <p className="text-sm text-text-secondary">{intl.formatMessage(i18n.attachHint)}</p>
         </div>
       </div>
-    </div>
+      <div className="flex gap-2 justify-end">
+        <Button
+          onClick={onClose}
+          variant="outline"
+          size="sm"
+          disabled={isDownloading || isFilingBug}
+        >
+          {intl.formatMessage(i18n.cancel)}
+        </Button>
+        <Button
+          onClick={handleDownload}
+          variant="outline"
+          size="sm"
+          disabled={isDownloading || isFilingBug}
+        >
+          <Download size={16} className="mr-1" />
+          {isDownloading ? intl.formatMessage(i18n.downloading) : intl.formatMessage(i18n.download)}
+        </Button>
+        <Button
+          onClick={handleFileGitHubIssue}
+          variant="outline"
+          size="sm"
+          disabled={isDownloading || isFilingBug}
+          className="bg-slate-600 text-white hover:bg-slate-700"
+        >
+          <Github size={16} className="mr-1" />
+          {isFilingBug ? intl.formatMessage(i18n.opening) : intl.formatMessage(i18n.fileBug)}
+        </Button>
+      </div>
+    </OverlayDialog>
   );
 };

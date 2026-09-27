@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import ChatInput from './ChatInput';
 import { ChatState } from '../types/chatState';
@@ -56,10 +56,6 @@ vi.mock('./ModelAndProviderContext', () => ({
     currentProvider: 'anthropic',
   }),
 }));
-vi.mock('./swarm/usePersona', () => ({
-  usePersona: () => ({ persona: 'build', setPersona: vi.fn() }),
-}));
-vi.mock('./swarm/PersonaChooser', () => ({ PersonaChooser: () => null }));
 vi.mock('./swarm/AgentSetupWizard', () => ({ default: () => null }));
 vi.mock('./alerts', () => ({
   useAlerts: () => ({ alerts: [], addAlert: vi.fn(), clearAlerts: vi.fn() }),
@@ -71,7 +67,7 @@ vi.mock('../acp/mlx-engine', () => ({
   mlxEngineStatus: async () => ({ state: 'stopped', restartRequired: false, availableMemoryGb: 0 }),
 }));
 vi.mock('./swarm/useFleet', () => ({ fetchSwarmContextLimit: async () => null }));
-vi.mock('./ui/Diagnostics', () => ({ DiagnosticsModal: () => null }));
+vi.mock('../acp/diagnostics', () => ({ getDiagnosticsReport: vi.fn() }));
 
 class ResizeObserverMock {
   observe() {}
@@ -195,9 +191,7 @@ describe('ChatInput bottom bar (Studio chrome)', () => {
       'ghost'
     );
     expect(
-      screen
-        .getByRole('button', { name: 'Generate diagnostics bundle' })
-        .getAttribute('data-variant')
+      screen.getByRole('button', { name: 'Report a problem' }).getAttribute('data-variant')
     ).toBe('ghost');
     expect(
       screen.getAllByRole('button').filter((b) => b.getAttribute('data-variant') === 'primary')
@@ -228,4 +222,21 @@ describe('ChatInput bottom bar (Studio chrome)', () => {
     expect(classes.length).toBeGreaterThan(30);
     expect(await missingUtilities(classes)).toEqual([]);
   }, 30_000);
+});
+
+/**
+ * Q-9, round live-1: the bug icon's tooltip said "Generate diagnostics bundle" and it opened a
+ * dialog titled "Report a Problem" — one action, two names. The button, its tooltip and the
+ * dialog now read ONE message.
+ */
+describe('ChatInput report a problem (Q-9)', () => {
+  it('the button opens a dialog with the same name the button carries', async () => {
+    mount('anthropic');
+    const button = await screen.findByRole('button', { name: 'Report a problem' });
+    fireEvent.click(button);
+    expect(await screen.findByRole('dialog')).toHaveAccessibleName(
+      button.getAttribute('aria-label')!
+    );
+    expect(screen.queryByText(/diagnostics bundle/i)).toBeNull();
+  });
 });
