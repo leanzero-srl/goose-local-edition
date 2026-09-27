@@ -3819,7 +3819,7 @@
     "defaultMessage": "División"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "La división ocupa este Mac: ningún modelo se ejecuta aquí solo hasta que se detenga la división (Detener, en Ejecutar más abajo)."
+    "defaultMessage": "La división ocupa este Mac. «Ejecutar en este Mac», en Ejecutar más abajo, detiene primero la división."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Detalles del motor"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "configuración, prevuelo, comprobaciones, eventos"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "La división ocupa este Mac — detenla para ejecutar aquí un modelo solo."
   },
   "placementCard.estimated": {
     "defaultMessage": "estimado"

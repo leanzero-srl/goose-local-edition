@@ -142,7 +142,7 @@ const i18n = defineMessages({
   distributedOwnsText: {
     id: 'mlxEngineView.distributedOwnsText',
     defaultMessage:
-      'The split owns this Mac: no model runs here alone until the split is stopped (Stop, under Run it below).',
+      'The split owns this Mac. Run on this Mac, under Run it below, stops the split first.',
   },
   servingDistributed: {
     id: 'mlxEngineView.servingDistributed',
@@ -1161,7 +1161,8 @@ function EngineSection(props: EngineSectionProps) {
           distributed={distributed}
           onMountHere={onMount}
           onStopHere={onUnmount}
-          mountBusy={engineBusy || state === 'mounting' || distributedOwns}
+          // The split owning this Mac is not a mount in flight: Run on this Mac stops it first (Q-28).
+          mountBusy={engineBusy || state === 'mounting'}
           distributedCapability={distributedCapability}
           splitDetails={splitDetails}
         />

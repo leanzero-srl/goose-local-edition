@@ -3819,7 +3819,7 @@
     "defaultMessage": "विभाजन"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "विभाजन इस Mac पर है: जब तक विभाजन रोका नहीं जाता, यहाँ कोई मॉडल अकेले नहीं चलता (रोकें, नीचे Run it में)।"
+    "defaultMessage": "विभाजन इस Mac पर है। नीचे Run it में «इस Mac पर चलाएँ» पहले विभाजन को रोकता है।"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "इंजन विवरण"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "सेटअप, प्रीफ़्लाइट, जाँचें, इवेंट"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "विभाजन इस Mac को इस्तेमाल कर रहा है — यहाँ अकेले मॉडल चलाने के लिए इसे रोकें।"
   },
   "placementCard.estimated": {
     "defaultMessage": "अनुमानित"

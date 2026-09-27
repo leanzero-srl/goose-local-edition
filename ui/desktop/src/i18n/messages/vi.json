@@ -3819,7 +3819,7 @@
     "defaultMessage": "Bản chia"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Bản chia đang chiếm máy Mac này: không mô hình nào chạy riêng ở đây cho đến khi bản chia dừng (Dừng, trong Chạy bên dưới)."
+    "defaultMessage": "Bản chia đang chiếm máy Mac này. «Chạy trên Mac này», trong Chạy bên dưới, sẽ dừng bản chia trước."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Chi tiết engine"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "thiết lập, kiểm tra trước, kiểm tra, sự kiện"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "Bản chia đang chiếm Mac này — hãy dừng nó để chạy riêng một mô hình ở đây."
   },
   "placementCard.estimated": {
     "defaultMessage": "ước tính"

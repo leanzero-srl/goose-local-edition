@@ -2907,8 +2907,15 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     expect(await screen.findAllByTestId('mlx-dist-node')).toHaveLength(2);
     expect(screen.getByTestId('mlx-dist-slots')).toHaveTextContent('Slots 0 / 2');
     expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
-    // This Mac's own start waits for the split to stop.
-    expect(screen.queryByTestId('placement-run-local')).toBeNull();
+    // Q-28: Run on this Mac is a switch like every other way — offered, free, and it says it stops
+    // the split first.
+    expect(screen.getByTestId('mlx-distributed-owns')).toHaveTextContent(
+      'Run on this Mac, under Run it below, stops the split first.'
+    );
+    await runHere();
+    expect(
+      within(screen.getByTestId('placement-way-local')).getByTestId('placement-stops-first-local')
+    ).toHaveTextContent(/first\.$/);
     // Q-43: the details rows are this Mac's single engine, and they say so.
     await userEvent.click(screen.getByRole('button', { name: 'This Mac’s engine · not running' }));
     expect(screen.getByTestId('mlx-details-elsewhere')).toHaveTextContent(

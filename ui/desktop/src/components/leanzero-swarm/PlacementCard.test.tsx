@@ -1443,6 +1443,51 @@ describe('Q-148: a way that would cut the answer being written asks first, and i
     await waitFor(() => expect(mockDistributedStop).toHaveBeenCalledTimes(1));
   });
 
+  /**
+   * Q-28 (3.0.30, R5 r5-0-start.png): with the split up, "Run on this Mac" offered no Run — only
+   * "The split owns this Mac — stop it to run a model here alone" — while Run was a switch on every
+   * other way. It is one here too: it says it stops the split, stops it, then mounts here.
+   */
+  it('Q-28: while the split runs, Run on this Mac stops the split first, then mounts here', async () => {
+    bridge.mlxEngineActivity = vi.fn(async () => liveSplitSnapshot([]));
+    mockDistributedStop.mockResolvedValue({
+      status: { mode: 'single', state: 'stopped', nodes: [] },
+      stop: { verified: true, steps: [] },
+    });
+    // goose credits the split's memory back to this Mac: the 27B fits here once the split stops.
+    mockPlan.mockResolvedValue(
+      answer({
+        ...PLAN_LINK,
+        candidates: (PLAN_LINK.candidates ?? []).map((c) =>
+          c.id === 'single:local'
+            ? {
+                ...c,
+                fit: {
+                  ...c.fit,
+                  status: 'fits',
+                  shortBytes: undefined,
+                  shortNode: undefined,
+                  afterStopping: [MODEL],
+                },
+                outcome: { code: 'best' },
+              }
+            : c
+        ),
+      })
+    );
+    const { onMountHere } = renderCard({ distributed: SPLIT_SERVING });
+    const local = await screen.findByTestId('placement-way-local');
+    expect(await within(local).findByTestId('placement-stops-first-local')).toHaveTextContent(
+      'Fits once Qwen3.8-27B-Atlassian-Q8-mlx stops — Run stops it on Mihai Macbook and Work’s Mac Studio first.'
+    );
+    expect(within(local).queryByText(/The split owns this Mac/)).toBeNull();
+    const run = within(local).getByTestId('placement-run-local');
+    expect(run).toBeEnabled();
+    await userEvent.click(run);
+    await waitFor(() => expect(onMountHere).toHaveBeenCalledTimes(1));
+    expect(mockDistributedStop).toHaveBeenCalledTimes(1);
+  });
+
   it('with nothing in flight the switch goes on at once, and goose’s "Best" stands', async () => {
     bridge.mlxEngineActivity = vi.fn(async () => liveSplitSnapshot([]));
     mockPlan.mockResolvedValue(answer(STUDIO_SMALL));

@@ -3819,7 +3819,7 @@
     "defaultMessage": "Suddivisione"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "La suddivisione occupa questo Mac: nessun modello gira qui da solo finché la suddivisione non viene fermata (Ferma, in Esegui qui sotto)."
+    "defaultMessage": "La suddivisione occupa questo Mac. «Esegui su questo Mac», in Esegui qui sotto, ferma prima la suddivisione."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Dettagli del motore"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "configurazione, preflight, controlli, eventi"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "La suddivisione occupa questo Mac — fermala per eseguire qui un modello da solo."
   },
   "placementCard.estimated": {
     "defaultMessage": "stimato"

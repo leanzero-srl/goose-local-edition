@@ -3819,7 +3819,7 @@
     "defaultMessage": "Split"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "The split owns this Mac: no model runs here alone until the split is stopped (Stop, under Run it below)."
+    "defaultMessage": "The split owns this Mac. Run on this Mac, under Run it below, stops the split first."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Engine details"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "set up, preflight, checks, events"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "The split owns this Mac — stop it to run a model here alone."
   },
   "placementCard.estimated": {
     "defaultMessage": "estimated"

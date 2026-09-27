@@ -3819,7 +3819,7 @@
     "defaultMessage": "Разделение"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Разделение занимает этот Mac: ни одна модель не запустится здесь отдельно, пока разделение не остановлено (Остановить, в разделе «Запуск» ниже)."
+    "defaultMessage": "Разделение занимает этот Mac. «Запустить на этом Mac» в разделе «Запуск» ниже сначала останавливает разделение."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Сведения о движке"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "настройка, предпроверка, проверки, события"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "Этот Mac занят разделённой моделью — остановите её, чтобы запустить модель здесь одну."
   },
   "placementCard.estimated": {
     "defaultMessage": "оценка"

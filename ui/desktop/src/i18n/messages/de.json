@@ -3819,7 +3819,7 @@
     "defaultMessage": "Split"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Der Split belegt diesen Mac: Hier läuft kein Modell allein, bis der Split gestoppt ist (Stoppen, unter „Ausführen“ unten)."
+    "defaultMessage": "Der Split belegt diesen Mac. „Auf diesem Mac ausführen“ unter „Ausführen“ unten stoppt zuerst den Split."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Engine-Details"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "Einrichtung, Vorabprüfung, Prüfungen, Ereignisse"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "Der Split belegt diesen Mac — beende ihn, um hier allein ein Modell auszuführen."
   },
   "placementCard.estimated": {
     "defaultMessage": "geschätzt"

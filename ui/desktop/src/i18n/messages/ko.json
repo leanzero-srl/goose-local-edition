@@ -3819,7 +3819,7 @@
     "defaultMessage": "분할"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "분할이 이 Mac을 사용 중입니다. 분할을 중지할 때까지 여기서 단독으로 실행되는 모델은 없습니다(아래 실행의 중지)."
+    "defaultMessage": "분할이 이 Mac을 사용 중입니다. 아래 실행의 «이 Mac에서 실행»은 먼저 분할을 중지합니다."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "엔진 세부 정보"
@@ -5413,9 +5413,6 @@
   },
   "placementCard.detailsMeta": {
     "defaultMessage": "설정, 사전 점검, 검사, 이벤트"
-  },
-  "placementCard.distributedOwns": {
-    "defaultMessage": "분할이 이 Mac을 사용 중입니다 — 여기서 모델을 단독으로 실행하려면 중지하세요."
   },
   "placementCard.estimated": {
     "defaultMessage": "추정"

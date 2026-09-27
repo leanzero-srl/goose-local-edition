@@ -177,10 +177,6 @@ const i18n = defineMessages({
     id: 'placementCard.splitNoPeers',
     defaultMessage: 'goose planned this split without another Mac — open Details › Set up.',
   },
-  distributedOwns: {
-    id: 'placementCard.distributedOwns',
-    defaultMessage: 'The split owns this Mac — stop it to run a model here alone.',
-  },
   refresh: { id: 'placementCard.refresh', defaultMessage: 'Plan again' },
   others: {
     id: 'placementCard.others',
@@ -1391,7 +1387,6 @@ function PlacementCardBody({
   };
 
   const { ways, otherSplits } = waysOf(plan, macs.macs, distributedCapability);
-  const distributedOwns = ownsTheMac(distributed);
   const serving = servingWays(ways, macs.macs, single, distributed);
 
   /** Where a serving way runs, in the words the card's lines use. */
@@ -1453,13 +1448,13 @@ function PlacementCardBody({
     const needsCopy = missingOn(way);
     const copyJob = needsCopy ? macs.copies[copyKey(modelId, needsCopy.key)] : undefined;
     const copyLink = needsCopy ? macs.linkBetween(SELF_KEY, needsCopy.key) : null;
-    const blockedByDistributed = way.kind === 'local' && distributedOwns;
     // A way goose judged short (or could not judge) is not offered: the start would be refused.
+    // While the split owns this Mac, Run on this Mac is a switch like every other way: it stops the
+    // split first (servingWays lists it) and its stops-first line says so (Q-28).
     const fitsForGoose =
       c == null || (c.supported && c.fit.status !== 'short' && c.fit.status !== 'unknown');
     const startable =
       !running &&
-      !blockedByDistributed &&
       needsCopy == null &&
       fitsForGoose &&
       (action == null || action.kind !== 'unavailable');
@@ -1664,11 +1659,6 @@ function PlacementCardBody({
               })}
             </p>
           )}
-        {blockedByDistributed && !running && (
-          <p className={cx('break-words', TYPE.meta, WEIGHT.semibold)}>
-            {intl.formatMessage(i18n.distributedOwns)}
-          </p>
-        )}
         {action?.kind === 'unavailable' && !needsCopy && (
           <p className={cx('break-words', TYPE.meta)}>
             {way.mac ? macs.describeError(way.mac, action.reason) : action.reason}
