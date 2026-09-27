@@ -5417,6 +5417,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Stoppen"
   },
+  "nodes.auto": {
+    "defaultMessage": "Beliebiger Node (Auto)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "wird geprüft…"
+  },
   "nodes.cancel": {
     "defaultMessage": "Abbrechen"
   },
@@ -5464,6 +5470,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Bedient, was die Engine dieses Macs gerade ausführt: {model} · aufgeteilt auf {count} Macs"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Schwarm-Builds nutzen:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "Neue Chats starten auf:"
   },
   "nodes.fromPool": {
     "defaultMessage": "aus deinem Schwarm-Pool"
@@ -5717,6 +5729,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Füge einen weiteren Mac hinzu, um Modelle auszuführen, die für diesen zu groß sind"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (Node)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (Strategie)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Schalte zuerst „{permission}“ auf {mac} ein (LeanZero MLX › Meine Macs)"
   },
@@ -5734,6 +5752,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Deine Macs werden für diesen Weg gemessen…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Dein Schwarm-Pool"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Dein Schwarm-Pool · wird von Schwarm-Builds genutzt, solange „Schwarm-Builds nutzen“ „Dein Schwarm-Pool“ ist"
   },
   "nodes.readFailed": {
     "defaultMessage": "Deine Nodes konnten nicht gelesen werden"
@@ -5846,14 +5870,8 @@
   "nodes.stopAction": {
     "defaultMessage": "{node} stoppen"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "Eine Strategie wird festlegen, welcher Node was übernimmt: seine Rollen, die Reihenfolge, in der Nodes versucht werden, und wann der nächste dran ist. Bis dahin nutzen Chats und Schwarm-Builds die Nodes im Tab Nodes."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "Strategien kommen in diesem Release"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "Ein Node ist ein Modell, dem du Arbeit übergeben kannst, auf deinen Macs oder in der Cloud. Chats starten auf einem Node oder einer Strategie; Schwarm-Builds nutzen eine Strategie."
+    "defaultMessage": "Ein Node ist ein Modell, dem du Arbeit übergeben kannst, auf deinen Macs oder in der Cloud. Chats starten auf einem Node oder einer Strategie; Schwarm-Builds nutzen eine Strategie oder deinen Schwarm-Pool."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Dein Schwarm-Pool konnte nicht gelesen werden"
@@ -5866,6 +5884,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodes"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "Die Änderung konnte nicht gespeichert werden"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (nicht mehr definiert)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Nicht geändert"
   },
   "nodes.usedBy": {
     "defaultMessage": "Genutzt von"
@@ -8372,6 +8399,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Du hast diese Antwort nach {elapsed} gestoppt · {tokens} Tokens"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "Die Änderung konnte nicht gespeichert werden"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Node hinzufügen"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Schwarm-Builds nutzen dies"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "Neue Chats starten hier"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "Ob Schwarm-Builds sie nutzen können, wird beim Speichern geprüft."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Schwarm-Builds können diese Strategie nutzen."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Schwarm-Builds können diese Strategie nicht nutzen:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Wird geprüft, ob Schwarm-Builds sie nutzen können…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "Planung auf {node}: Die Engine ersetzt einen Cloud-Planer durch ein Modell, das LM Studio geladen hat"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "LM-Studio-Modelle, die auf deiner Flotte geladen sind, wirken auch bei diesem Build mit"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Schwarm-Builds auf der Engine dieses Macs führen {model} aus; wähle zuerst das Modell von {node} in Ausführen"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} läuft auf {mac}; Schwarm-Builds erreichen LeanZero MLX nur über die einzige Engine dieses Macs"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} ist eine Aufteilung; Schwarm-Builds erreichen LeanZero MLX nur über die einzige Engine dieses Macs"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Schwarm-Builds"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Ob Schwarm-Builds sie nutzen können, konnte nicht gelesen werden: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: immer verfügbar"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "Falls nicht geladen"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Nodes in Reihenfolge"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "Wann der nächste genutzt wird"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "Neue Strategie"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Jeder Delegationsaufruf wechselt zweimal: zu {build} und zurück zu {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Schließen"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Duplizieren"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "{node} früher versuchen"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Bearbeiten"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "{name} bearbeiten"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Erstelle eine, um festzulegen, welcher Node zuerst für Chats genutzt wird, welcher Node übernimmt, wenn er nicht laufen kann, und welche Nodes Schwarm-Builds nutzen."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "Noch keine Strategien"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: bedient, was auch immer die Engine dieses Macs gerade ausführt; lädt nie"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Link"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,one{etwa {duration}, # Ladevorgang gemessen} other{etwa {duration}, # Ladevorgänge gemessen}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "Ladezeit noch nicht gemessen"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Laden und warten"
+  },
+  "strategies.more": {
+    "defaultMessage": "Mehr zu {name}"
+  },
+  "strategies.name": {
+    "defaultMessage": "Strategie"
+  },
+  "strategies.new": {
+    "defaultMessage": "Neue Strategie"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "Neue Strategie"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "Es gibt noch keine Nodes. Erstelle zuerst einen im Tab Nodes."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "Es gibt keine Strategie „{id}“. Sie wurde möglicherweise entfernt."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "ein Weg ({node}), keine Wechsel"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "nichts lädt: jeder Node hier ist in der Cloud oder folgt der Engine dieses Macs"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Für diese Strategie lädt nichts auf deinen Macs."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: Node {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Nicht entfernt"
+  },
+  "strategies.note": {
+    "defaultMessage": "Notiz (in deinen Worten)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "Auf deinen Macs"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "Auf deinen Macs"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "Immer nur ein Weg bedient deine Chats: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "Immer nur ein MLX-Weg bedient goose auf diesem Mac, über alle deine Macs hinweg. Zwei verschiedene Wege in einer Strategie müssen sich abwechseln."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: Überlaufen von {a} zu {b} würde einen stoppen, um den anderen zu laden, sobald {a} ausgelastet ist"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Node auswählen"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Deine Strategien konnten nicht gelesen werden"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Deine Strategien werden gelesen…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Nicht gespeichert"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Entfernen"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Entfernen und neue Chats auf „Beliebiger Node (Auto)“ starten"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Entfernen und Schwarm-Builds deinen Schwarm-Pool nutzen lassen"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "Die Strategie wird entfernt. Ihre Nodes bleiben unverändert."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Entfernen"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "{node} aus {role} entfernen"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "{name} entfernen?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Erneut lesen"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Backend"
   },
@@ -8381,6 +8597,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Chat"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Frontend"
   },
@@ -8389,6 +8608,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Tests"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "Wie {role}"
+  },
+  "strategies.save": {
+    "defaultMessage": "Strategie speichern"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Gespeichert."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} läuft auf {first}. Falls das nicht möglich ist, auf {rest}."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} läuft auf {first}."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{Falls {node} nicht geladen ist, lädt er, und dein Zug wartet (etwa {duration}).} other{Falls {node} nicht geladen ist, lädt er, und die Aufgabe wartet (etwa {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{Falls {node} nicht geladen ist, lädt er, und dein Zug wartet; sein erstes Laden ist noch nicht gemessen.} other{Falls {node} nicht geladen ist, lädt er, und die Aufgabe wartet; sein erstes Laden ist noch nicht gemessen.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} läuft auf {first}; wenn er ausgelastet ist, geht die zusätzliche Arbeit an {rest}."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} läuft auf {first}; wenn er ausgelastet ist, wartet die Arbeit auf ihn."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} wird geteilt: {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} läuft auf {first}."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,one{{node} # Teil} other{{node} # Teile}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, dann {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "Falls {node} nicht geladen ist, kann kein Node danach die Arbeit übernehmen, also wird sie mit Begründung abgelehnt."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "Falls {node} nicht geladen ist, übernimmt {next} währenddessen die Arbeit, und nichts wird geladen."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Eigene Nodes festlegen"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: Teilen zwischen {a} und {b} würde bei jedem Zug einen stoppen, um den anderen zu laden"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "Eine Strategie legt fest, welcher Node was übernimmt: seine Rollen, die Reihenfolge, in der Nodes versucht werden, und wann der nächste dran ist."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: Jeder Wechsel zwischen ihnen stoppt einen und lädt den anderen."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,other{# Wege, einer nach dem anderen: jeder Wechsel stoppt einen und lädt den anderen}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (der nächste bei Auslastung)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (Anteil {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} ist kein Node mehr"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Für Schwarm-Builds verwenden"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Für neue Chats verwenden"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Währenddessen den nächsten nutzen"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Stattdessen wie {role}"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Wird von Schwarm-Builds genutzt."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "Anteil von {node}"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Build-Aufgaben, die die Serverseite schreiben (APIs, Dienste, Daten)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Den Code für jede Aufgabe schreiben"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "Deine Züge in einem Chat: Antworten, Bearbeitungen, Tool-Aufrufe"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Build-Aufgaben, die die Benutzeroberfläche schreiben (Seiten, Komponenten, Stile)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "Die Anfrage lesen, Fragen stellen, recherchieren und den Plan schreiben"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Das Ergebnis ausführen und prüfen und beheben, was die Prüfung findet"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "läuft nicht"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "ausgelastet"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "teilen"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Anbieter {name} ist konfiguriert"

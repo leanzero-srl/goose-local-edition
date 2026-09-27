@@ -85,7 +85,7 @@ const i18n = defineMessages({
   oneWayRule: {
     id: 'strategies.oneWayRule',
     defaultMessage:
-      'One MLX way serves this Mac’s goose at a time, across all your Macs: two different ways in one strategy swap.',
+      'One MLX way serves this Mac’s goose at a time, across all your Macs. Two different ways in one strategy have to take turns.',
   },
   oneWay: {
     id: 'strategies.oneWay',

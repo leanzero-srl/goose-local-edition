@@ -5417,6 +5417,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Dừng"
   },
+  "nodes.auto": {
+    "defaultMessage": "Nút bất kỳ (Tự động)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "đang kiểm tra…"
+  },
   "nodes.cancel": {
     "defaultMessage": "Hủy"
   },
@@ -5464,6 +5470,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Phục vụ bất cứ thứ gì engine của Mac này đang chạy: {model} · chia trên {count} Mac"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Bản dựng swarm dùng:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "Cuộc trò chuyện mới bắt đầu trên:"
   },
   "nodes.fromPool": {
     "defaultMessage": "từ nhóm của bầy"
@@ -5717,6 +5729,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Thêm một Mac khác để chạy các mô hình quá lớn đối với Mac này"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (nút)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (chiến lược)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Hãy bật “{permission}” trên {mac} trước (LeanZero MLX › Các Mac của tôi)"
   },
@@ -5734,6 +5752,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Đang đo các Mac của bạn cho cách này…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Nhóm của bầy của bạn"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Nhóm của bầy của bạn · được bản dựng swarm dùng khi “Bản dựng swarm dùng” là “Nhóm của bầy của bạn”"
   },
   "nodes.readFailed": {
     "defaultMessage": "Không đọc được các nút của bạn"
@@ -5846,14 +5870,8 @@
   "nodes.stopAction": {
     "defaultMessage": "Dừng {node}"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "Chiến lược sẽ cho biết nút nào làm việc gì: vai trò của nó, thứ tự thử các nút và khi nào dùng nút tiếp theo. Cho đến lúc đó, các cuộc trò chuyện và bản dựng swarm dùng các nút trong thẻ Nút."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "Chiến lược sẽ có trong bản phát hành này"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "Nút là một mô hình mà bạn có thể giao việc, trên các Mac của bạn hoặc trên đám mây. Cuộc trò chuyện bắt đầu trên một nút hoặc một chiến lược; bản dựng swarm dùng một chiến lược."
+    "defaultMessage": "Nút là một mô hình mà bạn có thể giao việc, trên các Mac của bạn hoặc trên đám mây. Cuộc trò chuyện bắt đầu trên một nút hoặc một chiến lược; bản dựng swarm dùng một chiến lược hoặc nhóm của bầy của bạn."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Không đọc được nhóm của bầy"
@@ -5866,6 +5884,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nút"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "Không lưu được thay đổi"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (không còn được định nghĩa)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Chưa thay đổi"
   },
   "nodes.usedBy": {
     "defaultMessage": "Được dùng bởi"
@@ -8372,6 +8399,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Bạn đã dừng câu trả lời này sau {elapsed} · {tokens} token"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "Không lưu được thay đổi"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Thêm một nút"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Bản dựng swarm dùng cái này"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "Cuộc trò chuyện mới bắt đầu ở đây"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "Việc bản dựng swarm có dùng được nó hay không sẽ được kiểm tra khi bạn lưu."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Bản dựng swarm có thể dùng chiến lược này."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Bản dựng swarm không thể dùng chiến lược này:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Đang kiểm tra xem bản dựng swarm có dùng được nó không…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "Lập kế hoạch trên {node}: engine thay một bộ lập kế hoạch đám mây bằng một mô hình mà LM Studio đã nạp"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "Các mô hình LM Studio đã nạp trên các Mac của bạn cũng tham gia bản dựng này"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Bản dựng swarm trên engine của Mac này chạy {model}; hãy chọn mô hình của {node} trong Chạy trước"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} chạy trên {mac}; bản dựng swarm chỉ tiếp cận LeanZero MLX qua engine duy nhất của Mac này"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} là một bản chia tách; bản dựng swarm chỉ tiếp cận LeanZero MLX qua engine duy nhất của Mac này"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Bản dựng swarm"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Không đọc được liệu bản dựng swarm có dùng được nó không: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: luôn sẵn sàng"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "Nếu chưa nạp"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Các nút theo thứ tự"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "Khi nào dùng nút tiếp theo"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "Chiến lược mới"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Mỗi lệnh gọi ủy quyền hoán đổi hai lần: sang {build} rồi quay lại {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Đóng"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Nhân bản"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "Thử {node} sớm hơn"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Sửa"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "Sửa {name}"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Tạo một chiến lược để nói rõ cuộc trò chuyện dùng nút nào trước, nút nào đảm nhận khi nút đó không chạy được, và bản dựng swarm dùng những nút nào."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "Chưa có chiến lược nào"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: phục vụ bất cứ thứ gì engine của Mac này đang chạy; không bao giờ nạp"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Liên kết"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural, other{khoảng {duration}, đã đo # lượt nạp}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "chưa đo lượt nạp"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Nạp và chờ"
+  },
+  "strategies.more": {
+    "defaultMessage": "Thêm cho {name}"
+  },
+  "strategies.name": {
+    "defaultMessage": "Chiến lược"
+  },
+  "strategies.new": {
+    "defaultMessage": "Chiến lược mới"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "Chiến lược mới"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "Chưa có nút nào. Hãy tạo một nút trong thẻ Nút trước."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "Không có chiến lược “{id}”. Có thể nó đã bị gỡ."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "một cách ({node}), không hoán đổi"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "không có gì được nạp: mọi nút ở đây đều trên đám mây hoặc theo engine của Mac này"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Không có gì được nạp trên các Mac của bạn cho chiến lược này."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: nút {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Chưa gỡ"
+  },
+  "strategies.note": {
+    "defaultMessage": "Ghi chú (lời của bạn)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "Trên các Mac của bạn"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "Trên các Mac của bạn"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "Một cách phục vụ cuộc trò chuyện của bạn tại một thời điểm: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "Một cách MLX phục vụ goose của Mac này tại một thời điểm, trên tất cả các Mac của bạn. Hai cách khác nhau trong một chiến lược phải thay phiên nhau."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: chuyển phần việc dư từ {a} sang {b} sẽ phải dừng một cái để tải cái kia mỗi khi {a} bận"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Chọn một nút"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Không đọc được các chiến lược của bạn"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Đang đọc các chiến lược của bạn…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Chưa lưu"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Gỡ"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Gỡ, và bắt đầu cuộc trò chuyện mới trên Nút bất kỳ (Tự động)"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Gỡ, và để bản dựng swarm dùng nhóm của bầy của bạn"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "Chiến lược bị gỡ. Các nút của nó vẫn giữ nguyên."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Gỡ"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "Đưa {node} ra khỏi {role}"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "Gỡ {name}?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Đọc lại"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Backend"
   },
@@ -8381,6 +8597,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Trò chuyện"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Frontend"
   },
@@ -8389,6 +8608,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Kiểm thử"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "Giống như {role}"
+  },
+  "strategies.save": {
+    "defaultMessage": "Lưu chiến lược"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Đã lưu."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} chạy trên {first}. Nếu không chạy được, trên {rest}."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} chạy trên {first}."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{Nếu {node} chưa được nạp, nó sẽ nạp và lượt của bạn phải chờ (khoảng {duration}).} other{Nếu {node} chưa được nạp, nó sẽ nạp và tác vụ phải chờ (khoảng {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{Nếu {node} chưa được nạp, nó sẽ nạp và lượt của bạn phải chờ; lần nạp đầu tiên của nó chưa được đo.} other{Nếu {node} chưa được nạp, nó sẽ nạp và tác vụ phải chờ; lần nạp đầu tiên của nó chưa được đo.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} chạy trên {first}; khi nó bận, phần việc dư ra sẽ chuyển sang {rest}."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} chạy trên {first}; khi nó bận, công việc sẽ chờ nó."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} được chia sẻ: {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} chạy trên {first}."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural, other{{node} # phần}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, rồi {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "Nếu {node} chưa được nạp, không nút nào sau nó có thể nhận việc, nên việc bị từ chối kèm lý do."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "Nếu {node} chưa được nạp, {next} sẽ nhận việc trong lúc đó và không có gì được nạp."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Đặt các nút riêng của nó"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: chia sẻ giữa {a} và {b} sẽ khiến một cái dừng lại để nạp cái kia ở mỗi lượt"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "Một chiến lược nói rõ nút nào làm việc gì: vai trò của nó, thứ tự thử các nút, và khi nào dùng nút tiếp theo."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: mỗi lần chuyển giữa chúng sẽ dừng một cái và tải cái kia."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural, other{# cách, mỗi lần một cách: mỗi lần đổi sẽ dừng cách này và nạp cách kia}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (kế tiếp khi bận)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (chia sẻ {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} không còn là một nút nữa"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Dùng cho bản dựng swarm"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Dùng cho cuộc trò chuyện mới"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Dùng tạm cái tiếp theo"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Giống như {role} thay vào đó"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Được bản dựng swarm dùng."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "phần chia của {node}"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Các tác vụ dựng viết phần máy chủ (API, dịch vụ, dữ liệu)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Viết mã cho từng tác vụ"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "Các lượt của bạn trong một cuộc trò chuyện: câu trả lời, chỉnh sửa, gọi công cụ"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Các tác vụ dựng viết giao diện người dùng (trang, thành phần, kiểu dáng)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "Đọc yêu cầu, đặt câu hỏi, nghiên cứu và viết kế hoạch"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Chạy và kiểm tra kết quả, rồi sửa những gì việc kiểm tra tìm thấy"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "không chạy được"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "bận"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "chia sẻ"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Nhà cung cấp {name} đã được định cấu hình"

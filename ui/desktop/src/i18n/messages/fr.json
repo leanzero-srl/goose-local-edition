@@ -5417,6 +5417,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Arrêter"
   },
+  "nodes.auto": {
+    "defaultMessage": "N’importe quel nœud (Auto)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "vérification…"
+  },
   "nodes.cancel": {
     "defaultMessage": "Annuler"
   },
@@ -5464,6 +5470,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Sert ce que le moteur de ce Mac exécute : {model} · réparti sur {count} Mac"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Les builds de l’essaim utilisent :"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "Les nouvelles discussions démarrent sur :"
   },
   "nodes.fromPool": {
     "defaultMessage": "de votre pool de l’essaim"
@@ -5717,6 +5729,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Ajoutez un autre Mac pour exécuter des modèles trop gros pour celui-ci"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (nœud)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (stratégie)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Activez d’abord « {permission} » sur {mac} (LeanZero MLX › Mes Mac)"
   },
@@ -5734,6 +5752,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Mesure de vos Mac pour cette option…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Votre pool de l’essaim"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Votre pool de l’essaim · utilisé par les builds de l’essaim tant que « Les builds de l’essaim utilisent » est « Votre pool de l’essaim »"
   },
   "nodes.readFailed": {
     "defaultMessage": "Impossible de lire vos nœuds"
@@ -5846,14 +5870,8 @@
   "nodes.stopAction": {
     "defaultMessage": "Arrêter {node}"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "Une stratégie indiquera quel nœud fait quoi : ses rôles, l'ordre dans lequel essayer les nœuds et quand passer au suivant. D'ici là, les discussions et les builds de l'essaim utilisent les nœuds de l'onglet Nœuds."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "Les stratégies arrivent dans cette version"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "Un nœud est un modèle auquel vous confiez du travail, sur vos Mac ou dans le cloud. Les discussions démarrent sur un nœud ou une stratégie ; les builds de l'essaim utilisent une stratégie."
+    "defaultMessage": "Un nœud est un modèle auquel vous pouvez confier du travail, sur vos Mac ou dans le cloud. Les discussions démarrent sur un nœud ou une stratégie ; les builds de l’essaim utilisent une stratégie ou votre pool de l’essaim."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Impossible de lire votre pool de l’essaim"
@@ -5866,6 +5884,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nœuds"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "Impossible d’enregistrer la modification"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (n’est plus défini)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Non modifié"
   },
   "nodes.usedBy": {
     "defaultMessage": "Utilisé par"
@@ -8372,6 +8399,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Vous avez arrêté cette réponse après {elapsed} · {tokens} jetons"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "Impossible d’enregistrer la modification"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Ajouter un nœud"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Les builds de l’essaim utilisent ceci"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "Les nouvelles discussions démarrent ici"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "La possibilité pour les builds de l’essaim de l’utiliser est vérifiée à l’enregistrement."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Les builds de l’essaim peuvent utiliser cette stratégie."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Les builds de l’essaim ne peuvent pas utiliser cette stratégie :"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Vérification de la possibilité pour les builds de l’essaim de l’utiliser…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "Planification sur {node} : le moteur remplace un planificateur cloud par un modèle que LM Studio a chargé"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "Les modèles LM Studio chargés sur votre flotte rejoignent aussi ce build"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Les builds de l’essaim sur le moteur de ce Mac exécutent {model} ; choisissez d’abord le modèle de {node} dans Exécuter"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} s’exécute sur {mac} ; les builds de l’essaim n’atteignent LeanZero MLX que via le moteur unique de ce Mac"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} est une répartition ; les builds de l’essaim n’atteignent LeanZero MLX que via le moteur unique de ce Mac"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Builds de l’essaim"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Impossible de savoir si les builds de l’essaim peuvent l’utiliser : {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node} : toujours disponible"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "Si non chargé"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Nœuds dans l’ordre"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "Quand utiliser le suivant"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "Nouvelle stratégie"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Chaque appel de délégation bascule deux fois : vers {build} puis retour à {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Fermer"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Dupliquer"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "Essayer {node} plus tôt"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Modifier"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "Modifier {name}"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Créez-en une pour indiquer quel nœud les discussions utilisent en premier, quel nœud prend le relais quand il ne peut pas s’exécuter, et quels nœuds les builds de l’essaim utilisent."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "Pas encore de stratégies"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node} : sert ce que le moteur de ce Mac exécute ; ne charge jamais"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Link"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,one{environ {duration}, # chargement mesuré} other{environ {duration}, # chargements mesurés}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "chargement pas encore mesuré"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Charger et attendre"
+  },
+  "strategies.more": {
+    "defaultMessage": "Plus pour {name}"
+  },
+  "strategies.name": {
+    "defaultMessage": "Stratégie"
+  },
+  "strategies.new": {
+    "defaultMessage": "Nouvelle stratégie"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "Nouvelle stratégie"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "Il n’y a pas encore de nœuds. Créez-en un d’abord dans l’onglet Nœuds."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "Il n’existe pas de stratégie « {id} ». Elle a peut-être été supprimée."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "une option ({node}), aucun changement"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "rien ne charge : chaque nœud ici est dans le cloud ou suit le moteur de ce Mac"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Rien ne charge sur vos Mac pour cette stratégie."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role} : nœud {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Non supprimé"
+  },
+  "strategies.note": {
+    "defaultMessage": "Note (vos mots)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "Sur vos Mac"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "Sur vos Mac"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "Une seule option sert vos discussions à la fois : {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "Une seule option MLX sert goose sur ce Mac à la fois, sur tous vos Mac. Deux options différentes dans une stratégie doivent se relayer."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role} : déborder de {a} vers {b} arrêterait l’un pour charger l’autre chaque fois que {a} est occupé"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Choisir un nœud"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Impossible de lire vos stratégies"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Lecture de vos stratégies…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Non enregistré"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Supprimer"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Supprimer, et démarrer les nouvelles discussions sur N’importe quel nœud (Auto)"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Supprimer, et laisser les builds de l’essaim utiliser votre pool de l’essaim"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "La stratégie est supprimée. Ses nœuds restent tels quels."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Supprimer"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "Retirer {node} de {role}"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "Supprimer {name} ?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Relire"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Backend"
   },
@@ -8381,6 +8597,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Discussion"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role} : {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Frontend"
   },
@@ -8389,6 +8608,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Tests"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "Comme {role}"
+  },
+  "strategies.save": {
+    "defaultMessage": "Enregistrer la stratégie"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Enregistré."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} s’exécute sur {first}. S’il ne peut pas s’exécuter, sur {rest}."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} s’exécute sur {first}."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{Si {node} n’est pas chargé, il se charge et votre tour attend (environ {duration}).} other{Si {node} n’est pas chargé, il se charge et la tâche attend (environ {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{Si {node} n’est pas chargé, il se charge et votre tour attend ; son premier chargement n’est pas encore mesuré.} other{Si {node} n’est pas chargé, il se charge et la tâche attend ; son premier chargement n’est pas encore mesuré.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} s’exécute sur {first} ; quand il est occupé, le travail en trop va à {rest}."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} s’exécute sur {first} ; quand il est occupé, le travail l’attend."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} est partagé : {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} s’exécute sur {first}."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,one{{node} # partie} other{{node} # parties}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, puis {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "Si {node} n’est pas chargé, aucun nœud après lui ne peut prendre le travail, il est donc refusé avec le motif."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "Si {node} n’est pas chargé, {next} prend le travail entre-temps et rien n’est chargé."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Définir ses propres nœuds"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role} : partager entre {a} et {b} arrêterait l’un pour charger l’autre à chaque tour"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "Une stratégie indique quel nœud fait quoi : ses rôles, l’ordre dans lequel essayer les nœuds, et quand utiliser le suivant."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b} : chaque bascule entre eux arrête l’un et charge l’autre."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,other{# options, une à la fois : chaque bascule arrête l’une et charge l’autre}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (le suivant en cas d’occupation)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (partage {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} n’est plus un nœud"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Utiliser pour les builds de l’essaim"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Utiliser pour les nouvelles discussions"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Utiliser le suivant entre-temps"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Comme {role} à la place"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Utilisée par les builds de l’essaim."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node} : {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "part de {node}"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Tâches de build qui écrivent le côté serveur (API, services, données)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Écrire le code de chaque tâche"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "Vos tours dans une discussion : réponses, modifications, appels d’outils"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Tâches de build qui écrivent l’interface utilisateur (pages, composants, styles)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "Lire la demande, poser des questions, faire des recherches et écrire le plan"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Exécuter et vérifier le résultat, et corriger ce que la vérification trouve"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "ne démarre pas"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "occupé"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "partager"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Le fournisseur {name} est configuré"

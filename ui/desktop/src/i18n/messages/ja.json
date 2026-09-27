@@ -5417,6 +5417,12 @@
   "nodes.actionStop": {
     "defaultMessage": "停止"
   },
+  "nodes.auto": {
+    "defaultMessage": "任意のノード (自動)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "確認中…"
+  },
   "nodes.cancel": {
     "defaultMessage": "キャンセル"
   },
@@ -5464,6 +5470,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "この Mac のエンジンで実行中のものを提供: {model} · {count} 台の Mac に分割"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "swarm のビルドの使用先:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "新しいチャットの開始先:"
   },
   "nodes.fromPool": {
     "defaultMessage": "スウォームのプールから"
@@ -5717,6 +5729,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "この Mac には大きすぎるモデルを実行するには、別の Mac を追加してください"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name}(ノード)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name}(ストラテジー)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "先に {mac} で「{permission}」をオンにしてください(LeanZero MLX › マイ Mac)"
   },
@@ -5734,6 +5752,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "この方法について Mac を計測中…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "あなたのスウォームのプール"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "あなたのスウォームのプール · 「swarm のビルドの使用先」が「あなたのスウォームのプール」のとき、swarm のビルドが使用します"
   },
   "nodes.readFailed": {
     "defaultMessage": "ノードを読み取れませんでした"
@@ -5846,14 +5870,8 @@
   "nodes.stopAction": {
     "defaultMessage": "{node} を停止"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "ストラテジーでは、どのノードが何を担当するかを決めます。ノードの役割、ノードを試す順番、次のノードに切り替えるタイミングです。それまでは、チャットとswarm のビルドは「ノード」タブのノードを使います。"
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "ストラテジーはこのリリースで登場します"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "ノードとは、Mac 上またはクラウドで作業を任せられるモデルです。チャットはノードかストラテジーで始まり、swarm のビルドはストラテジーを使います。"
+    "defaultMessage": "ノードとは、あなたの Mac またはクラウドで作業を任せられるモデルです。チャットはノードかストラテジーで始まり、swarm のビルドはストラテジーかあなたのスウォームのプールを使います。"
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "スウォームのプールを読み取れませんでした"
@@ -5866,6 +5884,15 @@
   },
   "nodes.title": {
     "defaultMessage": "ノード"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "変更を保存できませんでした"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id}(もう定義されていません)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "変更されませんでした"
   },
   "nodes.usedBy": {
     "defaultMessage": "使用元"
@@ -8372,6 +8399,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "{elapsed} でこの回答を停止しました · {tokens} トークン"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "変更を保存できませんでした"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "ノードを追加"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "swarm のビルドがこれを使用"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "新しいチャットはここから開始"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "swarm のビルドで使用できるかどうかは、保存時に確認されます。"
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "swarm のビルドはこのストラテジーを使用できます。"
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "swarm のビルドはこのストラテジーを使用できません:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "swarm のビルドで使用できるか確認中…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "{node} で計画: エンジンはクラウドのプランナーを LM Studio がロードしたモデルに置き換えます"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "あなたのフリート上で LM Studio がロードしたモデルも、このビルドに参加します"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "この Mac のエンジンでの swarm のビルドは {model} を実行します。先に「実行」で {node} のモデルを選んでください"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} は {mac} で実行されます。swarm のビルドはこの Mac の単一エンジンを通じてのみ LeanZero MLX に到達します"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} は分割です。swarm のビルドはこの Mac の単一エンジンを通じてのみ LeanZero MLX に到達します"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "swarm のビルド"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "swarm のビルドで使用できるかどうかを読み取れませんでした: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: 常に利用可能"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "未ロードの場合"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "ノードの順序"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "次を使うタイミング"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "新しいストラテジー"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "デリゲート呼び出しのたびに 2 回切り替わります: {build} へ、そして {chat} へ戻ります"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "複製"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "{node} を先に試す"
+  },
+  "strategies.edit": {
+    "defaultMessage": "編集"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "{name} を編集"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "作成すると、チャットが最初に使うノード、実行できないときに引き継ぐノード、swarm のビルドが使うノードを指定できます。"
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "ストラテジーはまだありません"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: この Mac のエンジンで実行中のものを提供します。ロードすることはありません"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Link"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count,plural,other{約 {duration} · # 回のロードを計測済み}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "ロードはまだ計測されていません"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "ロードして待つ"
+  },
+  "strategies.more": {
+    "defaultMessage": "{name} のその他の操作"
+  },
+  "strategies.name": {
+    "defaultMessage": "ストラテジー"
+  },
+  "strategies.new": {
+    "defaultMessage": "新しいストラテジー"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "新しいストラテジー"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "ノードがまだありません。先に「ノード」タブで作成してください。"
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "「{id}」というストラテジーはありません。削除された可能性があります。"
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "1 つの方法({node})、切り替えなし"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "何もロードされません: ここにあるノードはすべてクラウドか、この Mac のエンジンに追従しています"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "このストラテジーでは、あなたの Mac 上で何もロードされません。"
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: ノード {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "削除されませんでした"
+  },
+  "strategies.note": {
+    "defaultMessage": "メモ(自分の言葉で)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "あなたの Mac"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "あなたの Mac"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "あなたのチャットに使われる方法は常に 1 つです: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "この Mac の goose には、すべての Mac を通じて一度に 1 つの MLX の方法だけが使われます。1 つのストラテジー内の異なる 2 つの方法は交代で動きます。"
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: {a} から {b} へあふれさせると、{a} がビジーになるたびに一方を停止してもう一方を読み込むことになります"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "ノードを選択"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "ストラテジーを読み取れませんでした"
+  },
+  "strategies.reading": {
+    "defaultMessage": "ストラテジーを読み取り中…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "保存されませんでした"
+  },
+  "strategies.remove": {
+    "defaultMessage": "削除"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "削除し、新しいチャットは「任意のノード (自動)」で始める"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "削除し、swarm のビルドはあなたのスウォームのプールを使う"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "ストラテジーが削除されます。ノードはそのままです。"
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "削除"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "{role} から {node} を外す"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "{name} を削除しますか？"
+  },
+  "strategies.retry": {
+    "defaultMessage": "再読み込み"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "バックエンド"
   },
@@ -8381,6 +8597,9 @@
   "strategies.roleChat": {
     "defaultMessage": "チャット"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "フロントエンド"
   },
@@ -8389,6 +8608,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "テスト"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "{role} と同じ"
+  },
+  "strategies.save": {
+    "defaultMessage": "ストラテジーを保存"
+  },
+  "strategies.saved": {
+    "defaultMessage": "保存しました。"
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} は {first} で実行されます。実行できない場合は {rest} で実行されます。"
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} は {first} で実行されます。"
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main}{clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{{node} がロードされていない場合、ロードしてあなたのターンが待機します(約 {duration})。} other{{node} がロードされていない場合、ロードしてタスクが待機します(約 {duration})。}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{{node} がロードされていない場合、ロードしてあなたのターンが待機します。初回のロードはまだ計測されていません。} other{{node} がロードされていない場合、ロードしてタスクが待機します。初回のロードはまだ計測されていません。}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} は {first} で実行されます。混雑しているときは、追加の作業が {rest} に回されます。"
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} は {first} で実行されます。混雑しているときは、作業はそれを待ちます。"
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} は共有されます: {parts}。"
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} は {first} で実行されます。"
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight,plural,other{{node}(#)}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}、その後 {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "{node} がロードされていない場合、それ以降のノードは作業を引き受けられないため、理由とともに拒否されます。"
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "{node} がロードされていない場合、その間は {next} が作業を引き受け、何もロードされません。"
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "独自のノードを設定"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: {a} と {b} で共有すると、ターンのたびに一方を停止してもう一方をロードすることになります"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "ストラテジーは、どのノードが何をするかを指定します。役割、ノードを試す順番、次のノードを使うタイミングです。"
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: 切り替えるたびに一方を停止し、もう一方を読み込みます。"
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count,plural,other{# 通りの方法、同時には 1 つだけ: 切り替えるたびに一方を停止し、もう一方をロードします}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain}(混雑時は次へ)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain}(割合 {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} はもうノードではありません"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "swarm のビルドに使う"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "新しいチャットに使う"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "その間は次を使う"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "代わりに {role} と同じにする"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "swarm のビルドで使用されています。"
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node}({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "{node} の割合"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "サーバー側(API、サービス、データ)を書くビルドタスク"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "各タスクのコードを書く"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "チャットでのあなたのターン: 回答、編集、ツール呼び出し"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "ユーザーインターフェース(ページ、コンポーネント、スタイル)を書くビルドタスク"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "リクエストを読み、質問し、調査してプランを書く"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "結果を実行して確認し、チェックで見つかった問題を修正する"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "実行不可"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "混雑"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "共有"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name}プロバイダーが設定されています"

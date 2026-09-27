@@ -5417,6 +5417,12 @@
   "nodes.actionStop": {
     "defaultMessage": "Hentikan"
   },
+  "nodes.auto": {
+    "defaultMessage": "Mana-mana nod (Auto)"
+  },
+  "nodes.buildsChecking": {
+    "defaultMessage": "menyemak…"
+  },
   "nodes.cancel": {
     "defaultMessage": "Batal"
   },
@@ -5464,6 +5470,12 @@
   },
   "nodes.followsSplit": {
     "defaultMessage": "Melayan apa sahaja yang dijalankan enjin Mac ini: {model} · dibahagikan merentas {count} Mac"
+  },
+  "nodes.forBuilds": {
+    "defaultMessage": "Binaan swarm menggunakan:"
+  },
+  "nodes.forNewChats": {
+    "defaultMessage": "Sembang baharu bermula pada:"
   },
   "nodes.fromPool": {
     "defaultMessage": "daripada kumpulan swarm anda"
@@ -5717,6 +5729,12 @@
   "nodes.oneMacHint": {
     "defaultMessage": "Tambah Mac lain untuk menjalankan model yang terlalu besar untuk Mac ini"
   },
+  "nodes.optionNode": {
+    "defaultMessage": "{name} (nod)"
+  },
+  "nodes.optionStrategy": {
+    "defaultMessage": "{name} (strategi)"
+  },
   "nodes.permissionOff": {
     "defaultMessage": "Hidupkan “{permission}” pada {mac} dahulu (LeanZero MLX › Mac Saya)"
   },
@@ -5734,6 +5752,12 @@
   },
   "nodes.planning": {
     "defaultMessage": "Mengukur Mac anda untuk cara ini…"
+  },
+  "nodes.pool": {
+    "defaultMessage": "Kumpulan swarm anda"
+  },
+  "nodes.poolSection": {
+    "defaultMessage": "Kumpulan swarm anda · digunakan oleh binaan swarm semasa “Binaan swarm menggunakan” ialah “Kumpulan swarm anda”"
   },
   "nodes.readFailed": {
     "defaultMessage": "Nod anda tidak dapat dibaca"
@@ -5846,14 +5870,8 @@
   "nodes.stopAction": {
     "defaultMessage": "Hentikan {node}"
   },
-  "nodes.strategiesSoonBody": {
-    "defaultMessage": "Strategi akan menentukan nod mana melakukan apa: peranannya, susunan nod dicuba dan bila menggunakan yang seterusnya. Sehingga itu, sembang dan binaan swarm menggunakan nod dalam tab Nod."
-  },
-  "nodes.strategiesSoonTitle": {
-    "defaultMessage": "Strategi hadir dalam keluaran ini"
-  },
   "nodes.subtitle": {
-    "defaultMessage": "Nod ialah model yang boleh anda serahkan kerja, pada Mac anda atau di awan. Sembang bermula pada nod atau strategi; binaan swarm menggunakan strategi."
+    "defaultMessage": "Nod ialah model yang boleh anda serahkan kerja, pada Mac anda atau di awan. Sembang bermula pada nod atau strategi; binaan swarm menggunakan strategi atau kumpulan swarm anda."
   },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Kumpulan swarm anda tidak dapat dibaca"
@@ -5866,6 +5884,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nod"
+  },
+  "nodes.useFailed": {
+    "defaultMessage": "Perubahan tidak dapat disimpan"
+  },
+  "nodes.useMissing": {
+    "defaultMessage": "{id} (tidak lagi ditakrifkan)"
+  },
+  "nodes.useNotSaved": {
+    "defaultMessage": "Tidak diubah"
   },
   "nodes.usedBy": {
     "defaultMessage": "Digunakan oleh"
@@ -8372,6 +8399,195 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Anda menghentikan jawapan ini selepas {elapsed} · {tokens} token"
   },
+  "strategies.actionFailed": {
+    "defaultMessage": "Perubahan tidak dapat disimpan"
+  },
+  "strategies.addNode": {
+    "defaultMessage": "Tambah nod"
+  },
+  "strategies.badgeBuilds": {
+    "defaultMessage": "Binaan swarm menggunakan ini"
+  },
+  "strategies.badgeChats": {
+    "defaultMessage": "Sembang baharu bermula di sini"
+  },
+  "strategies.buildsAfterSave": {
+    "defaultMessage": "Sama ada binaan swarm boleh menggunakannya disemak apabila anda menyimpan."
+  },
+  "strategies.buildsCan": {
+    "defaultMessage": "Binaan swarm boleh menggunakan strategi ini."
+  },
+  "strategies.buildsCantUse": {
+    "defaultMessage": "Binaan swarm tidak boleh menggunakan strategi ini:"
+  },
+  "strategies.buildsChecking": {
+    "defaultMessage": "Menyemak sama ada binaan swarm boleh menggunakannya…"
+  },
+  "strategies.buildsCloudPlanner": {
+    "defaultMessage": "Perancangan pada {node}: enjin menggantikan perancang awan dengan model yang telah dimuatkan oleh LM Studio"
+  },
+  "strategies.buildsLmStudioJoin": {
+    "defaultMessage": "Model LM Studio yang dimuatkan pada semua peranti anda turut menyertai binaan ini"
+  },
+  "strategies.buildsOtherModel": {
+    "defaultMessage": "Binaan swarm pada enjin Mac ini menjalankan {model}; pilih dahulu model {node} dalam Jalankan"
+  },
+  "strategies.buildsRemote": {
+    "defaultMessage": "{node} berjalan pada {mac}; binaan swarm hanya sampai ke LeanZero MLX melalui satu-satunya enjin Mac ini"
+  },
+  "strategies.buildsSplit": {
+    "defaultMessage": "{node} ialah pembahagian; binaan swarm hanya sampai ke LeanZero MLX melalui satu-satunya enjin Mac ini"
+  },
+  "strategies.buildsTitle": {
+    "defaultMessage": "Binaan swarm"
+  },
+  "strategies.buildsUnread": {
+    "defaultMessage": "Sama ada binaan swarm boleh menggunakannya tidak dapat dibaca: {error}"
+  },
+  "strategies.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "strategies.cloudRow": {
+    "defaultMessage": "{node}: sentiasa tersedia"
+  },
+  "strategies.colIfNotLoaded": {
+    "defaultMessage": "Jika tidak dimuatkan"
+  },
+  "strategies.colNodes": {
+    "defaultMessage": "Nod mengikut susunan"
+  },
+  "strategies.colWhen": {
+    "defaultMessage": "Bila menggunakan yang seterusnya"
+  },
+  "strategies.defaultName": {
+    "defaultMessage": "Strategi baharu"
+  },
+  "strategies.delegateSwaps": {
+    "defaultMessage": "Setiap panggilan wakilan bertukar dua kali: ke {build} dan kembali ke {chat}"
+  },
+  "strategies.dismiss": {
+    "defaultMessage": "Tutup"
+  },
+  "strategies.duplicate": {
+    "defaultMessage": "Pendua"
+  },
+  "strategies.earlier": {
+    "defaultMessage": "Cuba {node} lebih awal"
+  },
+  "strategies.edit": {
+    "defaultMessage": "Edit"
+  },
+  "strategies.editTitle": {
+    "defaultMessage": "Edit {name}"
+  },
+  "strategies.emptyBody": {
+    "defaultMessage": "Cipta satu untuk menyatakan nod mana yang sembang gunakan dahulu, nod mana yang mengambil alih apabila ia tidak boleh berjalan, dan nod mana yang binaan swarm gunakan."
+  },
+  "strategies.emptyTitle": {
+    "defaultMessage": "Belum ada strategi"
+  },
+  "strategies.followsRow": {
+    "defaultMessage": "{node}: melayan apa sahaja yang dijalankan enjin Mac ini; tidak pernah dimuatkan"
+  },
+  "strategies.linkLabel": {
+    "defaultMessage": "Pautan"
+  },
+  "strategies.loadAbout": {
+    "defaultMessage": "{count, plural, other {kira-kira {duration}, # pemuatan diukur}}"
+  },
+  "strategies.loadUnmeasured": {
+    "defaultMessage": "pemuatan belum diukur"
+  },
+  "strategies.loadWait": {
+    "defaultMessage": "Muatkan dan tunggu"
+  },
+  "strategies.more": {
+    "defaultMessage": "Lagi untuk {name}"
+  },
+  "strategies.name": {
+    "defaultMessage": "Strategi"
+  },
+  "strategies.new": {
+    "defaultMessage": "Strategi baharu"
+  },
+  "strategies.newTitle": {
+    "defaultMessage": "Strategi baharu"
+  },
+  "strategies.noNodes": {
+    "defaultMessage": "Belum ada nod. Cipta satu dahulu dalam tab Nod."
+  },
+  "strategies.noSuchStrategy": {
+    "defaultMessage": "Tiada strategi “{id}”. Ia mungkin telah dialih keluar."
+  },
+  "strategies.noSwaps": {
+    "defaultMessage": "satu cara ({node}), tiada pertukaran"
+  },
+  "strategies.noWays": {
+    "defaultMessage": "tiada yang dimuatkan: setiap nod di sini berada di awan atau mengikut enjin Mac ini"
+  },
+  "strategies.noWaysPanel": {
+    "defaultMessage": "Tiada yang dimuatkan pada Mac anda untuk strategi ini."
+  },
+  "strategies.nodeAt": {
+    "defaultMessage": "{role}: nod {rank}"
+  },
+  "strategies.notRemoved": {
+    "defaultMessage": "Tidak dialih keluar"
+  },
+  "strategies.note": {
+    "defaultMessage": "Nota (perkataan anda sendiri)"
+  },
+  "strategies.onYourMacs": {
+    "defaultMessage": "Pada Mac anda"
+  },
+  "strategies.onYourMacsTitle": {
+    "defaultMessage": "Pada Mac anda"
+  },
+  "strategies.oneWay": {
+    "defaultMessage": "Satu cara pada satu masa melayan sembang anda: {node}"
+  },
+  "strategies.oneWayRule": {
+    "defaultMessage": "Merentas semua Mac anda, hanya satu cara MLX melayan goose Mac ini pada satu masa. Dua cara berbeza dalam satu strategi perlu bergilir-gilir."
+  },
+  "strategies.overflowTwoWays": {
+    "defaultMessage": "{role}: melimpahkan kerja dari {a} ke {b} akan menghentikan satu untuk memuatkan yang lain setiap kali {a} sibuk"
+  },
+  "strategies.pickNode": {
+    "defaultMessage": "Pilih nod"
+  },
+  "strategies.readFailed": {
+    "defaultMessage": "Strategi anda tidak dapat dibaca"
+  },
+  "strategies.reading": {
+    "defaultMessage": "Membaca strategi anda…"
+  },
+  "strategies.refused": {
+    "defaultMessage": "Tidak disimpan"
+  },
+  "strategies.remove": {
+    "defaultMessage": "Alih keluar"
+  },
+  "strategies.removeAndAuto": {
+    "defaultMessage": "Alih keluar, dan mulakan sembang baharu pada Mana-mana nod (Auto)"
+  },
+  "strategies.removeAndPool": {
+    "defaultMessage": "Alih keluar, dan biarkan binaan swarm menggunakan kumpulan swarm anda"
+  },
+  "strategies.removeBody": {
+    "defaultMessage": "Strategi dialih keluar. Nodnya kekal seperti sedia ada."
+  },
+  "strategies.removeConfirm": {
+    "defaultMessage": "Alih keluar"
+  },
+  "strategies.removeEntry": {
+    "defaultMessage": "Keluarkan {node} daripada {role}"
+  },
+  "strategies.removeTitle": {
+    "defaultMessage": "Alih keluar {name}?"
+  },
+  "strategies.retry": {
+    "defaultMessage": "Baca semula"
+  },
   "strategies.roleBackend": {
     "defaultMessage": "Backend"
   },
@@ -8381,6 +8597,9 @@
   "strategies.roleChat": {
     "defaultMessage": "Sembang"
   },
+  "strategies.roleField": {
+    "defaultMessage": "{role}: {field}"
+  },
   "strategies.roleFrontend": {
     "defaultMessage": "Frontend"
   },
@@ -8389,6 +8608,132 @@
   },
   "strategies.roleTesting": {
     "defaultMessage": "Pengujian"
+  },
+  "strategies.sameAs": {
+    "defaultMessage": "Sama seperti {role}"
+  },
+  "strategies.save": {
+    "defaultMessage": "Simpan strategi"
+  },
+  "strategies.saved": {
+    "defaultMessage": "Disimpan."
+  },
+  "strategies.sentenceFailoverMany": {
+    "defaultMessage": "{role} berjalan pada {first}. Jika ia tidak boleh berjalan, pada {rest}."
+  },
+  "strategies.sentenceFailoverOne": {
+    "defaultMessage": "{role} berjalan pada {first}."
+  },
+  "strategies.sentenceJoin": {
+    "defaultMessage": "{main} {clause}"
+  },
+  "strategies.sentenceLoadMeasured": {
+    "defaultMessage": "{who,select,chat{Jika {node} tidak dimuatkan, ia dimuatkan dan giliran anda menunggu (kira-kira {duration}).} other{Jika {node} tidak dimuatkan, ia dimuatkan dan tugas menunggu (kira-kira {duration}).}}"
+  },
+  "strategies.sentenceLoadUnmeasured": {
+    "defaultMessage": "{who,select,chat{Jika {node} tidak dimuatkan, ia dimuatkan dan giliran anda menunggu; pemuatan pertamanya belum diukur.} other{Jika {node} tidak dimuatkan, ia dimuatkan dan tugas menunggu; pemuatan pertamanya belum diukur.}}"
+  },
+  "strategies.sentenceOverflowMany": {
+    "defaultMessage": "{role} berjalan pada {first}; apabila ia sibuk, kerja tambahan pergi ke {rest}."
+  },
+  "strategies.sentenceOverflowOne": {
+    "defaultMessage": "{role} berjalan pada {first}; apabila ia sibuk, kerja menunggunya."
+  },
+  "strategies.sentenceShareMany": {
+    "defaultMessage": "{role} dikongsi: {parts}."
+  },
+  "strategies.sentenceShareOne": {
+    "defaultMessage": "{role} berjalan pada {first}."
+  },
+  "strategies.sentenceSharePart": {
+    "defaultMessage": "{weight, plural, other {{node} # bahagian}}"
+  },
+  "strategies.sentenceThen": {
+    "defaultMessage": "{earlier}, kemudian {next}"
+  },
+  "strategies.sentenceUseNextLast": {
+    "defaultMessage": "Jika {node} tidak dimuatkan, tiada nod selepasnya boleh mengambil alih kerja itu, jadi ia ditolak berserta sebabnya."
+  },
+  "strategies.sentenceUseNextMany": {
+    "defaultMessage": "Jika {node} tidak dimuatkan, sementara itu {next} mengambil alih kerja dan tiada yang dimuatkan."
+  },
+  "strategies.setOwn": {
+    "defaultMessage": "Tetapkan nod sendiri"
+  },
+  "strategies.shareTwoWays": {
+    "defaultMessage": "{role}: perkongsian antara {a} dan {b} akan menghentikan satu untuk memuatkan yang lain pada setiap giliran"
+  },
+  "strategies.subtitle": {
+    "defaultMessage": "Strategi menyatakan nod mana melakukan apa: peranannya, susunan nod dicuba dan bila menggunakan yang seterusnya."
+  },
+  "strategies.swapPair": {
+    "defaultMessage": "{a} ⇄ {b}"
+  },
+  "strategies.swapPairWarn": {
+    "defaultMessage": "{a} ⇄ {b}: setiap pertukaran antara keduanya menghentikan satu dan memuatkan yang lain."
+  },
+  "strategies.swapsSummary": {
+    "defaultMessage": "{count, plural, other {# cara, satu demi satu: setiap pertukaran menghentikan satu dan memuatkan yang lain}}"
+  },
+  "strategies.tagOverflow": {
+    "defaultMessage": "{chain} (seterusnya apabila sibuk)"
+  },
+  "strategies.tagShare": {
+    "defaultMessage": "{chain} (bahagian {ratio})"
+  },
+  "strategies.unknownNode": {
+    "defaultMessage": "{id} bukan lagi nod"
+  },
+  "strategies.useForBuilds": {
+    "defaultMessage": "Guna untuk binaan swarm"
+  },
+  "strategies.useForChats": {
+    "defaultMessage": "Guna untuk sembang baharu"
+  },
+  "strategies.useNext": {
+    "defaultMessage": "Guna yang seterusnya sementara itu"
+  },
+  "strategies.useSameAs": {
+    "defaultMessage": "Sama seperti {role} sebagai gantinya"
+  },
+  "strategies.usedByBuilds": {
+    "defaultMessage": "Digunakan oleh binaan swarm."
+  },
+  "strategies.wayLoad": {
+    "defaultMessage": "{node} ({load})"
+  },
+  "strategies.wayRow": {
+    "defaultMessage": "{node}: {load}"
+  },
+  "strategies.weightOf": {
+    "defaultMessage": "bahagian daripada {node}"
+  },
+  "strategies.whatBackend": {
+    "defaultMessage": "Tugasan binaan yang menulis bahagian pelayan (API, perkhidmatan, data)"
+  },
+  "strategies.whatBuild": {
+    "defaultMessage": "Menulis kod untuk setiap tugasan"
+  },
+  "strategies.whatChat": {
+    "defaultMessage": "Giliran anda dalam sembang: jawapan, edit, panggilan alat"
+  },
+  "strategies.whatFrontend": {
+    "defaultMessage": "Tugasan binaan yang menulis antara muka pengguna (halaman, komponen, gaya)"
+  },
+  "strategies.whatPlanning": {
+    "defaultMessage": "Membaca permintaan, bertanya soalan, menyelidik dan menulis pelan"
+  },
+  "strategies.whatTesting": {
+    "defaultMessage": "Menjalankan dan menyemak hasil, serta membaiki apa yang ditemui semakan"
+  },
+  "strategies.whenFailover": {
+    "defaultMessage": "tidak boleh berjalan"
+  },
+  "strategies.whenOverflow": {
+    "defaultMessage": "sibuk"
+  },
+  "strategies.whenShare": {
+    "defaultMessage": "kongsi"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Penyedia {name} telah dikonfigurasikan"
