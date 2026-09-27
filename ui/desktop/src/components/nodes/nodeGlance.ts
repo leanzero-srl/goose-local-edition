@@ -244,16 +244,28 @@ function loadLine(phase: string | null, glance: EngineGlance | null): GlanceLine
   return { kind: 'loadPhase', phase, progress };
 }
 
+/**
+ * The median of this node's MEASURED loads on its own way, or null when none is measured (or the
+ * loads are not read) — never an estimate. The card's start line and strategyFit's swap rows both
+ * say it from here.
+ */
+export function measuredStart(
+  node: ResolvedNodeDef,
+  loads: Read<NodeLoadGroupDto[]>
+): { medianMs: number; count: number } | null {
+  const placement = node.def.placement;
+  if (loads.kind !== 'read' || !placement || placement.kind === 'follows') return null;
+  const group = loads.value.find((g) => samePlacement(placement, placementOfKey(g.placement)));
+  return group?.medianTotalMs != null && group.count > 0
+    ? { medianMs: group.medianTotalMs, count: group.count }
+    : null;
+}
+
 /** The measured median start of this node's way, or "not measured yet" — never an estimate. */
 function startLine(node: ResolvedNodeDef, loads: Read<NodeLoadGroupDto[]>): GlanceLine {
   if (loads.kind === 'failed') return { kind: 'loadsUnread', error: loads.error };
-  const placement = node.def.placement;
-  if (loads.kind !== 'read' || !placement || placement.kind === 'follows')
-    return { kind: 'firstStart' };
-  const group = loads.value.find((g) => samePlacement(placement, placementOfKey(g.placement)));
-  return group?.medianTotalMs != null && group.count > 0
-    ? { kind: 'startsIn', medianMs: group.medianTotalMs, count: group.count }
-    : { kind: 'firstStart' };
+  const measured = measuredStart(node, loads);
+  return measured ? { kind: 'startsIn', ...measured } : { kind: 'firstStart' };
 }
 
 /** The Mac key useMacs keys this placement Mac by (`self` for this Mac). */

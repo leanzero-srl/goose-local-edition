@@ -5980,6 +5980,11 @@ export type NodesRefusal = {
      * The node, strategy or device the refusal is about, when it names one.
      */
     subject?: string | null;
+    /**
+     * `liveSessionsNotAcknowledged` only: how many live chats are set to the node. The removal
+     * goes through when the caller passes this same number as `acknowledgedSessions`.
+     */
+    liveSessions?: number | null;
 };
 
 export type NodesRefusalCode = 'unsupportedVersion' | 'duplicateId' | 'duplicateName' | 'emptyName' | 'missingModel' | 'missingProvider' | 'poolNodeOwnsModel' | 'placementMismatch' | 'badMacs' | 'unknownNode' | 'unknownStrategy' | 'emptyChain' | 'zeroWeight' | 'noRoleSet' | 'inheritanceCycle' | 'sharesTwoWays' | 'nodeInUse' | 'nodeIsForNewChats' | 'strategyIsForNewChats' | 'strategyIsForBuilds' | 'liveSessionsNotAcknowledged' | 'removedOutsideRemoveNode' | 'buildIneligible' | 'badId' | 'duplicateEntry';

@@ -433,6 +433,7 @@ fn refusal(code: NodesRefusalCode, subject: Option<&str>, message: String) -> No
         code,
         message,
         subject: subject.map(str::to_string),
+        live_sessions: None,
     }
 }
 
@@ -1010,20 +1011,23 @@ pub fn remove_node(
         }
     }
     if req.live_sessions > 0 && req.acknowledged_sessions != Some(req.live_sessions) {
-        refusals.push(refusal(
-            C::LiveSessionsNotAcknowledged,
-            Some(req.id),
-            format!(
-                "{} {} set to \"{}\"; their next message will say it was removed",
-                req.live_sessions,
-                if req.live_sessions == 1 {
-                    "chat is"
-                } else {
-                    "chats are"
-                },
-                def.name
-            ),
-        ));
+        refusals.push(NodesRefusal {
+            live_sessions: Some(req.live_sessions),
+            ..refusal(
+                C::LiveSessionsNotAcknowledged,
+                Some(req.id),
+                format!(
+                    "{} {} set to \"{}\"; their next message will say it was removed",
+                    req.live_sessions,
+                    if req.live_sessions == 1 {
+                        "chat is"
+                    } else {
+                        "chats are"
+                    },
+                    def.name
+                ),
+            )
+        });
     }
     if let Some(device) = &def.pool_device {
         if !next.declined.contains(device) {

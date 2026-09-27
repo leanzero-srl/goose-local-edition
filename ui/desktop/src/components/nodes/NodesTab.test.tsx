@@ -241,6 +241,7 @@ describe('NodesTab', () => {
             code: 'liveSessionsNotAcknowledged',
             message:
               '3 chats are set to "27B Atlassian · both Macs"; their next message will say it was removed',
+            liveSessions: 3,
           },
         ],
         read: readOf([]),
@@ -272,6 +273,48 @@ describe('NodesTab', () => {
     });
     await waitFor(() => expect(screen.queryByTestId('node-remove-dialog')).toBeNull());
     expect(mockRefresh).toHaveBeenCalled();
+  });
+
+  it('the live-chat count is the refusal\'s number, never read out of its words', async () => {
+    mockRemove.mockResolvedValueOnce({
+      written: false,
+      refusals: [
+        {
+          code: 'liveSessionsNotAcknowledged',
+          // Words with a different leading number: only the field decides what is acknowledged.
+          message: '9 of them — see the field',
+          liveSessions: 2,
+        },
+      ],
+      read: readOf([]),
+    });
+    renderTab();
+    const split = screen.getAllByTestId('node-card')[0];
+    await userEvent.click(within(split).getByTestId('node-more'));
+    await userEvent.click(await screen.findByTestId('node-remove'));
+    await userEvent.click(await screen.findByTestId('node-remove-confirm'));
+    const box = await screen.findByTestId('node-remove-acknowledge');
+    expect(box).toHaveTextContent('2 chats are set to this node.');
+  });
+
+  it('a live-chat refusal without its count offers nothing to acknowledge (no guessed count)', async () => {
+    mockRemove.mockResolvedValueOnce({
+      written: false,
+      refusals: [
+        {
+          code: 'liveSessionsNotAcknowledged',
+          message: '3 chats are set to "27B Atlassian · both Macs"',
+        },
+      ],
+      read: readOf([]),
+    });
+    renderTab();
+    const split = screen.getAllByTestId('node-card')[0];
+    await userEvent.click(within(split).getByTestId('node-more'));
+    await userEvent.click(await screen.findByTestId('node-remove'));
+    await userEvent.click(await screen.findByTestId('node-remove-confirm'));
+    expect(await screen.findByTestId('node-remove-refusals')).toHaveTextContent('3 chats are set');
+    expect(screen.queryByTestId('node-remove-acknowledge')).toBeNull();
   });
 
   it('Keep loaded writes the def through nodes/write with every other def kept', async () => {

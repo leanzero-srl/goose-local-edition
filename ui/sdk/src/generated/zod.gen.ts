@@ -6141,6 +6141,10 @@ export const zNodesRefusal = z.object({
     subject: z.union([
         z.string(),
         z.null()
+    ]).optional(),
+    liveSessions: z.union([
+        z.number().int().gte(0),
+        z.null()
     ]).optional()
 });
 

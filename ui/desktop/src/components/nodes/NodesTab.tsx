@@ -1,28 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Laptop, Plus, RefreshCw, Server } from 'lucide-react';
-import type { NodeLoadGroupDto, NodeResidency, NodesServingKind } from '@aaif/goose-sdk';
+import type { NodesServingKind } from '@aaif/goose-sdk';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, Checkbox, EmptyState, RADIUS, SURFACE, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 import { OverlayDialog, OverlayDialogTitle } from '../ui/OverlayDialog';
 import { ToneBanner } from '../leanzero-swarm/studio';
-import { WithMacs, useMacs } from '../leanzero-swarm/useMacs';
+import { WithMacs } from '../leanzero-swarm/useMacs';
 import { useCutGuard } from '../leanzero-swarm/cutGuard';
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
-import { usePlacementPlans } from '../leanzero-swarm/usePlacementPlans';
 import { dropRoute } from '../leanzero-swarm/routeSwitch';
 import { mlxEngineUnmount } from '../../acp/mlx-engine';
 import { mlxDistributedStop } from '../../acp/mlx-distributed';
-import { nodesEnsureServing, nodesLoadHistory, nodesRemoveNode } from '../../acp/nodes';
-import { acpListProviderDetails } from '../../acp/providers';
-import type { PlacementGoal } from '../../acp/mlx-placement';
-import type { ProviderDetails } from '../../types/providers';
+import { nodesEnsureServing, nodesRemoveNode } from '../../acp/nodes';
 import type { MlxEngineKind } from '../../utils/mlxInFlight';
 import { cloudHref, mlxHref, nodesHref } from '../../utils/navigationUtils';
-import { refreshGlanceNodes, useEngineGlance, useGlanceNodes } from '../engineGlance/glanceStore';
+import { refreshGlanceNodes } from '../engineGlance/glanceStore';
 import { NodeCard, type NodeCardAction } from './NodeCard';
 import { NewNodeDialog, type NewNodeStart } from './NewNodeDialog';
-import { nodeGlance, usedByOf, type NodeFacts, type Read } from './nodeGlance';
+import { usedByOf } from './nodeGlance';
+import { useNodeFacts } from './useNodeFacts';
 import { nodeIdFor, putNode, uniqueName } from './nodeDraft';
 import type { NodeDef, ResolvedNodeDef } from './model';
 
@@ -31,11 +28,8 @@ import type { NodeDef, ResolvedNodeDef } from './model';
  * groups — On your Macs (LeanZero MLX) and In the cloud — with New node, the one-Mac hint and the
  * empty state. S6's NodesView hosts it (and "Your swarm pool" under it).
  *
- * It adds NO poller. Its facts are stores that exist: the glance store's `nodes/read` +
- * `nodes/residency` (read when the glance changes way, model or stage — an event), the main-pushed
- * engine glance, `useMacs` (mounted here exactly as Providers mounts it; the two never render
- * together), the planner (once per goal in use, again when what serves changes), each MLX node's
- * measured loads (read when the node list or what serves changes) and the provider list (once).
+ * It adds NO poller: its facts are `useNodeFacts` (the same set the Strategies tab's pickers read),
+ * under `WithMacs` mounted here exactly as Providers mounts it (the two never render together).
  */
 
 const i18n = defineMessages({
@@ -111,21 +105,12 @@ const ENGINE_OF: Record<NodesServingKind, MlxEngineKind> = {
 
 type Notice = { tone: 'ok' | 'err'; text: string };
 
-/**
- * The count of live chats the refusal names ("3 chats are set to …"): the contract carries it only
- * in its words, so it is read from them; words without a leading count offer no acknowledgement.
- */
-function acknowledgeCount(message: string): number | null {
-  const match = /^(\d+)\s/.exec(message);
-  return match ? Number(match[1]) : null;
-}
-
 interface RemoveState {
   node: ResolvedNodeDef;
   alsoFromStrategies: boolean;
   andNewChatsAuto: boolean;
   acknowledged: number | null;
-  refusals: { code: string; message: string }[];
+  refusals: { code: string; message: string; liveSessions?: number | null }[];
   busy: boolean;
 }
 
@@ -143,7 +128,9 @@ function RemoveDialog({
   const intl = useIntl();
   const codes = new Set(state.refusals.map((r) => r.code));
   const live = state.refusals.find((r) => r.code === 'liveSessionsNotAcknowledged');
-  const liveCount = live ? acknowledgeCount(live.message) : null;
+  // The count rides the refusal as a number (`liveSessions`); words without it offer nothing to
+  // acknowledge, never a count guessed from the message.
+  const liveCount = live?.liveSessions ?? null;
   return (
     <OverlayDialog
       open
@@ -231,123 +218,19 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const highlight = searchParams.get('node');
-  const macs = useMacs();
-  const push = useEngineGlance();
-  const glance = push?.engine ?? null;
-  const store = useGlanceNodes();
+  const { store, nodes, servingNode, macCount, glanceOf } = useNodeFacts();
   const { guard, dialog: cutDialog } = useCutGuard();
 
   const read = store.kind === 'read' ? store.read : null;
   const residency = store.kind === 'read' ? store.residency : null;
-  const nodes = useMemo(() => read?.nodes ?? [], [read]);
   const mlxNodes = nodes.filter((n) => n.def.kind === 'mlx');
   const cloudNodes = nodes.filter((n) => n.def.kind !== 'mlx');
-
-  // Which way serves, as a key: the plans and load times are asked again when it changes.
-  const servingKey = JSON.stringify(residency?.serving ?? null);
-
-  const goalsInUse = new Set<PlacementGoal>(
-    mlxNodes
-      .filter((n) => n.def.placement && n.def.placement.kind !== 'follows')
-      // A node written without a goal is planned for chat — Run it's own default goal.
-      .map((n) => n.def.goal ?? 'chat')
-  );
-  const planKey = `${mlxNodes.map((n) => n.model ?? '').join('\n')}|${servingKey}`;
-  const plansChat = usePlacementPlans(goalsInUse.has('chat') ? 'chat' : null, planKey);
-  const plansLong = usePlacementPlans(
-    goalsInUse.has('longDocuments') ? 'longDocuments' : null,
-    planKey
-  );
-  const plansMany = usePlacementPlans(
-    goalsInUse.has('manyRequests') ? 'manyRequests' : null,
-    planKey
-  );
-  const plansFor = (goal: PlacementGoal) =>
-    goal === 'chat' ? plansChat : goal === 'longDocuments' ? plansLong : plansMany;
-
-  const [loads, setLoads] = useState<Record<string, Read<NodeLoadGroupDto[]>>>({});
-  const pinnedIds = mlxNodes
-    .filter((n) => n.def.placement && n.def.placement.kind !== 'follows')
-    .map((n) => n.def.id)
-    .join('\n');
-  useEffect(() => {
-    let alive = true;
-    for (const id of pinnedIds ? pinnedIds.split('\n') : []) {
-      nodesLoadHistory(id)
-        .then((history) => {
-          if (alive)
-            setLoads((prev) => ({ ...prev, [id]: { kind: 'read', value: history.groups } }));
-        })
-        .catch((e: unknown) => {
-          if (!alive) return;
-          setLoads((prev) => ({
-            ...prev,
-            [id]: { kind: 'failed', error: mlxErrorMessage(e, String(e)) },
-          }));
-        });
-    }
-    return () => {
-      alive = false;
-    };
-  }, [pinnedIds, servingKey]);
-
-  const [providers, setProviders] = useState<Read<ProviderDetails[]>>({ kind: 'reading' });
-  const wantsProviders = cloudNodes.length > 0;
-  useEffect(() => {
-    if (!wantsProviders) return;
-    let alive = true;
-    acpListProviderDetails()
-      .then((list) => alive && setProviders({ kind: 'read', value: list }))
-      .catch(
-        (e: unknown) =>
-          alive && setProviders({ kind: 'failed', error: mlxErrorMessage(e, String(e)) })
-      );
-    return () => {
-      alive = false;
-    };
-  }, [wantsProviders]);
 
   const [notices, setNotices] = useState<Record<string, Notice>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<NewNodeStart | null>(null);
   const [removing, setRemoving] = useState<RemoveState | null>(null);
   const say = (id: string, notice: Notice) => setNotices((prev) => ({ ...prev, [id]: notice }));
-
-  const residencyOf = (id: string): Read<NodeResidency> => {
-    if (store.kind === 'failed') return { kind: 'failed', error: store.error };
-    if (!residency) return { kind: 'reading' };
-    const row = residency.nodes.find((r) => r.node === id);
-    // A node goosed did not answer for (written after this read) is still being read.
-    return row ? { kind: 'read', value: row.residency } : { kind: 'reading' };
-  };
-  const servingNode =
-    residency?.nodes
-      .filter((r) => r.residency.kind === 'serving')
-      .map((r) => nodes.find((n) => n.def.id === r.node))
-      .find((n) => n?.def.placement && n.def.placement.kind !== 'follows') ??
-    residency?.nodes
-      .filter((r) => r.residency.kind === 'serving')
-      .map((r) => nodes.find((n) => n.def.id === r.node))
-      .find((n) => n != null) ??
-    null;
-
-  const factsFor = (node: ResolvedNodeDef): NodeFacts => ({
-    residency: residencyOf(node.def.id),
-    serving: residency?.serving ?? null,
-    servingNodeName: servingNode?.def.name ?? null,
-    glance,
-    plans: plansFor(node.def.goal ?? 'chat'),
-    macs: macs.macs,
-    modelsOn: (key) => macs.factsOf(key).models,
-    loads: loads[node.def.id] ?? { kind: 'reading' },
-    // No swarm run registers a holder yet (S5's holders.rs, S8): nothing here says a build holds
-    // the engine, so no card claims it.
-    buildHolder: null,
-    provider:
-      providers.kind === 'read'
-        ? { kind: 'read', value: providers.value.find((p) => p.name === node.provider) ?? null }
-        : providers,
-  });
 
   const highlighted = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -521,7 +404,7 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
     >
       <NodeCard
         node={node}
-        glance={nodeGlance(node, factsFor(node))}
+        glance={glanceOf(node)}
         usedBy={read ? usedByOf(read.config, node.def.id) : []}
         highlighted={node.def.id === highlight}
         busy={busy === node.def.id}
@@ -617,7 +500,7 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
             () => navigate(mlxHref('macs'))
           )}
           <div className={grid}>{mlxNodes.map(card)}</div>
-          {macs.macs.length === 1 && (
+          {macCount === 1 && (
             <button
               type="button"
               onClick={() => navigate(mlxHref('macs'))}
