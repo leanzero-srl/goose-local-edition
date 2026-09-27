@@ -40,8 +40,10 @@ import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
 import type { ChatServedBy } from './chatServedBy/chatServedBy';
 import {
+  heldContextLimit,
   nextMeasuredPrompt,
   shownContextTokens,
+  type KnownWindow,
   type MeasuredPrompt,
 } from './chatServedBy/contextFloor';
 import { PersonaChooser } from './swarm/PersonaChooser';
@@ -623,6 +625,19 @@ export default function ChatInput({
     }
   }, [textAreaRef]);
 
+  const knownWindowRef = useRef<KnownWindow | null>(null);
+  const holdMeasuredLimit = (provider: string, model: string, read: number | null) => {
+    const held = heldContextLimit(
+      knownWindowRef.current,
+      sessionId ?? null,
+      `${provider}:${model}`,
+      read
+    );
+    knownWindowRef.current = held.known;
+    setTokenLimit(held.limit);
+    setIsTokenLimitLoaded(true);
+  };
+
   // Load providers and get current model's token limit
   const loadProviderDetails = async () => {
     try {
@@ -654,20 +669,19 @@ export default function ChatInput({
       // every engine the POOL runs on and take the min (an MLX-only pool used to fall to the 128k default).
       // A pool whose engines report no window yet shows NO limit (the indicator hides) — never the
       // generic 128k, which read as a fact about a model with 262,144.
+      // An engine that stopped (a dead split, every pool engine down) reports no window: the last
+      // one measured for this chat on this model holds (Q-60, chatServedBy/contextFloor.ts).
       if (provider === 'swarm') {
-        const swarmLimit = await fetchSwarmPoolContextLimit();
-        setTokenLimit(swarmLimit ?? 0);
-        setIsTokenLimitLoaded(true);
+        holdMeasuredLimit(provider, model, await fetchSwarmPoolContextLimit());
         return;
       }
 
       // Leanzero MLX engine: same rule as swarm — the engine that serves chat (this Mac's, a
       // linked Mac's through the route, or the split) reports the window its model mounted with.
-      // No window reported yet shows NO limit — never the generic default: a route to the Studio
+      // No window ever reported shows NO limit — never the generic default: a route to the Studio
       // used to ask only this Mac's stopped engine and fall to 128k (Q-18).
       if (provider === MLX_PROVIDER_ID) {
-        setTokenLimit(servedRef.current.contextWindow ?? 0);
-        setIsTokenLimitLoaded(true);
+        holdMeasuredLimit(provider, model, servedRef.current.contextWindow);
         return;
       }
 
