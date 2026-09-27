@@ -576,7 +576,9 @@ fn do_everything_never_reaches_a_model() {
 // this gate's own counter: 86 under commands/swarm{,.rs,_engine.rs} + 9 in goose-swarm/src — the
 // golden's scheduler.rs carries 7, one more than the post-golden tip; the deleted post-golden
 // modules took 8 with them).
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 95;
+// To 94 (2026-09-27): measured 94 by this counter after the day's merges (Q-211 moved the tool-result join
+// out of swarm.rs through the one audience rule); the ratchet only moves down.
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 94;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
