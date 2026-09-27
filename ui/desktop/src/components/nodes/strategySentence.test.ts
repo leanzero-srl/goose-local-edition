@@ -40,12 +40,18 @@ function factsOf(
 const LOAD = 'If A · both Macs isn’t loaded, it loads and your turn waits (about 1m 40s).';
 const NEXT_LAST =
   'If A · both Macs isn’t loaded, no node after it can take the work, so it is refused with the reason.';
-const NEXT_B = 'If A · both Macs isn’t loaded, B · cloud takes the work meanwhile and nothing is loaded.';
+const NEXT_B =
+  'If A · both Macs isn’t loaded, B · cloud takes the work meanwhile and nothing is loaded.';
 
 /** Every when-rule × if-not-loaded × chain length, each against its exact words. */
 const MATRIX: [NodeWhen, NodeIfNotLoaded, string[], string][] = [
   ['failover', 'load', ['a'], `Chat runs on A · both Macs. ${LOAD}`],
-  ['failover', 'load', ['a', 'b'], `Chat runs on A · both Macs. If it can’t run, on B · cloud. ${LOAD}`],
+  [
+    'failover',
+    'load',
+    ['a', 'b'],
+    `Chat runs on A · both Macs. If it can’t run, on B · cloud. ${LOAD}`,
+  ],
   [
     'failover',
     'load',

@@ -69,7 +69,11 @@ describe('UseSelectors — New chats start on / Swarm builds use', () => {
     renderIt();
     await userEvent.click(chats());
     const list = screen.getByRole('listbox', { name: 'New chats start on:' });
-    expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual([
+    expect(
+      within(list)
+        .getAllByRole('option')
+        .map((o) => o.textContent)
+    ).toEqual([
       'Any node (Auto)',
       'Everyday (strategy)',
       'Local (strategy)',
@@ -105,7 +109,10 @@ describe('UseSelectors — New chats start on / Swarm builds use', () => {
     await userEvent.click(builds());
     const everyday = screen.getByTestId('use-builds-strategy:everyday');
     expect(everyday).toBeDisabled();
-    expect(everyday).toHaveTextContent('27B Atlassian · both Macs is a split');
+    // The reason in the person's words (the card's own), not goosed's English.
+    expect(everyday).toHaveTextContent(
+      '27B Atlassian · both Macs is a split; swarm builds reach LeanZero MLX only through this Mac’s single engine'
+    );
     await userEvent.click(everyday);
     expect(mockWrite).not.toHaveBeenCalled();
     await userEvent.click(screen.getByTestId('use-builds-strategy:local'));

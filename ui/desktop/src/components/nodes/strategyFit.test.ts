@@ -156,14 +156,14 @@ describe('strategyFit — one MLX way serves this Mac’s goose at a time, acros
       measured
     );
     expect(shared.shareTwoWays).toEqual([
-      { role: 'build', a: NODE_SPLIT.def.name, b: NODE_FLASH.def.name },
+      { role: 'build', when: 'share', a: NODE_SPLIT.def.name, b: NODE_FLASH.def.name },
     ]);
     const overflow = strategyFit(
       strategy({ chat: entry([NODE_SPLIT, NODE_FLASH], 'overflow') }),
       NODES,
       measured
     );
-    expect(overflow.shareTwoWays.map((s) => s.role)).toEqual(['chat']);
+    expect(overflow.shareTwoWays.map((s) => [s.role, s.when])).toEqual([['chat', 'overflow']]);
     const failover = strategyFit(
       strategy({ chat: entry([NODE_SPLIT, NODE_FLASH], 'failover') }),
       NODES,

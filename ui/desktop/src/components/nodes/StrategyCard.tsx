@@ -67,6 +67,11 @@ const i18n = defineMessages({
     defaultMessage:
       '{role}: sharing between {a} and {b} would stop one to load the other on every turn',
   },
+  overflowTwoWays: {
+    id: 'strategies.overflowTwoWays',
+    defaultMessage:
+      '{role}: overflowing from {a} to {b} would stop one to load the other whenever {a} is busy',
+  },
   unknownNode: {
     id: 'strategies.unknownNode',
     defaultMessage: '{id} is not a node any more',
@@ -156,7 +161,7 @@ export function delegateWords(intl: IntlShape, fit: StrategyFit): string | null 
 
 export function shareTwoWaysWords(intl: IntlShape, fit: StrategyFit): string[] {
   return fit.shareTwoWays.map((s) =>
-    intl.formatMessage(i18n.shareTwoWays, {
+    intl.formatMessage(s.when === 'share' ? i18n.shareTwoWays : i18n.overflowTwoWays, {
       role: intl.formatMessage(ROLE_WORD[s.role]),
       a: s.a,
       b: s.b,

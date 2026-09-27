@@ -71,7 +71,16 @@ const NodesView: React.FC = () => {
     { value: 'strategies', label: intl.formatMessage(i18n.tabStrategies) },
   ];
 
-  const pool = <SwarmNodesSection onOpenCloudProviders={() => navigate(cloudHref())} />;
+  // The pool's table is a fixed four-column grid (unchanged, its own component): at the narrow window
+  // it scrolls sideways inside its own box instead of being clipped by its card (measured at 460:
+  // the table needs ~790px and its card cut Provider/Model/Share off).
+  const pool = (
+    <div className="min-w-0 overflow-x-auto" data-testid="nodes-pool-scroll">
+      <div className="min-w-[50rem]">
+        <SwarmNodesSection onOpenCloudProviders={() => navigate(cloudHref())} />
+      </div>
+    </div>
+  );
 
   return (
     <MainPanelLayout>

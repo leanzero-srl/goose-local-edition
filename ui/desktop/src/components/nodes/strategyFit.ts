@@ -40,6 +40,7 @@ export interface FitWay {
 
 export interface FitShareTwoWays {
   role: NodeRole;
+  when: 'share' | 'overflow';
   a: string;
   b: string;
 }
@@ -143,7 +144,7 @@ export function strategyFit(
       .map((link) => byId.get(link.node))
       .filter((n): n is ResolvedNodeDef => n != null && wayKeyOf(n) !== null);
     const other = pinned.find((n) => wayKeyOf(n) !== wayKeyOf(pinned[0]));
-    if (other) shareTwoWays.push({ role, a: pinned[0].def.name, b: other.def.name });
+    if (other) shareTwoWays.push({ role, when, a: pinned[0].def.name, b: other.def.name });
   }
 
   return {

@@ -8,6 +8,7 @@ import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
 import { refreshGlanceNodes } from '../engineGlance/glanceStore';
 import type { NodesConfig, NodesForBuilds, NodesForNewChats, ResolvedNodeDef } from './model';
 import type { Read } from './nodeGlance';
+import { buildReasonWords } from './StrategyCard';
 
 /**
  * "New chats start on" and "Swarm builds use" (DESIGN-NODES-AND-STRATEGIES.md §8.2) — the page's
@@ -66,6 +67,7 @@ export function UseSelectors({ config, nodes, eligibility }: UseSelectorsProps) 
   const [busy, setBusy] = useState(false);
   const [refusals, setRefusals] = useState<string[]>([]);
   const strategies = config.strategies ?? [];
+  const names = Object.fromEntries(nodes.map((n) => [n.def.id, n.def.name]));
 
   const chatOptions: UseOption[] = [
     { value: 'auto', label: intl.formatMessage(i18n.auto) },
@@ -88,7 +90,7 @@ export function UseSelectors({ config, nodes, eligibility }: UseSelectorsProps) 
       }
       const hint =
         answer?.kind === 'read'
-          ? (answer.value.reasons ?? []).map((r) => r.message).join('; ')
+          ? (answer.value.reasons ?? []).map((r) => buildReasonWords(intl, r, names, [])).join('; ')
           : answer?.kind === 'failed'
             ? answer.error
             : intl.formatMessage(i18n.checking);

@@ -96,10 +96,9 @@ const i18n = defineMessages({
     defaultMessage: 'Nothing loads on your Macs for this strategy.',
   },
   wayRow: { id: 'strategies.wayRow', defaultMessage: '{node}: {load}' },
-  swapWarn: {
-    id: 'strategies.swapWarn',
-    defaultMessage:
-      '{roleA} and {roleB} need different ways. Each switch between them stops one and loads the other.',
+  swapPairWarn: {
+    id: 'strategies.swapPairWarn',
+    defaultMessage: '{a} ⇄ {b}: each switch between them stops one and loads the other.',
   },
   cloudRow: { id: 'strategies.cloudRow', defaultMessage: '{node}: always available' },
   followsRow: {
@@ -255,7 +254,7 @@ export function StrategyEditor({
     const entry = roles[role] ?? null;
     const roleWord = intl.formatMessage(ROLE_WORD[role]);
     const header = (
-      <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 flex-col items-start gap-1">
         <RoleChip role={role} />
         <p className={cx('break-words', TYPE.bodyMuted)}>{intl.formatMessage(ROLE_WHAT[role])}</p>
         {role !== 'chat' && (
@@ -608,10 +607,7 @@ function FitPanel({
           className={cx('break-words text-lz-meta', WEIGHT.semibold, TONE_TEXT.warn)}
           data-testid="strategy-fit-swap"
         >
-          {intl.formatMessage(i18n.swapWarn, {
-            roleA: intl.formatMessage(ROLE_WORD[a.uses[0].role]),
-            roleB: intl.formatMessage(ROLE_WORD[b.uses[0].role]),
-          })}
+          {intl.formatMessage(i18n.swapPairWarn, { a: wayName(a), b: wayName(b) })}
         </p>
       ))}
       {delegate && (

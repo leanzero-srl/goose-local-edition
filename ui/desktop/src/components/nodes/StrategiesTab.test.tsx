@@ -279,9 +279,7 @@ describe('the Strategies tab — cards', () => {
     mockRemove
       .mockResolvedValueOnce({
         written: false,
-        refusals: [
-          { code: 'strategyIsForNewChats', message: 'new chats start on "Everyday"' },
-        ],
+        refusals: [{ code: 'strategyIsForNewChats', message: 'new chats start on "Everyday"' }],
         read: readOf(CONFIG),
       })
       .mockResolvedValueOnce({ written: true, refusals: [], read: readOf(CONFIG) });
@@ -396,7 +394,7 @@ describe('the strategy editor', () => {
     renderTab('/nodes?tab=strategies&strategy=quick');
     // Quick already swaps: Chat on Flash, Build on the split.
     expect(screen.getByTestId('strategy-fit-swap')).toHaveTextContent(
-      'Chat and Build need different ways. Each switch between them stops one and loads the other.'
+      'Flash · this Mac ⇄ 27B Atlassian · both Macs: each switch between them stops one and loads the other.'
     );
     expect(screen.getByTestId('strategy-fit-delegate')).toHaveTextContent(
       'Each delegate call swaps twice: to 27B Atlassian · both Macs and back to Flash · this Mac'
@@ -405,6 +403,10 @@ describe('the strategy editor', () => {
     await userEvent.click(within(build).getByTestId('strategy-add-node'));
     // The next free node is Flash · this Mac: two MLX ways in one Build chain.
     await userEvent.click(within(build).getByRole('radio', { name: 'share' }));
+    // Two ways named once each, never a role paired with itself.
+    expect(screen.getAllByTestId('strategy-fit-swap').map((p) => p.textContent)).toEqual([
+      'Flash · this Mac ⇄ 27B Atlassian · both Macs: each switch between them stops one and loads the other.',
+    ]);
     expect(screen.getByTestId('strategy-fit-refusal')).toHaveTextContent(
       'Build: sharing between 27B Atlassian · both Macs and Flash · this Mac would stop one to load the other on every turn'
     );
