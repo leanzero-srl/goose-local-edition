@@ -487,7 +487,7 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
         data-phase={engine.phase}
         data-stage={engine.stage}
         className={cx(
-          'relative inline-flex h-9 max-w-full items-center gap-2 pl-3 pr-1 [&_svg]:size-4 [&_svg]:shrink-0',
+          'relative inline-flex h-9 max-w-full items-center gap-2 whitespace-nowrap pl-3 pr-1 [&_svg]:size-4 [&_svg]:shrink-0',
           RADIUS.pill,
           phaseFill
         )}
@@ -590,7 +590,7 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
             {engine.present && (
               <span
                 data-testid="engine-glance-mode"
-                className={cx('truncate text-lz-meta', WEIGHT.semibold)}
+                className={cx('break-words text-lz-meta', WEIGHT.semibold)}
               >
                 {modeLine(intl, engine.engine)}
               </span>

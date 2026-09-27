@@ -2242,11 +2242,17 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
   // goose is the app in front only while one of its windows holds focus; the glance never can.
   appInFront: () => BrowserWindow.getFocusedWindow() != null,
   savePrefs: (next) => saveGlancePrefs(next),
+  // The glance is a non-activating panel: its click reaches goose with another app still in front,
+  // and a window's focus() alone does not activate the app on macOS (measured on the packaged build:
+  // the Engine tab opened behind the app the person was in). Opening is the one click that should
+  // bring goose forward, so it activates the app explicitly.
   openEngine: () => {
+    app.focus({ steal: true });
     if (mlxActionWindow()) runMlxTrayAction('open-providers');
     else void createNewWindow(app);
   },
   openSession: (sessionId) => {
+    app.focus({ steal: true });
     if (mlxActionWindow()) openTraySession(sessionId);
     else void createNewWindow(app);
   },

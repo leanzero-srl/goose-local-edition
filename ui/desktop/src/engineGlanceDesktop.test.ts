@@ -114,6 +114,24 @@ describe('EngineGlanceDesktop — the floating window’s life', () => {
     expect(state.calls.filter((c) => c === 'showInactive')).toHaveLength(2);
   });
 
+  it('live while goose is in front: made hidden and warm, then shown the moment goose leaves', () => {
+    const { desktop, state, facts } = setup({ inFront: true });
+    desktop.update(writing);
+    expect(state.calls).toEqual(['ensure']);
+    expect(state.visible).toBe(false);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(false);
+    facts.inFront = false;
+    desktop.refresh();
+    expect(state.calls).toEqual(['ensure', 'showInactive']);
+  });
+
+  it('nothing live: no window is made at all', () => {
+    const { desktop, state } = setup({ inFront: true });
+    desktop.update(idle);
+    expect(state.calls).toEqual([]);
+  });
+
   it('the engine goes quiet: hidden', () => {
     const { desktop, state } = setup();
     desktop.update(writing);

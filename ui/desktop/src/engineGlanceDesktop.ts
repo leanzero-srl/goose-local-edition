@@ -7,6 +7,7 @@ import {
 import {
   cornerBounds,
   desktopGlanceVisible,
+  glanceLive,
   nearestCorner,
   snoozeAfter,
   type Rect,
@@ -121,6 +122,12 @@ export class EngineGlanceDesktop {
       if (port.exists() && port.isVisible()) port.hide();
       // Turned off: nothing floats and nothing is kept alive for it.
       if (push?.prefs.desktop === 'off' && port.exists()) port.destroy();
+      // Live while goose is in front: the window is made (hidden) now, so it shows the moment goose
+      // leaves the front instead of after a cold renderer loads (measured ~4 s on the packaged build).
+      else if (push != null && push.prefs.desktop !== 'off' && glanceLive(push) && !port.exists()) {
+        port.ensure();
+        port.send(ENGINE_GLANCE_CHANNEL, push);
+      }
       return;
     }
     if (!port.exists()) {

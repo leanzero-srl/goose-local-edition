@@ -44,7 +44,7 @@ export function EngineGlanceDesktopRoot() {
 
   if (!push) return null;
   return (
-    <div ref={root} data-testid="engine-glance-desktop" className="inline-block align-top">
+    <div ref={root} data-testid="engine-glance-desktop" className="inline-block w-max align-top">
       <EngineGlanceCard
         push={push}
         variant="desktop"
