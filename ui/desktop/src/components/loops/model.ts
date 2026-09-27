@@ -916,7 +916,7 @@ export function renderSteps(steps: string, facts: StepFacts): RenderedSteps {
         const last = facts.lastNextStep;
         if (last.kind === 'first') return 'this is the first tick';
         if (last.kind === 'named_none') return `tick ${last.prev} named no next step`;
-        return `"${last.text}"`;
+        return `the last tick named "${last.text}"`;
       }
       default:
         if (!unknown.includes(name)) unknown.push(name);

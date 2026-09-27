@@ -1115,7 +1115,9 @@ pub fn render_steps(steps: &str, facts: &StepFacts) -> RenderedSteps {
                     LastNextStep::NamedNone { prev } => {
                         text.push_str(&format!("tick {prev} named no next step"))
                     }
-                    LastNextStep::Named { text: step } => text.push_str(&format!("\"{step}\"")),
+                    LastNextStep::Named { text: step } => {
+                        text.push_str(&format!("the last tick named \"{step}\""))
+                    }
                 },
                 other => {
                     text.push('{');

@@ -14,11 +14,17 @@ use super::rules::{
     cadence_label, clock_time, goal_first_line, render_steps, LastNextStep, StepFacts,
 };
 
-/// How the question tick n−1 asked was resolved (read by the runner from `needs_you.v0`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// How the question tick n−1 asked was resolved (read by the runner from `needs_you.v0`). The
+/// answer is quoted from the item itself, so the prompt never depends on a transcript compaction
+/// may have folded away.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum AskedResolution {
-    Answered,
+    Answered { answer: String },
     Dismissed,
     Open,
 }
@@ -115,8 +121,11 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
                 report.summary.trim(),
                 report.next_step.trim()
             )),
-            (None, Some(LoopTickOutcome::Failed { error, .. })) => {
-                last.push_str(&format!(": {}", error.trim()))
+            (None, Some(LoopTickOutcome::Failed { error_class, error })) => {
+                last.push_str(&format!(
+                    ": the turn ended with a {error_class} error: {}",
+                    error.trim()
+                ))
             }
             (None, Some(LoopTickOutcome::NoReport)) => {
                 last.push_str(": it ended without calling loop_report.")
@@ -129,7 +138,9 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
         if let Some(report) = &prev.report {
             if report.verdict == LoopVerdict::Blocked {
                 if let Some(blocked_on) = report.blocked_on.as_deref().map(str::trim) {
-                    lines.push(format!("Tick {p} was blocked on: \"{blocked_on}\""));
+                    lines.push(format!(
+                        "Tick {p} was blocked on: \"{blocked_on}\". Nothing in this loop records an answer; if the state file and the conversation above do not settle it, report blocked again rather than choosing."
+                    ));
                 }
             }
         }
@@ -137,32 +148,23 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
         if let Some(run) = &prev.check {
             let command = &run.command;
             if run.ran {
-                if prev.report.as_ref().map(|r| r.verdict) == Some(LoopVerdict::Done)
-                    && run.exit != Some(0)
-                {
-                    match run.exit {
-                        Some(code) => lines.push(format!(
-                            "You reported the goal done in tick {p}; `{command}` exited {code}."
-                        )),
-                        None => lines.push(format!(
-                            "You reported the goal done in tick {p}; `{command}` ended without an exit status."
-                        )),
-                    }
-                }
                 let result = match run.exit {
                     Some(0) => "passed".to_string(),
                     Some(code) => format!("exited {code}"),
                     None => "ended without an exit status".to_string(),
                 };
+                let reported_done =
+                    prev.report.as_ref().map(|r| r.verdict) == Some(LoopVerdict::Done);
+                let lead = if reported_done && run.exit != Some(0) {
+                    format!("You reported the goal done in tick {p}, but `{command}` {result}.")
+                } else {
+                    format!("Check `{command}` after tick {p}: {result}.")
+                };
                 let tail = run.output_tail.trim_end();
                 if tail.is_empty() {
-                    lines.push(format!(
-                        "Check `{command}` after tick {p}: {result}. Its output was empty."
-                    ));
+                    lines.push(format!("{lead} Its output was empty."));
                 } else {
-                    lines.push(format!(
-                        "Check `{command}` after tick {p}: {result}. Its output ended with:"
-                    ));
+                    lines.push(format!("{lead} Its output ended with:"));
                     lines.push(tail.to_string());
                 }
             } else {
@@ -171,7 +173,7 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
                     .as_deref()
                     .unwrap_or("it did not start and named no error");
                 lines.push(format!(
-                    "Check `{command}` could not run after tick {p}: {error}."
+                    "Check `{command}` could not run after tick {p}: {error}. No result can be quoted from it until it runs; fix what stops it, or report blocked on it."
                 ));
             }
         }
@@ -188,10 +190,12 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
                 ));
             }
             Some(LoopTickOutcome::Asked { question, .. }) => {
-                let resolution = match facts.asked_resolution {
-                    Some(AskedResolution::Answered) => "their answer is above",
-                    Some(AskedResolution::Dismissed) => "they dismissed it",
-                    Some(AskedResolution::Open) | None => "it is still open",
+                let resolution = match &facts.asked_resolution {
+                    Some(AskedResolution::Answered { answer }) => {
+                        format!("they answered: \"{answer}\"")
+                    }
+                    Some(AskedResolution::Dismissed) => "they dismissed it".to_string(),
+                    Some(AskedResolution::Open) | None => "it is still open".to_string(),
                 };
                 lines.push(format!(
                     "Tick {p} asked the user \"{question}\"; {resolution}."
@@ -202,7 +206,10 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
     }
 
     if record.cadence == LoopCadence::SelfPaced {
-        lines.push("Say when to come back: next_in (\"10m\", \"2h\") and why.".to_string());
+        lines.push(
+            "In loop_report, set next_in (\"10m\", \"2h\") and next_reason: when to come back, and why."
+                .to_string(),
+        );
     }
     lines.push("Finish by calling loop_report; calling it ends this tick.".to_string());
     Ok(lines.join("\n"))

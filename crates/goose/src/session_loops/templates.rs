@@ -24,9 +24,9 @@ pub const SLOTS: [&str; 5] = [
 ];
 
 const QUALITY_STEPS: &str = "1. Discover: open {state_file}, then run or read what {goal_first_line} names in {working_dir}. List what is broken, missing or confusing, each with the evidence you saw (command output, file:line).
-2. Critique: rank what you found by how much it blocks the goal; pick the ONE item that matters most (the last tick named: {last_next_step}).
+2. Critique: rank what you found by how much it blocks the goal; pick the ONE item that matters most ({last_next_step}).
 3. Fix: make that change, and only that change.
-4. Prove it with the check — {check} — and quote the result. A fix without a quoted result is not done.
+4. Prove it. Check to run: {check}. A fix without a quoted result is not done.
 5. Rewrite {state_file}: what is now true, what is next, what you found but did not fix.";
 
 const UNTIL_CHECK_STEPS: &str = "1. Run the check — {check} — and read why it fails.

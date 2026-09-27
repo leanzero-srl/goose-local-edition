@@ -87,9 +87,9 @@ STATE = '.goose/loops/users-csv/NOW.md'
 GOAL = "Make scripts/generate_users.js produce every problem class in notes/kickoff.md\nKeep the seed at 42."
 
 QUALITY_STEPS = "1. Discover: open {state_file}, then run or read what {goal_first_line} names in {working_dir}. List what is broken, missing or confusing, each with the evidence you saw (command output, file:line).\n" \
-  "2. Critique: rank what you found by how much it blocks the goal; pick the ONE item that matters most (the last tick named: {last_next_step}).\n" \
+  "2. Critique: rank what you found by how much it blocks the goal; pick the ONE item that matters most ({last_next_step}).\n" \
   "3. Fix: make that change, and only that change.\n" \
-  "4. Prove it with the check — {check} — and quote the result. A fix without a quoted result is not done.\n" \
+  "4. Prove it. Check to run: {check}. A fix without a quoted result is not done.\n" \
   '5. Rewrite {state_file}: what is now true, what is next, what you found but did not fix.'
 UNTIL_STEPS = "1. Run the check — {check} — and read why it fails.\n2. Fix the first cause it names.\n" \
   "3. Run the check again — {check} — and quote the result.\n4. Rewrite {state_file}."
@@ -432,7 +432,7 @@ def render_steps(steps, f)
       case l['kind']
       when 'first' then 'this is the first tick'
       when 'named_none' then "tick #{l['prev']} named no next step"
-      else "\"#{l['text']}\""
+      else "the last tick named \"#{l['text']}\""
       end
     else
       unknown << name unless unknown.include?(name)
@@ -580,7 +580,7 @@ def prompt(record, n, facts)
     if prev['report']
       last += ": \"#{prev['report']['summary'].strip}\" — next step it named: \"#{prev['report']['nextStep'].strip}\""
     elsif oc && oc['kind'] == 'failed'
-      last += ": #{oc['error'].strip}"
+      last += ": the turn ended with a #{oc['errorClass']} error: #{oc['error'].strip}"
     elsif oc && oc['kind'] == 'no_report'
       last += ': it ended without calling loop_report.'
     else
@@ -588,34 +588,40 @@ def prompt(record, n, facts)
     end
     lines << last
     if prev['report'] && prev['report']['verdict'] == 'blocked' && prev['report']['blockedOn']
-      lines << "Tick #{p} was blocked on: \"#{prev['report']['blockedOn'].strip}\""
+      lines << "Tick #{p} was blocked on: \"#{prev['report']['blockedOn'].strip}\". Nothing in this loop records an answer; if the state file and the conversation above do not settle it, report blocked again rather than choosing."
     end
     c = prev['check']
     if c
       if c['ran']
-        if prev['report'] && prev['report']['verdict'] == 'done' && c['exit'] != 0
-          lines << (c['exit'].nil? ? "You reported the goal done in tick #{p}; `#{c['command']}` ended without an exit status." : "You reported the goal done in tick #{p}; `#{c['command']}` exited #{c['exit']}.")
-        end
         result = c['exit'] == 0 ? 'passed' : (c['exit'].nil? ? 'ended without an exit status' : "exited #{c['exit']}")
+        lead = if prev['report'] && prev['report']['verdict'] == 'done' && c['exit'] != 0
+                 "You reported the goal done in tick #{p}, but `#{c['command']}` #{result}."
+               else
+                 "Check `#{c['command']}` after tick #{p}: #{result}."
+               end
         tail = c['outputTail'].rstrip
         if tail.empty?
-          lines << "Check `#{c['command']}` after tick #{p}: #{result}. Its output was empty."
+          lines << "#{lead} Its output was empty."
         else
-          lines << "Check `#{c['command']}` after tick #{p}: #{result}. Its output ended with:"
+          lines << "#{lead} Its output ended with:"
           lines << tail
         end
       else
-        lines << "Check `#{c['command']}` could not run after tick #{p}: #{c['error'] || 'it did not start and named no error'}."
+        lines << "Check `#{c['command']}` could not run after tick #{p}: #{c['error'] || 'it did not start and named no error'}. No result can be quoted from it until it runs; fix what stops it, or report blocked on it."
       end
     end
     if oc && oc['kind'] == 'yielded'
       lines << "Tick #{p} was stopped at #{hm.call(prev['endedAt'])} for the user's turn in \"#{oc['toChat']}\"; its partial work is above."
     elsif oc && oc['kind'] == 'asked'
-      res = { 'answered' => 'their answer is above', 'dismissed' => 'they dismissed it' }[facts['askedResolution']] || 'it is still open'
+      ar = facts['askedResolution']
+      res = if ar && ar['kind'] == 'answered' then "they answered: \"#{ar['answer']}\""
+            elsif ar && ar['kind'] == 'dismissed' then 'they dismissed it'
+            else 'it is still open'
+            end
       lines << "Tick #{p} asked the user \"#{oc['question']}\"; #{res}."
     end
   end
-  lines << 'Say when to come back: next_in ("10m", "2h") and why.' if record['cadence']['kind'] == 'self_paced'
+  lines << 'In loop_report, set next_in ("10m", "2h") and next_reason: when to come back, and why.' if record['cadence']['kind'] == 'self_paced'
   lines << 'Finish by calling loop_report; calling it ends this tick.'
   lines.join("\n")
 end
@@ -925,9 +931,9 @@ pr << ['blank, self-paced, the last tick made no report',
 pr << ['watch, the last tick yielded to a user turn',
        rec('template' => 'watch', 'steps' => WATCH_STEPS, 'cadence' => every('30m'), 'ticks' => [tick(5, t('22:00'), t('22:03', 40), 'outcome' => { 'kind' => 'yielded', 'toSession' => 's2', 'toChat' => 'Kickoff notes' })]), 6, pf.call('utcOffsetMinutes' => 180)]
 pr << ['the last tick asked and was answered',
-       rec('check' => CHECK, 'ticks' => [tick(2, t('22:00'), t('22:02'), 'report' => prog.call('pick the delimiter'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' })]), 3, pf.call('askedResolution' => 'answered')]
+       rec('check' => CHECK, 'ticks' => [tick(2, t('22:00'), t('22:02'), 'report' => prog.call('pick the delimiter'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' })]), 3, pf.call('askedResolution' => { 'kind' => 'answered', 'answer' => 'Semicolon — the owner opens it in Excel.' })]
 pr << ['the last tick asked and it was dismissed',
-       rec('ticks' => [tick(2, t('22:00'), t('22:02'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' })]), 3, pf.call('askedResolution' => 'dismissed')]
+       rec('ticks' => [tick(2, t('22:00'), t('22:02'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' })]), 3, pf.call('askedResolution' => { 'kind' => 'dismissed' })]
 pr << ['the last tick failed',
        rec('ticks' => [tick(2, t('22:00'), t('22:01'), 'outcome' => { 'kind' => 'failed', 'errorClass' => 'provider', 'error' => 'Provider error: stream ended early' })]), 3, pf.call]
 pr << ['the check could not run',
