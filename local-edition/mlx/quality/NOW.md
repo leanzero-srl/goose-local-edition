@@ -1,28 +1,24 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 21:15 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-27 21:40 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed on both Macs: 3.0.61 (engine glance + Q-183) — VERIFIED post-swap pids (studio 97418, macbook 10693);
-  the split restored itself on launch and answered "OK." (split-start now waits for a restore in flight).
-- E2E #3h stopped at turn 12 (3.0.59) · #3i stopped at turn 3 (3.0.60: 336/53/666/681 s; Q-185 found live; the
-  view was moved to the Engine page twice → Q-186).
-- E2E #3j RUNNING on 3.0.61 (27B tensor, jira brief; r1 with VIEW_RETURNED + inode call keys) · runwatch b7snujtmq.
-  Prove: no 0-cached full re-reads (Q-182), Q-181/161/164/177, livecheck green; then the live critic round on the
-  engine glance (dock, float, desktop mini window over another app).
+- Installed: 3.0.61 (both Macs, verified). BUILDING 3.0.62 from a654dfa85 (Q-185 background labels, Q-187/188,
+  Q-189/190 diffs + Changes rail, Q-191/192 LeanZero pill + report form, r1 Q-219) · watcher bgooafd7y. Install
+  via `touch <run>/STOP` → driver exits at the boundary → install.sh → split-start → #3l.
+- E2E #3k RUNNING on 3.0.61 (fresh r1: visible-only messages, STOP file) · runwatch bey93kmww. #3j's turn-3
+  'notice' was #3i's hidden chat (Q-219) — not a split crash (rank1 alive since 20:49:37).
+- leanzero.net: Q-209/210 pushed (ce043ba, red-teamed FIX-THEN-PUSH → fixed) · live probe bi5f4xi9l (413 wording).
 
 ## CI
-- Green again from dc701189c on (the title-test flake fixed at the cause, fa15f595d).
+- Green through dc701189c; merges since gated locally (tsc, vitest 3,243, eslint, i18n, cargo check, wincheck).
 
 ## Agents
-- LANE D design MERGED e78b6ae06: DESIGN-NODES-AND-STRATEGIES.md (Nodes nav first · Providers keeps 2 tabs ·
-  LeanZero MLX = Engine/My Macs/Models/Sampling + setup strip · node = model + way · strategy = 6 roles × ordered
-  nodes + when-rule failover/overflow/share · loader S5 · chat via swarm provider node:/strategy: ids · swarm Tier A
-  env-projected, Tier B gated). Slices S0..S10; open questions proceed on the recommendations. Q-200..208 = its D1–D9.
-  RUNNING: design REVIEW (refuter) · S1 nav/IA surgeon. On the review: fix the doc, then S0 contract → S2/S3/S5/S6/S7/S8.
-- Lane A+B (edit diffs + Changes rail) · Lane C (LeanZero pill + report form) · Q-197/198 path leaks — running.
-- Q-187/188 merged 9174cf5d9 locally, gate b1rmuck9y running (cargo check green) → push.
-- Q-185 merged + pushed 96bcc680e → ships in 3.0.62.
+- LANE D: design REVISION after the review (13 defects: one-way-at-a-time across Macs, cross-process holders,
+  per-reply batching, Tier A can't reach split/remote, …) · S1 nav/IA surgeon (told: no main.ts edit).
+- Q-215..218 engine glance (drop composer line + in-app float, card in flow, hide/restore, lead with the chat's
+  request) · Q-211/212 audience · Q-220 fetch 404 wording · Q-221 skills path check.
+- Merged locally, gate bdhcg38ai: Q-197/198/213/214 (9abeb5c1c).
 
 ## Next actions (in order)
 1. 3.0.61 DONE (glance + Q-183) → install at #3i turn-3 boundary (watcher b3ugzqvvu) → split-start 27B → #3i continues (new session = #3j if needed).
