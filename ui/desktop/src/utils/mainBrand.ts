@@ -1,6 +1,5 @@
 import * as fsSync from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
+import { gooseConfigYamlPath } from './goosePaths';
 import { isLocalProviderName } from '../components/settings/models/leanzeroSelectorPolicy';
 
 /**
@@ -49,7 +48,7 @@ export function parseProviderFromConfigYaml(text: string): string | null {
 }
 
 export function defaultGooseConfigPath(): string {
-  return path.join(os.homedir(), '.config', 'goose', 'config.yaml');
+  return gooseConfigYamlPath();
 }
 
 function readPersistedEdition(settingsFile: string): unknown {
