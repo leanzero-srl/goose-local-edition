@@ -58,6 +58,11 @@
 #   trail, published at every step and printed by the reporter; and, on SIGTERM, every thread's
 #   Python stack. Both land in the rank's durable log (goosed's rank_log.rs), so a stall leaves each
 #   rank's position behind — Q-114's could not be told apart for want of rank 1's.
+# - the prompt cache's nearest-entry search in linear time (Q-162, rank_prompt_search.py): mlx_lm's
+#   copied the whole path at every node it walked, and E2E #3e's 259,408-token compaction call sat
+#   in it on the CPU with no step and no GPU time until goosed's hang rule stopped the split; the
+#   search is published as the loop's `cache_lookup`, which the rule reads as progress while the
+#   rank's CPU time advances.
 # - every batch cache counter a step advanced is evaluated with the step (Q-114, `settle_counters`):
 #   mlx_lm's lazy `left_padding -= N` pinned one Metal buffer per unread linear-attention layer per
 #   decode step, and the 27B hit MLX's 499,000-buffer limit at ~10.5k generated tokens.
@@ -179,6 +184,7 @@ import importlib  # noqa: E402
 mlx_generate = importlib.import_module("mlx_lm.generate")  # noqa: E402
 import mlx_lm.server as server  # noqa: E402
 from mlx_lm.tool_parsers import qwen3_coder  # noqa: E402
+from mlx_lm.models.cache import PromptTrie, PromptTrieResult  # noqa: E402
 import uuid  # noqa: E402
 from collections import deque  # noqa: E402
 
@@ -203,6 +209,8 @@ for owner, name in (
     (server.ResponseGenerator, "_generate"),
     (server, "LRUPromptCache"),
     (server.LRUPromptCache, "insert_cache"),
+    (server.LRUPromptCache, "fetch_nearest_cache"),
+    (PromptTrie, "search"),
     (server.LRUPromptCache, "trim_to"),
     (server, "BatchGenerator"),
     (server.BatchGenerator, "close"),
@@ -467,6 +475,32 @@ if prefill is not None:
     mlx_generate.PromptProcessingBatch.prompt = prompt
     mlx_generate.PromptProcessingBatch.split = split
 
+class LinearPromptTrie(PromptTrie):
+    """mlx_lm's trie with its search in linear time (rank_prompt_search.py, Q-162). The search is
+    the rank's own CPU work between the request's share and the batch step — no step, no GPU, no
+    collective — so it is published as its own place in the loop (`cache_lookup`), which goosed's
+    hang rule reads as progress while the rank's CPU time advances."""
+
+    def search(self, model, tokens):
+        at = loop.at
+        loop.publish(CACHE_LOOKUP)
+        try:
+            return PromptTrieResult(*nearest_prompt(self._trie, model, tokens))
+        finally:
+            loop.publish(at)
+
+
+class LookupPromptCache(server.LRUPromptCache):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not isinstance(getattr(self, "_trie", None), PromptTrie) or self._trie._trie:
+            raise SystemExit(
+                f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache keeps no empty "
+                "PromptTrie at `_trie`; the prompt search was written against mlx_lm 0.31.3"
+            )
+        self._trie = LinearPromptTrie()
+
+
 if "prompt_cache_limit_bytes" in spec:
     prompt_cache_limit = int(spec["prompt_cache_limit_bytes"])
     # A spec that asks for it (`prompt_cache_live_bound`, tag mlxLmServerBounded) bounds cached
@@ -483,7 +517,7 @@ if "prompt_cache_limit_bytes" in spec:
         str(prompt_cache_limit),
     ]
 
-    class BoundedPromptCache(server.LRUPromptCache):
+    class BoundedPromptCache(LookupPromptCache):
         def __init__(self, max_size):
             super().__init__(max_size, prompt_cache_limit)
             prompt_caches[:] = [self]
@@ -498,7 +532,7 @@ if "prompt_cache_limit_bytes" in spec:
 else:
     prompt_cache_flags = ["--prompt-cache-bytes", str(int(spec["prompt_cache_bytes"]))]
 
-    class CompactPromptCache(server.LRUPromptCache):
+    class CompactPromptCache(LookupPromptCache):
         def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
             compact(prompt_cache)
             super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)

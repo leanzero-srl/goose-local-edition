@@ -12,7 +12,9 @@
 # - `steps`: its own `_next_request` count (rank 0's is /goose/progress; a worker's was never read);
 # - `at`: where the loop is — `poll` (rank 0 waiting on its request queue), `doorbell` (a worker
 #   parked in recv(1) for rank 0's ring), `share` (in the request share's collective), `batch` (the
-#   batch step: the model's collectives), `idle` (nothing shared, nothing running);
+#   batch step: the model's collectives), `idle` (nothing shared, nothing running), `cache_lookup`
+#   (the prompt cache's nearest-entry search, rank_prompt_search.py: CPU only, no collective — the
+#   one place goosed's hang rule reads the rank's CPU time as progress, Q-162);
 # - `mode`: `busy` while mlx_lm runs a batch (`timeout` None), `idle` otherwise — the decision
 #   the doorbell keys on; `rings`: rings rank 0 sent / a worker received; `rows`, `width`: the batch;
 # - per generating row, its token trail (`TokenTrail`): two ranks that sampled the same tokens hold

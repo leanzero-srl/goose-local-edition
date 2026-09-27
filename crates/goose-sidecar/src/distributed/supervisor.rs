@@ -37,7 +37,7 @@ use super::preflight::{self, now_ms, PreflightReport};
 use super::probe::{self, Pressure, SseVerdict};
 use super::runner_update::{self, Preflighted, RunnerUpdate};
 use super::sampling::SamplingDefaults;
-use super::{HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
+use super::{CPU_ONLY_PHASES, HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
 use crate::model_identity::ServedNames;
 use crate::{SidecarConfig, GIB, GRACE_TICK, GRACE_TICKS};
 
@@ -493,9 +493,13 @@ impl Shared {
 /// time while every rank's node reports one, else its CPU time. CPU alone let a hang through (Q-114
 /// repro B1, 4 min 19 s until stopped by hand): rank 0 stuck at 0% still spends CPU answering the
 /// supervisor's own `/v1/status` and `/goose/progress` polls, and its peer spins in the collective,
-/// so "every rank's CPU advanced" held on every poll. Neither rank's GPU runs in that state. A HANG
-/// is no progress for longer than `HANG_MEDIAN_MULTIPLE` × the running median of the intervals
-/// between progress — held until `HANG_MIN_SAMPLES` intervals exist.
+/// so "every rank's CPU advanced" held on every poll. Neither rank's GPU runs in that state. The one
+/// place a rank's CPU alone IS its work is a place its loop reports as CPU-only (`CPU_ONLY_PHASES`:
+/// the prompt cache's search, Q-162 — E2E #3e's rank 0 sat 22 s in it, no step, no GPU, and the
+/// rule stopped a working split): there, that rank's own CPU time advancing is progress. Q-114's
+/// spinning rank was inside the step's collective (`at: batch`), which no CPU-only place covers. A
+/// HANG is no progress for longer than `HANG_MEDIAN_MULTIPLE` × the running median of the
+/// intervals between progress — held until `HANG_MIN_SAMPLES` intervals exist.
 pub struct ProgressMeter {
     last_progress: Instant,
     intervals: VecDeque<Duration>,
@@ -556,6 +560,7 @@ impl ProgressMeter {
         steps: Option<u64>,
         cpu: &[Option<u64>],
         gpu: &[Option<u64>],
+        cpu_only: &[bool],
     ) -> MeterReading {
         fn all_advanced(now: &[Option<u64>], before: &[Option<u64>]) -> bool {
             now.len() == before.len()
@@ -581,7 +586,14 @@ impl ProgressMeter {
             WorkSignal::Gpu => all_advanced(gpu, &self.last_gpu),
             WorkSignal::Cpu => all_advanced(cpu, &self.last_cpu),
         };
-        let progressed = steps_advanced || work_advanced;
+        let cpu_only_work =
+            cpu_only
+                .iter()
+                .zip(cpu.iter().zip(&self.last_cpu))
+                .any(|(cpu_only, (now, before))| {
+                    *cpu_only && matches!((before, now), (Some(a), Some(b)) if b > a)
+                });
+        let progressed = steps_advanced || work_advanced || cpu_only_work;
         if steps.is_some() {
             self.last_steps = steps;
         }
@@ -1844,7 +1856,17 @@ async fn monitor(
         }
 
         let now = Instant::now();
-        let mut reading = meter.observe(now, progress.as_ref().map(|p| p.steps), &cpu, &gpu);
+        let cpu_only: Vec<bool> = ranks
+            .iter()
+            .map(|rank| rank.live.lock().unwrap().in_cpu_only_phase())
+            .collect();
+        let mut reading = meter.observe(
+            now,
+            progress.as_ref().map(|p| p.steps),
+            &cpu,
+            &gpu,
+            &cpu_only,
+        );
         let busy = progress.as_ref().is_none_or(|p| p.inflight > 0);
         judge_silence(&mut meter, now, busy, &mut reading);
         for rank in ranks.iter() {
@@ -1882,15 +1904,18 @@ async fn monitor(
                 format!(
                     "progress-ratio rule: samples {}, median {} ms, bound {} ms ({HANG_MEDIAN_MULTIPLE}× \
                      median), silent {} ms — the rank-0 step counter (last {:?}) and {} stood \
-                     still (GPU ns {:?}, CPU centiseconds {:?}); rank ps stats {:?}; {}",
+                     still, and no rank in a CPU-only place ({}) advanced its CPU time (GPU ns \
+                     {:?}, CPU centiseconds {:?}, CPU-only {:?}); rank ps stats {:?}; {}",
                     meter.intervals.len(),
                     reading.median.unwrap_or_default().as_millis(),
                     reading.bound.unwrap_or_default().as_millis(),
                     reading.silent_for.as_millis(),
                     progress.as_ref().map(|p| p.steps),
                     reading.signal.described(),
+                    CPU_ONLY_PHASES.join(", "),
                     gpu,
                     cpu,
+                    cpu_only,
                     stats,
                     ranks_evidence(ranks),
                 ),
@@ -3088,6 +3113,8 @@ mod tests {
 
     /// A node whose goose builds the older sample: no GPU time, so the meter reads CPU time.
     const NO_GPU: &[Option<u64>] = &[None, None];
+    /// No rank reports a CPU-only place in its loop (`CPU_ONLY_PHASES`).
+    const NO_PHASE: &[bool] = &[false, false];
 
     fn at(start: Instant, ms: u64) -> Instant {
         start + Duration::from_millis(ms)
@@ -3100,16 +3127,22 @@ mod tests {
     fn an_idle_engine_is_never_a_hang_and_work_after_idle_is_timed_from_its_start() {
         let start = Instant::now();
         let mut meter = ProgressMeter::new(start, 2);
-        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU);
+        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU, NO_PHASE);
         for i in 1..=39u64 {
-            let r = meter.observe(at(start, i * 2_016), Some(i), &[Some(i), Some(i)], NO_GPU);
+            let r = meter.observe(
+                at(start, i * 2_016),
+                Some(i),
+                &[Some(i), Some(i)],
+                NO_GPU,
+                NO_PHASE,
+            );
             assert!(r.progressed);
         }
         let last = 39 * 2_016;
         // Idle for 5 minutes: counter and CPU frozen, nothing in flight.
         for poll in 1..=150u64 {
             let now = at(start, last + poll * 2_016);
-            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)], NO_GPU);
+            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)], NO_GPU, NO_PHASE);
             judge_silence(&mut meter, now, false, &mut r);
             assert!(!r.hang, "idle poll {poll} read as a hang");
         }
@@ -3118,7 +3151,7 @@ mod tests {
         let mut caught = None;
         for poll in 1..=20u64 {
             let now = at(start, resumed + poll * 2_016);
-            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)], NO_GPU);
+            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)], NO_GPU, NO_PHASE);
             judge_silence(&mut meter, now, true, &mut r);
             if r.hang {
                 caught = Some(poll);
@@ -3236,7 +3269,13 @@ mod tests {
         // First poll only sets the baselines.
         assert!(
             !meter
-                .observe(at(start, 2_000), Some(10), &[Some(100), Some(100)], NO_GPU)
+                .observe(
+                    at(start, 2_000),
+                    Some(10),
+                    &[Some(100), Some(100)],
+                    NO_GPU,
+                    NO_PHASE
+                )
                 .progressed
         );
         // Healthy: the counter advances every 2 s poll.
@@ -3246,15 +3285,28 @@ mod tests {
                 Some(10 + i),
                 &[None, None],
                 NO_GPU,
+                NO_PHASE,
             );
             assert!(r.progressed && !r.hang);
         }
         assert_eq!(meter.median(), Some(Duration::from_millis(2_000)));
         // Silent (counter frozen, CPU unknown): 19.9 s is inside 10 × 2 s, 20.1 s is a hang.
         let last = 12_000;
-        let r = meter.observe(at(start, last + 19_900), Some(15), &[None, None], NO_GPU);
+        let r = meter.observe(
+            at(start, last + 19_900),
+            Some(15),
+            &[None, None],
+            NO_GPU,
+            NO_PHASE,
+        );
         assert!(!r.hang, "{r:?}");
-        let r = meter.observe(at(start, last + 20_100), Some(15), &[None, None], NO_GPU);
+        let r = meter.observe(
+            at(start, last + 20_100),
+            Some(15),
+            &[None, None],
+            NO_GPU,
+            NO_PHASE,
+        );
         assert!(r.hang, "{r:?}");
         assert_eq!(r.bound, Some(Duration::from_millis(20_000)));
     }
@@ -3263,9 +3315,15 @@ mod tests {
     fn a_long_prefill_chunk_is_not_a_hang_while_every_rank_computes() {
         let start = Instant::now();
         let mut meter = ProgressMeter::new(start, 2);
-        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU);
+        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU, NO_PHASE);
         for i in 1..=4u64 {
-            meter.observe(at(start, i * 2_000), Some(i), &[Some(i), Some(i)], NO_GPU);
+            meter.observe(
+                at(start, i * 2_000),
+                Some(i),
+                &[Some(i), Some(i)],
+                NO_GPU,
+                NO_PHASE,
+            );
         }
         // A 60 s chunk: the counter stands still, both ranks' CPU keeps moving.
         for i in 1..=30u64 {
@@ -3274,6 +3332,7 @@ mod tests {
                 Some(4),
                 &[Some(4 + i * 50), Some(4 + i * 50)],
                 NO_GPU,
+                NO_PHASE,
             );
             assert!(!r.hang, "poll {i}: {r:?}");
         }
@@ -3283,9 +3342,15 @@ mod tests {
     fn a_frozen_rank_stalls_progress_even_when_its_peer_spins() {
         let start = Instant::now();
         let mut meter = ProgressMeter::new(start, 2);
-        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU);
+        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU, NO_PHASE);
         for i in 1..=4u64 {
-            meter.observe(at(start, i * 2_000), Some(i), &[Some(i), Some(i)], NO_GPU);
+            meter.observe(
+                at(start, i * 2_000),
+                Some(i),
+                &[Some(i), Some(i)],
+                NO_GPU,
+                NO_PHASE,
+            );
         }
         // Rank 1 frozen (CPU flat), rank 0 spinning in the collective: not progress.
         let mut hang_at = None;
@@ -3295,6 +3360,7 @@ mod tests {
                 Some(4),
                 &[Some(100 + i * 100), Some(4)],
                 NO_GPU,
+                NO_PHASE,
             );
             if r.hang {
                 hang_at = Some(i * 2_000);
@@ -3322,13 +3388,20 @@ mod tests {
                     [None, None]
                 }
             };
-            meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], &gpu(0));
+            meter.observe(
+                at(start, 0),
+                Some(0),
+                &[Some(0), Some(0)],
+                &gpu(0),
+                NO_PHASE,
+            );
             for i in 1..=4u64 {
                 meter.observe(
                     at(start, i * 2_000),
                     Some(i),
                     &[Some(i * 10), Some(i * 10)],
                     &gpu(i * 1_000_000_000),
+                    NO_PHASE,
                 );
             }
             (1..=150u64)
@@ -3339,6 +3412,7 @@ mod tests {
                             Some(4),
                             &[Some(40 + 2 * i), Some(40 + 200 * i)],
                             &gpu(4_000_000_000),
+                            NO_PHASE,
                         )
                         .hang
                 })
@@ -3346,6 +3420,107 @@ mod tests {
         };
         assert_eq!(run(true), Some(22_000), "first poll past 10 × 2 s");
         assert_eq!(run(false), None, "CPU time alone never calls it");
+    }
+
+    /// E2E #3e's last minute (goosed WARN 2026-09-27 07:27:46): 64 intervals at a 2,037 ms median,
+    /// then the rank-0 counter held at 45,549 and both GPUs still, while each rank's CPU moved
+    /// `burn` centiseconds per 2,037 ms poll (the WARN's last reading: CPU [902037, 1176748], GPU
+    /// [17981203122208, 16546780894833], ps [R, R]). `cpu_only`: whether each rank's last loop
+    /// state named a CPU-only place. Returns the silence at the poll the rule calls a hang.
+    fn e2e_3e_silence(cpu_only: [bool; 2], burn: [u64; 2]) -> Option<u64> {
+        const POLL_MS: u64 = 2_037;
+        const HELD_POLLS: u64 = 150;
+        let gpu = [17_981_203_122_208u64, 16_546_780_894_833];
+        let cpu_at_hang = [902_037u64, 1_176_748];
+        let cpu_held = [cpu_at_hang[0] - 11 * burn[0], cpu_at_hang[1] - 11 * burn[1]];
+        let start = Instant::now();
+        let mut meter = ProgressMeter::new(start, 2);
+        for i in 0..=64u64 {
+            let back = 64 - i;
+            meter.observe(
+                at(start, i * POLL_MS),
+                Some(45_549 - back),
+                &[Some(cpu_held[0] - back * 90), Some(cpu_held[1] - back * 90)],
+                &[
+                    Some(gpu[0] - back * 1_500_000_000),
+                    Some(gpu[1] - back * 1_500_000_000),
+                ],
+                NO_PHASE,
+            );
+        }
+        assert_eq!(meter.median(), Some(Duration::from_millis(POLL_MS)));
+        let held_from = 64 * POLL_MS;
+        (1..=HELD_POLLS)
+            .find(|i| {
+                meter
+                    .observe(
+                        at(start, held_from + i * POLL_MS),
+                        Some(45_549),
+                        &[
+                            Some(cpu_held[0] + i * burn[0]),
+                            Some(cpu_held[1] + i * burn[1]),
+                        ],
+                        &[Some(gpu[0]), Some(gpu[1])],
+                        &cpu_only,
+                    )
+                    .hang
+            })
+            .map(|i| i * POLL_MS)
+    }
+
+    /// Q-162: rank 0 (and rank 1, running its own cache over the same request) spent the
+    /// compaction call's first 22 s in mlx_lm's prompt-cache search — pure Python, no step, no GPU
+    /// — and the rule SIGTERMed a working split. Negative control: the same samples with the loop
+    /// state the old wrapper printed there (`at: batch`) still reproduce the verdict E2E #3e got.
+    #[test]
+    fn a_rank_searching_its_prompt_cache_on_its_cpu_is_not_a_hang() {
+        let one_core = [204, 204];
+        assert_eq!(
+            e2e_3e_silence([false, false], one_core),
+            Some(11 * 2_037),
+            "outside a CPU-only place, the E2E #3e verdict: first poll past 10 × 2,037 ms"
+        );
+        assert_eq!(e2e_3e_silence([true, true], one_core), None);
+        assert_eq!(
+            e2e_3e_silence([true, false], [204, 0]),
+            None,
+            "rank 0 searching while rank 1 waits: rank 0's own CPU is the work"
+        );
+    }
+
+    /// Q-114's shape beside the new arm: a rank spinning inside the step's collective reports
+    /// `at: batch`, which is no CPU-only place, so its spin is no progress; and a rank whose state
+    /// says `cache_lookup` but whose CPU stands still is no progress either, whatever its peer
+    /// spins (only the rank IN the CPU-only place counts, by its own CPU).
+    #[test]
+    fn a_spin_outside_a_cpu_only_place_or_a_still_search_is_still_a_hang() {
+        assert_eq!(
+            e2e_3e_silence([false, false], [200, 2]),
+            Some(11 * 2_037),
+            "Q-114: rank 0 R spinning in the collective, rank 1 near 0%"
+        );
+        assert_eq!(
+            e2e_3e_silence([true, false], [0, 200]),
+            Some(11 * 2_037),
+            "a still rank in cache_lookup beside a spinning peer"
+        );
+    }
+
+    /// The places the rule reads as CPU-only are the ones the wrapper publishes, and a rank's last
+    /// loop state is read as one only when its `at` names it.
+    #[test]
+    fn the_cpu_only_places_are_the_ones_the_wrapper_publishes() {
+        let search = include_str!("rank_prompt_search.py");
+        let wrapper = include_str!("rank_wrapper.py");
+        assert_eq!(CPU_ONLY_PHASES, ["cache_lookup"]);
+        assert!(search.contains("CACHE_LOOKUP = \"cache_lookup\""));
+        assert!(wrapper.contains("loop.publish(CACHE_LOOKUP)"));
+        let mut live = RankLive::default();
+        assert!(!live.in_cpu_only_phase(), "no state reported");
+        live.state = Some(serde_json::json!({"steps": 45_549, "at": "batch"}));
+        assert!(!live.in_cpu_only_phase());
+        live.state = Some(serde_json::json!({"steps": 45_549, "at": "cache_lookup"}));
+        assert!(live.in_cpu_only_phase());
     }
 
     #[test]
@@ -3357,6 +3532,7 @@ mod tests {
             Some(0),
             &[Some(0), Some(0)],
             &[Some(0), Some(0)],
+            NO_PHASE,
         );
         for i in 1..=4u64 {
             meter.observe(
@@ -3364,6 +3540,7 @@ mod tests {
                 Some(i),
                 &[Some(i), Some(i)],
                 &[Some(i), Some(i)],
+                NO_PHASE,
             );
         }
         // A 60 s chunk: the counter stands still and the slower rank's CPU barely moves (it sleeps
@@ -3374,6 +3551,7 @@ mod tests {
                 Some(4),
                 &[Some(4), Some(4 + i * 150)],
                 &[Some(4 + i * 1_900_000_000), Some(4 + i * 1_200_000_000)],
+                NO_PHASE,
             );
             assert!(!r.hang && r.signal == WorkSignal::Gpu, "poll {i}: {r:?}");
         }

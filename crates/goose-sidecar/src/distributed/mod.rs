@@ -86,6 +86,12 @@ pub const PIPELINE_DEFAULT_SLOTS: u32 = 2;
 pub const HANG_MEDIAN_MULTIPLE: f64 = 10.0;
 // ratio: the soak's rule held its verdict until 3 samples of the measure existed.
 pub const HANG_MIN_SAMPLES: usize = 3;
+/// The places a tensor rank's loop reports (`GOOSE_RANK_STATE`'s `at`, rank_state.py) where it
+/// works on its CPU alone — no step, no GPU, no collective — so its own CPU time advancing is
+/// progress (Q-162: rank 0 sat 22 s in the prompt cache's search before the hang rule stopped
+/// it). Every place inside a step or a collective stays out: there a CPU spinning is Q-114's
+/// deadlock, not work.
+pub const CPU_ONLY_PHASES: &[&str] = &["cache_lookup"];
 // measured: TENSOR RUNNER — mlx_lm 0.31.3's own prefill chunk (`--prefill-step-size` default,
 // server.py:1866; BatchGenerator's `prefill_step_size`), the largest chunk the plan grants. The
 // launch hands it to mlx_lm explicitly, so the engine runs the chunk the plan charged whatever
