@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   SPARK_WINDOW,
+  parseSamplingDefaults,
   advanceMountWatch,
   compactTokens,
   formatElapsed,
@@ -339,5 +340,32 @@ describe('rates at a glance', () => {
   it('rates read at a glance: one decimal under 100, whole numbers above', () => {
     expect(formatRate(19.94, 'en-US')).toBe('19.9');
     expect(formatRate(1240.4, 'en-US')).toBe('1,240');
+  });
+});
+
+describe('parseSamplingDefaults — the split rank 0’s sampling_defaults (Q-170)', () => {
+  it('each field takes its layer in rank 0’s order: profile, then the model’s config, then the fallback', () => {
+    expect(
+      parseSamplingDefaults({
+        profile: { top_k: 40 },
+        generation_config: { temperature: 1.0, top_p: 0.95, top_k: 20 },
+        engine_fallback: { temperature: 0.7, top_p: 0.9 },
+      })
+    ).toEqual({
+      temperature: { value: 1, from: 'generationConfig' },
+      topP: { value: 0.95, from: 'generationConfig' },
+      topK: { value: 40, from: 'profile' },
+    });
+    expect(
+      parseSamplingDefaults({ generation_config: {}, engine_fallback: { top_p: 0.9 } })
+    ).toEqual({ topP: { value: 0.9, from: 'engineFallback' } });
+  });
+
+  it('an engine that does not report it (Rapid-MLX single) reads as null, never as values', () => {
+    expect(parseSamplingDefaults(undefined)).toBeNull();
+    expect(parseMlxLiveStatus({ status: 'idle', requests: [] })).toMatchObject({
+      ok: true,
+      stats: { samplingDefaults: null },
+    });
   });
 });

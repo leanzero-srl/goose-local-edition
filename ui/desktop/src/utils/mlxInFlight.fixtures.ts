@@ -35,6 +35,7 @@ export function liveStats(requests: MlxLiveRequest[]): MlxLiveStats {
     totalPromptTokens: null,
     totalCompletionTokens: null,
     requests,
+    samplingDefaults: null,
   };
 }
 

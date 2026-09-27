@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Resim İçinde Resim'de Oynatma"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Kaydedilirken {max} karakterde kesildi, bu yüzden bu haliyle kaydedilemez. Tam metni yeniden isteyin."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Kapat"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Motor ayrıntıları"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "motor {value} kullanıyor · {from, select, profile {başlangıçtaki bu profil} generationConfig {modelin kendi yapılandırması} other {motorun yedek değeri}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Değer gönderilmiyor — çalışan motor {value} ile örnekleme yaptığını bildiriyor"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} üzerindeki bellek"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "ağ üzerinden"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "Thunderbolt üzerinden"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} üzerinden sunuluyor"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose, {model} modelini bölmenin bir yolunu bulamadı."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "bölme {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "bölme"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{model}, {nodes} üzerinde başlatılıyor…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Başka sağlayıcı kullan"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose denetimi"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "goose'nin iyileştirilmesine yardımcı olmak için anonim kullanım verilerini paylaşmak ister misiniz? Konuşmalarınızı, kodlarınızı veya kişisel verilerinizi asla toplamıyoruz."

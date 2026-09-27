@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Đang phát ở chế độ Hình-trong-hình"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Bị cắt ở {max} ký tự khi được ghi lại, nên không thể lưu nguyên như vậy. Hãy yêu cầu lại toàn bộ nội dung."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Bỏ qua"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Chi tiết engine"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "engine dùng {value} · {from, select, profile {hồ sơ này khi khởi động} generationConfig {cấu hình riêng của mô hình} other {giá trị dự phòng của engine}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Không gửi giá trị — engine đang chạy báo rằng nó lấy mẫu với {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Bộ nhớ trên {mac}"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "qua mạng"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "qua Thunderbolt"
   },
   "mlxMode.remote": {
     "defaultMessage": "Đang phục vụ từ {peer}"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose không tìm được cách chia {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "chia tách {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "chia tách"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Đang khởi động {model} trên {nodes}…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Sử dụng nhà cung cấp khác"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose kiểm tra"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "Bạn có muốn chia sẻ dữ liệu sử dụng ẩn danh để giúp cải thiện goose không? Chúng tôi không bao giờ thu thập các cuộc trò chuyện, mã hoặc dữ liệu cá nhân của bạn."

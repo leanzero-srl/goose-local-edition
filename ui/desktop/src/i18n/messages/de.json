@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Wiedergabe im Bild-in-Bild-Modus"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Beim Ablegen nach {max} Zeichen abgeschnitten, daher so nicht speicherbar. Frag erneut nach dem vollständigen Text."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Ausblenden"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Engine-Details"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "Engine nutzt {value} · {from, select, profile {dieses Profil beim Start} generationConfig {die eigene Konfiguration des Modells} other {den Fallback der Engine}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Kein Wert gesendet — die laufende Engine meldet, dass sie mit {value} sampelt"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Speicher auf {mac}"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rang {rank} von {requester}s Split · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "über das Netzwerk"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "über Thunderbolt"
   },
   "mlxMode.remote": {
     "defaultMessage": "Bereitgestellt von {peer}"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose hat keinen Weg gefunden, {model} aufzuteilen."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "Aufteilung {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "Aufteilung"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{model} wird über {nodes} gestartet…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Anderen Anbieter verwenden"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose-Prüfung"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "Möchten Sie anonyme Nutzungsdaten teilen, um goose zu verbessern? Wir erfassen niemals Ihre Unterhaltungen, Ihren Code oder Ihre persönlichen Daten."

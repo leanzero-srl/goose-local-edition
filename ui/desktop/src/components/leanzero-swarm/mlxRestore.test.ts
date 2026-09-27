@@ -16,8 +16,8 @@ import {
   toRestoreReport,
   type RestoreDeps,
 } from './mlxRestore';
-import { isMlxRestoreReport, restoreTrayLine } from '../../utils/mlxRestoreReport';
-import { buildMlxTrayModel } from '../../utils/mlxTray';
+import { isMlxRestoreReport, restoreTrayLine, servingKey } from '../../utils/mlxRestoreReport';
+import { buildMlxTrayModel, standingRestore } from '../../utils/mlxTray';
 import { INITIAL_SNAPSHOT } from '../../utils/mlxEngineMonitor';
 
 const QWEN = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
@@ -406,7 +406,8 @@ describe('the restore’s one line, and what main is told', () => {
   });
 });
 
-describe('settleRestoreLine — a failed line clears once what it names serves', () => {
+describe('settleRestoreLine — a failed line clears once an engine serves after it', () => {
+  afterEach(() => publishRestoreLine({ phase: 'idle' }));
   const MODEL = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
   const failedOnStudio = () =>
     publishRestoreLine({
@@ -425,18 +426,109 @@ describe('settleRestoreLine — a failed line clears once what it names serves',
     expect(latestRestoreLine()).toEqual({ phase: 'idle' });
   });
 
-  it('still mounting, another model, or this Mac serving instead: the line stays', () => {
+  it('still mounting, or nothing serving: the line stays', () => {
     failedOnStudio();
     settleRestoreLine({
-      single: { state: 'running', modelId: MODEL } as MlxEngineStatus,
+      single: { state: 'mounting', modelId: MODEL } as MlxEngineStatus,
       remote: { state: 'mounting', modelId: MODEL } as MlxRemoteSingleStatus,
+      distributed: {
+        mode: 'distributed',
+        state: 'loading',
+        modelId: MODEL,
+      } as MlxDistributedStatus,
+    });
+    settleRestoreLine({ single: null, remote: null, distributed: null });
+    expect(latestRestoreLine().phase).toBe('failed');
+  });
+
+  // Q-166 (3.0.57): "Could not restore Qwen3.8-Flash-Next-4bit … Another MLX split (not goose's)"
+  // stayed up 20 minutes above the 27B split the owner started afterwards.
+  const splitUp = (modelId: string) =>
+    ({ mode: 'distributed', state: 'ready', modelId }) as MlxDistributedStatus;
+  const failedFlashSplit = (servingAtFailure?: string[]) =>
+    publishRestoreLine({
+      phase: 'failed',
+      what: { kind: 'split', modelId: FLASH, peerName: null },
+      reason: { code: 'said', text: "Another MLX split (not goose's) is running" },
+      ...(servingAtFailure ? { servingAtFailure } : {}),
+    });
+
+  it('ANOTHER engine the owner started afterwards supersedes the failure (Q-166)', () => {
+    failedFlashSplit([]);
+    settleRestoreLine({ single: null, remote: null, distributed: splitUp(QWEN) });
+    expect(latestRestoreLine()).toEqual({ phase: 'idle' });
+
+    failedFlashSplit([]);
+    settleRestoreLine({
+      single: { state: 'running', modelId: QWEN } as MlxEngineStatus,
+      remote: null,
       distributed: null,
     });
+    expect(latestRestoreLine()).toEqual({ phase: 'idle' });
+  });
+
+  it('an engine already serving when the restore gave up does not hide why', () => {
+    failedFlashSplit([servingKey('split', QWEN)]);
+    settleRestoreLine({ single: null, remote: null, distributed: splitUp(QWEN) });
+    expect(latestRestoreLine().phase).toBe('failed');
     settleRestoreLine({
       single: null,
-      remote: { state: 'ready', modelId: 'other/model' } as MlxRemoteSingleStatus,
-      distributed: null,
+      remote: { state: 'ready', modelId: MODEL } as MlxRemoteSingleStatus,
+      distributed: splitUp(QWEN),
     });
-    expect(latestRestoreLine().phase).toBe('failed');
+    expect(latestRestoreLine()).toEqual({ phase: 'idle' });
+  });
+
+  it('runRestore records what served at the failure and settles the line with no Engine view open', async () => {
+    const report = vi.fn();
+    (window.electron as unknown as { mlxRestoreReport: typeof report }).mlxRestoreReport = report;
+    let owner = false;
+    const d = deps({
+      intent: [{ kind: 'split', modelId: FLASH }],
+      distributedStart: [
+        {
+          started: false,
+          refusal: { code: 'foreignEngines', message: "Another MLX split (not goose's)" },
+        },
+      ],
+    });
+    d.distributedStatus.mockImplementation(async () => (owner ? splitUp(QWEN) : null));
+    let waits = 0;
+    d.wait.mockImplementation(async () => {
+      waits += 1;
+      if (waits === 2) owner = true;
+    });
+    await runRestore(d);
+    const failed = latestRestoreLine();
+    expect(failed).toMatchObject({ phase: 'failed', servingAtFailure: [] });
+    expect(report.mock.lastCall?.[0]).toMatchObject({ phase: 'failed', servingAtFailure: [] });
+    await vi.waitFor(() => expect(latestRestoreLine()).toEqual({ phase: 'idle' }));
+    expect(report.mock.lastCall?.[0]).toBeNull();
+  });
+
+  it('the tray drops a failed restore beside a split the owner started afterwards (Q-166)', () => {
+    const failed = toRestoreReport({
+      phase: 'failed',
+      what: { kind: 'split', modelId: FLASH, peerName: null },
+      reason: { code: 'said', text: "Another MLX split (not goose's) is running" },
+      servingAtFailure: [],
+    })!;
+    expect(isMlxRestoreReport(failed)).toBe(true);
+    const splitReady = {
+      report: { mode: 'distributed', state: 'ready', modelId: QWEN, nodes: [], nodeNames: [] },
+      ageMs: 0,
+    } as unknown as NonNullable<Parameters<typeof buildMlxTrayModel>[1]['distributed']>;
+    const options = { canAct: true, mountModelId: null, distributed: splitReady, restore: failed };
+    expect(standingRestore(INITIAL_SNAPSHOT, options)).toBeNull();
+    const tray = buildMlxTrayModel(INITIAL_SNAPSHOT, options);
+    expect(tray.items.some((item) => 'label' in item && /Could not restore/.test(item.label))).toBe(
+      false
+    );
+    expect(
+      standingRestore(INITIAL_SNAPSHOT, {
+        ...options,
+        restore: { ...failed, servingAtFailure: [servingKey('split', QWEN)] },
+      })
+    ).not.toBeNull();
   });
 });

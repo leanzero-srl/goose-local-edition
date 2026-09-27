@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Воспроизведение в режиме «картинка в картинке»"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Обрезано на {max} символах при сохранении предложения, поэтому сохранить его так нельзя. Запросите полный текст снова."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Скрыть"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Сведения о движке"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "движок использует {value} · {from, select, profile {этот профиль при запуске} generationConfig {собственную конфигурацию модели} other {запасное значение движка}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Значение не отправляется — работающий движок сообщает, что сэмплирует с {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Память на {mac}"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Ранг {rank} разделения {requester} · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "по сети"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "по Thunderbolt"
   },
   "mlxMode.remote": {
     "defaultMessage": "Обслуживается с {peer}"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose не нашёл способа разделить {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "разделение {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "разделение"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Запуск {model} на {nodes}…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Использовать другого провайдера"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "проверка goose"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "Хотите поделиться анонимными данными об использовании, чтобы помочь улучшить goose? Мы никогда не собираем ваши разговоры, код или персональные данные."

@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "PIP(Picture-in-Picture)에서 재생 중"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "등록할 때 {max}자에서 잘려 그대로 저장할 수 없습니다. 전체 내용을 다시 요청하세요."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "닫기"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "엔진 세부 정보"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "엔진이 {value} 사용 · {from, select, profile {시작 시 이 프로필} generationConfig {모델 자체 설정} other {엔진 대체값}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "보낸 값 없음 — 실행 중인 엔진이 {value}(으)로 샘플링한다고 보고합니다"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac}의 메모리"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} 분할의 랭크 {rank} · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "네트워크 경유"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "Thunderbolt 경유"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer}에서 제공 중"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose가 {model}을(를) 분할할 방법을 찾지 못했습니다."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "분할 {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "분할"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{nodes}에서 {model} 시작 중…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "다른 제공업체 이용"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose 확인"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "goose 개선을 위해 익명의 사용 데이터를 공유하시겠습니까? 대화, 코드 또는 개인 데이터는 수집하지 않습니다."

@@ -291,11 +291,12 @@ function MatrixCell({ mac, modelId, macs, onPending, onOpenSampling }: CellProps
               {intl.formatMessage(i18n.incomplete, { count: Math.max(1, model.missingFiles) })}
             </Chip>
           ) : role ? (
-            // The copy an engine holds is the one FILLED chip in the table, in the engine-phase
-            // palette; a copy that only sits on disk is quiet. A solid green "On disk" beside a
-            // grey "Loaded" made the serving copy look the least alive (Q-45). A split's copies
-            // say so on both Macs — "On disk" twice while the split served it (Q-149).
-            <Chip phase={phase}>
+            // The copy an engine holds is the one FILLED chip in the table; a copy that only sits
+            // on disk is quiet. While its engine works the chip wears that phase's fill; at rest it
+            // is the solid "ok" green, never the idle phase's grey — a grey "Loaded", then a grey
+            // "Split" / "Part of a split", made the serving copy look the least alive (Q-45). A
+            // split's copies say so on both Macs (Q-149).
+            <Chip {...(phase === 'idle' ? { tone: 'ok' as const } : { phase })}>
               {role === 'split' || role === 'hosting'
                 ? macStateWord(intl, summary.state)
                 : intl.formatMessage(role === 'loading' ? i18n.loading : i18n.loaded)}

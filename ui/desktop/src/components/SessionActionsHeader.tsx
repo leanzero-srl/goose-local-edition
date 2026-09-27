@@ -19,7 +19,7 @@ import type { Recipe } from '../recipe';
 import type { Session } from '../types/session';
 import { errorMessage } from '../utils/conversionUtils';
 import { cn } from '../utils';
-import { TYPE, cx } from './lz/tokens';
+import { LAYER, TYPE, cx } from './lz/tokens';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import {
@@ -482,7 +482,8 @@ export default function SessionActionsHeader({
     <>
       <div
         className={cn(
-          'no-drag absolute top-[14px] left-1/2 z-30 max-w-[min(36rem,calc(100vw-13rem))] -translate-x-1/2',
+          'no-drag absolute top-[14px] left-1/2 max-w-[min(36rem,calc(100vw-13rem))] -translate-x-1/2',
+          LAYER.chrome,
           className
         )}
       >

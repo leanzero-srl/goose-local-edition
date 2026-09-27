@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "正在以画中画播放"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "提交时在 {max} 个字符处被截断，因此无法原样保存。请重新获取完整内容。"
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "关闭"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "引擎详情"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "引擎使用 {value} · {from, select, profile {启动时的此配置文件} generationConfig {模型自带的配置} other {引擎的后备值}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "不发送值 — 运行中的引擎报告它以 {value} 采样"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} 的内存"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} 拆分的第 {rank} 个分片 · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "通过网络"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "通过 Thunderbolt"
   },
   "mlxMode.remote": {
     "defaultMessage": "由 {peer} 提供"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose 找不到拆分 {model} 的方式。"
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "拆分 {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "拆分"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "正在 {nodes} 上启动 {model}…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "使用其他提供商"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose 检查"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "是否愿意分享匿名使用数据帮助改进 goose？我们绝不采集你的对话、代码或个人数据。"

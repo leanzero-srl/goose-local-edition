@@ -45,6 +45,7 @@ import {
   Button,
   Chip,
   FOCUS,
+  LAYER,
   MOTION,
   Panel,
   RADIUS,
@@ -381,6 +382,21 @@ export default function BaseChat({
     }
     return null;
   }, [messages]);
+  // When the person last asked something (a tool result rides a user message too; it is no question):
+  // a project-level memory card older than this is not pinned under it (Q-172).
+  const lastQuestionAt = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (
+        message.role === 'user' &&
+        message.metadata.userVisible &&
+        message.content.some((c) => c.type === 'text')
+      ) {
+        return message.created;
+      }
+    }
+    return null;
+  }, [messages]);
 
   useEffect(() => {
     if (!recipe || !isActiveSession || session?.session_type === 'scheduled') return;
@@ -601,7 +617,12 @@ export default function BaseChat({
             {/* FRAME 1.14 event B: what the agent asked to remember at the end of the turn — a card,
                 never a modal, never an elicitation. Not edition-gated: a memory proposal is
                 upstream-worthy, so it renders on every build. */}
-            <MemoryProposalCards sessionId={sessionId} chatState={chatState} className="mt-2" />
+            <MemoryProposalCards
+              sessionId={sessionId}
+              chatState={chatState}
+              lastQuestionAt={lastQuestionAt}
+              className="mt-2"
+            />
 
             <div className="block h-8" />
           </>
@@ -737,8 +758,14 @@ export default function BaseChat({
               SURFACE.hairline
             )}
           />
-          {/* Brand — top right, one quiet chip */}
-          <div className="absolute top-[14px] right-4 z-[60] flex flex-row items-center gap-2">
+          {/* Brand — top right, one quiet chip; page chrome, so every overlay covers it */}
+          <div
+            data-testid="session-brand-corner"
+            className={cx(
+              'absolute top-[14px] right-4 flex flex-row items-center gap-2',
+              LAYER.chrome
+            )}
+          >
             <SessionBrand isLocal={isLocal} />
             <EnvironmentBadge className="translate-y-px" />
           </div>

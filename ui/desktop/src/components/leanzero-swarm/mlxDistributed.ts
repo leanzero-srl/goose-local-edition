@@ -23,15 +23,28 @@ export function ownsTheMac(status: Pick<MlxDistributedStatusDto, 'mode'> | null)
   return status?.mode === 'distributed';
 }
 
-/** The transport's proper name. An unknown value is shown as sent, never guessed at. */
+/**
+ * The transport's proper name — for the split's details and setup, where it is the thing being
+ * configured. A surface a person reads says the link in plain words instead (`linkWords`; the
+ * renderer's mlxModeLabel `linkText`), Q-174. An unknown value is shown as sent, never guessed at.
+ */
 export function backendName(backend: string | null | undefined): string | null {
   if (!backend) return null;
   if (backend === 'jaccl') return 'JACCL';
   return backend;
 }
 
+/** The link a split runs over, in the tray's English: "over Thunderbolt" rather than "JACCL". */
+export function linkWords(backend: string | null | undefined): string | null {
+  if (!backend) return null;
+  if (backend === 'jaccl') return 'over Thunderbolt';
+  if (backend === 'ring') return 'over the network';
+  return backend;
+}
+
 export type MlxModeSummary =
   | { mode: 'single' }
+  /** `backend`: goose's id (`jaccl` | `ring`); the mode line says it in words (mlxModeLabel). */
   | { mode: 'distributed'; nodeNames: string[]; backend: string | null }
   | {
       mode: 'hosting';
@@ -55,7 +68,7 @@ export function hostingSummary(
     rank: hosting.rank,
     requester: hosting.requesterName,
     modelId: hosting.modelId,
-    backend: backendName(hosting.backend),
+    backend: hosting.backend ?? null,
   };
 }
 
@@ -72,7 +85,7 @@ export function modeSummary(
   return {
     mode: 'distributed',
     nodeNames,
-    backend: backendName(status.backend ?? status.config?.backend),
+    backend: status.backend ?? status.config?.backend ?? null,
   };
 }
 
@@ -91,7 +104,7 @@ export function configuredModeSummary(
   return {
     mode: 'distributed',
     nodeNames: config.nodes.map((n) => n.name),
-    backend: backendName(config.backend),
+    backend: config.backend ?? null,
   };
 }
 

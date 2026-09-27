@@ -6,6 +6,8 @@ import {
   mlxTrayTitle,
   trayTitleText,
   type MlxTrayItem,
+  alarmLine,
+  plainAlarmMessage,
 } from './mlxTray';
 import { phaseDotBitmap } from './phaseDot';
 import type { MlxDistributedStatus } from '../acp/mlx-distributed';
@@ -299,13 +301,13 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
     const model = buildMlxTrayModel({ ...INITIAL_SNAPSHOT, mode: 'off' }, fresh());
     expect(labels(model.items)).toEqual([
       'LeanZero MLX: split across 2 Macs, ready',
-      'Split across MacBook Pro + workhorse · JACCL',
+      'Split across MacBook Pro + workhorse · over Thunderbolt',
       'Model: rapid-mlx/Qwen3.8-Flash-Next-4bit',
       'MacBook Pro: L0–19 · peak 61.0 of 83.4 GB split budget',
       'workhorse: L20–47 · peak 42.5 of 55.4 GB split budget',
       'In flight: 0',
       'Restarts: 1',
-      'Last: restart — restart 1 of the breaker window',
+      'Last: The split restarted — restart 1 of the breaker window',
       '---',
       'Open Providers',
       'Stop the split',
@@ -419,7 +421,7 @@ describe('the tray while this Mac SERVES a rank of another Mac over LeanZero Lin
     expect(model.title).toBe('Rank 1 · serving');
     expect(labels(model.items)).toEqual([
       'LeanZero MLX: serving a rank, serving',
-      "Rank 1 of MacBook Pro's split · JACCL",
+      "Rank 1 of MacBook Pro's split · over Thunderbolt",
       'Model: Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
       'Single engine: refused while this Mac serves MacBook Pro',
       '---',
@@ -581,5 +583,34 @@ describe('the tray in the engine-phase palette', () => {
     expect(at(12, 12)).toEqual([0x0b, 0x9e, 0xf5, 255]);
     // corner: outside the disc, transparent
     expect(at(0, 0)).toEqual([0, 0, 0, 0]);
+  });
+});
+
+/**
+ * Q-174, critic round 2 (3.0.57): the tray read "Last: startFailed — preflight: … foreignEngines:
+ * another distri…" — the supervisor's event id and the preflight's check id, verbatim.
+ */
+describe('the tray’s last alarm in plain words (Q-174)', () => {
+  it('startFailed from the preflight: the kind in words, the check ids gone, the Mac kept', () => {
+    const line = alarmLine({
+      kind: 'startFailed',
+      node: null,
+      message:
+        "preflight: Work’s Mac Studio foreignEngines: another distributed MLX engine (not goose's) holds this Mac; Mihai Macbook memory: 12.0 GB free of 31.9 GB needed",
+    });
+    expect(line).toBe(
+      "Last: The split did not start — Work’s Mac Studio: another distributed MLX engine (not goose's) holds this Mac; Mihai Macbook: 12.0 GB free of 31.9 GB needed"
+    );
+    expect(line).not.toMatch(/startFailed|preflight|foreignEngines|memory:/);
+  });
+
+  it('a cluster check loses its id; words inside a message are left alone; an unknown kind is shown as sent', () => {
+    expect(plainAlarmMessage('preflight: ports: 9600 is taken')).toBe('9600 is taken');
+    expect(plainAlarmMessage('rank 1 died: out of memory: Metal')).toBe(
+      'rank 1 died: out of memory: Metal'
+    );
+    expect(alarmLine({ kind: 'somethingNew', node: 'workhorse', message: 'x' })).toBe(
+      'Last: somethingNew on workhorse — x'
+    );
   });
 });

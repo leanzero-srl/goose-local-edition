@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "In riproduzione in Picture-in-Picture"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Tagliato a {max} caratteri quando è stato archiviato, quindi non si può salvare così. Chiedi di nuovo il testo completo."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Ignora"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Dettagli del motore"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "il motore usa {value} · {from, select, profile {questo profilo all’avvio} generationConfig {la configurazione propria del modello} other {il valore di riserva del motore}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Nessun valore inviato — il motore in esecuzione riporta di campionare con {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memoria su {mac}"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rango {rank} della suddivisione di {requester} · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "via rete"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "via Thunderbolt"
   },
   "mlxMode.remote": {
     "defaultMessage": "Servito da {peer}"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose non ha trovato un modo per suddividere {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "divisione {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "divisione"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Avvio di {model} su {nodes}…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Usa un altro provider"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "controllo di goose"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "Vuoi condividere dati di utilizzo anonimi per aiutare a migliorare goose? Non raccogliamo mai le tue conversazioni, il tuo codice o i tuoi dati personali."

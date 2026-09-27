@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "ピクチャ・イン・ピクチャで再生中"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "登録時に {max} 文字で切れているため、このままでは保存できません。全文をもう一度依頼してください。"
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "閉じる"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "エンジンの詳細"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "エンジンは {value} を使用 · {from, select, profile {起動時のこのプロファイル} generationConfig {モデル自身の設定} other {エンジンのフォールバック}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "値は送信されません — 実行中のエンジンは {value} でサンプリングすると報告しています"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} のメモリ"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} の分割のランク {rank} · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "ネットワーク経由"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "Thunderbolt 経由"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} から提供中"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose は {model} を分割する方法を見つけられませんでした。"
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "分割 {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "分割"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{nodes} で {model} を起動中…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "別のプロバイダーを使用"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose チェック"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "gooseの改善のため、匿名の使用状況データを共有しますか？会話、コード、個人データは一切収集しません。"

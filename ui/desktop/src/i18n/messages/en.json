@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Playing in Picture-in-Picture"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Cut off at {max} characters when it was filed, so it cannot be saved as it is. Ask again for the whole piece."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Engine details"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "{from,select,profile{engine uses {value} · this profile at start} generationConfig{engine uses {value} · the model’s own config} other{engine uses {value} · the engine’s fallback}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "No value sent — the running engine reports it samples with {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memory on {mac}"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} of {requester}''s split · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "over the network"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "over Thunderbolt"
   },
   "mlxMode.remote": {
     "defaultMessage": "Serving from {peer}"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose found no way to split {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "split {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "split"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Starting {model} across {nodes}…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Use other provider"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose check"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "Would you like to share anonymous usage data to help improve goose? We never collect your conversations, code, or personal data."

@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Reproduciendo en imagen en imagen"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Se cortó a los {max} caracteres al archivarse, así que no se puede guardar tal cual. Pide de nuevo el texto completo."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Descartar"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Detalles del motor"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "el motor usa {value} · {from, select, profile {este perfil al iniciar} generationConfig {la configuración propia del modelo} other {el valor de reserva del motor}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "No se envía ningún valor — el motor en marcha indica que muestrea con {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memoria en {mac}"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rango {rank} de la división de {requester} · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "por la red"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "por Thunderbolt"
   },
   "mlxMode.remote": {
     "defaultMessage": "Servido desde {peer}"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose no encontró forma de dividir {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "división {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "división"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Iniciando {model} en {nodes}…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Usar otro proveedor"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "comprobación de goose"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "¿Te gustaría compartir datos de uso anónimos para ayudar a mejorar goose? Nunca recopilamos tus conversaciones, código ni datos personales."

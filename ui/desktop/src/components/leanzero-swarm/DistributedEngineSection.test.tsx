@@ -188,7 +188,7 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     const mode = screen.getByTestId('mlx-dist-mode');
     expect(mode).toHaveAttribute('data-mode', 'distributed');
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Split across 2 Macs · JACCL'
+      'Split across 2 Macs · over Thunderbolt'
     );
     expect(within(mode).getByText('Ready')).toBeInTheDocument();
 
@@ -452,7 +452,7 @@ describe('DistributedEngineSection — starting', () => {
     const { container } = section({ status: STOPPED_WITH_CONFIG });
     // The section names the engine it configures, even while the Mac belongs to the single one.
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Split across 2 Macs · JACCL'
+      'Split across 2 Macs · over Thunderbolt'
     );
     await userEvent.click(screen.getByRole('button', { name: 'Start' }));
     expect(mockStart).toHaveBeenCalledWith(null);
@@ -689,7 +689,7 @@ describe('DistributedEngineSection — configuration', () => {
   it('a saved but stopped config: the headline is the configured engine, not the single one', () => {
     section({ status: STOPPED_WITH_CONFIG });
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Split across 2 Macs · JACCL'
+      'Split across 2 Macs · over Thunderbolt'
     );
     expect(within(screen.getByTestId('mlx-dist-mode')).getByText('Stopped')).toBeInTheDocument();
     expect(screen.queryByText('Single · this Mac')).toBeNull();

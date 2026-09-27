@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "पिक्चर-इन-पिक्चर में बजाना"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "दर्ज करते समय {max} अक्षरों पर कट गया, इसलिए इसे ऐसे सहेजा नहीं जा सकता। पूरा अंश फिर से माँगें।"
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "हटाएँ"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "इंजन विवरण"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "इंजन {value} उपयोग करता है · {from, select, profile {शुरू होने पर यह प्रोफ़ाइल} generationConfig {मॉडल का अपना कॉन्फ़िग} other {इंजन का फ़ॉलबैक}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "कोई मान नहीं भेजा गया — चल रहा इंजन बताता है कि वह {value} से सैंपल करता है"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} पर मेमोरी"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "नेटवर्क पर"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "Thunderbolt पर"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} से सर्व हो रहा है"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose को {model} को बाँटने का कोई तरीका नहीं मिला।"
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "विभाजन {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "विभाजन"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "{nodes} पर {model} शुरू हो रहा है…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "अन्य प्रदाता का उपयोग करें"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose जाँच"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "क्या आप goose को बेहतर बनाने में सहायता के लिए अनाम उपयोग डेटा साझा करना चाहेंगे? हम कभी भी आपकी बातचीत, कोड या व्यक्तिगत डेटा एकत्र नहीं करते हैं।"

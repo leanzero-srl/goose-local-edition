@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Memutar dalam Picture-in-Picture"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Terpotong di {max} karakter saat diajukan, jadi tidak bisa disimpan apa adanya. Minta lagi bagian lengkapnya."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Tutup"
   },
@@ -3824,6 +3827,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Detail mesin"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "mesin memakai {value} · {from, select, profile {profil ini saat mulai} generationConfig {konfigurasi model itu sendiri} other {nilai cadangan mesin}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Tidak ada nilai dikirim — mesin yang berjalan melaporkan sampling dengan {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memori di {mac}"
   },
@@ -3946,6 +3955,12 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Peringkat {rank} dari pembagian {requester} · {model}"
+  },
+  "mlxMode.overNetwork": {
+    "defaultMessage": "lewat jaringan"
+  },
+  "mlxMode.overThunderbolt": {
+    "defaultMessage": "lewat Thunderbolt"
   },
   "mlxMode.remote": {
     "defaultMessage": "Dilayani dari {peer}"
@@ -5566,6 +5581,12 @@
   },
   "placementCard.splitNotSplittable": {
     "defaultMessage": "goose tidak menemukan cara untuk membagi {model}."
+  },
+  "placementCard.splitOver": {
+    "defaultMessage": "pembagian {link}"
+  },
+  "placementCard.splitPlain": {
+    "defaultMessage": "pembagian"
   },
   "placementCard.splitStarting": {
     "defaultMessage": "Memulai {model} di {nodes}…"
@@ -7798,6 +7819,9 @@
   },
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Gunakan penyedia lain"
+  },
+  "systemNotificationInline.check": {
+    "defaultMessage": "pemeriksaan goose"
   },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "Apakah Anda ingin membagikan data penggunaan anonim untuk membantu meningkatkan goose? Kami tidak pernah mengumpulkan percakapan, kode, atau data pribadi Anda."

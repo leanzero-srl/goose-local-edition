@@ -8,12 +8,45 @@ import { ChatState } from '../../types/chatState';
 export const POLL_MS = 3000;
 export const POLL_TRIES = 12;
 
-/** What the card shows: open proposals, and expired ones (rendered as "expired — not saved"). */
-export function visibleProposals(all: MemoryProposalDto[]): MemoryProposalDto[] {
-  return all.filter((p) => p.state === 'open' || p.state === 'expired');
+/**
+ * A card holds this many characters — the store's `PROPOSAL_TEXT_MAX_CHARS`
+ * (goose-memory-store proposals.rs), which the card's editor also holds to.
+ */
+export const PROPOSAL_CARD_MAX_CHARS = 350;
+
+/**
+ * A proposal filed before Q-93 had its text CUT at the card's limit — the store clamped instead of
+ * refusing (the Sep 25 card ends `by exception only". Bi`). Since Q-93 a text over the card is
+ * refused whole, so an open text at the limit is that clamp's stump: it is shown expired, never
+ * offered for Save (Save would store the stump).
+ */
+export function isClampedStump(p: MemoryProposalDto): boolean {
+  return p.state === 'open' && [...p.text].length >= PROPOSAL_CARD_MAX_CHARS;
 }
 
-export function useMemoryProposals(sessionId: string | undefined, chatState: ChatState) {
+/**
+ * What the card shows: open proposals, and expired ones (rendered as "expired — not saved").
+ * A card filed for the whole project (`key` is not this chat's) is shown only while it is not
+ * older than the chat's latest question: a days-old project card pinned under every new question
+ * read as the reply (Q-172). `lastQuestionAt` (seconds) null = no question yet, nothing to hide.
+ */
+export function visibleProposals(
+  all: MemoryProposalDto[],
+  sessionId?: string,
+  lastQuestionAt: number | null = null
+): MemoryProposalDto[] {
+  return all.filter(
+    (p) =>
+      (p.state === 'open' || p.state === 'expired') &&
+      (p.key === sessionId || lastQuestionAt == null || p.createdAt >= lastQuestionAt)
+  );
+}
+
+export function useMemoryProposals(
+  sessionId: string | undefined,
+  chatState: ChatState,
+  lastQuestionAt: number | null = null
+) {
   const [proposals, setProposals] = useState<MemoryProposalDto[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -23,13 +56,13 @@ export function useMemoryProposals(sessionId: string | undefined, chatState: Cha
     if (!sessionId) return [] as MemoryProposalDto[];
     try {
       const all = await acpListMemoryProposals(sessionId);
-      setProposals(visibleProposals(all));
+      setProposals(visibleProposals(all, sessionId, lastQuestionAt));
       return all;
     } catch {
       // Fail open: a read that fails leaves the transcript as it was.
       return [] as MemoryProposalDto[];
     }
-  }, [sessionId]);
+  }, [sessionId, lastQuestionAt]);
 
   useEffect(() => {
     if (!sessionId || chatState !== ChatState.Idle) return;
