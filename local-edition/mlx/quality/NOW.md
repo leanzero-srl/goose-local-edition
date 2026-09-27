@@ -1,19 +1,19 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 13:00 (date) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
+Updated: 2026-09-27 15:47 (date) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
 
 ## Live
-- Installed on both Macs: 3.0.58 (3.0.57 + Q-165 memory guard counts only the engine).
-- E2E #5b RUNNING: Flash PIPELINE split, stdlib brief, runwatch bkbs1ri4h (the pipeline's /v1/status has no
-  `stream.tail`, so only the size/notice/driver rules apply). Proves Q-143/144/145/159/160 in real chat use.
-- 3.0.59 DONE — install QUEUED behind: E2E #5b turn 3 (install restarts the pipeline run). (Q-161 FIXED AT THE CAUSE: mlx_lm's GenerationBatch.filter left a finished row's empty processor
-  list, so the guard ran 1 token on the joining tool request; each row now keeps its own processors + a text-cycle
-  stop; + Q-177 validation is NOT in it). Then 27B tensor E2E #3g.
-- Critic round 2 filed (Q-166..Q-176, 20 proven, 8 reopened); load 26e proved Q-145/Q-160.
+- Installed on both Macs: 3.0.59 — VERIFIED running (install.sh now proves a post-swap pid; Q-180: the 13:08 install
+  left 3.0.58 running an hour and voided E2E #3g).
+- E2E #3h RUNNING (27B tensor, jira brief, 3.0.59 with the Q-161 row-processor fix really live): turns 0–4 done in
+  250 / 314 / 208 / 1827 / 419 s, NO runaway so far. runwatch bbcribpnh (its LIVE counter + serving-title parse fixed).
+- BUILDING 3.0.60 from caf85afb4 (round-2 sidecar/desktop/core fixes, Q-177, Q-178/179 pipeline parity + prefix
+  cache, Q-181 cancel, harness) · watcher bw0xm2xgk. Install after #3h or at a turn boundary.
+- #5b (Flash pipeline) found Q-178 (no arg streaming, no live words) and Q-179 (0 cache past ~53k) — both merged.
 
 ## Agents
-- Round-2 sidecar (Q-166/167/168/174) · desktop (Q-166/170/172/173/174/176/23/45) · core (Q-169/171/97/175).
-- Q-177 split request validation (top_logprobs > 11 drops the connection).
+- Engine PiP (owner idea 2026-09-27 15:4x): research + design + build an in-app compact live card in the sidebar's
+  empty space / movable mini-card, and an optional system-level floating window (always on top, never steals focus).
 
 ## Next actions (in order)
 1. Q-161 + Q-162 + chat merge land → 3.0.56 (with engine surfaces + Q-160) → install → split-start 27B → E2E #3f
