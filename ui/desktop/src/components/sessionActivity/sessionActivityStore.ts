@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type {
+  BackgroundSessionDto,
+  BackgroundWorkKind,
   FailedSessionDto,
   NeedsYouItemDto,
   RunningSessionDto,
@@ -33,10 +35,22 @@ export interface SessionActivitySnapshot {
   failed: FailedSessionDto[];
   /** Sessions whose LAST turn the person stopped (a later completed turn clears it). */
   stopped: StoppedSessionDto[];
+  /**
+   * goose's own calls in flight FOR a session — the fact check after the reply, a title (Q-185).
+   * A session shows it only while no turn runs: the quieter "still working for you" state.
+   */
+  background: BackgroundSessionDto[];
   elicitations: AcpElicitationRequest[];
 }
 
-export type { FailedSessionDto, NeedsYouItemDto, RunningSessionDto, StoppedSessionDto };
+export type {
+  BackgroundSessionDto,
+  BackgroundWorkKind,
+  FailedSessionDto,
+  NeedsYouItemDto,
+  RunningSessionDto,
+  StoppedSessionDto,
+};
 
 /** The poll only catches turns this window did not start; this window's own starts arrive at once. */
 export const ACTIVITY_POLL_MS = 5000;
@@ -46,6 +60,7 @@ const EMPTY: SessionActivitySnapshot = {
   needsYou: [],
   failed: [],
   stopped: [],
+  background: [],
   elicitations: [],
 };
 
@@ -74,17 +89,20 @@ export async function refreshSessionActivity(): Promise<void> {
     const { running, needsYou, failed } = activity;
     // An engine older than Q-169 sends no `stopped` list: it records no stopped turns.
     const stopped = activity.stopped ?? [];
+    // An engine older than Q-185 lists no background work: it tagged none.
+    const background = activity.background ?? [];
     if (generation !== refreshGeneration) return;
     // The poll re-reads every few seconds; an unchanged answer must not re-render every list.
     if (
       JSON.stringify(running) === JSON.stringify(snapshot.running) &&
       JSON.stringify(needsYou) === JSON.stringify(snapshot.needsYou) &&
       JSON.stringify(failed) === JSON.stringify(snapshot.failed) &&
-      JSON.stringify(stopped) === JSON.stringify(snapshot.stopped)
+      JSON.stringify(stopped) === JSON.stringify(snapshot.stopped) &&
+      JSON.stringify(background) === JSON.stringify(snapshot.background)
     ) {
       return;
     }
-    emit({ ...snapshot, running, needsYou, failed, stopped });
+    emit({ ...snapshot, running, needsYou, failed, stopped, background });
   } catch (error) {
     console.warn('Failed to read session activity:', error);
   }
@@ -176,12 +194,15 @@ export interface SessionActivity {
   stoppedElapsedMs?: number;
   /** The output tokens the stopped turn had written; undefined = not counted. */
   stoppedOutputTokens?: number;
+  /** goose's oldest call in flight FOR the session besides its turn (Q-185); undefined = none. */
+  background?: BackgroundWorkKind;
 }
 
 export function activityOf(state: SessionActivitySnapshot, sessionId: string): SessionActivity {
   const running = state.running.find((row) => row.sessionId === sessionId);
   const failed = state.failed.find((row) => row.sessionId === sessionId);
   const stopped = state.stopped.find((row) => row.sessionId === sessionId);
+  const background = state.background.find((row) => row.sessionId === sessionId);
   const needsYou =
     state.needsYou.filter((item) => item.sessionId === sessionId).length +
     state.elicitations.filter((request) => request.sessionId === sessionId).length;
@@ -193,19 +214,23 @@ export function activityOf(state: SessionActivitySnapshot, sessionId: string): S
     stoppedAt: stopped?.stoppedAt,
     stoppedElapsedMs: stopped?.elapsedMs,
     stoppedOutputTokens: stopped?.outputTokens ?? undefined,
+    background: background?.kind,
   };
 }
 
-export type SessionState = 'running' | 'needs-you' | 'failed' | 'stopped' | 'idle';
+export type SessionState = 'running' | 'needs-you' | 'background' | 'failed' | 'stopped' | 'idle';
 
 /**
  * Every state that holds, most urgent first. A new turn on a session whose last turn failed is
  * RUNNING (the failure is history once a turn starts); needs-you and running can hold together.
+ * BACKGROUND (Q-185) is goose still working for the session with no turn running — the fact
+ * check after the reply: quieter than running, never idle.
  */
 export function sessionStates(activity: SessionActivity): SessionState[] {
   const states: SessionState[] = [];
   if (activity.needsYou > 0) states.push('needs-you');
   if (activity.runningSince) states.push('running');
+  else if (activity.background) states.push('background');
   if (states.length === 0 && activity.failedAt) states.push('failed');
   if (states.length === 0 && activity.stoppedAt) states.push('stopped');
   return states.length > 0 ? states : ['idle'];
@@ -240,6 +265,10 @@ export function useActivityOf(sessionId: string): SessionActivity {
     subscribe,
     () => activityOf(snapshot, sessionId).stoppedOutputTokens
   );
+  const background = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).background
+  );
   return {
     runningSince,
     needsYou,
@@ -248,6 +277,7 @@ export function useActivityOf(sessionId: string): SessionActivity {
     stoppedAt,
     stoppedElapsedMs,
     stoppedOutputTokens,
+    background,
   };
 }
 
@@ -368,6 +398,8 @@ export interface ListedName {
 
 const listedNames = new Map<string, ListedName>();
 const listedNameListeners = new Set<() => void>();
+/** Bumped on every change, so a surface naming many sessions re-renders when any name changes. */
+let listedNamesVersion = 0;
 
 /**
  * The sidebar lists publish the names they show, so the chat header reads the same " · 3" as the
@@ -383,6 +415,7 @@ export function publishListedNames(rows: ReadonlyArray<{ id: string } & ListedNa
     changed = true;
   }
   if (!changed) return;
+  listedNamesVersion += 1;
   for (const listener of listedNameListeners) listener();
 }
 
@@ -404,7 +437,21 @@ export function listedTitle(name: string, listed: ListedName | undefined): strin
   return listed && listed.base === name ? listed.label : name;
 }
 
+/**
+ * A session's name as the lists show it, read at the moment (Q-185): the Engine card and the cut
+ * guard name "Jira Migration Kickoff Notes · 5", never the bare title two rows share.
+ */
+export function listedTitleOf(sessionId: string, name: string): string {
+  return listedTitle(name, listedNames.get(sessionId));
+}
+
+/** For a surface naming several sessions: re-render whenever any listed name changes. */
+export function useListedNamesVersion(): number {
+  return useSyncExternalStore(subscribeListedNames, () => listedNamesVersion);
+}
+
 export function resetListedNamesForTests(): void {
   listedNames.clear();
+  listedNamesVersion += 1;
   for (const listener of listedNameListeners) listener();
 }

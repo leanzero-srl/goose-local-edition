@@ -18,7 +18,11 @@ import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import type { NodesResponse } from '../../acp/leanzero-link';
 import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
 import { dismissPeerHeld, latestPeerHeld } from './routeSwitch';
-import { liveSplitSnapshot } from '../../utils/mlxInFlight.fixtures';
+import { factCheckSnapshot, liveSplitSnapshot } from '../../utils/mlxInFlight.fixtures';
+import {
+  publishListedNames,
+  resetListedNamesForTests,
+} from '../sessionActivity/sessionActivityStore';
 
 const mockPlan = vi.fn();
 const mockMeasure = vi.fn();
@@ -1455,6 +1459,39 @@ describe('Q-148: a way that would cut the answer being written asks first, and i
     );
     await waitFor(() => expect(mockRemoteStart).toHaveBeenCalledTimes(1));
     expect(mockDistributedStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('Q-185, E2E #3i: goose’s fact check after the reply is named as that, with the chat’s listed name', async () => {
+    publishListedNames([
+      {
+        id: '20260927_5',
+        base: 'Jira Migration Kickoff Notes',
+        label: 'Jira Migration Kickoff Notes · 5',
+      },
+    ]);
+    bridge.mlxEngineActivity = vi.fn(async () => factCheckSnapshot());
+    mockPlan.mockResolvedValue(answer(STUDIO_SMALL));
+    renderCard({ distributed: SPLIT_SERVING });
+    const peer = await screen.findByTestId('placement-way-peer');
+    const said =
+      'Run cuts goose’s background work for “Jira Migration Kickoff Notes · 5”: Checking the reply — 3s in, still reading its 1,094-token prompt.';
+    expect(await within(peer).findByTestId('placement-cuts-live-peer')).toHaveTextContent(said);
+    expect(within(peer).getByTestId('placement-cuts-live-peer')).not.toHaveTextContent(
+      'the answer being written'
+    );
+
+    await userEvent.click(within(peer).getByTestId('placement-run-peer'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Cut goose’s background work?')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        'Run on Work’s Mac Studio cuts goose’s background work for “Jira Migration Kickoff Notes · 5”: Checking the reply — 3s in, still reading its 1,094-token prompt.'
+      )
+    ).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Let it finish' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(mockDistributedStop).not.toHaveBeenCalled();
+    resetListedNamesForTests();
   });
 
   it('the split’s own Stop names the cut too', async () => {

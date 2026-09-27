@@ -36,6 +36,7 @@ pub(super) async fn complete_tool_label(
         crate::model_config::get_fast_model(provider.get_name(), model_config).await?;
     for attempt in 0..2 {
         match crate::model_config::complete_helper(
+            crate::background_work::BackgroundWorkKind::ToolLabel,
             provider,
             &fast_model_config,
             session_id,

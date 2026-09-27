@@ -8,13 +8,17 @@ import {
   type MlxEngineSnapshot,
 } from '../../utils/mlxEngineMonitor';
 import {
+  backgroundWorkCut,
   clientName,
   inFlightWork,
   workCutBy,
   type InFlightWork,
   type MlxEngineKind,
 } from '../../utils/mlxInFlight';
+import type { MlxClient } from '../../utils/mlxServing';
 import { formatElapsed } from './mlxLiveStats';
+import { backgroundWorkFor, backgroundWorkLabel } from '../sessionActivity/backgroundWorkText';
+import { listedTitleOf } from '../sessionActivity/sessionActivityStore';
 
 /**
  * Every door that stops or replaces the engine serving chat asks FIRST while that engine holds
@@ -59,7 +63,28 @@ const i18n = defineMessages({
     defaultMessage: 'still reading its prompt',
   },
   keep: { id: 'cutGuard.keep', defaultMessage: 'Keep it writing' },
+  titleBackground: {
+    id: 'cutGuard.titleBackground',
+    defaultMessage: 'Cut goose’s background work?',
+  },
+  oneBackground: {
+    id: 'cutGuard.oneBackground',
+    defaultMessage: '{action} cuts goose’s background work for “{name}”: {work} — {figures}.',
+  },
+  keepBackground: { id: 'cutGuard.keepBackground', defaultMessage: 'Let it finish' },
 });
+
+/**
+ * A client by the name the person sees for it: a session by its sidebar row's label (" · 5"
+ * included), goose's own call for it by what the call is (Q-185).
+ */
+function cutClientName(intl: IntlShape, client: MlxClient): string {
+  if (client.kind === 'external') return clientName(client);
+  const name = client.sessionId
+    ? listedTitleOf(client.sessionId, clientName(client))
+    : clientName(client);
+  return client.work ? backgroundWorkFor(intl, client.work, name) : name;
+}
 
 /** The work's figures: elapsed and tokens written (or the prompt it is still reading). */
 export function workFiguresText(intl: IntlShape, work: InFlightWork): string {
@@ -81,7 +106,21 @@ export function workFiguresText(intl: IntlShape, work: InFlightWork): string {
 /** "Stop the split cuts the answer being written in “Jira…” — 39m 15s in, 24,228 tokens written." */
 export function cutMessage(intl: IntlShape, action: string, work: InFlightWork): string {
   const figures = workFiguresText(intl, work);
-  const names = work.clients.map(clientName);
+  const background = backgroundWorkCut(work);
+  if (background) {
+    const [client] = work.clients;
+    const name =
+      client.kind !== 'external' && client.sessionId
+        ? listedTitleOf(client.sessionId, clientName(client))
+        : clientName(client);
+    return intl.formatMessage(i18n.oneBackground, {
+      action,
+      name,
+      work: backgroundWorkLabel(intl, background),
+      figures,
+    });
+  }
+  const names = work.clients.map((client) => cutClientName(intl, client));
   if (work.requests <= 1) {
     return names[0]
       ? intl.formatMessage(i18n.one, { action, name: names[0], figures })
@@ -101,8 +140,9 @@ export function cutMessage(intl: IntlShape, action: string, work: InFlightWork):
 }
 
 export function cutTitle(intl: IntlShape, work: InFlightWork): string {
-  return work.requests > 1
-    ? intl.formatMessage(i18n.titleMany, { count: work.requests })
+  if (work.requests > 1) return intl.formatMessage(i18n.titleMany, { count: work.requests });
+  return backgroundWorkCut(work)
+    ? intl.formatMessage(i18n.titleBackground)
     : intl.formatMessage(i18n.title);
 }
 
@@ -199,7 +239,7 @@ export function useCutGuard(): { guard: CutGuard; dialog: ReactElement } {
           title: cutTitle(intl, work),
           message: cutMessage(intl, action, work),
           action,
-          cancel: intl.formatMessage(i18n.keep),
+          cancel: intl.formatMessage(backgroundWorkCut(work) ? i18n.keepBackground : i18n.keep),
           run,
         });
         return;

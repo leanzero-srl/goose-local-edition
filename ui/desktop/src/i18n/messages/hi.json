@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "वापस"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "बातचीत को संक्षिप्त किया जा रहा है"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "जवाब की जाँच हो रही है"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "यादों के लिए टर्न की समीक्षा हो रही है"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "टूल की अनुमति जाँची जा रही है"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "रेसिपी लिखी जा रही है"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "टूल कॉल की जाँच हो रही है"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "बातचीत का सारांश बन रहा है"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "संक्षिप्त"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "जाँच रहा है"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "समीक्षा"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "जाँच रहा है"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "लिख रहा है"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "जाँच"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "सारांश"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "नाम"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "सारांश"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "लेबल"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "चैट का नाम रखा जा रहा है"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "टूल परिणाम का सारांश बन रहा है"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "टूल कॉल पर लेबल लगाए जा रहे हैं"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "एक्सटेंशन खोजें..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {‘{name}’ के लिए व्यस्त: {work}} other {‘{name}’ के लिए व्यस्त: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {‘{name}’ में व्यस्त} other {किसी दूसरी चैट में व्यस्त}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "अभी भेजा गया संदेश तब तक प्रतीक्षा करेगा जब तक इंजन के पास उसके लिए जगह न हो।"
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "अभी भेजा गया संदेश पहले जाएगा: goose इस जाँच को अलग रखकर बाद में फिर से चलाता है।"
   },
   "cardButtons.configure": {
     "defaultMessage": "कॉन्फ़िगर करें"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "लिखते रहने दें"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "पूरा होने दें"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action} {count} चल रहे अनुरोधों को काट देगा ({names}) — सबसे लंबा {figures}।"
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action} “{name}” में लिखे जा रहे उत्तर को काट देगा — {figures}।"
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action} “{name}” के लिए goose का बैकग्राउंड काम रोक देता है: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action} एक ऐसे अनुरोध को काट देगा जिसे goose पहचान नहीं सका — {figures}।"
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "लिखे जा रहे उत्तर को काटें?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "goose का बैकग्राउंड काम रोकें?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "{count} चल रहे अनुरोध काटें?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose अभी भी इस चैट के लिए काम कर रहा है: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "विफल"

@@ -51,12 +51,32 @@ describe('buildEngineGlance — the single engine', () => {
       engine: { mode: 'single' },
       modelId: GLANCE_MODEL,
       hero: { kind: 'writing', tps: 19.9 },
-      chat: { sessionId: CHAT_ROW.sessionId, name: 'Refactor the auth flow' },
+      chat: { sessionId: CHAT_ROW.sessionId, name: 'Refactor the auth flow', work: null },
       waiting: 1,
       progress: null,
     });
     // The other two requests on the engine are nobody this app can name: counted, never named.
     expect(g.otherClients).toBe(2);
+  });
+
+  it('Q-185: goose’s fact check for a chat is its chat line with the work named; the turn wins when both run', () => {
+    const check = { ...CHAT_ROW, id: 41, work: 'factCheck' as const };
+    const onlyCheck = buildEngineGlance(
+      runningSnapshot(GENERATING_STATUS, { serving: attributeServing([check], 1, [], null) }),
+      NONE
+    );
+    expect(onlyCheck.chat).toEqual({
+      sessionId: CHAT_ROW.sessionId,
+      name: 'Refactor the auth flow',
+      work: 'factCheck',
+    });
+    const both = buildEngineGlance(
+      runningSnapshot(GENERATING_STATUS, {
+        serving: attributeServing([check, CHAT_ROW], 2, [], null),
+      }),
+      NONE
+    );
+    expect(both.chat?.work).toBeNull();
   });
 
   it('reading a prompt on the single engine: size and time lead, and NO bar — it reports no progress', () => {

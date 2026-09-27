@@ -5757,11 +5757,43 @@ export const zStoppedSessionDto = z.object({
     ]).optional()
 });
 
+/**
+ * What goose asks the model FOR a session besides the answer being written (Q-185): the call's
+ * kind, set once where the call is made (`goose::background_work`) and read by every surface that
+ * names it — the session lists, the chat, the MLX engine card and the cut guard.
+ */
+export const zBackgroundWorkKind = z.union([
+    z.literal('factCheck'),
+    z.literal('memoryReview'),
+    z.literal('title'),
+    z.literal('toolLabel'),
+    z.literal('compaction'),
+    z.literal('toolDigest'),
+    z.literal('permissionCheck'),
+    z.literal('safetyCheck'),
+    z.literal('sessionSummary'),
+    z.literal('recipe')
+]);
+
+/**
+ * A session goose is doing background work for right now (Q-185): a model call in flight on the
+ * session's behalf that is not its turn. Listed whether or not a turn also runs; a surface shows it
+ * as the session's state only while no turn does.
+ */
+export const zBackgroundSessionDto = z.object({
+    sessionId: z.string(),
+    sessionName: z.string(),
+    workingDir: z.string(),
+    kind: zBackgroundWorkKind,
+    startedAt: z.string()
+});
+
 export const zSessionActivityResponse_unstable = z.object({
     running: z.array(zRunningSessionDto),
     needsYou: z.array(zNeedsYouItemDto),
     failed: z.array(zFailedSessionDto),
-    stopped: z.array(zStoppedSessionDto).optional().default([])
+    stopped: z.array(zStoppedSessionDto).optional().default([]),
+    background: z.array(zBackgroundSessionDto).optional().default([])
 });
 
 export const zNeedsYouAction = z.enum(['answer', 'dismiss']);

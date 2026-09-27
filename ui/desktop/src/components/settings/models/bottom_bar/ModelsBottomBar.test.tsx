@@ -397,6 +397,7 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
       busyIn: {
         sessionId: '20260926_19',
         sessionName: 'Jira Migration Kickoff Notes',
+        work: null,
         elapsedS: 2355,
         waits: false,
       },

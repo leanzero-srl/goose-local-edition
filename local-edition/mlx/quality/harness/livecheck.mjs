@@ -27,13 +27,19 @@ export async function liveCheck(p, { title = '' } = {}) {
       .filter((e) => e.offsetParent)
       .map((e) => {
         const text = e.innerText.replace(/\s+/g, ' ').trim();
+        // Q-185: `background` = goose still working for the session after its reply (the fact check) —
+        // a quieter mark than running, but a mark: the row must not read idle while the engine serves it.
         const busy = e.getAttribute('aria-busy') === 'true' || !!e.querySelector('[aria-busy=true]')
-          || /running|live|busy|active-turn/i.test(e.getAttribute('data-state') ?? '')
-          || !!e.querySelector('[data-state*=running],[data-state*=live],[data-running=true],[data-live=true]');
+          || /running|live|busy|active-turn|background/i.test(e.getAttribute('data-state') ?? '')
+          || !!e.querySelector('[data-state*=running],[data-state*=live],[data-state*=background],[data-running=true],[data-live=true]');
         return { id: e.dataset.testid.slice('session-row-'.length), text, busy, liveWord: live.test(text) };
       });
     // What the Engine card says it is serving (MlxStateTile's serving list), when that view is open.
-    const serving = [...document.querySelectorAll('[data-testid=mlx-serving-row]')].map((e) => e.innerText.replace(/\s+/g, ' ').trim());
+    // A row goose tagged with its own work (Q-185) reads "<work> · <session>" and carries data-work.
+    const serving = [...document.querySelectorAll('[data-testid=mlx-serving-row]')].map((e) => {
+      const text = e.innerText.replace(/\s+/g, ' ').trim();
+      return e.dataset.work ? text.replace(/^[^·]+ · /, 'Chat · ') : text;
+    });
     return { cands, serving };
   }, LIVE_WORDS.source);
   const { cands, serving } = rows;

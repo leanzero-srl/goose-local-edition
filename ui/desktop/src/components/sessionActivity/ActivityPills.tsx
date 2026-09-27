@@ -2,7 +2,13 @@ import { useSyncExternalStore, type ReactNode } from 'react';
 import { CircleStop, Hand, TriangleAlert } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import { PHASE_FILL, RADIUS, TNUM, TONE_FILL, cx } from '../lz';
-import { elapsedLabel, sessionStates, useActivityOf } from './sessionActivityStore';
+import { backgroundWorkLabel, backgroundWorkShort } from './backgroundWorkText';
+import {
+  elapsedLabel,
+  sessionStates,
+  useActivityOf,
+  type BackgroundWorkKind,
+} from './sessionActivityStore';
 import { stoppedTurnText } from './stoppedTurnText';
 
 const i18n = defineMessages({
@@ -27,6 +33,10 @@ const i18n = defineMessages({
     id: 'sessionActivity.needsYouLabel',
     defaultMessage:
       '{count, plural, one {Waiting for your answer} other {# questions waiting for your answer}}',
+  },
+  backgroundLabel: {
+    id: 'sessionActivity.backgroundLabel',
+    defaultMessage: 'goose is still working for this chat: {work}',
   },
 });
 
@@ -82,6 +92,35 @@ export function RunningPill({ since, className }: { since: string; className?: s
     >
       <span aria-hidden className="size-1.5 animate-lz-live rounded-full bg-current" />
       {intl.formatMessage(i18n.running, { elapsed })}
+    </span>
+  );
+}
+
+/**
+ * Solid secondary with a still dot: no turn runs, but goose is still working for the session — the
+ * fact check after the reply, a title (Q-185). Quieter than Running, never the idle "4m ago".
+ */
+export function BackgroundPill({
+  kind,
+  className,
+}: {
+  kind: BackgroundWorkKind;
+  className?: string;
+}) {
+  const intl = useIntl();
+  const label = intl.formatMessage(i18n.backgroundLabel, {
+    work: backgroundWorkLabel(intl, kind),
+  });
+  return (
+    <span
+      data-testid="session-background-pill"
+      data-work={kind}
+      title={label}
+      aria-label={label}
+      className={cx(PILL, RADIUS.pill, TONE_FILL.secondary, className)}
+    >
+      <span aria-hidden className="size-1.5 rounded-full bg-current" />
+      {backgroundWorkShort(intl, kind)}
     </span>
   );
 }
@@ -150,16 +189,18 @@ export function StoppedPill({
 
 /**
  * The row attributes every session list carries, from the one store: `data-state` (space-separated
- * when two hold, e.g. "needs-you running") and `aria-busy` while a turn runs.
+ * when two hold, e.g. "needs-you running") and `aria-busy` while a turn runs or goose still works
+ * for the session after it (Q-185).
  */
 export function useSessionStateAttrs(sessionId: string): {
   'data-state': string;
   'aria-busy': true | undefined;
 } {
   const activity = useActivityOf(sessionId);
+  const states = sessionStates(activity);
   return {
-    'data-state': sessionStates(activity).join(' '),
-    'aria-busy': activity.runningSince ? true : undefined,
+    'data-state': states.join(' '),
+    'aria-busy': states.includes('running') || states.includes('background') ? true : undefined,
   };
 }
 
@@ -186,6 +227,9 @@ export function SessionActivityMarker({
     >
       {states.includes('needs-you') && <NeedsYouPill count={activity.needsYou} />}
       {activity.runningSince && <RunningPill since={activity.runningSince} />}
+      {states.includes('background') && activity.background && (
+        <BackgroundPill kind={activity.background} />
+      )}
       {states.includes('failed') && <FailedPill reason={activity.failedReason} />}
       {states.includes('stopped') && activity.stoppedElapsedMs !== undefined && (
         <StoppedPill

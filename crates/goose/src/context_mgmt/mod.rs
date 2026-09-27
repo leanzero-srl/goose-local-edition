@@ -442,6 +442,7 @@ async fn do_compact(
         let summarization_request = vec![user_message];
 
         match crate::model_config::complete_fast(
+            crate::background_work::BackgroundWorkKind::Compaction,
             provider,
             model_config,
             session_id,
@@ -659,6 +660,7 @@ pub async fn summarize_tool_call(
             "#};
 
     let (mut response, _) = crate::model_config::complete_fast(
+        crate::background_work::BackgroundWorkKind::ToolDigest,
         provider,
         model_config,
         session_id,

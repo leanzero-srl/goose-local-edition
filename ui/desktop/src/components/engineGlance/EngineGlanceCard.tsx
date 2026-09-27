@@ -23,6 +23,7 @@ import type { EngineFigure } from '../leanzero-swarm/engineFigures';
 import { formatMlxMode, formatRemoteMode } from '../leanzero-swarm/mlxModeLabel';
 import { formatElapsed, formatRate } from '../leanzero-swarm/mlxLiveStats';
 import type { EngineGlance, GlancePush, GlanceStage } from '../../utils/engineGlance';
+import { backgroundWorkFor } from '../sessionActivity/backgroundWorkText';
 
 /**
  * The engine glance — the Engine tab's state tile made small. Pure presentation of main's glance
@@ -434,6 +435,11 @@ export interface EngineGlanceCardProps {
   };
   /** A drag just ended: the click it produced must not open the Engine. */
   consumeDrag?: () => boolean;
+  /**
+   * The served chat's name as this window's session lists show it (" · 5" included, Q-185);
+   * absent (the desktop window, which lists no sessions) = the session's own name.
+   */
+  chatName?: (sessionId: string, name: string) => string;
 }
 
 const WIDTH: Record<GlanceVariant, string> = {
@@ -462,6 +468,13 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
   const openLabel = question
     ? intl.formatMessage(i18n.openQuestion, { name: questionName, question: question.question })
     : intl.formatMessage(i18n.openEngine);
+  const chatName = engine.chat
+    ? (props.chatName?.(engine.chat.sessionId, engine.chat.name) ?? engine.chat.name)
+    : '';
+  // goose's own call for the chat (the fact check after the reply) is named as that (Q-185).
+  const chatText = engine.chat?.work
+    ? backgroundWorkFor(intl, engine.chat.work, chatName)
+    : intl.formatMessage(i18n.chat, { name: chatName });
   const stretched = (
     <button
       type="button"
@@ -687,7 +700,8 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
           <button
             type="button"
             data-testid="engine-glance-chat"
-            title={intl.formatMessage(i18n.openChat, { name: engine.chat.name })}
+            data-work={engine.chat.work ?? undefined}
+            title={intl.formatMessage(i18n.openChat, { name: chatName })}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -701,9 +715,7 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
             )}
           >
             <MessageSquare aria-hidden />
-            <span className="min-w-0 truncate">
-              {intl.formatMessage(i18n.chat, { name: engine.chat.name })}
-            </span>
+            <span className="min-w-0 truncate">{chatText}</span>
           </button>
         )}
         {engine.otherClients > 0 && (

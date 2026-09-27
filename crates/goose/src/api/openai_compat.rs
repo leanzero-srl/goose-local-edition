@@ -728,6 +728,7 @@ async fn chat_completions(
     let serving = crate::providers::mlx_serving::register(
         crate::providers::mlx_serving::ServingVia::OpenaiApi,
         Some(session_id.clone()),
+        None,
         &model_ref.provider,
         &model_ref.model,
         None,

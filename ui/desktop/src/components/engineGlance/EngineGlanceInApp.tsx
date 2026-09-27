@@ -5,7 +5,11 @@ import { useEngineGlance } from './glanceStore';
 import { useGlanceDrag } from './useGlanceDrag';
 import { dockFits, inAppPlacement, nearestCorner } from '../../utils/engineGlanceRules';
 import type { GlanceCorner } from '../../utils/engineGlance';
-import { sessionHref } from '../sessionActivity/sessionActivityStore';
+import {
+  listedTitleOf,
+  sessionHref,
+  useListedNamesVersion,
+} from '../sessionActivity/sessionActivityStore';
 import { LAYER, RADIUS, cx } from '../lz';
 
 /**
@@ -62,6 +66,7 @@ export function EngineGlanceDockSlot({
   contentRef: RefObject<HTMLElement | null>;
 }) {
   const push = useEngineGlance();
+  useListedNamesVersion();
   const room = useDockRoom();
   const slot = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -103,6 +108,7 @@ export function EngineGlanceDockSlot({
         onOpenSession={openSession}
         onToggleExpanded={() => setExpanded((v) => !v)}
         onCollapsedChange={() => undefined}
+        chatName={listedTitleOf}
       />
     </div>
   );
@@ -132,6 +138,7 @@ function storedCorner(): GlanceCorner {
  */
 export function EngineGlanceFloat({ navExpanded }: { navExpanded: boolean }) {
   const push = useEngineGlance();
+  useListedNamesVersion();
   const room = useDockRoom();
   const card = useRef<HTMLDivElement>(null);
   const [corner, setCorner] = useState<GlanceCorner>(storedCorner);
@@ -204,6 +211,7 @@ export function EngineGlanceFloat({ navExpanded }: { navExpanded: boolean }) {
         onCollapsedChange={setCollapsedStored}
         dragHandlers={dragHandlers}
         consumeDrag={consumeDrag}
+        chatName={listedTitleOf}
       />
     </div>
   );

@@ -1,3 +1,4 @@
+import type { BackgroundWorkKind } from '@aaif/goose-sdk';
 import { compactTokens, formatElapsed } from '../components/leanzero-swarm/mlxLiveStats';
 import type { MlxEngineSnapshot } from './mlxEngineMonitor';
 import type { MlxClient } from './mlxServing';
@@ -80,6 +81,34 @@ export const TRAY_ACTION_ENGINES: Readonly<
   'stop-waiting': ['remote'],
 };
 
+/**
+ * goose's own call the ONE request in flight is (Q-185) — the fact check after the reply, a title
+ * — or null when it is a turn, an external request, several requests, or unnamed. A stop then cuts
+ * that call, not "the answer being written": the reply is already on screen.
+ */
+export function backgroundWorkCut(work: InFlightWork): BackgroundWorkKind | null {
+  if (work.requests > 1 || work.clients.length !== 1) return null;
+  const [client] = work.clients;
+  return client.kind === 'external' ? null : client.work;
+}
+
+/**
+ * The tray's English for each kind (main has no catalog). Pinned equal to the i18n defaults
+ * (sessionActivity/backgroundWorkText.ts) by mlxInFlight.test.ts, so the two never drift.
+ */
+export const BACKGROUND_WORK_EN: Readonly<Record<BackgroundWorkKind, string>> = {
+  factCheck: 'Checking the reply',
+  memoryReview: 'Reviewing the turn for memories',
+  title: 'Naming the chat',
+  toolLabel: 'Labeling tool calls',
+  compaction: 'Compacting the conversation',
+  toolDigest: 'Summarizing a tool result',
+  permissionCheck: 'Checking a tool’s permission',
+  safetyCheck: 'Inspecting a tool call',
+  sessionSummary: 'Summarizing the conversation',
+  recipe: 'Writing a recipe',
+};
+
 /** A client by the name a person knows it by. */
 export function clientName(client: MlxClient): string {
   switch (client.kind) {
@@ -109,7 +138,12 @@ export function workFigures(work: InFlightWork): string {
  * written)".
  */
 export function trayCutLine(work: InFlightWork): string {
+  const background = backgroundWorkCut(work);
   const what =
-    work.requests > 1 ? `${work.requests} requests in flight, the longest` : 'the answer in flight';
+    work.requests > 1
+      ? `${work.requests} requests in flight, the longest`
+      : background
+        ? `goose’s background work: ${BACKGROUND_WORK_EN[background]}`
+        : 'the answer in flight';
   return `Stopping cuts ${what} (${workFigures(work)})`;
 }

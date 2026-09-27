@@ -24,6 +24,8 @@ use std::sync::{LazyLock, Mutex};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+use crate::background_work::BackgroundWorkKind;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ServingVia {
@@ -40,6 +42,10 @@ pub struct ServingEntry {
     pub via: ServingVia,
     /// The goose session the work belongs to; `None` when the call ran outside a session scope.
     pub session_id: Option<String>,
+    /// What goose asked FOR the session when it is not the answer being written (Q-185) — the
+    /// fact check, a title, a tool label; `None` = the session's own turn (or an external
+    /// request). Read from the task the call ran in (`background_work::current_kind`).
+    pub work: Option<BackgroundWorkKind>,
     /// The goose provider the work was dispatched with (`omlx` for a router lease on the engine).
     pub provider: String,
     pub model: String,
@@ -72,6 +78,7 @@ impl Drop for ServingGuard {
 pub fn register(
     via: ServingVia,
     session_id: Option<String>,
+    work: Option<BackgroundWorkKind>,
     provider: &str,
     model: &str,
     node_id: Option<&str>,
@@ -84,6 +91,7 @@ pub fn register(
             id,
             via,
             session_id,
+            work,
             provider: provider.to_string(),
             model: model.to_string(),
             node_id: node_id.map(str::to_string),
@@ -120,6 +128,7 @@ mod tests {
         let router = register(
             ServingVia::SwarmRouter,
             Some("20260923_7".to_string()),
+            None,
             "omlx",
             "mihai-qwen3.8-27b-atlassian-q8-mlx",
             Some("mihai-mlx"),
@@ -128,6 +137,7 @@ mod tests {
         let remote = register(
             ServingVia::SwarmRouter,
             Some("20260923_9".to_string()),
+            None,
             "omlx",
             "mihai-qwen3.8-27b-atlassian-q8-mlx",
             Some("remote-WorksMacStudio.lan"),
@@ -136,6 +146,7 @@ mod tests {
         let api = register(
             ServingVia::OpenaiApi,
             Some("20260923_8".to_string()),
+            None,
             "omlx",
             "mihai-qwen3.8-27b-atlassian-q8-mlx",
             None,
@@ -164,6 +175,7 @@ mod tests {
         let guard = register(
             ServingVia::OpenaiApi,
             None,
+            None,
             "anthropic",
             "claude",
             None,
@@ -173,7 +185,20 @@ mod tests {
         let json = serde_json::to_value(&entry).unwrap();
         assert_eq!(json["via"], "openaiApi");
         assert_eq!(json["sessionId"], serde_json::Value::Null);
+        assert_eq!(json["work"], serde_json::Value::Null);
         assert_eq!(json["provider"], "anthropic");
         assert!(json["startedAt"].is_string());
+
+        let check = register(
+            ServingVia::SwarmRouter,
+            Some("20260927_5".to_string()),
+            Some(BackgroundWorkKind::FactCheck),
+            "omlx",
+            "mihai-qwen3.8-27b-atlassian-q8-mlx",
+            Some("mihai-mlx"),
+            None,
+        );
+        let json = serde_json::to_value(ours(&[check.0]).remove(0)).unwrap();
+        assert_eq!(json["work"], "factCheck");
     }
 }

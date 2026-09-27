@@ -37,6 +37,7 @@ import { PHASE_FILL, TONE_FILL } from '../lz';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 import NeedsYouTray from './NeedsYouCard';
+import { BackgroundWorkLine } from './BackgroundWorkLine';
 import { ChatState } from '../../types/chatState';
 
 const NOW = Date.parse('2026-09-26T10:27:00Z');
@@ -131,6 +132,77 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
     assertStudioClean(container);
     const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
     expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
+
+  // Q-185, E2E #3i: the reply was done and goose's fact check ran for the chat while its row read
+  // "4m ago", unmarked. The row, the chat and the Engine card now say the same thing.
+  it('goose still working for a chat after its reply: a quiet solid pill on the row, the same words in the chat', async () => {
+    Object.assign(window.electron, { getConfig: () => ({}) });
+    const base = {
+      workingDir: '/Users/me/api',
+      messageCount: 3,
+      updatedAt: '2026-09-25T10:00:00Z',
+      lastMessageAt: '2026-09-25T10:00:00Z',
+    };
+    sessionsAcp.acpListSessions.mockResolvedValue({
+      sessions: [
+        { ...base, id: 'check-1', name: 'Kickoff', createdAt: '2026-09-26T10:00:00Z' },
+        { ...base, id: 'turn-1', name: 'Readiness', createdAt: '2026-09-25T10:00:00Z' },
+      ],
+      nextCursor: null,
+    });
+    const checking = {
+      sessionId: 'check-1',
+      sessionName: 'Kickoff',
+      workingDir: '/Users/me/api',
+      kind: 'factCheck' as const,
+      startedAt: '2026-09-26T10:26:57Z',
+    };
+    seedSessionActivityForTests({
+      running: [running('turn-1', 'Readiness')],
+      // goose's tool label for a RUNNING turn: the turn's Running pill says it all.
+      background: [checking, { ...checking, sessionId: 'turn-1', kind: 'toolLabel' as const }],
+    });
+    render(
+      <IntlProvider locale="en" messages={{}}>
+        <MemoryRouter>
+          <SessionListView onSelectSession={vi.fn()} />
+          <BackgroundWorkLine sessionId="check-1" />
+          <BackgroundWorkLine sessionId="turn-1" />
+        </MemoryRouter>
+      </IntlProvider>
+    );
+    const card = await screen.findByTestId('session-card-check-1');
+    expect(card.getAttribute('data-state')).toBe('background');
+    expect(card.getAttribute('aria-busy')).toBe('true');
+    const pill = within(card).getByTestId('session-background-pill');
+    expect(pill.textContent).toBe('Checking');
+    expect(pill.getAttribute('title')).toBe(
+      'goose is still working for this chat: Checking the reply'
+    );
+    for (const c of TONE_FILL.secondary.split(' ')) expect(pill.className).toContain(c);
+
+    const turn = screen.getByTestId('session-card-turn-1');
+    expect(turn.getAttribute('data-state')).toBe('running');
+    expect(within(turn).queryByTestId('session-background-pill')).toBeNull();
+
+    const lines = screen.getAllByTestId('chat-background-work');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].textContent).toBe('Checking the reply');
+    expect(lines[0].dataset.work).toBe('factCheck');
+    // The new marks only (the history view around them has its own design test).
+    for (const mark of [pill.parentElement!, lines[0]]) {
+      assertStudioClean(mark);
+      const classes = allClasses(mark).filter((c) => !c.startsWith('lucide'));
+      expect(await missingUtilities(classes)).toEqual([]);
+    }
+
+    // The check ends: the row goes back to its time, the chat line goes.
+    seedSessionActivityForTests({ running: [running('turn-1', 'Readiness')] });
+    await waitFor(() =>
+      expect(screen.getByTestId('session-card-check-1').getAttribute('data-state')).toBe('idle')
+    );
+    expect(screen.queryByTestId('chat-background-work')).toBeNull();
   }, 30_000);
 
   it('the top bar shows nothing when nothing is active', () => {

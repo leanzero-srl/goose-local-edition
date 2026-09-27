@@ -1,3 +1,4 @@
+import type { BackgroundWorkKind } from '@aaif/goose-sdk';
 import { mlxActivity, type MlxActivity } from '../components/leanzero-swarm/mlxLiveStats';
 import {
   engineFigures,
@@ -88,8 +89,11 @@ export interface EngineGlance {
   waiting: number | null;
   /** The split's in-flight count when no live read of its rank 0 exists. */
   inflight: number | null;
-  /** The chat of this app the engine serves (it opens that session). */
-  chat: { sessionId: string; name: string } | null;
+  /**
+   * The chat of this app the engine serves (it opens that session): its turn, else goose's own call
+   * for it (`work`, Q-185 — the fact check after the reply is named as that, never as the chat).
+   */
+  chat: { sessionId: string; name: string; work: BackgroundWorkKind | null } | null;
   /** Everyone else it serves: other clients, and requests from another app. */
   otherClients: number;
   ranges: {
@@ -176,10 +180,15 @@ const BUSY_STAGES: ReadonlySet<GlanceStage> = new Set<GlanceStage>([
 function servingOf(snapshot: MlxEngineSnapshot): Pick<EngineGlance, 'chat' | 'otherClients'> {
   const serving = snapshot.serving;
   if (!serving) return { chat: null, otherClients: 0 };
-  const chatClient = serving.clients.find((c) => c.kind === 'chat');
+  const chats = serving.clients.filter((c) => c.kind === 'chat');
+  const chatClient = chats.find((c) => c.work == null) ?? chats[0];
   const chat =
     chatClient && chatClient.kind === 'chat'
-      ? { sessionId: chatClient.sessionId, name: chatClient.sessionName || chatClient.sessionId }
+      ? {
+          sessionId: chatClient.sessionId,
+          name: chatClient.sessionName || chatClient.sessionId,
+          work: chatClient.work,
+        }
       : null;
   return {
     chat,

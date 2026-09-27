@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "Voltar"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "Compactando a conversa"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "Verificando a resposta"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "Revisando o turno para memórias"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "Verificando a permissão de uma ferramenta"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "Escrevendo uma receita"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "Inspecionando uma chamada de ferramenta"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "Resumindo a conversa"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "Compactando"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "Verificando"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "Revisando"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "Verificando"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "Escrevendo"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "Inspecionando"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "Resumindo"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "Nomeando"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "Resumindo"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "Rotulando"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "Dando nome ao chat"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "Resumindo um resultado de ferramenta"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "Rotulando chamadas de ferramentas"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "procurar extensões..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {Ocupado para “{name}”: {work}} other {Ocupado para “{name}”: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Ocupado em “{name}”} other {Ocupado em outro chat}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Uma mensagem enviada agora aguarda até o motor ter espaço para ela."
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "Uma mensagem enviada agora vai primeiro: o goose deixa esta verificação de lado e a executa de novo depois."
   },
   "cardButtons.configure": {
     "defaultMessage": "Configurar"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "Deixar continuar a escrever"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "Deixar terminar"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action} interrompe {count} pedidos em curso ({names}) — o mais longo {figures}."
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action} interrompe a resposta que está a ser escrita em “{name}” — {figures}."
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action} interrompe o trabalho em segundo plano do goose para “{name}”: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action} interrompe um pedido que o goose não conseguiu identificar — {figures}."
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "Interromper a resposta que está a ser escrita?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "Interromper o trabalho em segundo plano do goose?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "Interromper {count} pedidos em curso?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Ver JSON da sessão"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "O goose ainda está trabalhando para este chat: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "Falhou"

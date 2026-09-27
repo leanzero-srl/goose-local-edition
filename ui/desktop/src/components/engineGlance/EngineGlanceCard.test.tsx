@@ -79,6 +79,20 @@ describe('EngineGlanceCard — the Engine tile, small', () => {
     );
   });
 
+  it('Q-185: goose’s fact check is named as that, by the name this window’s lists show', () => {
+    const push: GlancePush = {
+      ...splitReading,
+      engine: {
+        ...splitReading.engine,
+        chat: { sessionId: CHAT_ROW.sessionId!, name: 'Refactor the auth flow', work: 'factCheck' },
+      },
+    };
+    renderCard(push, { chatName: (_id, name) => `${name} · 5` });
+    const chat = screen.getByTestId('engine-glance-chat');
+    expect(chat.textContent).toBe('Checking the reply · Refactor the auth flow · 5');
+    expect(chat.dataset.work).toBe('factCheck');
+  });
+
   it('the ranges and each Mac’s memory wait behind More', () => {
     renderCard(splitReading);
     expect(screen.queryByTestId('engine-glance-details')).toBeNull();

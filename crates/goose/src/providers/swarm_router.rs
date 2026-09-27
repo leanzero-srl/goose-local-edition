@@ -1029,6 +1029,7 @@ impl Router {
             super::mlx_serving::register(
                 super::mlx_serving::ServingVia::SwarmRouter,
                 crate::session_context::current_session_id(),
+                crate::background_work::current_kind(),
                 node.provider_name(),
                 &node.model_id,
                 Some(&node.id),
@@ -1557,6 +1558,25 @@ mod tests {
         assert_eq!(listed[0].provider, "omlx");
         assert_eq!(listed[0].model, "serving-test-mlx-model");
         assert_eq!(listed[0].peer, None);
+        assert_eq!(listed[0].work, None);
+
+        // Q-185: goose's own call for a session (the end-of-turn fact check) is listed under the
+        // session AND its kind, so the engine card never calls it the chat's answer.
+        let check = crate::background_work::run(
+            crate::background_work::BackgroundWorkKind::FactCheck,
+            "20260923_42",
+            router.pick(std::slice::from_ref(&mlx), &probe, 14, &HashSet::new()),
+        )
+        .await
+        .unwrap();
+        let listed = mine("serving-test-mlx");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(
+            listed[1].work,
+            Some(crate::background_work::BackgroundWorkKind::FactCheck)
+        );
+        assert_eq!(listed[1].session_id.as_deref(), Some("20260923_42"));
+        drop(check);
 
         // A lease on a linked Mac's engine is listed too, naming that Mac, so the desktop counts
         // this app's turn against the engine that runs it instead of as someone else's request.

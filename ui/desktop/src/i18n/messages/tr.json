@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "Geri"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "Konuşma sıkıştırılıyor"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "Yanıt kontrol ediliyor"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "Anılar için tur gözden geçiriliyor"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "Bir aracın izni kontrol ediliyor"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "Tarif yazılıyor"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "Bir araç çağrısı inceleniyor"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "Konuşma özetleniyor"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "Sıkıştırma"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "Kontrol"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "İnceleme"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "Kontrol"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "Yazma"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "İnceleme"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "Özetleme"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "Adlandırma"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "Özetleme"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "Etiketleme"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "Sohbete ad veriliyor"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "Bir araç sonucu özetleniyor"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "Araç çağrıları etiketleniyor"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "uzantıları ara..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {‘{name}’ için meşgul: {work}} other {‘{name}’ için meşgul: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {‘{name}’ içinde meşgul} other {Başka bir sohbette meşgul}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Şimdi gönderilen bir mesaj, motorda yer açılana kadar bekler."
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "Şimdi gönderilen mesaj önce gider: goose bu kontrolü bir kenara bırakır ve sonra yeniden çalıştırır."
   },
   "cardButtons.configure": {
     "defaultMessage": "Yapılandır"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "Yazmaya devam etsin"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "Bitirmesine izin ver"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action}, süren {count} isteği ({names}) keser — en uzunu {figures}."
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action}, “{name}” içinde yazılmakta olan yanıtı keser — {figures}."
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action}, goose’un “{name}” için arka plan işini keser: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action}, goose'un adlandıramadığı bir isteği keser — {figures}."
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "Yazılmakta olan yanıt kesilsin mi?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "goose’un arka plan işi kesilsin mi?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "Süren {count} istek kesilsin mi?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose bu sohbet için hâlâ çalışıyor: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "Başarısız"

@@ -165,6 +165,7 @@ pub async fn detect_read_only_tools(
         }
     };
     let res = crate::model_config::complete_helper(
+        crate::background_work::BackgroundWorkKind::PermissionCheck,
         provider.as_ref(),
         &model_config,
         session_id,

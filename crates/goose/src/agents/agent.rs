@@ -3677,8 +3677,9 @@ impl Agent {
             tracing::error!("{}", error);
             error
         })?;
-        let (result, _usage) = crate::session_context::with_session_id(
-            Some(session_id.to_string()),
+        let (result, _usage) = crate::background_work::run(
+            crate::background_work::BackgroundWorkKind::Recipe,
+            session_id,
             provider.complete(&model_config, &system_prompt, messages.messages(), &tools),
         )
         .await

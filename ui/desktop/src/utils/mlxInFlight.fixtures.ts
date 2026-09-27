@@ -56,6 +56,7 @@ export function liveSplitSnapshot(
         {
           key: 'chat:20260926_19',
           kind: 'chat',
+          work: null,
           sessionId: '20260926_19',
           sessionName: 'Jira Migration Kickoff Notes',
           count: 1,
@@ -67,5 +68,43 @@ export function liveSplitSnapshot(
     },
     failedError: null,
     contact: null,
+  };
+}
+
+/**
+ * E2E #3i (3.0.60, 2026-09-27 17:23:25Z, Q-185): the reply was done and goose's end-of-turn fact
+ * checker read its 1,094-token prompt on the split, 3 s in — for session 20260927_5, which the
+ * sidebar lists as "Jira Migration Kickoff Notes · 5" beside an older "… · 4".
+ */
+export const FACT_CHECK_READING: MlxLiveRequest = {
+  ...LIVE_WRITING,
+  id: 'r-check',
+  phase: 'prefill',
+  elapsedS: 3,
+  promptTokens: 1094,
+  completionTokens: 0,
+  tokensPerSecond: null,
+  ttftS: null,
+};
+
+export function factCheckSnapshot(): MlxEngineSnapshot {
+  const snapshot = liveSplitSnapshot([FACT_CHECK_READING]);
+  return {
+    ...snapshot,
+    serving: {
+      clients: [
+        {
+          key: 'chat:20260927_5:factCheck',
+          kind: 'chat',
+          work: 'factCheck',
+          sessionId: '20260927_5',
+          sessionName: 'Jira Migration Kickoff Notes',
+          count: 1,
+        },
+      ],
+      unattributed: 0,
+      swarmRuns: [],
+      error: null,
+    },
   };
 }

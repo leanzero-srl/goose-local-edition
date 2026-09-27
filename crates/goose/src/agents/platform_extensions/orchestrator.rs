@@ -354,6 +354,7 @@ impl OrchestratorClient {
 
         let model_config = self.parent_model_config(provider.get_name()).await?;
         let (response, _usage) = crate::model_config::complete_fast(
+            crate::background_work::BackgroundWorkKind::SessionSummary,
             provider.as_ref(),
             &model_config,
             session_id,

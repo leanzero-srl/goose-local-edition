@@ -5572,6 +5572,10 @@ export type SessionActivityResponse_unstable = {
      * User/scheduled sessions whose LAST turn the person stopped (a later completed turn clears it).
      */
     stopped?: Array<StoppedSessionDto>;
+    /**
+     * User/scheduled sessions goose is doing background work for, oldest call first (Q-185).
+     */
+    background?: Array<BackgroundSessionDto>;
 };
 
 export type RunningSessionDto = {
@@ -5637,6 +5641,29 @@ export type StoppedSessionDto = {
      */
     outputTokens?: number | null;
 };
+
+/**
+ * A session goose is doing background work for right now (Q-185): a model call in flight on the
+ * session's behalf that is not its turn. Listed whether or not a turn also runs; a surface shows it
+ * as the session's state only while no turn does.
+ */
+export type BackgroundSessionDto = {
+    sessionId: string;
+    sessionName: string;
+    workingDir: string;
+    kind: BackgroundWorkKind;
+    /**
+     * RFC 3339: when the call began.
+     */
+    startedAt: string;
+};
+
+/**
+ * What goose asks the model FOR a session besides the answer being written (Q-185): the call's
+ * kind, set once where the call is made (`goose::background_work`) and read by every surface that
+ * names it — the session lists, the chat, the MLX engine card and the cut guard.
+ */
+export type BackgroundWorkKind = 'factCheck' | 'memoryReview' | 'title' | 'toolLabel' | 'compaction' | 'toolDigest' | 'permissionCheck' | 'safetyCheck' | 'sessionSummary' | 'recipe';
 
 /**
  * Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.

@@ -40,6 +40,7 @@ import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
 import NeedsYouTray from './sessionActivity/NeedsYouCard';
+import { BackgroundWorkLine } from './sessionActivity/BackgroundWorkLine';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 import {
   Button,
@@ -613,6 +614,9 @@ export default function BaseChat({
                 submitElicitationResponse={submitElicitationResponse}
               />
             </SearchView>
+
+            {/* Q-185: goose still working for this chat after the reply (the fact check). */}
+            {chatState === ChatState.Idle && <BackgroundWorkLine sessionId={sessionId} />}
 
             {/* FRAME 1.14 event B: what the agent asked to remember at the end of the turn — a card,
                 never a modal, never an elicitation. Not edition-gated: a memory proposal is

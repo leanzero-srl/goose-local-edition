@@ -41,7 +41,39 @@ describe('attributeServing — who the engine serves, from goose’s own two doo
       null
     );
     expect(s.clients).toEqual([
-      { key: 'chat:s1', kind: 'chat', sessionId: 's1', sessionName: 'Memory · verify', count: 1 },
+      {
+        key: 'chat:s1',
+        kind: 'chat',
+        sessionId: 's1',
+        sessionName: 'Memory · verify',
+        work: null,
+        count: 1,
+      },
+    ]);
+    expect(s.unattributed).toBe(0);
+  });
+
+  it('Q-185: goose’s own call for a chat is its own client, by its work — never the chat’s turn', () => {
+    const s = attributeServing(
+      [
+        row({ id: 1, via: 'swarmRouter', sessionId: 's1', sessionType: 'user', work: null }),
+        row({ id: 2, via: 'swarmRouter', sessionId: 's1', sessionType: 'user', work: 'factCheck' }),
+        row({
+          id: 3,
+          via: 'swarmRouter',
+          sessionId: 'sub',
+          sessionType: 'sub_agent',
+          work: 'title',
+        }),
+      ],
+      3,
+      [],
+      null
+    );
+    expect(s.clients.map((c) => [c.key, c.kind, c.kind === 'external' ? null : c.work])).toEqual([
+      ['chat:s1', 'chat', null],
+      ['chat:s1:factCheck', 'chat', 'factCheck'],
+      ['session:sub:title', 'session', 'title'],
     ]);
     expect(s.unattributed).toBe(0);
   });

@@ -284,6 +284,69 @@
   "backButton.back": {
     "defaultMessage": "Quay lại"
   },
+  "backgroundWork.compaction": {
+    "defaultMessage": "Đang nén cuộc trò chuyện"
+  },
+  "backgroundWork.factCheck": {
+    "defaultMessage": "Đang kiểm tra câu trả lời"
+  },
+  "backgroundWork.memoryReview": {
+    "defaultMessage": "Đang xem lại lượt để ghi nhớ"
+  },
+  "backgroundWork.named": {
+    "defaultMessage": "{work} · {name}"
+  },
+  "backgroundWork.permissionCheck": {
+    "defaultMessage": "Đang kiểm tra quyền của công cụ"
+  },
+  "backgroundWork.recipe": {
+    "defaultMessage": "Đang viết công thức"
+  },
+  "backgroundWork.safetyCheck": {
+    "defaultMessage": "Đang kiểm tra một lệnh gọi công cụ"
+  },
+  "backgroundWork.sessionSummary": {
+    "defaultMessage": "Đang tóm tắt cuộc trò chuyện"
+  },
+  "backgroundWork.short.compaction": {
+    "defaultMessage": "Đang nén"
+  },
+  "backgroundWork.short.factCheck": {
+    "defaultMessage": "Đang kiểm tra"
+  },
+  "backgroundWork.short.memoryReview": {
+    "defaultMessage": "Đang xem lại"
+  },
+  "backgroundWork.short.permissionCheck": {
+    "defaultMessage": "Đang kiểm tra"
+  },
+  "backgroundWork.short.recipe": {
+    "defaultMessage": "Đang viết"
+  },
+  "backgroundWork.short.safetyCheck": {
+    "defaultMessage": "Đang kiểm tra"
+  },
+  "backgroundWork.short.sessionSummary": {
+    "defaultMessage": "Đang tóm tắt"
+  },
+  "backgroundWork.short.title": {
+    "defaultMessage": "Đang đặt tên"
+  },
+  "backgroundWork.short.toolDigest": {
+    "defaultMessage": "Đang tóm tắt"
+  },
+  "backgroundWork.short.toolLabel": {
+    "defaultMessage": "Đang gắn nhãn"
+  },
+  "backgroundWork.title": {
+    "defaultMessage": "Đang đặt tên cuộc trò chuyện"
+  },
+  "backgroundWork.toolDigest": {
+    "defaultMessage": "Đang tóm tắt một kết quả công cụ"
+  },
+  "backgroundWork.toolLabel": {
+    "defaultMessage": "Đang gắn nhãn lệnh gọi công cụ"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -371,6 +434,9 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "tìm kiếm tiện ích mở rộng..."
   },
+  "busyIn.backgroundHeadline": {
+    "defaultMessage": "{elapsed, select, none {Đang bận cho ‘{name}’: {work}} other {Đang bận cho ‘{name}’: {work} · {elapsed}}}"
+  },
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Đang bận trong ‘{name}’} other {Đang bận trong cuộc trò chuyện khác}}{elapsed, select, none {} other { · {elapsed}}}"
   },
@@ -379,6 +445,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Tin nhắn gửi bây giờ sẽ chờ cho tới khi engine có chỗ cho nó."
+  },
+  "busyIn.sendYields": {
+    "defaultMessage": "Tin nhắn gửi bây giờ được ưu tiên: goose tạm gác lần kiểm tra này và chạy lại sau."
   },
   "cardButtons.configure": {
     "defaultMessage": "Cấu hình"
@@ -1400,6 +1469,9 @@
   "cutGuard.keep": {
     "defaultMessage": "Để nó tiếp tục viết"
   },
+  "cutGuard.keepBackground": {
+    "defaultMessage": "Để nó hoàn tất"
+  },
   "cutGuard.many": {
     "defaultMessage": "{action} sẽ cắt {count} yêu cầu đang chạy ({names}) — yêu cầu lâu nhất {figures}."
   },
@@ -1408,6 +1480,9 @@
   },
   "cutGuard.one": {
     "defaultMessage": "{action} sẽ cắt câu trả lời đang được viết trong “{name}” — {figures}."
+  },
+  "cutGuard.oneBackground": {
+    "defaultMessage": "{action} cắt công việc nền của goose cho “{name}”: {work} — {figures}."
   },
   "cutGuard.oneUnnamed": {
     "defaultMessage": "{action} sẽ cắt một yêu cầu mà goose không xác định được — {figures}."
@@ -1420,6 +1495,9 @@
   },
   "cutGuard.title": {
     "defaultMessage": "Cắt câu trả lời đang được viết?"
+  },
+  "cutGuard.titleBackground": {
+    "defaultMessage": "Cắt công việc nền của goose?"
   },
   "cutGuard.titleMany": {
     "defaultMessage": "Cắt {count} yêu cầu đang chạy?"
@@ -7192,6 +7270,9 @@
   },
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Xem JSON của phiên"
+  },
+  "sessionActivity.backgroundLabel": {
+    "defaultMessage": "goose vẫn đang làm việc cho cuộc trò chuyện này: {work}"
   },
   "sessionActivity.failed": {
     "defaultMessage": "Thất bại"

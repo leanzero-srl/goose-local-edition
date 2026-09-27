@@ -1,3 +1,4 @@
+use crate::background_work::BackgroundWorkKind;
 use crate::config::{Config, ConfigError};
 use crate::conversation::message::Message;
 use crate::providers::base::Provider;
@@ -130,9 +131,11 @@ pub async fn get_fast_model(
 /// measured, and on a local engine it competes with the agent's turn for the same decode: the
 /// answer check on the Flash split (2026-09-26 14:28) sent no switch and reasoned 5,295+ tokens
 /// over 278+ s before any verdict. A helper that needs to think must carry a MEASUREMENT saying
-/// so and call the provider itself. The call is tagged with the chat's session id, so the swarm
-/// router's lease and the serving record name the chat even from a detached task.
+/// so and call the provider itself. The call is tagged with the chat's session id AND its `kind`
+/// (Q-185, [`crate::background_work`]), so the swarm router's lease, the serving record and the
+/// session lists name the chat and the work even from a detached task.
 pub async fn complete_helper(
+    kind: BackgroundWorkKind,
     provider: &dyn Provider,
     model_config: &ModelConfig,
     session_id: &str,
@@ -143,8 +146,9 @@ pub async fn complete_helper(
     let helper = model_config
         .clone()
         .with_thinking_effort(ThinkingEffort::Off);
-    crate::session_context::with_session_id(
-        Some(session_id.to_string()),
+    crate::background_work::run(
+        kind,
+        session_id,
         provider.complete(&helper, system, messages, tools),
     )
     .await
@@ -154,6 +158,7 @@ pub async fn complete_helper(
 /// summarization) using the provider's fast model, falling back to the supplied
 /// main `model_config` if the fast model errors. Both go through [`complete_helper`].
 pub async fn complete_fast(
+    kind: BackgroundWorkKind,
     provider: &dyn Provider,
     model_config: &ModelConfig,
     session_id: &str,
@@ -166,6 +171,7 @@ pub async fn complete_fast(
         .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
 
     match complete_helper(
+        kind,
         provider,
         &fast_model_config,
         session_id,
@@ -183,7 +189,16 @@ pub async fn complete_fast(
                 e,
                 model_config.model_name
             );
-            complete_helper(provider, model_config, session_id, system, messages, tools).await
+            complete_helper(
+                kind,
+                provider,
+                model_config,
+                session_id,
+                system,
+                messages,
+                tools,
+            )
+            .await
         }
         Err(e) => Err(e),
     }

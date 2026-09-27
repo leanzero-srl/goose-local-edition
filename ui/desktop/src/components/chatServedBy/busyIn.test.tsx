@@ -13,6 +13,10 @@ import { MEASURED_PENDING } from '../../utils/mlxMeasuredRuns';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { ComposerReadinessStrip } from '../noNodeNotice/ComposerReadiness';
 import { deriveChatServedBy, servedReady, type ChatServedInputs } from './chatServedBy';
+import {
+  publishListedNames,
+  resetListedNamesForTests,
+} from '../sessionActivity/sessionActivityStore';
 
 vi.mock('../leanzero-swarm/PeerHeldLine', () => ({ PeerHeldLine: () => null }));
 
@@ -80,6 +84,7 @@ const body = (requests: unknown[]) => ({
 const LIVE_CHAT: MlxClient = {
   key: 'chat:20260926_19',
   kind: 'chat',
+  work: null,
   sessionId: '20260926_19',
   sessionName: 'Jira Migration Kickoff Notes',
   count: 1,
@@ -87,6 +92,7 @@ const LIVE_CHAT: MlxClient = {
 const TITLE_CALL: MlxClient = {
   key: 'session:row-9',
   kind: 'session',
+  work: null,
   sessionId: null,
   sessionName: null,
   sessionType: null,
@@ -133,6 +139,7 @@ describe('Q-152: an idle chat names the chat the engine is busy in', () => {
     expect(served.busyIn).toEqual({
       sessionId: '20260926_19',
       sessionName: 'Jira Migration Kickoff Notes',
+      work: null,
       elapsedS: 2355,
       waits: false,
     });
@@ -212,5 +219,26 @@ describe('Q-152: the composer says where the engine is busy, what a send does, a
     expect(screen.getByTestId('composer-readiness-detail')).toHaveTextContent(
       'A message sent now waits until the engine has room for it.'
     );
+  });
+
+  // Q-185, E2E #3i: the other chat's reply was done — goose was checking it. The composer names
+  // the check and the listed name, and says the truth about a send: the check steps aside.
+  it('another chat’s fact check: named as that, and a send goes first', () => {
+    publishListedNames([
+      {
+        id: '20260926_19',
+        base: 'Jira Migration Kickoff Notes',
+        label: 'Jira Migration Kickoff Notes · 5',
+      },
+    ]);
+    const check: MlxClient = { ...LIVE_CHAT, key: 'chat:20260926_19:factCheck', work: 'factCheck' };
+    strip(main([request({ elapsed_s: 3, prompt_tokens: 1094, phase: 'prefill' })], [check]));
+    expect(screen.getByTestId('composer-readiness-busy-in')).toHaveTextContent(
+      'Busy for ‘Jira Migration Kickoff Notes · 5’: Checking the reply · 3s'
+    );
+    expect(screen.getByTestId('composer-readiness-detail')).toHaveTextContent(
+      'A message sent now goes first: goose sets this check aside and runs it again after.'
+    );
+    resetListedNamesForTests();
   });
 });

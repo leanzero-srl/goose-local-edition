@@ -93,6 +93,51 @@ pub struct SessionActivityResponse {
     /// User/scheduled sessions whose LAST turn the person stopped (a later completed turn clears it).
     #[serde(default)]
     pub stopped: Vec<StoppedSessionDto>,
+    /// User/scheduled sessions goose is doing background work for, oldest call first (Q-185).
+    #[serde(default)]
+    pub background: Vec<BackgroundSessionDto>,
+}
+
+/// What goose asks the model FOR a session besides the answer being written (Q-185): the call's
+/// kind, set once where the call is made (`goose::background_work`) and read by every surface that
+/// names it — the session lists, the chat, the MLX engine card and the cut guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum BackgroundWorkKind {
+    /// The end-of-turn fact checker ("goose check:"), after the reply.
+    FactCheck,
+    /// The end-of-turn reviewer that proposes memories, after the reply.
+    MemoryReview,
+    /// The session's title.
+    Title,
+    /// The short labels on a turn's tool calls.
+    ToolLabel,
+    /// Compaction of the conversation.
+    Compaction,
+    /// A tool call and its result summarized to save tokens.
+    ToolDigest,
+    /// The permission judge deciding whether a tool call only reads.
+    PermissionCheck,
+    /// The adversary inspector reviewing a tool call.
+    SafetyCheck,
+    /// The orchestrator summarizing a session's conversation.
+    SessionSummary,
+    /// A recipe written from the session.
+    Recipe,
+}
+
+/// A session goose is doing background work for right now (Q-185): a model call in flight on the
+/// session's behalf that is not its turn. Listed whether or not a turn also runs; a surface shows it
+/// as the session's state only while no turn does.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundSessionDto {
+    pub session_id: String,
+    pub session_name: String,
+    pub working_dir: String,
+    pub kind: BackgroundWorkKind,
+    /// RFC 3339: when the call began.
+    pub started_at: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

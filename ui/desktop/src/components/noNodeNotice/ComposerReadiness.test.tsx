@@ -881,7 +881,14 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
       mlxEngineActivity: async () =>
         snapshot({
           clients: [
-            { key: 'chat:s-mine', kind: 'chat', sessionId: 's-mine', sessionName: 'x', count: 1 },
+            {
+              key: 'chat:s-mine',
+              kind: 'chat',
+              sessionId: 's-mine',
+              sessionName: 'x',
+              work: null,
+              count: 1,
+            },
           ],
           unattributed: 0,
           swarmRuns: [],
@@ -953,7 +960,9 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
     await mlxDistributedStatus();
     wrap('swarm');
     const strip = await screen.findByTestId('composer-readiness');
-    expect(strip.textContent).toContain('Split across 2 Macs · over Thunderbolt · Starting — mihai-mlx');
+    expect(strip.textContent).toContain(
+      'Split across 2 Macs · over Thunderbolt · Starting — mihai-mlx'
+    );
     expect(strip.textContent).not.toContain('No model is mounted');
     expect(screen.getByTestId('composer-readiness-spinner')).toHaveAttribute(
       'data-for',
