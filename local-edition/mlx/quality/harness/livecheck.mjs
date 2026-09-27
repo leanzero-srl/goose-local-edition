@@ -49,7 +49,8 @@ function judge(act, engineBusy, rows, serving, title, url) {
     findings.push({ kind: 'LIVE_STATE_MISSING', surface: 'sidebar session list',
       says: `${rows.length} session rows, none marked running`, truth: `engine generating ${act.stats.numRunning} request(s)` });
   }
-  const names = [...new Set([title, ...serving.map((t) => t.replace(/^Chat · /, ''))].filter(Boolean))];
+  // The serving row reads "Chat · <title>" and, since 3.0.57, a trailing "· N requests" / "N requests".
+  const names = [...new Set([title, ...serving.map((t) => t.replace(/^Chat · /, '').replace(/\s*·?\s*\d+ requests?$/, ''))].filter(Boolean))];
   for (const name of names) {
     const mine = rows.filter((r) => r.text.includes(name));
     if (rows.length && mine.length === 0) findings.push({ kind: 'LIVE_SESSION_NOT_LISTED', surface: 'sidebar', says: 'no row', truth: name });

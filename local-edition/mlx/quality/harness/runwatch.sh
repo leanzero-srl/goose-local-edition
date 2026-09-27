@@ -7,11 +7,11 @@
 # split's /v1/status unreachable while the driver still runs.
 d=${1:?run dir}
 RATIO=${RATIO:-20}   # ratio: of the run's own median call output
-seen_live=$(grep -c ' LIVE ' $d/events.log 2>/dev/null || echo 0)
+seen_live=$(cat $d/events.log 2>/dev/null | grep -c ' LIVE ')  # grep -c already prints 0; '|| echo 0' made it "0\n0"
 while true; do
   if awk -F'\t' 'NR>1 && ($5=="notice" || $5=="hang") {f=1} END {exit !f}' $d/turns.tsv 2>/dev/null; then
     echo "STOP: a turn ended notice/hang"; awk -F'\t' 'NR>1 {print $1, $4, $5, $8}' $d/turns.tsv | tail -3; exit 0; fi
-  now_live=$(grep -c ' LIVE ' $d/events.log 2>/dev/null || echo 0)
+  now_live=$(cat $d/events.log 2>/dev/null | grep -c ' LIVE ')
   if [ "$now_live" -gt "$seen_live" ]; then echo "LIVE finding:"; grep ' LIVE ' $d/events.log | tail -1 | cut -c1-300; exit 0; fi
   if ! pgrep -f "(r1.mjs|load.py) $d" >/dev/null; then echo "driver gone"; tail -3 $d/turns.tsv 2>/dev/null; exit 0; fi
   if ! curl -s -m 5 127.0.0.1:8091/v1/models >/dev/null 2>&1 && ! curl -s -m 5 127.0.0.1:8090/v1/models >/dev/null 2>&1; then
