@@ -33,8 +33,11 @@ export interface SwarmDeviceRow {
   /** How fast this node is relative to its siblings — routes proportionally more of the build to it.
    *  Mirrors SwarmDevice.speed_weight; the legacy `speed_weights` substring map remains the fallback. */
   speed_weight?: number;
-  /** This node SUPERVISES rather than builds: it takes the judge, review and synthesis calls and is kept
-   *  out of the build pool. Put the strongest model here. Mirrors SwarmDevice.supervision. */
+  /** This node is kept OUT OF THE BUILD POOL (goose-swarm scheduler.rs: `pick_device` skips it) and
+   *  is preferred for the scheduler's idle jobs (`least_loaded_free_device` sorts it first). It does
+   *  NOT take the judge, review or synthesis calls — the planner is `planner_model` and the judge is
+   *  chosen by name (D2, DESIGN-NODES-AND-STRATEGIES.md §2.3; strategies' Planning role replaces
+   *  the idea). No UI surfaces it. Mirrors SwarmDevice.supervision. */
   supervision?: boolean;
   /** Which LOCAL engine hosts this device's model. Absent = LM Studio; "mlx-sidecar" = the LeanZero MLX
    *  engine (its model_id must equal the engine's served alias — mlx_engine.served_model_name). Mirrors

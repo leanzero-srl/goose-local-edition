@@ -8,7 +8,8 @@ import { usePlacementPlans } from './usePlacementPlans';
 import { PLAN_27B, NODES } from './placement.fixtures';
 import type { PlacementPlan } from '../../acp/mlx-placement';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
-import type { NodesConfig, NodesRead } from '../../acp/nodes';
+import type { NodesRead } from '../../acp/nodes';
+import type { NodesConfig } from '../nodes/model';
 
 /**
  * Run it's "Save as node" (DESIGN-NODES-AND-STRATEGIES.md §8.6) and the extracted plans hook (D10).

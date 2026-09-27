@@ -467,6 +467,42 @@ export interface PlacementCandidatesProps {
 
 const NO_FACTS: WayRowFacts = { live: null, tooSmall: false };
 
+/**
+ * A candidate's figures as Run it says them: the goal's speed figure with its range and whether it
+ * was measured, and the context it fits. The node cards show a planned way with this same row.
+ */
+export function CandidateFigures({
+  candidate: c,
+  goal,
+}: {
+  candidate: PlacementCandidate;
+  goal: PlacementGoal;
+}) {
+  const intl = useIntl();
+  const figure = goalFigure(c, goal);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {figure && (
+        <>
+          <span className={cx('text-lz-body', WEIGHT.semibold, TNUM, TONE_TEXT.accent)}>
+            {goalFigureText(intl, goal, figure, c)}
+          </span>
+          <FigureRange figure={figure} />
+          <SourceChip figure={figure} />
+        </>
+      )}
+      {c.fit.context != null && (
+        <Chip>
+          {intl.formatMessage(
+            c.fit.status === 'smallerContext' ? i18n.smallerContext : i18n.context,
+            { tokens: c.fit.context.toLocaleString() }
+          )}
+        </Chip>
+      )}
+    </div>
+  );
+}
+
 function PickDot({ checked }: { checked: boolean }) {
   return (
     <span
@@ -500,7 +536,6 @@ export function PlacementCandidates({
       {ways.map((way) => {
         const c = way.candidate;
         const { live, tooSmall } = rowFacts?.(way) ?? NO_FACTS;
-        const figure = c ? goalFigure(c, goal) : null;
         // "Best" is goose's: the planner ranks long documents by a whole turn's expected time, so a
         // split that reads faster but writes slower wins only when the turn's answer is short enough.
         const isBest = c != null && plan?.best === c.id && !tooSmall;
@@ -531,27 +566,7 @@ export function PlacementCandidates({
               )}
               {live && <LiveChip live={live} />}
             </div>
-            {c && (
-              <div className="flex flex-wrap items-center gap-2">
-                {figure && (
-                  <>
-                    <span className={cx('text-lz-body', WEIGHT.semibold, TNUM, TONE_TEXT.accent)}>
-                      {goalFigureText(intl, goal, figure, c)}
-                    </span>
-                    <FigureRange figure={figure} />
-                    <SourceChip figure={figure} />
-                  </>
-                )}
-                {c.fit.context != null && (
-                  <Chip>
-                    {intl.formatMessage(
-                      c.fit.status === 'smallerContext' ? i18n.smallerContext : i18n.context,
-                      { tokens: c.fit.context.toLocaleString() }
-                    )}
-                  </Chip>
-                )}
-              </div>
-            )}
+            {c && <CandidateFigures candidate={c} goal={goal} />}
             {why && (
               <p className={cx('break-words', TYPE.meta)} title={c?.fit.detail}>
                 {why}

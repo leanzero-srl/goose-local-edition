@@ -66,12 +66,13 @@ const i18n = defineMessages({
   compatibleHint: {
     id: 'cloudProviders.compatibleHint',
     defaultMessage:
-      'Any server that speaks the OpenAI API — vLLM, llama.cpp, Together, Groq, a company gateway. Add as many as you need. Chat sessions can use them; swarm nodes cannot yet.',
+      'Any server that speaks the OpenAI API — vLLM, llama.cpp, Together, Groq, a company gateway. Add as many as you need. Make a node from any configured provider under Nodes.',
   },
   chatOnly: { id: 'cloudProviders.chatOnly', defaultMessage: 'Chat only' },
   chatOnlyHint: {
     id: 'cloudProviders.chatOnlyHint',
-    defaultMessage: 'Chat sessions can use this endpoint; swarm nodes cannot yet.',
+    defaultMessage:
+      'Chat sessions and nodes can use this endpoint — make one under Nodes; swarm builds cannot yet.',
   },
   addEndpoint: { id: 'cloudProviders.addEndpoint', defaultMessage: 'Add endpoint' },
 });

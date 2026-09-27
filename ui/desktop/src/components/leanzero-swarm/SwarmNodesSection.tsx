@@ -51,6 +51,11 @@ const i18nMsg = defineMessages({
     defaultMessage: 'Share: relative share of work across nodes — higher gets more tasks.',
   },
   shareLabel: { id: 'swarmSettings.shareLabel', defaultMessage: 'Share' },
+  emptyTitle: { id: 'swarmSettings.emptyTitle', defaultMessage: 'No nodes yet' },
+  emptyBody: {
+    id: 'swarmSettings.emptyBody',
+    defaultMessage: 'Add one with “Add node” — it joins the pool the moment the add commits.',
+  },
   addNode: { id: 'swarmSettings.addNode', defaultMessage: 'Add node' },
   autoChip: { id: 'swarmSettings.autoChip', defaultMessage: 'auto' },
   autoChipTitle: {
@@ -500,8 +505,8 @@ export default function SwarmNodesSection({
           empty={
             <EmptyState
               icon={<Server />}
-              title="No nodes yet"
-              body="Add one with “Add node” — it joins the pool the moment the add commits."
+              title={intl.formatMessage(i18nMsg.emptyTitle)}
+              body={intl.formatMessage(i18nMsg.emptyBody)}
             />
           }
         />
