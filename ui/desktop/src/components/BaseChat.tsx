@@ -45,6 +45,7 @@ import {
   Button,
   Chip,
   FOCUS,
+  LAYER,
   MOTION,
   Panel,
   RADIUS,
@@ -757,8 +758,14 @@ export default function BaseChat({
               SURFACE.hairline
             )}
           />
-          {/* Brand — top right, one quiet chip */}
-          <div className="absolute top-[14px] right-4 z-[60] flex flex-row items-center gap-2">
+          {/* Brand — top right, one quiet chip; page chrome, so every overlay covers it */}
+          <div
+            data-testid="session-brand-corner"
+            className={cx(
+              'absolute top-[14px] right-4 flex flex-row items-center gap-2',
+              LAYER.chrome
+            )}
+          >
             <SessionBrand isLocal={isLocal} />
             <EnvironmentBadge className="translate-y-px" />
           </div>

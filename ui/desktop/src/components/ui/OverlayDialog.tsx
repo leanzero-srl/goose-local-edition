@@ -2,6 +2,7 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Dialog, DialogOverlay, DialogPortal } from './dialog';
 import { cn } from '../../utils';
+import { LAYER } from '../lz/tokens';
 
 /**
  * The app's dialog primitive (Radix, ui/dialog.tsx) for a panel that draws its OWN chrome: Escape
@@ -16,7 +17,7 @@ export function OverlayDialog({
   open,
   onClose,
   panelClassName,
-  layerClassName = 'z-50',
+  layerClassName = LAYER.overlay,
   children,
   ...rest
 }: {

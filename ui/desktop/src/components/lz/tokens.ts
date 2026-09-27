@@ -184,6 +184,18 @@ export const TYPE = {
   mono: 'font-mono text-lz-mono text-lz-ink',
 } as const;
 
+/**
+ * Stacking layers. Page chrome — the top bar's brand chip, the session title, sticky bars — sits in
+ * `chrome`; every overlay (the dialog primitive's backdrop and panel, a hand-rolled modal) sits at
+ * `overlay` or above, so nothing on the page ever draws over a backdrop (Q-176/Q-23: the top-right
+ * "Goose Swarm" badge was z-[60] over the dialog's z-40 backdrop). A dialog portals to <body>, after
+ * the app root, so at `overlay` it also covers a full-window page at the same layer (Benchmark).
+ */
+export const LAYER = {
+  chrome: 'z-30',
+  overlay: 'z-50',
+} as const;
+
 /** Surfaces. Hover is a SOLID step to surface-2; selection is the accent fill or a 2px inset ring. */
 export const SURFACE = {
   page: 'bg-lz-bg text-lz-ink',
