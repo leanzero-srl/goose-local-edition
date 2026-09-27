@@ -24,7 +24,7 @@ use serde_json::Value;
 
 use super::config::{Backend, Runner};
 use super::exec::{NodeExec, SystemExec};
-use super::launch::{self, RankPhase, RankProcess, RANK_MARKER};
+use super::launch::{self, RankPhase, RankProcess};
 use super::link_control::{
     link_peer, ExecAnswer, ExecRequest, LinkOp, LinkRefusal, ProvisionPollAnswer,
     ProvisionPollRequest, ProvisionStartAnswer, ProvisionStartRequest, RankExit, RankPollRequest,
@@ -711,7 +711,7 @@ fn ensure_lease_watch() {
 /// the record, so the mount stays refused by name and the next reclaim looks again.
 pub async fn reclaim_orphan(pid: u32) -> Result<Option<(String, bool)>, HostError> {
     match signal_proof(pid).await? {
-        Some(command) if command.contains(RANK_MARKER) => {}
+        Some(command) if super::probe::carries_rank_marker(&command) => {}
         _ => return Ok(None),
     }
     Ok(Some(
