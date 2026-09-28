@@ -196,9 +196,9 @@ function macNameOf(
  * "Split across 2 Macs").
  */
 function followedWhere(serving: NodesServingWayDto | null): GlanceWhere {
-  if (serving?.kind === 'split') {
-    return { kind: 'split', count: serving.macNames.length || (serving.macs?.length ?? 0) };
-  }
+  const splitMacs =
+    serving?.kind === 'split' ? serving.macNames.length || (serving.macs?.length ?? 0) : 0;
+  if (splitMacs > 0) return { kind: 'split', count: splitMacs };
   if (serving?.kind === 'remoteSingle' && serving.macNames[0]) {
     return { kind: 'mac', name: serving.macNames[0] };
   }
