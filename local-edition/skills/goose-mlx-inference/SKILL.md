@@ -230,6 +230,26 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   status:"error" result). Fix: `stored_error` parses the code back. GENERAL RULE: anything goose sends
   that is rebuilt from the session DB at a turn start must render byte-identical to what the turn sent
   from memory — check a new field's serde round-trip against the formatter's output.
+- COMPACTION IS THE CONVERSATION'S NEXT REQUEST (Q-342, 2026-09-28, E2E #3p on 3.0.69). The old summary
+  request put the history as TEXT in the system message (transcript shape) → 0 of 97,590 read, 441 s of
+  prefill before the first token, 678 s in all (12:21:28 → 12:32:46), while the rank still held the
+  chat's ~142k prefix. Now (`context_mgmt::SummaryRequest::ExtendsChat`): the chat's own system prompt +
+  tools (after disclosure) + messages through the chat's fix_conversation/`messages_for_provider`, then
+  ONE instruction message (joined to a trailing user message; its own message after tool results), sent
+  via `model_config::complete_as_the_chat` with the CHAT's model config — NOT the helper path. Transcript
+  stays for swarm workers (golden), the context-length RECOVERY compaction, and a distinct fast model.
+  THINKING SWITCH FACTS (measured on the split's wrapper in the real-mlx_lm replay; the single Rapid-MLX
+  engine does the same per rank_thinking.py's account of its helpers.py): a request carrying tools with no
+  pinned `enable_thinking` resolves thinking OFF (Q-135),
+  so goose's chat requests render off and a helper's pinned-off renders identically; a switch the chat did
+  NOT render (pinned ON) reads 0 — Qwen3.8 writes "Reasoning effort is set to xhigh…" into the SYSTEM block.
+  Replay `a_tool_step_reads_the_prefix_before_the_turn_context_through_real_mlx_lm`: chat-shaped summary
+  4,392 of 4,760 (= the last boundary), thinking-on 0 of 4,965, transcript 0 of 1,749. HOW TO MEASURE a
+  compaction live: the in-flight `llm_request.<uuid>.jsonl` (copy it — it is renamed into the numbered
+  rotation when it ends) holds the body; the rank log's `GOOSE_RANK_ADMISSION held_tokens` is its size,
+  the `Prompt processing progress: a/b` b is the cold part, the `"ended": {"uid": …, "generated": N}`
+  state line its end. OPEN after it: the first request after a compaction prefills system+tools cold
+  (#3p: 44,053, 150 s — Q-347: mlx_lm snapshots a segment only past the tokens a request read from cache).
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
