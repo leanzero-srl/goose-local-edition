@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IntlTestWrapper } from '../../i18n/test-utils';
-import ChangesRail from './ChangesRail';
+import SessionRail from '../session-rail/SessionRail';
 import { REVEAL_TOOL_CALL_EVENT } from './fileDiff';
 import {
   KICKOFF_EDIT,
@@ -14,8 +14,17 @@ import {
 } from './fixtures';
 import type { Message } from '../../types/message';
 
+/** Q-190's rail, now the Changes tab of the session rail (Q-228 L5) in a chat with no loop. */
 function renderRail(messages: Message[]) {
-  return render(<ChangesRail messages={messages} />, { wrapper: IntlTestWrapper });
+  return render(
+    <SessionRail
+      sessionId="s-changes"
+      messages={messages}
+      loop={{ kind: 'none' }}
+      control={async () => ({ kind: 'failed', error: 'unused' })}
+    />,
+    { wrapper: IntlTestWrapper }
+  );
 }
 
 const ownerEdit = [
@@ -31,7 +40,10 @@ const ownerEdit = [
 ];
 
 describe('ChangesRail', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+  });
 
   it('renders nothing when the chat changed no file — a failed edit included', () => {
     const { container } = renderRail([

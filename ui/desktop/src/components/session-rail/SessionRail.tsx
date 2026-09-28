@@ -133,8 +133,14 @@ export default function SessionRail({
     }
   }, [ended, onLoopTab, loopId, endedSeen]);
 
+  const refocus = useRef(false);
   useEffect(() => {
-    if (memory.open) panelRef.current?.focus();
+    if (memory.open) {
+      panelRef.current?.focus();
+    } else if (refocus.current) {
+      refocus.current = false;
+      (openedFrom.current === 'loop' ? loopPillRef : changesPillRef).current?.focus();
+    }
   }, [memory.open]);
 
   const pill: PillView | null =
@@ -155,10 +161,8 @@ export default function SessionRail({
     update({ open: true, tab });
   };
   const close = () => {
+    refocus.current = true;
     update({ ...memory, open: false });
-    requestAnimationFrame(() =>
-      (openedFrom.current === 'loop' ? loopPillRef : changesPillRef).current?.focus()
-    );
   };
 
   const tabOptions = [
