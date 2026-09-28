@@ -28,12 +28,16 @@ import {
   disambiguatedNames,
   elapsedLabel,
   getSessionActivitySnapshot,
+  isActive,
   refreshSessionActivity,
   resetSessionActivityForTests,
   resolveNeedsYou,
+  SESSION_STATE_ORDER,
   sessionStates,
   startSessionActivitySync,
+  type LoopStatus,
   type SessionActivitySnapshot,
+  type SessionState,
 } from './sessionActivityStore';
 import { AppEvents } from '../../constants/events';
 
@@ -68,10 +72,37 @@ function snapshotWith(partial: Partial<SessionActivitySnapshot>): SessionActivit
     failed: [],
     stopped: [],
     background: [],
+    looping: [],
     elicitations: [],
     ...partial,
   };
 }
+
+function loop(sessionId: string, status: LoopStatus, nextTickAt?: string) {
+  return { sessionId, status, ...(nextTickAt ? { nextTickAt } : {}) };
+}
+
+const FAILED_TICK = {
+  sessionId: 'L',
+  sessionName: 'Loop chat',
+  workingDir: '/proj/L',
+  failedAt: '2026-09-27T22:31:00Z',
+  reason: 'Provider error: stream ended early',
+};
+const STOPPED_TICK = {
+  sessionId: 'L',
+  sessionName: 'Loop chat',
+  workingDir: '/proj/L',
+  stoppedAt: '2026-09-27T22:36:00Z',
+  elapsedMs: 72_000,
+};
+const BACKGROUND_CHECK = {
+  sessionId: 'L',
+  sessionName: 'Loop chat',
+  workingDir: '/proj/L',
+  kind: 'factCheck' as const,
+  startedAt: '2026-09-27T22:37:00Z',
+};
 
 describe('session activity: the one source of running / needs-you / failed / idle', () => {
   beforeEach(() => {
@@ -109,6 +140,120 @@ describe('session activity: the one source of running / needs-you / failed / idl
     expect(sessionStates(activityOf(state, 'c'))).toEqual(['failed']);
     expect(activityOf(state, 'c').failedReason).toContain('stopped mid-answer');
     expect(sessionStates(activityOf(state, 'idle'))).toEqual(['idle']);
+  });
+
+  // Session loops §8.6 / L7: needs-you > running > background > looping > failed > stopped > idle.
+  describe('the order of states, looping included (Q-228)', () => {
+    const table: Array<[string, Partial<SessionActivitySnapshot>, SessionState[]]> = [
+      [
+        'a tick in flight is a turn: Running, not Looping',
+        { running: [running('L', '2026-09-27T22:40:00Z')], looping: [loop('L', 'running')] },
+        ['running'],
+      ],
+      [
+        "the tick's reviewers after it: Background, not Looping",
+        { background: [BACKGROUND_CHECK], looping: [loop('L', 'waiting', '2026-09-27T22:50:00Z')] },
+        ['background'],
+      ],
+      [
+        'a tick that asked the person: Needs you leads, the loop still shows',
+        { needsYou: [item('i1', 'L')], looping: [loop('L', 'needs_you')] },
+        ['needs-you', 'looping'],
+      ],
+      [
+        "the answer's turn runs: Needs you is gone, the turn is Running",
+        { running: [running('L', '2026-09-27T22:45:00Z')], looping: [loop('L', 'needs_you')] },
+        ['running'],
+      ],
+      [
+        'a loop between ticks',
+        { looping: [loop('L', 'waiting', '2026-09-27T22:50:00Z')] },
+        ['looping'],
+      ],
+      [
+        "a loop whose last tick failed reads Looping, not Failed (the failure is on the tick's row)",
+        { failed: [FAILED_TICK], looping: [loop('L', 'waiting', '2026-09-27T22:50:00Z')] },
+        ['looping'],
+      ],
+      [
+        'two failed ticks paused the loop: Looping (Paused), not Failed',
+        { failed: [FAILED_TICK], looping: [loop('L', 'paused')] },
+        ['looping'],
+      ],
+      [
+        'the person stopped a tick: its own state, the loop Paused, not Stopped',
+        { stopped: [STOPPED_TICK], looping: [loop('L', 'paused')] },
+        ['looping'],
+      ],
+      [
+        'a yielded tick is never Stopped (the engine records no stop; the tick waits its turn)',
+        { looping: [loop('L', 'waiting_turn')] },
+        ['looping'],
+      ],
+      ['a self-paced tick named no delay', { looping: [loop('L', 'waiting_you')] }, ['looping']],
+      ['a loop checking after its tick', { looping: [loop('L', 'checking')] }, ['looping']],
+      ['a loop in another window', { looping: [loop('L', 'elsewhere')] }, ['looping']],
+      [
+        'an unreadable loop record is named, never read as "no loop"',
+        {
+          failed: [FAILED_TICK],
+          looping: [{ sessionId: 'L', error: 'The loop record could not be read: bad id' }],
+        },
+        ['looping'],
+      ],
+      [
+        'an ended loop is not looping: the last turn shows again',
+        { failed: [FAILED_TICK], looping: [loop('L', 'ended')] },
+        ['failed'],
+      ],
+      ['failed outranks stopped', { failed: [FAILED_TICK], stopped: [STOPPED_TICK] }, ['failed']],
+      ['stopped alone', { stopped: [STOPPED_TICK] }, ['stopped']],
+      ['nothing holds', {}, ['idle']],
+    ];
+    it.each(table)('%s', (_name, partial, expected) => {
+      const states = sessionStates(activityOf(snapshotWith(partial), 'L'));
+      expect(states).toEqual(expected);
+      const ranks = states.map((state) => SESSION_STATE_ORDER.indexOf(state));
+      expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+    });
+
+    it('reads the loop facts a row shows, and only for its own chat', () => {
+      const state = snapshotWith({
+        looping: [
+          loop('L', 'waiting', '2026-09-27T22:50:00Z'),
+          { sessionId: 'U', error: 'The loop record could not be read: bad id' },
+        ],
+      });
+      expect(activityOf(state, 'L')).toMatchObject({
+        loopStatus: 'waiting',
+        loopNextTickAt: '2026-09-27T22:50:00Z',
+        loopError: undefined,
+      });
+      expect(activityOf(state, 'U')).toMatchObject({
+        loopStatus: undefined,
+        loopError: 'The loop record could not be read: bad id',
+      });
+      expect(activityOf(state, 'other')).toMatchObject({
+        loopStatus: undefined,
+        loopNextTickAt: undefined,
+        loopError: undefined,
+      });
+    });
+
+    it('a waiting loop is a scheduled future, not work in flight: never Active now', () => {
+      const state = snapshotWith({
+        looping: [loop('L', 'waiting', '2026-09-27T22:50:00Z'), loop('P', 'paused')],
+      });
+      expect(isActive(activityOf(state, 'L'))).toBe(false);
+      expect(isActive(activityOf(state, 'P'))).toBe(false);
+      expect(activeSessions(state)).toEqual([]);
+      // A tick in flight IS a running turn.
+      const ticking = snapshotWith({
+        running: [running('L', '2026-09-27T22:40:00Z')],
+        looping: [loop('L', 'running')],
+      });
+      expect(activeSessions(ticking).map((row) => row.sessionId)).toEqual(['L']);
+    });
   });
 
   // Q-169: a stopped turn left the row reading "15m ago", as if nothing had happened.
@@ -191,6 +336,29 @@ describe('session activity: the one source of running / needs-you / failed / idl
     expect(first.needsYou).toEqual(answer.needsYou);
     await refreshSessionActivity();
     expect(getSessionActivitySnapshot()).toBe(first);
+  });
+
+  it("keeps the engine's looping list, and an engine older than loops sends none", async () => {
+    const looping = [loop('L', 'waiting', '2026-09-27T22:50:00Z')];
+    acp.acpSessionActivity.mockResolvedValue({ running: [], needsYou: [], failed: [], looping });
+    await refreshSessionActivity();
+    const first = getSessionActivitySnapshot();
+    expect(first.looping).toEqual(looping);
+    await refreshSessionActivity();
+    expect(getSessionActivitySnapshot()).toBe(first);
+    // The loop pauses: only the loop changed, and that alone is a new answer.
+    acp.acpSessionActivity.mockResolvedValue({
+      running: [],
+      needsYou: [],
+      failed: [],
+      looping: [loop('L', 'paused')],
+    });
+    await refreshSessionActivity();
+    expect(getSessionActivitySnapshot().looping).toEqual([loop('L', 'paused')]);
+
+    acp.acpSessionActivity.mockResolvedValue({ running: [], needsYou: [], failed: [] });
+    await refreshSessionActivity();
+    expect(getSessionActivitySnapshot().looping).toEqual([]);
   });
 
   it('resolving drops the item at once and re-reads the engine', async () => {

@@ -25,6 +25,7 @@ import SessionActivityIndicator from './SessionActivityIndicator';
 import ActiveNowSection from './ActiveNowSection';
 import {
   FailedPill,
+  LoopingPill,
   NeedsYouPill,
   RunningPill,
   StoppedPill,
@@ -203,6 +204,141 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
       expect(screen.getByTestId('session-card-check-1').getAttribute('data-state')).toBe('idle')
     );
     expect(screen.queryByTestId('chat-background-work')).toBeNull();
+  }, 30_000);
+
+  // Session loops §8.6 (Q-228): a chat whose loop has not ended, between ticks.
+  it('the Looping pill: solid fills, its words per loop state, nothing for an ended loop', async () => {
+    const next = '2026-09-27T22:40:00Z';
+    const at = new Date(next);
+    const hm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    const cases = [
+      { status: 'waiting', nextTickAt: next, text: `Next ${hm}`, tone: 'accent', title: hm },
+      { status: 'running', text: 'Looping', tone: 'accent', title: 'running a tick' },
+      { status: 'checking', text: 'Looping', tone: 'accent', title: 'running its check' },
+      { status: 'waiting_turn', text: 'Looping', tone: 'accent', title: 'the turn before it ends' },
+      { status: 'needs_you', text: 'Looping', tone: 'accent', title: 'your answer' },
+      { status: 'elsewhere', text: 'Looping', tone: 'accent', title: 'another goose window' },
+      { status: 'waiting_you', text: 'Waiting for you', tone: 'warn', title: 'when to come back' },
+      { status: 'paused', text: 'Paused', tone: 'stopped', title: 'is paused' },
+      { status: 'waiting', text: 'Looping', tone: 'accent', title: 'sent no time' },
+      {
+        status: 'waiting',
+        nextTickAt: 'soon',
+        text: 'Looping',
+        tone: 'accent',
+        title: '"soon" is not an RFC 3339 time',
+      },
+    ] as const;
+    const { container } = render(
+      <IntlProvider locale="en" messages={{}}>
+        {cases.map((c, index) => (
+          <LoopingPill
+            key={index}
+            status={c.status}
+            nextTickAt={'nextTickAt' in c ? c.nextTickAt : undefined}
+          />
+        ))}
+        <LoopingPill error="The loop record could not be read: missing field `goal`" />
+        <LoopingPill status="ended" />
+        <LoopingPill />
+      </IntlProvider>
+    );
+    const pills = screen.getAllByTestId('session-looping-pill');
+    expect(pills).toHaveLength(cases.length + 1);
+    cases.forEach((c, index) => {
+      const pill = pills[index];
+      expect(pill.textContent).toBe(c.text);
+      expect(pill.dataset.loop).toBe(c.status);
+      expect(pill.getAttribute('title')).toContain(c.title);
+      expect(pill.getAttribute('aria-label')).toBe(pill.getAttribute('title'));
+      for (const cls of TONE_FILL[c.tone].split(' ')) expect(pill.className).toContain(cls);
+    });
+    const unreadable = pills[cases.length];
+    expect(unreadable.textContent).toBe('Loop unreadable');
+    expect(unreadable.dataset.loop).toBe('unreadable');
+    expect(unreadable.getAttribute('title')).toBe(
+      'The loop record could not be read: missing field `goal`'
+    );
+    for (const cls of TONE_FILL.err.split(' ')) expect(unreadable.className).toContain(cls);
+    assertStudioClean(container);
+    const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
+    expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
+
+  it('a looping chat: its row reads Looping over a failed or stopped last turn, a tick in flight reads Running, and a waiting loop is not Active now', async () => {
+    Object.assign(window.electron, { getConfig: () => ({}) });
+    const base = {
+      workingDir: '/Users/me/api',
+      messageCount: 3,
+      updatedAt: '2026-09-25T10:00:00Z',
+      lastMessageAt: '2026-09-25T10:00:00Z',
+    };
+    sessionsAcp.acpListSessions.mockResolvedValue({
+      sessions: [
+        { ...base, id: 'loop-wait', name: 'Generator', createdAt: '2026-09-26T09:00:00Z' },
+        { ...base, id: 'loop-stop', name: 'Validator', createdAt: '2026-09-25T09:00:00Z' },
+        { ...base, id: 'loop-tick', name: 'Kickoff', createdAt: '2026-09-24T09:00:00Z' },
+      ],
+      nextCursor: null,
+    });
+    seedSessionActivityForTests({
+      running: [running('loop-tick', 'Kickoff')],
+      failed: [
+        {
+          sessionId: 'loop-wait',
+          sessionName: 'Generator',
+          workingDir: '/Users/me/api',
+          failedAt: '2026-09-26T10:00:00Z',
+          reason: 'Provider error: stream ended early',
+        },
+      ],
+      stopped: [
+        {
+          sessionId: 'loop-stop',
+          sessionName: 'Validator',
+          workingDir: '/Users/me/api',
+          stoppedAt: '2026-09-26T10:05:00Z',
+          elapsedMs: 72_000,
+        },
+      ],
+      looping: [
+        { sessionId: 'loop-wait', status: 'waiting', nextTickAt: '2026-09-26T10:40:00Z' },
+        { sessionId: 'loop-stop', status: 'paused' },
+        { sessionId: 'loop-tick', status: 'running' },
+      ],
+    });
+    render(
+      <IntlProvider locale="en" messages={{}}>
+        <MemoryRouter>
+          <SessionListView onSelectSession={vi.fn()} />
+          <ActiveNowSection />
+        </MemoryRouter>
+      </IntlProvider>
+    );
+    const waiting = await screen.findByTestId('session-card-loop-wait');
+    expect(waiting.getAttribute('data-state')).toBe('looping');
+    expect(waiting.getAttribute('aria-busy')).toBeNull();
+    expect(within(waiting).getByTestId('session-looping-pill').textContent).toMatch(
+      /^Next \d{2}:\d{2}$/
+    );
+    expect(within(waiting).queryByTestId('session-failed-pill')).toBeNull();
+
+    const stopped = screen.getByTestId('session-card-loop-stop');
+    expect(stopped.getAttribute('data-state')).toBe('looping');
+    expect(within(stopped).getByTestId('session-looping-pill').textContent).toBe('Paused');
+    expect(within(stopped).queryByTestId('session-stopped-pill')).toBeNull();
+
+    const ticking = screen.getByTestId('session-card-loop-tick');
+    expect(ticking.getAttribute('data-state')).toBe('running');
+    expect(ticking.getAttribute('aria-busy')).toBe('true');
+    expect(within(ticking).getByTestId('session-running-pill')).toBeTruthy();
+    expect(within(ticking).queryByTestId('session-looping-pill')).toBeNull();
+
+    // Active now lists the tick in flight only.
+    const active = screen.getByTestId('active-now-section');
+    expect(within(active).queryByTestId('active-now-row-loop-tick')).toBeTruthy();
+    expect(within(active).queryByTestId('active-now-row-loop-wait')).toBeNull();
+    expect(within(active).queryByTestId('active-now-row-loop-stop')).toBeNull();
   }, 30_000);
 
   it('the top bar shows nothing when nothing is active', () => {

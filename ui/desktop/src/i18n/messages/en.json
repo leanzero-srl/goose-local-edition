@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "The last turn failed"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "This chat's loop is running its check after a tick"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "This chat's loop runs in another goose window"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "This chat's loop waits until your answer to its tick has run"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "This chat's loop runs its next tick at {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "This chat's loop is waiting, but goose sent no time for its next tick"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "This chat's loop is waiting; its next tick time could not be read: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "This chat's loop is paused; open the chat to see why and resume it"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "This chat's loop is running a tick"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "A tick of this chat's loop is due; it starts when the turn before it ends"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "The last tick of this chat's loop didn't say when to come back"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Next {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "Paused"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Loop unreadable"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Waiting for you"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "Looping"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Needs you"
   },

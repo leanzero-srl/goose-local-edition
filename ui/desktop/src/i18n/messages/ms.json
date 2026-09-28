@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "Giliran terakhir gagal"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "Gelung sembang ini sedang menjalankan semakannya selepas satu pusingan"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "Gelung sembang ini berjalan dalam tetingkap goose yang lain"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "Gelung sembang ini menunggu sehingga jawapan anda kepada pusingannya selesai dijalankan"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "Gelung sembang ini menjalankan pusingan seterusnya pada {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "Gelung sembang ini sedang menunggu, tetapi goose tidak menghantar masa untuk pusingan seterusnya"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "Gelung sembang ini sedang menunggu; masa pusingan seterusnya tidak dapat dibaca: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "Gelung sembang ini dijeda; buka sembang untuk melihat sebabnya dan menyambungnya"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "Gelung sembang ini sedang menjalankan satu pusingan"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Satu pusingan gelung sembang ini sudah tiba masanya; ia bermula apabila giliran sebelumnya tamat"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "Pusingan terakhir gelung sembang ini tidak menyatakan bila hendak kembali"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Seterusnya {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "Dijeda"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Gelung tidak dapat dibaca"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Menunggu anda"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "Bergelung"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Memerlukan anda"
   },

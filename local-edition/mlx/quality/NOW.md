@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 00:37 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 03:22 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.64 (both Macs; install.sh reaped the 3.0.63 goosed orphan — that app predates Q-223). Split "OK".
@@ -15,8 +15,11 @@ Updated: 2026-09-28 00:37 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - RED (see above) — fix in flight.
 
 ## Agents
-- CI fix (Windows gating + stderr race).
-- Loops: L0 DONE on its branch (held until CI is green) → then L2a, L3, L4r, L7, L5 in parallel.
+- SPEND LIMIT hit ~01:10; reset 03:20. Four loop agents died mid-slice; their WIP is COMMITTED in their worktrees
+  (resume via SendMessage to the same ids): L2a runner (turn_priority.rs, session_loops/check.rs, owner.rs) ·
+  L4r renderer door (1 commit + tests) · L3 loop_report (1 commit + execute_commands/loop_report/session_manager/
+  agent_sync) · L5 rail (BaseChat, UserMessage, ChangesRail, messages.ts, LoopPanel/LoopPill/TickMarker).
+- Merged + pushed: L0, L7, S6, S3b, S8, Q-231, L8, CI fix (Windows gating + stderr race). Next build 3.0.65.
 
 ## Next actions (in order)
 1. 3.0.61 DONE (glance + Q-183) → install at #3i turn-3 boundary (watcher b3ugzqvvu) → split-start 27B → #3i continues (new session = #3j if needed).

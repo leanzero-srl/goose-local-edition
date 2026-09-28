@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "Последний ход завершился сбоем"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "Цикл этого чата выполняет проверку после итерации"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "Цикл этого чата выполняется в другом окне goose"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "Цикл этого чата ждёт, пока ваш ответ на его итерацию не будет выполнен"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "Цикл этого чата запустит следующую итерацию в {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "Цикл этого чата ждёт, но goose не прислал время следующей итерации"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "Цикл этого чата ждёт; время следующей итерации не удалось прочитать: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "Цикл этого чата на паузе; откройте чат, чтобы увидеть причину и возобновить его"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "Цикл этого чата выполняет итерацию"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Настало время итерации цикла этого чата; она начнётся, когда закончится предыдущий ход"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "Последняя итерация цикла этого чата не сказала, когда вернуться"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Далее {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "На паузе"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Цикл не читается"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Ждёт вас"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "Цикл"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Нужен ваш ответ"
   },
