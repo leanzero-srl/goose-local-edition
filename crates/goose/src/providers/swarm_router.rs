@@ -4034,6 +4034,73 @@ devices:
         );
     }
 
+    /// Q-260 over Link: the remote single's request is built by the same `omlx` provider, so the
+    /// peer engine's own `/v1/models` declaration — read through the relay, under its capability
+    /// path — decides; a text-only peer is sent the image's placeholder and the chat is told.
+    #[tokio::test]
+    async fn a_text_only_peer_over_link_is_sent_a_placeholder_never_the_image() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let relay = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/relay/cafe/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "object": "list",
+                "data": [{"id": SERVED, "capabilities": ["text", "tools"]}],
+            })))
+            .mount(&relay)
+            .await;
+        let answer = "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"No image here.\"}}]}\n\n\
+                      data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                      data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/relay/cafe/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(answer),
+            )
+            .mount(&relay)
+            .await;
+        let target = RemoteTarget {
+            peer: "studio".to_string(),
+            peer_name: "WorksMacStudio.lan".to_string(),
+            base_url: format!("{}/relay/cafe", relay.uri()),
+            template_kwargs: None,
+        };
+        let provider = remote_provider(&target).expect("the omlx definition builds");
+        let messages = vec![Message::user()
+            .with_text("What does this screenshot say?")
+            .with_image("iVBORw0KGgo=", "image/png")];
+        let stream = provider
+            .stream(&ModelConfig::new(SERVED), "sys", &messages, &[])
+            .await
+            .unwrap();
+        let items: Vec<_> = stream.collect().await;
+        let first = items[0].as_ref().unwrap().0.as_ref().unwrap();
+        assert!(
+            matches!(
+                &first.content[..],
+                [MessageContent::SystemNotification(n)]
+                    if n.msg.ends_with("reads text only — the image attachment (image/png) was not sent")
+            ),
+            "{first:?}"
+        );
+        assert!(items.iter().all(|item| item.is_ok()));
+
+        let requests = relay.received_requests().await.unwrap();
+        let post = requests
+            .iter()
+            .find(|r| r.method == wiremock::http::Method::POST)
+            .unwrap();
+        let body = String::from_utf8(post.body.clone()).unwrap();
+        assert!(!body.contains("image_url"), "{body}");
+        assert!(
+            body.contains("[image attachment (image/png) not sent: this model reads text only]"),
+            "{body}"
+        );
+    }
+
     /// Live 2026-09-24 (3.0.19): the distributed engine served the HF id while the `mihai-mlx` node
     /// names the single engine's alias, so the router refused the node. The rank specs now carry
     /// the id `engine::served_model_id` derives — the single engine's `--served-model-name` — and
