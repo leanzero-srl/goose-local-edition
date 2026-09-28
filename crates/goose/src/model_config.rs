@@ -154,6 +154,36 @@ pub async fn complete_helper(
     .await
 }
 
+/// Q-342: the one call around a turn that is NOT a helper call — the compaction summary that
+/// extends the chat's own request (`context_mgmt::SummaryRequest::ExtendsChat`). It is made with
+/// the chat's model config because the prompt cache it exists to read was filled under that
+/// config's switches, and a thinking switch can change a prompt's first tokens: Qwen3.8's template
+/// writes "Reasoning effort is set to xhigh…" into the SYSTEM block only while thinking is on. On
+/// the Rapid-MLX engines a request carrying tools renders thinking-off unless it pins the switch
+/// (Q-135), so with the chat's switch unpinned (E2E #3p) the summary is written without thinking,
+/// as a helper's would be; a chat whose model profile pins thinking ON would lose its whole prefix
+/// to the helper path's forced Off. The measurement that licenses the call (#3p, 27B split): the
+/// transcript-shaped compaction prefilled 97,590 tokens cold for 441 s beside a conversation
+/// prefix of ~142k tokens the chat's previous call had read from the cache (138,665 of 139,503).
+/// Tagged with the chat's session and `kind` like every helper.
+pub async fn complete_as_the_chat(
+    kind: BackgroundWorkKind,
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    system: &str,
+    messages: &[Message],
+    tools: &[Tool],
+) -> Result<(Message, ProviderUsage), ProviderError> {
+    let chat = crate::agents::reply_parts::provider_call_model_config(model_config.clone());
+    crate::background_work::run(
+        kind,
+        session_id,
+        provider.complete(&chat, system, messages, tools),
+    )
+    .await
+}
+
 /// Run a completion for a lightweight "fast" task (session naming, compaction,
 /// summarization) using the provider's fast model, falling back to the supplied
 /// main `model_config` if the fast model errors. Both go through [`complete_helper`].
@@ -452,6 +482,12 @@ mod one_helper_path {
             assert!(
                 run_path.contains("complete_helper(") || run_path.contains("complete_fast("),
                 "{file} is listed as a helper but calls neither complete_helper nor complete_fast"
+            );
+            assert_eq!(
+                run_path.contains("complete_as_the_chat("),
+                file == "context_mgmt/mod.rs",
+                "{file}: complete_as_the_chat keeps the chat's thinking switch, and only the \
+                 compaction that extends the chat's request carries the measurement for it (Q-342)"
             );
         }
     }
