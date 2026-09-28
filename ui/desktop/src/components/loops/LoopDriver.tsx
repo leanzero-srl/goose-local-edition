@@ -46,9 +46,10 @@ const liveWake: WakeDeps = {
 };
 
 // One `loops/wake` per resume, every time: two quick resumes are two calls and the runner decides.
-// Waking re-reads the wall clock and offers at most one tick per loop that came due — a loop whose
-// wake tick is already offered or running has nothing due — so a second call, or one from another
-// window on the same goosed, re-arms nothing. A debounce here would be a clock guessing for it.
+// The runner's `wake` (runner.rs) holds its op lock, skips a loop that is not Waiting or already
+// has an offer out, and only relabels a due next tick `on_wake` — so a second call, or one from
+// another window on the same goosed, either finds the offer out or rewrites the same label: one
+// tick either way. A debounce here would be a clock guessing for it.
 function forwardWake(wake: WakeDeps): void {
   wake.wake().then(
     (result) => {
