@@ -1886,6 +1886,7 @@ fn a_replys_load_rides_its_later_records_on_the_same_node() {
         loaded_ms,
         at_ms: 1,
         asked_for_this_turn: false,
+        serving_other: None,
     };
     let delegate = "served-test-delegate-q434";
     assert_eq!(
