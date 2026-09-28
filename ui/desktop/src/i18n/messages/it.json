@@ -6443,6 +6443,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Dagli un nome"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Scegli un modello per continuare"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Dagli un nome per salvarlo"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Scegli un provider per continuare"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Scegli una via per eseguirlo per continuare"
+  },
   "nodes.newNext": {
     "defaultMessage": "Avanti"
   },
@@ -6578,8 +6590,17 @@
   "nodes.remove": {
     "defaultMessage": "Rimuovi"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Rimuovi e avvia le nuove chat su Qualsiasi nodo (Auto)"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Rimuovilo anche da {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Una strategia usa questo nodo, quindi non può essere rimosso da solo.} other{# strategie usano questo nodo, quindi non può essere rimosso da solo.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Rimuovilo anche dalle strategie che lo usano"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Spunta la casella qui sopra per rimuoverlo} other{Spunta le # caselle qui sopra per rimuoverlo}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "Il nodo viene rimosso dai tuoi nodi. I tuoi Mac, modelli e provider restano come sono."
@@ -6587,17 +6608,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Rimuovi"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Rimuovilo anche da quelle strategie"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Rimuovilo comunque: # chat è impostata su questo nodo} other{Rimuovilo comunque: # chat sono impostate su questo nodo}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Il suo prossimo messaggio dirà che il nodo è stato rimosso e ti chiederà di sceglierne un altro.} other{Il loro prossimo messaggio dirà che il nodo è stato rimosso e ti chiederà di sceglierne un altro.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Avvia invece le nuove chat su Qualsiasi nodo (Auto)"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Le nuove chat partono ora su questo nodo, quindi non può essere rimosso da solo."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Il tuo pool dello sciame mantiene il suo dispositivo; questo nodo non viene più mostrato qui. Modifica il pool stesso qui sotto."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Rimuovere {node}?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# chat è impostata su questo nodo. Il suo prossimo messaggio dirà che è stato rimosso.} other{# chat sono impostate su questo nodo. Il loro prossimo messaggio dirà che è stato rimosso.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Rileggi"
@@ -9380,9 +9407,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: nodo {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Non rimosso"
-  },
   "strategies.note": {
     "defaultMessage": "Nota (con parole tue)"
   },
@@ -9416,20 +9440,23 @@
   "strategies.remove": {
     "defaultMessage": "Rimuovi"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Rimuovi e avvia le nuove chat su Qualsiasi nodo (Auto)"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Rimuovi, e lascia che le build dello sciame usino il tuo pool dello sciame"
-  },
   "strategies.removeBody": {
     "defaultMessage": "La strategia viene rimossa. I suoi nodi restano come sono."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Rimuovi"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Lascia invece che le build dello sciame usino il tuo pool dello sciame"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Le build dello sciame usano ora questa strategia, quindi non può essere rimossa da sola."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Togli {node} da {role}"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Avvia invece le nuove chat su Qualsiasi nodo (Auto)"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Le nuove chat partono ora su questa strategia, quindi non può essere rimossa da sola."
   },
   "strategies.removeTitle": {
     "defaultMessage": "Rimuovere {name}?"

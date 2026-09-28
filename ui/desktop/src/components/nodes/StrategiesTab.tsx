@@ -4,8 +4,7 @@ import { Plus, RefreshCw, Route as RouteIcon } from 'lucide-react';
 import type { BuildEligibility } from '../../acp/nodes';
 import { nodesRemoveStrategy, nodesWrite } from '../../acp/nodes';
 import { defineMessages, useIntl } from '../../i18n';
-import { Button, Checkbox, EmptyState, SURFACE, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
-import { OverlayDialog, OverlayDialogTitle } from '../ui/OverlayDialog';
+import { Button, EmptyState, SURFACE, TYPE, cx } from '../lz';
 import { ToneBanner } from '../leanzero-swarm/studio';
 import { WithMacs } from '../leanzero-swarm/useMacs';
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
@@ -17,6 +16,7 @@ import { strategyFit, type MeasuredLoad } from './strategyFit';
 import { StrategyCard, type StrategyCardAction } from './StrategyCard';
 import { StrategyEditor, newStrategyDraft } from './StrategyEditor';
 import { useNodeFacts } from './useNodeFacts';
+import { RemoveConfirmDialog, type RemoveConfirmation } from './RemoveConfirmDialog';
 
 /**
  * THE STRATEGIES TAB (DESIGN-NODES-AND-STRATEGIES.md §8.4): every strategy as a card, New strategy,
@@ -58,20 +58,27 @@ const i18n = defineMessages({
     id: 'strategies.removeBody',
     defaultMessage: 'The strategy is removed. Its nodes stay as they are.',
   },
-  removeAndAuto: {
-    id: 'strategies.removeAndAuto',
-    defaultMessage: 'Remove, and start new chats on Any node (Auto)',
+  removeNewChatsAuto: {
+    id: 'strategies.removeNewChatsAuto',
+    defaultMessage: 'Start new chats on Any node (Auto) instead',
   },
-  removeAndPool: {
-    id: 'strategies.removeAndPool',
-    defaultMessage: 'Remove, and let swarm builds use your swarm pool',
+  removeNewChatsAutoWhy: {
+    id: 'strategies.removeNewChatsAutoWhy',
+    defaultMessage: 'New chats start on this strategy now, so it can’t be removed on its own.',
   },
-  removeConfirm: { id: 'strategies.removeConfirm', defaultMessage: 'Remove' },
-  cancel: { id: 'strategies.cancel', defaultMessage: 'Cancel' },
-  notRemoved: { id: 'strategies.notRemoved', defaultMessage: 'Not removed' },
+  removeBuildsPool: {
+    id: 'strategies.removeBuildsPool',
+    defaultMessage: 'Let swarm builds use your swarm pool instead',
+  },
+  removeBuildsPoolWhy: {
+    id: 'strategies.removeBuildsPoolWhy',
+    defaultMessage: 'Swarm builds use this strategy now, so it can’t be removed on its own.',
+  },
 });
 
 type Editing = { kind: 'new'; initial: NodeStrategy; seq: number } | { kind: 'stored'; id: string };
+
+const ANSWERED_BY_A_BOX = new Set(['strategyIsForNewChats', 'strategyIsForBuilds']);
 
 interface RemoveState {
   strategy: NodeStrategy;
@@ -272,6 +279,42 @@ function StrategiesBody({ eligibility }: StrategiesTabProps) {
     }
   };
 
+  // What removing a strategy needs confirmed, from the config the dialog was opened on and from
+  // the engine's refusals (a config the dialog has not re-read yet): a box that says what it does,
+  // never a red refusal first (Q-259).
+  const removeConfirmations = (state: RemoveState): RemoveConfirmation[] => {
+    const id = state.strategy.id;
+    const codes = new Set(state.refusals.map((r) => r.code));
+    const out: RemoveConfirmation[] = [];
+    if (
+      (config?.forNewChats?.kind === 'strategy' && config.forNewChats.id === id) ||
+      codes.has('strategyIsForNewChats')
+    ) {
+      out.push({
+        key: 'newChats',
+        label: intl.formatMessage(i18n.removeNewChatsAuto),
+        description: intl.formatMessage(i18n.removeNewChatsAutoWhy),
+        checked: state.andNewChatsAuto,
+        onChange: (v) => setRemoving({ ...state, andNewChatsAuto: v }),
+        testId: 'strategy-remove-and-auto',
+      });
+    }
+    if (
+      (config?.forBuilds?.kind === 'strategy' && config.forBuilds.id === id) ||
+      codes.has('strategyIsForBuilds')
+    ) {
+      out.push({
+        key: 'builds',
+        label: intl.formatMessage(i18n.removeBuildsPool),
+        description: intl.formatMessage(i18n.removeBuildsPoolWhy),
+        checked: state.andBuildsPool,
+        onChange: (v) => setRemoving({ ...state, andBuildsPool: v }),
+        testId: 'strategy-remove-and-pool',
+      });
+    }
+    return out;
+  };
+
   const storedEditing =
     editing?.kind === 'stored' ? (strategies.find((s) => s.id === editing.id) ?? null) : null;
 
@@ -387,65 +430,16 @@ function StrategiesBody({ eligibility }: StrategiesTabProps) {
       )}
 
       {removing && (
-        <OverlayDialog
-          open
+        <RemoveConfirmDialog
+          title={intl.formatMessage(i18n.removeTitle, { name: removing.strategy.name })}
+          body={intl.formatMessage(i18n.removeBody)}
+          confirmations={removeConfirmations(removing)}
+          refusals={removing.refusals.filter((r) => !ANSWERED_BY_A_BOX.has(r.code))}
+          busy={removing.busy}
+          onConfirm={() => void remove(removing)}
           onClose={() => setRemoving(null)}
-          panelClassName={cx('flex w-[30rem] flex-col gap-4 p-5', SURFACE.overlay)}
-        >
-          <div data-testid="strategy-remove-dialog" className="flex flex-col gap-2">
-            <OverlayDialogTitle asChild>
-              <h2 className={TYPE.h2}>
-                {intl.formatMessage(i18n.removeTitle, { name: removing.strategy.name })}
-              </h2>
-            </OverlayDialogTitle>
-            <p className={TYPE.body}>{intl.formatMessage(i18n.removeBody)}</p>
-          </div>
-          {removing.refusals.length > 0 && (
-            <div
-              role="alert"
-              className="flex flex-col gap-2"
-              data-testid="strategy-remove-refusals"
-            >
-              <span className={cx('text-lz-meta', WEIGHT.semibold, TONE_TEXT.err)}>
-                {intl.formatMessage(i18n.notRemoved)}
-              </span>
-              {removing.refusals.map((r) => (
-                <p key={r.code + r.message} className={cx('break-words', TYPE.body)}>
-                  {r.message}
-                </p>
-              ))}
-              {removing.refusals.some((r) => r.code === 'strategyIsForNewChats') && (
-                <Checkbox
-                  checked={removing.andNewChatsAuto}
-                  onChange={(v) => setRemoving({ ...removing, andNewChatsAuto: v })}
-                  label={intl.formatMessage(i18n.removeAndAuto)}
-                  testId="strategy-remove-and-auto"
-                />
-              )}
-              {removing.refusals.some((r) => r.code === 'strategyIsForBuilds') && (
-                <Checkbox
-                  checked={removing.andBuildsPool}
-                  onChange={(v) => setRemoving({ ...removing, andBuildsPool: v })}
-                  label={intl.formatMessage(i18n.removeAndPool)}
-                  testId="strategy-remove-and-pool"
-                />
-              )}
-            </div>
-          )}
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="ghost" onClick={() => setRemoving(null)}>
-              {intl.formatMessage(i18n.cancel)}
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={removing.busy}
-              onClick={() => void remove(removing)}
-              data-testid="strategy-remove-confirm"
-            >
-              {intl.formatMessage(i18n.removeConfirm)}
-            </Button>
-          </div>
-        </OverlayDialog>
+          testIdPrefix="strategy-remove"
+        />
       )}
     </div>
   );

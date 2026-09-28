@@ -6443,6 +6443,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Namakannya"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Pilih model untuk teruskan"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Beri nama untuk menyimpannya"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Pilih penyedia untuk teruskan"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Pilih cara menjalankannya untuk teruskan"
+  },
   "nodes.newNext": {
     "defaultMessage": "Seterusnya"
   },
@@ -6578,8 +6590,17 @@
   "nodes.remove": {
     "defaultMessage": "Alih keluar"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Alih keluar, dan mulakan sembang baharu pada Mana-mana nod (Auto)"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Alih keluar juga daripada {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Satu strategi menggunakan nod ini, jadi ia tidak boleh dialih keluar sendirian.} other{# strategi menggunakan nod ini, jadi ia tidak boleh dialih keluar sendirian.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Alih keluar juga daripada strategi yang menggunakannya"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Tandakan kotak di atas untuk mengalih keluarnya} other{Tandakan # kotak di atas untuk mengalih keluarnya}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "Nod dialih keluar daripada nod anda. Mac, model dan penyedia anda kekal seperti sedia ada."
@@ -6587,17 +6608,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Alih keluar"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Alih keluar juga daripada strategi tersebut"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Tetap alih keluar: # sembang ditetapkan pada nod ini} other{Tetap alih keluar: # sembang ditetapkan pada nod ini}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Mesej seterusnya akan menyatakan bahawa nod telah dialih keluar dan meminta anda memilih yang lain.} other{Mesej seterusnya akan menyatakan bahawa nod telah dialih keluar dan meminta anda memilih yang lain.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Mulakan sembang baharu pada Mana-mana nod (Auto) sebagai gantinya"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Sembang baharu kini bermula pada nod ini, jadi ia tidak boleh dialih keluar sendirian."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Kumpulan swarm anda mengekalkan perantinya; nod ini tidak ditunjukkan di sini lagi. Edit kumpulan itu sendiri di bawah."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Alih keluar {node}?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# sembang ditetapkan pada nod ini. Mesej seterusnya akan menyatakan bahawa ia telah dialih keluar.} other{# sembang ditetapkan pada nod ini. Mesej seterusnya akan menyatakan bahawa ia telah dialih keluar.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Baca semula"
@@ -9380,9 +9407,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: nod {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Tidak dialih keluar"
-  },
   "strategies.note": {
     "defaultMessage": "Nota (perkataan anda sendiri)"
   },
@@ -9416,20 +9440,23 @@
   "strategies.remove": {
     "defaultMessage": "Alih keluar"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Alih keluar, dan mulakan sembang baharu pada Mana-mana nod (Auto)"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Alih keluar, dan biarkan binaan swarm menggunakan kumpulan swarm anda"
-  },
   "strategies.removeBody": {
     "defaultMessage": "Strategi dialih keluar. Nodnya kekal seperti sedia ada."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Alih keluar"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Biarkan binaan swarm menggunakan kumpulan swarm anda sebagai gantinya"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Binaan swarm kini menggunakan strategi ini, jadi ia tidak boleh dialih keluar sendirian."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Keluarkan {node} daripada {role}"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Mulakan sembang baharu pada Mana-mana nod (Auto) sebagai gantinya"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Sembang baharu kini bermula dengan strategi ini, jadi ia tidak boleh dialih keluar sendirian."
   },
   "strategies.removeTitle": {
     "defaultMessage": "Alih keluar {name}?"

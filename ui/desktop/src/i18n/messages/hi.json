@@ -6443,6 +6443,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "नाम दें"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "आगे बढ़ने के लिए एक मॉडल चुनें"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "इसे सहेजने के लिए इसे एक नाम दें"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "आगे बढ़ने के लिए एक प्रदाता चुनें"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "आगे बढ़ने के लिए इसे चलाने का एक तरीका चुनें"
+  },
   "nodes.newNext": {
     "defaultMessage": "आगे"
   },
@@ -6578,8 +6590,17 @@
   "nodes.remove": {
     "defaultMessage": "हटाएँ"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "हटाएँ, और नई चैट कोई भी नोड (ऑटो) पर शुरू करें"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "इसे {strategies} से भी हटाएँ"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{एक रणनीति इस नोड का उपयोग करती है, इसलिए इसे अकेले नहीं हटाया जा सकता।} other{# रणनीतियाँ इस नोड का उपयोग करती हैं, इसलिए इसे अकेले नहीं हटाया जा सकता।}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "इसे उन रणनीतियों से भी हटाएँ जो इसका उपयोग करती हैं"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{इसे हटाने के लिए ऊपर का बॉक्स चुनें} other{इसे हटाने के लिए ऊपर के # बॉक्स चुनें}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "नोड आपके नोड से हटा दिया जाता है। आपके Mac, मॉडल और प्रदाता जैसे हैं वैसे ही रहते हैं।"
@@ -6587,17 +6608,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "हटाएँ"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "इसे उन रणनीतियों से भी हटाएँ"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{फिर भी हटाएँ: # चैट इस नोड पर सेट है} other{फिर भी हटाएँ: # चैट इस नोड पर सेट हैं}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{उसका अगला संदेश बताएगा कि नोड हटा दिया गया और आपसे दूसरा चुनने को कहेगा।} other{उनका अगला संदेश बताएगा कि नोड हटा दिया गया और आपसे दूसरा चुनने को कहेगा।}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "इसके बजाय नई चैट कोई भी नोड (ऑटो) पर शुरू करें"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "नई चैट अभी इस नोड पर शुरू होती हैं, इसलिए इसे अकेले नहीं हटाया जा सकता।"
   },
   "nodes.removePoolBody": {
     "defaultMessage": "आपका स्वार्म पूल अपना डिवाइस रखता है; यह नोड यहाँ फिर नहीं दिखेगा। पूल को नीचे खुद संपादित करें।"
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node} हटाएँ?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# चैट इस नोड पर सेट है। उसका अगला संदेश बताएगा कि इसे हटा दिया गया।} other{# चैट इस नोड पर सेट हैं। उनका अगला संदेश बताएगा कि इसे हटा दिया गया।}}"
   },
   "nodes.retry": {
     "defaultMessage": "फिर से पढ़ें"
@@ -9380,9 +9407,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: नोड {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "हटाया नहीं गया"
-  },
   "strategies.note": {
     "defaultMessage": "टिप्पणी (आपके शब्दों में)"
   },
@@ -9416,20 +9440,23 @@
   "strategies.remove": {
     "defaultMessage": "हटाएँ"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "हटाएँ, और नई चैट कोई भी नोड (ऑटो) पर शुरू करें"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "हटाएँ, और swarm बिल्ड को आपके स्वार्म पूल का उपयोग करने दें"
-  },
   "strategies.removeBody": {
     "defaultMessage": "रणनीति हटा दी जाती है। इसके नोड जैसे हैं वैसे ही रहते हैं।"
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "हटाएँ"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "इसके बजाय swarm बिल्ड को आपके स्वार्म पूल का उपयोग करने दें"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "swarm बिल्ड अभी इस रणनीति का उपयोग करते हैं, इसलिए इसे अकेले नहीं हटाया जा सकता।"
   },
   "strategies.removeEntry": {
     "defaultMessage": "{node} को {role} से हटाएँ"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "इसके बजाय नई चैट कोई भी नोड (ऑटो) पर शुरू करें"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "नई चैट अभी इस रणनीति पर शुरू होती हैं, इसलिए इसे अकेले नहीं हटाया जा सकता।"
   },
   "strategies.removeTitle": {
     "defaultMessage": "{name} हटाएँ?"

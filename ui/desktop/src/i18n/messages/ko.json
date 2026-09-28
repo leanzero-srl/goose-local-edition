@@ -6443,6 +6443,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "이름 지정"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "계속하려면 모델을 선택하세요"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "저장하려면 이름을 입력하세요"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "계속하려면 제공자를 선택하세요"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "계속하려면 실행 방법을 선택하세요"
+  },
   "nodes.newNext": {
     "defaultMessage": "다음"
   },
@@ -6578,8 +6590,17 @@
   "nodes.remove": {
     "defaultMessage": "제거"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "제거하고 새 채팅은 아무 노드(자동)에서 시작"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "{strategies}에서도 제거"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{전략 하나가 이 노드를 사용하므로 노드만 따로 제거할 수 없습니다.} other{전략 #개가 이 노드를 사용하므로 노드만 따로 제거할 수 없습니다.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "이 노드를 사용하는 전략에서도 제거"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{제거하려면 위의 확인란을 선택하세요} other{제거하려면 위의 확인란 #개를 선택하세요}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "노드가 노드 목록에서 제거됩니다. Mac, 모델, 제공자는 그대로 유지됩니다."
@@ -6587,17 +6608,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "제거"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "해당 전략에서도 제거"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{그래도 제거: 채팅 #개가 이 노드로 설정되어 있음} other{그래도 제거: 채팅 #개가 이 노드로 설정되어 있음}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{다음 메시지에서 노드가 제거되었다고 알리고 다른 노드를 고르도록 요청합니다.} other{다음 메시지에서 노드가 제거되었다고 알리고 다른 노드를 고르도록 요청합니다.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "대신 새 채팅은 아무 노드(자동)에서 시작"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "지금 새 채팅이 이 노드에서 시작되므로 노드만 따로 제거할 수 없습니다."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "스웜 풀은 장치를 그대로 유지하며, 이 노드는 여기에 더 이상 표시되지 않습니다. 풀 자체는 아래에서 편집하세요."
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node}을(를) 제거할까요?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{채팅 #개가 이 노드로 설정되어 있습니다. 다음 메시지에서 노드가 제거되었다고 알려 줍니다.} other{채팅 #개가 이 노드로 설정되어 있습니다. 다음 메시지에서 노드가 제거되었다고 알려 줍니다.}}"
   },
   "nodes.retry": {
     "defaultMessage": "다시 읽기"
@@ -9380,9 +9407,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: 노드 {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "제거되지 않음"
-  },
   "strategies.note": {
     "defaultMessage": "메모(직접 작성)"
   },
@@ -9416,20 +9440,23 @@
   "strategies.remove": {
     "defaultMessage": "제거"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "제거하고 새 채팅은 아무 노드(자동)에서 시작"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "제거하고 swarm 빌드는 내 스웜 풀을 사용"
-  },
   "strategies.removeBody": {
     "defaultMessage": "전략이 제거됩니다. 전략의 노드는 그대로 유지됩니다."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "제거"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "대신 swarm 빌드는 내 스웜 풀을 사용"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "지금 swarm 빌드가 이 전략을 사용하므로 전략만 따로 제거할 수 없습니다."
   },
   "strategies.removeEntry": {
     "defaultMessage": "{role}에서 {node} 빼기"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "대신 새 채팅은 아무 노드(자동)에서 시작"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "지금 새 채팅이 이 전략으로 시작되므로 전략만 따로 제거할 수 없습니다."
   },
   "strategies.removeTitle": {
     "defaultMessage": "{name}을(를) 제거할까요?"

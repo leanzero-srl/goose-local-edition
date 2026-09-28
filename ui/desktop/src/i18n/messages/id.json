@@ -6443,6 +6443,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Beri nama"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Pilih model untuk lanjut"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Beri nama untuk menyimpannya"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Pilih penyedia untuk lanjut"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Pilih cara menjalankannya untuk lanjut"
+  },
   "nodes.newNext": {
     "defaultMessage": "Berikutnya"
   },
@@ -6578,8 +6590,17 @@
   "nodes.remove": {
     "defaultMessage": "Hapus"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Hapus, dan mulai chat baru di Node mana pun (Otomatis)"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Hapus juga dari {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Satu strategi memakai node ini, jadi node ini tidak bisa dihapus sendiri.} other{# strategi memakai node ini, jadi node ini tidak bisa dihapus sendiri.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Hapus juga dari strategi yang memakainya"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Centang kotak di atas untuk menghapusnya} other{Centang # kotak di atas untuk menghapusnya}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "Node dihapus dari node Anda. Mac, model, dan penyedia Anda tetap seperti semula."
@@ -6587,17 +6608,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Hapus"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Hapus juga dari strategi-strategi itu"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Tetap hapus: # chat diatur ke node ini} other{Tetap hapus: # chat diatur ke node ini}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Pesan berikutnya akan menyebutkan bahwa node ini sudah dihapus dan meminta Anda memilih yang lain.} other{Pesan berikutnya akan menyebutkan bahwa node ini sudah dihapus dan meminta Anda memilih yang lain.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Mulai chat baru di Node mana pun (Otomatis) sebagai gantinya"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Chat baru sekarang dimulai di node ini, jadi node ini tidak bisa dihapus sendiri."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Pool swarm Anda tetap menyimpan perangkatnya; node ini tidak ditampilkan lagi di sini. Edit pool itu sendiri di bawah."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Hapus {node}?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# chat diatur ke node ini. Pesan berikutnya akan menyebutkan bahwa node ini sudah dihapus.} other{# chat diatur ke node ini. Pesan berikutnya akan menyebutkan bahwa node ini sudah dihapus.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Baca lagi"
@@ -9380,9 +9407,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: node {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Tidak dihapus"
-  },
   "strategies.note": {
     "defaultMessage": "Catatan (kata-kata Anda)"
   },
@@ -9416,20 +9440,23 @@
   "strategies.remove": {
     "defaultMessage": "Hapus"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Hapus, dan mulai chat baru di Node mana pun (Otomatis)"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Hapus, dan biarkan build swarm memakai pool swarm Anda"
-  },
   "strategies.removeBody": {
     "defaultMessage": "Strategi dihapus. Node-nodenya tetap seperti semula."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Hapus"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Biarkan build swarm memakai pool swarm Anda sebagai gantinya"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Build swarm sekarang memakai strategi ini, jadi strategi ini tidak bisa dihapus sendiri."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Keluarkan {node} dari {role}"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Mulai chat baru di Node mana pun (Otomatis) sebagai gantinya"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Chat baru sekarang dimulai dengan strategi ini, jadi strategi ini tidak bisa dihapus sendiri."
   },
   "strategies.removeTitle": {
     "defaultMessage": "Hapus {name}?"
