@@ -4098,6 +4098,34 @@ mod tests {
         const PROJECT_RULE: &str = "Q346 PROJECT RULE: every answer names the ledger row.";
         const SUBDIR_HINT: &str = "Q346 SUBDIR HINT: files under sub/ use tabs.";
 
+        /// What `after` removed from `before` and what it put in its place, between their longest
+        /// common prefix and suffix (on char boundaries).
+        fn changed_regions<'a, 'b>(before: &'a str, after: &'b str) -> (&'a str, &'b str) {
+            let prefix: usize = before
+                .chars()
+                .zip(after.chars())
+                .take_while(|(a, b)| a == b)
+                .map(|(c, _)| c.len_utf8())
+                .sum();
+            let before_rest = before.get(prefix..).expect("a char boundary");
+            let after_rest = after.get(prefix..).expect("a char boundary");
+            let suffix: usize = before_rest
+                .chars()
+                .rev()
+                .zip(after_rest.chars().rev())
+                .take_while(|(a, b)| a == b)
+                .map(|(c, _)| c.len_utf8())
+                .sum();
+            (
+                before_rest
+                    .get(..before_rest.len() - suffix)
+                    .expect("a char boundary"),
+                after_rest
+                    .get(..after_rest.len() - suffix)
+                    .expect("a char boundary"),
+            )
+        }
+
         fn usage() -> ProviderUsage {
             ProviderUsage::new(
                 "mock-model".to_string(),
@@ -4195,21 +4223,23 @@ mod tests {
                 )
                 .await?;
 
-            let reply = agent
-                .reply(
-                    Message::user().with_text("read sub/notes.txt"),
-                    SessionConfig {
-                        id: session.id.clone(),
-                        schedule_id: None,
-                        max_turns: Some(2),
-                        retry_config: None,
-                    },
-                    None,
-                )
-                .await?;
-            tokio::pin!(reply);
-            while let Some(event) = reply.next().await {
-                event?;
+            for text in ["read sub/notes.txt", "and now?"] {
+                let reply = agent
+                    .reply(
+                        Message::user().with_text(text),
+                        SessionConfig {
+                            id: session.id.clone(),
+                            schedule_id: None,
+                            max_turns: Some(2),
+                            retry_config: None,
+                        },
+                        None,
+                    )
+                    .await?;
+                tokio::pin!(reply);
+                while let Some(event) = reply.next().await {
+                    event?;
+                }
             }
             let reloaded = session_manager.get_session(&session.id, false).await?;
             let (_, _, rebuilt, _) = agent.prepare_tools_and_prompt(&reloaded).await?;
@@ -4218,11 +4248,18 @@ mod tests {
 
             let prompts = provider.system_prompts.lock().unwrap().clone();
             assert_eq!(
-                prompts.last(),
-                Some(&rebuilt),
-                "a rebuild from unchanged inputs is byte-identical to the prompt the reply last sent"
+                prompts.len(),
+                3,
+                "the tool call and the answer, then the next turn's answer"
             );
-            assert_eq!(prompts.len(), 2, "the tool call, then the answer");
+            assert_eq!(
+                prompts[2], prompts[1],
+                "the next turn starts on the byte-identical prompt the refreshed call carried"
+            );
+            assert_eq!(
+                prompts[2], rebuilt,
+                "a rebuild from unchanged inputs is byte-identical to the prompt last sent"
+            );
             let (first, refreshed) = (&prompts[0], &prompts[1]);
             assert!(
                 first.contains(PROJECT_RULE),
@@ -4237,23 +4274,11 @@ mod tests {
                 "the mid-turn rebuild dropped the project's instructions"
             );
 
-            let prefix = first
-                .bytes()
-                .zip(refreshed.bytes())
-                .take_while(|(a, b)| a == b)
-                .count();
-            let suffix = first[prefix..]
-                .bytes()
-                .rev()
-                .zip(refreshed[prefix..].bytes().rev())
-                .take_while(|(a, b)| a == b)
-                .count();
+            let (removed, inserted) = changed_regions(first, refreshed);
             assert_eq!(
-                prefix + suffix,
-                first.len(),
+                removed, "",
                 "the rebuild only inserts; nothing the first call was sent is rewritten"
             );
-            let inserted = &refreshed[prefix..refreshed.len() - suffix];
             assert!(
                 inserted.contains(SUBDIR_HINT) && !inserted.contains(PROJECT_RULE),
                 "what changed is the loaded hint and nothing else: {inserted:?}"

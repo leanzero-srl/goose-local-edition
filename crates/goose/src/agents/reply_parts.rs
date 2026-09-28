@@ -1178,29 +1178,24 @@ mod tests {
         assert_eq!(added, vec!["q346ext__q346_tool".to_string()]);
         assert_eq!(tools_after.len(), tools_before.len() + 1);
 
-        let prefix = before
-            .bytes()
-            .zip(after.bytes())
-            .take_while(|(a, b)| a == b)
-            .count();
-        let suffix = before[prefix..]
+        let common_suffix = before
             .bytes()
             .rev()
-            .zip(after[prefix..].bytes().rev())
+            .zip(after.bytes().rev())
             .take_while(|(a, b)| a == b)
             .count();
         assert!(
-            suffix >= project_suffix.len(),
+            common_suffix >= project_suffix.len(),
             "the project's instructions sit unchanged after the refreshed part"
         );
-        let changed = &after[prefix..after.len() - suffix];
+        let before_head = before.strip_suffix(project_suffix.as_str()).unwrap();
+        let after_head = after.strip_suffix(project_suffix.as_str()).unwrap();
         assert!(
-            changed.contains("## frontend")
-                && after[prefix..after.len() - project_suffix.len()]
-                    .contains(EXTENSION_INSTRUCTIONS),
-            "the refreshed part is the new extension: {changed:?}"
+            after_head.contains("## frontend") && after_head.contains(EXTENSION_INSTRUCTIONS),
+            "the refreshed part is the new extension: {after_head}"
         );
-        assert!(!changed.contains(PROJECT_RULE));
+        assert!(!before_head.contains(EXTENSION_INSTRUCTIONS));
+        assert!(!after_head.contains(PROJECT_RULE));
         Ok(())
     }
 
