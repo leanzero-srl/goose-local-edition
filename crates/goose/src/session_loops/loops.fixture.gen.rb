@@ -635,6 +635,7 @@ def prompt(record, n, facts)
       ar = facts['askedResolution']
       res = if ar && ar['kind'] == 'answered' then "they answered: \"#{ar['answer']}\""
             elsif ar && ar['kind'] == 'dismissed' then 'they dismissed it'
+            elsif ar && ar['kind'] == 'superseded' then "they did not answer it and wrote instead: \"#{ar['message']}\""
             else 'it is still open'
             end
       lines << "Tick #{p} asked the user \"#{oc['question']}\"; #{res}."
@@ -1005,6 +1006,8 @@ pr << ['the last tick asked and was answered',
        rec('check' => CHECK, 'ticks' => [tick(2, t('22:00'), t('22:02'), 'report' => prog.call('pick the delimiter'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' })]), 3, pf.call('askedResolution' => { 'kind' => 'answered', 'answer' => 'Semicolon — the owner opens it in Excel.' })]
 pr << ['the last tick asked and it was dismissed',
        rec('ticks' => [tick(2, t('22:00'), t('22:02'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' })]), 3, pf.call('askedResolution' => { 'kind' => 'dismissed' })]
+pr << ['Q-298: the last tick asked and the person wrote instead of answering',
+       rec('ticks' => [tick(2, t('22:00'), t('22:02'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' })]), 3, pf.call('askedResolution' => { 'kind' => 'superseded', 'message' => 'Use tabs, and stop after the next file.' })]
 pr << ['the last tick failed',
        rec('ticks' => [tick(2, t('22:00'), t('22:01'), 'outcome' => { 'kind' => 'failed', 'errorClass' => 'provider', 'error' => 'Provider error: stream ended early' })]), 3, pf.call]
 pr << ['the check could not run',

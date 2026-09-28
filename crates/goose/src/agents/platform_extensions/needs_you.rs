@@ -54,7 +54,9 @@ impl NeedsYouClient {
                 answer unblocks. Add `options` when the answer is one of a few choices.
                 Do not ask for anything you can find out yourself by reading files, running commands
                 or searching. Ask one question per call, and only when you cannot sensibly proceed.
-                Calling `ask_user` ends your turn. The person's answer arrives as their next message.
+                Calling `ask_user` ends your turn. If the person answers on the card, their next
+                message says it is the answer to your question; if they write to you instead, the
+                question closes as superseded and you are told so, with their message quoted.
             "#}
                 .to_string(),
             );
@@ -71,8 +73,9 @@ impl NeedsYouClient {
             indoc! {r#"
                 Ask the person a question you cannot answer yourself. It is pinned in their app
                 until they answer or dismiss it, with your recommended answer offered as a
-                one-click choice. Your turn ends when you call this; the answer arrives as the
-                person's next message.
+                one-click choice. Your turn ends when you call this. The person's next message
+                either answers it on the card or, when they write to you instead, closes it as
+                superseded — you are told which.
             "#}
             .to_string(),
             schema_value.as_object().unwrap().clone(),
@@ -111,7 +114,9 @@ impl NeedsYouClient {
 
         let result = CallToolResult::success(vec![Content::text(format!(
             "The question is pinned in the person's app as item {}. Your turn ends now; do not \
-             repeat the question in text. Their answer will arrive as their next message.",
+             repeat the question in text. Their next message either answers it on the card or, \
+             when they write to you instead, closes it as superseded; you will be told which, \
+             with their message quoted.",
             item.id
         ))]);
         let mut params = serde_json::Map::new();
