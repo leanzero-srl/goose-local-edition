@@ -261,24 +261,33 @@ pub fn map_http_error_to_provider_error(
             .unwrap_or_else(|| payload.as_ref().map(|p| p.to_string()).unwrap_or_default())
     };
 
-    let error = match status {
-        StatusCode::OK => unreachable!("Should not call this function with OK status"),
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => ProviderError::Authentication(format!(
-            "Authentication failed for {url}. Status: {}. Response: {}",
-            status,
-            extract_message()
-        )),
-        StatusCode::NOT_FOUND => ProviderError::RequestFailed(http_failure_text(
+    let server_error_text =
+        || http_failure_text(&format!("Server error ({status})"), url, &extract_message());
+    let hold =
+        crate::engine_hold::hold_of_refusal(status, payload.as_ref(), url, server_error_text);
+    let error = match (status, hold) {
+        (_, Some(hold)) => hold,
+        (StatusCode::OK, None) => unreachable!("Should not call this function with OK status"),
+        (StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN, None) => {
+            ProviderError::Authentication(format!(
+                "Authentication failed for {url}. Status: {}. Response: {}",
+                status,
+                extract_message()
+            ))
+        }
+        (StatusCode::NOT_FOUND, None) => ProviderError::RequestFailed(http_failure_text(
             "Resource not found (404)",
             url,
             &extract_message(),
         )),
-        StatusCode::PAYMENT_REQUIRED => ProviderError::CreditsExhausted {
+        (StatusCode::PAYMENT_REQUIRED, None) => ProviderError::CreditsExhausted {
             details: extract_message(),
             top_up_url: None,
         },
-        StatusCode::PAYLOAD_TOO_LARGE => ProviderError::ContextLengthExceeded(extract_message()),
-        StatusCode::BAD_REQUEST => {
+        (StatusCode::PAYLOAD_TOO_LARGE, None) => {
+            ProviderError::ContextLengthExceeded(extract_message())
+        }
+        (StatusCode::BAD_REQUEST, None) => {
             let payload_str = extract_message();
             if is_context_length_exceeded(payload.as_ref(), &payload_str) {
                 ProviderError::ContextLengthExceeded(payload_str)
@@ -286,15 +295,11 @@ pub fn map_http_error_to_provider_error(
                 ProviderError::RequestFailed(format!("Bad request (400): {}", payload_str))
             }
         }
-        StatusCode::TOO_MANY_REQUESTS => ProviderError::RateLimitExceeded {
+        (StatusCode::TOO_MANY_REQUESTS, None) => ProviderError::RateLimitExceeded {
             details: extract_message(),
             retry_delay: None,
         },
-        _ if status.is_server_error() => ProviderError::ServerError(http_failure_text(
-            &format!("Server error ({status})"),
-            url,
-            &extract_message(),
-        )),
+        _ if status.is_server_error() => ProviderError::ServerError(server_error_text()),
         _ => ProviderError::RequestFailed(http_failure_text(
             &format!("Request failed with status {status}"),
             url,
@@ -613,5 +618,65 @@ mod tests {
         );
         assert_eq!(busy.engine_words(), "Server is busy");
         assert!(busy.is_transient());
+    }
+
+    /// Q-397, #3r turn 18's refusal (goose log 2026-09-28 14:18:25) as the engine now sends it:
+    /// the code makes it the hold, framed with the endpoint like any server error, waiting on the
+    /// refusing origin. NEGATIVE CONTROL: the same body without the code is today's server error —
+    /// transient, so the ordinary retries keep it.
+    #[test]
+    fn a_503_carrying_the_memory_hold_code_is_the_hold() {
+        let url = "http://127.0.0.1:8091/v1/chat/completions";
+        let said = "goose distributed engine is not admitting new requests: memory on Mihai \
+                    Macbook is low (other apps and the system use 87.3 GiB; the engine holds \
+                    29.4 GiB); the engine is holding new requests until memory recovers — \
+                    quitting other apps frees it";
+        let body = |code: Option<&str>| {
+            let mut error = json!({
+                "message": said,
+                "type": "server_busy",
+                "reason": "memory on Mihai Macbook is low",
+                "admission": "/goose/admission",
+            });
+            if let Some(code) = code {
+                error["code"] = json!(code);
+            }
+            json!({ "error": error })
+        };
+        let hold = map_http_error_to_provider_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some(body(Some("memory_hold"))),
+            url,
+        );
+        let ProviderError::EngineHold {
+            reason,
+            admission_url,
+            ..
+        } = &hold
+        else {
+            panic!("not the hold: {hold:?}");
+        };
+        assert_eq!(reason.as_deref(), Some("memory on Mihai Macbook is low"));
+        assert_eq!(
+            admission_url.as_deref(),
+            Some("http://127.0.0.1:8091/goose/admission")
+        );
+        assert_eq!(hold.engine_words(), said);
+        assert_eq!(
+            hold.to_string(),
+            format!("Server error: Server error (503 Service Unavailable) at {url}: {said}")
+        );
+
+        let unmarked = map_http_error_to_provider_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some(body(None)),
+            url,
+        );
+        assert!(
+            matches!(unmarked, ProviderError::ServerError(_)),
+            "{unmarked:?}"
+        );
+        assert!(unmarked.is_transient());
+        assert_eq!(unmarked.to_string(), hold.to_string());
     }
 }

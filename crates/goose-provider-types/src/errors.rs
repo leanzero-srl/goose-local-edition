@@ -43,6 +43,20 @@ pub enum ProviderError {
     #[error("Endpoint not found (404): {0}")]
     EndpointNotFound(String),
 
+    /// The serving engine holds new requests until its memory recovers — goose's distributed
+    /// engine answers 503 with `code: "memory_hold"` (Q-397). A known engine state with its own
+    /// end, so it is waited out on `admission_url` (`engine_hold::wait_for_admission`), never
+    /// retried on a clock and never counted against the retries.
+    #[error("Server error: {details}")]
+    EngineHold {
+        details: String,
+        /// The engine's own words for why it holds; `None` when its refusal carried none.
+        reason: Option<String>,
+        /// Where the lift is awaited: the refusal's `admission` path on the refusing origin.
+        /// `None` when the engine named no path — the hold cannot be waited out, and says so.
+        admission_url: Option<String>,
+    },
+
     #[error("Credits exhausted: {details}")]
     CreditsExhausted {
         details: String,
@@ -87,6 +101,7 @@ impl ProviderError {
             ProviderError::UsageError(_) => "usage",
             ProviderError::NotImplemented(_) => "not_implemented",
             ProviderError::EndpointNotFound(_) => "endpoint_not_found",
+            ProviderError::EngineHold { .. } => "engine_hold",
             ProviderError::CreditsExhausted { .. } => "credits_exhausted",
             ProviderError::Refusal { .. } => "refusal",
         }
@@ -130,6 +145,7 @@ impl ProviderError {
             | ProviderError::NotImplemented(s)
             | ProviderError::EndpointNotFound(s) => s,
             ProviderError::RateLimitExceeded { details, .. }
+            | ProviderError::EngineHold { details, .. }
             | ProviderError::CreditsExhausted { details, .. }
             | ProviderError::Refusal { details, .. } => details,
         }

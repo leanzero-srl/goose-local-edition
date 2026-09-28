@@ -1,4 +1,5 @@
 use crate::base::Provider;
+use crate::engine_hold;
 use crate::errors::ProviderError;
 use async_trait::async_trait;
 use std::future::Future;
@@ -105,6 +106,19 @@ pub fn should_retry(error: &ProviderError, config: &RetryConfig) -> bool {
     }
 }
 
+/// Q-397: an engine's memory hold is waited out, not retried. `None` = not a hold (the ordinary
+/// retries decide); `Some(Ok)` = the hold lifted, send again without counting an attempt;
+/// `Some(Err)` = end with it — the caller fails over holds itself, or the wait ended without a lift.
+async fn outlast_hold(error: &ProviderError) -> Option<Result<(), ProviderError>> {
+    if !matches!(error, ProviderError::EngineHold { .. }) {
+        return None;
+    }
+    if engine_hold::hold_goes_to_caller() {
+        return Some(Err(error.clone()));
+    }
+    Some(engine_hold::wait_for_admission(error).await)
+}
+
 pub async fn retry_operation<F, Fut, T>(
     config: &RetryConfig,
     operation: F,
@@ -120,6 +134,10 @@ where
         match operation().await {
             Ok(result) => return Ok(result),
             Err(error) => {
+                if let Some(lifted) = outlast_hold(&error).await {
+                    lifted?;
+                    continue;
+                }
                 if should_retry(&error, config) && attempts < config.max_retries {
                     attempts += 1;
                     tracing::warn!(
@@ -217,6 +235,11 @@ impl<P: Provider> ProviderRetry for P {
                                 );
                             }
                         }
+                    }
+
+                    if let Some(lifted) = outlast_hold(&error).await {
+                        lifted?;
+                        continue;
                     }
 
                     if should_retry(&error, &config) && attempts < config.max_retries {
