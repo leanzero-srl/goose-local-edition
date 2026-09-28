@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "Lượt tiếp theo bắt đầu ngay bây giờ"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "sau câu trả lời của bạn"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "sau lượt của bạn"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "do bạn chạy"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "sau khi Mac của bạn thức dậy"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "sau khi bạn tiếp tục"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "Chưa có lượt nào kết thúc."
   },

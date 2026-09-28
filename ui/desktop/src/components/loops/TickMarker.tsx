@@ -5,15 +5,19 @@ import type { LoopTickMetadata, Message } from '../../types/message';
 import { getTextAndImageContent } from '../../types/message';
 import { FOCUS, MOTION, SURFACE, TNUM, TONE_FILL, cx } from '../lz';
 import { loopWords as w } from './loopWords';
-import { cadenceWords, hm, tickMarkerDomId } from './loopView';
+import { hm, tickCauseWords, tickMarkerDomId } from './loopView';
 import { fmtTime } from './model';
 import { LoopSessionContext } from './startLoopRequest';
+import { useChatName } from './useChatName';
 
 /**
  * A tick's prompt in the transcript (§8.5): a full-width divider, not a user bubble — "⟳ Loop tick 5
  * · 22:40 · every 10 min" — with the exact text goose was sent one click away (the tick prompt's
- * transparency, §4.4). A yielded tick says on a second line why it stopped. Its only hover action is
- * Copy prompt: a marker is never edited, forked or looped.
+ * transparency, §4.4). The third part says what started the tick: the cadence's label, or the event
+ * that did ("after your turn" for the tick after a yield, Q-279); a marker whose tick the record no
+ * longer holds names no cause rather than guess one. A yielded tick says on a second line why it
+ * stopped, naming the chat as it is called now. Its only hover action is Copy prompt: a marker is
+ * never edited, forked or looped.
  */
 export function TickMarker({ message, tick }: { message: Message; tick: LoopTickMetadata }) {
   const intl = useIntl();
@@ -24,14 +28,14 @@ export function TickMarker({ message, tick }: { message: Message; tick: LoopTick
   const { textContent } = getTextAndImageContent(message);
   const time = hm(fmtTime(message.created * 1000)) ?? '';
   const loop = session?.loop?.id === tick.loopId ? session.loop : null;
-  const cadence = loop ? cadenceWords(loop.cadence) : null;
   const record = loop?.ticks?.find((t) => t.n === tick.n);
+  const cause = loop && record ? tickCauseWords(record.origin, loop.cadence) : null;
   const yielded = record?.outcome?.kind === 'yielded' ? record.outcome : null;
-  const title = cadence
+  const title = cause
     ? intl.formatMessage(w.markerTitleCadence, {
         n: tick.n,
         time,
-        cadence: intl.formatMessage(cadence.message, cadence.values),
+        cadence: intl.formatMessage(cause.message, cause.values),
       })
     : intl.formatMessage(w.markerTitle, { n: tick.n, time });
 
@@ -72,15 +76,11 @@ export function TickMarker({ message, tick }: { message: Message; tick: LoopTick
         </button>
       </div>
       {yielded && record?.endedAt && (
-        <p
-          data-testid="loop-tick-marker-yielded"
-          className="mt-1 text-center text-xs text-lz-ink-2"
-        >
-          {intl.formatMessage(w.markerYielded, {
-            time: hm(record.endedAt) ?? '',
-            chat: yielded.toChat,
-          })}
-        </p>
+        <YieldedLine
+          time={hm(record.endedAt) ?? ''}
+          toSession={yielded.toSession}
+          toChat={yielded.toChat}
+        />
       )}
       {showPrompt && (
         <pre
@@ -117,5 +117,23 @@ export function TickMarker({ message, tick }: { message: Message; tick: LoopTick
         </button>
       </div>
     </div>
+  );
+}
+
+function YieldedLine({
+  time,
+  toSession,
+  toChat,
+}: {
+  time: string;
+  toSession: string;
+  toChat: string;
+}) {
+  const intl = useIntl();
+  const chat = useChatName(toSession, toChat);
+  return (
+    <p data-testid="loop-tick-marker-yielded" className="mt-1 text-center text-xs text-lz-ink-2">
+      {intl.formatMessage(w.markerYielded, { time, chat })}
+    </p>
   );
 }

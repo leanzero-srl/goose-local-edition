@@ -1,5 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { acpGetSessionListItem, type SessionListItem } from '../acp/sessions';
+import { AppEvents } from '../constants/events';
 import { IntlTestWrapper } from '../i18n/test-utils';
 import { createUserMessage, type Message } from '../types/message';
 import { loopRecord, markerId } from './loops/railFixtures';
@@ -11,7 +13,14 @@ import {
 } from './loops/startLoopRequest';
 import UserMessage from './UserMessage';
 
+vi.mock('../acp/sessions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../acp/sessions')>()),
+  acpGetSessionListItem: vi.fn(),
+}));
+
 beforeEach(() => {
+  vi.mocked(acpGetSessionListItem).mockRejectedValue(new Error('no goosed in this test'));
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(0);
   window.electron = { ...(window.electron ?? {}), logInfo: vi.fn() } as typeof window.electron;
 });
@@ -83,6 +92,51 @@ describe('UserMessage and loops', () => {
     mount(tickMessage(true), loopSessionOf('s1', record));
     expect(screen.getByTestId('loop-tick-marker-yielded')).toHaveTextContent(
       'Stopped at 22:27 for your message in "Kickoff notes" — the loop continues after your turn.'
+    );
+  });
+
+  it('says the tick after a yield started after your turn, not by the cadence (Q-279)', () => {
+    const record = loopRecord();
+    record.ticks = record.ticks!.map((t) =>
+      t.n === 3 ? { ...t, origin: 'after_your_turn' as const } : t
+    );
+    mount(tickMessage(true), loopSessionOf('s1', record));
+    expect(screen.getByTestId('loop-tick-marker')).toHaveTextContent(
+      'Loop tick 3 · 22:21 · after your turn'
+    );
+    expect(screen.getByTestId('loop-tick-marker')).not.toHaveTextContent('every 10 min');
+  });
+
+  it('names no cause when the record no longer holds the tick, rather than guess the cadence', () => {
+    const record = loopRecord();
+    record.ticks = record.ticks!.filter((t) => t.n !== 3);
+    mount(tickMessage(true), loopSessionOf('s1', record));
+    expect(screen.getByTestId('loop-tick-marker')).toHaveTextContent('Loop tick 3 · 22:21');
+    expect(screen.getByTestId('loop-tick-marker')).not.toHaveTextContent('every');
+  });
+
+  it('names the chat a tick yielded to as it is called now, and follows a rename (Q-279)', async () => {
+    vi.mocked(acpGetSessionListItem).mockResolvedValue({
+      id: 's2',
+      name: 'Simple pong reply',
+    } as SessionListItem);
+    const record = loopRecord();
+    record.ticks = record.ticks!.map((t) =>
+      t.n === 3 ? { ...t, outcome: { kind: 'yielded', toSession: 's2', toChat: 'New Chat' } } : t
+    );
+    mount(tickMessage(true), loopSessionOf('s1', record));
+    expect(await screen.findByText(/"Simple pong reply"/)).toBeInTheDocument();
+    expect(acpGetSessionListItem).toHaveBeenCalledWith('s2');
+    expect(screen.getByTestId('loop-tick-marker-yielded')).not.toHaveTextContent('New Chat');
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(AppEvents.SESSION_RENAMED, {
+          detail: { sessionId: 's2', newName: 'Pong, renamed' },
+        })
+      );
+    });
+    expect(screen.getByTestId('loop-tick-marker-yielded')).toHaveTextContent(
+      'Stopped at 22:27 for your message in "Pong, renamed" — the loop continues after your turn.'
     );
   });
 

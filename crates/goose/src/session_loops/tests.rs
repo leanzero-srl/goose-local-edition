@@ -12,7 +12,7 @@ use goose_sdk_types::custom_requests::{
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-use super::prompt::{tick_prompt, PromptFacts};
+use super::prompt::{last_next_step, tick_prompt, PromptFacts};
 use super::record::{self, parse_time, RawLoopValue};
 use super::rules::*;
 use super::{acp, seam, templates};
@@ -300,6 +300,59 @@ fn every_prompt_follows_the_fixture() {
     }
 }
 
+#[test]
+fn the_next_ticks_last_step_follows_the_fixture() {
+    for case in cases("lastNextStep") {
+        let ticks: Vec<LoopTickRecord> = typed(&case["ticks"], &name(&case));
+        let record = LoopRecord {
+            ticks,
+            ..Default::default()
+        };
+        let want: LastNextStep = typed(&case["expect"], &name(&case));
+        assert_eq!(last_next_step(&record), want, "{}", name(&case));
+    }
+}
+
+/// Q-280: no template pastes the user's goal into a step. The goal reaches the model once, whole,
+/// under "Your goal (the user's words)"; a step that splices its first line mid-sentence reads
+/// "Look at what Count the files in … Change nothing. names" for a goal written as an instruction.
+#[test]
+fn no_template_splices_the_goal_into_a_step() {
+    let goals = [
+        "Count the files in /Users/mihai/loopwork with ls and report the count. Change nothing.",
+        "Watch the nightly build at https://ci.example.com/job/nightly and fix it when it goes red",
+        "make scripts/generate_users.js produce every problem class in notes/kickoff.md",
+        "Keep the README's install section in sync with package.json",
+    ];
+    for template in templates::all() {
+        assert!(
+            !template
+                .slots
+                .iter()
+                .any(|s| s == templates::SLOT_GOAL_FIRST_LINE),
+            "{:?} splices the goal into its steps",
+            template.id
+        );
+        for goal in goals {
+            let facts = StepFacts {
+                state_file: ".goose/loops/x/NOW.md".into(),
+                check: Some("pnpm test".into()),
+                goal_first_line: goal_first_line(goal),
+                last_next_step: LastNextStep::First,
+                working_dir: "/Users/mihai/work".into(),
+            };
+            let rendered = render_steps(&template.steps, &facts);
+            assert!(rendered.unknown.is_empty(), "{:?}", template.id);
+            assert!(
+                !rendered.text.contains(goal),
+                "{:?} rendered the goal inside a step:\n{}",
+                template.id,
+                rendered.text
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Beyond the fixture
 // ---------------------------------------------------------------------------------------------
@@ -459,6 +512,40 @@ fn a_record(status: LoopStatus) -> LoopRecord {
         reason: goose_sdk_types::custom_requests::LoopNextReason::First,
     });
     record
+}
+
+#[tokio::test]
+async fn a_user_turn_reason_names_the_chat_as_it_is_now() {
+    let (_dir, manager, id) = store().await;
+    let recorded = |session_id: &str| {
+        Some(LoopStatusReason::UserTurn {
+            session_id: session_id.to_string(),
+            chat: "New Chat".into(),
+        })
+    };
+    manager
+        .update(&id)
+        .system_generated_name("Simple pong reply")
+        .apply()
+        .await
+        .unwrap();
+    assert_eq!(
+        acp::turn_chat_named_now(&manager, recorded(&id)).await,
+        Some(LoopStatusReason::UserTurn {
+            session_id: id.clone(),
+            chat: "Simple pong reply".into(),
+        })
+    );
+    assert_eq!(
+        acp::turn_chat_named_now(&manager, recorded("no-such-chat")).await,
+        recorded("no-such-chat"),
+        "a chat that cannot be read keeps the recorded name"
+    );
+    let other = Some(LoopStatusReason::Reviewers { n: 2 });
+    assert_eq!(
+        acp::turn_chat_named_now(&manager, other.clone()).await,
+        other
+    );
 }
 
 #[tokio::test]

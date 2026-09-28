@@ -132,11 +132,14 @@ describe('StartLoopDialog', () => {
     const facts = Object.fromEntries(slots.map((s) => [s.dataset.slot, s.textContent]));
     expect(facts).toEqual({
       state_file: '.goose/loops/make-the-generator-produce/NOW.md',
-      goal_first_line: 'Make the generator produce every class',
       working_dir: '/w',
       last_next_step: 'this is the first tick',
       check: 'node scripts/validate_users.js',
     });
+    // Q-280: the goal reaches goose once, whole, above the steps — no step splices it mid-sentence.
+    expect(screen.getByTestId('loop-steps-preview')).not.toHaveTextContent(
+      'Make the generator produce every class'
+    );
   });
 
   it('flags a slot goose does not know and refuses to start with it', async () => {

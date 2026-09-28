@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "Il prossimo giro parte ora"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "dopo la tua risposta"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "dopo il tuo turno"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "avviato da te"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "dopo il risveglio del tuo Mac"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "dopo che hai ripreso"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "Nessun giro è ancora terminato."
   },

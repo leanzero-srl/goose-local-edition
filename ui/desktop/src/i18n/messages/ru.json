@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "Следующая итерация начинается сейчас"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "после вашего ответа"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "после вашего хода"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "запущено вами"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "после пробуждения Mac"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "после возобновления"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "Ни одна итерация ещё не завершилась."
   },

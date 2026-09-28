@@ -216,6 +216,14 @@ export const loopWords = defineMessages({
   cadenceAsTyped: { id: 'loops.cadence.asTyped', defaultMessage: 'every {every}' },
   cadenceSelfPaced: { id: 'loops.cadence.selfPaced', defaultMessage: 'goose decides when' },
   cadenceBackToBack: { id: 'loops.cadence.backToBack', defaultMessage: 'back to back' },
+  originAfterYourTurn: { id: 'loops.origin.afterYourTurn', defaultMessage: 'after your turn' },
+  originAfterYourAnswer: {
+    id: 'loops.origin.afterYourAnswer',
+    defaultMessage: 'after your answer',
+  },
+  originOnWake: { id: 'loops.origin.onWake', defaultMessage: 'after your Mac woke' },
+  originResume: { id: 'loops.origin.resume', defaultMessage: 'after you resumed' },
+  originNow: { id: 'loops.origin.now', defaultMessage: 'run by you' },
 
   headerTick: { id: 'loops.header.tick', defaultMessage: 'tick {n}' },
   headerTickOf: { id: 'loops.header.tickOf', defaultMessage: 'tick {n} of {k}' },

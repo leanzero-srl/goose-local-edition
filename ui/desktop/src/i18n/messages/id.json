@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "Putaran berikutnya dimulai sekarang"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "setelah jawaban Anda"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "setelah giliran Anda"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "dijalankan oleh Anda"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "setelah Mac Anda bangun"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "setelah Anda melanjutkan"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "Belum ada putaran yang selesai."
   },

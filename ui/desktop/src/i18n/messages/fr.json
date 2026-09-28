@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "Le prochain passage démarre maintenant"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "après votre réponse"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "après votre tour"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "lancé par vous"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "après le réveil de votre Mac"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "après votre reprise"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "Aucun passage n’est encore terminé."
   },

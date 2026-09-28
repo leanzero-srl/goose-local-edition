@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { validateLoop } from './model';
+import raw from '../../../../../crates/goose/src/session_loops/loops.fixture.json';
+import { validateLoop, type LoopRecord, type LoopTickRecord } from './model';
 import { loopRecord, waitingRecord } from './railFixtures';
 import {
   EVERY_PRESETS,
@@ -174,5 +175,42 @@ describe('the Start dialog form', () => {
       text: 'add dormant admins',
     });
     expect(nextTickLastStep(loopRecord())).toEqual({ kind: 'named_none', prev: 5 });
+  });
+
+  it('no template splices the goal into a step, whatever the goal says (Q-280)', () => {
+    const goals = [
+      'Count the files in /Users/mihai/loopwork with ls and report the count. Change nothing.',
+      'Watch the nightly build at https://ci.example.com/job/nightly and fix it when it goes red',
+      'make scripts/generate_users.js produce every problem class in notes/kickoff.md',
+    ];
+    for (const template of TEMPLATES) {
+      for (const goal of goals) {
+        const segments = stepSegments(template.steps, {
+          stateFile: '.goose/loops/x/NOW.md',
+          check: 'pnpm test',
+          goal,
+          workingDir: '/w',
+          lastNextStep: { kind: 'first' },
+        });
+        const text = segments
+          .map((s) => (s.kind === 'unknown' ? s.name : 'value' in s ? s.value : s.text))
+          .join('');
+        expect(text, `${template.id}: ${goal}`).not.toContain(goal);
+        expect(segments.some((s) => s.kind === 'slot' && s.name === 'goal_first_line')).toBe(false);
+      }
+    }
+  });
+
+  it("{last_next_step} after a yield is the last FINISHED tick's step, as goosed words it (Q-278)", () => {
+    const cases = (
+      raw as unknown as {
+        lastNextStep: { name: string; ticks: LoopTickRecord[]; expect: unknown }[];
+      }
+    ).lastNextStep;
+    expect(cases.length).toBeGreaterThanOrEqual(8);
+    for (const c of cases) {
+      const record = { ...loopRecord(), ticks: c.ticks } as LoopRecord;
+      expect(nextTickLastStep(record), c.name).toEqual(c.expect);
+    }
   });
 });

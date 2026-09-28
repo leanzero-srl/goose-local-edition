@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "次のティックを今すぐ開始します"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "あなたの回答の後"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "あなたのターンの後"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "あなたが実行"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "Mac のスリープ解除後"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "再開の後"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "終了したティックはまだありません。"
   },
