@@ -1740,6 +1740,29 @@ impl Runner {
     }
 
     async fn answer_turn_ended(&self, session_id: &str) {
+        // Every person's turn in every chat ends here. Only a loop waiting on its answer's turn
+        // moves, so the chat is READ first (a WAL read never waits on a writer) and the write
+        // transaction — which would hold the runner's lock while another writer holds the store —
+        // is taken only for such a loop; the write re-checks under it.
+        match record::read(&self.inner.deps.sessions, session_id).await {
+            Ok(Ok(Some(rec)))
+                if matches!(
+                    (&rec.status, &rec.status_reason),
+                    (
+                        LoopStatus::NeedsYou,
+                        Some(LoopStatusReason::AnswerRunning { .. })
+                    )
+                ) => {}
+            Ok(Ok(_)) => return,
+            Ok(Err(error)) => {
+                tracing::warn!(session_id, %error, "loop: the record of a chat whose turn ended could not be read");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(session_id, %error, "loop: the chat whose turn ended could not be read");
+                return;
+            }
+        }
         let _op = self.inner.op.lock().await;
         let now = self.now();
         let written = self
