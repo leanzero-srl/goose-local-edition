@@ -4,10 +4,14 @@
 Every agent edits its own row's status while main appends new rows, so almost every merge conflicts in the
 ledger (2026-09-26: three merges in a row). Per conflict block: one row per id; for an id on both sides the
 row whose status is further along wins (fixed/shipped/proven > framed/cutting > the rest), ties go to the
-incoming branch (the agent that just worked the row); rows sorted by id. Exact duplicate rows outside the
+incoming branch (the agent that just worked the row); rows sorted by id. BUT a side whose row still equals the
+merge BASE (git stage :1) did not touch it, so the side that changed it wins whatever its status reads — the
+rank alone once kept main's 'framed' over a lane's 'model behaviour — no goose cause' (Q-368, twice on
+2026-09-28), because a free-text verdict ranks lowest. Exact duplicate rows outside the
 blocks are dropped too. Refuses (exit 2) on a block that holds a non-row line, rather than guessing.
 usage: ledger_resolve.py [path]   (default local-edition/mlx/quality/FINDINGS-LEDGER.md)
 """
+import subprocess
 import sys
 
 path = sys.argv[1] if len(sys.argv) > 1 else 'local-edition/mlx/quality/FINDINGS-LEDGER.md'
@@ -35,6 +39,16 @@ def id_key(i):
         return (1, i)
 
 
+base_rows = {}
+try:
+    base_text = subprocess.run(['git', 'show', f':1:./{path}'], capture_output=True, text=True, check=True).stdout
+    for line in base_text.splitlines():
+        cells = line.split('|')
+        if len(cells) > 9:
+            base_rows[cells[1].strip()] = line
+except (subprocess.CalledProcessError, FileNotFoundError):
+    print('no merge base stage (:1) — resolving by status rank only', file=sys.stderr)
+
 blocks = 0
 while '<<<<<<< ' in text:
     a = text.index('<<<<<<< ')
@@ -58,7 +72,12 @@ while '<<<<<<< ' in text:
                 best[i] = line
             else:
                 prev = best[i].split('|')[8]
-                if rank(status) > rank(prev) or (rank(status) == rank(prev) and side == 'theirs'):
+                base = base_rows.get(i)
+                if base is not None and best[i] == base and line != base:
+                    best[i] = line
+                elif base is not None and line == base and best[i] != base:
+                    pass
+                elif rank(status) > rank(prev) or (rank(status) == rank(prev) and side == 'theirs'):
                     best[i] = line
     order.sort(key=id_key)
     text = text[:a] + ''.join(best[i] + '\n' for i in order) + text[end_line:]
