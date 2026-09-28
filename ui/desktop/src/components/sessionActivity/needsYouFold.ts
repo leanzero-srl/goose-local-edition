@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 /**
  * Q-340: what a person folded in a chat's needs-you tray — the whole stack, or single cards — kept
- * per chat in this window's localStorage (a viewer's convenience, not the chat's state). A question
- * the person has not yet SEEN in this chat always opens, and opens the stack with it, so folding
- * never hides a new question.
+ * per chat in this window's localStorage (a viewer's convenience, not the chat's state).
+ *
+ * A question the person has not yet SEEN in this chat opens the stack, so folding never hides a new
+ * one. Of the new ones, the first opens and the rest arrive folded to their one line: two long cards
+ * opened at once is exactly the screen that swallowed the chat (3.0.69), while a line per question
+ * still shows every one of them.
  */
 export interface NeedsYouFold {
   stackFolded: boolean;
@@ -27,7 +30,7 @@ function isFold(value: unknown): value is NeedsYouFold {
 
 /**
  * Nothing stored (or storage unreadable, or a shape this build does not know) reads as nothing
- * folded: every card shows. That is the state a person never loses a question in.
+ * folded and nothing seen: the tray opens as for new questions. No question is lost that way.
  */
 export function readFold(sessionId: string): NeedsYouFold {
   try {
@@ -48,6 +51,25 @@ function writeFold(sessionId: string, fold: NeedsYouFold): void {
   }
 }
 
+/** The fold as it must be with `open` on screen: new ids seen, the stack opened for them. */
+export function foldFor(fold: NeedsYouFold, open: readonly string[]): NeedsYouFold {
+  const unseen = open.filter((id) => !fold.seen.includes(id));
+  if (open.length === 0) return fold;
+  return {
+    stackFolded: fold.stackFolded && unseen.length === 0,
+    folded: [
+      ...fold.folded.filter((id) => open.includes(id) && !unseen.includes(id)),
+      ...unseen.slice(1),
+    ],
+    seen: open.filter((id) => fold.seen.includes(id) || unseen.includes(id)),
+  };
+}
+
+const sameFold = (a: NeedsYouFold, b: NeedsYouFold) =>
+  a.stackFolded === b.stackFolded &&
+  a.folded.join('\n') === b.folded.join('\n') &&
+  a.seen.join('\n') === b.seen.join('\n');
+
 export interface FoldView {
   stackFolded: boolean;
   isFolded: (id: string) => boolean;
@@ -57,39 +79,24 @@ export interface FoldView {
 
 /** `openIds`: the ids the tray shows now, in order. */
 export function useNeedsYouFold(sessionId: string, openIds: readonly string[]): FoldView {
-  const [fold, setFold] = useState<NeedsYouFold>(() => readFold(sessionId));
-  const [foldSession, setFoldSession] = useState(sessionId);
-  if (foldSession !== sessionId) {
-    setFoldSession(sessionId);
-    setFold(readFold(sessionId));
+  const [stored, setStored] = useState<NeedsYouFold>(() => readFold(sessionId));
+  const [storedSession, setStoredSession] = useState(sessionId);
+  if (storedSession !== sessionId) {
+    setStoredSession(sessionId);
+    setStored(readFold(sessionId));
   }
 
-  const idsKey = openIds.join('\n');
-  const unseen = useMemo(
-    () => (idsKey ? idsKey.split('\n') : []).filter((id) => !fold.seen.includes(id)),
-    [idsKey, fold.seen]
-  );
-
-  // A new question opens itself and the stack; closed ids are forgotten so storage stays small.
+  // Derived during render, so a new question is open on its first frame, never a frame later.
+  const fold = foldFor(stored, openIds);
   useEffect(() => {
-    const open = idsKey ? idsKey.split('\n') : [];
-    const seen = open.filter((id) => fold.seen.includes(id) || unseen.includes(id));
-    const folded = fold.folded.filter((id) => open.includes(id) && !unseen.includes(id));
-    const stackFolded = fold.stackFolded && unseen.length === 0 && open.length > 0;
-    const same =
-      stackFolded === fold.stackFolded &&
-      folded.join('\n') === fold.folded.join('\n') &&
-      seen.join('\n') === fold.seen.join('\n');
-    if (same) return;
-    const next = { stackFolded, folded, seen };
-    setFold(next);
-    // Before the tray has shown anything there is nothing to forget: keep what was stored.
-    if (open.length > 0) writeFold(sessionId, next);
-  }, [idsKey, unseen, fold, sessionId]);
+    if (sameFold(fold, stored)) return;
+    setStored(fold);
+    writeFold(sessionId, fold);
+  }, [fold, stored, sessionId]);
 
   const change = useCallback(
     (make: (current: NeedsYouFold) => NeedsYouFold) => {
-      setFold((current) => {
+      setStored((current) => {
         const next = make(current);
         writeFold(sessionId, next);
         return next;
@@ -99,15 +106,22 @@ export function useNeedsYouFold(sessionId: string, openIds: readonly string[]): 
   );
 
   return {
-    stackFolded: fold.stackFolded && unseen.length === 0,
-    isFolded: (id) => fold.folded.includes(id) && !unseen.includes(id),
-    toggleStack: () => change((current) => ({ ...current, stackFolded: !current.stackFolded })),
+    stackFolded: fold.stackFolded,
+    isFolded: (id) => fold.folded.includes(id),
+    toggleStack: () =>
+      change((current) => {
+        const now = foldFor(current, openIds);
+        return { ...now, stackFolded: !now.stackFolded };
+      }),
     toggle: (id) =>
-      change((current) => ({
-        ...current,
-        folded: current.folded.includes(id)
-          ? current.folded.filter((folded) => folded !== id)
-          : [...current.folded, id],
-      })),
+      change((current) => {
+        const now = foldFor(current, openIds);
+        return {
+          ...now,
+          folded: now.folded.includes(id)
+            ? now.folded.filter((folded) => folded !== id)
+            : [...now.folded, id],
+        };
+      }),
   };
 }

@@ -65,7 +65,14 @@ const i18n = defineMessages({
 });
 
 /** Answer surfaces are solid: amber header band, full amber border — never a rail, never a wash. */
-const CARD = 'shrink-0 overflow-hidden border-2 border-lz-warn-solid bg-lz-surface';
+const CARD = 'overflow-hidden border-2 border-lz-warn-solid bg-lz-surface';
+/**
+ * Q-340, the clipped action row: in the height-capped list an overflow-hidden card's automatic
+ * min-height is 0, so the cards SHRANK and cut their own bottoms. A folded card never shrinks; an
+ * open card may, but only its question part scrolls — the band and the answer footer (text box,
+ * Answer, Dismiss) never shrink, so the action row is always whole on screen.
+ */
+const cardLayout = (folded: boolean) => (folded ? 'shrink-0' : 'flex min-h-0 flex-col');
 const BAND_TONE = TONE_FILL.warn;
 /** A chip that sits ON the amber band: solid surface, dark ink. */
 const BAND_CHIP = cx(
@@ -109,7 +116,7 @@ function FoldBand({
       aria-controls={bodyId}
       onClick={onToggle}
       className={cx(
-        'flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left [&>svg]:size-4 [&>svg]:shrink-0',
+        'flex w-full min-w-0 shrink-0 items-center gap-2 px-3 py-1.5 text-left [&>svg]:size-4 [&>svg]:shrink-0',
         BAND_TONE,
         FOCUS,
         MOTION
@@ -208,7 +215,7 @@ export function QuestionCard({
       data-item-id={item.id}
       data-folded={folded ? 'true' : 'false'}
       aria-label={intl.formatMessage(i18n.title)}
-      className={cx(CARD, RADIUS.card)}
+      className={cx(CARD, RADIUS.card, cardLayout(folded))}
     >
       <FoldBand
         folded={folded}
@@ -222,152 +229,162 @@ export function QuestionCard({
       />
 
       {/* Folded, the body stays mounted (a typed answer survives the fold) but hidden. */}
-      <div id={bodyId} hidden={folded} className="flex flex-col gap-2 px-4 py-3">
-        <p data-testid="needs-you-question" className={cx(TYPE.h2, 'whitespace-pre-wrap')}>
-          {item.question}
-        </p>
-        {item.why && (
-          <p data-testid="needs-you-why" className={cx(TYPE.bodyMuted, 'whitespace-pre-wrap')}>
-            {item.why}
+      <div id={bodyId} hidden={folded} className="flex min-h-0 flex-col">
+        <div
+          data-testid="needs-you-card-scroll"
+          className="flex min-h-0 flex-col gap-2 overflow-y-auto px-4 pb-2 pt-3"
+        >
+          <p data-testid="needs-you-question" className={cx(TYPE.h2, 'whitespace-pre-wrap')}>
+            {item.question}
           </p>
-        )}
-
-        {queued && (
-          <div
-            data-testid="needs-you-queued"
-            className={cx(
-              'flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 [&_svg]:size-4 [&_svg]:shrink-0',
-              TONE_FILL.secondary,
-              RADIUS.control
-            )}
-          >
-            <Clock aria-hidden />
-            <span className={cx('min-w-0 flex-1 text-lz-body', WEIGHT.semibold)}>
-              {intl.formatMessage(queuedSending ? i18n.sending : i18n.queued)}
-            </span>
-            <Button
-              variant="secondary"
-              size="sm"
-              data-testid="needs-you-queued-cancel"
-              disabled={queuedSending}
-              onClick={cancelQueued}
-            >
-              {intl.formatMessage(i18n.cancelQueued)}
-            </Button>
-            <p
-              data-testid="needs-you-queued-answer"
-              className="basis-full whitespace-pre-wrap break-words text-lz-body"
-            >
-              {queued.answer}
+          {item.why && (
+            <p data-testid="needs-you-why" className={cx(TYPE.bodyMuted, 'whitespace-pre-wrap')}>
+              {item.why}
             </p>
-          </div>
-        )}
+          )}
 
-        <div className="flex flex-col gap-1">
-          <span className={TYPE.zone}>{intl.formatMessage(i18n.recommended)}</span>
-          <button
-            type="button"
-            data-testid="needs-you-recommended"
+          {queued && (
+            <div
+              data-testid="needs-you-queued"
+              className={cx(
+                'flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 [&_svg]:size-4 [&_svg]:shrink-0',
+                TONE_FILL.secondary,
+                RADIUS.control
+              )}
+            >
+              <Clock aria-hidden />
+              <span className={cx('min-w-0 flex-1 text-lz-body', WEIGHT.semibold)}>
+                {intl.formatMessage(queuedSending ? i18n.sending : i18n.queued)}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="needs-you-queued-cancel"
+                disabled={queuedSending}
+                onClick={cancelQueued}
+              >
+                {intl.formatMessage(i18n.cancelQueued)}
+              </Button>
+              <p
+                data-testid="needs-you-queued-answer"
+                className="basis-full whitespace-pre-wrap break-words text-lz-body"
+              >
+                {queued.answer}
+              </p>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-1">
+            <span className={TYPE.zone}>{intl.formatMessage(i18n.recommended)}</span>
+            <button
+              type="button"
+              data-testid="needs-you-recommended"
+              disabled={locked}
+              onClick={() => answer(item.recommendedAnswer)}
+              className={cx(
+                'inline-flex max-w-full items-start gap-2 self-start border border-lz-accent bg-lz-accent px-3 py-1.5 text-left text-lz-body text-lz-accent-ink hover:border-lz-accent-hover hover:bg-lz-accent-hover [&_svg]:mt-0.5 [&_svg]:size-4 [&_svg]:shrink-0',
+                'disabled:pointer-events-none disabled:border-lz-border disabled:bg-lz-surface-2 disabled:text-lz-ink-3',
+                WEIGHT.semibold,
+                RADIUS.control,
+                FOCUS,
+                MOTION
+              )}
+            >
+              <Check aria-hidden />
+              <span className="whitespace-pre-wrap">{item.recommendedAnswer}</span>
+            </button>
+          </div>
+
+          {options.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className={TYPE.zone}>{intl.formatMessage(i18n.options)}</span>
+              <div className="flex flex-wrap gap-1.5">
+                {options.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    data-testid="needs-you-option"
+                    disabled={locked}
+                    onClick={() => answer(option)}
+                    className={cx(
+                      // Q-315: an option is a sentence; at 460 px it wraps, so the chip grows in
+                      // height with its text (never a fixed h-7 the text spills out of) and takes the
+                      // chip radius, which holds two lines where the 999 pill clipped them.
+                      'inline-flex min-h-7 max-w-full items-center whitespace-normal break-words border border-lz-border-strong bg-lz-surface px-2.5 py-1 text-left text-[12px] text-lz-ink hover:bg-lz-surface-2',
+                      'disabled:pointer-events-none disabled:bg-lz-surface-2 disabled:text-lz-ink-3',
+                      WEIGHT.medium,
+                      RADIUS.control,
+                      FOCUS,
+                      MOTION
+                    )}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div
+          data-testid="needs-you-card-footer"
+          className="flex shrink-0 flex-col gap-2 border-t border-lz-border px-4 pb-3 pt-2"
+        >
+          <textarea
+            data-testid="needs-you-input"
+            rows={2}
+            value={text}
             disabled={locked}
-            onClick={() => answer(item.recommendedAnswer)}
+            placeholder={intl.formatMessage(i18n.placeholder)}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                answer(text);
+              }
+            }}
             className={cx(
-              'inline-flex max-w-full items-start gap-2 self-start border border-lz-accent bg-lz-accent px-3 py-1.5 text-left text-lz-body text-lz-accent-ink hover:border-lz-accent-hover hover:bg-lz-accent-hover [&_svg]:mt-0.5 [&_svg]:size-4 [&_svg]:shrink-0',
-              'disabled:pointer-events-none disabled:border-lz-border disabled:bg-lz-surface-2 disabled:text-lz-ink-3',
-              WEIGHT.semibold,
+              'w-full resize-y border border-lz-border-strong bg-lz-surface px-2 py-1.5 text-lz-body text-lz-ink placeholder:text-lz-ink-3',
+              'disabled:bg-lz-surface-2 disabled:text-lz-ink-3',
               RADIUS.control,
               FOCUS,
               MOTION
             )}
-          >
-            <Check aria-hidden />
-            <span className="whitespace-pre-wrap">{item.recommendedAnswer}</span>
-          </button>
-        </div>
+          />
 
-        {options.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <span className={TYPE.zone}>{intl.formatMessage(i18n.options)}</span>
-            <div className="flex flex-wrap gap-1.5">
-              {options.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  data-testid="needs-you-option"
-                  disabled={locked}
-                  onClick={() => answer(option)}
-                  className={cx(
-                    // Q-315: an option is a sentence; at 460 px it wraps, so the chip grows in
-                    // height with its text (never a fixed h-7 the text spills out of) and takes the
-                    // chip radius, which holds two lines where the 999 pill clipped them.
-                    'inline-flex min-h-7 max-w-full items-center whitespace-normal break-words border border-lz-border-strong bg-lz-surface px-2.5 py-1 text-left text-[12px] text-lz-ink hover:bg-lz-surface-2',
-                    'disabled:pointer-events-none disabled:bg-lz-surface-2 disabled:text-lz-ink-3',
-                    WEIGHT.medium,
-                    RADIUS.control,
-                    FOCUS,
-                    MOTION
-                  )}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid="needs-you-answer"
+              disabled={locked || text.trim().length === 0}
+              onClick={() => answer(text)}
+            >
+              {intl.formatMessage(i18n.answer)}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<X />}
+              data-testid="needs-you-dismiss"
+              disabled={locked}
+              onClick={() => void act(() => onDismiss(item))}
+            >
+              {intl.formatMessage(i18n.dismiss)}
+            </Button>
+            {queues && !queued && (
+              <span data-testid="needs-you-busy" className="min-w-0 text-lz-meta text-lz-ink-3">
+                {intl.formatMessage(i18n.busyQueues)}
+              </span>
+            )}
           </div>
-        )}
-
-        <textarea
-          data-testid="needs-you-input"
-          rows={2}
-          value={text}
-          disabled={locked}
-          placeholder={intl.formatMessage(i18n.placeholder)}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              answer(text);
-            }
-          }}
-          className={cx(
-            'w-full resize-y border border-lz-border-strong bg-lz-surface px-2 py-1.5 text-lz-body text-lz-ink placeholder:text-lz-ink-3',
-            'disabled:bg-lz-surface-2 disabled:text-lz-ink-3',
-            RADIUS.control,
-            FOCUS,
-            MOTION
-          )}
-        />
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            data-testid="needs-you-answer"
-            disabled={locked || text.trim().length === 0}
-            onClick={() => answer(text)}
-          >
-            {intl.formatMessage(i18n.answer)}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<X />}
-            data-testid="needs-you-dismiss"
-            disabled={locked}
-            onClick={() => void act(() => onDismiss(item))}
-          >
-            {intl.formatMessage(i18n.dismiss)}
-          </Button>
-          {queues && !queued && (
-            <span data-testid="needs-you-busy" className="min-w-0 text-lz-meta text-lz-ink-3">
-              {intl.formatMessage(i18n.busyQueues)}
-            </span>
+          {error && (
+            // The size utility alone with the err ink: TYPE.meta carries ink-3, which wins (c16f1d5f1).
+            <p role="alert" className="text-lz-meta text-lz-err">
+              {intl.formatMessage(i18n.failed, { error })}
+            </p>
           )}
         </div>
-        {error && (
-          // The size utility alone with the err ink: TYPE.meta carries ink-3, which wins (c16f1d5f1).
-          <p role="alert" className="text-lz-meta text-lz-err">
-            {intl.formatMessage(i18n.failed, { error })}
-          </p>
-        )}
       </div>
     </section>
   );
@@ -635,7 +652,7 @@ function ElicitationCard({
       data-testid="needs-you-elicitation"
       data-item-id={id}
       data-folded={folded ? 'true' : 'false'}
-      className={cx(CARD, RADIUS.card)}
+      className={cx(CARD, RADIUS.card, cardLayout(folded))}
     >
       <FoldBand
         folded={folded}
@@ -647,7 +664,7 @@ function ElicitationCard({
         queued={false}
         position={position}
       />
-      <div id={bodyId} hidden={folded} className="px-2 py-2">
+      <div id={bodyId} hidden={folded} className="min-h-0 overflow-y-auto px-2 py-2">
         {children}
       </div>
     </section>

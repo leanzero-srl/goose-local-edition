@@ -128,8 +128,8 @@ describe('Q-340: needs-you folds — each card to one line, the stack to one bar
     expect(summary.className).toContain('truncate');
     expect(band.textContent).toContain('Needs you');
     expect(band.textContent).toContain('1 of 2');
-    // The other card is untouched.
-    expect(card(CSV.id).getAttribute('data-folded')).toBe('false');
+    // The other card is untouched (it arrived as a line — see the next test).
+    expect(card(CSV.id).getAttribute('data-folded')).toBe('true');
 
     fireEvent.click(band);
     expect(bodyOf(lead).hidden).toBe(false);
@@ -141,7 +141,7 @@ describe('Q-340: needs-you folds — each card to one line, the stack to one bar
   it('a new question opens the folded stack and itself, and the count moves', async () => {
     seedSessionActivityForTests({ needsYou: [LEAD, CSV] });
     renderTray(ChatState.Idle);
-    fireEvent.click(within(card(CSV.id)).getByTestId('needs-you-fold'));
+    fireEvent.click(within(card(LEAD.id)).getByTestId('needs-you-fold'));
     fireEvent.click(screen.getByTestId('needs-you-stack'));
     expect(screen.getByTestId('needs-you-list').hidden).toBe(true);
 
@@ -153,22 +153,32 @@ describe('Q-340: needs-you folds — each card to one line, the stack to one bar
     expect(screen.getByTestId('needs-you-list').hidden).toBe(false);
     expect(card('ny_third').getAttribute('data-folded')).toBe('false');
     // What the person folded by hand stays folded.
-    expect(card(CSV.id).getAttribute('data-folded')).toBe('true');
+    expect(card(LEAD.id).getAttribute('data-folded')).toBe('true');
     await waitFor(() =>
       expect(JSON.parse(window.localStorage.getItem(foldKey('jira'))!).seen).toContain('ny_third')
     );
   });
 
-  it('the cause of the clipped action row: the cards never shrink inside the height cap — the list scrolls', () => {
+  it('the cause of the clipped action row: in the height cap only the question part of an open card scrolls — band and answer footer never shrink', () => {
     seedSessionActivityForTests({ needsYou: [LEAD, CSV] });
     renderTray(ChatState.Idle);
-    const list = screen.getByTestId('needs-you-list').className.split(/\s+/);
+    const classesOf = (el: HTMLElement) => el.className.split(/\s+/);
+    const list = classesOf(screen.getByTestId('needs-you-list'));
     expect(list).toEqual(expect.arrayContaining(['max-h-[45vh]', 'overflow-y-auto', 'flex-col']));
-    for (const c of cards()) {
-      const classes = c.className.split(/\s+/);
-      expect(classes).toContain('shrink-0');
-      expect(classes).not.toContain('min-h-0');
-    }
+    // Folded: one line that never shrinks.
+    expect(classesOf(card(CSV.id))).toContain('shrink-0');
+    // Open: the card may shrink, its question part scrolls, band and footer hold.
+    const open = card(LEAD.id);
+    expect(classesOf(open)).toEqual(expect.arrayContaining(['flex', 'min-h-0', 'flex-col']));
+    expect(classesOf(within(open).getByTestId('needs-you-fold'))).toContain('shrink-0');
+    expect(classesOf(within(open).getByTestId('needs-you-card-scroll'))).toEqual(
+      expect.arrayContaining(['min-h-0', 'overflow-y-auto'])
+    );
+    const footer = within(open).getByTestId('needs-you-card-footer');
+    expect(classesOf(footer)).toContain('shrink-0');
+    expect(within(footer).getByTestId('needs-you-answer')).toBeTruthy();
+    expect(within(footer).getByTestId('needs-you-dismiss')).toBeTruthy();
+    expect(within(footer).getByTestId('needs-you-input')).toBeTruthy();
   });
 
   it('one question has no stack bar — its own band folds it', () => {
@@ -178,12 +188,26 @@ describe('Q-340: needs-you folds — each card to one line, the stack to one bar
     expect(within(card(LEAD.id)).getByTestId('needs-you-fold').textContent).not.toContain('of');
   });
 
-  it('an unreadable stored fold shows everything open', () => {
+  it('questions arriving together: the stack opens, the first card opens, the rest arrive as their one line', () => {
+    seedSessionActivityForTests({ needsYou: [LEAD, CSV] });
+    renderTray(ChatState.Idle);
+    expect(screen.getByTestId('needs-you-stack').getAttribute('aria-expanded')).toBe('true');
+    expect(card(LEAD.id).getAttribute('data-folded')).toBe('false');
+    expect(card(CSV.id).getAttribute('data-folded')).toBe('true');
+    expect(within(card(CSV.id)).getByTestId('needs-you-fold-summary').textContent).toBe(
+      CSV.question
+    );
+    // Opening it is one click on its line.
+    fireEvent.click(within(card(CSV.id)).getByTestId('needs-you-fold'));
+    expect(card(CSV.id).getAttribute('data-folded')).toBe('false');
+  });
+
+  it('an unreadable stored fold reads as new questions: the stack open, the first card open', () => {
     window.localStorage.setItem(foldKey('jira'), '{not json');
     seedSessionActivityForTests({ needsYou: [LEAD, CSV] });
     renderTray(ChatState.Idle);
     expect(screen.getByTestId('needs-you-stack').getAttribute('aria-expanded')).toBe('true');
-    expect(cards().every((c) => c.getAttribute('data-folded') === 'false')).toBe(true);
+    expect(card(LEAD.id).getAttribute('data-folded')).toBe('false');
   });
 });
 
