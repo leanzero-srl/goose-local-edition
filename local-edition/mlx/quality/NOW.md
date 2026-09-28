@@ -46,27 +46,25 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 ## Agents (worktrees)
 - Q-454 (create-doc renders GFM tables as Word tables; honest formattingQuality).
 
-## Batch 4 → 3.0.74 — merge-074 (/tmp/merge-074, d750166f1) COMPLETE, GATE RUNNING
-- Holds:
+## 3.0.74 = main edd009c6b — RELEASE BUILDING (~/goose-builds/release-3.0.74.log, goose-rel, own session)
+- Contents:
   - Q-417, Q-407, Q-423 (BOTH Macs), Q-426;
-  - Q-429/431/433..440;
-  - Q-447 (float32 KV; BOTH Macs), Q-449, Q-450;
-  - Q-428/430/432 (b/o demo; break pass fixed 4).
-  No ledger row lost; Q-444..446 unused.
-- g074 full gate + g074b re-gate: ALL GREEN at da6f4628d.
-  - Fixed on the branch: tsc b068352cf, and the seam da6f4628d (which is why clippy failed and lib tests were
-    skipped).
-  - The sidecar stray-listener test failed once under load and passed 5/5 alone plus the full suite → Q-452,
-    scheduled on a second red.
-- Q-441/442/443 MERGED (1bedb7b8f). Delta gate g074c → /tmp/g074c.out (own session): UI full, lib, acp_*,
-  server, cli, clippy, dev gates, schema, wincheck.
-- Green → ff main, push → release 3.0.74 (/tmp/rel074.sh) → install BOTH Macs at an #3u turn boundary →
-  split-start smoke.
-- Then live-prove:
-  - Q-447 (decode ≥ 8 tok/s on cache-hit turns; entry bytes 32,768/token);
-  - Q-428 (the demo strategy with its Chat role on "Use the next node" and on "Wait");
-  - Q-426, Q-417, Q-450.
-- Then tell the owner about Q-428.
+  - Q-428/430/432 and Q-441/442/443 (don't-interrupt option + follow-ups);
+  - Q-429/431/433..440 (demo fixes);
+  - Q-447 (float32 KV — BOTH Macs, new tag);
+  - Q-449, Q-450.
+- Gates g074 + g074b + g074c all GREEN. Two seams were fixed on the branch: b068352cf and da6f4628d.
+- Merged worktrees removed. Disk: 128 GB.
+- Next:
+  1. The DMG lands → install on BOTH Macs at an #3u turn boundary (the new tag refuses mixed versions) →
+     split-start smoke.
+  2. Live-prove:
+     - Q-447: decode ≥ 8 tok/s on a cache-hit turn, and entry bytes = 32,768/token in RANK_ADMISSION;
+     - Q-428: set the demo strategy's Chat role to "Use the next node", then to "Wait", and re-run the
+       shared-Mac case;
+     - Q-426, Q-417, Q-450.
+  3. Tell the owner about Q-428.
+  4. Q-454 goes into 3.0.75.
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
