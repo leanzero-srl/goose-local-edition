@@ -807,7 +807,7 @@ async fn a_persons_reply_that_took_the_engine_after_the_offer_yields_the_tick_at
     bed.mac.reply_ends(&bed.other);
     let second = bed.due(2).await;
     assert!(
-        second.prompt.contains("Tick 1 was stopped at"),
+        second.prompt.contains("did not finish: it was stopped at"),
         "{}",
         second.prompt
     );
