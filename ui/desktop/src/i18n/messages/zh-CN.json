@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "在你的回合之后"
   },
+  "loops.origin.first": {
+    "defaultMessage": "由你启动"
+  },
   "loops.origin.now": {
     "defaultMessage": "由你运行"
   },
@@ -4382,11 +4385,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "计划 {gb} GB（含开销）"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "请先填写下方的空字段：试运行会检查其中填写的内容。"
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "请先设置拆分：试运行会检查其中列出的 Mac。"
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "尚未运行预检。试运行会检查每个节点（可达性、内存、模型、Python、Thunderbolt 链路、端口），并在不启动任何东西的情况下规划各节点的层。"
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "预检"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "请先停止拆分再进行试运行：它的各个 rank 占用着试运行要检查的端口和内存。"
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "内存压力：危急"
@@ -5319,7 +5331,7 @@
     "defaultMessage": "个提示词 token，已读取 {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 读取，中间一半的运行"
+    "defaultMessage": "tok/s 读取，中间一半的提示"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s（读取此提示词）"

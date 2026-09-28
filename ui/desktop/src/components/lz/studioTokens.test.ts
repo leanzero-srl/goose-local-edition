@@ -34,6 +34,7 @@ const SURFACE_TOKENS = [
   '--color-lz-surface-2',
   '--color-lz-border',
   '--color-lz-border-strong',
+  '--color-lz-accent-text',
   '--color-lz-ink',
   '--color-lz-ink-2',
   '--color-lz-ink-3',
@@ -101,6 +102,8 @@ describe('LeanZero Studio surfaces — the token contract in main.css', () => {
   it('registers the accent, the status triad (text + solid) and the six-node ramp with its ink', () => {
     expect(registered['--color-lz-accent']).toBe('var(--color-action-solid, #1d4ed8)');
     expect(registered['--color-lz-accent-ink']).toBe('#ffffff');
+    // Accent TEXT reads its own token (Q-320); the fill keeps the action blue under white ink.
+    expect(registered['--text-color-lz-accent']).toBe('var(--color-lz-accent-text, #1d4ed8)');
     for (const tone of ['ok', 'warn', 'err', 'stopped']) {
       expect(registered[`--color-lz-${tone}`]).toMatch(/^var\(--color-status-/);
       expect(registered[`--color-lz-${tone}-solid`]).toMatch(/^var\(--color-status-.*-solid, #/);
@@ -129,6 +132,13 @@ describe('LeanZero Studio surfaces — the token contract in main.css', () => {
         4.5
       );
       expect(contrast('#ffffff', theme['--color-lz-accent-hover'])).toBeGreaterThan(4.5);
+      // Accent as TEXT (a figure, a link) is AA on every surface it sits on — Q-320: the fill blue
+      // read 2.18:1 as text on the dark Run it rows (surface-2).
+      for (const ground of ['--color-lz-bg', '--color-lz-surface', '--color-lz-surface-2']) {
+        expect(contrast(theme['--color-lz-accent-text'], theme[ground]), ground).toBeGreaterThan(
+          4.5
+        );
+      }
       // The syntax palette is TEXT on the surface (the JSON viewer): AA in both themes.
       for (const register of ['key', 'string', 'number', 'bool']) {
         expect(

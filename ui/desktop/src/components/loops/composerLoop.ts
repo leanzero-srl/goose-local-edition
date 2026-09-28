@@ -10,13 +10,12 @@ import { ChatState } from '../../types/chatState';
 import type { Message } from '../../types/message';
 import { SWARM_PROVIDER_ID } from '../../branding';
 import { parseRouteModel } from '../nodes/model';
-import { lastTick, pillView, viewerOffsetMinutes, type PillView } from './loopView';
+import { chatClockTime, lastTick, pillView, viewerOffsetMinutes, type PillView } from './loopView';
 import { loopWords, sentenceMessage, sentenceValues } from './loopWords';
 import {
   goalFirstLine,
   parseTickId,
   parseTime,
-  clockTime,
   statusSentence,
   type LoopCommand,
   type LoopRecord,
@@ -120,7 +119,14 @@ function nowSentence(
   reason: LoopStatusReason | null | undefined,
   nowMs: number
 ): string {
-  const got = statusSentence(record, status, reason, nowMs, viewerOffsetMinutes(nowMs));
+  const got = statusSentence(
+    record,
+    status,
+    reason,
+    nowMs,
+    viewerOffsetMinutes(nowMs),
+    chatClockTime
+  );
   if (!got.ok) return intl.formatMessage(cw.replyStatusUnreadable, { error: got.error });
   const message = sentenceMessage(got.value);
   return message ? intl.formatMessage(message, sentenceValues(got.value)) : got.value.text;
@@ -196,7 +202,7 @@ export function loopReplyLine(
         };
       }
       const at = parseTime(record.nextTick.at);
-      const time = at.ok ? clockTime(at.value, viewerOffsetMinutes(at.value)) : at;
+      const time = at.ok ? chatClockTime(at.value, viewerOffsetMinutes(at.value)) : at;
       return {
         text: time.ok
           ? intl.formatMessage(cw.replyResumedAt, { time: time.value })

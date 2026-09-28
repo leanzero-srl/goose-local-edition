@@ -292,8 +292,8 @@ function splitRank(c: PlacementCandidate): number {
 
 /**
  * The plan's candidates as the ways a person picks between: every single-Mac candidate (this Mac
- * first), then ONE split — the supported, startable one first; the other splits fold away with
- * their reason. With no plan, the ways goose can start anyway: this Mac, each peer that lets this
+ * first), then ONE split — the supported, startable one first; the other supported splits fold
+ * away with their reason, and one goose cannot run is not listed. With no plan, the ways goose can start anyway: this Mac, each peer that lets this
  * Mac load models, the split when goose offers it.
  */
 export function waysOf(
@@ -335,7 +335,10 @@ export function waysOf(
           ]
         : []),
     ];
-    return { ways, otherSplits: splits.slice(1) };
+    // A split goose cannot run for this model is no option at all, not even under Details (Q-312,
+    // after Q-25 moved it there): only the other splits goose CAN run, now or once a Mac frees up,
+    // stay as reference with their reason.
+    return { ways, otherSplits: splits.slice(1).filter((c) => c.supported) };
   }
   const ways: Way[] = [
     { key: 'local', kind: 'local', candidate: null, mac: null, peerNodeId: null },

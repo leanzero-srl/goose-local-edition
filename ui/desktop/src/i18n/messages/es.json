@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "después de tu turno"
   },
+  "loops.origin.first": {
+    "defaultMessage": "iniciado por ti"
+  },
   "loops.origin.now": {
     "defaultMessage": "iniciado por ti"
   },
@@ -4382,11 +4385,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "planificado {gb} GB con sobrecarga"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Rellena primero los campos vacíos de abajo: una prueba en seco comprueba lo que indican."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Configura primero la división: una prueba en seco comprueba los Mac que nombra."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Todavía no se ha ejecutado ningún preflight. Una prueba en seco comprueba cada nodo (accesibilidad, memoria, el modelo, Python, el enlace Thunderbolt, puertos) y planifica las capas por nodo sin lanzar nada."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Detén la división para hacer una prueba en seco: sus rangos ocupan los puertos y la memoria que la prueba comprueba."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Presión crítica"
@@ -5319,7 +5331,7 @@
     "defaultMessage": "tokens del prompt, leyendo desde hace {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s leyendo, mitad central de las ejecuciones"
+    "defaultMessage": "tok/s leyendo, mitad central de los prompts"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s leyendo este prompt"

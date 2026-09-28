@@ -6,7 +6,9 @@
  * fact is left out or named, never filled in.
  */
 import type { MessageDescriptor } from 'react-intl';
+import { currentLocale } from '../../i18n';
 import type { Message } from '../../types/message';
+import { formatClockTime } from '../../utils/timeUtils';
 import type { Tone } from '../lz';
 import { loopWords as w } from './loopWords';
 import {
@@ -15,6 +17,7 @@ import {
   parseCadenceSeconds,
   parseTime,
   tickRanges,
+  type Checked,
   type LoopCadence,
   type LoopRecord,
   type LoopStatus,
@@ -36,12 +39,24 @@ export function viewerOffsetMinutes(atMs: number): number {
   return -new Date(atMs).getTimezoneOffset();
 }
 
-/** `HH:MM` in the viewer's zone, or null for a time the record cannot give. */
+/**
+ * A loop time as the chat beside it writes its own (`formatClockTime`: "6:48 AM" in en), at the
+ * offset `clockTime` validates — the one clock every loop surface a person reads uses, so a tick
+ * marker never says "06:45" a line above a message stamped "6:48 AM" (Q-316). `clockTime` stays
+ * the rule's `HH:MM`, the words goosed and the shared fixture are pinned to.
+ */
+export function chatClockTime(ms: number, utcOffsetMinutes: number): Checked<string> {
+  const valid = clockTime(ms, utcOffsetMinutes);
+  if (!valid.ok) return valid;
+  return { ok: true, value: formatClockTime(ms + utcOffsetMinutes * 60_000, currentLocale, 'UTC') };
+}
+
+/** The chat's clock time in the viewer's zone, or null for a time the record cannot give. */
 export function hm(rfc3339: string | null | undefined): string | null {
   if (!rfc3339) return null;
   const t = parseTime(rfc3339);
   if (!t.ok) return null;
-  const c = clockTime(t.value, viewerOffsetMinutes(t.value));
+  const c = chatClockTime(t.value, viewerOffsetMinutes(t.value));
   return c.ok ? c.value : null;
 }
 
@@ -173,10 +188,13 @@ export function cadenceWords(cadence: LoopCadence): Words {
 /**
  * What started a tick, for its marker (§8.5): the cadence's own label when the cadence started it,
  * else the event that did — the tick after a yield starts "after your turn", never "back to back"
- * (Q-279).
+ * (Q-279); the first tick is the one the person started with Start (goosed's `start` is reached
+ * only from the loop dialog's request), never "every 5 min" as if the clock had (Q-316).
  */
 export function tickCauseWords(origin: LoopTickOrigin, cadence: LoopCadence): Words {
   switch (origin) {
+    case 'first':
+      return words(w.originFirst);
     case 'after_your_turn':
       return words(w.originAfterYourTurn);
     case 'after_your_answer':
@@ -187,7 +205,6 @@ export function tickCauseWords(origin: LoopTickOrigin, cadence: LoopCadence): Wo
       return words(w.originResume);
     case 'now':
       return words(w.originNow);
-    case 'first':
     case 'cadence':
     case 'self_paced':
     case 'back_to_back':

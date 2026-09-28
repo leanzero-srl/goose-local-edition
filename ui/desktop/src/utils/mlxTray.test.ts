@@ -179,7 +179,7 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
     const got = labels(buildMlxTrayModel(idle, OPTS).items);
     expect(got[0]).toBe('LeanZero MLX: idle');
     expect(got).toContain('Writes 29.6 tok/s · 1 run');
-    expect(got).toContain('Reads 196 tok/s · 1 run');
+    expect(got).toContain('Reads 196 tok/s · 1 prompt');
     expect(got.some((l) => l.includes('29.6–29.6'))).toBe(false);
     expect(got.some((l) => l.startsWith('Writing '))).toBe(false);
   });
@@ -190,6 +190,30 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
     });
     const got = labels(buildMlxTrayModel(idle, OPTS).items);
     expect(got).toContain('Writes 27.0 tok/s · median of 303 runs, middle half 24.1–30.7');
+  });
+
+  it('Q-314: the split at rest — the title is the model, both Macs and the ONE word the menu says; reads are over prompts', () => {
+    // The live critic on 3.0.68: "⚪ Split · Idle" over a menu that said "ready", and
+    // "Reads 157 tok/s · median of 454 runs" beside the Engine card's "median of 454 prompts".
+    const report = toMlxDistributedReport({ ...FLASH_READY, modelId: CONFIGURED });
+    const rank0 = running(IDLE_STATUS, {
+      engine: 'distributed',
+      modelId: null,
+      baseUrl: 'http://127.0.0.1:8091',
+      measured: goose({
+        recorded: 803,
+        writing: figure(10.6, 10.1, 11.0, 349),
+        reading: figure(157, 88.7, 202, 454),
+      }),
+    });
+    const model = buildMlxTrayModel(rank0, { ...OPTS, distributed: { report, ageMs: 500 } });
+    expect(trayTitleText(model)).toBe('⚪ Qwen3.8-27B-Atlassian-Q8-mlx · both Macs · Idle');
+    const got = labels(model.items);
+    expect(got[0]).toBe('LeanZero MLX: split across both Macs, idle');
+    expect(got.some((l) => /\bready\b/.test(l))).toBe(false);
+    expect(got).toContain('Writes 10.6 tok/s · median of 349 runs, middle half 10.1–11.0');
+    expect(got).toContain('Reads 157 tok/s · median of 454 prompts, middle half 88.7–202');
+    expect(got.some((l) => /454 runs/.test(l))).toBe(false);
   });
 
   it('goose’s runs still being read say nothing; unread says why; none says none', () => {
@@ -287,22 +311,24 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
   const fresh = (report = ready) => ({ ...OPTS, distributed: { report, ageMs: 500 } });
 
   it('the title is the run: ready, requests in flight while serving, held when admission closes', () => {
-    expect(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh()).title).toBe('Split · ready');
+    expect(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh()).title).toBe(
+      'Qwen3.8-Flash-Next-4bit · both Macs · ready'
+    );
     expect(
       buildMlxTrayModel(INITIAL_SNAPSHOT, fresh(toMlxDistributedReport(FLASH_SERVING))).title
-    ).toBe('Split · 2 in flight');
+    ).toBe('Qwen3.8-Flash-Next-4bit · both Macs · 2 in flight');
     expect(
       buildMlxTrayModel(
         INITIAL_SNAPSHOT,
         fresh(toMlxDistributedReport({ ...FLASH_SERVING, admissionOpen: false }))
       ).title
-    ).toBe('Split · held');
+    ).toBe('Qwen3.8-Flash-Next-4bit · both Macs · held');
   });
 
   it('the menu names the mode, the nodes and backend, per-node memory, restarts and the last alarm', () => {
     const model = buildMlxTrayModel({ ...INITIAL_SNAPSHOT, mode: 'off' }, fresh());
     expect(labels(model.items)).toEqual([
-      'LeanZero MLX: split across 2 Macs, ready',
+      'LeanZero MLX: split across both Macs, ready',
       'Split across MacBook Pro + workhorse · over Thunderbolt',
       'Model: rapid-mlx/Qwen3.8-Flash-Next-4bit',
       'MacBook Pro: L0–19 · peak 61.0 of 83.4 GB split budget',
@@ -327,7 +353,7 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
         baseUrl: 'http://127.0.0.1:8091',
       });
     const reading = buildMlxTrayModel(rank0(DIST_READING_STATUS), fresh(serving));
-    expect(reading.title).toBe('Split · Reading 7.0k');
+    expect(reading.title).toBe('Qwen3.8-Flash-Next-4bit · both Macs · Reading 7.0k');
     expect(reading.phase).toBe('reading');
     expect(labels(reading.items)).toContain('Reading a 7.0k-token prompt, 2.0k read for 14s');
     expect(labels(reading.items)).toContain('Reading at 152 tok/s');
@@ -335,13 +361,13 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
     expect(reading.items[0]).toMatchObject({ phase: 'reading' });
 
     const writing = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), fresh(serving));
-    expect(writing.title).toBe('Split · 171 tok/s');
+    expect(writing.title).toBe('Qwen3.8-Flash-Next-4bit · both Macs · 171 tok/s');
     expect(writing.phase).toBe('writing');
     expect(labels(writing.items)).toContain('Writing 171 tok/s');
 
     // A read of the single engine never speaks for the run: the counters do.
     const single = buildMlxTrayModel(running(DIST_WRITING_STATUS), fresh(serving));
-    expect(single.title).toBe('Split · 1 in flight');
+    expect(single.title).toBe('Qwen3.8-Flash-Next-4bit · both Macs · 1 in flight');
     expect(single.phase).toBe('writing');
     // And a rank 0 read never speaks for the single engine once the run is gone.
     const gone = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), OPTS);
@@ -354,7 +380,7 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
       running(body, { engine: 'distributed', modelId: null, baseUrl: 'http://127.0.0.1:8091' });
     const behind = buildMlxTrayModel(rank0(SPLIT_TURN_BEHIND_LEAVING_3M), fresh(serving));
     // Before: "Split · Reading 5.5k", phase reading, "Reading a 5.5k-token prompt, 380 read for 7s".
-    expect(behind.title).toBe('Split · Queued 1');
+    expect(behind.title).toBe('Qwen3.8-Flash-Next-4bit · both Macs · Queued 1');
     expect(behind.phase).toBe('held');
     expect(labels(behind.items)).toContain(
       '3 stopped requests still leaving the engine · stopped 3s ago'
@@ -362,7 +388,7 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
     expect(labels(behind.items).some((l) => l.startsWith('Reading'))).toBe(false);
 
     const only = buildMlxTrayModel(rank0(SPLIT_ONLY_LEAVING_3M), fresh(serving));
-    expect(only.title).toBe('Split · 3 stopped · leaving');
+    expect(only.title).toBe('Qwen3.8-Flash-Next-4bit · both Macs · 3 stopped · leaving');
     expect(only.phase).toBe('held');
 
     // The single engine's headline line says it too.
@@ -404,7 +430,7 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
   it('a read older than three polls is SAID to be stale, never shown as live', () => {
     const stale = { ...OPTS, distributed: { report: ready, ageMs: MLX_DISTRIBUTED_STALE_MS + 1 } };
     const model = buildMlxTrayModel(INITIAL_SNAPSHOT, stale);
-    expect(model.title).toBe('Split · stale');
+    expect(model.title).toBe('Qwen3.8-Flash-Next-4bit · both Macs · stale');
     expect(labels(model.items)).toContain('Not refreshed for 6s — open goose to read it again');
   });
 
@@ -522,9 +548,9 @@ describe('the tray in the engine-phase palette', () => {
       distributed: { report: starting, ageMs: 0 },
     });
     expect(model.phase).toBe('loading');
-    expect(trayTitleText(model)).toBe('🟡 Split · starting');
+    expect(trayTitleText(model)).toBe('🟡 Qwen3.8-Flash-Next-4bit · both Macs · starting');
     expect(phases(model.items)).toEqual([
-      ['LeanZero MLX: split across 2 Macs, starting', 'loading'],
+      ['LeanZero MLX: split across both Macs, starting', 'loading'],
       [
         'MacBook Pro (loading): L0–19 · loaded 12.0 of 48.0 GB · peak 61.0 of 83.4 GB sp…',
         'loading',
@@ -539,7 +565,7 @@ describe('the tray in the engine-phase palette', () => {
       },
     });
     expect(held.phase).toBe('held');
-    expect(trayTitleText(held)).toBe('🟠 Split · held');
+    expect(trayTitleText(held)).toBe('🟠 Qwen3.8-Flash-Next-4bit · both Macs · held');
   });
 
   it('a Mac macOS is making room on is said so, amber, with no load figure', () => {
@@ -571,7 +597,7 @@ describe('the tray in the engine-phase palette', () => {
       },
     });
     expect(model.phase).toBeNull();
-    expect(trayTitleText(model)).toBe('Split · stale');
+    expect(trayTitleText(model)).toBe('Qwen3.8-Flash-Next-4bit · both Macs · stale');
     expect(phases(model.items)).toEqual([]);
   });
 

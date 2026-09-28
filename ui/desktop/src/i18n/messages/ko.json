@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "사용자의 턴이 끝난 후"
   },
+  "loops.origin.first": {
+    "defaultMessage": "직접 시작함"
+  },
   "loops.origin.now": {
     "defaultMessage": "사용자가 실행함"
   },
@@ -4382,11 +4385,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "계획 {gb} GB(오버헤드 포함)"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "먼저 아래의 빈 필드를 채우세요. 드라이 런은 거기에 지정된 것을 확인합니다."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "먼저 분할을 설정하세요. 드라이 런은 설정에 지정된 Mac을 확인합니다."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "아직 프리플라이트를 실행하지 않았습니다. 시험 실행은 각 노드(연결 가능 여부, 메모리, 모델, Python, Thunderbolt 링크, 포트)를 점검하고 아무것도 실행하지 않고 노드별 레이어를 계획합니다."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "프리플라이트"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "드라이 런을 하려면 분할을 중지하세요. 분할의 랭크가 드라이 런이 확인하는 포트와 메모리를 쓰고 있습니다."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "메모리 압박 위험"
@@ -5319,7 +5331,7 @@
     "defaultMessage": "프롬프트 토큰, {elapsed}째 읽는 중"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 읽기, 실행의 중간 절반"
+    "defaultMessage": "tok/s 읽기, 프롬프트의 중간 절반"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (이 프롬프트 읽기)"

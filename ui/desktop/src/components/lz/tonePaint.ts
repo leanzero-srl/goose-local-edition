@@ -1,5 +1,18 @@
 import { resolvedPaint, studioToken } from './resolvedPaint';
-import { TONE_TEXT, TONES } from './tokens';
+import { TONE_TEXT, TONES, type Tone } from './tokens';
+
+/**
+ * The token each tone's TEXT utility paints: the tone's own colour, except accent, whose text has
+ * its own token (`--text-color-lz-accent` → `--color-lz-accent-text`, Q-320).
+ */
+export const TONE_TEXT_TOKEN: Record<Tone, string> = {
+  ok: '--color-lz-ok',
+  warn: '--color-lz-warn',
+  err: '--color-lz-err',
+  stopped: '--color-lz-stopped',
+  accent: '--color-lz-accent-text',
+  secondary: '--color-lz-secondary',
+};
 
 /** Any element that names a tone (ok, warn, err, stopped, accent, secondary) as its text colour. */
 export const TONE_TEXT_SELECTOR = TONES.map((tone) => `.${TONE_TEXT[tone]}`).join(', ');
@@ -24,7 +37,7 @@ export async function tonesThatDoNotPaint(root: Element): Promise<string[]> {
       wrong.push(`${said} names two tones (${tones.join(' + ')})`);
       continue;
     }
-    const want = studioToken(`--color-lz-${tones[0]}`, 'light');
+    const want = studioToken(TONE_TEXT_TOKEN[tones[0]], 'light');
     const got = (await resolvedPaint(el, 'light')).text;
     if (got !== want) wrong.push(`${said} paints ${got}, not its ${tones[0]} (${want})`);
   }

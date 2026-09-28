@@ -72,7 +72,7 @@ describe('the composer and the chat loop', () => {
     const w = waitingRecord();
     expect(label({ kind: 'loop', loop: w, status: 'waiting' })).toEqual([
       'accent',
-      'Next tick 22:51',
+      'Next tick 10:51 PM',
     ]);
     expect(label({ kind: 'loop', loop: w, status: 'paused' })).toEqual(['stopped', 'Loop paused']);
     expect(label({ kind: 'loop', loop: w, status: 'needs_you' })).toEqual([
@@ -151,7 +151,7 @@ describe('the composer and the chat loop', () => {
         { kind: 'control', result: { loop: waitingRecord() } },
         NOW_MS
       ).text
-    ).toBe('Loop resumed — next tick 22:51.');
+    ).toBe('Loop resumed — next tick 10:51 PM.');
     expect(
       loopReplyLine(
         intl,
@@ -198,7 +198,7 @@ describe('the composer and the chat loop', () => {
       NOW_MS
     ).text;
     expect(status).toMatch(
-      /^Loop: Make scripts\/generate_users\.js produce every problem class in notes\/kickoff\.md · Next tick 22:51 · in \d+m · tick 5$/
+      /^Loop: Make scripts\/generate_users\.js produce every problem class in notes\/kickoff\.md · Next tick 10:51 PM · in \d+m · tick 5$/
     );
   });
 });

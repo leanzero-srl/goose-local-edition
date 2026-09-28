@@ -147,6 +147,13 @@ export function clockTime(ms: number, utcOffsetMinutes: number): Checked<string>
   return ok(`${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`);
 }
 
+/**
+ * How a sentence writes a clock time: `clockTime` is the rule's own `HH:MM` (goosed's words and the
+ * fixture's); a surface a person reads beside the chat passes the chat's clock (loopView
+ * `chatClockTime`, Q-316) so the rail never says "06:45" beside a transcript's "6:48 AM".
+ */
+export type LoopClock = (ms: number, utcOffsetMinutes: number) => Checked<string>;
+
 function secondsBetween(fromMs: number, toMs: number): number {
   return Math.trunc((toMs - fromMs) / 1000);
 }
@@ -456,7 +463,8 @@ export function statusSentence(
   status: LoopStatus,
   reason: LoopStatusReason | null | undefined,
   nowMs: number,
-  utcOffsetMinutes: number
+  utcOffsetMinutes: number,
+  clock: LoopClock
 ): Checked<Sentence> {
   const ticks = record.ticks ?? [];
   const last = ticks[ticks.length - 1];
@@ -465,7 +473,7 @@ export function statusSentence(
     fail<Sentence>(`a ${status} loop cannot carry the reason ${JSON.stringify(reason)}`);
   const hm = (text: string): Checked<string> => {
     const t = parseTime(text);
-    return t.ok ? clockTime(t.value, utcOffsetMinutes) : t;
+    return t.ok ? clock(t.value, utcOffsetMinutes) : t;
   };
   const since = (text: string): Checked<string> => {
     const t = parseTime(text);
@@ -516,7 +524,7 @@ export function statusSentence(
       if (!nt) return fail('a waiting loop has no next tick');
       const at = parseTime(nt.at);
       if (!at.ok) return at;
-      const time = clockTime(at.value, utcOffsetMinutes);
+      const time = clock(at.value, utcOffsetMinutes);
       if (!time.ok) return time;
       const r = nt.reason;
       if (r.kind === 'self_paced' && r.reason != null) {

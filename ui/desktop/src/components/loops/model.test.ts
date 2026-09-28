@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import raw from '../../../../../crates/goose/src/session_loops/loops.fixture.json';
 import {
   cadenceLabel,
+  clockTime,
   controlAction,
   decideAfterTick,
   defaultStateFile,
@@ -152,12 +153,19 @@ describe('the loops model — the fixture goosed is pinned to', () => {
   it('words every status sentence as goosed does, key, facts and text', () => {
     expect(fixture.sentences.length).toBeGreaterThanOrEqual(35);
     for (const c of fixture.sentences) {
-      const got = statusSentence(c.record, c.status, c.reason, ms(c.now), c.utcOffsetMinutes);
+      const got = statusSentence(
+        c.record,
+        c.status,
+        c.reason,
+        ms(c.now),
+        c.utcOffsetMinutes,
+        clockTime
+      );
       expect(value(got, c.name), c.name).toEqual(c.expect);
     }
     for (const c of fixture.sentenceErrors) {
       expect(
-        statusSentence(c.record, c.status, c.reason, ms(c.now), c.utcOffsetMinutes).ok,
+        statusSentence(c.record, c.status, c.reason, ms(c.now), c.utcOffsetMinutes, clockTime).ok,
         c.name
       ).toBe(false);
     }
@@ -217,8 +225,8 @@ describe('the loops model — beyond the fixture', () => {
 
   it('refuses an out-of-range UTC offset instead of guessing one', () => {
     const record = fixture.sentences[0].record;
-    expect(statusSentence(record, 'running', null, ms('2026-09-27T22:45:00Z'), 24 * 60).ok).toBe(
-      false
-    );
+    expect(
+      statusSentence(record, 'running', null, ms('2026-09-27T22:45:00Z'), 24 * 60, clockTime).ok
+    ).toBe(false);
   });
 });

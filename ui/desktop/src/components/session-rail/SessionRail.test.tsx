@@ -13,6 +13,14 @@ import { onStartLoopRequest, type StartLoopRequest } from '../loops/startLoopReq
 import type { ControlResult, SessionLoop } from '../loops/useSessionLoop';
 import SessionRail from './SessionRail';
 
+/** Every `HH:MM` of goosed's words as the chat's `en` clock writes it ("22:40" → "10:40 PM"). */
+function inChatClock(text: string): string {
+  return text.replace(/\b([01]\d|2[0-3]):([0-5]\d)\b/g, (_, h: string, m: string) => {
+    const hour = Number(h);
+    return `${hour % 12 === 0 ? 12 : hour % 12}:${m} ${hour < 12 ? 'AM' : 'PM'}`;
+  });
+}
+
 vi.mock('../../acp/sessions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../acp/sessions')>()),
   acpGetSessionListItem: vi.fn(),
@@ -92,7 +100,7 @@ describe('SessionRail collapsed', () => {
 
   it('labels each status as §4.7 does, in its own solid fill', () => {
     const cases: [SessionLoop, string, string][] = [
-      [asLoop(waitingRecord()), 'Next tick 22:51', 'accent'],
+      [asLoop(waitingRecord()), 'Next tick 10:51 PM', 'accent'],
       [
         asLoop(loopRecord(), 'waiting_turn', { kind: 'reviewers', n: 4 }),
         "Next tick after goose's check of tick 4",
@@ -203,7 +211,7 @@ describe('the Loop tab', () => {
     );
     expect(screen.getByTestId('loop-status-chip')).toHaveTextContent('Running');
     expect(screen.getByTestId('loop-line-two')).toHaveTextContent(
-      'every 10 min · tick 5 · since 22:00 · 22m 54s · 40K tokens'
+      'every 10 min · tick 5 · since 10:00 PM · 22m 54s · 40K tokens'
     );
     expect(screen.getByTestId('loop-check-line')).toHaveTextContent(
       'Check: node scripts/validate_users.js'
@@ -293,7 +301,7 @@ describe('the tick ledger', () => {
       '2',
       '1',
     ]);
-    expect(screen.getByTestId('loop-now')).toHaveTextContent('Tick 5 · started 22:41 · 2m');
+    expect(screen.getByTestId('loop-now')).toHaveTextContent('Tick 5 · started 10:41 PM · 2m');
   });
 
   it("lists each tick's files through the same sessionChanges over that tick's messages", () => {
@@ -318,7 +326,7 @@ describe('the tick ledger', () => {
   it('collapses a quiet tick to one line with the exact words', () => {
     openWaiting();
     expect(within(row(4)).getByTestId('loop-tick-quiet')).toHaveTextContent(
-      '22:31 · no write or edit outside the state file · check the svc- account format against kickoff.md'
+      '10:31 PM · no write or edit outside the state file · check the svc- account format against kickoff.md'
     );
     expect(within(row(3)).queryByTestId('loop-tick-quiet')).not.toBeInTheDocument();
   });
@@ -476,7 +484,8 @@ describe('the NOW block, one case per status and reason of the fixture (§8.4)',
       });
       fireEvent.click(screen.getByTestId('loop-rail-pill'));
       const now = screen.getByTestId('loop-now');
-      expect(now.textContent, c.name).toBe(c.expect.text);
+      // The fixture pins goosed's HH:MM; the rail says each time in the chat's clock (Q-316).
+      expect(now.textContent, c.name).toBe(inChatClock(c.expect.text));
       const block = now.parentElement!;
       for (const label of actions[c.status] ?? []) {
         expect(

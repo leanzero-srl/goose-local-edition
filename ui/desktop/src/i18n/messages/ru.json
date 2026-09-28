@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "после вашего хода"
   },
+  "loops.origin.first": {
+    "defaultMessage": "начат вами"
+  },
   "loops.origin.now": {
     "defaultMessage": "запущено вами"
   },
@@ -4382,11 +4385,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "по плану {gb} ГБ с накладными расходами"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Сначала заполните пустые поля ниже: пробный запуск проверяет то, что в них указано."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Сначала настройте разделение: пробный запуск проверяет указанные в нём Mac."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Preflight ещё не запускался. Пробный прогон проверяет каждый узел (доступность, память, модель, Python, канал Thunderbolt, порты) и распределяет слои по узлам, ничего не запуская."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Остановите разделение, чтобы выполнить пробный запуск: его ранги занимают порты и память, которые проверяет пробный запуск."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Давление критическое"
@@ -5319,7 +5331,7 @@
     "defaultMessage": "токенов промпта, читается {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "ток/с чтение, средняя половина запусков"
+    "defaultMessage": "ток/с чтение, средняя половина промптов"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s при чтении этого промпта"

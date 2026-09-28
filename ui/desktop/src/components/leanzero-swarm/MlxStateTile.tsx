@@ -146,7 +146,11 @@ const i18n = defineMessages({
     id: 'mlxStateTile.readRateMedian',
     defaultMessage: 'tok/s reading, {count, plural, one {# prompt} other {median of # prompts}}',
   },
-  readRange: { id: 'mlxStateTile.readRange', defaultMessage: 'tok/s reading, middle half of runs' },
+  // Reading is measured over the prompts read (readRateMedian), never "runs" (Q-314).
+  readRange: {
+    id: 'mlxStateTile.readRange',
+    defaultMessage: 'tok/s reading, middle half of prompts',
+  },
   promptSize: {
     id: 'mlxStateTile.promptSize',
     defaultMessage: 'prompt tokens, reading for {elapsed}',

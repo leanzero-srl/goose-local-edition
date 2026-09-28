@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "setelah giliran Anda"
   },
+  "loops.origin.first": {
+    "defaultMessage": "dimulai oleh Anda"
+  },
   "loops.origin.now": {
     "defaultMessage": "dijalankan oleh Anda"
   },
@@ -4382,11 +4385,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "direncanakan {gb} GB dengan overhead"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Isi dulu kolom kosong di bawah: uji coba memeriksa apa yang disebutkannya."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Siapkan pembagian dulu: uji coba memeriksa Mac yang disebutkannya."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Belum ada preflight yang dijalankan. Uji coba memeriksa setiap node (keterjangkauan, memori, model, Python, tautan Thunderbolt, port) dan merencanakan lapisan per node tanpa meluncurkan apa pun."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Hentikan pembagian untuk menjalankan uji coba: rank-nya memakai port dan memori yang diperiksa uji coba."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Tekanan kritis"
@@ -5319,7 +5331,7 @@
     "defaultMessage": "token prompt, dibaca selama {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s membaca, separuh tengah dari run"
+    "defaultMessage": "tok/s membaca, separuh tengah dari prompt"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s membaca prompt ini"

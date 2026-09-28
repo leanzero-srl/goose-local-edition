@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "dopo il tuo turno"
   },
+  "loops.origin.first": {
+    "defaultMessage": "avviato da te"
+  },
   "loops.origin.now": {
     "defaultMessage": "avviato da te"
   },
@@ -4382,11 +4385,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "pianificati {gb} GB con overhead"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Compila prima i campi vuoti qui sotto: una prova a vuoto controlla ciò che indicano."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Configura prima la suddivisione: una prova a vuoto controlla i Mac che indica."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Nessun preflight è stato ancora eseguito. Una prova a secco controlla ogni nodo (raggiungibilità, memoria, il modello, Python, il collegamento Thunderbolt, le porte) e pianifica gli strati per nodo senza avviare nulla."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Ferma la suddivisione per eseguire una prova a vuoto: i suoi rank occupano le porte e la memoria che la prova controlla."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Pressione critica"
@@ -5319,7 +5331,7 @@
     "defaultMessage": "token del prompt, in lettura da {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s in lettura, metà centrale delle esecuzioni"
+    "defaultMessage": "tok/s in lettura, metà centrale dei prompt"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s leggendo questo prompt"

@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "sıran bittikten sonra"
   },
+  "loops.origin.first": {
+    "defaultMessage": "senin başlattığın"
+  },
   "loops.origin.now": {
     "defaultMessage": "senin tarafından çalıştırıldı"
   },
@@ -4382,11 +4385,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "planlanan {gb} GB (ek yük dahil)"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Önce aşağıdaki boş alanları doldurun: deneme çalıştırması onların belirttiğini denetler."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Önce bölmeyi kurun: deneme çalıştırması onun adlandırdığı Mac'leri denetler."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Henüz preflight çalıştırılmadı. Deneme çalıştırması her düğümü (erişilebilirlik, bellek, model, Python, Thunderbolt bağlantısı, bağlantı noktaları) denetler ve hiçbir şey başlatmadan katmanları düğümlere göre planlar."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Deneme çalıştırması için bölmeyi durdurun: rank'leri deneme çalıştırmasının denetlediği portları ve belleği tutuyor."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Baskı kritik"
@@ -5319,7 +5331,7 @@
     "defaultMessage": "istem tokenı, {elapsed} süredir okunuyor"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s okuma, çalıştırmaların orta yarısı"
+    "defaultMessage": "tok/s okuma, istemlerin orta yarısı"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (bu istemi okuma)"
