@@ -291,7 +291,7 @@
     "defaultMessage": "जवाब की जाँच हो रही है"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "यादों के लिए टर्न की समीक्षा हो रही है"
+    "defaultMessage": "यादों के लिए समीक्षा हो रही है"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "जाँच रहा है"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "समीक्षा"
+    "defaultMessage": "यादों के लिए समीक्षा हो रही है"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "जाँच रहा है"
@@ -5931,7 +5931,7 @@
     "defaultMessage": "इस चैट के लिए {model} छोड़ देता है"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "goose का सहायक कॉल चल रहा है"
+    "defaultMessage": "goose के अपने काम में व्यस्त"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "दूसरा काम कर रहा है"
@@ -7813,6 +7813,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "प्रदाता कनेक्शन पर ध्यान देने की आवश्यकता है"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "विवरण"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {मॉडल के सर्वर ने यह अनुरोध अस्वीकार कर दिया} auth {प्रदाता ने goose के क्रेडेंशियल स्वीकार नहीं किए} rate_limit {प्रदाता सीमित कर रहा है कि goose कितनी बार पूछ सकता है} server {जवाब देते समय मॉडल का सर्वर विफल हो गया} network {goose का मॉडल से कनेक्शन टूट गया} context_length {यह बातचीत इस मॉडल के लिए बहुत लंबी है} not_implemented {मॉडल इस अनुरोध का समर्थन नहीं करता} endpoint_not_found {मॉडल के सर्वर पर इस अनुरोध के लिए कोई एंडपॉइंट नहीं है} execution {goose यह अनुरोध नहीं भेज सका} other {मॉडल ने एक त्रुटि लौटाई}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "वही अनुरोध दोबारा भेजने पर तब तक यही विफलता होगी जब तक कारण ठीक न हो।"
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "फिर से प्रयास करें"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "यह अपने आप ठीक हो सकता है — थोड़ी देर में फिर भेजें।"
   },
   "providerGrid.addProvider": {
     "defaultMessage": "प्रदाता जोड़ें"
@@ -10384,6 +10399,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "चल रहे अनुरोध पूरे होने तक कतार में — उनके साथ जुड़ने के लिए मेमोरी में जगह नहीं"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "इस गति से लगभग {left} बाकी"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "अब तक पढ़ा गया प्रॉम्प्ट"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "{total} में से {done} टोकन पढ़े गए"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} प्रॉम्प्ट टोकन, {elapsed} से पढ़ा जा रहा है"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "आपका प्रॉम्प्ट पढ़ा जा रहा है"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "मॉडल के पहले शब्दों की प्रतीक्षा"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "मॉडल के पहले शब्दों की प्रतीक्षा · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "अपडेट बैकग्राउंड में अपने आप डाउनलोड हो जाएगा."

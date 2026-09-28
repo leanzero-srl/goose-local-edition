@@ -131,6 +131,39 @@ export function promptProgress(
   lead: MlxLiveRequest | null = null
 ): { done: number; total: number } | null {
   const r = lead ? (lead.phase === 'prefill' ? lead : undefined) : readingRequest(stats);
-  if (!r || r.prefilledTokens == null || !r.promptTokens) return null;
+  return r ? readProgressOf(r) : null;
+}
+
+function readProgressOf(r: MlxLiveRequest): { done: number; total: number } | null {
+  if (r.prefilledTokens == null || !r.promptTokens) return null;
   return { done: Math.min(r.prefilledTokens, r.promptTokens), total: r.promptTokens };
+}
+
+/**
+ * A chat's turn while its prompt is read, in the figures the card leads with for it (Q-301 — the
+ * chat's own working row repeats them): the prompt's size, how long it has been read, how far in
+ * (`promptProgress`'s rule), the rate it is read at NOW (the request's own prefill rate — the
+ * card's "tok/s reading this prompt"), and the time left AT THAT RATE. Every figure is one the
+ * engine measured; one it does not report is null, and with no live rate or no progress there is
+ * no time left — never a guessed rate, never a guessed share.
+ */
+export interface PromptRead {
+  tokens: number | null;
+  elapsedS: number;
+  progress: { done: number; total: number } | null;
+  tps: number | null;
+  leftS: number | null;
+}
+
+export function promptRead(lead: MlxLiveRequest): PromptRead | null {
+  if (requestActivity(lead) !== 'prefill') return null;
+  const progress = readProgressOf(lead);
+  const tps = lead.promptTps != null && lead.promptTps > 0 ? lead.promptTps : null;
+  return {
+    tokens: lead.promptTokens,
+    elapsedS: lead.elapsedS ?? 0,
+    progress,
+    tps,
+    leftS: progress && tps ? (progress.total - progress.done) / tps : null,
+  };
 }

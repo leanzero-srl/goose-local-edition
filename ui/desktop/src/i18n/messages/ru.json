@@ -291,7 +291,7 @@
     "defaultMessage": "Проверка ответа"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "Разбор хода для воспоминаний"
+    "defaultMessage": "Разбор для воспоминаний"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "Проверка"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "Разбор"
+    "defaultMessage": "Разбор для воспоминаний"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "Проверка"
@@ -5931,7 +5931,7 @@
     "defaultMessage": "Уходит с {model} в этом чате"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "Идёт вспомогательный вызов goose"
+    "defaultMessage": "Занят собственной работой goose"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "Обслуживает другую работу"
@@ -7813,6 +7813,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "Подключения провайдеров требуют внимания"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "Подробности"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {Сервер модели отклонил этот запрос} auth {Провайдер не принял учётные данные goose} rate_limit {Провайдер ограничивает, как часто goose может спрашивать} server {Сервер модели дал сбой во время ответа} network {goose потерял соединение с моделью} context_length {Разговор слишком длинный для этой модели} not_implemented {Модель не поддерживает этот запрос} endpoint_not_found {У сервера модели нет конечной точки для этого запроса} execution {goose не смог отправить этот запрос} other {Модель вернула ошибку}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "Тот же запрос снова завершится так же, пока причина не устранена."
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "Это может пройти само — отправьте ещё раз чуть позже."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "Добавить провайдера"
@@ -10384,6 +10399,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "В очереди, пока не завершатся текущие запросы — нет места в памяти, чтобы присоединиться"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "осталось около {left} при этой скорости"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "Прочитанная часть промпта"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "Прочитано {done} из {total} токенов"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} токенов промпта, чтение уже {elapsed}"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "Чтение вашего промпта"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "Ожидание первых слов модели"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "Ожидание первых слов модели · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Обновление будет автоматически скачано в фоновом режиме."

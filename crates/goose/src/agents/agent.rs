@@ -37,8 +37,8 @@ use crate::context_mgmt::{
     check_if_compaction_needed, compact_messages, DEFAULT_COMPACTION_THRESHOLD,
 };
 use crate::conversation::message::{
-    ActionRequiredData, InferenceMetadata, Message, MessageContent, ProviderMetadata,
-    SystemNotificationType, ToolRequest,
+    ActionRequiredData, InferenceMetadata, Message, MessageContent, ProviderErrorNotice,
+    ProviderMetadata, SystemNotificationType, ToolRequest,
 };
 use crate::conversation::{debug_conversation_fix, fix_conversation, Conversation};
 use crate::mcp_utils::ToolResult;
@@ -2933,13 +2933,21 @@ impl Agent {
                             crate::posthog::emit_error(provider_err.telemetry_type(), &provider_err.to_string());
                             error!("Error: {}", provider_err);
                             let split = split_record::split_record_now(provider_call_started_ms);
+                            // Q-302: the class decides the advice, and the notice rides the
+                            // message's metadata so a client paints it without reading the text.
+                            let notice = ProviderErrorNotice::of(provider_err);
+                            let closer = if notice.transient {
+                                split_record::TRANSIENT_ERROR_CLOSER
+                            } else {
+                                split_record::PERMANENT_ERROR_CLOSER
+                            };
                             let message = Message::assistant().with_text(
                                 split_record::failed_turn_text(
                                     &format!("Ran into this error: {provider_err}."),
                                     split.as_deref(),
-                                    "Please retry if you think this is a transient or recoverable error.",
+                                    closer,
                                 )
-                            ).user_only();
+                            ).user_only().with_provider_error(notice);
                             messages_to_add.push(message.clone());
                             yield AgentEvent::Message(message);
                             break;

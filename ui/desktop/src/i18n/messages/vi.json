@@ -291,7 +291,7 @@
     "defaultMessage": "Đang kiểm tra câu trả lời"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "Đang xem lại lượt để ghi nhớ"
+    "defaultMessage": "Đang xem lại để ghi nhớ"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "Đang kiểm tra"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "Đang xem lại"
+    "defaultMessage": "Đang xem lại để ghi nhớ"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "Đang kiểm tra"
@@ -5931,7 +5931,7 @@
     "defaultMessage": "Rời {model} cho cuộc trò chuyện này"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "Lệnh gọi phụ của goose đang chạy"
+    "defaultMessage": "Đang bận việc riêng của goose"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "Đang phục vụ việc khác"
@@ -7813,6 +7813,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "Kết nối nhà cung cấp cần được kiểm tra"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "Chi tiết"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {Máy chủ của mô hình đã từ chối yêu cầu này} auth {Nhà cung cấp không chấp nhận thông tin xác thực của goose} rate_limit {Nhà cung cấp đang giới hạn tần suất goose có thể hỏi} server {Máy chủ của mô hình gặp lỗi khi trả lời} network {goose mất kết nối với mô hình} context_length {Cuộc trò chuyện quá dài cho mô hình này} not_implemented {Mô hình không hỗ trợ yêu cầu này} endpoint_not_found {Máy chủ của mô hình không có endpoint cho yêu cầu này} execution {goose không gửi được yêu cầu này} other {Mô hình trả về lỗi}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "Gửi lại cùng yêu cầu sẽ thất bại y như vậy cho đến khi nguyên nhân được khắc phục."
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "Lỗi này có thể tự hết — hãy gửi lại sau giây lát."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "Thêm nhà cung cấp"
@@ -10384,6 +10399,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "Đang xếp hàng cho tới khi các yêu cầu đang chạy xong — không đủ bộ nhớ để tham gia cùng"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "còn khoảng {left} với tốc độ này"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "Phần prompt đã đọc"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "Đã đọc {done} trên {total} token"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} token prompt, đang đọc được {elapsed}"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "Đang đọc prompt của bạn"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "Đang chờ những từ đầu tiên của mô hình"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "Đang chờ những từ đầu tiên của mô hình · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose sẽ tải bản cập nhật ở chế độ nền và cài đặt vào lần tiếp theo khi bạn thoát hoặc khởi động lại."

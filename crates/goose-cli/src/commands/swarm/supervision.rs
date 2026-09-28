@@ -829,14 +829,16 @@ pub(super) fn tail_chars(s: &str, max: usize) -> String {
 }
 
 /// The closing sentences of the assistant-authored ERROR texts in agent.rs's provider-error arms —
-/// the refusal, the NetworkError arm, and the generic provider-error arm. These are the ONLY texts
+/// the refusal, the NetworkError arm, and the generic provider-error arm (whose closer follows
+/// the error's class since Q-302: transient, or permanent). These are the ONLY texts
 /// that reach the answer channel without the model having said them, so "does `last_text` end with
 /// one of these" is a deterministic test for "this is a transport/agent error, not the model's
 /// answer". Matched as suffixes because `last_text` is a 400-char TAIL and each of these sentences
 /// is what the agent appends LAST before breaking the stream.
-pub(super) const AGENT_ERROR_CLOSERS: [&str; 3] = [
+pub(super) const AGENT_ERROR_CLOSERS: [&str; 4] = [
     "Please resend your message to try again.",
-    "Please retry if you think this is a transient or recoverable error.",
+    goose::agents::split_record::TRANSIENT_ERROR_CLOSER,
+    goose::agents::split_record::PERMANENT_ERROR_CLOSER,
     "resending this conversation is likely to be refused again.",
 ];
 
@@ -1332,6 +1334,22 @@ mod reply_tests {
             "next ends at the judge's own words, not the engine's: {}",
             out.next_action
         );
+    }
+
+    /// Q-302: the generic provider-error arm closes a permanent class (a 4xx) without retry
+    /// advice. That text is still the agent's own error, never a verdict the judge said.
+    #[test]
+    fn a_permanent_provider_error_is_still_an_error_text() {
+        let permanent = format!(
+            "Ran into this error: Request failed: Bad request (400): Invalid model identifier \
+             'qwen3-omni-30b'.\n\n{}",
+            goose::agents::split_record::PERMANENT_ERROR_CLOSER
+        );
+        assert_eq!(said_kind_of(&permanent), "error");
+        assert!(matches!(
+            supervised_reply_text(&permanent),
+            Err(SupervisedReplyError::ProviderError(_))
+        ));
     }
 
     /// The r2 provider-error shape (moved with the `supervision_reply` absorption) and two normal

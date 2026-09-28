@@ -32,6 +32,9 @@ export function applyContentChunk(
   const existing = findMessageForChunk(state, role, messageId, gooseMeta.created);
 
   if (existing) {
+    if (gooseMeta.providerError) {
+      existing.metadata = { ...existing.metadata, providerError: gooseMeta.providerError };
+    }
     const lastContent = existing.content[existing.content.length - 1];
     if (reconcileLocalSteerTextChunk(state, existing, content, gooseMeta.steer)) {
       return messagesChangeWithLocalSteerConfirmation(state, existing, gooseMeta.steer);
@@ -56,6 +59,7 @@ export function applyContentChunk(
       metadata: {
         ...DEFAULT_VISIBLE_MESSAGE_METADATA,
         ...(gooseMeta.steer ? { steer: true } : {}),
+        ...(gooseMeta.providerError ? { providerError: gooseMeta.providerError } : {}),
         ...(loopTick ? { loopTick } : {}),
       },
     });
@@ -88,6 +92,9 @@ export function applyThoughtChunk(
   const existing = findMessageForChunk(state, 'assistant', messageId, gooseMeta.created);
 
   if (existing) {
+    if (gooseMeta.providerError) {
+      existing.metadata = { ...existing.metadata, providerError: gooseMeta.providerError };
+    }
     const lastContent = existing.content[existing.content.length - 1];
     if (lastContent?.type === 'thinking') {
       lastContent.thinking += update.content.text;

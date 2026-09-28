@@ -98,9 +98,7 @@ fn is_permanent_request_failure(message: &str) -> bool {
 
 pub fn should_retry(error: &ProviderError, config: &RetryConfig) -> bool {
     match error {
-        ProviderError::RateLimitExceeded { .. }
-        | ProviderError::ServerError(_)
-        | ProviderError::NetworkError(_) => true,
+        e if e.is_transient() => true,
         ProviderError::RequestFailed(message) if is_permanent_request_failure(message) => false,
         ProviderError::RequestFailed(_) => !config.transient_only,
         _ => false,

@@ -22,8 +22,8 @@ use crate::config::paths::Paths;
 use crate::config::permission::PermissionManager;
 use crate::config::{Config, GooseMode};
 use crate::conversation::message::{
-    ActionRequiredData, Message, MessageContent, SystemNotificationContent, SystemNotificationType,
-    ToolRequest,
+    ActionRequiredData, Message, MessageContent, ProviderErrorNotice, SystemNotificationContent,
+    SystemNotificationType, ToolRequest,
 };
 use crate::execution::manager::{AgentManager, AgentManagerGetResult, RuntimeContext};
 use crate::mcp_utils::ToolResult;
@@ -1446,15 +1446,18 @@ impl GooseAcpAgent {
         message_created: i64,
         role: &Role,
         steer: bool,
+        provider_error: Option<&ProviderErrorNotice>,
         agent: &Arc<Agent>,
         session: &mut GooseAcpSession,
         cx: &ConnectionTo<Client>,
     ) -> Result<(), agent_client_protocol::Error> {
         match content_item {
             MessageContent::Text(text) => {
+                let mut meta = message_update_meta(message_id, message_created, steer);
+                insert_provider_error_meta(&mut meta, provider_error);
                 let chunk =
                     ContentChunk::new(ContentBlock::Text(TextContent::new(text.text.clone())))
-                        .meta(message_update_meta(message_id, message_created, steer));
+                        .meta(meta);
                 let update = match role {
                     Role::User => SessionUpdate::UserMessageChunk(chunk),
                     Role::Assistant => SessionUpdate::AgentMessageChunk(chunk),
@@ -2313,7 +2316,27 @@ fn replay_message_goose_meta(message: &Message) -> serde_json::Map<String, serde
     if message.metadata.steer {
         goose.insert("steer".to_string(), serde_json::json!(true));
     }
+    if let Some(notice) = &message.metadata.provider_error {
+        goose.insert(
+            PROVIDER_ERROR_META_KEY.to_string(),
+            serde_json::json!(notice),
+        );
+    }
     goose
+}
+
+/// Q-302: the provider error a notice ends a turn on, beside its text chunk, so a client paints
+/// the failure by its class instead of matching the text.
+const PROVIDER_ERROR_META_KEY: &str = "providerError";
+
+fn insert_provider_error_meta(meta: &mut Meta, notice: Option<&ProviderErrorNotice>) {
+    let Some(notice) = notice else { return };
+    if let Some(serde_json::Value::Object(goose)) = meta.get_mut("goose") {
+        goose.insert(
+            PROVIDER_ERROR_META_KEY.to_string(),
+            serde_json::json!(notice),
+        );
+    }
 }
 
 fn merge_replay_message_meta(meta: Option<Meta>, message: &Message) -> Meta {
@@ -3142,6 +3165,7 @@ impl GooseAcpAgent {
                                 message.created,
                                 &message.role,
                                 message.metadata.steer,
+                                message.metadata.provider_error.as_ref(),
                                 &agent,
                                 session,
                                 cx,
@@ -4703,6 +4727,44 @@ print(\"hello, world\")
             })),
             "replay must carry the steer marker so the boundary survives reload"
         );
+    }
+
+    /// Q-302: the provider error rides the chunk live and on replay, so a reopened chat paints the
+    /// same notice the live one did.
+    #[test]
+    fn a_provider_error_notice_rides_the_chunk_live_and_on_replay() {
+        let error = goose_providers::errors::ProviderError::RequestFailed(
+            goose_providers::errors::http_failure_text(
+                "Resource not found (404)",
+                "http://127.0.0.1:8091/v1/chat/completions",
+                "Only 'text' content type is supported.",
+            ),
+        );
+        let notice = ProviderErrorNotice::of(&error);
+        let expected = serde_json::json!({
+            "class": "request",
+            "transient": false,
+            "said": "Only 'text' content type is supported.",
+            "detail": "Request failed: Resource not found (404) at \
+                       http://127.0.0.1:8091/v1/chat/completions: Only 'text' content type is \
+                       supported.",
+        });
+
+        let mut live = message_update_meta(Some("msg_err"), 1_700_000_000, false);
+        insert_provider_error_meta(&mut live, Some(&notice));
+        assert_eq!(live["goose"]["providerError"], expected);
+
+        let message = Message::assistant()
+            .with_id("msg_err")
+            .with_text("Ran into this error: …")
+            .user_only()
+            .with_provider_error(notice);
+        let replayed = merge_replay_message_meta(None, &message);
+        assert_eq!(replayed["goose"]["providerError"], expected);
+
+        let mut plain = message_update_meta(Some("msg_ok"), 1_700_000_000, false);
+        insert_provider_error_meta(&mut plain, None);
+        assert!(plain["goose"].get("providerError").is_none());
     }
 
     #[test]

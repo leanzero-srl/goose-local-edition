@@ -32,6 +32,9 @@ import { takeSplitRecord } from './chatServedBy/splitRecord';
 import { splitNetworkCut } from './noNodeNotice/parseNetworkCut';
 import SplitCutNotice from './noNodeNotice/SplitCutNotice';
 import { useElicitationIsPinned } from './sessionActivity/sessionActivityStore';
+import ProviderErrorNotice, {
+  splitProviderErrorAnswer,
+} from './providerErrorNotice/ProviderErrorNotice';
 
 interface GooseMessageProps {
   sessionId: string;
@@ -79,13 +82,21 @@ export default function GooseMessage({
     () => (linkDrop || noNode || isStreaming || !splitRecord ? null : splitNetworkCut(fullText)),
     [linkDrop, noNode, isStreaming, splitRecord, fullText]
   );
+  // Any other provider error ends the turn with its facts on the message's metadata (Q-302): the
+  // answer before it renders as written, the error as a notice in the error colour below it.
+  const providerError =
+    linkDrop || noNode || networkCut || isStreaming
+      ? null
+      : (message.metadata.providerError ?? null);
   const displayText = linkDrop
     ? linkDrop.answer
     : noNode
       ? noNode.answer
       : networkCut
         ? networkCut.answer
-        : fullText;
+        : providerError
+          ? splitProviderErrorAnswer(fullText)
+          : fullText;
   const thinkingContent = getThinkingContent(message);
 
   const timestamp = useMemo(() => formatMessageTimestamp(message.created), [message.created]);
@@ -170,7 +181,7 @@ export default function GooseMessage({
     return null;
   }, [isStreaming, message.content, displayText, noNode, answered]);
   const failureRetryText = useMemo(() => {
-    if (!failure && !linkDrop && !noNode && !networkCut) return null;
+    if (!failure && !linkDrop && !noNode && !networkCut && !providerError) return null;
     for (let i = messageIndex - 1; i >= 0; i--) {
       if (messages[i].role !== 'user') continue;
       const { textContent, imagePaths: userImages } = getTextAndImageContent(messages[i]);
@@ -178,7 +189,7 @@ export default function GooseMessage({
       return userImages.length === 0 ? textContent : null;
     }
     return null;
-  }, [failure, linkDrop, noNode, networkCut, messages, messageIndex]);
+  }, [failure, linkDrop, noNode, networkCut, providerError, messages, messageIndex]);
   const live = messageIndex === messages.length - 1;
   const createdMs = message.created * 1000;
 
@@ -242,10 +253,19 @@ export default function GooseMessage({
     />
   );
 
-  // The drop (or the cut) arrived as its own message: nothing was written, so the notice is the
-  // message.
+  const providerErrorNotice = providerError && !failure && (
+    <ProviderErrorNotice
+      notice={providerError}
+      live={live}
+      retryText={failureRetryText}
+      onRetry={append}
+    />
+  );
+
+  // The drop (or the cut, or the provider error) arrived as its own message: nothing was written,
+  // so the notice is the message.
   if (
-    (linkDrop || splitCutNotice) &&
+    (linkDrop || splitCutNotice || providerErrorNotice) &&
     !displayText.trim() &&
     imagePaths.length === 0 &&
     toolRequests.length === 0
@@ -256,6 +276,7 @@ export default function GooseMessage({
           {thinkingContent && <ThinkingContent content={thinkingContent} isExpanded={false} />}
           {linkDropNotice}
           {splitCutNotice}
+          {providerErrorNotice}
           <div className="text-xs font-mono text-text-secondary pt-1">{timestamp}</div>
         </div>
       </div>
@@ -364,6 +385,7 @@ export default function GooseMessage({
         {linkDropNotice}
         {cutNotice}
         {splitCutNotice}
+        {providerErrorNotice}
       </div>
     </div>
   );

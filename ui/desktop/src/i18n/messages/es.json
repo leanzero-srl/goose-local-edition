@@ -291,7 +291,7 @@
     "defaultMessage": "Comprobando la respuesta"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "Revisando el turno para recuerdos"
+    "defaultMessage": "Revisando para recuerdos"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "Comprobando"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "Revisando"
+    "defaultMessage": "Revisando para recuerdos"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "Comprobando"
@@ -5931,7 +5931,7 @@
     "defaultMessage": "Deja {model} en este chat"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "Llamada auxiliar de goose en curso"
+    "defaultMessage": "Ocupado con trabajo propio de goose"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "Atendiendo otro trabajo"
@@ -7813,6 +7813,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "Las conexiones de proveedores necesitan atención"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "Detalles"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {El servidor del modelo rechazó esta solicitud} auth {El proveedor no aceptó las credenciales de goose} rate_limit {El proveedor limita la frecuencia con la que goose puede preguntar} server {El servidor del modelo falló al responder} network {goose perdió la conexión con el modelo} context_length {La conversación es demasiado larga para este modelo} not_implemented {El modelo no admite esta solicitud} endpoint_not_found {El servidor del modelo no tiene un endpoint para esta solicitud} execution {goose no pudo enviar esta solicitud} other {El modelo devolvió un error}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "Enviar la misma solicitud de nuevo fallará igual hasta que se corrija la causa."
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "Esto puede pasar solo: vuelve a enviarlo en un momento."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "Añadir proveedor"
@@ -10384,6 +10399,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "En cola hasta que terminen las solicitudes en curso — no hay memoria para unirse a ellas"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "quedan unos {left} a este ritmo"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "Prompt leído hasta ahora"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "{done} de {total} tokens leídos"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} tokens de prompt, leyendo desde hace {elapsed}"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "Leyendo tu prompt"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "Esperando las primeras palabras del modelo"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "Esperando las primeras palabras del modelo · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "La actualización se descargará automáticamente en segundo plano."

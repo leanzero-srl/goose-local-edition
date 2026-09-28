@@ -291,7 +291,7 @@
     "defaultMessage": "Memeriksa balasan"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "Meninjau giliran untuk memori"
+    "defaultMessage": "Meninjau untuk memori"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "Memeriksa"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "Meninjau"
+    "defaultMessage": "Meninjau untuk memori"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "Memeriksa"
@@ -5931,7 +5931,7 @@
     "defaultMessage": "Meninggalkan {model} untuk obrolan ini"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "Panggilan pembantu goose berjalan"
+    "defaultMessage": "Sibuk dengan pekerjaan goose sendiri"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "Melayani pekerjaan lain"
@@ -7813,6 +7813,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "Koneksi penyedia memerlukan perhatian"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "Detail"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {Server model menolak permintaan ini} auth {Penyedia tidak menerima kredensial goose} rate_limit {Penyedia membatasi seberapa sering goose dapat bertanya} server {Server model gagal saat menjawab} network {goose kehilangan koneksi ke model} context_length {Percakapan terlalu panjang untuk model ini} not_implemented {Model tidak mendukung permintaan ini} endpoint_not_found {Server model tidak punya endpoint untuk permintaan ini} execution {goose tidak dapat mengirim permintaan ini} other {Model mengembalikan galat}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "Mengirim permintaan yang sama lagi akan gagal dengan cara yang sama sampai penyebabnya diperbaiki."
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "Ini bisa berlalu sendiri — kirim lagi sebentar lagi."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "Tambah Penyedia"
@@ -10384,6 +10399,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "Mengantre sampai permintaan yang berjalan selesai — tidak ada ruang memori untuk bergabung"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "sekitar {left} lagi pada laju ini"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "Prompt yang sudah dibaca"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "{done} dari {total} token dibaca"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} token prompt, dibaca selama {elapsed}"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "Membaca prompt Anda"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "Menunggu kata pertama model"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "Menunggu kata pertama model · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan mengunduh pembaruan di latar belakang dan menginstalnya saat Anda keluar atau memulai ulang berikutnya."

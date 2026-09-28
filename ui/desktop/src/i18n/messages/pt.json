@@ -291,7 +291,7 @@
     "defaultMessage": "Verificando a resposta"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "Revisando o turno para memórias"
+    "defaultMessage": "Revisando para memórias"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "Verificando"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "Revisando"
+    "defaultMessage": "Revisando para memórias"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "Verificando"
@@ -5931,7 +5931,7 @@
     "defaultMessage": "Deixa {model} nesta conversa"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "Chamada auxiliar do goose em execução"
+    "defaultMessage": "Ocupado com o trabalho do próprio goose"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "Atendendo outro trabalho"
@@ -7813,6 +7813,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "As conexões dos provedores precisam de atenção"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "Detalhes"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {O servidor do modelo recusou esta solicitação} auth {O provedor não aceitou as credenciais do goose} rate_limit {O provedor está limitando a frequência com que o goose pode perguntar} server {O servidor do modelo falhou ao responder} network {O goose perdeu a conexão com o modelo} context_length {A conversa é longa demais para este modelo} not_implemented {O modelo não suporta esta solicitação} endpoint_not_found {O servidor do modelo não tem um endpoint para esta solicitação} execution {O goose não conseguiu enviar esta solicitação} other {O modelo retornou um erro}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "Enviar a mesma solicitação de novo falhará da mesma forma até a causa ser corrigida."
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "Tentar novamente"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "Isto pode passar sozinho — envie de novo daqui a pouco."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "Adicionar fornecedor"
@@ -10384,6 +10399,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "Na fila até as solicitações em andamento terminarem — sem espaço de memória para se juntar a elas"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "cerca de {left} restantes neste ritmo"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "Prompt lido até agora"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "{done} de {total} tokens lidos"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} tokens de prompt, lendo há {elapsed}"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "Lendo seu prompt"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "Aguardando as primeiras palavras do modelo"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "Aguardando as primeiras palavras do modelo · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "O Goose transferirá a atualização em segundo plano e instalá-la-á da próxima vez que sair ou reiniciar."

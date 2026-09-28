@@ -206,6 +206,47 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
     expect(screen.queryByTestId('chat-background-work')).toBeNull();
   }, 30_000);
 
+  it('Q-307: the memory review is one phrase on the row and under the reply', async () => {
+    Object.assign(window.electron, { getConfig: () => ({}) });
+    sessionsAcp.acpListSessions.mockResolvedValue({
+      sessions: [
+        {
+          id: 'review-1',
+          name: 'Portugal capital question',
+          workingDir: '/Users/me/api',
+          messageCount: 2,
+          createdAt: '2026-09-26T10:20:00Z',
+          updatedAt: '2026-09-26T10:23:00Z',
+          lastMessageAt: '2026-09-26T10:23:00Z',
+        },
+      ],
+      nextCursor: null,
+    });
+    seedSessionActivityForTests({
+      background: [
+        {
+          sessionId: 'review-1',
+          sessionName: 'Portugal capital question',
+          workingDir: '/Users/me/api',
+          kind: 'memoryReview' as const,
+          startedAt: '2026-09-26T10:26:57Z',
+        },
+      ],
+    });
+    render(
+      <IntlProvider locale="en" messages={{}}>
+        <MemoryRouter>
+          <SessionListView onSelectSession={vi.fn()} />
+          <BackgroundWorkLine sessionId="review-1" />
+        </MemoryRouter>
+      </IntlProvider>
+    );
+    const card = await screen.findByTestId('session-card-review-1');
+    const pill = within(card).getByTestId('session-background-pill');
+    expect(pill.textContent).toBe('Reviewing for memories');
+    expect(screen.getByTestId('chat-background-work').textContent).toBe('Reviewing for memories');
+  });
+
   // Session loops §8.6 (Q-228): a chat whose loop has not ended, between ticks.
   it('the Looping pill: solid fills, its words per loop state, nothing for an ended loop', async () => {
     const next = '2026-09-27T22:40:00Z';

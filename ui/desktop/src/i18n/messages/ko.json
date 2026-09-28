@@ -291,7 +291,7 @@
     "defaultMessage": "답변 확인 중"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "메모리를 위해 턴 검토 중"
+    "defaultMessage": "메모리를 위해 검토 중"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "확인 중"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "검토 중"
+    "defaultMessage": "메모리를 위해 검토 중"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "확인 중"
@@ -5931,7 +5931,7 @@
     "defaultMessage": "이 채팅에서 {model} 사용을 그만둡니다"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "goose 보조 호출 실행 중"
+    "defaultMessage": "goose 자체 작업 중"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "다른 작업 처리 중"
@@ -7813,6 +7813,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "제공업체 연결을 확인해야 합니다"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "세부 정보"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {모델 서버가 이 요청을 거부했습니다} auth {공급자가 goose의 자격 증명을 받아들이지 않았습니다} rate_limit {공급자가 goose의 요청 빈도를 제한하고 있습니다} server {모델 서버가 응답하는 중에 실패했습니다} network {goose가 모델과의 연결을 잃었습니다} context_length {이 대화는 이 모델에 비해 너무 깁니다} not_implemented {모델이 이 요청을 지원하지 않습니다} endpoint_not_found {모델 서버에 이 요청을 위한 엔드포인트가 없습니다} execution {goose가 이 요청을 보내지 못했습니다} other {모델이 오류를 반환했습니다}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "원인이 해결될 때까지 같은 요청을 다시 보내도 같은 방식으로 실패합니다."
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "일시적일 수 있습니다. 잠시 후 다시 보내세요."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "제공업체 추가"
@@ -10384,6 +10399,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "실행 중인 요청이 끝날 때까지 대기 중 — 합류할 메모리 공간이 없습니다"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "이 속도로 약 {left} 남음"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "지금까지 읽은 프롬프트"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "{total}개 중 {done}개 토큰 읽음"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "프롬프트 토큰 {tokens}개, {elapsed} 동안 읽는 중"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "프롬프트를 읽는 중"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "모델의 첫 단어를 기다리는 중"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "모델의 첫 단어를 기다리는 중 · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "업데이트는 백그라운드에서 자동으로 다운로드됩니다."

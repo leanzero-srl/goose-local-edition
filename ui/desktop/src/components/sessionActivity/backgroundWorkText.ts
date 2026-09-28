@@ -11,10 +11,7 @@ import { defineMessages } from '../../i18n';
  */
 const label = defineMessages({
   factCheck: { id: 'backgroundWork.factCheck', defaultMessage: 'Checking the reply' },
-  memoryReview: {
-    id: 'backgroundWork.memoryReview',
-    defaultMessage: 'Reviewing the turn for memories',
-  },
+  memoryReview: { id: 'backgroundWork.memoryReview', defaultMessage: 'Reviewing for memories' },
   title: { id: 'backgroundWork.title', defaultMessage: 'Naming the chat' },
   toolLabel: { id: 'backgroundWork.toolLabel', defaultMessage: 'Labeling tool calls' },
   compaction: { id: 'backgroundWork.compaction', defaultMessage: 'Compacting the conversation' },
@@ -34,7 +31,12 @@ const label = defineMessages({
 /** The one word a session row can spare beside its name. */
 const short = defineMessages({
   factCheck: { id: 'backgroundWork.short.factCheck', defaultMessage: 'Checking' },
-  memoryReview: { id: 'backgroundWork.short.memoryReview', defaultMessage: 'Reviewing' },
+  // Q-307: the row says what the chip and the line under the reply say — "Reviewing" alone read as
+  // a review of the answer.
+  memoryReview: {
+    id: 'backgroundWork.short.memoryReview',
+    defaultMessage: 'Reviewing for memories',
+  },
   title: { id: 'backgroundWork.short.title', defaultMessage: 'Naming' },
   toolLabel: { id: 'backgroundWork.short.toolLabel', defaultMessage: 'Labeling' },
   compaction: { id: 'backgroundWork.short.compaction', defaultMessage: 'Compacting' },

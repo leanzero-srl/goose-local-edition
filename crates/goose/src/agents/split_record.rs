@@ -27,6 +27,15 @@ use serde_json::json;
 /// The line's prefix. Mirrored by `ui/desktop/src/components/chatServedBy/splitRecord.ts`.
 pub const SPLIT_RECORD_MARKER: &str = "Split supervisor record: ";
 
+/// The closer of a provider error whose class a resend can outlive (`ProviderError::is_transient`).
+pub const TRANSIENT_ERROR_CLOSER: &str =
+    "Please retry if you think this is a transient or recoverable error.";
+
+/// The closer of every other provider error: the same request fails the same way (Q-302 — a
+/// 404 "Only 'text' content type is supported" was told to retry).
+pub const PERMANENT_ERROR_CLOSER: &str =
+    "Sending the same request again will fail the same way until its cause is fixed.";
+
 /// The failure text a failed turn saves: the error, then the split's record when there is one,
 /// then the closing sentence — always last.
 pub fn failed_turn_text(error: &str, record: Option<&str>, closer: &str) -> String {

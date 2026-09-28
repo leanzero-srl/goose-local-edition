@@ -1,6 +1,6 @@
 import type { ToolCall, ToolCallUpdate } from '@agentclientprotocol/sdk';
 import type { TokenState } from '../../types/chat';
-import type { Message, NotificationEvent } from '../../types/message';
+import type { Message, NotificationEvent, ProviderErrorNotice } from '../../types/message';
 
 export type AcpChatStateChange =
   | { type: 'messages'; messages: Message[] }
@@ -22,6 +22,7 @@ export interface GooseMessageMeta {
   messageId?: string;
   created?: number;
   steer?: boolean;
+  providerError?: ProviderErrorNotice;
 }
 
 export interface ToolIdentity {
@@ -63,7 +64,20 @@ export function getGooseMessageMeta(update: { _meta?: unknown }): GooseMessageMe
     created: typeof goose.created === 'number' ? goose.created : undefined,
     messageId: typeof goose.messageId === 'string' ? goose.messageId : undefined,
     steer: goose.steer === true ? true : undefined,
+    providerError: providerErrorOf(goose.providerError),
   };
+}
+
+/** The Q-302 notice when every field is there; a partial one is not a notice. */
+function providerErrorOf(value: unknown): ProviderErrorNotice | undefined {
+  if (!isRecord(value)) return undefined;
+  const { class: kind, transient, said, detail } = value;
+  return typeof kind === 'string' &&
+    typeof transient === 'boolean' &&
+    typeof said === 'string' &&
+    typeof detail === 'string'
+    ? { class: kind, transient, said, detail }
+    : undefined;
 }
 
 export function getGooseActiveRunId(update: { _meta?: unknown }): string | null | undefined {
