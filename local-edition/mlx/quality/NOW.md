@@ -83,7 +83,8 @@ Updated: 2026-09-28 20:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   "retry please all"; if they die again, re-send after 21:50.
 
 - 3.0.73 = /tmp/merge-073: Q-399/401 + Q-402 + Q-409 merged (5d149699b); Q-400+403 waits on the Q-403 lane
-  merging main (rank_wrapper.py conflict with Q-397 — resolved by its author, not by me); Q-406 still cutting.
+  merging main (rank_wrapper.py conflict with Q-397 — resolved by its author, not by me); Q-406 MERGED (13280e94d: own process groups, proof-gated
+  group kill, named TCC cause; #3r trace YES); Q-407 (goosed crash leaves commands running) cutting.
 
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.
