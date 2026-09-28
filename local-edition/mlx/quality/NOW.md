@@ -96,7 +96,8 @@ Updated: 2026-09-28 22:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - CI: red 6× 17:15–18:10 on three timing-flaky integration tests (Q-397's hold test ×4, needs-you superseded,
   link control Offline) → Q-420 cutting; green runs interleave.
 - BATCH 4 (→ 3.0.74): Q-417 DONE (worktree-agent-ad33799988ff81b4d: one servedModel() for single/split/remote;
-  also the split's running modelId was null); Q-407 (goosed crash leaves commands) cutting.
+  also the split's running modelId was null); Q-407 DONE (worktree-agent-a324bae2eb0f9de65 bb7c29e18: a pipe-watchdog
+  ends a dead goosed's command groups, start-time proven). Q-420 + Q-423 resumed.
 
 - OWNER DEMO (22:2x): a strategy 'Studio chat, split for heavy work' — chat on the Studio single, delegates on
   the split — built through the app's UI and exercised 3 cycles (switch stability measured) → DEMO-2026-09-28-strategy.
