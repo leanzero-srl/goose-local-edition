@@ -12,6 +12,10 @@ set -euo pipefail
 v=$1; repo=${REPO:-/Users/mihaiperdum/Projects/goose}/ui/desktop
 dmg="$repo/out/make/Goose-Swarm-$v.dmg"; app="$repo/out/Goose Swarm-darwin-arm64/Goose Swarm.app"
 MAIN='Goose Swarm.app/Contents/MacOS/Goose Swarm'
+# Q-241: the quit now waits for goosed to EXIT before the app does. Its worst case is the stop's
+# SIGKILL leg plus its give-up, 2 × GOOSED_SIGKILL_AFTER_MS (ui/desktop/src/gooseServe.ts, 66 s);
+# the happy path is seconds. A shorter wait would call a quit still in progress "did not quit".
+QUIT_WAIT=140
 grep -q ">>> DONE" ~/goose-builds/release-$v.log || { echo "build $v has not finished (no >>> DONE)"; exit 2; }
 [ -f "$dmg" ] && [ -d "$app" ] || { echo "missing $dmg or $app"; exit 2; }
 built=$(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString)
@@ -21,7 +25,7 @@ built=$(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString)
 scp -q "$dmg" workhorse-tb:/tmp/gs-$v.dmg
 ssh workhorse "set -e; mp=\$(hdiutil attach -nobrowse -readonly /tmp/gs-$v.dmg | grep -o '/Volumes/.*' | head -1); rm -rf '/Applications/Goose Swarm.new.app'; ditto \"\$mp/Goose Swarm.app\" '/Applications/Goose Swarm.new.app'; hdiutil detach -quiet \"\$mp\"; rm /tmp/gs-$v.dmg
 osascript -e 'quit app \"Goose Swarm\"' 2>/dev/null || true
-for i in \$(seq 1 60); do pgrep -f '$MAIN' >/dev/null || break; sleep 1; done
+for i in \$(seq 1 $QUIT_WAIT); do pgrep -f '$MAIN' >/dev/null || break; sleep 1; done
 if pgrep -f '$MAIN' >/dev/null; then echo \"studio: the old app did not quit (pid \$(pgrep -f '$MAIN' | head -1)) — NOT swapping\"; exit 3; fi
 for p in \$(ps -Ao pid=,ppid=,args= | awk '\$2==1 && /Goose Swarm.app\\/Contents\\/Resources\\/bin\\/(goose serve|tailscaled --tun)/ {print \$1}'); do echo \"studio: reaping orphan pid \$p\"; kill \$p; done
 rm -rf '/Applications/Goose Swarm.app'; mv '/Applications/Goose Swarm.new.app' '/Applications/Goose Swarm.app'
@@ -34,7 +38,7 @@ echo studio \$(defaults read '/Applications/Goose Swarm.app/Contents/Info.plist'
 # This Mac: the same, then relaunch with the CDP port the harness uses.
 rm -rf "/Applications/Goose Swarm.new.app"; ditto "$app" "/Applications/Goose Swarm.new.app"
 osascript -e 'quit app "Goose Swarm"' 2>/dev/null || true
-for i in $(seq 1 60); do pgrep -f "$MAIN" >/dev/null || break; sleep 1; done
+for i in $(seq 1 $QUIT_WAIT); do pgrep -f "$MAIN" >/dev/null || break; sleep 1; done
 if pgrep -f "$MAIN" >/dev/null; then
   held=$(pgrep -f "$MAIN" | head -1)
   # Name what holds it (a confirm the quit raised) instead of swapping under a live app.

@@ -76,6 +76,7 @@ import { startGooseServe, findGooseBinaryPath, GOOSED_SIGKILL_AFTER_MS } from '.
 import { reapOrphanedGoosed } from './utils/orphanGoosedReap';
 import { LOCAL_NETWORK_SETTINGS_URL, touchLocalNetwork } from './localNetwork';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
+import { QuitHold } from './quitHold';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
 import {
@@ -1696,8 +1697,10 @@ const createChat = async (
     });
     if (verdict === 'pass') return;
     event.preventDefault();
-    // A refused close refuses the quit it may belong to: the floating window comes back (Q-229).
+    // A refused close refuses the quit it may belong to: the floating window comes back (Q-229),
+    // and the next quit holds for goosed again (Q-241).
     engineGlanceDesktop.resumeAfterRefusedQuit();
+    quitHold.quitRefused();
     const payload: CloseRunPayload = { runs: windowLiveRuns(mainWindow) };
     contents.send(CONFIRM_CLOSE_RUN_CHANNEL, payload);
   });
@@ -4902,6 +4905,31 @@ const windowLiveRuns = (win: BrowserWindow): CloseRunPayload['runs'] => {
 // "Stop run and close" gets exactly one `close` through. See mainWindow.on('close') in createChat.
 const confirmedCloses = new ConfirmedCloses();
 
+/** Would any goose window's close guard ask before closing — the same verdict its `close` reaches. */
+const anyCloseWouldAsk = (): boolean =>
+  BrowserWindow.getAllWindows().some((win) => {
+    if (win.isDestroyed()) return false;
+    const contents = win.webContents;
+    const rendererCanAnswer = !contents.isDestroyed() && !contents.isCrashed();
+    return (
+      decideClose({
+        confirmed: confirmedCloses.has(win.id),
+        windowHoldsLiveRun: rendererCanAnswer && windowHoldsLiveRun(win),
+        rendererCanAnswer,
+      }) === 'ask'
+    );
+  });
+
+// Q-241: the quit waits for every goosed to EXIT, starting at `before-quit` — before any window
+// closes (quitHold.ts has the measurement). `will-quit` holds too, below.
+const quitHold = new QuitHold({
+  backends: gooseServeLeases,
+  logger: log,
+  quit: () => app.quit(),
+  closeWouldAsk: anyCloseWouldAsk,
+});
+app.on('before-quit', (event) => quitHold.onQuitEvent('before-quit', event));
+
 let lastSwarmReadErrorLogMs = 0;
 ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
   try {
@@ -6763,10 +6791,9 @@ async function getAllowList(): Promise<string[]> {
 
 // Set by the renderer's restart-app request; read once the quit is really happening (will-quit).
 let relaunchOnQuit = false;
-// will-quit runs twice when backends are still up: the first pass holds the quit until every
+// will-quit can run twice when backends are still up: the first pass holds the quit until every
 // goosed has EXITED, then quits again. The one-shot work below runs on the first pass only.
 let quitWorkDone = false;
-let backendsStopped = false;
 
 app.on('will-quit', (event) => {
   if (!quitWorkDone) {
@@ -6781,29 +6808,10 @@ app.on('will-quit', (event) => {
     if (relaunchOnQuit) app.relaunch();
   }
 
-  // Electron does not await a will-quit listener: the old `async` handler's `await cleanupAll()`
-  // returned control to Electron, which exited without waiting — every quit in main.log logs
-  // "Terminating goose serve" and never goosed's exit, so the SIGKILL leg could never run and a
-  // slow teardown was simply abandoned (Q-223). Hold the quit, wait for every goosed to EXIT
-  // (its own teardown stops the mesh daemon and the engine), then quit for real.
-  if (!backendsStopped && gooseServeLeases.hasBackendsToStop()) {
-    event.preventDefault();
-    log.info(
-      `App quitting: waiting for ${gooseServeLeases.activeLeaseCount()} attached backend(s) and any stop already under way to exit`
-    );
-    void gooseServeLeases.stopAllAndWait().then(({ abandoned }) => {
-      backendsStopped = true;
-      if (abandoned > 0) {
-        log.error(
-          `App quitting: ${abandoned} goose serve backend(s) did not exit (logged above); quitting without them — their own stdin watch ends them once this process is gone`
-        );
-      } else {
-        log.info('App quitting: every goose serve backend has exited');
-      }
-      app.quit();
-    });
-    return;
-  }
+  // Electron does not await a will-quit listener, so the quit is held (preventDefault) until every
+  // goosed has EXITED (Q-223). Usually before-quit already held it and nothing is left here; a stop
+  // a window close started (the close guard's confirmed close) is still waited for.
+  if (quitHold.onQuitEvent('will-quit', event) === 'held') return;
 
   globalShortcut.unregisterAll();
 });

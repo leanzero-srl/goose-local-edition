@@ -1,5 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
 import fs from 'node:fs';
+import type { Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -58,12 +60,19 @@ describe('selectOrphanedGoosed — the proof, as a pure function (Q-223)', () =>
 });
 
 // Real processes: `sh` backgrounds the stand-in and exits, so launchd adopts it (ppid 1) — the shape
-// an app that died without stopping its goosed leaves. The stand-in is a compiled `pause()` at
+// an app that died without stopping its goosed leaves. The stand-in is a compiled program at
 // `<tmp>/Goose Swarm.app/Contents/Resources/bin/goose` (a space in the path, like the real bundle):
 // a binary, so `ps` shows ITS path first (a script would show its interpreter), and one that leaves
 // its argv alone (macOS /usr/bin/yes rewrites its argv buffer and `ps` then prints garbage).
 // macOS only: Linux may reparent orphans to a subreaper, not pid 1, and the proof then (rightly)
 // keeps them.
+//
+// Q-243: an orphan is by design nobody's child, so nothing ends it when the test run dies — a
+// SIGTERM-ignoring one leaked as ppid 1 for 12 minutes (pid 95645) when a run was interrupted under
+// load. So the stand-in carries its own LIFELINE: it blocks reading fd 3, the far end of a socket
+// this vitest worker holds, and exits the moment that read ends — the kernel closes the worker's end
+// however the worker ends (after hooks, a timeout, ^C, SIGKILL). Per-pid kills in afterEach stay the
+// first line; the lifeline is what holds when afterEach never runs.
 let STAND_IN = '';
 const desktopArgs = [
   'serve',
@@ -81,7 +90,10 @@ const buildStandIn = () => {
   const bin = path.join(dir, 'Goose Swarm.app', 'Contents', 'Resources', 'bin');
   fs.mkdirSync(bin, { recursive: true });
   const source = path.join(dir, 'pause.c');
-  fs.writeFileSync(source, '#include <unistd.h>\nint main(void) { for (;;) pause(); }\n');
+  fs.writeFileSync(
+    source,
+    '#include <unistd.h>\nint main(void) { char b; while (read(3, &b, 1) > 0) {} return 0; }\n'
+  );
   execFileSync('cc', ['-o', path.join(bin, 'goose'), source]);
   return { dir, goose: path.join(bin, 'goose') };
 };
@@ -94,14 +106,40 @@ const orphanPidsOf = (marker: string): number[] =>
       return m && m[2] === '1' && m[3].includes(marker) ? [Number(m[1])] : [];
     });
 
+/** `sh` argv that backgrounds the stand-in as an orphan; fd 3 (its lifeline) is inherited. */
+const orphanShellArgs = (prefix: string, marker: string): string[] => [
+  '-c',
+  `${prefix} exec "$0" ${desktopArgs.join(' ')} ${marker} >/dev/null 2>&1 &`,
+  STAND_IN,
+];
+
+/** fd 3 of a stand-in: the far end of a socket this process holds (its lifeline). */
+const LIFELINE_STDIO: ['ignore', 'ignore', 'ignore', 'pipe'] = [
+  'ignore',
+  'ignore',
+  'ignore',
+  'pipe',
+];
+
+// Every lifeline this worker holds and every stand-in pid it saw — the per-pid afterEach reads both.
+const lifelines: Socket[] = [];
+const started: number[] = [];
+
+const holdLifeline = (child: ChildProcess) => {
+  const end = child.stdio[3] as Socket;
+  // Held, never read, and never what keeps the worker alive.
+  end.unref();
+  lifelines.push(end);
+};
+
 const spawnOrphan = async (prefix: string, marker: string): Promise<number> => {
-  execFileSync('sh', [
-    '-c',
-    `${prefix} exec "$0" ${desktopArgs.join(' ')} ${marker} >/dev/null 2>&1 &`,
-    STAND_IN,
-  ]);
+  const sh = spawn('sh', orphanShellArgs(prefix, marker), { stdio: LIFELINE_STDIO });
+  holdLifeline(sh);
+  await once(sh, 'exit');
   for (let i = 0; i < 100; i += 1) {
     const pids = orphanPidsOf(marker);
+    // Recorded the moment it is seen, so a test that fails or times out after this still reaps it.
+    started.push(...pids.filter((pid) => !started.includes(pid)));
     if (pids.length === 1) return pids[0];
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
@@ -117,8 +155,15 @@ const alive = (pid: number): boolean => {
   }
 };
 
+const waitGone = async (pid: number): Promise<boolean> => {
+  for (let i = 0; i < 250; i += 1) {
+    if (!alive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return !alive(pid);
+};
+
 describe.skipIf(process.platform !== 'darwin')('reapOrphanedGoosed — real processes', () => {
-  const started: number[] = [];
   const children: ChildProcess[] = [];
   let standInDir = '';
   beforeAll(() => {
@@ -130,13 +175,14 @@ describe.skipIf(process.platform !== 'darwin')('reapOrphanedGoosed — real proc
   afterEach(() => {
     for (const pid of started.splice(0)) if (alive(pid)) process.kill(pid, 'SIGKILL');
     for (const child of children.splice(0)) child.kill('SIGKILL');
+    for (const end of lifelines.splice(0)) end.destroy();
   });
 
   it('stops this bundle’s orphan with SIGTERM and leaves a live app’s goosed alone', async () => {
     const marker = `--q223-term-${process.pid}-${Date.now()}`;
     const orphan = await spawnOrphan('', marker);
-    started.push(orphan);
-    const owned = spawn(STAND_IN, [...desktopArgs, marker], { stdio: 'ignore' });
+    const owned = spawn(STAND_IN, [...desktopArgs, marker], { stdio: LIFELINE_STDIO });
+    holdLifeline(owned);
     children.push(owned);
     const logger = { info: vi.fn(), error: vi.fn() };
 
@@ -151,7 +197,6 @@ describe.skipIf(process.platform !== 'darwin')('reapOrphanedGoosed — real proc
   it('SIGKILLs, per pid, an orphan that ignores SIGTERM — only after the grace', async () => {
     const marker = `--q223-kill-${process.pid}-${Date.now()}`;
     const orphan = await spawnOrphan("trap '' TERM;", marker);
-    started.push(orphan);
     const logger = { info: vi.fn(), error: vi.fn() };
 
     const before = Date.now();
@@ -160,5 +205,54 @@ describe.skipIf(process.platform !== 'darwin')('reapOrphanedGoosed — real proc
     expect(Date.now() - before).toBeGreaterThanOrEqual(400);
     expect(report.reaped).toEqual([{ pid: orphan, signal: 'SIGKILL' }]);
     expect(alive(orphan)).toBe(false);
+  });
+  it('Q-243: a SIGTERM-ignoring stand-in dies with the run that made it, even when no after hook runs', async () => {
+    // The run is a separate process here, so it can be SIGKILLed the way an interrupted vitest worker
+    // dies: no afterEach, no afterAll. It makes the orphan exactly as spawnOrphan does and reports
+    // once the `sh` that backgrounded it is gone; its own stdin watch ends it if THIS worker dies.
+    const marker = `--q243-abort-${process.pid}-${Date.now()}`;
+    const run = spawn(
+      process.execPath,
+      [
+        '-e',
+        `process.stdin.on('end', () => process.exit(0)); process.stdin.resume();
+         const { spawn } = require('node:child_process');
+         const sh = spawn('sh', JSON.parse(process.argv[1]), { stdio: ['ignore', 'ignore', 'ignore', 'pipe'] });
+         sh.on('exit', () => console.log('spawned'));`,
+        JSON.stringify(orphanShellArgs("trap '' TERM;", marker)),
+      ],
+      { stdio: ['pipe', 'pipe', 'ignore'] }
+    );
+    children.push(run);
+    const [line] = await once(run.stdout!, 'data');
+    expect(String(line)).toContain('spawned');
+    let orphan: number | undefined;
+    for (let i = 0; i < 100 && orphan === undefined; i += 1) {
+      [orphan] = orphanPidsOf(marker);
+      if (orphan === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(orphan).toBeDefined();
+    started.push(orphan!);
+    // It is the case that leaked: an orphan (ppid 1) that ignores SIGTERM.
+    process.kill(orphan!, 'SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(alive(orphan!)).toBe(true);
+
+    const exited = once(run, 'exit');
+    process.kill(run.pid!, 'SIGKILL');
+    await exited;
+
+    expect(await waitGone(orphan!)).toBe(true);
+    expect(orphanPidsOf(marker)).toEqual([]);
+  });
+
+  it('Q-243: the run lives on while its worker holds the lifeline', async () => {
+    const marker = `--q243-held-${process.pid}-${Date.now()}`;
+    const orphan = await spawnOrphan('', marker);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(alive(orphan)).toBe(true);
+    // Dropping this worker's end is the worker dying, as far as the stand-in can tell.
+    lifelines.splice(0).forEach((end) => end.destroy());
+    expect(await waitGone(orphan)).toBe(true);
   });
 });

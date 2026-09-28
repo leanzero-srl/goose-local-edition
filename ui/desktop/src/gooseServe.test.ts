@@ -497,19 +497,24 @@ describe('buildGooseServeEnv — the tool shim directory (Q-102)', () => {
 });
 
 describe('stop — the SIGKILL fallback covers goosed\'s own teardown', () => {
-  // goosed's teardown on SIGTERM is bounded only by its supervisors' per-pid grace windows:
-  // the stdio extension children (one shared 50 × 100 ms window — Q-138), the mesh daemon (one
-  // leg), the engine sidecar (two: terminate + release_port) and the status probe that gates the
-  // unmount (reqwest 5 s). Cutting SIGKILL in before that ceiling re-creates the orphans this
-  // constant exists to prevent.
-  it('waits at least the stdio + mesh + engine + probe ceilings before SIGKILL', () => {
+  // goosed's teardown on SIGTERM is bounded only by its supervisors' own windows: the stdio
+  // extension children (one shared 50 × 100 ms window — Q-138), the going-away notice (the Link's
+  // 5 s connect timeout), the engine sidecar (two legs: terminate + release_port) and the status
+  // probe that gates the unmount (reqwest 5 s), the split's local rank (three legs) and its peer
+  // rank over the Link (connect 5 s + three legs on the peer — Q-242: it runs before the mesh
+  // stops now, so it really waits on the peer), and the mesh daemon (one leg). Cutting SIGKILL in
+  // before that ceiling re-creates the orphans this constant exists to prevent.
+  it('waits at least every teardown step’s ceiling before SIGKILL', () => {
     const perPidGraceMs = 50 * 100;
+    const linkConnectMs = 5000;
     const stdioCeiling = perPidGraceMs;
-    const meshCeiling = perPidGraceMs;
+    const noticeCeiling = linkConnectMs;
     const engineCeiling = 2 * perPidGraceMs;
     const probeCeiling = 5000;
+    const splitCeiling = 3 * perPidGraceMs + linkConnectMs + 3 * perPidGraceMs;
+    const meshCeiling = perPidGraceMs;
     expect(GOOSED_SIGKILL_AFTER_MS).toBeGreaterThanOrEqual(
-      stdioCeiling + meshCeiling + engineCeiling + probeCeiling
+      stdioCeiling + noticeCeiling + engineCeiling + probeCeiling + splitCeiling + meshCeiling
     );
   });
 });
