@@ -224,6 +224,12 @@ fn pgrep(args: &[&str]) -> std::io::Result<Vec<i32>> {
     }
 }
 
+/// Every process whose group id is `group` right now.
+#[cfg(unix)]
+pub(super) fn group_members(group: i32) -> std::io::Result<Vec<i32>> {
+    pgrep(&["-g", &group.to_string()])
+}
+
 #[cfg(unix)]
 fn pgid_of(pid: i32) -> Option<i32> {
     let pgid = unsafe { libc::getpgid(pid) };

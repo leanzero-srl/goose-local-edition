@@ -2477,10 +2477,26 @@ async fn handle_default_session() -> Result<()> {
     session.interactive(None).await
 }
 
+async fn run_shell_watchdog() -> Result<()> {
+    let outcome =
+        goose::agents::platform_extensions::developer::shell_watchdog::run_on_stdin().await;
+    tracing::info!(%outcome, "shell-command watchdog: goose serve is gone");
+    // goosed's stderr may be a pipe whose reader is gone with the app; `eprintln!` would panic on
+    // that write.
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr(), "[shell-watchdog] {outcome}");
+    Ok(())
+}
+
 pub async fn cli() -> anyhow::Result<()> {
     register_builtin_extensions(goose::builtin_extension::builtin_extensions());
 
     let cli = Cli::parse();
+
+    // goose serve's own helper, not a use of goose: no project entry, no command counter.
+    if matches!(cli.command, Some(Command::ShellWatchdog)) {
+        return run_shell_watchdog().await;
+    }
 
     if let Err(e) = crate::project_tracker::update_project_tracker(None, None) {
         warn!("Warning: Failed to update project tracker: {}", e);
@@ -2664,16 +2680,7 @@ pub async fn cli() -> anyhow::Result<()> {
                 }
             }
         }
-        Some(Command::ShellWatchdog) => {
-            let outcome =
-                goose::agents::platform_extensions::developer::shell_watchdog::run_on_stdin().await;
-            tracing::info!(%outcome, "shell-command watchdog: goose serve is gone");
-            // goosed's stderr may be a pipe whose reader is gone with the app; `eprintln!` would
-            // panic on that write.
-            use std::io::Write as _;
-            let _ = writeln!(std::io::stderr(), "[shell-watchdog] {outcome}");
-            Ok(())
-        }
+        Some(Command::ShellWatchdog) => run_shell_watchdog().await,
         None => handle_default_session().await,
     }
 }

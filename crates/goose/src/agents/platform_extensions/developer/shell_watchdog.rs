@@ -203,6 +203,35 @@ pub fn read_records(mut reader: impl BufRead) -> Records {
     records
 }
 
+/// A kernel stamp as a number that orders by start: `sec.usec` (macOS) or clock ticks (Linux).
+/// The `ps` fallback's date text does not order, so it answers `None`.
+#[cfg(unix)]
+fn stamp_order(stamp: &str) -> Option<(u64, u64)> {
+    match stamp.split_once('.') {
+        Some((sec, usec)) => Some((sec.parse().ok()?, usec.parse().ok()?)),
+        None => Some((stamp.parse().ok()?, 0)),
+    }
+}
+
+/// An in-flight group whose leader is GONE by the time the watchdog looks — it can die after
+/// goosed does (a member's next write to goosed's closed pipe is a SIGPIPE, and bash then
+/// exits), leaving a `&` server in the group. The members still in the group are the command's
+/// when each started no earlier than the leader: while any member lives the group id cannot be
+/// handed out again, and a group id reused before that would need the kernel to cycle through
+/// every pid between goosed's death and this look. `None` when nothing qualifies or nothing can
+/// be proven (no members, a stamp that does not order).
+#[cfg(unix)]
+fn members_since(leader: i32, leader_stamp: &str) -> Option<Vec<(i32, String)>> {
+    let since = stamp_order(leader_stamp)?;
+    let members: Vec<(i32, String)> = process_groups::group_members(leader)
+        .ok()?
+        .into_iter()
+        .filter_map(|pid| process_groups::start_time(pid).map(|stamp| (pid, stamp)))
+        .filter(|(_, stamp)| stamp_order(stamp).is_some_and(|started| started >= since))
+        .collect();
+    (!members.is_empty()).then_some(members)
+}
+
 /// End every recorded group that is provably still the one recorded, and say what happened.
 #[cfg(unix)]
 pub async fn end_recorded(records: Records) -> String {
@@ -217,19 +246,20 @@ pub async fn end_recorded(records: Records) -> String {
     let mut ended = Vec::new();
     for (leader, record) in records.groups {
         match record {
-            Record::Live(stamp) => {
-                if process_groups::start_time(leader).as_deref() == Some(stamp.as_str()) {
-                    live.push(leader);
-                } else {
-                    not_the_same.push(leader);
-                }
-            }
+            Record::Live(stamp) => match process_groups::start_time(leader) {
+                Some(now) if now == stamp => live.push(leader),
+                Some(_) => not_the_same.push(leader),
+                None => match members_since(leader, &stamp) {
+                    Some(members) => ended.push(Lingering::new(leader, members)),
+                    None => not_the_same.push(leader),
+                },
+            },
             Record::Ended(stamps) => ended.push(Lingering::new(leader, stamps)),
         }
     }
     let outcome = process_groups::terminate_command_groups(live, ended).await;
     let mut report = format!(
-        "goose is gone: {outcome}; left alone, their leader no longer the process recorded: {not_the_same:?}"
+        "goose is gone: {outcome}; left alone, their leader now another process or nothing of theirs provably left: {not_the_same:?}"
     );
     if !records.unreadable.is_empty() {
         report.push_str(&format!("; unreadable lines: {:?}", records.unreadable));
@@ -330,6 +360,21 @@ mod tests {
         (group, members(group)[0])
     }
 
+    /// A command stamped while it runs, whose leader then exits (and is reaped) leaving one
+    /// backgrounded member. Returns (group, the leader's stamp, the member).
+    fn leader_gone_member_left(marker: &str) -> (i32, String, i32) {
+        let mut leader = own_group(&["sh", "-c", &format!("( {marker} & ); sleep 0.3")]);
+        let group = leader.id() as i32;
+        let leader_stamp = process_groups::start_time(group).expect("the leader's stamp");
+        let _ = leader.wait();
+        assert!(
+            wait_for(|| members(group).len() == 1),
+            "{:?}",
+            members(group)
+        );
+        (group, leader_stamp, members(group)[0])
+    }
+
     /// The recovery path on its own: goosed's records up to EOF, then the end. The genuine groups
     /// go; a pid now held by ANOTHER process (the shape a reused group id takes: the recorded
     /// leader or member died and the kernel handed its pid to someone else, so the stamp is the
@@ -355,6 +400,22 @@ mod tests {
         let released = own_group(&["sleep", "407005"]);
         let released_pid = released.id() as i32;
         started.children.push(released);
+        // In flight when goosed died, its leader gone by the time the watchdog looks, a server
+        // it started still in the group; and the same shape recorded with a stamp LATER than the
+        // member's start — a member that predates its leader is not provably the command's.
+        let (orphaned_group, orphaned_leader_stamp, orphaned_member) =
+            leader_gone_member_left("sleep 407007");
+        started
+            .strays
+            .push((orphaned_member, stamp(orphaned_member)));
+        let (predating_group, _, predating_member) = leader_gone_member_left("sleep 407008");
+        started
+            .strays
+            .push((predating_member, stamp(predating_member)));
+        let after_the_member = {
+            let (sec, usec) = stamp_order(&stamp(predating_member)).unwrap();
+            format!("{}.{usec:06}", sec + 1)
+        };
 
         let earlier = "1.000000";
         let lines = format!(
@@ -363,7 +424,9 @@ mod tests {
              live {reused_leader_pid} {earlier}\n\
              ended {reused_ended_group} {reused_member}={earlier}\n\
              live {released_pid} {}\n\
-             gone {released_pid}\n",
+             gone {released_pid}\n\
+             live {orphaned_group} {orphaned_leader_stamp}\n\
+             live {predating_group} {after_the_member}\n",
             stamp(in_flight_group),
             stamp(ended_member),
             stamp(released_pid),
@@ -390,9 +453,17 @@ mod tests {
         assert!(alive(reused_member), "{outcome}");
         assert!(alive(released_pid), "{outcome}");
         assert!(
-            outcome.contains(&format!("[{reused_leader_pid}]")),
-            "{outcome}"
+            wait_for(|| !alive(orphaned_member)),
+            "a server left in a group whose leader died after goosed survived: {outcome}"
         );
+        assert!(
+            alive(predating_member),
+            "a member older than its recorded leader was signalled: {outcome}"
+        );
+        let left_alone = outcome.split("provably left: ").nth(1).unwrap_or("");
+        for pid in [reused_leader_pid, predating_group] {
+            assert!(left_alone.contains(&pid.to_string()), "{outcome}");
+        }
     }
 
     /// Only EOF says goosed is gone. A pipe that fails some other way says nothing about goosed,
