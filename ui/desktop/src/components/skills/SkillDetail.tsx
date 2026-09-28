@@ -97,7 +97,7 @@ function PersonaEditor({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="border border-borderSubtle p-4">
+      <div className="border border-border-primary p-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-bold">Your notes</h3>
           {dirty && <span className="text-[11px] font-bold text-[#b45309]">UNSAVED</span>}
@@ -112,7 +112,7 @@ function PersonaEditor({
           onChange={(e) => setNotes(e.target.value)}
           spellCheck={false}
           placeholder="e.g. goose keeps getting this wrong: we use SQLModel here, not raw SQLAlchemy."
-          className="w-full h-40 p-3 font-mono text-xs bg-background-default border border-borderSubtle text-text-default focus:outline-none focus:border-borderStandard resize-y"
+          className="w-full h-40 p-3 font-mono text-xs bg-background-primary border border-border-primary text-text-primary focus:outline-none focus:border-border-secondary resize-y"
         />
         {error && <p className="mt-2 text-xs font-bold text-[#dc2626]">{error}</p>}
         <div className="flex gap-2 mt-3">
@@ -202,7 +202,7 @@ function BodyEditor({
         value={body}
         onChange={(e) => setBody(e.target.value)}
         spellCheck={false}
-        className="w-full h-[420px] p-3 font-mono text-xs bg-background-default border border-borderSubtle text-text-default focus:outline-none focus:border-borderStandard resize-y"
+        className="w-full h-[420px] p-3 font-mono text-xs bg-background-primary border border-border-primary text-text-primary focus:outline-none focus:border-border-secondary resize-y"
       />
       {error && <p className="text-xs font-bold text-[#dc2626]">{error}</p>}
       <div className="flex gap-2">
@@ -311,7 +311,7 @@ function FileTree({
     );
   };
 
-  return <div className="border border-borderSubtle">{root.children!.map((c) => row(c, 0))}</div>;
+  return <div className="border border-border-primary">{root.children!.map((c) => row(c, 0))}</div>;
 }
 
 export function SkillDetail({
@@ -397,7 +397,7 @@ export function SkillDetail({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="pb-4 border-b border-borderSubtle">
+      <div className="pb-4 border-b border-border-primary">
         <div className="flex items-center gap-2 mb-2">
           <OriginBadge origin={origin} />
           <h2 className={cx(TYPE.h1, 'truncate')}>{entry.name}</h2>
@@ -465,7 +465,7 @@ export function SkillDetail({
               </div>
               {/* Verbatim, in a mono block. A supporting file is a script or a data file — rendering it as
                   markdown would silently eat its indentation, which for a Python script is its meaning. */}
-              <pre className="p-3 bg-background-default border border-borderSubtle text-xs font-mono overflow-x-auto whitespace-pre">
+              <pre className="p-3 bg-background-primary border border-border-primary text-xs font-mono overflow-x-auto whitespace-pre">
                 {openFile.body}
               </pre>
             </div>

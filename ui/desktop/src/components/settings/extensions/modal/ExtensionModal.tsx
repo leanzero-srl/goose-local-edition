@@ -262,9 +262,9 @@ export default function ExtensionModal({
       return <AlertTriangle className="text-red-500" size={24} />;
     }
     return modalType === 'add' ? (
-      <PlusIcon className="text-iconStandard" size={24} />
+      <PlusIcon className="text-text-primary" size={24} />
     ) : (
-      <Edit className="text-iconStandard" size={24} />
+      <Edit className="text-text-primary" size={24} />
     );
   };
 

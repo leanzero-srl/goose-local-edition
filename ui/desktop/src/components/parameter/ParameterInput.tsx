@@ -112,7 +112,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
   };
 
   return (
-    <div className="parameter-input my-4 border rounded-lg bg-background-secondary shadow-sm relative">
+    <div className="parameter-input my-4 border rounded-lg bg-background-secondary relative">
       {/* Collapsed header - always visible */}
       <div
         className={`flex items-center justify-between p-4 ${onToggleExpanded ? 'cursor-pointer hover:bg-background-primary/50' : ''} transition-colors`}
@@ -137,7 +137,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
           )}
 
           <div className="flex items-center gap-2">
-            <span className="text-md font-bold text-text-primary">
+            <span className="text-base font-bold text-text-primary">
               <code className="bg-background-primary px-2 py-1 rounded-md">{parameter.key}</code>
             </span>
             {isUnused && (
@@ -172,7 +172,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
         <div className="px-4 pb-4 border-t border-border-primary">
           <div className="pt-4">
             <div className="mb-4">
-              <label className="block text-md text-text-primary mb-2 font-semibold">
+              <label className="block text-base text-text-primary mb-2 font-semibold">
                 {intl.formatMessage(i18n.description)}
               </label>
               <input
@@ -190,7 +190,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
             {/* Controls for requirement, input type, and default value */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="block text-md text-text-primary mb-2 font-semibold">
+                <label className="block text-base text-text-primary mb-2 font-semibold">
                   {intl.formatMessage(i18n.inputType)}
                 </label>
                 <select
@@ -208,7 +208,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
               </div>
 
               <div>
-                <label className="block text-md text-text-primary mb-2 font-semibold">
+                <label className="block text-base text-text-primary mb-2 font-semibold">
                   {intl.formatMessage(i18n.requirement)}
                 </label>
                 <select
@@ -226,7 +226,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
               {/* The default value input is only shown for optional parameters */}
               {requirement === 'optional' && (
                 <div>
-                  <label className="block text-md text-text-primary mb-2 font-semibold">
+                  <label className="block text-base text-text-primary mb-2 font-semibold">
                     {intl.formatMessage(i18n.defaultValue)}
                   </label>
                   <input
@@ -243,7 +243,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
             {/* Options field for select input type */}
             {parameter.input_type === 'select' && (
               <div className="mt-4">
-                <label className="block text-md text-text-primary mb-2 font-semibold">
+                <label className="block text-base text-text-primary mb-2 font-semibold">
                   {intl.formatMessage(i18n.optionsLabel)}
                 </label>
                 <textarea

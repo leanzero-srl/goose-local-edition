@@ -69,7 +69,7 @@ export default function KeyValueEditor({
           onChange={(e) => setNewKey(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={keyPlaceholder || intl.formatMessage(i18n.defaultKeyPlaceholder)}
-          className="flex-1 px-3 py-2 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring text-sm"
+          className="flex-1 px-3 py-2 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring text-sm"
         />
         <input
           type="text"
@@ -77,7 +77,7 @@ export default function KeyValueEditor({
           onChange={(e) => setNewValue(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={valuePlaceholder || intl.formatMessage(i18n.defaultValuePlaceholder)}
-          className="flex-1 px-3 py-2 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring text-sm"
+          className="flex-1 px-3 py-2 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring text-sm"
         />
         <Button
           type="button"
@@ -93,16 +93,16 @@ export default function KeyValueEditor({
       </div>
 
       {Object.keys(values).length > 0 && (
-        <div className="space-y-2 border border-border-subtle rounded-lg p-3">
+        <div className="space-y-2 border border-border-primary rounded-lg p-3">
           {Object.entries(values).map(([key, value]) => (
             <div
               key={key}
-              className="flex items-center justify-between p-2 bg-background-muted rounded"
+              className="flex items-center justify-between p-2 bg-background-secondary rounded"
             >
               <div className="flex-1">
-                <span className="text-sm font-medium text-text-standard">{key}</span>
-                <span className="text-sm text-text-muted mx-2">=</span>
-                <span className="text-sm text-text-standard">{value}</span>
+                <span className="text-sm font-medium text-text-primary">{key}</span>
+                <span className="text-sm text-text-secondary mx-2">=</span>
+                <span className="text-sm text-text-primary">{value}</span>
               </div>
               <Button
                 type="button"

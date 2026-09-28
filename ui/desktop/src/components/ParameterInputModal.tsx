@@ -129,7 +129,7 @@ const ParameterInputModal: React.FC<ParameterInputModalProps> = ({
   return (
     <div className="fixed inset-0 backdrop-blur-sm z-50 flex justify-center items-center animate-[fadein_200ms_ease-in]">
       {showCancelOptions ? (
-        <div className="bg-background-primary border border-border-primary rounded-xl p-8 shadow-2xl w-full max-w-md">
+        <div className="bg-background-primary border border-border-primary rounded-xl p-8 shadow-lz-overlay dark:shadow-lz-overlay-dark w-full max-w-md">
           <h2 className="text-xl font-bold text-text-primary mb-4">
             {intl.formatMessage(i18n.cancelRecipeSetup)}
           </h2>
@@ -149,7 +149,7 @@ const ParameterInputModal: React.FC<ParameterInputModalProps> = ({
           </div>
         </div>
       ) : (
-        <div className="bg-background-primary border border-border-primary rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="bg-background-primary border border-border-primary rounded-xl shadow-lz-overlay dark:shadow-lz-overlay-dark w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
           <div className="p-8 pb-4 flex-shrink-0">
             <h2 className="text-xl font-bold text-text-primary mb-6">
               {intl.formatMessage(i18n.recipeParameters)}
@@ -161,7 +161,7 @@ const ParameterInputModal: React.FC<ParameterInputModalProps> = ({
                 <div key={param.key}>
                   <label
                     htmlFor={fieldId(param.key)}
-                    className="block text-md font-medium text-text-primary mb-2"
+                    className="block text-base font-medium text-text-primary mb-2"
                   >
                     {param.description || param.key}
                     {needsUserValue(param) && <span className="text-red-500 ml-1">*</span>}

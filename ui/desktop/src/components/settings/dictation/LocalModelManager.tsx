@@ -255,7 +255,7 @@ export const LocalModelManager = () => {
                         variant="ghost"
                         size="sm"
                         onClick={() => deleteModel(model.id)}
-                        className="text-destructive hover:text-destructive"
+                        className="text-text-danger hover:text-text-danger"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -295,7 +295,7 @@ export const LocalModelManager = () => {
               )}
 
               {progress?.status === 'failed' && progress.error && (
-                <div className="mt-2 text-xs text-destructive">{progress.error}</div>
+                <div className="mt-2 text-xs text-text-danger">{progress.error}</div>
               )}
             </div>
           );

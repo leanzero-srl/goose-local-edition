@@ -1050,7 +1050,7 @@ function CodeModeView({ toolGraph, code }: CodeModeViewProps) {
   return (
     <div className="px-4 py-2">
       {toolGraph && (
-        <pre className="font-mono text-xs text-textSubtle whitespace-pre-wrap">{renderGraph()}</pre>
+        <pre className="font-mono text-xs text-text-secondary whitespace-pre-wrap">{renderGraph()}</pre>
       )}
       {code && (
         <div className="border-t border-border-primary -mx-4 mt-2">
@@ -1125,7 +1125,7 @@ function ToolResultView({ result, isStartExpanded }: ToolResultViewProps) {
 function SubagentLogEntry({ log }: { log: string }) {
   const subagentMatch = log.match(/^\[subagent:(\w+)\]\s*([\s\S]*)/);
   if (!subagentMatch) {
-    return <span className="font-sans text-sm text-textSubtle">{log}</span>;
+    return <span className="font-sans text-sm text-text-secondary">{log}</span>;
   }
 
   const [, , rest] = subagentMatch;
@@ -1135,14 +1135,14 @@ function SubagentLogEntry({ log }: { log: string }) {
   const extensionName = parts[1]?.trim();
 
   return (
-    <div className="font-sans text-sm text-textSubtle">
+    <div className="font-sans text-sm text-text-secondary">
       <span className="flex items-center gap-1.5">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
         <span className="font-medium text-text-secondary">{toolName}</span>
-        {extensionName && <span className="text-textSubtle opacity-60">· {extensionName}</span>}
+        {extensionName && <span className="text-text-secondary opacity-60">· {extensionName}</span>}
       </span>
       {detailLines.length > 0 && (
-        <pre className="ml-3 mt-0.5 text-xs text-textSubtle whitespace-pre-wrap">
+        <pre className="ml-3 mt-0.5 text-xs text-text-secondary whitespace-pre-wrap">
           {detailLines.join('\n')}
         </pre>
       )}
@@ -1218,16 +1218,16 @@ const ProgressBar = ({ progress, total, message }: Omit<Progress, 'progressToken
 
   return (
     <div className="w-full space-y-2">
-      {message && <div className="font-sans text-sm text-textSubtle">{message}</div>}
+      {message && <div className="font-sans text-sm text-text-secondary">{message}</div>}
 
-      <div className="w-full bg-background-subtle rounded-full h-4 overflow-hidden relative">
+      <div className="w-full bg-background-secondary rounded-full h-4 overflow-hidden relative">
         {isDeterminate ? (
           <div
-            className="bg-primary h-full transition-all duration-300"
+            className="bg-lz-accent h-full transition-all duration-300"
             style={{ width: `${percent}%` }}
           />
         ) : (
-          <div className="absolute inset-0 animate-indeterminate bg-primary" />
+          <div className="absolute inset-y-0 left-0 w-1/3 animate-lz-indeterminate bg-lz-accent" />
         )}
       </div>
     </div>

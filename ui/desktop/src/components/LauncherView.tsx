@@ -37,7 +37,7 @@ export default function LauncherView() {
     <div className="h-screen w-screen flex bg-transparent overflow-hidden">
       <form
         onSubmit={handleSubmit}
-        className="w-full h-full bg-background-primary/95 backdrop-blur-lg shadow-2xl border border-border-primary"
+        className="w-full h-full bg-background-primary/95 backdrop-blur-lg border border-border-primary"
       >
         <input
           ref={inputRef}

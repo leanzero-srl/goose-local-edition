@@ -168,13 +168,13 @@ export default function ProviderSelector({
           <div
             onClick={handleSwarmClick}
             data-testid="onboarding-use-swarm"
-            className="p-4 border rounded-xl transition-all duration-200 cursor-pointer group border-border-default bg-background-muted hover:border-blue-400"
+            className="p-4 border rounded-xl transition-all duration-200 cursor-pointer group border-border-primary bg-background-secondary hover:border-blue-400"
           >
-            <LeanZero className="size-5 text-text-muted mb-2" />
-            <span className="font-medium text-text-default text-base block">
+            <LeanZero className="size-5 text-text-secondary mb-2" />
+            <span className="font-medium text-text-primary text-base block">
               {intl.formatMessage(i18n.useSwarm, { name: SWARM_DISPLAY_NAME })}
             </span>
-            <p className="text-text-muted text-sm mt-1">
+            <p className="text-text-secondary text-sm mt-1">
               {intl.formatMessage(i18n.useSwarmDescription)}
             </p>
           </div>
@@ -184,15 +184,15 @@ export default function ProviderSelector({
             onClick={handleLocalModelClick}
             className={`p-4 border rounded-xl transition-all duration-200 cursor-pointer group ${
               selectedPath === LOCAL_MODEL
-                ? 'border-blue-400 bg-background-muted'
-                : 'border-border-default bg-background-muted hover:border-blue-400'
+                ? 'border-blue-400 bg-background-secondary'
+                : 'border-border-primary bg-background-secondary hover:border-blue-400'
             }`}
           >
-            <HardDrive size={20} className="text-text-muted mb-2" />
-            <span className="font-medium text-text-default text-base block">
+            <HardDrive size={20} className="text-text-secondary mb-2" />
+            <span className="font-medium text-text-primary text-base block">
               {intl.formatMessage(i18n.useLocalModel)}
             </span>
-            <p className="text-text-muted text-sm mt-1">
+            <p className="text-text-secondary text-sm mt-1">
               {intl.formatMessage(i18n.localModelDescription)}
             </p>
           </div>
@@ -202,15 +202,15 @@ export default function ProviderSelector({
           onClick={handleOwnProviderClick}
           className={`p-4 border rounded-xl transition-all duration-200 cursor-pointer group ${
             selectedPath === OWN_PROVIDER
-              ? 'border-blue-400 bg-background-muted'
-              : 'border-border-default bg-background-muted hover:border-blue-400'
+              ? 'border-blue-400 bg-background-secondary'
+              : 'border-border-primary bg-background-secondary hover:border-blue-400'
           }`}
         >
-          <Key size={20} className="text-text-muted mb-2" />
-          <span className="font-medium text-text-default text-base block">
+          <Key size={20} className="text-text-secondary mb-2" />
+          <span className="font-medium text-text-primary text-base block">
             {intl.formatMessage(i18n.connectProvider)}
           </span>
-          <p className="text-text-muted text-sm mt-1">
+          <p className="text-text-secondary text-sm mt-1">
             {isLocal
               ? intl.formatMessage(i18n.connectCloudProviderDescription, {
                   providers: options.map((option) => option.label).join(', '),
@@ -244,7 +244,7 @@ export default function ProviderSelector({
           {!isLocal && (
             <button
               onClick={() => setShowCustomModal(true)}
-              className="flex items-center gap-1 text-sm text-text-muted hover:text-text-default transition-colors mb-6"
+              className="flex items-center gap-1 text-sm text-text-secondary hover:text-text-primary transition-colors mb-6"
             >
               <Plus size={14} />
               <span>{intl.formatMessage(i18n.addCustomProvider)}</span>

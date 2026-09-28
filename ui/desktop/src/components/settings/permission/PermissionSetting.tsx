@@ -42,7 +42,7 @@ function RuleItem({ title, description }: { title: string; description: string }
           <h3 className="font-semibold text-text-primary">{title}</h3>
           <p className="text-xs text-text-secondary mt-1">{description}</p>
         </div>
-        <ChevronRight className="w-4 h-4 text-iconStandard" />
+        <ChevronRight className="w-4 h-4 text-text-primary" />
         {/* Modal for updating tool permission */}
       </Button>
       {isModalOpen && <PermissionModal onClose={handleModalClose} extensionName={title} />}

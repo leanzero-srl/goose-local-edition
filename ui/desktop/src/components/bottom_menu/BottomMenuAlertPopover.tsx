@@ -243,7 +243,7 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
       {isOpen && (
         <div
           ref={popoverRef}
-          className="fixed w-[275px] p-0 rounded-lg overflow-hidden bg-app border z-50 shadow-lg pointer-events-auto text-left"
+          className="fixed w-[275px] p-0 rounded-lg overflow-hidden bg-background-primary border z-50 shadow-lz-overlay dark:shadow-lz-overlay-dark pointer-events-auto text-left"
           style={{
             top: `${popoverPosition.top}px`,
             left: `${popoverPosition.left}px`,

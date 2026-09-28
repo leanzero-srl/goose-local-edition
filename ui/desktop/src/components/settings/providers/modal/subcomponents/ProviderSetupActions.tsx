@@ -90,7 +90,7 @@ export default function ProviderSetupActions({
           <Button
             variant="ghost"
             onClick={onCancelDelete}
-            className="w-full h-[60px] rounded-none hover:bg-background-secondary text-text-secondary hover:text-text-primary text-md font-regular"
+            className="w-full h-[60px] rounded-none hover:bg-background-secondary text-text-secondary hover:text-text-primary text-base font-normal"
           >
             {intl.formatMessage(i18n.ok)}
           </Button>
@@ -108,14 +108,14 @@ export default function ProviderSetupActions({
         </div>
         <Button
           onClick={onConfirmDelete}
-          className="w-full h-[60px] rounded-none border-b border-border-primary bg-transparent hover:bg-red-900/20 text-red-500 font-medium text-md"
+          className="w-full h-[60px] rounded-none border-b border-border-primary bg-transparent hover:bg-red-900/20 text-red-500 font-medium text-base"
         >
           <Trash2 className="h-4 w-4 mr-2" /> {intl.formatMessage(i18n.confirmDelete)}
         </Button>
         <Button
           variant="ghost"
           onClick={onCancelDelete}
-          className="w-full h-[60px] rounded-none hover:bg-background-secondary text-text-secondary hover:text-text-primary text-md font-regular"
+          className="w-full h-[60px] rounded-none hover:bg-background-secondary text-text-secondary hover:text-text-primary text-base font-normal"
         >
           {intl.formatMessage(i18n.cancel)}
         </Button>
@@ -130,7 +130,7 @@ export default function ProviderSetupActions({
         <Button
           type="button"
           onClick={onDelete}
-          className="w-full h-[60px] rounded-none border-t border-border-primary bg-transparent hover:bg-background-secondary text-red-500 font-medium text-md"
+          className="w-full h-[60px] rounded-none border-t border-border-primary bg-transparent hover:bg-background-secondary text-red-500 font-medium text-base"
         >
           <Trash2 className="h-4 w-4 mr-2" /> {intl.formatMessage(i18n.deleteProvider)}
         </Button>
@@ -142,7 +142,7 @@ export default function ProviderSetupActions({
             type="submit"
             variant="ghost"
             onClick={onSubmit}
-            className="w-full h-[60px] rounded-none border-t border-border-primary text-md hover:bg-background-secondary text-text-primary font-medium"
+            className="w-full h-[60px] rounded-none border-t border-border-primary text-base hover:bg-background-secondary text-text-primary font-medium"
           >
             {intl.formatMessage(checkingConnection ? i18n.checking : i18n.submit)}
           </Button>
@@ -150,7 +150,7 @@ export default function ProviderSetupActions({
             type="button"
             variant="ghost"
             onClick={onCancel}
-            className="w-full h-[60px] rounded-none border-t border-border-primary hover:text-text-primary text-text-secondary hover:bg-background-secondary text-md font-regular"
+            className="w-full h-[60px] rounded-none border-t border-border-primary hover:text-text-primary text-text-secondary hover:bg-background-secondary text-base font-normal"
           >
             {intl.formatMessage(i18n.cancel)}
           </Button>
@@ -162,7 +162,7 @@ export default function ProviderSetupActions({
             type="submit"
             variant="ghost"
             onClick={onSubmit}
-            className="w-full h-[60px] rounded-none border-t border-border-primary text-md hover:bg-background-secondary text-text-primary font-medium"
+            className="w-full h-[60px] rounded-none border-t border-border-primary text-base hover:bg-background-secondary text-text-primary font-medium"
           >
             {intl.formatMessage(i18n.enableProvider)}
           </Button>
@@ -170,7 +170,7 @@ export default function ProviderSetupActions({
             type="button"
             variant="ghost"
             onClick={onCancel}
-            className="w-full h-[60px] rounded-none border-t border-border-primary hover:text-text-primary text-text-secondary hover:bg-background-secondary text-md font-regular"
+            className="w-full h-[60px] rounded-none border-t border-border-primary hover:text-text-primary text-text-secondary hover:bg-background-secondary text-base font-normal"
           >
             {intl.formatMessage(i18n.cancel)}
           </Button>

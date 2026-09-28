@@ -178,7 +178,7 @@ export default function EnvVarsSection({
               <Button
                 onClick={() => handleEdit(index)}
                 variant="ghost"
-                className="group p-2 h-auto text-iconSubtle hover:bg-transparent"
+                className="group p-2 h-auto text-text-secondary hover:bg-transparent"
               >
                 <Edit className="h-3 w-3 text-gray-400 group-hover:text-white group-hover:drop-shadow-sm transition-all" />
               </Button>
@@ -189,7 +189,7 @@ export default function EnvVarsSection({
             <Button
               onClick={() => onRemove(index)}
               variant="ghost"
-              className="group p-2 h-auto text-iconSubtle hover:bg-transparent"
+              className="group p-2 h-auto text-text-secondary hover:bg-transparent"
             >
               <X className="h-3 w-3 text-gray-400 group-hover:text-white group-hover:drop-shadow-sm transition-all" />
             </Button>

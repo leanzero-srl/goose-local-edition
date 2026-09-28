@@ -486,19 +486,19 @@ export default function CustomProviderForm({
   if (step === 'choice') {
     return (
       <div className="mt-4 space-y-3">
-        <p className="text-sm text-textSubtle">{intl.formatMessage(i18n.chooseSetup)}</p>
+        <p className="text-sm text-text-secondary">{intl.formatMessage(i18n.chooseSetup)}</p>
         <button
           type="button"
           onClick={() => setStep('catalog')}
-          className="w-full p-4 text-left border border-border rounded-lg hover:bg-surfaceHover hover:border-primary transition-colors group"
+          className="w-full p-4 text-left border border-border-primary rounded-lg hover:bg-background-secondary hover:border-lz-accent transition-colors group"
         >
           <div className="flex items-center gap-3">
-            <Search className="w-5 h-5 text-primary flex-shrink-0" />
+            <Search className="w-5 h-5 text-lz-accent flex-shrink-0" />
             <div>
-              <div className="font-medium text-textStandard">
+              <div className="font-medium text-text-primary">
                 {intl.formatMessage(i18n.startFromTemplate)}
               </div>
-              <div className="text-sm text-textSubtle mt-0.5">
+              <div className="text-sm text-text-secondary mt-0.5">
                 {intl.formatMessage(i18n.startFromTemplateDesc)}
               </div>
             </div>
@@ -507,15 +507,15 @@ export default function CustomProviderForm({
         <button
           type="button"
           onClick={() => setStep('form')}
-          className="w-full p-4 text-left border border-border rounded-lg hover:bg-surfaceHover hover:border-primary transition-colors group"
+          className="w-full p-4 text-left border border-border-primary rounded-lg hover:bg-background-secondary hover:border-lz-accent transition-colors group"
         >
           <div className="flex items-center gap-3">
-            <Settings className="w-5 h-5 text-textSubtle flex-shrink-0" />
+            <Settings className="w-5 h-5 text-text-secondary flex-shrink-0" />
             <div>
-              <div className="font-medium text-textStandard">
+              <div className="font-medium text-text-primary">
                 {intl.formatMessage(i18n.configureManually)}
               </div>
-              <div className="text-sm text-textSubtle mt-0.5">
+              <div className="text-sm text-text-secondary mt-0.5">
                 {intl.formatMessage(i18n.configureManuallyDesc)}
               </div>
             </div>
@@ -552,13 +552,13 @@ export default function CustomProviderForm({
     <form onSubmit={handleSubmit} className="mt-4 space-y-4">
       {/* Template info banner */}
       {selectedTemplate && (
-        <div className="p-3 bg-surfaceHover border border-border rounded-lg">
+        <div className="p-3 bg-background-secondary border border-border-primary rounded-lg">
           <div className="flex items-center justify-between">
             <div className="text-sm">
-              <div className="font-medium text-textStandard">
+              <div className="font-medium text-text-primary">
                 {intl.formatMessage(i18n.usingTemplate, { name: selectedTemplate.name })}
               </div>
-              <div className="text-textSubtle mt-1">{selectedTemplate.apiUrl}</div>
+              <div className="text-text-secondary mt-1">{selectedTemplate.apiUrl}</div>
             </div>
             <div className="flex items-center gap-2">
               {selectedTemplate.docUrl && (
@@ -566,7 +566,7 @@ export default function CustomProviderForm({
                   href={selectedTemplate.docUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-primary hover:underline text-sm flex items-center gap-1"
+                  className="text-lz-accent hover:underline text-sm flex items-center gap-1"
                 >
                   {intl.formatMessage(i18n.docs)} <ExternalLink className="w-3 h-3" />
                 </a>
@@ -576,7 +576,7 @@ export default function CustomProviderForm({
                 variant="ghost"
                 size="sm"
                 onClick={handleClearTemplate}
-                className="text-textSubtle hover:text-textStandard"
+                className="text-text-secondary hover:text-text-primary"
               >
                 {intl.formatMessage(i18n.clear)}
               </Button>
@@ -706,7 +706,7 @@ export default function CustomProviderForm({
             onChange={(e) => setBasePath(e.target.value)}
             placeholder={intl.formatMessage(i18n.apiBasePathPlaceholder)}
           />
-          <p className="text-xs text-textSubtle mt-1">{intl.formatMessage(i18n.apiBasePathHint)}</p>
+          <p className="text-xs text-text-secondary mt-1">{intl.formatMessage(i18n.apiBasePathHint)}</p>
         </div>
       )}
 
@@ -737,7 +737,7 @@ export default function CustomProviderForm({
             >
               {intl.formatMessage(i18n.apiKey)}
               {selectedTemplate?.envVar && (
-                <span className="text-textSubtle ml-1 font-normal">
+                <span className="text-text-secondary ml-1 font-normal">
                   ({selectedTemplate.envVar})
                 </span>
               )}
@@ -832,10 +832,10 @@ export default function CustomProviderForm({
       {/* Custom headers */}
       {isEditable && (
         <div>
-          <label className="text-sm font-medium text-textStandard mb-2 block">
+          <label className="text-sm font-medium text-text-primary mb-2 block">
             {intl.formatMessage(i18n.customHeaders)}
           </label>
-          <p className="text-xs text-textSubtle mb-4">
+          <p className="text-xs text-text-secondary mb-4">
             {intl.formatMessage(i18n.customHeadersHint)}
           </p>
           <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
@@ -845,19 +845,19 @@ export default function CustomProviderForm({
                   value={header.key}
                   onChange={(e) => handleHeaderChange(index, 'key', e.target.value)}
                   placeholder={intl.formatMessage(i18n.headerNamePlaceholder)}
-                  className="w-full text-textStandard border-borderSubtle hover:border-borderStandard"
+                  className="w-full text-text-primary border-border-primary hover:border-border-secondary"
                 />
                 <Input
                   value={header.value}
                   onChange={(e) => handleHeaderChange(index, 'value', e.target.value)}
                   placeholder={intl.formatMessage(i18n.valuePlaceholder)}
-                  className="w-full text-textStandard border-borderSubtle hover:border-borderStandard"
+                  className="w-full text-text-primary border-border-primary hover:border-border-secondary"
                 />
                 <Button
                   onClick={() => handleRemoveHeader(index)}
                   variant="ghost"
                   type="button"
-                  className="group p-2 h-auto text-iconSubtle hover:bg-transparent"
+                  className="group p-2 h-auto text-text-secondary hover:bg-transparent"
                 >
                   <X className="h-3 w-3 text-gray-400 group-hover:text-white group-hover:drop-shadow-sm transition-all" />
                 </Button>
@@ -873,7 +873,7 @@ export default function CustomProviderForm({
               onKeyDown={handleHeaderKeyDown}
               placeholder="Header name"
               className={cn(
-                'w-full text-textStandard border-borderSubtle hover:border-borderStandard',
+                'w-full text-text-primary border-border-primary hover:border-border-secondary',
                 invalidHeaderFields.key && 'border-red-500 focus:border-red-500'
               )}
             />
@@ -886,7 +886,7 @@ export default function CustomProviderForm({
               onKeyDown={handleHeaderKeyDown}
               placeholder={intl.formatMessage(i18n.valuePlaceholder)}
               className={cn(
-                'w-full text-textStandard border-borderSubtle hover:border-borderStandard',
+                'w-full text-text-primary border-border-primary hover:border-border-secondary',
                 invalidHeaderFields.value && 'border-red-500 focus:border-red-500'
               )}
             />
@@ -894,7 +894,7 @@ export default function CustomProviderForm({
               onClick={handleAddHeader}
               variant="ghost"
               type="button"
-              className="flex items-center justify-start gap-1 px-2 pr-4 text-sm rounded-full text-textStandard bg-background-primary border border-borderSubtle hover:border-borderStandard transition-colors min-w-[60px] h-9 [&>svg]:!size-4"
+              className="flex items-center justify-start gap-1 px-2 pr-4 text-sm rounded-full text-text-primary bg-background-primary border border-border-primary hover:border-border-secondary transition-colors min-w-[60px] h-9 [&>svg]:!size-4"
             >
               <Plus /> {intl.formatMessage(i18n.add)}
             </Button>

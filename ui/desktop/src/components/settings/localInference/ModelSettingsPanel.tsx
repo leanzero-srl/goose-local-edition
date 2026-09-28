@@ -276,11 +276,11 @@ function NumberField({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-text-default">{label}</label>
-      {description && <span className="text-xs text-text-muted">{description}</span>}
+      <label className="text-xs font-medium text-text-primary">{label}</label>
+      {description && <span className="text-xs text-text-secondary">{description}</span>}
       <input
         type="number"
-        className="w-full rounded border border-border-subtle bg-background-default px-2 py-1 text-sm text-text-default"
+        className="w-full rounded border border-border-primary bg-background-primary px-2 py-1 text-sm text-text-primary"
         value={value ?? ''}
         onChange={(e) => {
           const raw = e.target.value;
@@ -314,8 +314,8 @@ function ToggleField({
   return (
     <div className="flex items-center justify-between gap-2">
       <div>
-        <div className="text-xs font-medium text-text-default">{label}</div>
-        {description && <span className="text-xs text-text-muted">{description}</span>}
+        <div className="text-xs font-medium text-text-primary">{label}</div>
+        {description && <span className="text-xs text-text-secondary">{description}</span>}
       </div>
       <Switch checked={value} onCheckedChange={onChange} variant="mono" />
     </div>
@@ -338,13 +338,13 @@ function SelectField<T extends string>({
   return (
     <div className="flex items-center justify-between gap-2">
       <div>
-        <div className="text-xs font-medium text-text-default">{label}</div>
-        {description && <span className="text-xs text-text-muted">{description}</span>}
+        <div className="text-xs font-medium text-text-primary">{label}</div>
+        {description && <span className="text-xs text-text-secondary">{description}</span>}
       </div>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
-        className="rounded border border-border-subtle bg-background-default px-2 py-1 text-xs text-text-default"
+        className="rounded border border-border-primary bg-background-primary px-2 py-1 text-xs text-text-primary"
       >
         {options.map((opt) => (
           <option key={opt.value} value={opt.value}>
@@ -371,14 +371,14 @@ function TextAreaField({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-text-default">{label}</label>
-      {description && <span className="text-xs text-text-muted">{description}</span>}
+      <label className="text-xs font-medium text-text-primary">{label}</label>
+      {description && <span className="text-xs text-text-secondary">{description}</span>}
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
         spellCheck={false}
-        className="min-h-32 rounded border border-border-subtle bg-background-default px-2 py-1 font-mono text-xs text-text-default"
+        className="min-h-32 rounded border border-border-primary bg-background-primary px-2 py-1 font-mono text-xs text-text-primary"
       />
     </div>
   );
@@ -515,13 +515,13 @@ export const ModelSettingsPanel = ({ modelId }: { modelId: string }) => {
     : [builtinTemplateDraft, ...builtinTemplateOptions].filter(Boolean);
 
   if (loading) {
-    return <div className="py-2 text-xs text-text-muted">{intl.formatMessage(i18n.loadingSettings)}</div>;
+    return <div className="py-2 text-xs text-text-secondary">{intl.formatMessage(i18n.loadingSettings)}</div>;
   }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end">
-        {saving && <span className="text-xs text-text-muted mr-auto">{intl.formatMessage(i18n.saving)}</span>}
+        {saving && <span className="text-xs text-text-secondary mr-auto">{intl.formatMessage(i18n.saving)}</span>}
         <Button variant="ghost" size="sm" onClick={resetDefaults} title={intl.formatMessage(i18n.resetToDefaults)}>
           <RotateCcw className="w-3.5 h-3.5 mr-1" />
           <span className="text-xs">{intl.formatMessage(i18n.reset)}</span>
@@ -530,7 +530,7 @@ export const ModelSettingsPanel = ({ modelId }: { modelId: string }) => {
 
       {/* Context & Generation */}
       <div className="space-y-2">
-        <h5 className="text-xs font-medium text-text-default">{intl.formatMessage(i18n.contextAndGeneration)}</h5>
+        <h5 className="text-xs font-medium text-text-primary">{intl.formatMessage(i18n.contextAndGeneration)}</h5>
         <div className="grid grid-cols-2 gap-3">
           <NumberField
             label={intl.formatMessage(i18n.contextSize)}
@@ -640,7 +640,7 @@ export const ModelSettingsPanel = ({ modelId }: { modelId: string }) => {
 
       {/* Repetition Penalty */}
       <div className="space-y-2">
-        <h5 className="text-xs font-medium text-text-default">{intl.formatMessage(i18n.repetitionPenalty)}</h5>
+        <h5 className="text-xs font-medium text-text-primary">{intl.formatMessage(i18n.repetitionPenalty)}</h5>
         <div className="grid grid-cols-2 gap-3">
           <NumberField
             label={intl.formatMessage(i18n.repeatPenalty)}
@@ -680,7 +680,7 @@ export const ModelSettingsPanel = ({ modelId }: { modelId: string }) => {
 
       {/* Performance */}
       <div className="space-y-2">
-        <h5 className="text-xs font-medium text-text-default">{intl.formatMessage(i18n.performance)}</h5>
+        <h5 className="text-xs font-medium text-text-primary">{intl.formatMessage(i18n.performance)}</h5>
         <div className="grid grid-cols-2 gap-3">
           <NumberField
             label={intl.formatMessage(i18n.batchSize)}

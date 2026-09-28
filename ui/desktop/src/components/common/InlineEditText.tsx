@@ -175,7 +175,7 @@ export const InlineEditText: React.FC<InlineEditTextProps> = ({
         disabled={isSaving}
         className={`
           w-full px-2 py-1 border rounded
-          bg-background-primary text-text-standard
+          bg-background-primary text-text-primary
           border-blue-500 ring-2 ring-blue-500/20
           focus:outline-none focus:ring-2 focus:ring-blue-500/40
           disabled:opacity-50 disabled:cursor-not-allowed
@@ -190,7 +190,7 @@ export const InlineEditText: React.FC<InlineEditTextProps> = ({
     <div
       className={`
         cursor-pointer px-2 py-1 rounded
-        hover:bg-background-hover
+        hover:bg-background-secondary
         transition-colors
         ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
         ${className}
@@ -199,7 +199,7 @@ export const InlineEditText: React.FC<InlineEditTextProps> = ({
       onDoubleClick={handleDoubleClick}
       title={disabled ? '' : singleClickEdit ? intl.formatMessage(i18n.clickToEdit) : intl.formatMessage(i18n.doubleClickToEdit)}
     >
-      {value || <span className="text-text-subtle italic">{resolvedPlaceholder}</span>}
+      {value || <span className="text-text-secondary italic">{resolvedPlaceholder}</span>}
     </div>
   );
 };

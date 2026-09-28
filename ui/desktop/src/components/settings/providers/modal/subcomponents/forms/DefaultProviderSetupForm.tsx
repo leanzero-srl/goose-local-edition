@@ -278,11 +278,11 @@ export default function DefaultProviderSetupForm({
               });
             }}
             placeholder={getPlaceholder(parameter)}
-            className={`w-full h-14 px-4 font-regular rounded-lg shadow-none ${
+            className={`w-full h-14 px-4 font-normal rounded-lg shadow-none ${
               validationErrors[parameter.name]
                 ? 'border-2 border-red-500'
                 : 'border border-border-primary hover:border-border-primary'
-            } bg-background-primary text-lg placeholder:text-text-secondary font-regular text-text-primary`}
+            } bg-background-primary text-lg placeholder:text-text-secondary font-normal text-text-primary`}
             required={parameter.required}
           />
           {validationErrors[parameter.name] && (
@@ -322,7 +322,7 @@ export default function DefaultProviderSetupForm({
             <Collapsible
               open={optionalExpanded}
               onOpenChange={setOptionalExpanded}
-              className="my-4 border-2 border-dashed border-secondary rounded-lg bg-secondary/10"
+              className="my-4 border-2 border-dashed border-border-primary rounded-lg bg-background-secondary"
             >
               <CollapsibleTrigger className="m-3 w-full">
                 <div>

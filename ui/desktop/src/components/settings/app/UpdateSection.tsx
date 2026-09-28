@@ -468,7 +468,7 @@ export default function UpdateSection() {
       </div>
 
       {/* Auto-download toggle */}
-      <div className="mt-6 pt-4 border-t border-borderSubtle">
+      <div className="mt-6 pt-4 border-t border-border-primary">
         {autoDownloadForcedByEnv ? (
           <p className="text-xs text-amber-600">
             {intl.formatMessage(i18n.autoDownloadDisabledByEnv)}
@@ -477,7 +477,7 @@ export default function UpdateSection() {
           <label className="flex items-start gap-3 cursor-pointer group">
             <input
               type="checkbox"
-              className="mt-0.5 cursor-pointer accent-bgApp"
+              className="mt-0.5 cursor-pointer accent-lz-accent"
               checked={disableAutoDownload}
               onChange={(e) => toggleAutoDownload(e.target.checked)}
             />

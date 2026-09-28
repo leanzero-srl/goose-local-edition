@@ -703,7 +703,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Settings className="text-iconStandard" size={24} />
+              <Settings className="text-text-primary" size={24} />
               {intl.formatMessage(i18n.notificationsModalTitle)}
             </DialogTitle>
           </DialogHeader>

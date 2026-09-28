@@ -323,7 +323,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
               </p>
             )}
             {scheduleDetails && (
-              <Card className="p-4 bg-background-primary shadow mb-6">
+              <Card className="p-4 bg-background-primary mb-6">
                 <div className="space-y-2">
                   <div className="flex flex-col md:flex-row md:items-center justify-between">
                     <h3 className="text-base font-semibold text-text-primary">
@@ -491,7 +491,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   return (
                     <Card
                       key={sessionId}
-                      className="p-4 bg-background-primary shadow cursor-pointer hover:shadow-lg transition-shadow duration-200"
+                      className="p-4 bg-background-primary cursor-pointer transition-shadow duration-200"
                       onClick={() => openSession(sessionId)}
                     >
                       <h3

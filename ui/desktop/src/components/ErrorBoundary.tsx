@@ -66,21 +66,21 @@ export function ErrorUI({ error }: { error: string }) {
   const version = window?.appConfig?.get('GOOSE_VERSION') as string | undefined;
 
   return (
-    <div className="fixed inset-0 w-full h-full flex flex-col items-center justify-center gap-6 bg-background">
+    <div className="fixed inset-0 w-full h-full flex flex-col items-center justify-center gap-6 bg-background-primary">
       <div className="flex flex-col items-center gap-4 max-w-[600px] text-center px-6">
-        <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-2">
-          <AlertTriangle className="w-8 h-8 text-destructive" />
+        <div className="w-16 h-16 rounded-full bg-background-danger flex items-center justify-center mb-2">
+          <AlertTriangle className="w-8 h-8 text-white" />
         </div>
 
-        <h1 className="text-2xl font-semibold text-foreground dark:text-white">{intl.formatMessage(i18n.heading)}</h1>
+        <h1 className="text-2xl font-semibold text-text-primary dark:text-white">{intl.formatMessage(i18n.heading)}</h1>
 
-        <p className="text-base text-text-secondary dark:text-muted-foreground mb-2">
+        <p className="text-base text-text-secondary mb-2">
           {version !== undefined
             ? intl.formatMessage(i18n.errorWithVersion, { version })
             : intl.formatMessage(i18n.errorGeneric)}
         </p>
 
-        <pre className="text-destructive text-sm dark:text-white p-4 bg-muted rounded-lg w-full overflow-auto border border-border whitespace-pre-wrap">
+        <pre className="text-text-danger text-sm dark:text-white p-4 bg-background-secondary rounded-lg w-full overflow-auto border border-border-primary whitespace-pre-wrap">
           {error}
         </pre>
 

@@ -236,15 +236,15 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
   if (phase === 'loading') {
     return (
       <div className="flex flex-col items-center justify-center py-16">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-text-muted mb-4"></div>
-        <p className="text-text-muted text-sm">{intl.formatMessage(i18n.checkingModels)}</p>
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-text-secondary mb-4"></div>
+        <p className="text-text-secondary text-sm">{intl.formatMessage(i18n.checkingModels)}</p>
       </div>
     );
   }
 
   return (
     <div>
-      <div className="p-4 border rounded-xl bg-background-muted">
+      <div className="p-4 border rounded-xl bg-background-secondary">
         {phase === 'error' && (
           <div className="space-y-3">
             <div className="border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20 rounded-lg p-3">
@@ -255,7 +255,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                 setErrorMessage(null);
                 setPhase('select');
               }}
-              className="w-full px-4 py-2 bg-transparent border rounded-lg text-text-default text-sm font-medium hover:bg-background-muted/80 transition-colors"
+              className="w-full px-4 py-2 bg-transparent border rounded-lg text-text-primary text-sm font-medium hover:bg-background-secondary transition-colors"
             >
               {intl.formatMessage(i18n.tryAgain)}
             </button>
@@ -270,7 +270,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                 className={`relative w-full p-4 border rounded-lg cursor-pointer transition-all duration-200 ${
                   selectedModelId === recommended.id
                     ? 'border-blue-500 bg-blue-500/5'
-                    : 'border-border-subtle hover:border-border-default'
+                    : 'border-border-primary hover:border-border-primary'
                 }`}
               >
                 <div className="absolute -top-2 -right-2 z-10">
@@ -287,7 +287,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-text-default text-sm">
+                      <span className="font-medium text-text-primary text-sm">
                         {recommended.id}
                       </span>
                       {recommended.status.state === 'Downloaded' && (
@@ -296,7 +296,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                         </span>
                       )}
                     </div>
-                    <p className="text-text-muted text-xs mt-1">
+                    <p className="text-text-secondary text-xs mt-1">
                       {formatSize(recommended.sizeBytes)}
                     </p>
                   </div>
@@ -335,7 +335,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                         className={`w-full p-4 border rounded-lg cursor-pointer transition-all duration-200 ${
                           selectedModelId === model.id
                             ? 'border-blue-500 bg-blue-500/5'
-                            : 'border-border-subtle hover:border-border-default'
+                            : 'border-border-primary hover:border-border-primary'
                         }`}
                       >
                         <div className="flex items-start gap-3">
@@ -347,10 +347,10 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                           />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-medium text-text-default text-sm">
+                              <span className="font-medium text-text-primary text-sm">
                                 {model.id}
                               </span>
-                              <span className="text-xs text-text-muted">
+                              <span className="text-xs text-text-secondary">
                                 {formatSize(model.sizeBytes)}
                               </span>
                               {model.status.state === 'Downloaded' && (
@@ -385,21 +385,21 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
 
         {phase === 'downloading' && selectedModel && (
           <div className="space-y-3">
-            <div className="border border-border-subtle rounded-lg p-4 bg-background-default">
-              <p className="font-medium text-text-default text-sm mb-3">
+            <div className="border border-border-primary rounded-lg p-4 bg-background-primary">
+              <p className="font-medium text-text-primary text-sm mb-3">
                 {intl.formatMessage(i18n.downloading, { modelId: selectedModel.id })}
               </p>
 
               {downloadProgress ? (
                 <div className="space-y-2">
-                  <div className="w-full bg-background-subtle rounded-full h-2 overflow-hidden">
+                  <div className="w-full bg-background-secondary rounded-full h-2 overflow-hidden">
                     <div
                       className="bg-blue-500 h-2 rounded-full transition-all duration-500 ease-out"
                       style={{ width: `${downloadProgress.progressPercent}%` }}
                     />
                   </div>
 
-                  <div className="flex justify-between text-xs text-text-muted">
+                  <div className="flex justify-between text-xs text-text-secondary">
                     <span>
                       {formatBytes(downloadProgress.bytesDownloaded)} of{' '}
                       {formatBytes(downloadProgress.totalBytes)}
@@ -407,7 +407,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                     <span>{downloadProgress.progressPercent.toFixed(0)}%</span>
                   </div>
 
-                  <div className="flex justify-between text-xs text-text-muted">
+                  <div className="flex justify-between text-xs text-text-secondary">
                     {downloadProgress.speedBps ? (
                       <span>{formatBytes(downloadProgress.speedBps)}/s</span>
                     ) : (
@@ -426,15 +426,15 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                 </div>
               ) : (
                 <div className="flex items-center gap-3">
-                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-text-muted"></div>
-                  <span className="text-sm text-text-muted">{intl.formatMessage(i18n.startingDownload)}</span>
+                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-text-secondary"></div>
+                  <span className="text-sm text-text-secondary">{intl.formatMessage(i18n.startingDownload)}</span>
                 </div>
               )}
             </div>
 
             <button
               onClick={handleCancelDownload}
-              className="w-full px-4 py-2.5 bg-transparent text-text-muted border rounded-lg text-sm hover:bg-background-default/80 transition-colors"
+              className="w-full px-4 py-2.5 bg-transparent text-text-secondary border rounded-lg text-sm hover:bg-background-secondary transition-colors"
             >
               {intl.formatMessage(i18n.cancelDownload)}
             </button>

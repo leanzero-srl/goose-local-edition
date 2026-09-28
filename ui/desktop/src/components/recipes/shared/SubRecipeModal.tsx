@@ -174,14 +174,14 @@ export default function SubRecipeModal({
 
   return (
     <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/50">
-      <div className="bg-background-primary border border-borderSubtle rounded-lg w-[90vw] max-w-2xl max-h-[90vh] flex flex-col">
+      <div className="bg-background-primary border border-border-primary rounded-lg w-[90vw] max-w-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-borderSubtle">
+        <div className="flex items-center justify-between p-6 border-b border-border-primary">
           <div>
-            <h2 className="text-xl font-medium text-textProminent">
+            <h2 className="text-xl font-medium text-text-primary">
               {subRecipe ? intl.formatMessage(i18n.configureTitle) : intl.formatMessage(i18n.addTitle)}
             </h2>
-            <p className="text-textSubtle text-sm">
+            <p className="text-text-secondary text-sm">
               {intl.formatMessage(i18n.subtitle)}
             </p>
           </div>
@@ -189,7 +189,7 @@ export default function SubRecipeModal({
             onClick={onClose}
             variant="ghost"
             size="sm"
-            className="p-2 hover:bg-bgSubtle rounded-lg transition-colors"
+            className="p-2 hover:bg-background-secondary rounded-lg transition-colors"
             aria-label={intl.formatMessage(i18n.closeModal)}
           >
             <X className="w-5 h-5" />
@@ -202,7 +202,7 @@ export default function SubRecipeModal({
           <div>
             <label
               htmlFor="subrecipe-name"
-              className="block text-sm font-medium text-text-standard mb-2"
+              className="block text-sm font-medium text-text-primary mb-2"
             >
               {intl.formatMessage(i18n.nameLabel)} <span className="text-text-danger">*</span>
             </label>
@@ -211,10 +211,10 @@ export default function SubRecipeModal({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full p-3 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full p-3 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring"
               placeholder={intl.formatMessage(i18n.namePlaceholder)}
             />
-            <p className="text-xs text-text-muted mt-1">
+            <p className="text-xs text-text-secondary mt-1">
               {intl.formatMessage(i18n.nameHint)}
             </p>
           </div>
@@ -223,7 +223,7 @@ export default function SubRecipeModal({
           <div>
             <label
               htmlFor="subrecipe-path"
-              className="block text-sm font-medium text-text-standard mb-2"
+              className="block text-sm font-medium text-text-primary mb-2"
             >
               {intl.formatMessage(i18n.pathLabel)} <span className="text-text-danger">*</span>
             </label>
@@ -233,7 +233,7 @@ export default function SubRecipeModal({
                 type="text"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
-                className="flex-1 p-3 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring"
+                className="flex-1 p-3 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring"
                 placeholder={intl.formatMessage(i18n.pathPlaceholder)}
               />
               <Button
@@ -246,7 +246,7 @@ export default function SubRecipeModal({
                 {intl.formatMessage(i18n.browse)}
               </Button>
             </div>
-            <p className="text-xs text-text-muted mt-1">
+            <p className="text-xs text-text-secondary mt-1">
               {intl.formatMessage(i18n.pathHint)}
             </p>
           </div>
@@ -255,7 +255,7 @@ export default function SubRecipeModal({
           <div>
             <label
               htmlFor="subrecipe-description"
-              className="block text-sm font-medium text-text-standard mb-2"
+              className="block text-sm font-medium text-text-primary mb-2"
             >
               {intl.formatMessage(i18n.descriptionLabel)}
             </label>
@@ -263,7 +263,7 @@ export default function SubRecipeModal({
               id="subrecipe-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full p-3 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+              className="w-full p-3 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring resize-none"
               placeholder={intl.formatMessage(i18n.descriptionPlaceholder)}
               rows={3}
             />
@@ -276,22 +276,22 @@ export default function SubRecipeModal({
               type="checkbox"
               checked={sequentialWhenRepeated}
               onChange={(e) => setSequentialWhenRepeated(e.target.checked)}
-              className="w-4 h-4 border-border-subtle rounded focus:ring-2 focus:ring-ring"
+              className="w-4 h-4 border-border-primary rounded focus:ring-2 focus:ring-ring"
             />
-            <label htmlFor="subrecipe-sequential" className="text-sm text-text-standard">
+            <label htmlFor="subrecipe-sequential" className="text-sm text-text-primary">
               {intl.formatMessage(i18n.sequentialLabel)}
             </label>
-            <span className="text-xs text-text-muted">
+            <span className="text-xs text-text-secondary">
               {intl.formatMessage(i18n.sequentialHint)}
             </span>
           </div>
 
           {/* Values Section */}
           <div>
-            <label className="block text-sm font-medium text-text-standard mb-2">
+            <label className="block text-sm font-medium text-text-primary mb-2">
               {intl.formatMessage(i18n.preconfiguredValues)}
             </label>
-            <p className="text-xs text-text-muted mb-3">
+            <p className="text-xs text-text-secondary mb-3">
               {intl.formatMessage(i18n.preconfiguredValuesHint)}
             </p>
             <KeyValueEditor values={values} onChange={setValues} />
@@ -299,7 +299,7 @@ export default function SubRecipeModal({
         </div>
 
         {/* Footer */}
-        <div className="flex gap-2 p-6 border-t border-borderSubtle">
+        <div className="flex gap-2 p-6 border-t border-border-primary">
           <Button onClick={onClose} variant="outline" className="flex-1">
             {intl.formatMessage(i18n.cancel)}
           </Button>

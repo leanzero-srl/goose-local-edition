@@ -226,7 +226,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md bg-background-primary shadow-xl rounded-3xl z-50 flex flex-col max-h-[90vh] overflow-hidden">
+      <Card className="w-full max-w-md bg-background-primary shadow-lz-overlay dark:shadow-lz-overlay-dark rounded-3xl z-50 flex flex-col max-h-[90vh] overflow-hidden">
         <div className="px-8 pt-6 pb-4 flex-shrink-0">
           <div className="flex items-center gap-3">
             <img src={ClockIcon} alt="Clock" className="w-8 h-8" />
@@ -282,7 +282,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                       onClick={() => setSourceType('file')}
                       className={`flex-1 px-4 py-2 text-sm font-medium rounded-full transition-all ${
                         sourceType === 'file'
-                          ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm'
+                          ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
                           : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
                       }`}
                     >
@@ -293,7 +293,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                       onClick={() => setSourceType('deeplink')}
                       className={`flex-1 px-4 py-2 text-sm font-medium rounded-full transition-all ${
                         sourceType === 'deeplink'
-                          ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm'
+                          ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
                           : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
                       }`}
                     >

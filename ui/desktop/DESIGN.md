@@ -122,12 +122,12 @@ regenerate the plain alphabetical rule. `lz/inkYields.test.ts` refuses a regress
 Host code joined with `cn()` uses `font-medium` / `font-semibold` / `font-bold` / `font-normal`:
 tailwind-merge reads `font-lz-medium` as a font FAMILY and deletes it beside `font-mono` (measured),
 so the Studio weights are not safe there. Until Q-325 the four host weights compiled to NO rule —
-the MCP theme registration sets `--font-weight-*` to `initial`, which deletes the keys — and 233
+the MCP theme registration sets `--font-weight-*` to `initial`, which deletes the keys — and 224
 host sites were silent no-ops; main.css re-registers them (inline 400/500/600/700).
 
 **Every class compiles.** `lz/classesCompile.test.ts` scans every className, class helper call and
 class-named binding in `src/` and fails on any token that names a Tailwind utility but produces no
-CSS (the Q-325 sweep found 97 such names on 664 sites: a whole older palette, shadcn names this app
+CSS (the Q-325 sweep found over 100 such names on 664 sites: a whole older palette, shadcn names this app
 never registered, `ring-border-active`), and on any class string that clears the outline and then
 draws one it never styles (`outline-none` + `focus-visible:outline-2` without `outline-solid`
 computes to `none 0px` — the FOCUS token itself shipped that way).

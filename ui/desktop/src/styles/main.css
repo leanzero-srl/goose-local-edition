@@ -348,7 +348,7 @@
 
   /* The four host weights, re-registered (Q-325). The MCP registration above sets
      --font-weight-{normal,medium,semibold,bold} to `initial`, which DELETES the keys, so
-     font-medium / font-semibold / font-bold / font-normal produced no rule on 233 host sites —
+     font-medium / font-semibold / font-bold / font-normal produced no rule on 224 host sites —
      and the Studio's font-lz-* cannot stand in for them there: those components join classes
      with cn() (tailwind-merge), which reads `font-lz-medium` as a font FAMILY and drops it beside
      font-mono (measured). INLINE, so the weight is a literal in the utility, never the runtime

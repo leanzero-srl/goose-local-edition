@@ -209,7 +209,7 @@ export default function ConfigSettings() {
     <Card className="rounded-lg">
       <CardHeader className="pb-0">
         <CardTitle className="flex items-center gap-2">
-          <FileText className="text-iconStandard" size={20} />
+          <FileText className="text-text-primary" size={20} />
           {intl.formatMessage(i18n.title)}
         </CardTitle>
         <CardDescription>
@@ -229,7 +229,7 @@ export default function ConfigSettings() {
           <DialogContent className="max-w-4xl max-h-[80vh]">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <FileText className="text-iconStandard" size={20} />
+                <FileText className="text-text-primary" size={20} />
                 {intl.formatMessage(i18n.configurationEditor)}
               </DialogTitle>
               <DialogDescription>

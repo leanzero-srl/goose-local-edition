@@ -492,7 +492,7 @@ export default function ProviderConfigurationModal({
                   type="button"
                   variant="ghost"
                   onClick={handleCancel}
-                  className="w-full h-[60px] rounded-none border-t border-border-primary text-md hover:bg-background-secondary text-text-primary font-medium"
+                  className="w-full h-[60px] rounded-none border-t border-border-primary text-base hover:bg-background-secondary text-text-primary font-medium"
                 >
                   {intl.formatMessage(i18n.close)}
                 </Button>

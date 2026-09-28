@@ -106,7 +106,7 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
   );
 
   return (
-    <div className="flex flex-1 w-full h-full relative animate-fade-in bg-background-primary flex-row">
+    <div className="flex flex-1 w-full h-full relative bg-background-primary flex-row">
       {/* Session loops: goosed offers each tick; this window fires it through the chat's own door. */}
       <LoopDriver />
       <div
