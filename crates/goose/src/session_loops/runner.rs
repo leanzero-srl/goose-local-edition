@@ -541,6 +541,27 @@ impl Runner {
         })
     }
 
+    /// A decision that most often changes nothing — `evaluate` runs for every owned loop after
+    /// every event, `ready_inner` for every loop when a door opens — is taken first on a READ of
+    /// the record (the store is WAL: a read never waits on a writer), and only a decision that
+    /// changes the record takes the write transaction, where it is taken again on the record as
+    /// it is then. A decision that writes nothing is thereby linearized at its read; before, it
+    /// waited on any other writer of the store (another goose process, a person's turn end) while
+    /// holding `op`, and every other door of the runner — the tick's `accept_offer` — waited on
+    /// `op` behind a transaction that would write nothing (Q-286).
+    async fn decide_then_write<T>(
+        &self,
+        session_id: &str,
+        decide: impl Fn(Option<LoopRecord>) -> Result<(LoopRecord, T), Skip>,
+    ) -> Result<(LoopRecord, T), Skip> {
+        let current = record::read(&self.inner.deps.sessions, session_id)
+            .await
+            .map_err(|e| Skip::Store(e.to_string()))?
+            .map_err(Skip::Store)?;
+        decide(current)?;
+        self.write(session_id, decide).await
+    }
+
     fn emit(&self, session_id: &str, rec: &LoopRecord) {
         let changed = LoopsChangedNotification {
             session_id: session_id.to_string(),
@@ -752,7 +773,7 @@ impl Runner {
             Offer,
         }
         let written = self
-            .write(session_id, |current| {
+            .decide_then_write(session_id, |current| {
                 let mut rec = current.ok_or(Skip::NoLoop)?;
                 if rec.id != loop_id || rec.owner != Some(me) {
                     return Err(Skip::NotOurs);
@@ -1831,7 +1852,7 @@ impl Runner {
         }
         let me = self.me();
         let written = self
-            .write(session_id, |current| {
+            .decide_then_write(session_id, |current| {
                 let mut rec = current.ok_or(Skip::NoLoop)?;
                 if rec.owner != Some(me) {
                     return Err(Skip::NotOurs);

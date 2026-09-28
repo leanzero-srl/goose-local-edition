@@ -111,7 +111,9 @@ const psTable = async (pids?: number[]): Promise<string> => {
       ['-ww', ...select, '-o', 'pid=,ppid=,uid=,lstart=,args='],
       {
         encoding: 'utf8',
-        maxBuffer: 16 * 1024 * 1024,
+        // The process table's own size is the bound: a fixed buffer is what a busy Mac overflows
+        // (Q-286 — one engine's argv measured 262 KB, and `ps -ax` passed 1 MiB under a build).
+        maxBuffer: Infinity,
         env: { ...process.env, LC_ALL: 'C' },
         // The launch awaits this scan: a `ps` that never answers must not hold the app. Transport,
         // like the benchmark cancel's ps (main.ts) — it bounds a system call, never model work.

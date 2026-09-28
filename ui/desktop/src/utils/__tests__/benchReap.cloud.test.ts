@@ -43,7 +43,11 @@ it('captures and reaps a real cloud child in a separate session before its runne
   try {
     const [line] = await once(runner.stdout!, 'data');
     childPid = Number(String(line).trim());
-    const snapshot = execFileSync('ps', ['-axo', 'pid=,ppid=,args='], { encoding: 'utf8' });
+    const snapshot = execFileSync('ps', ['-axo', 'pid=,ppid=,args='], {
+      encoding: 'utf8',
+      // Q-290: a busy Mac's full table overflows the default 1 MiB (ENOBUFS).
+      maxBuffer: Infinity,
+    });
     const pids = benchmarkCancellationPids(snapshot, runner.pid!, '/not-a-real-run', process.pid);
     expect(pids).toContain(childPid);
     expect(pids[pids.length - 1]).toBe(runner.pid);
