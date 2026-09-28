@@ -429,15 +429,15 @@ async fn child_process_client(
         command.env("PATH", path);
     }
 
-    if working_dir.exists() && working_dir.is_dir() {
-        tracing::info!("Setting MCP process working directory: {:?}", working_dir);
-        command.current_dir(working_dir);
-    } else {
-        tracing::warn!(
-            "Working directory doesn't exist or isn't a directory: {:?}",
-            working_dir
-        );
+    // A missing session folder refuses the start: spawned without a dir, the server would run in
+    // goosed's own cwd — since Q-257 the shared $HOME, which is no session's folder.
+    if !working_dir.is_dir() {
+        return Err(ExtensionError::SetupError(format!(
+            "the session's folder {} does not exist or is not a folder, so the extension was not started",
+            working_dir.display()
+        )));
     }
+    command.current_dir(working_dir);
 
     let (transport, mut stderr) = TokioChildProcess::builder(command)
         .stderr(Stdio::piped())
@@ -1092,7 +1092,7 @@ impl ExtensionManager {
                     } else {
                         let (server_read, client_write) = tokio::io::duplex(65536);
                         let (client_read, server_write) = tokio::io::duplex(65536);
-                        extension_fn(server_read, server_write);
+                        extension_fn(server_read, server_write, effective_working_dir.clone());
 
                         Box::new(
                             McpClient::connect(

@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
     tracing::info!("Starting MCP server");
 
     // Create an instance of our memory server
-    let memory_server = MemoryServer::with_proposals(true);
+    let memory_server = MemoryServer::with_proposals(true, std::env::current_dir()?);
 
     // Run the server using rmcp
     let transport = rmcp::transport::stdio();

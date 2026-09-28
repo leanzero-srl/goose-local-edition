@@ -3,7 +3,7 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-pub type SpawnServerFn = fn(tokio::io::DuplexStream, tokio::io::DuplexStream);
+pub type SpawnServerFn = goose_mcp::SpawnServerFn;
 
 static BUILTIN_REGISTRY: Lazy<RwLock<HashMap<&'static str, SpawnServerFn>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
@@ -41,17 +41,23 @@ pub fn builtin_extensions() -> HashMap<&'static str, SpawnServerFn> {
 /// session uses, `goose mcp memory` (the Docker path) and `goosed mcp memory` — so the owner's
 /// `memory_proposals` setting reaches all of them. Read when the server is built, so a changed
 /// setting applies from the next session. Absent = ON (`Config::memory_proposals_enabled`, the
-/// default the desktop's "Ask before saving memories" switch shows).
-pub fn memory_server() -> goose_mcp::MemoryServer {
-    memory_server_for(Config::global())
+/// default the desktop's "Ask before saving memories" switch shows). `working_dir` is the session's
+/// folder: the in-process builtin gets it from the extension manager (Q-264), `goose mcp memory`
+/// from its own cwd, which the manager spawns it in.
+pub fn memory_server(working_dir: std::path::PathBuf) -> goose_mcp::MemoryServer {
+    memory_server_for(Config::global(), working_dir)
 }
 
-fn memory_server_for(config: &Config) -> goose_mcp::MemoryServer {
-    goose_mcp::MemoryServer::with_proposals(config.memory_proposals_enabled())
+fn memory_server_for(config: &Config, working_dir: std::path::PathBuf) -> goose_mcp::MemoryServer {
+    goose_mcp::MemoryServer::with_proposals(config.memory_proposals_enabled(), working_dir)
 }
 
-fn spawn_memory(r: tokio::io::DuplexStream, w: tokio::io::DuplexStream) {
-    goose_mcp::spawn_and_serve("memory", memory_server(), (r, w));
+fn spawn_memory(
+    r: tokio::io::DuplexStream,
+    w: tokio::io::DuplexStream,
+    working_dir: std::path::PathBuf,
+) {
+    goose_mcp::spawn_and_serve("memory", memory_server(working_dir), (r, w));
 }
 
 #[cfg(test)]
@@ -77,8 +83,8 @@ mod tests {
             ("GOOSE_MEMORY_PROPOSALS: true\n", true),
             ("{}\n", true),
         ] {
-            let (_dir, config) = config_with(yaml);
-            let server = memory_server_for(&config);
+            let (dir, config) = config_with(yaml);
+            let server = memory_server_for(&config, dir.path().to_path_buf());
             assert_eq!(server.proposals_dir().is_some(), filed, "{yaml}");
         }
     }
@@ -88,7 +94,11 @@ mod tests {
     #[test]
     fn memory_server_reads_the_process_config() {
         let _guard = env_lock::lock_env([("GOOSE_MEMORY_PROPOSALS", Some("false"))]);
-        assert_eq!(memory_server().proposals_dir(), None);
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            memory_server(dir.path().to_path_buf()).proposals_dir(),
+            None
+        );
     }
 
     /// Q-187: the in-process registry's memory is goose's config-reading spawn, and goose-mcp's own

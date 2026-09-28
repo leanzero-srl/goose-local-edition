@@ -231,13 +231,39 @@ pub enum HookDecision {
 pub struct HookManager {
     rules: HashMap<HookEvent, Vec<LoadedRule>>,
     use_login_shell_path: bool,
+    /// The session's folder: hook commands run in it and every payload names it (`working_dir`).
+    /// `None` only for a manager built before any session was known — the user's hooks alone.
+    project_root: Option<PathBuf>,
 }
 
 impl HookManager {
     /// Build a manager by scanning all enabled plugins for `hooks/hooks.json`.
     pub fn load(project_root: Option<&Path>, use_login_shell_path: bool) -> Self {
         let plugins = discover_enabled_plugins(project_root);
-        Self::from_plugins(plugins, use_login_shell_path)
+        let mut manager = Self::from_plugins(plugins, use_login_shell_path);
+        manager.project_root = project_root.map(Path::to_path_buf);
+        manager
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_plugins_in_for_test(
+        plugins: Vec<DiscoveredPlugin>,
+        project_root: &Path,
+    ) -> Self {
+        let mut manager = Self::from_plugins(plugins, false);
+        manager.project_root = Some(project_root.to_path_buf());
+        manager
+    }
+
+    /// The payload a hook reads: the session's folder rides along when the caller did not name one.
+    fn payload(&self, mut ctx: HookContext) -> serde_json::Result<String> {
+        if ctx.working_dir.is_none() {
+            ctx.working_dir = self
+                .project_root
+                .as_ref()
+                .map(|root| root.to_string_lossy().into_owned());
+        }
+        serde_json::to_string(&ctx)
     }
 
     #[cfg(test)]
@@ -281,6 +307,7 @@ impl HookManager {
         Self {
             rules,
             use_login_shell_path,
+            project_root: None,
         }
     }
 
@@ -300,7 +327,7 @@ impl HookManager {
             return;
         }
 
-        let payload = match serde_json::to_string(&ctx) {
+        let payload = match self.payload(ctx.clone()) {
             Ok(s) => s,
             Err(err) => {
                 warn!(event = %event, error = %err, "Failed to serialize hook context");
@@ -330,6 +357,7 @@ impl HookManager {
                     &payload,
                     *timeout,
                     self.use_login_shell_path,
+                    self.project_root.as_deref(),
                 )
                 .await
                 .and_then(|o| {
@@ -366,7 +394,7 @@ impl HookManager {
             return HookDecision::Allow;
         };
 
-        let payload = match serde_json::to_string(&ctx) {
+        let payload = match self.payload(ctx.clone()) {
             Ok(s) => s,
             Err(err) => {
                 warn!(event = %event, error = %err, "Failed to serialize hook context");
@@ -390,6 +418,7 @@ impl HookManager {
                     &payload,
                     *timeout,
                     self.use_login_shell_path,
+                    self.project_root.as_deref(),
                 )
                 .await
                 {
@@ -531,6 +560,7 @@ async fn run_command_hook(
     payload: &str,
     timeout: Duration,
     use_login_shell_path: bool,
+    project_root: Option<&Path>,
 ) -> Result<std::process::Output> {
     // The login-shell probe is goose's own one-time setup, bounded by its own read window in
     // `probe_login_shell_path`. The plugin's timeout is the budget for its command alone, so the
@@ -542,7 +572,13 @@ async fn run_command_hook(
     };
     match tokio::time::timeout(
         timeout,
-        run_command_hook_inner(raw_command, plugin_root, payload, path.as_deref()),
+        run_command_hook_inner(
+            raw_command,
+            plugin_root,
+            payload,
+            path.as_deref(),
+            project_root,
+        ),
     )
     .await
     {
@@ -556,9 +592,10 @@ async fn run_command_hook_inner(
     plugin_root: &Path,
     payload: &str,
     path: Option<&str>,
+    project_root: Option<&Path>,
 ) -> Result<std::process::Output> {
     let command = expand_plugin_root(raw_command, plugin_root);
-    let mut process = hook_command(&command, plugin_root, path);
+    let mut process = hook_command(&command, plugin_root, path, project_root);
     process
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -579,7 +616,14 @@ async fn run_command_hook_inner(
         .with_context(|| format!("waiting on hook `{command}`"))
 }
 
-fn hook_command(command: &str, plugin_root: &Path, path: Option<&str>) -> Command {
+/// A hook runs in the session's folder (Q-263), as Claude Code's do: a relative path in a hook
+/// command means the project, never whatever folder goosed was started in.
+fn hook_command(
+    command: &str,
+    plugin_root: &Path,
+    path: Option<&str>,
+    project_root: Option<&Path>,
+) -> Command {
     #[cfg(not(windows))]
     {
         if crate::agents::platform_extensions::developer::shell::is_flatpak() {
@@ -588,6 +632,9 @@ fn hook_command(command: &str, plugin_root: &Path, path: Option<&str>) -> Comman
             process.arg(format!("--env=PLUGIN_ROOT={}", plugin_root.display()));
             if let Some(path) = path {
                 process.arg(format!("--env=PATH={path}"));
+            }
+            if let Some(root) = project_root {
+                process.arg(format!("--directory={}", root.display()));
             }
             process.arg("sh").arg("-c").arg(command);
             return process;
@@ -601,6 +648,9 @@ fn hook_command(command: &str, plugin_root: &Path, path: Option<&str>) -> Comman
         .env("PLUGIN_ROOT", plugin_root);
     if let Some(path) = path {
         process.env("PATH", path);
+    }
+    if let Some(root) = project_root {
+        process.current_dir(root);
     }
     process
 }
@@ -861,6 +911,7 @@ mod tests {
             "{}",
             Duration::from_secs(DEFAULT_HOOK_TIMEOUT_SECS),
             true,
+            None,
         )
         .await
         .unwrap();

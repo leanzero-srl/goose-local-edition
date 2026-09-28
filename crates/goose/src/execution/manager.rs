@@ -250,6 +250,7 @@ impl AgentManager {
             .get_session(session_id, false)
             .await
         {
+            agent.load_hooks_for(&session.working_dir);
             if session.provider_name.is_some() {
                 info!(
                     "Restoring evicted session {} (provider: {:?})",

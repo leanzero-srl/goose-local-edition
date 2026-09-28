@@ -122,8 +122,8 @@ mod tests {
         assert_eq!(goose_mcp::goose_config_dir(), Paths::config_dir());
 
         for server in [
-            crate::builtin_extension::memory_server(),
-            goose_mcp::MemoryServer::with_proposals(true),
+            crate::builtin_extension::memory_server(root.path().join("project")),
+            goose_mcp::MemoryServer::with_proposals(true, root.path().join("project")),
         ] {
             assert_eq!(server.global_memory_dir(), Paths::in_config_dir("memory"));
             assert_eq!(

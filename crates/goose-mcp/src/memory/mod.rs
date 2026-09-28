@@ -188,6 +188,11 @@ pub struct MemoryServer {
     tool_router: ToolRouter<Self>,
     instructions: String,
     global_memory_dir: PathBuf,
+    /// The folder of the session this server was started for: the local scope (`.goose/memory`)
+    /// the instructions index and a call without the `agent-working-dir` header reads. Q-264: this
+    /// was the process cwd, and the in-process builtin runs inside goosed, which since Q-257 serves
+    /// every window from $HOME — every chat's memory named $HOME as its folder.
+    working_dir: PathBuf,
     /// Where `propose_knowledge` files a PROPOSAL instead of writing an entry — the owner's
     /// `memory_proposals` (default ON, frame 1.14). None = write directly, as `remember_memory` does.
     proposals_dir: Option<PathBuf>,
@@ -209,18 +214,19 @@ impl MemoryServer {
     /// setting: `new()` was the config-blind path the in-process builtin and `goosed mcp memory`
     /// took (Q-187). The caller reads the config — `goose::builtin_extension::memory_server` — this
     /// crate reads none.
-    pub fn with_proposals(memory_proposals: bool) -> Self {
-        let mut server = Self::with_global_dir(crate::goose_config_dir().join("memory"));
+    pub fn with_proposals(memory_proposals: bool, working_dir: PathBuf) -> Self {
+        let mut server =
+            Self::with_global_dir(crate::goose_config_dir().join("memory"), working_dir);
         if !memory_proposals {
             server.proposals_dir = None;
         }
         server
     }
 
-    /// Build the server over a given global directory. The project-local directory is resolved from the
-    /// process working directory, which the extension manager sets to the session's working dir when it
-    /// spawns this server, so the startup index covers both scopes.
-    pub fn with_global_dir(global_memory_dir: PathBuf) -> Self {
+    /// Build the server over a given global directory for the session in `working_dir`, so the startup
+    /// index covers both scopes: the extension manager hands the in-process builtin the session's
+    /// folder, and `goose mcp memory` its own cwd, which the manager sets to that folder.
+    pub fn with_global_dir(global_memory_dir: PathBuf, working_dir: PathBuf) -> Self {
         let global_shown = global_memory_dir_shown(&global_memory_dir);
         let instructions = formatdoc! {r#"
              This extension stores and retrieves categorized information with tagging support — it is YOUR
@@ -270,14 +276,12 @@ impl MemoryServer {
             tool_router: Self::tool_router(),
             instructions: String::new(),
             global_memory_dir,
+            working_dir,
             proposals_dir,
         };
 
         let mut updated_instructions = instructions;
-        if let Some(note) = std::env::current_dir()
-            .ok()
-            .and_then(|wd| home_folder_note(&wd))
-        {
+        if let Some(note) = home_folder_note(&memory_router.working_dir) {
             updated_instructions.push_str("\n\n");
             updated_instructions.push_str(note);
         }
@@ -298,11 +302,10 @@ impl MemoryServer {
     }
 
     fn store(&self, working_dir: Option<&PathBuf>) -> MemoryStore {
-        let working_dir = working_dir
-            .cloned()
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."));
-        MemoryStore::new(self.global_memory_dir.clone(), &working_dir)
+        MemoryStore::new(
+            self.global_memory_dir.clone(),
+            working_dir.unwrap_or(&self.working_dir),
+        )
     }
 
     fn get_memory_file(
@@ -634,9 +637,7 @@ impl MemoryServer {
             // chat in the project (E2E #2, Q-82). The dir key stays for a caller with no session.
             let key = session_id.unwrap_or_else(|| {
                 goose_memory_store::working_dir_key(
-                    working_dir
-                        .as_deref()
-                        .unwrap_or_else(|| std::path::Path::new(".")),
+                    working_dir.as_deref().unwrap_or(&self.working_dir),
                 )
             });
             let outcome = goose_memory_store::ProposalStore::new(dir.clone())
@@ -961,6 +962,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: dir.join("memory"),
+            working_dir: dir.join("working"),
             proposals_dir: proposals.then(|| dir.join("proposals")),
         }
     }
@@ -1131,6 +1133,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            working_dir: memory_base.join("working"),
             proposals_dir: None,
         };
 
@@ -1177,6 +1180,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            working_dir: memory_base.join("working"),
             proposals_dir: None,
         };
 
@@ -1198,6 +1202,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            working_dir: memory_base.join("working"),
             proposals_dir: None,
         };
 
@@ -1243,6 +1248,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            working_dir: memory_base.join("working"),
             proposals_dir: None,
         };
 
@@ -1274,6 +1280,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: memory_base.join("global"),
+            working_dir: memory_base.join("working"),
             proposals_dir: None,
         };
 
@@ -1332,6 +1339,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: temp_dir.path().join("global"),
+            working_dir: temp_dir.path().join("working"),
             proposals_dir: None,
         };
 
@@ -1400,6 +1408,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: temp_dir.path().join("global"),
+            working_dir: temp_dir.path().join("working"),
             proposals_dir: None,
         };
 
@@ -1434,6 +1443,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: temp_dir.path().join("global"),
+            working_dir: temp_dir.path().join("working"),
             proposals_dir: None,
         };
 
@@ -1463,7 +1473,7 @@ mod tests {
         )
         .unwrap();
 
-        let server = MemoryServer::with_global_dir(global);
+        let server = MemoryServer::with_global_dir(global, temp_dir.path().join("working"));
         let instructions = server.get_instructions();
 
         assert!(instructions.contains("Memory index:"));
@@ -1484,7 +1494,7 @@ mod tests {
     #[test]
     fn the_memory_words_never_ask_for_a_reason_the_user_did_not_give() {
         let temp_dir = tempdir().unwrap();
-        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"));
+        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"), temp_dir.path().join("working"));
         let instructions = server.get_instructions();
         assert!(
             !instructions.contains("the reason behind it"),
@@ -1517,7 +1527,7 @@ mod tests {
             "ISO dates British spelling client deliverables Node zero dependencies scripts";
         let temp_dir = tempdir().unwrap();
         let wd = temp_dir.path().join("project");
-        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"));
+        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"), temp_dir.path().join("working"));
         let save = |category: &str, data: &str, tags: &[&str]| {
             server
                 .remember("context", category, data, tags, true, Some(&wd))
@@ -1617,6 +1627,7 @@ mod tests {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
             global_memory_dir: temp_dir.path().join("global"),
+            working_dir: temp_dir.path().join("working"),
             proposals_dir: None,
         };
         let first = router
@@ -1727,7 +1738,7 @@ mod tests {
         let config = crate::goose_config_dir_under(Some(root.path().as_os_str().to_owned()));
         assert_eq!(config, root.path().join("config"));
 
-        let server = MemoryServer::with_global_dir(config.join("memory"));
+        let server = MemoryServer::with_global_dir(config.join("memory"), root.path().join("project"));
         assert_eq!(
             server.global_memory_dir(),
             root.path().join("config/memory")
@@ -1777,7 +1788,7 @@ mod tests {
         let root = tempdir().unwrap();
         let memory =
             crate::goose_config_dir_under(Some(root.path().as_os_str().to_owned())).join("memory");
-        let server = MemoryServer::with_global_dir(memory.clone());
+        let server = MemoryServer::with_global_dir(memory.clone(), root.path().join("project"));
         let line = format!("- Global: {}/ (user-wide)", memory.display());
         assert!(server.get_instructions().contains(&line), "{line}");
         assert!(!server

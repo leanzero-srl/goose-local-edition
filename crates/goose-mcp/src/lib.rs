@@ -47,8 +47,10 @@ pub use computercontroller::ComputerControllerServer;
 pub use memory::MemoryServer;
 pub use tutorial::TutorialServer;
 
-/// Type definition for a function that spawns and serves a builtin extension server
-pub type SpawnServerFn = fn(tokio::io::DuplexStream, tokio::io::DuplexStream);
+/// Type definition for a function that spawns and serves a builtin extension server for the
+/// session whose folder is the `PathBuf` (Q-264: an in-process builtin shares goosed's cwd, which
+/// is no session's folder).
+pub type SpawnServerFn = fn(tokio::io::DuplexStream, tokio::io::DuplexStream, std::path::PathBuf);
 
 /// Serve a builtin extension server on the in-process transport a [`SpawnServerFn`] receives.
 /// Public so goose can register the builtin this crate cannot configure (memory, Q-187).
@@ -71,7 +73,11 @@ pub fn spawn_and_serve<S>(
 
 macro_rules! builtin {
     ($name:ident, $server_ty:ty) => {{
-        fn spawn(r: tokio::io::DuplexStream, w: tokio::io::DuplexStream) {
+        fn spawn(
+            r: tokio::io::DuplexStream,
+            w: tokio::io::DuplexStream,
+            _working_dir: std::path::PathBuf,
+        ) {
             spawn_and_serve(stringify!($name), <$server_ty>::new(), (r, w));
         }
         (stringify!($name), spawn as SpawnServerFn)

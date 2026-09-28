@@ -472,7 +472,12 @@ extensions:
 
     #[test]
     fn test_get_extension_by_name_falls_back_to_available_builtin() {
-        fn spawn_builtin(_: tokio::io::DuplexStream, _: tokio::io::DuplexStream) {}
+        fn spawn_builtin(
+            _: tokio::io::DuplexStream,
+            _: tokio::io::DuplexStream,
+            _: std::path::PathBuf,
+        ) {
+        }
         crate::builtin_extension::register_builtin_extension("memory", spawn_builtin);
 
         let extension = get_extension_by_name("memory").unwrap();
