@@ -257,6 +257,16 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   the `Prompt processing progress: a/b` b is the cold part, the `"ended": {"uid": …, "generated": N}`
   state line its end. OPEN after it: the first request after a compaction prefills system+tools cold
   (#3p: 44,053, 150 s — Q-347: mlx_lm snapshots a segment only past the tokens a request read from cache).
+- ONE BUILDER FOR THE SYSTEM PROMPT (Q-346, 2026-09-28, b52f65f60). `Agent::prepare_tools_and_prompt(&Session)`
+  (reply_parts.rs) is the only thing that builds a chat request's tools + system prompt: base template +
+  extras (subdir hints, root hints) → toolshim rewrite → the session's PROJECT instructions last. The reply's
+  first call, the mid-turn refresh (tools updated OR new subdir hints — hints load FIRST, one rebuild), the
+  compaction's chat-extending request and the post-compaction count all call it. Before: the project text was
+  appended only at the reply's start, so every refresh dropped it for the rest of the reply AND rewrote the
+  prompt's tail (a prefix change → cold prefill). RULE: never append to `system_prompt` outside the builder;
+  a part added anywhere else vanishes at the next refresh. Same inputs → byte-identical prompt (the date line
+  is fixed per PromptManager). Tests: tests/agent.rs `a_hints_refresh_mid_turn_keeps_the_projects_instructions`,
+  reply_parts `a_tools_refresh_changes_the_prompt_only_by_the_refreshed_extension`.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
