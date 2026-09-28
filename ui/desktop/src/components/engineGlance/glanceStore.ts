@@ -30,6 +30,7 @@ interface GlanceBridge {
   engineGlanceRead?: () => Promise<GlancePush | null>;
   engineGlanceSessions?: (report: GlanceSessions) => void;
   engineGlancePip?: (action: GlancePipAction) => void;
+  engineGlanceShowDesktop?: () => void;
   engineGlancePrefsSet?: (prefs: GlancePrefs) => Promise<void>;
   on?: (channel: string, fn: (event: unknown, ...args: unknown[]) => void) => void;
   off?: (channel: string, fn: (event: unknown, ...args: unknown[]) => void) => void;
@@ -88,6 +89,11 @@ export function useEngineGlance(): GlancePush | null {
 
 export function glancePipAction(action: GlancePipAction): void {
   bridge()?.engineGlancePip?.(action);
+}
+
+/** Bring the desktop window back after the person closed it this session (Q-426). */
+export function showDesktopGlanceAgain(): void {
+  bridge()?.engineGlanceShowDesktop?.();
 }
 
 export async function setGlancePrefs(prefs: GlancePrefs): Promise<void> {

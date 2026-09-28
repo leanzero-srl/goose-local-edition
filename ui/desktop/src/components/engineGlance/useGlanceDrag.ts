@@ -11,12 +11,11 @@ export interface GlanceDragCallbacks {
 }
 
 /**
- * Drag the card by its body; a press that does not move is still the click that opens the Engine.
- * `consumeDrag()` answers the click that follows a drag's release — it must not open anything.
+ * Drag the card by its body. The body opens nothing (Q-426), so the click a release produces needs
+ * no answer: a press that never moved is a click on nothing.
  */
 export function useGlanceDrag(callbacks: GlanceDragCallbacks) {
   const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  const justDragged = useRef(false);
   const cb = useRef(callbacks);
   cb.current = callbacks;
 
@@ -27,7 +26,6 @@ export function useGlanceDrag(callbacks: GlanceDragCallbacks) {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
-    justDragged.current = p.moved;
     cb.current.onEnd(p.moved);
   }, []);
 
@@ -36,7 +34,6 @@ export function useGlanceDrag(callbacks: GlanceDragCallbacks) {
       onPointerDown: (e: PointerEvent<HTMLElement>) => {
         if (e.button !== 0) return;
         press.current = { x: e.screenX, y: e.screenY, moved: false };
-        justDragged.current = false;
         e.currentTarget.setPointerCapture(e.pointerId);
         cb.current.onStart(e.screenX, e.screenY);
       },
@@ -53,11 +50,5 @@ export function useGlanceDrag(callbacks: GlanceDragCallbacks) {
     [end]
   );
 
-  const consumeDrag = useCallback(() => {
-    const dragged = justDragged.current;
-    justDragged.current = false;
-    return dragged;
-  }, []);
-
-  return { dragHandlers, consumeDrag };
+  return dragHandlers;
 }

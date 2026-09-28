@@ -3,6 +3,7 @@ import {
   EngineGlanceDesktop,
   GLANCE_MARGIN,
   isGlancePipAction,
+  trayOffersGlanceBack,
   type GlanceDisplay,
   type GlanceWindowPort,
 } from './engineGlanceDesktop';
@@ -76,8 +77,9 @@ function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
   const saved: GlancePrefs[] = [];
   const openEngine = vi.fn();
   const openSession = vi.fn();
-  // The goose window in front hears "turned off" only while goose IS in front (main's rule).
+  // The goose window in front hears "closed for the session" only while goose IS in front (main's rule).
   const told: string[] = [];
+  const dismissedChanged = vi.fn();
   const coverage = { measure: vi.fn(), forget: vi.fn() };
   const desktop = new EngineGlanceDesktop({
     port,
@@ -95,13 +97,24 @@ function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
     coverage,
     openEngine,
     openSession,
-    tellTurnedOff: () => {
+    tellDismissed: () => {
       if (!facts.inFront) return false;
-      told.push('turned-off');
+      told.push('dismissed');
       return true;
     },
+    dismissedChanged,
   });
-  return { desktop, state, facts, saved, told, coverage, openEngine, openSession };
+  return {
+    desktop,
+    state,
+    facts,
+    saved,
+    told,
+    coverage,
+    openEngine,
+    openSession,
+    dismissedChanged,
+  };
 }
 
 const writing = glancePush(runningSnapshot(GENERATING_STATUS));
@@ -167,17 +180,20 @@ describe('EngineGlanceDesktop — the floating window’s life', () => {
     expect(state.visible).toBe(false);
   });
 
-  it('closed: stays closed while the spell lasts, and comes back with the next one', () => {
+  it('Q-426: closed — gone for the session: the next busy spell does NOT bring it back', () => {
     const { desktop, state } = setup();
     desktop.update(writing);
     desktop.handle({ type: 'size', width: 300, height: 180 });
     desktop.handle({ type: 'close' });
     expect(state.visible).toBe(false);
+    // Nothing kept alive for it, and nothing made again while it is closed.
+    expect(state.exists).toBe(false);
     desktop.update(writing);
-    expect(state.visible).toBe(false);
     desktop.update(idle);
     desktop.update(writing);
-    expect(state.visible).toBe(true);
+    desktop.refresh();
+    expect(state.exists).toBe(false);
+    expect(state.calls.filter((c) => c === 'ensure')).toHaveLength(1);
   });
 
   it('turned off: hidden and destroyed — nothing kept alive for it', () => {
@@ -257,60 +273,102 @@ describe('EngineGlanceDesktop — the floating window’s life', () => {
   });
 });
 
-describe('EngineGlanceDesktop — Q-224: turned off from the window itself', () => {
-  it('"Turn off the floating window": the setting to Off through the one save, the window destroyed', () => {
-    const { desktop, state, saved } = setup();
+describe('EngineGlanceDesktop — Q-426: the X closes it for the session, and only the person brings it back', () => {
+  it('the X: hidden and destroyed at once, no goose window opened, no setting written', () => {
+    const { desktop, state, saved, openEngine, openSession, dismissedChanged } = setup();
     desktop.update(writing);
     desktop.handle({ type: 'size', width: 300, height: 180 });
     expect(state.visible).toBe(true);
-    desktop.handle({ type: 'turn-off' });
-    const last = saved[saved.length - 1];
-    expect(last).toEqual({ ...writing.prefs, desktopHintSeen: true, desktop: 'off' });
-    expect(state.visible).toBe(false);
-    expect(state.exists).toBe(false);
-    // main republishes with the saved prefs: nothing comes back while it is Off, live or not.
-    desktop.update(withPrefs(writing, last));
-    expect(state.calls.filter((c) => c === 'ensure')).toHaveLength(1);
-  });
-
-  it('"Hide for now" writes nothing: the setting stays as it was', () => {
-    const { desktop, saved } = setup();
-    desktop.update(writing);
-    desktop.handle({ type: 'size', width: 300, height: 180 });
     const before = saved.length;
     desktop.handle({ type: 'close' });
+    expect(state.visible).toBe(false);
+    expect(state.exists).toBe(false);
+    expect(desktop.isDismissed()).toBe(true);
+    expect(dismissedChanged).toHaveBeenCalledOnce();
+    expect(openEngine).not.toHaveBeenCalled();
+    expect(openSession).not.toHaveBeenCalled();
+    // Session state, never a setting: the next launch reads the stored mode as it was.
     expect(saved).toHaveLength(before);
   });
 
-  it('goose in the background at the click: the notice waits for a goose window in front, once', () => {
+  it('"whenever the engine works" and goose in front: closed stays closed too', () => {
+    const { desktop, state } = setup({ inFront: true });
+    desktop.update(withPrefs(writing, { desktop: 'busy' }));
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(state.visible).toBe(true);
+    desktop.handle({ type: 'close' });
+    desktop.update(withPrefs(writing, { desktop: 'busy' }));
+    expect(state.exists).toBe(false);
+  });
+
+  it('brought back (the menu-bar item, Settings › App): it shows again by the ordinary rules', () => {
+    const { desktop, state } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    desktop.handle({ type: 'close' });
+    expect(desktop.showAgain()).toBe(true);
+    expect(desktop.isDismissed()).toBe(false);
+    // Made again and shown inactive, as always — never focused, never activating goose.
+    expect(state.visible).toBe(true);
+    expect(state.calls.slice(-4)).toEqual(['hide', 'destroy', 'ensure', 'showInactive']);
+  });
+
+  it('negative control: bringing back a window nobody closed changes nothing', () => {
+    const { desktop, state } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
+    const before = [...state.calls];
+    expect(desktop.showAgain()).toBe(false);
+    expect(state.calls).toEqual(before);
+  });
+
+  it('goose in the background at the click: said once a goose window is in front — once a session', () => {
     const { desktop, facts, told } = setup();
     desktop.update(writing);
     desktop.handle({ type: 'size', width: 300, height: 180 });
-    desktop.handle({ type: 'turn-off' });
+    desktop.handle({ type: 'close' });
     expect(told).toEqual([]);
     // Every snapshot re-decides; the person is still in the other app.
     desktop.refresh();
     expect(told).toEqual([]);
     facts.inFront = true;
     desktop.refresh();
-    expect(told).toEqual(['turned-off']);
+    expect(told).toEqual(['dismissed']);
     desktop.refresh();
-    expect(told).toEqual(['turned-off']);
-  });
-
-  it('goose in front at the click ("whenever the engine works"): told at once', () => {
-    const { desktop, told } = setup({ inFront: true });
-    desktop.update(withPrefs(writing, { desktop: 'busy' }));
+    expect(told).toEqual(['dismissed']);
+    // Brought back and closed again: the person already knows the way back.
+    desktop.showAgain();
+    facts.inFront = false;
     desktop.handle({ type: 'size', width: 300, height: 180 });
-    desktop.handle({ type: 'turn-off' });
-    expect(told).toEqual(['turned-off']);
+    desktop.handle({ type: 'close' });
+    facts.inFront = true;
+    desktop.refresh();
+    expect(told).toEqual(['dismissed']);
   });
 
-  it('turned off from Settings › App: no notice — the person is already looking at the way back', () => {
+  it('brought back before any goose window could say it: nothing is said later', () => {
     const { desktop, facts, told } = setup();
     desktop.update(writing);
     desktop.handle({ type: 'size', width: 300, height: 180 });
+    desktop.handle({ type: 'close' });
+    desktop.showAgain();
+    facts.inFront = true;
+    desktop.refresh();
+    expect(told).toEqual([]);
+  });
+
+  it('the menu bar offers it back only while it is closed and a floating mode is on', () => {
+    expect(trayOffersGlanceBack(true, writing.prefs)).toBe(true);
+    expect(trayOffersGlanceBack(false, writing.prefs)).toBe(false);
+    expect(trayOffersGlanceBack(true, { ...writing.prefs, desktop: 'off' })).toBe(false);
+  });
+
+  it('turned off from Settings › App: destroyed, and nothing is said', () => {
+    const { desktop, state, facts, told } = setup();
+    desktop.update(writing);
+    desktop.handle({ type: 'size', width: 300, height: 180 });
     desktop.update(withPrefs(writing, { desktop: 'off' }));
+    expect(state.exists).toBe(false);
     facts.inFront = true;
     desktop.refresh();
     expect(told).toEqual([]);
@@ -516,7 +574,9 @@ describe('EngineGlanceDesktop — Q-229: the quit is never held open by the floa
 describe('isGlancePipAction — what the window may ask', () => {
   it('accepts the actions it sends and nothing else', () => {
     expect(isGlancePipAction({ type: 'size', width: 300, height: 120 })).toBe(true);
-    expect(isGlancePipAction({ type: 'turn-off' })).toBe(true);
+    expect(isGlancePipAction({ type: 'close' })).toBe(true);
+    // Q-426: the X no longer turns the setting off from the window; main refuses the old ask.
+    expect(isGlancePipAction({ type: 'turn-off' })).toBe(false);
     expect(isGlancePipAction({ type: 'size', width: 0, height: 120 })).toBe(false);
     expect(isGlancePipAction({ type: 'open-session', sessionId: '' })).toBe(false);
     expect(isGlancePipAction({ type: 'drag-move', screenX: Number.NaN, screenY: 1 })).toBe(false);

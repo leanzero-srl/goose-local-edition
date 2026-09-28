@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "Diese Karte ausblenden — zurückholen am Fuß der Seitenleiste oder unter Einstellungen › App"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "Das schwebende Fenster ausblenden oder ausschalten"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "Vorerst ausblenden"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "Zurück, sobald die Engine wieder arbeitet"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "Du kannst das hier ausschalten"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Verstanden"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Wechselt"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "Das schwebende Fenster ausschalten"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Wieder einschalten unter Einstellungen › App"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "Schwebendes Fenster ausgeschaltet"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Wieder einschalten unter Einstellungen › App."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "Unbenannte Sitzung"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Aus"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke deiner Wahl. Es nimmt nie den Fokus. Sein Schließen-Knopf blendet es aus, bis die Engine wieder arbeitet, oder schaltet es aus."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "In der Seitenleiste"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Schwebendes Fenster für diese Sitzung schließen"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "Hier schließen, bis du es zurückholst"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "Schwebendes Fenster für diese Sitzung ausgeblendet"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Hol es unter Einstellungen › App zurück – dort kannst du es auch ausschalten."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Hol es über das goose-Symbol in der Menüleiste oder unter Einstellungen › App zurück – dort kannst du es auch ausschalten."
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke, in die du es ziehst. Es nimmt nie den Fokus und holt goose nur nach vorn, wenn du darin etwas öffnest. Sein Schließen-Knopf blendet es für den Rest dieser Sitzung aus."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "Du hast es geschlossen – ausgeblendet, bis du es zurückholst."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Wieder anzeigen"
   }
 }

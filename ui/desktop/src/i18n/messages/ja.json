@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "このカードを隠す — サイドバーの下部か 設定 › アプリ から戻せます"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "フローティングウィンドウを隠すかオフにする"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "今は隠す"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "次にエンジンが動くときに戻ります"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "ここからオフにできます"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "OK"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "切り替え中"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "フローティングウィンドウをオフにする"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "設定 › アプリ で再びオンにできます"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "フローティングウィンドウをオフにしました"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "設定 › アプリ で再びオンにできます。"
-  },
   "engineGlance.untitled": {
     "defaultMessage": "無題のセッション"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "オフ"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "他のアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に留まります。フォーカスを奪いません。閉じるボタンで、エンジンが再び動くまで隠すか、オフにできます。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "サイドバー内"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "このセッションの間、フローティングウィンドウを閉じる"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "ここで閉じると、戻すまで表示されません"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "このセッションの間、フローティングウィンドウを隠しました"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "設定 › アプリ から再表示できます。そこでオフにすることもできます。"
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "メニューバーの goose アイコン、または 設定 › アプリ から再表示できます。設定ではオフにすることもできます。"
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "ほかのアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に置かれます。フォーカスを奪うことはなく、そこから何かを開いたときだけ goose を前面に出します。閉じるボタンを押すと、このセッションの残りの間は隠れます。"
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "閉じられています — 再表示するまで隠れたままです。"
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "再表示"
   }
 }

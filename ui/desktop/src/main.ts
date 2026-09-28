@@ -167,7 +167,8 @@ import { MLX_ENGINE_SNAPSHOT_CHANNEL } from './utils/mlxEngineMonitor';
 import { swapOfReports } from './utils/nodeSwap';
 import {
   ENGINE_GLANCE_CHANNEL,
-  ENGINE_GLANCE_TURNED_OFF_CHANNEL,
+  ENGINE_GLANCE_DISMISSED_CHANNEL,
+  ENGINE_GLANCE_SHOW_DESKTOP_CHANNEL,
   NO_SESSIONS,
   buildEngineGlance,
   glancePrefsOf,
@@ -176,6 +177,7 @@ import {
   mergeGlanceSessions,
   servingKeptOf,
   servingReportsOf,
+  type GlanceDismissedNotice,
   type GlancePrefs,
   type GlancePush,
   type GlanceServingReport,
@@ -184,7 +186,9 @@ import {
 import {
   EngineGlanceDesktop,
   GLANCE_PIP_ACTION_CHANNEL,
+  SHOW_GLANCE_TRAY_LABEL,
   isGlancePipAction,
+  trayOffersGlanceBack,
 } from './engineGlanceDesktop';
 import { createGlanceWindowPort } from './engineGlanceWindow';
 import { gooseWindowFacts, trackOutOfSight } from './engineGlanceGooseWindows';
@@ -2346,7 +2350,8 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
   // The glance is a non-activating panel: its click reaches goose with another app still in front,
   // and a window's focus() alone does not activate the app on macOS (measured on the packaged build:
   // the Engine tab opened behind the app the person was in). Opening is the one click that should
-  // bring goose forward, so it activates the app explicitly.
+  // bring goose forward, so it activates the app explicitly — and ONLY these two deps do (Q-426:
+  // the card's body used to be one of them, so nearly any click raised the goose window).
   openEngine: () => {
     app.focus({ steal: true });
     if (mlxActionWindow()) runMlxTrayAction('open-providers');
@@ -2357,15 +2362,18 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
     if (mlxActionWindow()) openTraySession(sessionId);
     else void createNewWindow(app);
   },
-  // Turned off from the floating window (Q-224): the goose window in front says so, with the way
-  // back. The window is a non-activating panel, so goose is usually in the background at that
+  // Closed from its X for this session (Q-426): the goose window in front says so once, with the
+  // ways back. The window is a non-activating panel, so goose is usually in the background at that
   // click; the controller asks again on the refresh a goose window's focus brings (below).
-  tellTurnedOff: () => {
+  tellDismissed: () => {
     const win = BrowserWindow.getFocusedWindow();
     if (!win || win.isDestroyed()) return false;
-    win.webContents.send(ENGINE_GLANCE_TURNED_OFF_CHANNEL);
+    const notice: GlanceDismissedNotice = { tray: tray != null };
+    win.webContents.send(ENGINE_GLANCE_DISMISSED_CHANNEL, notice);
     return true;
   },
+  // Settings › App offers it back and the tray grows its item: both read the republished glance.
+  dismissedChanged: () => renderMlxTray(mlxMonitor.current()),
 });
 const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
   const push: GlancePush = {
@@ -2384,6 +2392,7 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
         ? mergeGlanceSessions(glanceSessionsByWindow.values())
         : NO_SESSIONS,
     prefs: currentGlancePrefs(),
+    desktopDismissed: engineGlanceDesktop.isDismissed(),
   };
   // Every snapshot is re-read, but only a changed glance is sent: an idle engine stays quiet.
   const key = JSON.stringify(push);
@@ -2398,11 +2407,19 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
   engineGlanceDesktop.update(push);
 };
 const saveGlancePrefs = (next: GlancePrefs) => {
+  // A floating mode picked in Settings › App is the person asking for the window: a close earlier
+  // this session no longer holds it back (Q-426).
+  const modeChanged = next.desktop !== currentGlancePrefs().desktop;
   glancePrefs = next;
   updateSettings((s) => {
     s.engineGlance = next;
   });
-  publishEngineGlance(mlxMonitor.current());
+  if (modeChanged && engineGlanceDesktop.showAgain()) renderMlxTray(mlxMonitor.current());
+  else publishEngineGlance(mlxMonitor.current());
+};
+// The ways back after a close (Q-426): the menu-bar item and Settings › App's "Show it again".
+const showDesktopGlanceAgain = () => {
+  if (engineGlanceDesktop.showAgain()) renderMlxTray(mlxMonitor.current());
 };
 // A goose window covered, uncovered, minimized, restored or focused re-decides the desktop window;
 // deferred one turn so focus passing between two goose windows never flashes it.
@@ -2576,15 +2593,22 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     tray.setTitle(silent ? '' : trayTitleText(model), { fontType: 'monospacedDigit' });
   }
   const items = silent ? [] : model.items;
-  const key = JSON.stringify({ items, linkTray, macsTray, canAct: mlxActionWindow() != null });
+  const glanceBack = trayOffersGlanceBack(engineGlanceDesktop.isDismissed(), currentGlancePrefs());
+  const key = JSON.stringify({
+    items,
+    linkTray,
+    macsTray,
+    canAct: mlxActionWindow() != null,
+    glanceBack,
+  });
   if (key === lastMlxTrayMenu) return;
   lastMlxTrayMenu = key;
-  const linkItems = linkTrayMenuItems();
-  const engineItems = items.map(mlxTrayMenuItem);
-  const section =
-    linkItems.length > 0 && engineItems.length > 0
-      ? [...linkItems, { type: 'separator' as const }, ...engineItems]
-      : [...linkItems, ...engineItems];
+  const glanceItems: MenuItemConstructorOptions[] = glanceBack
+    ? [{ label: SHOW_GLANCE_TRAY_LABEL, click: showDesktopGlanceAgain }]
+    : [];
+  const section = [linkTrayMenuItems(), items.map(mlxTrayMenuItem), glanceItems]
+    .filter((group) => group.length > 0)
+    .flatMap((group, i) => (i === 0 ? group : [{ type: 'separator' as const }, ...group]));
   setTrayEngineSection(section, () => {
     mlxMonitor.wake();
     mlxActionWindow()?.webContents.send('mlx-distributed-wake');
@@ -2692,6 +2716,7 @@ ipcMain.on(GLANCE_PIP_ACTION_CHANNEL, (event, action: unknown) => {
   if (event.sender.id !== glanceWebContentsId || !isGlancePipAction(action)) return;
   engineGlanceDesktop.handle(action);
 });
+ipcMain.on(ENGINE_GLANCE_SHOW_DESKTOP_CHANNEL, () => showDesktopGlanceAgain());
 ipcMain.handle('engine-glance-prefs-set', (_event, next: unknown) => {
   if (!isGlancePrefs(next)) throw new Error('engine-glance-prefs-set: not the glance prefs');
   saveGlancePrefs(next);

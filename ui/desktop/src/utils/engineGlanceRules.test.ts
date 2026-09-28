@@ -12,7 +12,6 @@ import {
   clearOfGoose,
   nearestCorner,
   placeGlance,
-  snoozeAfter,
   visibleShare,
   workingDisplay,
   type GlanceDisplay,
@@ -59,18 +58,18 @@ describe('desktopGlanceVisible — the floating window on the desktop', () => {
   });
 
   it('default (away): shown while live and no goose window can be seen, never over goose itself', () => {
-    expect(desktopGlanceVisible(writing, { gooseOnScreen: false, snoozed: false })).toBe(true);
-    expect(desktopGlanceVisible(writing, { gooseOnScreen: true, snoozed: false })).toBe(false);
+    expect(desktopGlanceVisible(writing, { gooseOnScreen: false, dismissed: false })).toBe(true);
+    expect(desktopGlanceVisible(writing, { gooseOnScreen: true, dismissed: false })).toBe(false);
   });
 
   it('busy: shown whenever live, goose in sight or not (where is placeGlance’s to decide)', () => {
-    expect(desktopGlanceVisible(withMode('busy'), { gooseOnScreen: true, snoozed: false })).toBe(
+    expect(desktopGlanceVisible(withMode('busy'), { gooseOnScreen: true, dismissed: false })).toBe(
       true
     );
   });
 
   it('off: never', () => {
-    expect(desktopGlanceVisible(withMode('off'), { gooseOnScreen: false, snoozed: false })).toBe(
+    expect(desktopGlanceVisible(withMode('off'), { gooseOnScreen: false, dismissed: false })).toBe(
       false
     );
   });
@@ -78,18 +77,17 @@ describe('desktopGlanceVisible — the floating window on the desktop', () => {
   it('nothing live: never, whatever the mode — an idle engine does not float over your work', () => {
     for (const mode of ['away', 'busy'] as const) {
       expect(
-        desktopGlanceVisible(withMode(mode, idle), { gooseOnScreen: false, snoozed: false })
+        desktopGlanceVisible(withMode(mode, idle), { gooseOnScreen: false, dismissed: false })
       ).toBe(false);
     }
   });
 
-  it('closed: snoozed for this live spell, back on the next one', () => {
-    expect(desktopGlanceVisible(writing, { gooseOnScreen: false, snoozed: true })).toBe(false);
-    // Still live: the snooze holds.
-    expect(snoozeAfter(true, writing)).toBe(true);
-    // The spell ended: the snooze is spent, so the next spell shows it again.
-    expect(snoozeAfter(true, idle)).toBe(false);
-    expect(snoozeAfter(false, writing)).toBe(false);
+  it('Q-426: closed for the session — never shown, whatever the mode or the work', () => {
+    for (const mode of ['away', 'busy'] as const) {
+      expect(desktopGlanceVisible(withMode(mode), { gooseOnScreen: false, dismissed: true })).toBe(
+        false
+      );
+    }
   });
 });
 
@@ -293,7 +291,7 @@ describe('Q-313 — a goose window covered but for a sliver counts as covered', 
     expect(
       desktopGlanceVisible(writing, {
         gooseOnScreen: gooseOnScreen('darwin', [sliver]),
-        snoozed: false,
+        dismissed: false,
       })
     ).toBe(true);
   });

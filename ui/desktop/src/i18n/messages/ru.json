@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "Скрыть эту карточку — вернуть её можно внизу боковой панели или в Настройки › Приложение"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "Скрыть или выключить плавающее окно"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "Скрыть пока"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "Вернётся, когда движок снова заработает"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "Это можно выключить отсюда"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Понятно"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Переключение"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "Выключить плавающее окно"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Включить снова: Настройки › Приложение"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "Плавающее окно выключено"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Включить его снова можно в Настройки › Приложение."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "Сеанс без названия"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Выкл."
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус. Кнопка закрытия скрывает его, пока движок снова не заработает, или выключает его."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "В боковой панели"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Закрыть плавающее окно до конца сеанса"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "Закройте его здесь — оно не вернётся, пока вы его не покажете"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "Плавающее окно скрыто до конца сеанса"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Вернуть его можно в Настройки › Приложение — там же его можно выключить."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Вернуть его можно через значок goose в строке меню или в Настройки › Приложение — там же его можно выключить."
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус и выводит goose на передний план, только когда вы что-то в нём открываете. Кнопка закрытия скрывает его до конца этого сеанса."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "Вы его закрыли — оно скрыто, пока вы его не вернёте."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Показать снова"
   }
 }

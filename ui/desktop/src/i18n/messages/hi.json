@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "यह कार्ड छिपाएँ — साइडबार के नीचे से या Settings › ऐप से वापस लाएँ"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "फ़्लोटिंग विंडो छिपाएँ या बंद करें"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "अभी के लिए छिपाएँ"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "अगली बार इंजन के काम करने पर वापस आएगी"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "आप इसे यहीं से बंद कर सकते हैं"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "समझ गया"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "बदल रहा है"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "फ़्लोटिंग विंडो बंद करें"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Settings › ऐप में फिर से चालू करें"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "फ़्लोटिंग विंडो बंद की गई"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Settings › ऐप में इसे फिर से चालू करें।"
-  },
   "engineGlance.untitled": {
     "defaultMessage": "बिना शीर्षक का सत्र"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "बंद"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "आपके अन्य ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप उसे खींचें। यह कभी फ़ोकस नहीं लेती। इसका बंद करने वाला बटन इसे इंजन के फिर से काम करने तक छिपाता है, या इसे बंद कर देता है।"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "साइडबार में"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "इस सत्र के लिए फ़्लोटिंग विंडो बंद करें"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "इसे यहाँ से बंद करें, जब तक आप इसे वापस न लाएँ"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "फ़्लोटिंग विंडो इस सत्र के लिए छिपाई गई"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "इसे Settings › ऐप से वापस लाएँ, जहाँ आप इसे बंद भी कर सकते हैं।"
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "इसे मेनू बार में goose आइकन से या Settings › ऐप से वापस लाएँ, जहाँ आप इसे बंद भी कर सकते हैं।"
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "आपके दूसरे ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप इसे खींचकर रखें। यह कभी फ़ोकस नहीं लेती, और goose को तभी आगे लाती है जब आप इससे कुछ खोलते हैं। इसका बंद करने का बटन इसे इस सत्र के बाकी समय के लिए छिपा देता है।"
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "आपने इसे बंद किया — जब तक आप इसे वापस न लाएँ, छिपी रहेगी।"
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "फिर से दिखाएँ"
   }
 }

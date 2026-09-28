@@ -48,10 +48,25 @@ import { isNodeSwap, swapStopsEngine, type NodeSwap } from './nodeSwap';
 
 export const ENGINE_GLANCE_CHANNEL = 'engine-glance';
 /**
- * main → the focused goose window: the person turned the desktop window off from the window itself
- * (Q-224), so the app says it happened and where it comes back from.
+ * main → the goose window in front: the person closed the desktop window for this session (Q-426),
+ * so the app says it once, with the ways back (`GlanceDismissedNotice`).
  */
-export const ENGINE_GLANCE_TURNED_OFF_CHANNEL = 'engine-glance-turned-off';
+export const ENGINE_GLANCE_DISMISSED_CHANNEL = 'engine-glance-dismissed';
+/** a goose window → main: bring the desktop window back after a close (Settings › App). */
+export const ENGINE_GLANCE_SHOW_DESKTOP_CHANNEL = 'engine-glance-show-desktop';
+
+/** What the dismissal notice may name as the way back: the menu-bar icon only while there is one. */
+export interface GlanceDismissedNotice {
+  tray: boolean;
+}
+
+export function isGlanceDismissedNotice(value: unknown): value is GlanceDismissedNotice {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    typeof (value as Record<string, unknown>).tray === 'boolean'
+  );
+}
 
 /**
  * What the engine is doing, as the glance headlines it. The tile's activity words while it is up
@@ -215,8 +230,8 @@ export interface GlancePrefs {
   /** Where the desktop window sits: a corner of a display, by the display's id. */
   desktopPlace: { displayId: number; corner: GlanceCorner } | null;
   /**
-   * The desktop window has appeared at least once, so its one-time "you can turn this off from
-   * here" hint has had its showing (Q-224). Set by main the first time it shows the window.
+   * The desktop window has appeared at least once, so its one-time hint pointing at its close
+   * (Q-224, Q-426) has had its showing. Set by main the first time it shows the window.
    */
   desktopHintSeen: boolean;
 }
@@ -236,6 +251,11 @@ export interface GlancePush {
   engine: EngineGlance;
   sessions: GlanceSessions;
   prefs: GlancePrefs;
+  /**
+   * The person closed the desktop window in this app session (Q-426) — main's session state, never
+   * stored — so Settings › App can offer it back.
+   */
+  desktopDismissed: boolean;
 }
 
 export interface EngineGlanceOptions {
@@ -826,6 +846,7 @@ export function isGlancePush(value: unknown): value is GlancePush {
     typeof engine.stage === 'string' &&
     typeof engine.phase === 'string' &&
     isGlanceSessions(v.sessions) &&
-    isGlancePrefs(v.prefs)
+    isGlancePrefs(v.prefs) &&
+    typeof v.desktopDismissed === 'boolean'
   );
 }

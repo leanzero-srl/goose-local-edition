@@ -11,8 +11,9 @@ import type { GlanceCorner, GlancePush } from './engineGlance';
  *    sidebar card already shows it wherever goose can be seen — Q-226: "not the active app" put it
  *    over goose's own window on a second display);
  *  - it covers what you are working on → it sits in a screen corner, collapses to a pill, and closing
- *    it snoozes it for the rest of this busy spell (the next spell brings it back; Settings turns it
- *    off for good);
+ *    it dismisses it for the rest of this app session (Q-426: a close that came back with the next
+ *    busy spell was "obtrusive") — the person brings it back from the menu-bar icon or Settings › App,
+ *    and Settings turns it off for good;
  *  - it flickers between requests → "live" includes a goose session with a turn in flight (the
  *    session-state store's `running`), so the gaps between an agent's model calls, while it runs its
  *    tools, keep it up — a truth the store already has, not a timer;
@@ -33,19 +34,17 @@ export function glanceHasContent(push: GlancePush): boolean {
 export interface DesktopFacts {
   /** A goose window (not the glance) can be seen somewhere on a screen (`gooseOnScreen`). */
   gooseOnScreen: boolean;
-  /** The person closed the desktop window during this live spell. */
-  snoozed: boolean;
+  /**
+   * The person closed the desktop window in this app session and has not brought it back (Q-426).
+   * Held in main only — never a setting: the next launch shows it by the stored mode again.
+   */
+  dismissed: boolean;
 }
 
 export function desktopGlanceVisible(push: GlancePush, facts: DesktopFacts): boolean {
   const mode = push.prefs.desktop;
-  if (mode === 'off' || facts.snoozed || !glanceLive(push)) return false;
+  if (mode === 'off' || facts.dismissed || !glanceLive(push)) return false;
   return mode === 'busy' || !facts.gooseOnScreen;
-}
-
-/** A close snoozes the window until the live spell ends; the next spell shows it again. */
-export function snoozeAfter(snoozed: boolean, push: GlancePush): boolean {
-  return snoozed && glanceLive(push);
 }
 
 /**
@@ -122,17 +121,17 @@ export function gooseOnScreen(platform: string, windows: readonly GooseWindowFac
 
 /**
  * Whether main reads macOS's window list now (Q-313): on macOS, while the desktop window could
- * show (on, not snoozed, something live), with goose behind another app, and while some goose
+ * show (on, not dismissed, something live), with goose behind another app, and while some goose
  * window is still reported on screen — a window macOS already calls covered needs no second read.
  */
 export function coverageWanted(
   platform: string,
   push: GlancePush | null,
-  snoozed: boolean,
+  dismissed: boolean,
   windows: readonly GooseWindowFacts[]
 ): boolean {
   if (platform !== 'darwin' || push == null) return false;
-  if (push.prefs.desktop === 'off' || snoozed || !glanceLive(push)) return false;
+  if (push.prefs.desktop === 'off' || dismissed || !glanceLive(push)) return false;
   if (windows.some((w) => w.focused)) return false;
   return windows.some((w) => w.onScreen);
 }

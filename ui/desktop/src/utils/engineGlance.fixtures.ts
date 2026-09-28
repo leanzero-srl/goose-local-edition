@@ -109,6 +109,7 @@ export function glancePush(
     engine: buildEngineGlance(snapshot, { distributed: null, remote: null, served: [], ...options }),
     sessions,
     prefs: { ...DEFAULT_GLANCE_PREFS, ...prefs },
+    desktopDismissed: false,
   };
 }
 
