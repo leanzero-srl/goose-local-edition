@@ -243,7 +243,7 @@ export default function ImportRecipeForm({ isOpen, onClose, onSuccess }: ImportR
                                 field.state.meta.errors.length > 0
                                   ? 'border-red-500'
                                   : 'border-border-primary'
-                              } ${isDisabled ? 'cursor-not-allowed bg-gray-40 text-gray-300' : ''}`}
+                              } ${isDisabled ? 'cursor-not-allowed bg-background-secondary text-gray-300' : ''}`}
                               placeholder={intl.formatMessage(i18n.deeplinkPlaceholder)}
                               rows={3}
                               autoFocus={!isDisabled}

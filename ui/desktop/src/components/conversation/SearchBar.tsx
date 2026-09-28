@@ -227,7 +227,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
               }`}
               title={intl.formatMessage(i18nMessages.caseSensitive)}
             >
-              <span className="text-md font-normal">Aa</span>
+              <span className="text-base font-normal">Aa</span>
             </Button>
           )}
 

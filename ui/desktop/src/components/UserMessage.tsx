@@ -265,7 +265,7 @@ function PersonMessage({ message, onMessageUpdate, opensConversation = false }: 
       <div className="flex flex-col group">
         {isEditing ? (
           // Truly wide, centered, in-place edit box replacing the bubble
-          <div className="w-full max-w-4xl mx-auto text-text-primary rounded-xl border border-border-primary shadow-lg py-4 px-4 my-2 transition-all duration-200 ease-in-out">
+          <div className="w-full max-w-4xl mx-auto text-text-primary rounded-xl border border-border-primary py-4 px-4 my-2 transition-all duration-200 ease-in-out">
             <textarea
               ref={textareaRef}
               value={editContent}
@@ -414,7 +414,7 @@ function PersonMessage({ message, onMessageUpdate, opensConversation = false }: 
                           handleEditClick();
                         }
                       }}
-                      className="flex items-center gap-1 text-xs text-text-secondary hover:cursor-pointer hover:text-text-primary transition-all duration-200 opacity-0 group-hover:opacity-100 -translate-y-4 group-hover:translate-y-0 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-50 rounded"
+                      className="flex items-center gap-1 text-xs text-text-secondary hover:cursor-pointer hover:text-text-primary transition-all duration-200 opacity-0 group-hover:opacity-100 -translate-y-4 group-hover:translate-y-0 focus:outline-none focus:ring-2 focus:ring-blue-400 rounded"
                       aria-label={intl.formatMessage(i18n.editMessageAriaLabel, {
                         preview: `${textContent.substring(0, 50)}${textContent.length > 50 ? '...' : ''}`,
                       })}

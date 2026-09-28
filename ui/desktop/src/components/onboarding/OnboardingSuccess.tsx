@@ -51,7 +51,7 @@ export default function OnboardingSuccess({ providerName, onFinish }: Onboarding
   const [telemetryOptIn, setTelemetryOptIn] = useState(true);
 
   return (
-    <div className="h-screen w-full bg-background-default overflow-hidden">
+    <div className="h-screen w-full bg-background-primary overflow-hidden">
       <div className="h-full overflow-y-auto">
         <div className="flex flex-col items-center justify-center h-full p-4">
           <div className="max-w-md w-full mx-auto text-center">
@@ -71,17 +71,17 @@ export default function OnboardingSuccess({ providerName, onFinish }: Onboarding
                   />
                 </svg>
               </div>
-              <h2 className="text-xl font-light text-text-default mb-1">
+              <h2 className="text-xl font-light text-text-primary mb-1">
                 {providerName === LOCAL_PROVIDER
                   ? intl.formatMessage(i18n.localModelReady)
                   : intl.formatMessage(i18n.connectedTo, { providerName })}
               </h2>
-              <p className="text-text-muted text-sm">{intl.formatMessage(i18n.allSet)}</p>
+              <p className="text-text-secondary text-sm">{intl.formatMessage(i18n.allSet)}</p>
             </div>
 
             <div className="w-full p-4 bg-transparent border rounded-xl text-left mb-6">
-              <h3 className="font-medium text-text-default text-sm mb-1">{intl.formatMessage(i18n.privacyTitle)}</h3>
-              <p className="text-text-muted text-sm">
+              <h3 className="font-medium text-text-primary text-sm mb-1">{intl.formatMessage(i18n.privacyTitle)}</h3>
+              <p className="text-text-secondary text-sm">
                 {intl.formatMessage(i18n.privacyDescription)}{' '}
                 <button
                   onClick={() => setShowPrivacyInfo(true)}
@@ -97,7 +97,7 @@ export default function OnboardingSuccess({ providerName, onFinish }: Onboarding
                   onChange={(e) => setTelemetryOptIn(e.target.checked)}
                   className="rounded"
                 />
-                <span className="text-text-muted text-sm">{intl.formatMessage(i18n.shareUsageData)}</span>
+                <span className="text-text-secondary text-sm">{intl.formatMessage(i18n.shareUsageData)}</span>
               </label>
             </div>
 

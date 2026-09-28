@@ -495,7 +495,7 @@ export default function CreateEditRecipeModal({
         <div className="flex items-center justify-between p-6 border-b border-border-primary">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-background-primary rounded-full flex items-center justify-center">
-              <Geese className="w-6 h-6 text-iconProminent" />
+              <Geese className="w-6 h-6 text-text-primary" />
             </div>
             <div>
               <h1 className="text-xl font-medium text-text-primary">
@@ -552,7 +552,7 @@ export default function CreateEditRecipeModal({
                   {copied ? (
                     <Check className="w-4 h-4 text-green-500" />
                   ) : (
-                    <Copy className="w-4 h-4 text-iconSubtle" />
+                    <Copy className="w-4 h-4 text-text-secondary" />
                   )}
                   <span className="ml-1 text-sm text-text-secondary">
                     {copied ? intl.formatMessage(i18n.copied) : intl.formatMessage(i18n.copy)}

@@ -101,7 +101,7 @@ export default function RecipeActivityEditor({
 
   return (
     <div>
-      <label htmlFor="activities" className="block text-md text-text-primary mb-2 font-bold">
+      <label htmlFor="activities" className="block text-base text-text-primary mb-2 font-bold">
         {intl.formatMessage(i18n.activitiesLabel)}
       </label>
       <p className="text-sm text-text-secondary space-y-2 pb-4">
@@ -121,7 +121,7 @@ export default function RecipeActivityEditor({
           value={messageContent}
           onChange={(e) => handleMessageChange(e.target.value)}
           onBlur={onBlur}
-          className="w-full px-4 py-3 border rounded-lg bg-background-primary text-text-primary placeholder:text-text-secondary focus:outline-none focus:ring-2 focus:ring-border-secondary resize-vertical"
+          className="w-full px-4 py-3 border rounded-lg bg-background-primary text-text-primary placeholder:text-text-secondary focus:outline-none focus:ring-2 focus:ring-border-secondary resize-y"
           placeholder={intl.formatMessage(i18n.messagePlaceholder)}
           rows={3}
           autoCorrect="off"

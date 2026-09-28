@@ -59,7 +59,7 @@ export function ConfirmationModal({
         </DialogHeader>
 
         {detail && (
-          <div className="overflow-y-auto min-h-0 text-sm text-text-muted break-all">{detail}</div>
+          <div className="overflow-y-auto min-h-0 text-sm text-text-secondary break-all">{detail}</div>
         )}
 
         <DialogFooter className="pt-2 shrink-0">
@@ -67,7 +67,6 @@ export function ConfirmationModal({
             variant="outline"
             onClick={onCancel}
             disabled={isSubmitting}
-            className="focus-visible:ring-2 focus-visible:ring-background-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background-default"
           >
             {cancelLabel || intl.formatMessage(i18n.defaultCancel)}
           </Button>
@@ -75,7 +74,6 @@ export function ConfirmationModal({
             variant={confirmVariant}
             onClick={onConfirm}
             disabled={isSubmitting}
-            className="focus-visible:ring-2 focus-visible:ring-background-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background-default"
           >
             {isSubmitting ? intl.formatMessage(i18n.processing) : (confirmLabel || intl.formatMessage(i18n.defaultConfirm))}
           </Button>

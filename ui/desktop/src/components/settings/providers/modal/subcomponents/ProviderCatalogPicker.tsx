@@ -141,17 +141,17 @@ export default function ProviderCatalogPicker({
     <div className="space-y-4">
       {/* Header */}
       <div>
-        <h3 className="text-lg font-semibold text-textStandard mb-2">
+        <h3 className="text-lg font-semibold text-text-primary mb-2">
           {intl.formatMessage(i18n.chooseProvider)}
         </h3>
-        <p className="text-sm text-textSubtle">
+        <p className="text-sm text-text-secondary">
           {intl.formatMessage(i18n.selectFormatDescription)}
         </p>
       </div>
 
       {/* Format Selection */}
       <div>
-        <label className="text-sm font-medium text-textStandard mb-2 block">
+        <label className="text-sm font-medium text-text-primary mb-2 block">
           {intl.formatMessage(i18n.apiFormat)}
         </label>
         <Select
@@ -169,7 +169,7 @@ export default function ProviderCatalogPicker({
 
       {/* Search */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-textSubtle w-4 h-4" />
+        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-text-secondary w-4 h-4" />
         <Input
           type="text"
           placeholder={intl.formatMessage(i18n.searchProviders)}
@@ -181,7 +181,7 @@ export default function ProviderCatalogPicker({
 
       {/* Loading/Error */}
       {loading && (
-        <div className="text-center py-8 text-textSubtle">
+        <div className="text-center py-8 text-text-secondary">
           {intl.formatMessage(i18n.loadingProviders)}
         </div>
       )}
@@ -195,7 +195,7 @@ export default function ProviderCatalogPicker({
       {!loading && !error && (
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {filteredProviders.length === 0 ? (
-            <div className="text-center py-8 text-textSubtle">
+            <div className="text-center py-8 text-text-secondary">
               {searchQuery
                 ? intl.formatMessage(i18n.noProvidersFound, { query: searchQuery })
                 : intl.formatMessage(i18n.noProvidersAvailable)}
@@ -205,32 +205,32 @@ export default function ProviderCatalogPicker({
               <button
                 key={provider.providerId}
                 onClick={() => handleProviderSelect(provider.providerId)}
-                className="w-full p-4 text-left border border-border rounded-lg hover:bg-surfaceHover hover:border-primary transition-colors group"
+                className="w-full p-4 text-left border border-border-primary rounded-lg hover:bg-background-secondary hover:border-lz-accent transition-colors group"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <div className="font-medium text-textStandard">{provider.name}</div>
+                      <div className="font-medium text-text-primary">{provider.name}</div>
                       {provider.docUrl && (
                         <a
                           href={provider.docUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="text-textSubtle hover:text-textStandard transition-colors flex-shrink-0"
+                          className="text-text-secondary hover:text-text-primary transition-colors flex-shrink-0"
                         >
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       )}
                     </div>
-                    <div className="text-sm text-textSubtle mt-1 break-all">{provider.apiUrl}</div>
-                    <div className="text-xs text-textSubtle mt-2">
+                    <div className="text-sm text-text-secondary mt-1 break-all">{provider.apiUrl}</div>
+                    <div className="text-xs text-text-secondary mt-2">
                       {intl.formatMessage(i18n.modelsAvailable, { count: provider.modelCount })}
                       {provider.envVar &&
                         intl.formatMessage(i18n.requiresEnvVar, { envVar: provider.envVar })}
                     </div>
                   </div>
-                  <Check className="w-5 h-5 text-primary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                  <Check className="w-5 h-5 text-lz-accent opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                 </div>
               </button>
             ))

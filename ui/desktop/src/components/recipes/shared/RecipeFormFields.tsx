@@ -418,10 +418,10 @@ export function RecipeFormFields({
               advancedOpen ? 'rotate-0' : '-rotate-90'
             }`}
           />
-          <span className="text-sm font-medium text-textStandard">
+          <span className="text-sm font-medium text-text-primary">
             {intl.formatMessage(i18n.advancedOptions)}
           </span>
-          <span className="text-xs text-textSubtle">
+          <span className="text-xs text-text-secondary">
             {intl.formatMessage(i18n.advancedOptionsHint)}
           </span>
         </CollapsibleTrigger>
@@ -498,7 +498,7 @@ export function RecipeFormFields({
 
               return (
                 <div>
-                  <label className="block text-md text-text-primary mb-2 font-bold">
+                  <label className="block text-base text-text-primary mb-2 font-bold">
                     {intl.formatMessage(i18n.parametersLabel)}
                   </label>
                   <p className="text-text-secondary text-sm space-y-2 pb-4">
@@ -591,7 +591,7 @@ export function RecipeFormFields({
           <form.Field name="jsonSchema">
             {(field: FormFieldApi<string | undefined>) => (
               <div>
-                <label className="block text-md text-text-primary mb-2 font-bold">
+                <label className="block text-base text-text-primary mb-2 font-bold">
                   {intl.formatMessage(i18n.responseJsonSchema)}
                 </label>
                 <p className="text-text-secondary text-sm space-y-2 pb-4">

@@ -172,7 +172,7 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
 
   if (checkProviderError) {
     return (
-      <div className="h-screen w-full bg-background-default flex flex-col items-center justify-center">
+      <div className="h-screen w-full bg-background-primary flex flex-col items-center justify-center">
         <div className="text-center max-w-md">
           <div className="mb-4">
             <Goose className="size-8 mx-auto" />
@@ -180,7 +180,7 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
           <h1 className="text-xl font-light mb-3">
             {intl.formatMessage(i18n.checkProviderErrorTitle)}
           </h1>
-          <p className="text-text-muted mb-6">
+          <p className="text-text-secondary mb-6">
             {intl.formatMessage(i18n.checkProviderErrorDescription)}
           </p>
           <Button onClick={() => checkProvider()}>{intl.formatMessage(i18n.retry)}</Button>
@@ -200,7 +200,7 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
   }
 
   return (
-    <div className="h-screen w-full bg-background-default overflow-hidden">
+    <div className="h-screen w-full bg-background-primary overflow-hidden">
       <div className="h-full overflow-y-auto">
         <div
           className={`flex flex-col items-center p-4 pb-8 transition-all duration-500 ease-in-out ${hasSelection ? 'pt-8' : 'pt-[15vh]'}`}
@@ -215,7 +215,7 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
               <h1 className="text-2xl sm:text-4xl font-light mb-3">
                 {intl.formatMessage(i18n.welcomeTitle)}
               </h1>
-              <p className="text-text-muted text-base sm:text-lg">
+              <p className="text-text-secondary text-base sm:text-lg">
                 {intl.formatMessage(i18n.welcomeDescription)}
               </p>
             </div>

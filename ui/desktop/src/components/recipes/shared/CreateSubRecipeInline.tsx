@@ -232,12 +232,12 @@ export default function CreateSubRecipeInline({
 
   return (
     <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/50">
-      <div className="bg-background-primary border border-borderSubtle rounded-lg w-[90vw] max-w-2xl max-h-[90vh] flex flex-col">
+      <div className="bg-background-primary border border-border-primary rounded-lg w-[90vw] max-w-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-borderSubtle">
+        <div className="flex items-center justify-between p-6 border-b border-border-primary">
           <div>
-            <h2 className="text-xl font-medium text-textProminent">{intl.formatMessage(i18n.title)}</h2>
-            <p className="text-textSubtle text-sm">
+            <h2 className="text-xl font-medium text-text-primary">{intl.formatMessage(i18n.title)}</h2>
+            <p className="text-text-secondary text-sm">
               {intl.formatMessage(i18n.subtitle)}
             </p>
           </div>
@@ -245,7 +245,7 @@ export default function CreateSubRecipeInline({
             onClick={onClose}
             variant="ghost"
             size="sm"
-            className="p-2 hover:bg-bgSubtle rounded-lg transition-colors"
+            className="p-2 hover:bg-background-secondary rounded-lg transition-colors"
             aria-label={intl.formatMessage(i18n.closeModal)}
           >
             <X className="w-5 h-5" />
@@ -258,7 +258,7 @@ export default function CreateSubRecipeInline({
           <div>
             <label
               htmlFor="subrecipe-name"
-              className="block text-sm font-medium text-text-standard mb-2"
+              className="block text-sm font-medium text-text-primary mb-2"
             >
               {intl.formatMessage(i18n.nameLabel)} <span className="text-text-danger">*</span>
             </label>
@@ -267,10 +267,10 @@ export default function CreateSubRecipeInline({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full p-3 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full p-3 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring"
               placeholder={intl.formatMessage(i18n.namePlaceholder)}
             />
-            <p className="text-xs text-text-muted mt-1">
+            <p className="text-xs text-text-secondary mt-1">
               {intl.formatMessage(i18n.nameHint)}
             </p>
           </div>
@@ -281,7 +281,7 @@ export default function CreateSubRecipeInline({
               <div>
                 <label
                   htmlFor="subrecipe-title"
-                  className="block text-sm font-medium text-text-standard mb-2"
+                  className="block text-sm font-medium text-text-primary mb-2"
                 >
                   {intl.formatMessage(i18n.recipeTitleLabel)} <span className="text-text-danger">*</span>
                 </label>
@@ -291,7 +291,7 @@ export default function CreateSubRecipeInline({
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                   onBlur={field.handleBlur}
-                  className="w-full p-3 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full p-3 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring"
                   placeholder={intl.formatMessage(i18n.recipeTitlePlaceholder)}
                 />
               </div>
@@ -304,7 +304,7 @@ export default function CreateSubRecipeInline({
               <div>
                 <label
                   htmlFor="recipe-description"
-                  className="block text-sm font-medium text-text-standard mb-2"
+                  className="block text-sm font-medium text-text-primary mb-2"
                 >
                   {intl.formatMessage(i18n.recipeDescriptionLabel)} <span className="text-text-danger">*</span>
                 </label>
@@ -314,7 +314,7 @@ export default function CreateSubRecipeInline({
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                   onBlur={field.handleBlur}
-                  className="w-full p-3 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full p-3 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring"
                   placeholder={intl.formatMessage(i18n.recipeDescriptionPlaceholder)}
                 />
               </div>
@@ -327,7 +327,7 @@ export default function CreateSubRecipeInline({
               <div>
                 <label
                   htmlFor="subrecipe-instructions"
-                  className="block text-sm font-medium text-text-standard mb-2"
+                  className="block text-sm font-medium text-text-primary mb-2"
                 >
                   {intl.formatMessage(i18n.instructionsLabel)} <span className="text-text-danger">*</span>
                 </label>
@@ -336,7 +336,7 @@ export default function CreateSubRecipeInline({
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                   onBlur={field.handleBlur}
-                  className="w-full p-3 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring resize-none font-mono text-sm"
+                  className="w-full p-3 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring resize-none font-mono text-sm"
                   placeholder={intl.formatMessage(i18n.instructionsPlaceholder)}
                   rows={8}
                 />
@@ -348,7 +348,7 @@ export default function CreateSubRecipeInline({
           <div>
             <label
               htmlFor="tool-description"
-              className="block text-sm font-medium text-text-standard mb-2"
+              className="block text-sm font-medium text-text-primary mb-2"
             >
               {intl.formatMessage(i18n.toolDescriptionLabel)}
             </label>
@@ -356,7 +356,7 @@ export default function CreateSubRecipeInline({
               id="tool-description"
               value={toolDescription}
               onChange={(e) => setToolDescription(e.target.value)}
-              className="w-full p-3 border border-border-subtle rounded-lg bg-background-primary text-text-standard focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+              className="w-full p-3 border border-border-primary rounded-lg bg-background-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-ring resize-none"
               placeholder={intl.formatMessage(i18n.toolDescriptionPlaceholder)}
               rows={2}
             />
@@ -369,22 +369,22 @@ export default function CreateSubRecipeInline({
               type="checkbox"
               checked={sequentialWhenRepeated}
               onChange={(e) => setSequentialWhenRepeated(e.target.checked)}
-              className="w-4 h-4 border-border-subtle rounded focus:ring-2 focus:ring-ring"
+              className="w-4 h-4 border-border-primary rounded focus:ring-2 focus:ring-ring"
             />
-            <label htmlFor="subrecipe-sequential" className="text-sm text-text-standard">
+            <label htmlFor="subrecipe-sequential" className="text-sm text-text-primary">
               {intl.formatMessage(i18n.sequentialLabel)}
             </label>
-            <span className="text-xs text-text-muted">
+            <span className="text-xs text-text-secondary">
               {intl.formatMessage(i18n.sequentialHint)}
             </span>
           </div>
 
           {/* Pre-configured Values */}
           <div>
-            <label className="block text-sm font-medium text-text-standard mb-2">
+            <label className="block text-sm font-medium text-text-primary mb-2">
               {intl.formatMessage(i18n.preconfiguredValues)}
             </label>
-            <p className="text-xs text-text-muted mb-3">
+            <p className="text-xs text-text-secondary mb-3">
               {intl.formatMessage(i18n.preconfiguredValuesHint)}
             </p>
             <KeyValueEditor values={values} onChange={setValues} />
@@ -392,7 +392,7 @@ export default function CreateSubRecipeInline({
         </div>
 
         {/* Footer */}
-        <div className="flex gap-3 p-6 border-t border-borderSubtle justify-end">
+        <div className="flex gap-3 p-6 border-t border-border-primary justify-end">
           <Button onClick={onClose} variant="outline">
             {intl.formatMessage(i18n.cancel)}
           </Button>

@@ -827,7 +827,7 @@ export const SwitchModelModal = ({
 
   const thinkingEffortControl = showThinkingControl && (
     <div className="mt-2">
-      <label className="text-sm text-textSubtle mb-1 block">
+      <label className="text-sm text-text-secondary mb-1 block">
         {intl.formatMessage(i18n.thinkingEffort)}
       </label>
       <Select

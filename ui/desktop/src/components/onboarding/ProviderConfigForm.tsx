@@ -53,7 +53,7 @@ function parseLinks(text: string) {
           e.preventDefault();
           window.electron.openExternal(part);
         }}
-        className="underline hover:text-text-default cursor-pointer"
+        className="underline hover:text-text-primary cursor-pointer"
       >
         {part}
       </a>
@@ -102,7 +102,7 @@ function OAuthForm({
           ? intl.formatMessage(i18n.signingIn)
           : intl.formatMessage(i18n.signInWith, { providerName: provider.metadata.display_name })}
       </Button>
-      <p className="text-xs text-text-muted text-center">
+      <p className="text-xs text-text-secondary text-center">
         {isDeviceCodeFlow
           ? intl.formatMessage(i18n.deviceCodeFlowHint)
           : intl.formatMessage(i18n.browserWindowOpen)}
@@ -186,7 +186,7 @@ function ApiKeyForm({
           <button
             type="button"
             onClick={() => setShowSetupHelp(!showSetupHelp)}
-            className="flex items-center gap-1 text-sm text-text-muted hover:text-text-default transition-colors"
+            className="flex items-center gap-1 text-sm text-text-secondary hover:text-text-primary transition-colors"
           >
             <ChevronRight
               size={14}
@@ -195,7 +195,7 @@ function ApiKeyForm({
             {intl.formatMessage(i18n.noApiKey)}
           </button>
           {showSetupHelp && (
-            <ol className="mt-2 ml-5 list-decimal text-sm text-text-muted space-y-1">
+            <ol className="mt-2 ml-5 list-decimal text-sm text-text-secondary space-y-1">
               {setupSteps.map((step, i) => (
                 <li key={i}>{parseLinks(step)}</li>
               ))}
@@ -231,12 +231,12 @@ export default function ProviderConfigForm({ provider, onConfigured }: ProviderC
 
   return (
     <div>
-      <div className="p-4 border rounded-xl bg-background-muted">
+      <div className="p-4 border rounded-xl bg-background-secondary">
         <div className="flex items-center gap-3 mb-4">
           <ProviderLogo providerName={provider.name} />
           <div>
-            <h3 className="font-medium text-text-default">{provider.metadata.display_name}</h3>
-            <p className="text-xs text-text-muted">{provider.metadata.description}</p>
+            <h3 className="font-medium text-text-primary">{provider.metadata.display_name}</h3>
+            <p className="text-xs text-text-secondary">{provider.metadata.description}</p>
           </div>
         </div>
 

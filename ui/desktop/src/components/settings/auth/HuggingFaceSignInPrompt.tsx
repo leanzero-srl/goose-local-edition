@@ -92,11 +92,11 @@ export default function HuggingFaceSignInPrompt({
 
   return (
     <div
-      className={`flex flex-col gap-3 rounded-lg border border-border-subtle bg-background-default p-3 sm:flex-row sm:items-center sm:justify-between ${className ?? ''}`}
+      className={`flex flex-col gap-3 rounded-lg border border-border-primary bg-background-primary p-3 sm:flex-row sm:items-center sm:justify-between ${className ?? ''}`}
     >
       <div className="min-w-0">
-        <h4 className="text-sm font-medium text-text-default">{intl.formatMessage(i18n.title)}</h4>
-        <p className="mt-1 text-xs text-text-muted">{description}</p>
+        <h4 className="text-sm font-medium text-text-primary">{intl.formatMessage(i18n.title)}</h4>
+        <p className="mt-1 text-xs text-text-secondary">{description}</p>
       </div>
       <Button
         variant="outline"

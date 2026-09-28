@@ -229,17 +229,22 @@ export const SPACE = {
   card: 'p-lz-card',
 } as const;
 
-/** The accent ring the app already owns (`--color-ring`), on :focus-visible only. */
+/**
+ * The accent ring the app already owns (`--color-ring`), on :focus-visible only. `outline-solid`
+ * is load-bearing (Q-325, measured in Chromium): `outline-none` sets `--tw-outline-style: none` on
+ * the element and `outline-2` draws `outline-style: var(--tw-outline-style)`, so without it the
+ * ring computed to `none 0px` on every control that used this token.
+ */
 export const FOCUS =
-  'outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring';
+  'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring';
 
 /** 120ms ease-out, colours only. */
 export const MOTION = 'transition-colors duration-120 ease-lz';
 
 /**
- * Weights. MEASURED: `font-medium`, `font-semibold` and `font-bold` compile to NOTHING in this
- * app (the MCP theme registration sets their tokens to `initial`), so the Studio carries its own.
- * The type-scale steps already embed their weight; these are for emphasis inside a step.
+ * Weights, for classes joined with `cx`. The type-scale steps already embed their weight; these
+ * are for emphasis inside a step. Host code joined with `cn()` uses `font-medium` / `font-semibold`
+ * instead (re-registered in main.css by Q-325): tailwind-merge reads `font-lz-*` as a font family.
  */
 export const WEIGHT = { medium: 'font-lz-medium', semibold: 'font-lz-semibold' } as const;
 

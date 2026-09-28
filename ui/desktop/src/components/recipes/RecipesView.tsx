@@ -1026,11 +1026,11 @@ export default function RecipesView() {
             </DialogHeader>
             <div className="space-y-4">
               <div>
-                <p className="text-sm text-muted-foreground mb-3">
+                <p className="text-sm text-text-secondary mb-3">
                   {intl.formatMessage(i18n.slashCommandDescription)}
                 </p>
                 <div className="flex gap-2 items-center">
-                  <span className="text-muted-foreground">/</span>
+                  <span className="text-text-secondary">/</span>
                   <input
                     type="text"
                     value={slashCommand}
@@ -1040,7 +1040,7 @@ export default function RecipesView() {
                   />
                 </div>
                 {slashCommand && (
-                  <p className="text-xs text-muted-foreground mt-2">
+                  <p className="text-xs text-text-secondary mt-2">
                     {intl.formatMessage(i18n.slashCommandUsageHint, { command: slashCommand })}
                   </p>
                 )}

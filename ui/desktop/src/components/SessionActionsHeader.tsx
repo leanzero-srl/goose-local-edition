@@ -22,7 +22,7 @@ import type { Recipe } from '../recipe';
 import type { Session } from '../types/session';
 import { errorMessage } from '../utils/conversionUtils';
 import { cn } from '../utils';
-import { LAYER, TYPE, cx } from './lz/tokens';
+import { FOCUS, LAYER, TYPE, cx } from './lz/tokens';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import {
@@ -209,7 +209,10 @@ function JsonPrimitiveValue({
       return (
         <button
           type="button"
-          className="min-w-0 rounded-sm text-left text-lz-syntax-string underline decoration-dotted underline-offset-2 hover:decoration-solid focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active break-all"
+          className={cx(
+            'min-w-0 rounded-sm text-left text-lz-syntax-string underline decoration-dotted underline-offset-2 hover:decoration-solid break-all',
+            FOCUS
+          )}
           onClick={() => onOpenText({ path, value })}
           title={path}
         >
@@ -283,7 +286,10 @@ function JsonTreeNode({
     <div className="min-w-0">
       <button
         type="button"
-        className="flex max-w-full items-baseline gap-1 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-background-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active"
+        className={cx(
+          'flex max-w-full items-baseline gap-1 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-background-primary',
+          FOCUS
+        )}
         onClick={() => entries.length > 0 && setIsOpen((open) => !open)}
       >
         {entries.length > 0 ? (
@@ -521,7 +527,10 @@ export default function SessionActionsHeader({
             <button
               type="button"
               data-testid="session-title-trigger"
-              className="no-drag pointer-events-auto flex h-9 min-w-0 max-w-[36rem] cursor-pointer items-center gap-1.5 rounded-md px-4 py-2 text-text-primary transition-colors hover:bg-background-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active"
+              className={cx(
+                'no-drag pointer-events-auto flex h-9 min-w-0 max-w-[36rem] cursor-pointer items-center gap-1.5 rounded-md px-4 py-2 text-text-primary transition-colors hover:bg-background-secondary',
+                FOCUS
+              )}
               aria-label={intl.formatMessage(i18n.actionsLabel)}
             >
               <span className={cx('truncate', TYPE.h2)}>{title}</span>
@@ -574,7 +583,10 @@ export default function SessionActionsHeader({
             onChange={(event) => setRenameValue(event.target.value)}
             onKeyDown={handleRenameKeyDown}
             placeholder={intl.formatMessage(i18n.renamePlaceholder)}
-            className="w-full rounded-lg border border-border-primary bg-background-primary p-3 text-text-primary outline-none focus:ring-2 focus:ring-border-active"
+            className={cx(
+              'w-full rounded-lg border border-border-primary bg-background-primary p-3 text-text-primary',
+              FOCUS
+            )}
             disabled={isRenaming}
             maxLength={200}
             autoFocus

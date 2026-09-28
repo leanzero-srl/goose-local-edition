@@ -69,7 +69,7 @@ const TEMPLATE_DESCRIPTION: Record<LoopTemplateId, MessageDescriptor> = {
 
 /** A body-text field on the Studio outline (the goal is words, not code). */
 const FIELD = cx(
-  'w-full resize-y bg-lz-surface px-3 py-2 text-lz-body text-lz-ink placeholder:text-lz-ink-4 outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring',
+  'w-full resize-y bg-lz-surface px-3 py-2 text-lz-body text-lz-ink placeholder:text-lz-ink-4 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring',
   SURFACE.outline,
   RADIUS.control
 );

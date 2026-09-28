@@ -208,10 +208,10 @@ export const RecipeExtensionSelector = ({
   return (
     <div className="space-y-4">
       <div>
-        <label className="block text-md text-textProminent mb-2 font-bold">
+        <label className="block text-base text-text-primary mb-2 font-bold">
           {intl.formatMessage(i18n.label)}
         </label>
-        <p className="text-textSubtle text-sm mb-4">{intl.formatMessage(i18n.description)}</p>
+        <p className="text-text-secondary text-sm mb-4">{intl.formatMessage(i18n.description)}</p>
 
         <Input
           type="text"
@@ -221,14 +221,14 @@ export const RecipeExtensionSelector = ({
           className="mb-3"
         />
 
-        <p className="text-xs text-textSubtle mb-3 text-right">
+        <p className="text-xs text-text-secondary mb-3 text-right">
           {intl.formatMessage(i18n.extensionsSelected, { count: activeCount })}
         </p>
       </div>
 
-      <div className="max-h-[300px] overflow-y-auto border border-borderSubtle rounded-lg">
+      <div className="max-h-[300px] overflow-y-auto border border-border-primary rounded-lg">
         {sortedExtensions.length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-textSubtle">
+          <div className="px-4 py-6 text-center text-sm text-text-secondary">
             {searchQuery
               ? intl.formatMessage(i18n.noExtensionsFound)
               : intl.formatMessage(i18n.noExtensionsAvailable)}
@@ -239,7 +239,7 @@ export const RecipeExtensionSelector = ({
             return (
               <div
                 key={ext.name}
-                className="flex items-center justify-between px-4 py-3 hover:bg-bgSubtle transition-colors cursor-pointer border-b border-borderSubtle last:border-b-0"
+                className="flex items-center justify-between px-4 py-3 hover:bg-background-secondary transition-colors cursor-pointer border-b border-border-primary last:border-b-0"
                 role="button"
                 tabIndex={0}
                 aria-pressed={isSelected}
@@ -253,11 +253,11 @@ export const RecipeExtensionSelector = ({
                 title={ext.description || ext.name}
               >
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-textStandard">
+                  <div className="text-sm font-medium text-text-primary">
                     {formatExtensionName(ext.name)}
                   </div>
                   {ext.description && (
-                    <div className="text-xs text-textSubtle truncate mt-1">{ext.description}</div>
+                    <div className="text-xs text-text-secondary truncate mt-1">{ext.description}</div>
                   )}
                 </div>
                 <div onClick={(e) => e.stopPropagation()} className="ml-4">

@@ -89,7 +89,7 @@ export default function TelemetryConsentPrompt() {
           <DialogHeader>
             <DialogTitle className="text-center">{intl.formatMessage(i18n.heading)}</DialogTitle>
           </DialogHeader>
-          <p className="text-text-muted text-sm">
+          <p className="text-text-secondary text-sm">
             {intl.formatMessage(i18n.description)}{' '}
             <button
               onClick={() => setShowPrivacyInfo(true)}

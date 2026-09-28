@@ -118,7 +118,7 @@ export default function SubRecipeEditor({ subRecipes, onChange }: SubRecipeEdito
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <label className="block text-md text-textProminent font-bold">{intl.formatMessage(i18n.label)}</label>
+        <label className="block text-base text-text-primary font-bold">{intl.formatMessage(i18n.label)}</label>
         <div className="flex gap-2">
           <Button
             type="button"
@@ -143,7 +143,7 @@ export default function SubRecipeEditor({ subRecipes, onChange }: SubRecipeEdito
         </div>
       </div>
 
-      <p className="text-textSubtle text-sm mb-4">
+      <p className="text-text-secondary text-sm mb-4">
         {intl.formatMessage(i18n.description)}
       </p>
 
@@ -152,34 +152,34 @@ export default function SubRecipeEditor({ subRecipes, onChange }: SubRecipeEdito
           {subRecipes.map((subRecipe, index) => (
             <div
               key={subRecipe.name}
-              className="border border-border-subtle rounded-lg p-4 bg-background-default hover:bg-background-muted transition-colors"
+              className="border border-border-primary rounded-lg p-4 bg-background-primary hover:bg-background-secondary transition-colors"
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <h4 className="text-sm font-semibold text-textProminent">{subRecipe.name}</h4>
+                    <h4 className="text-sm font-semibold text-text-primary">{subRecipe.name}</h4>
                     {subRecipe.sequential_when_repeated && (
                       <span className="text-xs px-2 py-0.5 bg-background-info/10 text-text-info rounded">
                         {intl.formatMessage(i18n.sequential)}
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-text-muted mb-2">{subRecipe.path}</p>
+                  <p className="text-xs text-text-secondary mb-2">{subRecipe.path}</p>
                   {subRecipe.description && (
-                    <p className="text-sm text-text-standard mb-2">{subRecipe.description}</p>
+                    <p className="text-sm text-text-primary mb-2">{subRecipe.description}</p>
                   )}
                   {subRecipe.values && Object.keys(subRecipe.values).length > 0 && (
                     <div className="mt-2">
-                      <p className="text-xs text-text-muted mb-1">{intl.formatMessage(i18n.preconfiguredValues)}</p>
+                      <p className="text-xs text-text-secondary mb-1">{intl.formatMessage(i18n.preconfiguredValues)}</p>
                       <div className="flex flex-wrap gap-1">
                         {Object.entries(subRecipe.values).map(([key, value]) => (
                           <span
                             key={key}
-                            className="text-xs px-2 py-1 bg-background-muted border border-border-subtle rounded"
+                            className="text-xs px-2 py-1 bg-background-secondary border border-border-primary rounded"
                           >
                             <span className="font-medium">{key}</span>
-                            <span className="text-text-muted">: </span>
-                            <span className="text-text-standard">{value}</span>
+                            <span className="text-text-secondary">: </span>
+                            <span className="text-text-primary">{value}</span>
                           </span>
                         ))}
                       </div>

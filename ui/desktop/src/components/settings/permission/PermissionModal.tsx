@@ -167,7 +167,7 @@ export default function PermissionModal({ extensionName, onClose }: PermissionMo
       <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <SlidersHorizontal className="text-iconStandard" size={24} />
+            <SlidersHorizontal className="text-text-primary" size={24} />
             {extensionName}
           </DialogTitle>
         </DialogHeader>
@@ -176,7 +176,7 @@ export default function PermissionModal({ extensionName, onClose }: PermissionMo
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <svg
-                className="animate-spin h-8 w-8 text-grey-50 dark:text-white"
+                className="animate-spin h-8 w-8 text-text-secondary dark:text-white"
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"

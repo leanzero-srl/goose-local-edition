@@ -6,6 +6,7 @@ import SessionActionsHeader from '../SessionActionsHeader';
 import type { Session } from '../../types/session';
 import { headerInsets, useHeaderObstacle } from './headerChrome';
 import { missingUtilities } from '../lz/compileStudioCss';
+import { FOCUS } from '../lz/tokens';
 
 vi.mock('../../acp/sessions', () => ({
   acpExportSession: vi.fn(async () => '{}'),
@@ -108,10 +109,12 @@ describe('the session title keeps clear of the chrome beside it (Q-315)', () => 
       expect(trigger.className).toContain('pointer-events-auto');
       expect(trigger.className).toContain('no-drag');
       expect(trigger.className).toContain('min-w-0');
-      // `no-drag` is the app's own region class (main.css), not a utility. The trigger's
-      // `focus-visible:ring-border-active` compiles to nothing at HEAD too — not this change's.
+      // Q-325: Tab onto the title draws the app's ring — the FOCUS token, whose outline-solid is
+      // what makes it draw (outline-none alone left `outline-style: none` under :focus-visible).
+      for (const c of FOCUS.split(' ')) expect(trigger.classList).toContain(c);
+      // `no-drag` is the app's own region class (main.css), not a utility.
       const classes = [...band.className.split(/\s+/), ...trigger.className.split(/\s+/)].filter(
-        (c) => c.length > 0 && c !== 'no-drag' && c !== 'focus-visible:ring-border-active'
+        (c) => c.length > 0 && c !== 'no-drag'
       );
       expect(await missingUtilities(classes)).toEqual([]);
     } finally {

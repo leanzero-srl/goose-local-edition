@@ -102,7 +102,7 @@ export const SessionMessages: React.FC<SessionMessagesProps> = ({
                 <div className="text-red-500 mb-4">
                   <AlertCircle size={32} />
                 </div>
-                <p className="text-md mb-2">{intl.formatMessage(i18n.errorLoadingDetails)}</p>
+                <p className="text-base mb-2">{intl.formatMessage(i18n.errorLoadingDetails)}</p>
                 <p className="text-sm text-center mb-4">{error}</p>
                 <Button onClick={onRetry} variant="default">
                   {intl.formatMessage(i18n.tryAgain)}
@@ -136,7 +136,7 @@ export const SessionMessages: React.FC<SessionMessagesProps> = ({
                       key={index}
                       className={`p-4 ${
                         message.role === 'user'
-                          ? 'bg-bgSecondary border border-border-primary'
+                          ? 'bg-background-secondary border border-border-primary'
                           : 'bg-background-secondary'
                       }`}
                     >

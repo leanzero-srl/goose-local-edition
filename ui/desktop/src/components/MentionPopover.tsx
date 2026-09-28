@@ -569,7 +569,7 @@ const MentionPopover = forwardRef<
     return (
       <div
         ref={popoverRef}
-        className="fixed z-50 bg-background-primary border border-border-primary rounded-lg shadow-lg min-w-96 max-w-lg max-h-80"
+        className="fixed z-50 bg-background-primary border border-border-primary rounded-lg shadow-lz-overlay dark:shadow-lz-overlay-dark min-w-96 max-w-lg max-h-80"
         style={{
           left: position.x,
           top: position.y - 10, // Position above the chat input
@@ -593,7 +593,7 @@ const MentionPopover = forwardRef<
               )}
               <div
                 ref={listRef}
-                className="space-y-1 overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-borderStandard scrollbar-track-transparent"
+                className="space-y-1 overflow-y-auto flex-1 scrollbar-thin"
                 style={{ maxHeight: '280px' }}
               >
                 {displayItems.map((item, index) => (

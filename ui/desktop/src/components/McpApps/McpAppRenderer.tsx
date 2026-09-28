@@ -1169,7 +1169,7 @@ export default function McpAppRenderer({
     'mcp-app-container bg-background-primary [&_iframe]:!w-full',
     isFillsViewport && 'fixed inset-0 z-[1000] overflow-hidden [&_iframe]:!h-full',
     isPip &&
-      'fixed z-[900] overflow-y-auto overflow-x-hidden rounded-xl border border-border-primary shadow-2xl',
+      'fixed z-[900] overflow-y-auto overflow-x-hidden rounded-xl border border-border-primary shadow-lz-overlay dark:shadow-lz-overlay-dark',
     isInline && 'group/mcp-app relative overflow-hidden',
     isInline && !isError && 'mt-6 mb-2',
     isInline && !isError && meta.prefersBorder && 'border border-border-primary rounded-lg',

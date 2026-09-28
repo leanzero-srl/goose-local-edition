@@ -108,7 +108,7 @@ export default function ToolApprovalButtons({ data }: { data: ToolApprovalData }
       cancel: intl.formatMessage(i18n.cancelled),
     };
     return (
-      <p className="text-sm text-muted-foreground mt-2">
+      <p className="text-sm text-text-secondary mt-2">
         {toolName} - {statusMessages[decision]}
       </p>
     );

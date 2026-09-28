@@ -95,7 +95,7 @@ export function ConfigureApproveMode({
         <div className="px-4 pb-0 space-y-6">
           {/* Header */}
           <div className="flex">
-            <h2 className="text-2xl font-regular text-text-primary">{intl.formatMessage(i18n.title)}</h2>
+            <h2 className="text-2xl font-normal text-text-primary">{intl.formatMessage(i18n.title)}</h2>
           </div>
 
           <div className="mt-[24px]">
@@ -125,7 +125,7 @@ export function ConfigureApproveMode({
               variant="ghost"
               disabled={isSubmitting}
               onClick={handleModeSubmit}
-              className="w-full h-[60px] rounded-none border-t border-border-primary hover:bg-background-secondary text-text-primary dark:border-gray-600 text-base font-regular"
+              className="w-full h-[60px] rounded-none border-t border-border-primary hover:bg-background-secondary text-text-primary dark:border-gray-600 text-base font-normal"
             >
               {isSubmitting ? intl.formatMessage(i18n.saving) : intl.formatMessage(i18n.save)}
             </Button>
@@ -134,7 +134,7 @@ export function ConfigureApproveMode({
               variant="ghost"
               disabled={isSubmitting}
               onClick={onClose}
-              className="w-full h-[60px] rounded-none border-t border-border-primary text-text-secondary hover:bg-background-secondary dark:border-gray-600 text-base font-regular"
+              className="w-full h-[60px] rounded-none border-t border-border-primary text-text-secondary hover:bg-background-secondary dark:border-gray-600 text-base font-normal"
             >
               {intl.formatMessage(i18n.cancel)}
             </Button>
