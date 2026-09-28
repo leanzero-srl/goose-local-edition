@@ -29,7 +29,16 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
             MatchDispatchFrom::new(message, &cx)
                 .if_request(
                     |req: InitializeRequest, responder: Responder<InitializeResponse>| async {
-                        responder.respond_with_result(agent.on_initialize(req).await)
+                        let initialized = agent.on_initialize(req).await;
+                        let open_door = initialized.is_ok();
+                        responder.respond_with_result(initialized)?;
+                        // Session loops (§5.1): the connection is a tick door from here — the
+                        // first moment its client has said whether it hears goose's own
+                        // notifications — until its serving future ends.
+                        if open_door {
+                            agent.open_loop_door(&cx);
+                        }
+                        Ok(())
                     },
                 )
                 .await

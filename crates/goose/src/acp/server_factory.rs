@@ -89,6 +89,14 @@ impl AcpServer {
         let config = crate::config::Config::global();
         let disable_session_naming = config.get_goose_disable_session_naming().unwrap_or(false);
         let scheduler = self.scheduler().await?;
+        // Session loops (L2a): one runner per process, over the store the process's chats live in
+        // (`SessionManager::instance`); a server over another store runs no loops — its agents
+        // answer every loop control that the runner is not in this build.
+        if self.config.data_dir == crate::config::paths::Paths::data_dir() {
+            if let Err(error) = crate::session_loops::runner::install() {
+                tracing::error!(%error, "session loops: the loop runner did not start; loop controls answer that it is not in this build");
+            }
+        }
 
         let provider_factory: AcpProviderFactory =
             Arc::new(move |provider_name, extensions, working_dir| {
