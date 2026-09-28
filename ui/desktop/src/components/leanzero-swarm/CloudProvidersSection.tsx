@@ -8,16 +8,13 @@ import {
   acpRecheckProviderConnections,
 } from '../../acp/providers';
 import type { ProviderDetails } from '../../types/providers';
-import {
-  isLocalEditionCloudProvider,
-  isUserEndpoint,
-} from '../settings/models/leanzeroSelectorPolicy';
+import { isUserEndpoint } from '../settings/models/leanzeroSelectorPolicy';
 import { Button, Chip, SURFACE, TYPE, cx } from '../lz';
 import { ToneBanner } from './studio';
 import { OPENAI_COMPATIBLE_TILE, ProviderTile } from './ProviderTile';
 import CloudProviderSetupDialog from './CloudProviderSetupDialog';
 import CompatibleEndpointDialog from './CompatibleEndpointDialog';
-import { partitionProviderRows, providerRowState } from './cloudProviderState';
+import { partitionProviderRows, providerListKind, providerRowState } from './cloudProviderState';
 import { openAiEndpointOverrides, type EndpointOverride } from './openaiEndpoint';
 import { errorMessage } from '../../utils/conversionUtils';
 import { defineMessages, useIntl } from '../../i18n';
@@ -223,7 +220,7 @@ export default function CloudProvidersSection() {
   const rows = useMemo(
     () =>
       (providers ?? [])
-        .filter((p) => isLocalEditionCloudProvider(p.name) || isUserEndpoint(p))
+        .filter((p) => providerListKind(p) != null)
         .sort((a, b) => a.metadata.display_name.localeCompare(b.metadata.display_name)),
     [providers]
   );

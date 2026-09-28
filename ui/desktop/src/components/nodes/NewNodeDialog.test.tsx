@@ -429,6 +429,31 @@ describe('New node · a cloud model or an endpoint', () => {
     });
   });
 
+  it('Q-429: the cloud tile counts and lists cloud providers only — never a local engine', async () => {
+    // The demo's 3.0.73 list: oMLX and Goose Swarm read configured (they need no key) while the
+    // Cloud Providers tab said 0 of 14 — the tile said "2 set up".
+    const OMLX = provider('omlx', 'oMLX');
+    const SWARM = provider('swarm', 'Goose Swarm');
+    const LMSTUDIO = provider('lmstudio', 'LM Studio');
+    mockProviders.mockResolvedValue([OMLX, SWARM, LMSTUDIO, NOT_SET_UP, ENDPOINT]);
+    renderDialog();
+    await waitFor(() =>
+      expect(screen.getByTestId('new-node-kind-cloud')).toHaveTextContent('None set up')
+    );
+    expect(screen.getByTestId('new-node-kind-endpoint')).toHaveTextContent('1 added');
+    cleanup();
+    mockProviders.mockResolvedValue([OMLX, SWARM, LMSTUDIO, OPENROUTER, ENDPOINT]);
+    renderDialog();
+    await waitFor(() =>
+      expect(screen.getByTestId('new-node-kind-cloud')).toHaveTextContent('1 set up')
+    );
+    await userEvent.click(screen.getByTestId('new-node-kind-cloud'));
+    await next();
+    expect(screen.getAllByTestId('new-node-provider-row').map((p) => p.textContent)).toEqual([
+      'OpenRouter',
+    ]);
+  });
+
   it('none configured: the tile says so and leads to Cloud Providers', async () => {
     mockProviders.mockResolvedValue([NOT_SET_UP]);
     const { onOpenCloudProviders } = renderDialog();

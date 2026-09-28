@@ -26,8 +26,11 @@ import { usePlacementPlans } from '../leanzero-swarm/usePlacementPlans';
 import { PlacementBadge, pickerBadgeOf } from '../leanzero-swarm/PlacementCard';
 import { PlacementCandidates, waysOf, type Way } from '../leanzero-swarm/PlacementCandidates';
 import { formatGb } from '../leanzero-swarm/primitives';
-import { providerRowState } from '../leanzero-swarm/cloudProviderState';
-import { isUserEndpoint } from '../settings/models/leanzeroSelectorPolicy';
+import {
+  providerListKind,
+  providerRowState,
+  type ProviderListKind,
+} from '../leanzero-swarm/cloudProviderState';
 import { acpListProviderDetails, acpListProviderLiveModels } from '../../acp/providers';
 import type { PlacementGoal } from '../../acp/mlx-placement';
 import type { ProviderDetails } from '../../types/providers';
@@ -360,10 +363,12 @@ function NewNodeDialogBody({
       alive = false;
     };
   }, []);
-  const configured = (want: 'cloud' | 'endpoint') =>
+  // The providers the Cloud Providers tab lists as configured, of one kind — never a local engine
+  // (Q-429): the tile's count and the Provider step read this one list.
+  const configured = (want: ProviderListKind) =>
     providers.kind === 'read'
       ? providers.providers.filter(
-          (p) => providerRowState(p) !== 'not-set-up' && (want === 'endpoint') === isUserEndpoint(p)
+          (p) => providerRowState(p) !== 'not-set-up' && providerListKind(p) === want
         )
       : [];
 
