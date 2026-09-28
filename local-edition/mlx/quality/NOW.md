@@ -27,7 +27,9 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
     - Turns 7–8: 340 s, then 105 s. 13/13 node:test pass. The totals and the 4 leads the rule saved are correct.
     - Turns 9–11: it could not interrupt an 82 ms run, said so plainly, and proved the resume path with a test
       instead (15/15). It found the official JCMA doc ("one account is always chosen as the main one (randomly)")
-      and put it above the merge rule. Turn 12 (plan-projects.mjs) is running. No goose defect. Decode is 9.5–11.9 tok/s since the 23:30 flip.
+      and put it above the merge rule. Turns 12–13: plan-projects 13/13, refresh.sh 28/28.
+      Turn 14 ("just the command" for CPU use) got NO command → Q-453, model behaviour; the stream and rank were
+      checked intact. Turn 15 (the client readiness .docx) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -73,6 +75,6 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-453. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-454. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
