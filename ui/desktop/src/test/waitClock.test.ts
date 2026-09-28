@@ -16,7 +16,9 @@ const VITEST_WAIT = new Set(['waitFor', 'waitUntil']);
 
 const hasTimeout = (node: ts.Node): node is ts.ObjectLiteralExpression =>
   ts.isObjectLiteralExpression(node) &&
-  node.properties.some((p) => p.name !== undefined && ts.isIdentifier(p.name) && p.name.text === 'timeout');
+  node.properties.some(
+    (p) => p.name !== undefined && ts.isIdentifier(p.name) && p.name.text === 'timeout'
+  );
 
 const runsOnTestClock = (options: ts.Expression | undefined, sf: ts.SourceFile): boolean =>
   options !== undefined &&

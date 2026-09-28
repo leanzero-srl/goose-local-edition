@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { pollUntil, testClock } from './test/testClock';
 import {
   buildGooseServeEnv,
   buildLocalServeUrls,
@@ -37,13 +38,8 @@ function makeExecutable(filePath: string, contents: string): string {
 }
 
 async function waitForFileLines(filePath: string): Promise<string[]> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (fs.existsSync(filePath)) {
-      return fs.readFileSync(filePath, 'utf8').trim().split('\n');
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`Timed out waiting for ${filePath}`);
+  await pollUntil(() => fs.existsSync(filePath), filePath, 10);
+  return fs.readFileSync(filePath, 'utf8').trim().split('\n');
 }
 
 describe('findGooseBinaryPath', () => {
@@ -185,8 +181,9 @@ describe('startGooseServe', () => {
         stderrLogPath,
         // Ready once the fake goosed has spoken, so the stop cannot outrun its one line.
         readinessFetch: async () => {
-          await vi.waitFor(() =>
-            expect(fs.readFileSync(stderrLogPath, 'utf8')).toContain('goosed-said-this')
+          await vi.waitFor(
+            () => expect(fs.readFileSync(stderrLogPath, 'utf8')).toContain('goosed-said-this'),
+            { timeout: testClock() }
           );
           return new Response(null, { status: 200 });
         },
@@ -194,8 +191,9 @@ describe('startGooseServe', () => {
       await result.cleanup();
 
       // The sink flushes after the exit event; the test waits for the bytes, the product never does.
-      await vi.waitFor(() =>
-        expect(fs.readFileSync(stderrLogPath, 'utf8')).toMatch(/===== goose serve exited /)
+      await vi.waitFor(
+        () => expect(fs.readFileSync(stderrLogPath, 'utf8')).toMatch(/===== goose serve exited /),
+        { timeout: testClock() }
       );
       expect(fs.existsSync(path.join(tempDir, '.swarm'))).toBe(false);
     }
@@ -353,13 +351,7 @@ describe('startGooseServe — goosed ends with its app, and the stop waits for i
         new Response(null, { status: fs.existsSync(path.join(dir, 'trapped')) ? 200 : 503 })
     );
 
-  const waitFor = async (check: () => boolean, what: string) => {
-    for (let i = 0; i < 200; i += 1) {
-      if (check()) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`timed out waiting for ${what}`);
-  };
+  const waitFor = (check: () => boolean, what: string) => pollUntil(check, what, 25);
 
   it.skipIf(process.platform === 'win32')(
     'hands goosed a stdin pipe held open for its life, and asks it to exit on EOF',

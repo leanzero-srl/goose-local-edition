@@ -5,6 +5,7 @@ import type { Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { testClock } from '../test/testClock';
 import { reapOrphanedGoosed, selectOrphanedGoosed } from './orphanGoosedReap';
 
 const APP_GOOSE = '/Applications/Goose Swarm.app/Contents/Resources/bin/goose';
@@ -295,7 +296,12 @@ describe.skipIf(process.platform !== 'darwin')('reapOrphanedGoosed — real proc
     expect(await ownedWitness.pid()).toBe(owned.pid);
     const logger = { info: vi.fn(), error: vi.fn() };
 
-    const report = await reapOrphanedGoosed({ goosePath: STAND_IN, logger, sigkillAfterMs: 3000 });
+    const report = await reapOrphanedGoosed({
+      goosePath: STAND_IN,
+      logger,
+      // Q-383: SIGTERM gets the test's whole clock to land — a loaded Mac is no reason to escalate.
+      sigkillAfterMs: testClock(),
+    });
 
     expect(report.reaped).toEqual([{ pid: orphan.pid, signal: 'SIGTERM' }]);
     expect(report.survived).toEqual([]);

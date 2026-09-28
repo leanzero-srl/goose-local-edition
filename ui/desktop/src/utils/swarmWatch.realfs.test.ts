@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { pollUntil } from '../test/testClock';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -82,10 +83,7 @@ afterEach(async () => {
 });
 
 async function waitForDelta(atLeast: number): Promise<void> {
-  const deadline = Date.now() + 4000;
-  while (sent.length < atLeast && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 20));
-  }
+  await pollUntil(() => sent.length >= atLeast, `${atLeast} pushed delta(s)`);
   expect(sent.length).toBeGreaterThanOrEqual(atLeast);
 }
 

@@ -198,9 +198,8 @@ describe('the inspector’s WORK pane while a write is in flight', () => {
     expect(dialog.textContent).not.toContain('Wrote app/cli.py');
     // The fleet cell says what the node is doing, not what it last thought. The cell types its live line
     // out (nextRevealedText), so wait for the reveal to reach the end of the preview.
-    await waitFor(
-      () => expect(cell.textContent).toContain('running: write app/cli.py (83 lines, 2100 bytes)'),
-      { timeout: 4000 }
+    await waitFor(() =>
+      expect(cell.textContent).toContain('running: write app/cli.py (83 lines, 2100 bytes)')
     );
   });
 

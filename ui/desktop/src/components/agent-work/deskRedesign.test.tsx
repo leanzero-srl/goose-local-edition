@@ -1,4 +1,4 @@
-import { act, fireEvent, render as renderBase, screen } from '@testing-library/react';
+import { fireEvent, render as renderBase, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'react-intl';
 import { assertStudioClean } from '../lz/assertStudioClean';
@@ -393,10 +393,9 @@ describe('the view wires ?tick from the URL', () => {
       },
     });
     render(<AgentWorkView />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20));
-    });
-    expect(screen.getByTestId('agent-result-lead').textContent).toContain('JavaScript | MDN');
+    await waitFor(() =>
+      expect(screen.getByTestId('agent-result-lead').textContent).toContain('JavaScript | MDN')
+    );
     expect(screen.getByLabelText('Tick 1')).toBeTruthy();
     expect(screen.getByTestId('agent-work-scroll').className.split(' ')).not.toContain('flex');
     window.location.hash = '';
@@ -460,7 +459,9 @@ describe('UX audit A1 (2026-09-23): phases coloured by who worked, and a lane ca
     );
     expect(twoInks.map((el) => el.getAttribute('class'))).toEqual([]);
     const role = row.querySelector<HTMLElement>('.text-lz-meta.text-lz-ink-2')!;
-    expect((await resolvedPaint(role, 'light')).text).toBe(studioToken('--color-lz-ink-2', 'light'));
+    expect((await resolvedPaint(role, 'light')).text).toBe(
+      studioToken('--color-lz-ink-2', 'light')
+    );
   }, 30_000);
 
   it('a settled lane that was not delivered leads with its first sentence only', async () => {
