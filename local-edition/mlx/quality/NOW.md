@@ -1,10 +1,11 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 17:1x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 17:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
-  Split up. E2E #3r RUNNING (RU-2026-09-28-3r-split-tensor, jira brief) since 13:24 — #3q died when MY probe
+  Split up. E2E #3r ENDED 17:2x at turn 18 (hung after compaction → Q-392 cutting; my own builds put the
+  engine in its memory hold). Was: E2E #3r RUNNING (RU-2026-09-28-3r-split-tensor, jira brief) since 13:24 — #3q died when MY probe
   navigated the main window (r1's chatUrl then pointed at the Engine tab); turn 0 big call 40,764/56,280 cached.
 - LIVE-PROVEN on 3.0.69 (#3p, 13 turns): Q-294/295/296 — every turn's first call 97–99% from cache (was 0% on #3o
   turns 3/5); Q-297 holding (skill loaded once). #3p turn 9 = a compaction that re-read ~143k cold → Q-342.
