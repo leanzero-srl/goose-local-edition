@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {Đang chờ {way} hoàn tất # phản hồi, rồi tải {node} ({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {Đang chờ {way} hoàn tất # phản hồi trong {chats}, sau đó tải {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {Đang chờ trong khi {mac} phục vụ {serving} cho {chats}: {node} sẽ tải khi cuộc trò chuyện đó được đóng hoặc chuyển sang nút khác ({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "Không lưu được thay đổi"
   },

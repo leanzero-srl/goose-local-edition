@@ -22,6 +22,18 @@ const i18n = defineMessages({
     defaultMessage:
       'Waiting for {way} to finish {count, plural, one {# reply} other {# replies}}, then loading {node} ({duration})',
   },
+  // Q-430: the wait names the chat whose reply it waits for — the loader's hold says whose.
+  turnWaitingInChat: {
+    id: 'nodes.turnWaitingInChat',
+    defaultMessage:
+      'Waiting for {way} to finish {count, plural, one {# reply} other {# replies}} in {chats}, then loading {node} ({duration})',
+  },
+  // Q-428 `wait`: the Mac serves another node for chats resting between messages.
+  turnWaitingServing: {
+    id: 'nodes.turnWaitingServing',
+    defaultMessage:
+      'Waiting while {mac} serves {serving} for {chats}: {node} loads when {count, plural, one {that chat is} other {those chats are}} closed or moved to another node ({duration})',
+  },
   turnFirstLoad: {
     id: 'nodes.turnFirstLoad',
     defaultMessage: 'First load of {node}, not measured yet',
@@ -142,7 +154,26 @@ export function loaderText(intl: IntlShape, loader: ChatLoader): string {
   switch (loader.kind) {
     case 'waiting': {
       const { wait } = loader;
+      if (wait.servingOther) {
+        return intl.formatMessage(i18n.turnWaitingServing, {
+          mac: wait.servingOther.mac,
+          serving: wait.servingOther.serving,
+          chats: servingChatsText(intl, wait.servingOther.chats),
+          count: wait.servingOther.chats.length,
+          node: wait.target.name,
+          duration: loadDurationText(intl, wait.load),
+        });
+      }
       if (!wait.replies) return headline(wait.reason);
+      if (wait.replies.chats.length > 0) {
+        return intl.formatMessage(i18n.turnWaitingInChat, {
+          way: wait.replies.way,
+          count: wait.replies.count,
+          chats: servingChatsText(intl, wait.replies.chats),
+          node: wait.target.name,
+          duration: loadDurationText(intl, wait.load),
+        });
+      }
       return intl.formatMessage(i18n.turnWaiting, {
         way: wait.replies.way,
         count: wait.replies.count,

@@ -180,6 +180,29 @@ function loaderAtWork(state: GlanceNodesState): boolean {
 
 let lookAgain: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Q-430: chats whose turn is in flight on a node that does not serve yet. Such a turn may be
+ * queued in the loader — waiting for another chat's reply — and NOTHING the glance keys on
+ * changes while it waits: the way serving the other chat keeps its model and its stage (the
+ * demo's shot 41: 26 s into the wait the glance still read "Reading prompt" for the other chat),
+ * so no read was taken, the loader's `waiting` mark was never seen, and the composer said
+ * "Waiting for the model's first words" instead of whose reply it waited for. While any chat
+ * watches, the read is taken again at the engine's own read interval — an observation cadence,
+ * never a decision: what the read says decides.
+ */
+let watchers = 0;
+
+export function watchGlanceNodes(): () => void {
+  watchers += 1;
+  refreshGlanceNodes();
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    watchers -= 1;
+  };
+}
+
 export function refreshGlanceNodes(): void {
   if (nodesListeners.size === 0) return;
   if (lookAgain != null) {
@@ -192,7 +215,7 @@ export function refreshGlanceNodes(): void {
     if (seq !== nodesSeq) return;
     nodesState = next;
     nodesListeners.forEach((l) => l());
-    if (loaderAtWork(next) && nodesListeners.size > 0) {
+    if ((loaderAtWork(next) || watchers > 0) && nodesListeners.size > 0) {
       lookAgain = setTimeout(() => {
         lookAgain = null;
         refreshGlanceNodes();
@@ -306,6 +329,7 @@ export function resetEngineGlanceForTests(next: GlancePush | null = null): void 
   nodesState = { kind: 'unread' };
   nodesKey = null;
   nodesSeq += 1;
+  watchers = 0;
   if (lookAgain != null) clearTimeout(lookAgain);
   lookAgain = null;
 }

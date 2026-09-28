@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, one {{way} # yanıtı bitirene kadar bekleniyor, ardından {node} yüklenecek ({duration})} other {{way} # yanıtı bitirene kadar bekleniyor, ardından {node} yüklenecek ({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, one {{way} tarafından {chats} içindeki # yanıtın bitmesi bekleniyor, ardından {node} yüklenecek ({duration})} other {{way} tarafından {chats} içindeki # yanıtın bitmesi bekleniyor, ardından {node} yüklenecek ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, one {{mac}, {chats} için {serving} sunarken bekleniyor: o sohbet kapatıldığında veya başka bir düğüme geçtiğinde {node} yüklenecek ({duration})} other {{mac}, {chats} için {serving} sunarken bekleniyor: o sohbetler kapatıldığında veya başka bir düğüme geçtiğinde {node} yüklenecek ({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "Değişiklik kaydedilemedi"
   },

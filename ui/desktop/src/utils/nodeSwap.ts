@@ -1,5 +1,6 @@
 import type {
   NodeRefusalFactsDto,
+  NodeServingOtherDto,
   NodesReadResponse_unstable,
   NodesResidencyResponse_unstable,
   ResolvedNodeDef,
@@ -126,7 +127,10 @@ function nodeTarget(read: NodesReadResponse_unstable, id: string): SwapTarget {
 export interface NodeWait {
   target: SwapTarget;
   reason: string;
-  replies: { way: string; count: number } | null;
+  /** `chats`: the chats those replies answer, by name (Q-430); empty from an older goosed. */
+  replies: { way: string; count: number; chats: string[] } | null;
+  /** The role says wait while the Mac serves another node for chats between replies (Q-428). */
+  servingOther: NodeServingOtherDto | null;
   load: MeasuredLoad | null;
 }
 
@@ -139,14 +143,19 @@ export function nodeWaitOf(
     (r) => r.residency.kind === 'waiting' && nodeIds.includes(r.node)
   );
   if (!row || row.residency.kind !== 'waiting') return null;
-  const { reason, replies } = row.residency;
+  const { reason, replies, servingOther } = row.residency;
   const wayNode = replies?.wayNodes?.find((id) => read.nodes.some((n) => n.def.id === id));
   return {
     target: nodeTarget(read, row.node),
     reason,
     replies: replies
-      ? { way: wayNode ? nodeTarget(read, wayNode).name : replies.way, count: replies.count }
+      ? {
+          way: wayNode ? nodeTarget(read, wayNode).name : replies.way,
+          count: replies.count,
+          chats: replies.chats ?? [],
+        }
       : null,
+    servingOther: servingOther ?? null,
     load: measuredLoadOf(residency, row.node),
   };
 }
@@ -248,6 +257,27 @@ export function routeNodeIds(
     for (const link of entry?.chain ?? []) ids.add(link.node);
   }
   return [...ids];
+}
+
+/**
+ * Q-430: a chat's turn on a `node:` / `strategy:` route may wait in the loader while NO node its
+ * model runs on serves (queued behind another chat's reply, or loading). True while none of its
+ * MLX nodes serves and it has at least one — the composer then keeps reading the loader's marks
+ * (glanceStore `watchGlanceNodes`) so its waiting line can say whose reply it waits for. A route
+ * of cloud nodes only never waits on the loader.
+ */
+export function turnAwaitsItsNode(
+  read: NodesReadResponse_unstable,
+  residency: NodesResidencyResponse_unstable,
+  model: string | null | undefined
+): boolean {
+  const ids = routeNodeIds(read, model);
+  if (!ids || ids.length === 0) return false;
+  const mlx = ids.filter((id) => read.nodes.some((n) => n.def.id === id && n.def.kind === 'mlx'));
+  if (mlx.length === 0) return false;
+  return !mlx.some(
+    (id) => residency.nodes.find((r) => r.node === id)?.residency.kind === 'serving'
+  );
 }
 
 const WAYS: ReadonlySet<string> = new Set<SwapWay>(['single', 'remoteSingle', 'split']);

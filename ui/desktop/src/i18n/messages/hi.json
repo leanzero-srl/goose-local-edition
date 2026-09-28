@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, one {{way} के # जवाब पूरा करने की प्रतीक्षा, फिर {node} लोड होगा ({duration})} other {{way} के # जवाब पूरे करने की प्रतीक्षा, फिर {node} लोड होगा ({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, one {{way} के {chats} में # जवाब पूरा करने की प्रतीक्षा, फिर {node} लोड होगा ({duration})} other {{way} के {chats} में # जवाब पूरे करने की प्रतीक्षा, फिर {node} लोड होगा ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, one {प्रतीक्षा जारी है जबकि {mac} {chats} के लिए {serving} चला रहा है: वह चैट बंद होने या किसी और नोड पर जाने पर {node} लोड होगा ({duration})} other {प्रतीक्षा जारी है जबकि {mac} {chats} के लिए {serving} चला रहा है: वे चैट बंद होने या किसी और नोड पर जाने पर {node} लोड होगा ({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "बदलाव सहेजा नहीं जा सका"
   },

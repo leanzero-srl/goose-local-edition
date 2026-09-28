@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, one {In attesa che {way} finisca # risposta, poi caricamento di {node} ({duration})} other {In attesa che {way} finisca # risposte, poi caricamento di {node} ({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, one {In attesa che {way} finisca # risposta in {chats}, poi si carica {node} ({duration})} other {In attesa che {way} finisca # risposte in {chats}, poi si carica {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, one {In attesa mentre {mac} serve {serving} per {chats}: {node} si carica quando quella chat viene chiusa o passa a un altro nodo ({duration})} other {In attesa mentre {mac} serve {serving} per {chats}: {node} si carica quando quelle chat vengono chiuse o passano a un altro nodo ({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "Impossibile salvare la modifica"
   },

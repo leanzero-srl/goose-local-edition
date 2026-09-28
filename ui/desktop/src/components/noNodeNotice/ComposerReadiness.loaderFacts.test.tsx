@@ -551,3 +551,65 @@ describe('Q-274: the chip’s menu — §8.5’s node list, the strategy, use th
     );
   });
 });
+
+describe('Q-430: the waiting line reads from the loader’s hold wherever the wait is', () => {
+  it('a turn queued behind another chat’s reply — no glance change at all — still shows its line', async () => {
+    // The demo's shot 41: 26 s into chat B's wait the way serving chat A kept its model and its
+    // stage, so the glance never moved and nothing re-read the loader's marks. The first read
+    // (on mount) is taken before the demand reaches the loader: nothing waits yet.
+    residency = J3_SERVING_SINGLE;
+    mockStatus.mockResolvedValue(RUNNING);
+    show(`node:${SPLIT.id}`, true);
+    await waitFor(() =>
+      expect(mockExtMethod.mock.calls.some(([m]) => m.endsWith('/nodes/residency'))).toBe(true)
+    );
+    expect(screen.queryByTestId('composer-readiness-loader')).toBeNull();
+    // The demand is now queued in the loader, behind chat A's reply.
+    residency = withRows(J3_SERVING_SINGLE, {
+      [SPLIT.id]: {
+        node: SPLIT.id,
+        residency: {
+          kind: 'waiting',
+          reason: "this Mac's engine is answering 1 reply; loading … when it finishes",
+          replies: {
+            way: "this Mac's engine",
+            wayNodes: [CHAT.id],
+            count: 1,
+            chats: ['Kickoff notes'],
+          },
+        },
+        load: LOAD_98S,
+      },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-readiness-loader').textContent).toBe(
+        'Waiting for Qwen3.8-27B-Atlassian-Q8-mlx · this Mac to finish 1 reply in chat "Kickoff notes", then loading Qwen3.8-27B-Atlassian-Q8-mlx · both Macs (about 1m 38s)'
+      )
+    );
+  });
+
+  it('a role on Wait, the other chat resting between messages: whose chat, and what ends the wait', async () => {
+    residency = withRows(J3_SERVING_SINGLE, {
+      [SPLIT.id]: {
+        node: SPLIT.id,
+        residency: {
+          kind: 'waiting',
+          reason: 'the loader’s own words',
+          servingOther: {
+            mac: 'Mihai Macbook',
+            serving: CHAT.name,
+            chats: ['Kickoff notes'],
+            replies: 0,
+          },
+        },
+      },
+    });
+    mockStatus.mockResolvedValue(RUNNING);
+    show(`node:${SPLIT.id}`, true);
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-readiness-loader').textContent).toBe(
+        'Waiting while Mihai Macbook serves Qwen3.8-27B-Atlassian-Q8-mlx · this Mac for chat "Kickoff notes": Qwen3.8-27B-Atlassian-Q8-mlx · both Macs loads when that chat is closed or moved to another node (first load not measured yet)'
+      )
+    );
+  });
+});

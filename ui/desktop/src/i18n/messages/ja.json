@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {{way} が # 件の返信を終えるのを待っています。その後 {node} を読み込みます（{duration}）}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {{way} が {chats} の # 件の返信を終えるのを待っています。その後 {node} を読み込みます（{duration}）}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {{mac} が {chats} のために {serving} を提供している間は待機します。そのチャットが閉じられるか別のノードに移ると {node} を読み込みます（{duration}）}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "変更を保存できませんでした"
   },

@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count,plural,one{Waiting for {way} to finish # reply, then loading {node} ({duration})} other{Waiting for {way} to finish # replies, then loading {node} ({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count,plural,one{Waiting for {way} to finish # reply in {chats}, then loading {node} ({duration})} other{Waiting for {way} to finish # replies in {chats}, then loading {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count,plural,one{Waiting while {mac} serves {serving} for {chats}: {node} loads when that chat is closed or moved to another node ({duration})} other{Waiting while {mac} serves {serving} for {chats}: {node} loads when those chats are closed or moved to another node ({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "The change could not be saved"
   },

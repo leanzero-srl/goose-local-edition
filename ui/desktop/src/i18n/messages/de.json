@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, one {Warte, bis {way} # Antwort beendet, dann wird {node} geladen ({duration})} other {Warte, bis {way} # Antworten beendet, dann wird {node} geladen ({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, one {Warte, bis {way} # Antwort in {chats} beendet, dann wird {node} geladen ({duration})} other {Warte, bis {way} # Antworten in {chats} beendet, dann wird {node} geladen ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, one {Warte, während {mac} {serving} für {chats} bedient: {node} wird geladen, wenn dieser Chat geschlossen wird oder zu einem anderen Knoten wechselt ({duration})} other {Warte, während {mac} {serving} für {chats} bedient: {node} wird geladen, wenn diese Chats geschlossen werden oder zu einem anderen Knoten wechseln ({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "Die Änderung konnte nicht gespeichert werden"
   },

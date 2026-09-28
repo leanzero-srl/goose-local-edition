@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, one {En attente que {way} termine # réponse, puis chargement de {node} ({duration})} other {En attente que {way} termine # réponses, puis chargement de {node} ({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, one {En attente que {way} termine # réponse dans {chats}, puis chargement de {node} ({duration})} other {En attente que {way} termine # réponses dans {chats}, puis chargement de {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, one {En attente pendant que {mac} sert {serving} pour {chats} : {node} se charge quand cette conversation est fermée ou passe à un autre nœud ({duration})} other {En attente pendant que {mac} sert {serving} pour {chats} : {node} se charge quand ces conversations sont fermées ou passent à un autre nœud ({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "Impossible d’enregistrer la modification"
   },

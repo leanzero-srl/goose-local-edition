@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {{way}이(가) 답변 # 개를 마칠 때까지 기다린 후 {node}을(를) 로드합니다({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {{way}이(가) {chats}의 응답 #개를 마칠 때까지 기다린 뒤 {node}을(를) 불러옵니다({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {{mac}이(가) {chats}을(를) 위해 {serving}을(를) 제공하는 동안 기다립니다: 그 채팅이 닫히거나 다른 노드로 옮기면 {node}을(를) 불러옵니다({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "변경 사항을 저장할 수 없습니다"
   },

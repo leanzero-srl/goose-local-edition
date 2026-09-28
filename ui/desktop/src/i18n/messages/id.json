@@ -7304,6 +7304,12 @@
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {Menunggu {way} menyelesaikan # balasan, lalu memuat {node} ({duration})}}"
   },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {Menunggu {way} menyelesaikan # balasan di {chats}, lalu memuat {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {Menunggu selama {mac} melayani {serving} untuk {chats}: {node} dimuat saat obrolan tersebut ditutup atau pindah ke node lain ({duration})}}"
+  },
   "nodes.useFailed": {
     "defaultMessage": "Perubahan tidak dapat disimpan"
   },
