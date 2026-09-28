@@ -93,6 +93,9 @@ Updated: 2026-09-28 21:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   author); FULL GATE /tmp/g073.out (scratchpad/gate073.sh, target g073); Q-406 MERGED (13280e94d: own process groups, proof-gated
   group kill, named TCC cause; #3r trace YES); Q-407 (goosed crash leaves commands running) cutting.
 
+- BATCH 4 (→ 3.0.74): Q-417 DONE (worktree-agent-ad33799988ff81b4d: one servedModel() for single/split/remote;
+  also the split's running modelId was null); Q-407 (goosed crash leaves commands) cutting.
+
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.
 2. On 3.0.71: live critic walk (Q-325's visual change, Q-337's bar, needs-you fold/queue), then E2E #3s.
