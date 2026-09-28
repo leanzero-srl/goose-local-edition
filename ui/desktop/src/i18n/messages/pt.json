@@ -9611,6 +9611,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "Algo responde na porta {port}, mas nenhum processo escuta ali agora — talvez tenha acabado de sair."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Não é deste goose — um goose mais antigo, pid {pid} ({command}), o iniciou e ainda o executa; ele não marca nenhum dos seus motores"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Não é deste goose — um motor do goose iniciado para outro motor ou outra porta"
   },
@@ -9629,17 +9632,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Próximo: inicie de novo em Executar — o início para primeiro esta sobra."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Próximo: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Próximo: dê ao motor outra porta nas configurações dele."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Próximo: feche o que o iniciou (pid {pid}) e inicie de novo em Executar."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "Um processo que este goose não executa escuta na porta {port} — Unmount o para."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Próximo: reinicie o goose que o iniciou (pid {pid}) — reiniciado, ele monta o motor de novo, marcado como seu."
   },
-  "strayListener.unread": {
-    "defaultMessage": "Não foi possível ler quem ocupa a porta {port} ({error}). Unmount para o que estiver escutando nela."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "Um processo que este goose não executa escuta na porta {port}."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "Não foi possível ler quem ocupa a porta {port} ({error}) — este goose não para nada ali que não possa provar que é seu."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Não comprovado deste goose — não foi possível ler quem o iniciou"

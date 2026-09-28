@@ -9611,6 +9611,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "На порту {port} что-то отвечает, но сейчас там не слушает ни один процесс — возможно, он только что завершился."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Не принадлежит этому goose — его запустил более старый goose, pid {pid} ({command}), и всё ещё держит; тот не ставит метку на свои движки"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Не принадлежит этому goose — движок goose, запущенный для другого движка или порта"
   },
@@ -9629,17 +9632,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Дальше: запустите снова в «Запуск» — запуск сначала остановит этот остаток."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Дальше: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Дальше: задайте движку другой порт в его настройках."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Дальше: закройте то, что его запустило (pid {pid}), затем запустите снова в «Запуск»."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "Порт {port} слушает процесс, который этот goose не запускал — Unmount остановит его."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Дальше: перезапустите goose, который его запустил (pid {pid}) — после перезапуска он снова подключит свой движок уже со своей меткой."
   },
-  "strayListener.unread": {
-    "defaultMessage": "Не удалось прочитать, кто занимает порт {port} ({error}). Unmount остановит всё, что его слушает."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "Порт {port} слушает процесс, который этот goose не запускал."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "Не удалось прочитать, кто занимает порт {port} ({error}) — этот goose не останавливает там ничего, что не может подтвердить как своё."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Принадлежность этому goose не доказана — не удалось прочитать, кто его запустил"

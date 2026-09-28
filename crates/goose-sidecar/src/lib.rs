@@ -919,7 +919,8 @@ impl Sidecar {
     /// still listens afterwards is either RESIDUE of the engine's own process group — the
     /// wrapper died without forwarding, its engine kept the socket — which is terminated
     /// per-pid, or a listener outside that group, which is NOT ours and is left alone and
-    /// logged (the manager refuses to mount over it; an explicit unmount reclaims it).
+    /// logged (the manager refuses to mount over it; an explicit unmount reclaims it only when
+    /// `port_holder`'s proof calls it this goose's own leftover — Q-252).
     async fn release_port(&self, owned_group: Option<u32>) {
         let Some(port) = self.listen_port() else {
             tracing::warn!(

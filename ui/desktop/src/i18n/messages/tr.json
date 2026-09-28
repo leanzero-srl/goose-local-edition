@@ -9611,6 +9611,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "{port} portunda bir şey yanıt veriyor ama şu an orada dinleyen bir süreç yok — az önce kapanmış olabilir."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Bu goose’un değil — daha eski bir goose, pid {pid} ({command}), başlattı ve hâlâ çalıştırıyor; motorlarının hiçbirini işaretlemiyor"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Bu goose’un değil — başka bir motor ya da port için başlatılmış bir goose motoru"
   },
@@ -9629,17 +9632,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Sonraki: Çalıştır’da yeniden başlatın — başlatma önce bu artığı durdurur."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Sonraki: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Sonraki: motorun ayarlarında ona başka bir port verin."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Sonraki: onu başlatanı kapatın (pid {pid}), ardından Çalıştır’da yeniden başlatın."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "Bu goose’un çalıştırmadığı bir süreç {port} portunu dinliyor — Unmount onu durdurur."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Sonraki: onu başlatan goose’u yeniden başlatın (pid {pid}) — yeniden başladığında motorunu kendi işaretiyle yeniden bağlar."
   },
-  "strayListener.unread": {
-    "defaultMessage": "{port} portunu kimin tuttuğu okunamadı ({error}). Unmount orayı dinleyen her şeyi durdurur."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "Bu goose’un çalıştırmadığı bir süreç {port} portunu dinliyor."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "{port} portunu kimin tuttuğu okunamadı ({error}) — bu goose orada kendisine ait olduğunu kanıtlayamadığı hiçbir şeyi durdurmaz."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Bu goose’un olduğu kanıtlanamadı — kimin başlattığı okunamadı"

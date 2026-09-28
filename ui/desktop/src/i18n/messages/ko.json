@@ -9611,6 +9611,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "포트 {port}에서 무언가 응답하지만 지금은 수신 중인 프로세스가 없습니다 — 방금 종료되었을 수 있습니다."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "이 goose의 것이 아닙니다 — 이전 버전 goose, pid {pid}({command})이(가) 시작했고 아직 실행 중입니다. 그 goose는 엔진에 표시를 남기지 않습니다"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "이 goose의 것이 아닙니다 — 다른 엔진이나 다른 포트용으로 시작된 goose 엔진"
   },
@@ -9629,17 +9632,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "다음: 실행에서 다시 시작하세요 — 시작할 때 이 남은 엔진을 먼저 중지합니다."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "다음: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "다음: 엔진 설정에서 다른 포트를 지정하세요."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "다음: 이를 시작한 프로세스(pid {pid})를 종료한 뒤 실행에서 다시 시작하세요."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "이 goose가 실행하지 않는 프로세스가 포트 {port}에서 수신 중입니다 — Unmount로 중지합니다."
+  "strayListener.stepRestart": {
+    "defaultMessage": "다음: 이를 시작한 goose(pid {pid})를 다시 시작하세요 — 다시 시작하면 자기 표시를 단 엔진을 다시 마운트합니다."
   },
-  "strayListener.unread": {
-    "defaultMessage": "포트 {port}을(를) 누가 쓰는지 읽을 수 없습니다({error}). Unmount는 거기서 수신 중인 것을 중지합니다."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "이 goose가 실행하지 않는 프로세스가 포트 {port}에서 수신 중입니다."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "포트 {port}을(를) 누가 쓰는지 읽을 수 없습니다({error}) — 이 goose는 자기 것임을 증명할 수 없는 것은 중지하지 않습니다."
   },
   "strayListener.unreadable": {
     "defaultMessage": "이 goose의 것임을 증명할 수 없습니다 — 누가 시작했는지 읽을 수 없습니다"

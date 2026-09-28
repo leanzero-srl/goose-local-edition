@@ -9611,6 +9611,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "पोर्ट {port} पर कुछ जवाब दे रहा है, पर अभी वहाँ कोई प्रोसेस नहीं सुन रहा — शायद वह अभी-अभी बंद हुआ है।"
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "इस goose का नहीं — एक पुराने goose, pid {pid} ({command}), ने इसे शुरू किया और अब भी चला रहा है; वह अपने किसी इंजन पर निशान नहीं लगाता"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "इस goose का नहीं — किसी दूसरे इंजन या पोर्ट के लिए शुरू किया गया goose इंजन"
   },
@@ -9629,17 +9632,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "आगे: चलाएँ में दोबारा शुरू करें — शुरू होते समय यह बचा हुआ इंजन पहले रोका जाएगा।"
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "आगे: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "आगे: इंजन की सेटिंग में उसे दूसरा पोर्ट दें।"
   },
   "strayListener.stepQuit": {
     "defaultMessage": "आगे: जिसने इसे शुरू किया उसे बंद करें (pid {pid}), फिर चलाएँ में दोबारा शुरू करें।"
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "एक प्रोसेस जिसे यह goose नहीं चलाता, पोर्ट {port} पर सुन रहा है — Unmount इसे रोकता है।"
+  "strayListener.stepRestart": {
+    "defaultMessage": "आगे: जिस goose ने इसे शुरू किया उसे दोबारा शुरू करें (pid {pid}) — दोबारा शुरू होने पर वह अपना इंजन फिर से माउंट करता है, अपने निशान के साथ।"
   },
-  "strayListener.unread": {
-    "defaultMessage": "पोर्ट {port} किसके पास है, यह पढ़ा नहीं जा सका ({error})। Unmount वहाँ सुन रही किसी भी चीज़ को रोकता है।"
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "एक प्रोसेस जिसे यह goose नहीं चलाता, पोर्ट {port} पर सुन रहा है।"
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "पोर्ट {port} किसके पास है, यह पढ़ा नहीं जा सका ({error}) — यह goose वहाँ ऐसा कुछ नहीं रोकता जिसे वह अपना साबित न कर सके।"
   },
   "strayListener.unreadable": {
     "defaultMessage": "इस goose का होना साबित नहीं — इसे किसने शुरू किया, यह पढ़ा नहीं जा सका"

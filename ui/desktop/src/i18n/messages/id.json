@@ -9611,6 +9611,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "Ada yang menjawab di port {port}, tetapi tidak ada proses yang mendengarkan di sana sekarang — mungkin baru saja berhenti."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Bukan milik goose ini — goose versi lama, pid {pid} ({command}), memulainya dan masih menjalankannya; goose itu tidak menandai mesinnya"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Bukan milik goose ini — mesin goose yang dimulai untuk mesin atau port lain"
   },
@@ -9629,17 +9632,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Berikutnya: mulai lagi di Jalankan — saat mulai, sisa ini dihentikan dulu."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Berikutnya: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Berikutnya: beri mesin port lain di pengaturannya."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Berikutnya: tutup yang memulainya (pid {pid}), lalu mulai lagi di Jalankan."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "Sebuah proses yang tidak dijalankan goose ini mendengarkan di port {port} — Unmount menghentikannya."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Berikutnya: mulai ulang goose yang memulainya (pid {pid}) — setelah dimulai ulang, goose itu memasang mesinnya lagi dengan tanda miliknya."
   },
-  "strayListener.unread": {
-    "defaultMessage": "Siapa yang memakai port {port} tidak dapat dibaca ({error}). Unmount menghentikan apa pun yang mendengarkan di sana."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "Sebuah proses yang tidak dijalankan goose ini mendengarkan di port {port}."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "Siapa yang memakai port {port} tidak dapat dibaca ({error}) — goose ini tidak menghentikan apa pun di sana yang tidak bisa dibuktikan miliknya."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Tidak terbukti milik goose ini — siapa yang memulainya tidak dapat dibaca"

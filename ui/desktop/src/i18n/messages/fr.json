@@ -9611,6 +9611,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "Quelque chose répond sur le port {port}, mais aucun processus n’y écoute maintenant — il vient peut-être de se terminer."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Pas à ce goose — un goose plus ancien, pid {pid} ({command}), l’a lancé et le fait encore tourner ; il ne marque aucun de ses moteurs"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Pas à ce goose — un moteur goose lancé pour un autre moteur ou un autre port"
   },
@@ -9629,17 +9632,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Ensuite : relancez dans Exécuter — le démarrage arrête d’abord ce reste."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Ensuite : {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Ensuite : donnez un autre port au moteur dans ses réglages."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Ensuite : quittez ce qui l’a lancé (pid {pid}), puis relancez dans Exécuter."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "Un processus que ce goose ne fait pas tourner écoute sur le port {port} — Unmount l’arrête."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Ensuite : redémarrez le goose qui l’a lancé (pid {pid}) — redémarré, il remonte son moteur, marqué comme le sien."
   },
-  "strayListener.unread": {
-    "defaultMessage": "Impossible de lire qui occupe le port {port} ({error}). Unmount arrête ce qui y écoute."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "Un processus que ce goose ne fait pas tourner écoute sur le port {port}."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "Impossible de lire qui occupe le port {port} ({error}) — ce goose n’y arrête rien qu’il ne peut prouver comme sien."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Pas prouvé à ce goose — impossible de lire qui l’a lancé"

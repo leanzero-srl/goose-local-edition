@@ -9611,6 +9611,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "ポート {port} で何かが応答していますが、今は待ち受けているプロセスがありません — 終了した直後かもしれません。"
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "この goose のものではありません — 古い goose、pid {pid}（{command}）が起動し、今も動かしています。その goose はエンジンに印を付けません"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "この goose のものではありません — 別のエンジンまたは別のポート用に起動された goose エンジンです"
   },
@@ -9629,17 +9632,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "次へ: 実行 でもう一度起動します — 起動時にこの残りを先に停止します。"
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "次へ: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "次へ: エンジンの設定で別のポートを指定します。"
   },
   "strayListener.stepQuit": {
     "defaultMessage": "次へ: 起動元（pid {pid}）を終了し、実行 でもう一度起動します。"
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "この goose が動かしていないプロセスがポート {port} で待ち受けています — Unmount で停止します。"
+  "strayListener.stepRestart": {
+    "defaultMessage": "次へ: 起動元の goose（pid {pid}）を再起動します — 再起動すると、自分の印を付けてエンジンをもう一度マウントします。"
   },
-  "strayListener.unread": {
-    "defaultMessage": "ポート {port} を使っているものを読み取れませんでした（{error}）。Unmount はそこで待ち受けているものを停止します。"
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "この goose が動かしていないプロセスがポート {port} で待ち受けています。"
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "ポート {port} を使っているものを読み取れませんでした（{error}）— この goose は自分のものと証明できないものは停止しません。"
   },
   "strayListener.unreadable": {
     "defaultMessage": "この goose のものと証明できません — 起動元を読み取れませんでした"
