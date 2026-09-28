@@ -3241,7 +3241,8 @@
         "required": [
           "id",
           "recipe",
-          "cron"
+          "cron",
+          "working_dir"
         ],
         "properties": {
           "cron": {
@@ -3252,6 +3253,10 @@
           },
           "recipe": {
             "$ref": "#/components/schemas/Recipe"
+          },
+          "working_dir": {
+            "type": "string",
+            "description": "The folder the job runs in (Q-282): the caller names it; the server's own cwd is not it."
           }
         }
       },
@@ -6209,7 +6214,8 @@
       "ScheduleRecipeRequest": {
         "type": "object",
         "required": [
-          "id"
+          "id",
+          "working_dir"
         ],
         "properties": {
           "cron_schedule": {
@@ -6218,6 +6224,10 @@
           },
           "id": {
             "type": "string"
+          },
+          "working_dir": {
+            "type": "string",
+            "description": "The folder a new job runs in (Q-282): the caller names it; the server's own cwd is not it."
           }
         }
       },
@@ -6278,6 +6288,11 @@
           },
           "source": {
             "type": "string"
+          },
+          "working_dir": {
+            "type": "string",
+            "description": "The folder the job's session works in: the folder of the window, terminal or chat that\ncreated it (Q-282). goosed is one process for every window (Q-257), so its own cwd is no\nwindow's project. `None` only on a job saved before schedules recorded a folder: such a job\nis refused, loudly, until its folder is chosen ([`Scheduler::set_schedule_working_dir`]).",
+            "nullable": true
           }
         }
       },
