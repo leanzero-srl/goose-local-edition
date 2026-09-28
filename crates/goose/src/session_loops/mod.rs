@@ -12,9 +12,12 @@
 //! cuts a tick or a check.
 
 pub mod acp;
+pub mod check;
+pub mod owner;
 pub mod prompt;
 pub mod record;
 pub mod rules;
+pub mod runner;
 pub mod seam;
 pub mod templates;
 
