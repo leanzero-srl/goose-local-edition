@@ -127,6 +127,8 @@ const ANSWER = `Answer to your question "${LEAD.question}": ${LEAD.recommendedAn
 
 const chat = {
   sent: [] as string[],
+  /** Q-344: the needs-you items each sent message is marked as answering (none = typed). */
+  marks: [] as (readonly string[] | undefined)[],
   refused: [] as string[],
   setState: (_: ChatState) => {},
 };
@@ -139,12 +141,13 @@ function Chat({ holdComposer }: { holdComposer: boolean }) {
     setChatState(next);
   };
   const queue = useAnswerQueue('jira');
-  const handleSubmit = (input: { msg: string }) => {
+  const handleSubmit = (input: { msg: string; needsYouAnswers?: readonly string[] }) => {
     if (stateRef.current !== ChatState.Idle) {
       chat.refused.push(input.msg);
       return;
     }
     chat.sent.push(input.msg);
+    chat.marks.push(input.needsYouAnswers);
     chat.setState(ChatState.Streaming);
   };
   return (
@@ -152,7 +155,7 @@ function Chat({ holdComposer }: { holdComposer: boolean }) {
       <NeedsYouTray
         sessionId="jira"
         chatState={chatState}
-        sendAnswer={(text) => handleSubmit({ msg: text })}
+        sendAnswer={(text, answered) => handleSubmit({ msg: text, needsYouAnswers: answered })}
       />
       <ChatInput
         sessionId="jira"
@@ -183,6 +186,7 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverMock);
   window.localStorage.clear();
   chat.sent = [];
+  chat.marks = [];
   chat.refused = [];
   acp.acpResolveNeedsYou.mockReset().mockResolvedValue(LEAD);
   acp.acpSessionActivity.mockReset().mockResolvedValue({ running: [], needsYou: [], failed: [] });
@@ -219,6 +223,9 @@ describe('Q-341: a queued needs-you answer and a queued composer message', () =>
     act(() => chat.setState(ChatState.Idle));
     await waitFor(() => expect(chat.sent).toEqual([ANSWER, 'also cover svc- accounts']));
     expect(chat.refused).toEqual([]);
+    // Q-344: the card's answer is marked as answering its item; the typed message is not, so it
+    // alone supersedes what is still open.
+    expect(chat.marks).toEqual([[LEAD.id], undefined]);
   });
 
   it('without the hold the composer would go first and the answer be refused — why the hold exists', async () => {

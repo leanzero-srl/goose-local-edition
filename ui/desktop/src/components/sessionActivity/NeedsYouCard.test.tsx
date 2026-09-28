@@ -78,13 +78,14 @@ describe('NeedsYouTray — pinned above the composer until answered or dismissed
     expect(card.className).not.toMatch(/border-l-/);
   });
 
-  it('one click on the recommended answer closes the item, THEN sends the answer to the model', async () => {
+  it('one click on the recommended answer closes the item, THEN sends the answer to the model, marked as that item’s answer (Q-344)', async () => {
     const sendAnswer = renderTray();
     fireEvent.click(screen.getByTestId('needs-you-recommended'));
     await waitFor(() => expect(sendAnswer).toHaveBeenCalledTimes(1));
     expect(acp.acpResolveNeedsYou).toHaveBeenCalledWith('sess-1', 'ny_1', 'answer', 'PostgreSQL');
     expect(sendAnswer).toHaveBeenCalledWith(
-      'Answer to your question "Which database should the service use?": PostgreSQL'
+      'Answer to your question "Which database should the service use?": PostgreSQL',
+      ['ny_1']
     );
     expect(getSessionActivitySnapshot().needsYou).toEqual([]);
   });
@@ -96,6 +97,7 @@ describe('NeedsYouTray — pinned above the composer until answered or dismissed
     fireEvent.click(screen.getAllByTestId('needs-you-option')[0]);
     await waitFor(() => expect(sendAnswer).toHaveBeenCalledTimes(1));
     expect(sendAnswer.mock.calls[0][0]).toContain(': SQLite');
+    expect(sendAnswer.mock.calls[0][1]).toEqual(['ny_1']);
 
     const input = await screen.findByTestId('needs-you-input');
     await waitFor(() => expect((input as HTMLTextAreaElement).disabled).toBe(false));
@@ -103,6 +105,7 @@ describe('NeedsYouTray — pinned above the composer until answered or dismissed
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(sendAnswer).toHaveBeenCalledTimes(2));
     expect(sendAnswer.mock.calls[1][0]).toContain(': Use DuckDB');
+    expect(sendAnswer.mock.calls[1][1]).toEqual(['ny_1']);
   });
 
   it('dismiss closes the item and sends nothing', async () => {

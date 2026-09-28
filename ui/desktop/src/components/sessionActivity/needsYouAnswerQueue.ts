@@ -11,9 +11,8 @@ import { answerMessage, resolveNeedsYou, type NeedsYouItemDto } from './sessionA
  *
  * THE ORDER at the turn's end (tested in ChatInput.needsYouOrder.test.tsx):
  *  1. every queued answer, oldest first, is resolved on the engine (Answered, with its words);
- *  2. ONE message carries them all to the model (a message per answer would let the first one's
- *     turn supersede the questions still waiting — Q-298 closes every question open when a message
- *     arrives);
+ *  2. ONE message carries them all to the model, marked with every item it answers (Q-344: an
+ *     unmarked message is read as typed, and Q-298 closes every question open when one arrives);
  *  3. only then do the composer's queued messages go, each after the turn before it ends — the
  *     composer is held (`answersWaiting`) from the moment an answer is queued until its message has
  *     started a turn. Composer first would let its message supersede the very question the person
@@ -22,6 +21,9 @@ import { answerMessage, resolveNeedsYou, type NeedsYouItemDto } from './sessionA
  * Kept per chat for the window's life, so leaving the chat and coming back keeps what was queued;
  * the tick door waits on it like on the composer's queue (`setPendingAnswers`).
  */
+
+/** Sends answers to the model as one chat message, marked with the items it answers (Q-344). */
+export type SendAnswer = (text: string, answered: readonly string[]) => void;
 
 export interface QueuedAnswer {
   itemId: string;
@@ -121,7 +123,7 @@ export function answersMessage(answers: readonly Pick<QueuedAnswer, 'question' |
 export async function deliverQueuedAnswers(
   sessionId: string,
   openIds: ReadonlySet<string>,
-  sendAnswer: (text: string) => void
+  sendAnswer: SendAnswer
 ): Promise<void> {
   const start = getAnswerQueue(sessionId);
   if (start.queued.length === 0 || start.sending.length > 0) return;
@@ -148,7 +150,12 @@ export async function deliverQueuedAnswers(
   }
   // The message goes BEFORE the composer is released: sending starts the turn synchronously, so
   // the composer's queue sees a busy chat, never an idle one it could send into first.
-  if (delivered.length > 0) sendAnswer(answersMessage(delivered));
+  if (delivered.length > 0) {
+    sendAnswer(
+      answersMessage(delivered),
+      delivered.map((entry) => entry.itemId)
+    );
+  }
 
   const now = getAnswerQueue(sessionId);
   update(sessionId, {

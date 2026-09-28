@@ -3012,9 +3012,13 @@ impl GooseAcpAgent {
         }
 
         // Q-298: the person wrote instead of answering, so their message supersedes the chat's
-        // open questions. A loop tick is not the person, and a slash command is not a reply.
+        // open questions. A loop tick is not the person, a slash command is not a reply, and the
+        // card's own answer (Q-344, marked in `_meta`) answers one question, not all of them.
         if tick.is_none()
             && crate::agents::execute_commands::parse_slash_command(&message_text).is_none()
+            && !self
+                .is_card_answer(&session_id, args.meta.as_ref(), &message_text)
+                .await
         {
             self.supersede_open_questions(&session_id, &message_text)
                 .await;

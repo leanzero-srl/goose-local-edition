@@ -726,7 +726,9 @@ export default function BaseChat({
           sessionId={sessionId}
           chatState={chatState}
           sendBlocked={queueProcessingBlocked}
-          sendAnswer={(text) => chatInputSubmit({ msg: text, images: [] })}
+          sendAnswer={(text, answered) =>
+            chatInputSubmit({ msg: text, images: [], needsYouAnswers: answered })
+          }
           submitElicitationResponse={submitElicitationResponse}
           className="relative z-10 mx-4 mb-2"
         />

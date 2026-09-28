@@ -19,6 +19,7 @@ import {
   enqueueAnswer,
   useAnswerQueue,
   type QueuedAnswer,
+  type SendAnswer,
 } from './needsYouAnswerQueue';
 import { useNeedsYouFold } from './needsYouFold';
 
@@ -395,8 +396,11 @@ interface NeedsYouTrayProps {
   chatState: ChatState;
   /** The chat refuses a message while a stop is being settled; queued answers wait for it too. */
   sendBlocked?: boolean;
-  /** Sends the answer to the model as the person's next chat message. */
-  sendAnswer: (text: string) => void;
+  /**
+   * Sends the answer to the model as the person's next chat message, marked with the questions it
+   * answers so goosed does not read it as typed and supersede the chat's other open ones (Q-344).
+   */
+  sendAnswer: SendAnswer;
   submitElicitationResponse?: (
     elicitationId: string,
     userData: Record<string, unknown>
@@ -464,7 +468,7 @@ export default function NeedsYouTray({
     }
     // The item is closed on the engine first: if that fails the card stays, answer still typed.
     await resolveNeedsYou(item, 'answer', answer);
-    sendAnswer(answerMessage(item.question, answer));
+    sendAnswer(answerMessage(item.question, answer), [item.id]);
   };
   const onCancelQueued = (item: NeedsYouItemDto) =>
     cancelQueuedAnswer(sessionId, item.id)?.answer ?? null;

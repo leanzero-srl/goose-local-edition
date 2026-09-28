@@ -266,6 +266,12 @@ export interface ImageData {
 export interface UserInput {
   msg: string;
   images: ImageData[];
+  /**
+   * Q-344: the needs-you questions this message answers from their cards (already resolved on the
+   * engine). goosed then closes none of the chat's other open questions, as it does for a typed
+   * message (Q-298).
+   */
+  needsYouAnswers?: readonly string[];
 }
 
 /** Whether a content item is meant for the person (Q-212): an MCP server may mark an item for the

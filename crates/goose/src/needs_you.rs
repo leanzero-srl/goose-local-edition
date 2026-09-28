@@ -16,6 +16,14 @@
 //! on while five surfaces still said "Needs you" for as long as the chat stood. Reporting it as a
 //! dismissal is the other known failure (anthropics/claude-code#88850: the model reads a refusal the
 //! person never made). Superseded names what happened and decides nothing for them.
+//!
+//! THE CARD'S OWN ANSWER IS NOT A MESSAGE THAT SUPERSEDES (Q-344). An answer given on the card is
+//! recorded first (Answered), then reaches the model as the next chat message — which, read as a
+//! plain message, would close every OTHER question still open as superseded. So the client marks
+//! that message (`_meta.goose.needsYouAnswers = [item ids]`) and the mark is honoured only when it
+//! names questions of this chat that were answered on the card, whose answers this message carries
+//! and that no earlier message delivered ([`take_card_answers`]). Anything else — a stale mark, a
+//! forged one, a malformed one — is refused loudly and the message supersedes as a typed one does.
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -57,6 +65,10 @@ pub struct NeedsYouItem {
     pub superseded_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<DateTime<Utc>>,
+    /// When the chat message carrying the card's answer arrived (Q-344): a mark naming this item is
+    /// honoured once, so a stale mark cannot shield a later typed message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_delivered_at: Option<DateTime<Utc>>,
 }
 
 /// Resolved items stay in the list: the record of what was asked and what the person said.
@@ -144,6 +156,7 @@ pub async fn raise(
         answer: None,
         superseded_by: None,
         resolved_at: None,
+        answer_delivered_at: None,
     };
     session_manager
         .update_extension_state::<NeedsYouState, _>(session_id, |state| {
@@ -215,6 +228,79 @@ pub async fn supersede_open(
             }
             superseded.sort_by_key(|item| item.created_at);
             Ok((state, superseded))
+        })
+        .await
+}
+
+/// The prompt `_meta` key under `goose` that marks a chat message as the card's answer (Q-344).
+pub const CARD_ANSWER_META_KEY: &str = "needsYouAnswers";
+
+/// The item ids a prompt's `_meta.goose.needsYouAnswers` names: `None` when the prompt carries no
+/// mark, `Some(Err)` when it carries one that is not a non-empty list of ids.
+pub fn card_answer_ids(
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Option<Result<Vec<String>>> {
+    let mark = meta?.get("goose")?.get(CARD_ANSWER_META_KEY)?;
+    let ids = mark.as_array().and_then(|ids| {
+        ids.iter()
+            .map(|id| id.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+    });
+    Some(match ids {
+        Some(ids) if !ids.is_empty() => Ok(ids),
+        _ => Err(anyhow!(
+            "the needs-you answer mark is not a list of item ids: {mark}"
+        )),
+    })
+}
+
+/// Q-344: the message is the card's answer to `item_ids`. Honoured — `Ok`, the items stamped as
+/// delivered in the same transaction — only when every id is a question of this chat answered on
+/// the card, whose recorded answer this message carries, and whose answer no earlier message
+/// delivered. Anything else is `Err` with the reason and nothing is written: the caller then
+/// treats the message as typed, so a mark can never keep a question open that a typed message
+/// would close unless the message really is that question's answer.
+pub async fn take_card_answers(
+    session_manager: &SessionManager,
+    session_id: &str,
+    item_ids: &[String],
+    message_text: &str,
+) -> Result<Vec<NeedsYouItem>> {
+    session_manager
+        .update_extension_state::<NeedsYouState, _>(session_id, |state| {
+            let mut state = state.unwrap_or_default();
+            let now = Utc::now();
+            let mut taken = Vec::new();
+            for item_id in item_ids {
+                let item = state
+                    .items
+                    .iter_mut()
+                    .find(|item| &item.id == item_id)
+                    .ok_or_else(|| anyhow!("no needs-you item {item_id} in this chat"))?;
+                if item.status != NeedsYouStatus::Answered {
+                    return Err(anyhow!(
+                        "needs-you item {item_id} was not answered on the card (it is {:?})",
+                        item.status
+                    ));
+                }
+                if let Some(at) = item.answer_delivered_at {
+                    return Err(anyhow!(
+                        "the answer to needs-you item {item_id} was already delivered at {at}"
+                    ));
+                }
+                let carried = item
+                    .answer
+                    .as_deref()
+                    .is_some_and(|answer| !answer.is_empty() && message_text.contains(answer));
+                if !carried {
+                    return Err(anyhow!(
+                        "the message does not carry the recorded answer to needs-you item {item_id}"
+                    ));
+                }
+                item.answer_delivered_at = Some(now);
+                taken.push(item.clone());
+            }
+            Ok((state, taken))
         })
         .await
 }

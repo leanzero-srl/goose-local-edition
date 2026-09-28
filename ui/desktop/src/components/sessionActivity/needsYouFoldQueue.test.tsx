@@ -249,7 +249,7 @@ describe('Q-341: answering while the turn runs — queued, then sent when it end
     );
   });
 
-  it('the turn ends: every queued answer is resolved first, then ONE message carries them all', async () => {
+  it('the turn ends: every queued answer is resolved first, then ONE message carries them all, marked with every item it answers (Q-344)', async () => {
     seedSessionActivityForTests({ needsYou: [LEAD, CSV] });
     const { sendAnswer, rerenderWith } = renderTray(ChatState.Streaming);
     fireEvent.click(within(card(CSV.id)).getAllByTestId('needs-you-option')[0]);
@@ -271,7 +271,8 @@ describe('Q-341: answering while the turn runs — queued, then sent when it end
     }
     expect(sendAnswer).toHaveBeenCalledWith(
       `Answer to your question "${CSV.question}": A tab\n\n` +
-        `Answer to your question "${LEAD.question}": migrate, flag them`
+        `Answer to your question "${LEAD.question}": migrate, flag them`,
+      [CSV.id, LEAD.id]
     );
     expect(getAnswerQueue('jira')).toEqual({ queued: [], sending: [], unsent: [] });
     expect(getPendingUserInput('jira')).toBe(0);

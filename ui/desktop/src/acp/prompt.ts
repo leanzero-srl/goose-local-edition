@@ -5,9 +5,20 @@ import { getAcpClient } from './acpConnection';
 
 /**
  * The prompt's ACP `_meta`. A loop tick carries `goose.loopTick`, which goosed matches against
- * the runner's open offer; anything else it reads as an ordinary user prompt.
+ * the runner's open offer; a needs-you card's answer carries `goose.needsYouAnswers`
+ * ({@link needsYouAnswersMeta}); anything else it reads as an ordinary user prompt.
  */
 export type AcpPromptMeta = Record<string, unknown>;
+
+/**
+ * Q-344: marks a message as the answer to needs-you questions given on their cards. Without it,
+ * goosed reads the message as typed and closes every question still open in the chat as superseded
+ * (Q-298) — the ones the person has not got to yet included. goosed honours the mark once, and only
+ * for questions answered on the card whose answers the message carries.
+ */
+export function needsYouAnswersMeta(itemIds: readonly string[]): AcpPromptMeta {
+  return { goose: { needsYouAnswers: [...itemIds] } };
+}
 
 export async function acpPromptSession(
   sessionId: string,
