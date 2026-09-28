@@ -1,13 +1,22 @@
 ## Task Context
 - An llm context limit was reached when a user was in a working session with an agent (you)
+{% if messages is none %}
+- Generate a version of the messages above with only the most verbose parts removed
+{% else %}
 - Generate a version of the below messages with only the most verbose parts removed
+{% endif %}
 - Include user requests, your responses, all technical content, and as much of the original context as possible
 - This will be used to let the user continue the working session
 - Use framing and tone knowing the content will be read an agent (you) on a next exchange to allow for continuation of the session
+{% if messages is none %}
+- Summarize now, as your reply: call no tool, and keep any thinking before it brief — the `<analysis>` section below is where the review of the conversation goes
+{% endif %}
 
+{% if messages is not none %}
 **Conversation History:**
 {{ messages }}
 
+{% endif %}
 Wrap reasoning in `<analysis>` tags:  
 - Review conversation chronologically
 - For each part, log:  
