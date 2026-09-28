@@ -27,6 +27,5 @@ export const compactionWords = defineMessages({
     id: 'compaction.noteReadFailed',
     defaultMessage: 'Couldn’t read the note saved for this chat: {error}',
   },
-  saving: { id: 'compaction.saving', defaultMessage: 'Saving…' },
   cancel: { id: 'compaction.cancel', defaultMessage: 'Cancel' },
 });

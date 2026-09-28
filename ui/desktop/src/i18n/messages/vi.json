@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "Nén ngay"
   },
+  "alertBox.context": {
+    "defaultMessage": "Ngữ cảnh · {current} / {total} token · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "Ngữ cảnh · {current} token"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "Đổi thời điểm goose nén"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "Không thể lưu ngưỡng: {error}"
+    "defaultMessage": "Không lưu được: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "Lưu"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "Đã hiểu!"
@@ -737,6 +749,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Thiết lập"
   },
+  "compaction.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "Nén theo đúng ghi chú"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "Tự động"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} token"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "Chưa nén — cuộc trò chuyện vẫn như cũ."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "Đang nén cuộc trò chuyện"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "Đã nén theo ghi chú của bạn. goose lưu ý: “{concern}”"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "Đã nén cuộc trò chuyện"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "Sửa ghi chú"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "Ghi chú của bạn cho lần nén này"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "Nén thất bại"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. Cuộc trò chuyện của bạn không thay đổi."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "Bạn yêu cầu"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose không nói ghi chú của bạn có rõ không — ghi chú được làm theo đúng như đã viết."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "Cuộc trò chuyện quá dài để gửi kèm ghi chú của bạn — goose đã giữ nguyên văn ghi chú của bạn."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "Đã nén theo ghi chú của bạn."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "phần {done} / {total}"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "Các phần của bản tóm tắt"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose hỏi về ghi chú của bạn"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "“{question}”"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} token/giây"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "Đang đọc cuộc trò chuyện"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "Cuộc trò chuyện quá dài"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "Lưu và nén"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "Thử lại"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "Những gì được giữ"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "Đang viết bản tóm tắt"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "Đã viết {tokens} token"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "Ghi chú của bạn: “{note}”"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "Nén ngay"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "Ghi chú cho lần nén tiếp theo"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "Điều phải giữ lại — một quy tắc, một con số, một quyết định"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "Không đọc được ghi chú đã lưu cho cuộc trò chuyện này: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "Không lưu được ghi chú: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "Xem những gì được giữ"
+  },
+  "compaction.standing": {
+    "defaultMessage": "Dùng ghi chú này cho mọi lần nén trong cuộc trò chuyện này"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "Thêm header"
   },
@@ -1060,6 +1186,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Đang xử lý..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "Ghim"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "Luôn có mặt"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "Đã có trong mọi lượt, dù nén hay không."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "Điều bạn yêu cầu"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "Giữ trong {tokens} token — một phần mười sáu cửa sổ"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "Chưa biết kích thước cửa sổ nên không cắt gì"
+  },
+  "contextRail.close": {
+    "defaultMessage": "Đóng ngữ cảnh"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# mục} other{# mục}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# mục được cắt còn phần đầu cho vừa} other{# mục được cắt còn phần đầu cho vừa}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "Lệnh gọi công cụ thất bại"
+  },
+  "contextRail.files": {
+    "defaultMessage": "Tệp đã ghi"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "goose giữ nguyên văn"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "Lần nén giữ những mục này đúng như hiện tại — goose tạo từ toàn bộ cuộc trò chuyện, mô hình không bao giờ viết lại."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "Lần nén gần nhất: {before} → {after} token · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "Lần nén gần nhất: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "Chưa có lần nén nào trong cuộc trò chuyện này."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "Lần nén gần nhất đã giữ"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "Sổ ghi"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "Mục sổ ghi mới nhất"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{# mục cũ hơn không được giữ ở đây cho vừa} other{# mục cũ hơn không được giữ ở đây cho vừa}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "Không đọc được những gì một lần nén sẽ giữ: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "Đang đọc cuộc trò chuyện này…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "Cuộc trò chuyện này chưa được nén."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "Sổ ghi chưa có mục nào."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "Chưa ghim gì."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "Bảng nháp trống."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "Ghi chú của bạn"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "Ghi chú và mục ghim của bạn"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "Chưa có"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "Một dòng luôn phải được giữ lại"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "Đã ghim"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "Giữ nguyên văn trong mọi lần nén của cuộc trò chuyện này."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "Bỏ ghim “{pin}”"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "Lưu ghi chú"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "Bảng nháp"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "Ngữ cảnh"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "Vòng lặp, thay đổi và ngữ cảnh"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "Không đọc được: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose viết"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "Những điều chỉ mô hình biết, được viết ở mỗi lần nén từ chính cuộc trò chuyện:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} token ngữ cảnh + {live} đang được viết, trên cửa sổ {limit} token"
@@ -3910,6 +4159,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "Sao chép"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "Gửi ngay sau khi nén"
   },
   "messageQueue.cancel": {
     "defaultMessage": "Hủy"

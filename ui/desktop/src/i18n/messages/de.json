@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "Jetzt verdichten"
   },
+  "alertBox.context": {
+    "defaultMessage": "Kontext · {current} von {total} Tokens · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "Kontext · {current} Tokens"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "Ändern, wann goose komprimiert"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "Schwellenwert konnte nicht gespeichert werden: {error}"
+    "defaultMessage": "Nicht gespeichert: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "Speichern"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "Verstanden!"
@@ -737,6 +749,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Einrichten"
   },
+  "compaction.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "So komprimieren, wie notiert"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "Automatisch"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} Tokens"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "Nicht komprimiert — die Unterhaltung ist unverändert."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "Die Unterhaltung wird komprimiert"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "Nach deiner Notiz komprimiert. goose merkt an: „{concern}“"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "Unterhaltung komprimiert"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "Notiz bearbeiten"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "Deine Notiz für diese Komprimierung"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "Komprimierung fehlgeschlagen"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. Deine Unterhaltung ist unverändert."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "Von dir angefordert"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose hat nicht gesagt, ob deine Notiz klar war — sie wurde so befolgt, wie sie dasteht."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "Die Unterhaltung war zu lang, um deine Notiz mitzuschicken — goose hat deine Notiz wörtlich behalten."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "Nach deiner Notiz komprimiert."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "Teil {done} von {total}"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "Teile der Zusammenfassung"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose hat eine Frage zu deiner Notiz"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "„{question}“"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} Tok./s"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "Die Unterhaltung wird gelesen"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} Tokens"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "Der Chat war zu lang"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "Speichern und komprimieren"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "Erneut versuchen"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "Was behalten wurde"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "Die Zusammenfassung wird geschrieben"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} Tokens geschrieben"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "Deine Notiz: „{note}“"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "Jetzt komprimieren"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "Notiz für die nächste Komprimierung"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "Was erhalten bleiben muss — eine Regel, eine Zahl, eine Entscheidung"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "Die für diesen Chat gespeicherte Notiz konnte nicht gelesen werden: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "Die Notiz wurde nicht gespeichert: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "Sehen, was sie behält"
+  },
+  "compaction.standing": {
+    "defaultMessage": "Diese Notiz für jede Komprimierung in diesem Chat verwenden"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "Header hinzufügen"
   },
@@ -1060,6 +1186,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Wird verarbeitet..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "Anheften"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "Immer dabei"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "Schon in jedem Zug enthalten, komprimiert oder nicht."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "Was du gefragt hast"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "Behalten innerhalb von {tokens} Tokens — ein Sechzehntel des Fensters"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "Das Fenster ist unbekannt, daher wird nichts gekürzt"
+  },
+  "contextRail.close": {
+    "defaultMessage": "Kontext schließen"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# Eintrag} other{# Einträge}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# wurde auf den Anfang gekürzt, damit es passt} other{# wurden auf den Anfang gekürzt, damit es passt}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "Fehlgeschlagene Tool-Aufrufe"
+  },
+  "contextRail.files": {
+    "defaultMessage": "Geschriebene Dateien"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "Von goose wörtlich behalten"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "Eine Komprimierung behält diese genau so, wie sie sind — von goose aus dem ganzen Chat gebaut, nie vom Modell umgeschrieben."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "Letzte Komprimierung: {before} → {after} Tokens · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "Letzte Komprimierung: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "In diesem Chat lief noch keine Komprimierung."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "Was die letzte Komprimierung behielt"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "Ledger"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "Neueste Ledger-Einträge"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{# älterer wird hier nicht behalten, damit es passt} other{# ältere werden hier nicht behalten, damit es passt}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "Konnte nicht lesen, was eine Komprimierung behalten würde: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "Dieser Chat wird gelesen…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "Dieser Chat wurde noch nicht komprimiert."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "Das Ledger hat keine Einträge."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "Nichts angeheftet."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "Der Notizblock ist leer."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "Deine Notiz"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "Deine Notiz und Angeheftetes"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "Noch nichts"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "Eine Zeile, die immer erhalten bleiben muss"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "Angeheftet"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "Wird in jeder Komprimierung dieses Chats wörtlich behalten."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "„{pin}“ lösen"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "Notiz speichern"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "Notizblock"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "Kontext"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "Loop, Änderungen und Kontext"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} Tokens"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "Konnte nicht gelesen werden: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose schreibt"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "Was nur das Modell weiß, bei jeder Komprimierung aus der Unterhaltung selbst geschrieben:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} Tokens Kontext + {live}, die gerade geschrieben werden, von einem Fenster mit {limit} Tokens"
@@ -3910,6 +4159,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "Kopieren"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "Wird direkt nach dem Komprimieren gesendet"
   },
   "messageQueue.cancel": {
     "defaultMessage": "Abbrechen"

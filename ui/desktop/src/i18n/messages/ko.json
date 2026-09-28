@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "지금 압축"
   },
+  "alertBox.context": {
+    "defaultMessage": "컨텍스트 · {total} 토큰 중 {current} · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "컨텍스트 · {current} 토큰"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "goose가 압축하는 시점 변경"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "임계값 저장 실패: {error}"
+    "defaultMessage": "저장하지 못했습니다: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "저장"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "알았어요!"
@@ -737,6 +749,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "설정"
   },
+  "compaction.cancel": {
+    "defaultMessage": "취소"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "적힌 그대로 압축"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "자동"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} 토큰"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "취소"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "압축하지 않았습니다 — 대화는 그대로입니다."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "대화를 압축하는 중"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "메모에 따라 압축했습니다. goose의 지적: “{concern}”"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "대화를 압축했습니다"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "메모 편집"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "이번 압축을 위한 메모"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "압축 실패"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. 대화는 바뀌지 않았습니다."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "직접 요청"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose가 메모가 명확했는지 말하지 않았습니다 — 메모는 적힌 그대로 따랐습니다."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "대화가 너무 길어 메모를 함께 보내지 못했습니다 — goose가 메모를 한 글자도 빠짐없이 보관했습니다."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "메모에 따라 압축했습니다."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "{total}개 중 {done}번째 부분"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "요약의 부분"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose가 메모에 대해 질문합니다"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "“{question}”"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} 토큰/초"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "대화를 읽는 중"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} 토큰"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "채팅이 너무 길었습니다"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "저장하고 압축"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "다시 시도"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "보관된 내용"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "요약을 작성하는 중"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} 토큰 작성됨"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "내 메모: “{note}”"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "지금 압축"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "다음 압축을 위한 메모"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "남아야 할 것 — 규칙, 숫자, 결정"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "이 채팅에 저장된 메모를 읽지 못했습니다: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "메모를 저장하지 못했습니다: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "보관되는 내용 보기"
+  },
+  "compaction.standing": {
+    "defaultMessage": "이 채팅의 모든 압축에 이 메모 사용"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "헤더 추가"
   },
@@ -1060,6 +1186,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "처리 중..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "고정"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "항상 포함"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "압축 여부와 관계없이 이미 매 턴에 포함됩니다."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "요청한 내용"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "{tokens} 토큰 이내로 보관 — 창의 16분의 1"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "창 크기를 알 수 없어 아무것도 자르지 않습니다"
+  },
+  "contextRail.close": {
+    "defaultMessage": "컨텍스트 닫기"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{항목 #개} other{항목 #개}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{#개는 들어가도록 앞부분만 남겼습니다} other{#개는 들어가도록 앞부분만 남겼습니다}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "실패한 도구 호출"
+  },
+  "contextRail.files": {
+    "defaultMessage": "작성된 파일"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "goose가 원문 그대로 보관"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "압축은 이것들을 있는 그대로 보관합니다 — goose가 전체 채팅에서 만들며, 모델이 다시 쓰지 않습니다."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "지난 압축: {before} → {after} 토큰 · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "지난 압축: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "이 채팅에서는 아직 압축이 실행되지 않았습니다."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "지난 압축이 보관한 내용"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "원장"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "원장의 최신 항목"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{들어가도록 오래된 #개는 여기에 보관하지 않았습니다} other{들어가도록 오래된 #개는 여기에 보관하지 않았습니다}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "압축이 보관할 내용을 읽지 못했습니다: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "이 채팅을 읽는 중…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "이 채팅은 아직 압축되지 않았습니다."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "원장에 항목이 없습니다."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "고정된 항목이 없습니다."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "스크래치패드가 비어 있습니다."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "내 메모"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "메모와 고정 항목"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "아직 없음"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "항상 남아야 하는 한 줄"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "고정됨"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "이 채팅의 모든 압축에서 원문 그대로 보관됩니다."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "“{pin}” 고정 해제"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "메모 저장"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "스크래치패드"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "컨텍스트"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "루프, 변경 사항, 컨텍스트"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} 토큰"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "읽을 수 없습니다: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose가 쓰는 것"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "모델만 아는 내용으로, 압축할 때마다 대화 자체에서 작성됩니다:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "컨텍스트 {context} 토큰 + 지금 작성 중 {live}, 창 {limit} 토큰 중"
@@ -3910,6 +4159,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "복사"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "압축 직후 전송됩니다"
   },
   "messageQueue.cancel": {
     "defaultMessage": "취소"
