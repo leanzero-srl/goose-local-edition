@@ -1,12 +1,16 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 23:3x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 23:3x (tick 2) (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.73 on BOTH Macs; the app serves the 27B SPLIT (Thunderbolt/jaccl, 0.46 ms).
-- E2E #3u RUNNING: RU-2026-09-28-3u-split-tensor, session 20260928_47, jira brief, watcher runwatch.sh. Turn 0
-  took 14 min at 4 tok/s decode (a `write` of the readiness file). It exercises needs-you answering (Q-376)
-  and compaction on 3.0.73.
+- E2E #3u RUNNING: RU-2026-09-28-3u-split-tensor, session 20260928_47, jira brief, watcher runwatch.sh. It
+  exercises needs-you answering (Q-376) and compaction on 3.0.73.
+  - Turn 0: 905 s, notes file OK.
+  - Turn 1: 212 s. Both memories were saved, but it invented a reason for the 24/9 date conflict in the client
+    file (Q-448, model behaviour, parked to the training round, forge-tuner 42b1893).
+  - Turn 2 (DC end-of-support web research) is running. Watch for invented tool names; the Q-367 hint has been
+    live since 3.0.71.
 - Q-447 FOUND this tick (STABILITY/perf):
   - Split decode is ~2.7× slower on cache-hit chat turns since the FIRST 3.0.71 launch (18:12).
   - Before: 8.2–9.5 tok/s at 159k–211k. After: 2.8–4.1 tok/s at 41k–90k. Cold 21k demo delegates still run 6.9–12.1.
@@ -18,7 +22,7 @@ Updated: 2026-09-28 23:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   for heavy work"; screenshots ~/goose-builds/quality/DEMO-2026-09-28-strategy).
 
 ## CI
-- main green through e6e813ec5; 9d15e2522 and e53562678 were running at 23:18 (ledger/NOW-only commits).
+- main green through 9d15e2522; ac6be4fbb running.
 
 ## Agents (worktrees)
 - Q-447 split decode regression — mlx-backend, dispatched 23:3x.
@@ -52,6 +56,6 @@ Updated: 2026-09-28 23:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-448. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-449. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
