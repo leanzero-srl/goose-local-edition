@@ -6775,6 +6775,22 @@
           "minimum": 0,
           "maximum": 65535
         },
+        "strayListenerHolders": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/MlxStrayListenerHolderDto"
+          },
+          "description": "Who holds `strayListenerPort`, read while no mount is in flight: every process listening\non it, with whether it is this goose's own leftover engine and why not. Absent when the\nport is not stray, while a mount is in flight (and from a goose before it), or exactly\nwhen `strayListenerHoldersError` says why they could not be read."
+        },
+        "strayListenerHoldersError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "availableMemoryGb": {
           "type": "number",
           "format": "double",
@@ -6928,6 +6944,63 @@
         "restartRequired"
       ],
       "description": "Live MLX engine state. `state` is one of \"stopped\" | \"mounting\" | \"running\" | \"failed\".\n`context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never\nfabricated: a failed probe leaves them unset and reports `probe_error` instead."
+    },
+    "MlxStrayListenerHolderDto": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Its command line; empty when it could not be read."
+        },
+        "ours": {
+          "type": "boolean",
+          "description": "Proven an engine this goose's sidecar started on this port whose goose is gone: a Mount\nstops it and starts the engine."
+        },
+        "notOursRule": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "When not ours, the rule it failed: \"unreadable\" | \"initOrSelf\" | \"otherUser\" |\n\"otherEngine\" | \"noMarker\" | \"liveStarter\"."
+        },
+        "notOursReason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The same finding in full, with its pids and values."
+        },
+        "liveStarterPid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "When the process that started it is alive (another goose, or a shell): that process —\nthe one to quit.",
+          "minimum": 0
+        },
+        "liveStarterArgv": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "pid",
+        "argv",
+        "ours"
+      ],
+      "description": "One process listening on the engine port while this goose supervises no engine there (Q-249):\nthe same facts a refused Mount names — pid, command line, and whether it is this goose's."
     },
     "MlxChipDto": {
       "type": "object",
