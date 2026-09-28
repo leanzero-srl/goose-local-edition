@@ -16,7 +16,9 @@
 //! the single engine resolves them, Q-159) + `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
 //! `rank_state.py` + `rank_prompt_search.py` (the prompt cache's nearest-entry search in linear time, Q-162) +
 //! `rank_boundary.py` + `rank_tool_schema.py` (a tool parameter's type read through a union or a
-//! reference, Q-232) + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_xml_guard.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
+//! reference, Q-232) + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_xml_guard.py` +
+//! `rank_admission.py` (rank 0's admission: the hold's 503 by its code and the GET that answers at
+//! its lift, Q-397) + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
 //! what an absent max_tokens generates, the prefill modules what a step and a batch may hold, the
 //! boundary where a chat request's reusable prefix ends, the XML guard what a tool call may be
 //! followed by, Q-161) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
@@ -67,6 +69,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_tool_stream.py"),
     include_str!("rank_stream_watch.py"),
     include_str!("rank_xml_guard.py"),
+    include_str!("rank_admission.py"),
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
@@ -1956,6 +1959,60 @@ print("ok")
         let out = std::process::Command::new("/usr/bin/python3")
             .arg("-c")
             .arg(format!("{}{checks}", include_str!("rank_budget.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// The hold's words, as #3r turn 18's 503 carried them (goose log 2026-09-28 14:13:24).
+    const HOLD_REASON: &str = "memory on Mihai Macbook is low because other apps took 1.4 GiB \
+        since the engine was last idle (other apps and the system use 82.6 GiB; the engine holds \
+        32.9 GiB); the engine is holding new requests until memory recovers — quitting other apps \
+        frees it";
+
+    /// rank_admission.py under a real interpreter, on Q-397 (#3r turn 18): the watchdog closed
+    /// admission at 14:13:49 and goose's three retries spent 1.0/2.3/3.8 s of a hold that lasted
+    /// minutes. The 503 names the hold by the closer's code, and the wait answers the moment the
+    /// watchdog reopens — not before. NEGATIVE CONTROL: a close that names no code (an older
+    /// goosed's watchdog) is today's 503, which a client keeps retrying the ordinary way.
+    #[test]
+    fn a_held_request_is_named_by_its_code_and_the_wait_ends_at_the_lift() {
+        let checks = format!(
+            "REASON = {}\n{}",
+            serde_json::to_string(HOLD_REASON).unwrap(),
+            r#"
+a = Admission()
+assert a.open and a.wait_open() == {"admission_open": True}, "open: the wait answers at once"
+assert a.set({"open": False, "reason": REASON, "code": "memory_hold"}) == {"admission_open": False}
+error = a.refusal()["error"]
+assert error["code"] == "memory_hold" and error["reason"] == REASON, error
+assert error["admission"] == "/goose/admission" and error["type"] == "server_busy", error
+assert error["message"] == "goose distributed engine is not admitting new requests: " + REASON
+answered = []
+waiter = threading.Thread(target=lambda: answered.append(a.wait_open()), daemon=True)
+waiter.start()
+waiter.join(0.3)
+assert waiter.is_alive() and not answered, "closed: the wait holds"
+assert a.set({"open": True, "reason": ""}) == {"admission_open": True}
+waiter.join(30)
+assert answered == [{"admission_open": True}], answered
+assert a.reason is None and a.code is None, "an open engine names no hold"
+a.set({"open": False, "reason": "an older closer"})
+assert "code" not in a.refusal()["error"], a.refusal()
+print("ok")
+"#
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!(
+                "import threading\n{}{checks}",
+                include_str!("rank_admission.py")
+            ))
             .output()
             .expect("/usr/bin/python3 runs the rank programs' pure half");
         assert!(
@@ -5391,6 +5448,69 @@ def token(text, state, match=None, finish=None):
     return server.Response(text, 7, state, match, 0.0, finish, ())
 "#;
 
+    /// Q-397 through the REAL mlx_lm 0.31.3 handler as the wrapper patched it: the watchdog's close
+    /// (`admission_body`'s exact JSON) makes rank 0 answer a chat request 503 with the hold's code,
+    /// its words and the path to wait on; a GET of that path holds while admission is closed and
+    /// answers 200 once the watchdog reopens it; /goose/progress (the supervisor's read) agrees.
+    #[test]
+    fn rank_zero_names_the_hold_and_answers_the_wait_at_the_lift() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let close = crate::distributed::supervisor::admission_body(false, HOLD_REASON);
+        let reopen = crate::distributed::supervisor::admission_body(true, "");
+        let checks = format!(
+            "CLOSE = json.loads({})\nREOPEN = json.loads({})\n{}",
+            serde_json::to_string(&close.to_string()).unwrap(),
+            serde_json::to_string(&reopen.to_string()).unwrap(),
+            r#"
+base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+def get(path):
+    with urllib.request.urlopen(base + path, timeout=60) as reply:
+        return reply.status, json.loads(reply.read())
+
+assert post("/goose/admission", CLOSE)[0] == 200
+status, body = post("/v1/chat/completions", {"model": served, "messages": [{"role": "user", "content": "go"}]})
+waited = []
+waiter = threading.Thread(target=lambda: waited.append(get("/goose/admission")), daemon=True)
+waiter.start()
+waiter.join(0.5)
+held_while_closed = waiter.is_alive() and not waited
+closed_progress = get("/goose/progress")[1]["admission_open"]
+assert post("/goose/admission", REOPEN)[0] == 200
+waiter.join(30)
+print("GOOSE_TEST " + json.dumps({
+    "status": status, "error": json.loads(body)["error"], "held_while_closed": held_while_closed,
+    "waited": waited, "closed_progress": closed_progress,
+    "open_progress": get("/goose/progress")[1]["admission_open"],
+}))
+"#
+        );
+        let (seen, _) = run_wrapper_checks(&python, &checks);
+        assert_eq!(seen["status"], 503, "{seen}");
+        let error = &seen["error"];
+        assert_eq!(
+            error["code"],
+            crate::distributed::MEMORY_HOLD_CODE,
+            "{seen}"
+        );
+        assert_eq!(error["reason"], HOLD_REASON, "{seen}");
+        assert_eq!(error["admission"], "/goose/admission", "{seen}");
+        assert_eq!(
+            error["message"],
+            format!("goose distributed engine is not admitting new requests: {HOLD_REASON}")
+        );
+        assert_eq!(seen["held_while_closed"], true, "{seen}");
+        assert_eq!(seen["closed_progress"], false, "{seen}");
+        assert_eq!(
+            seen["waited"],
+            serde_json::json!([[200, {"admission_open": true}]]),
+            "{seen}"
+        );
+        assert_eq!(seen["open_progress"], true, "{seen}");
+    }
+
     /// Q-161 reopened through the REAL mlx_lm 0.31.3 handler: E2E #3f turn 0's words, streamed. The
     /// stand-in generation writes one `write` call, `</tool_call>`, then what goose's forming panel
     /// showed beside it — `!\n\n</parameter>\n</function>\n!\n</parameter>\n</function>\n!…` — and
@@ -7858,6 +7978,7 @@ print("ok")
                 include_str!("rank_tool_stream.py"),
                 include_str!("rank_stream_watch.py"),
                 include_str!("rank_xml_guard.py"),
+                include_str!("rank_admission.py"),
                 include_str!("rank_wrapper.py")
             )
         );
