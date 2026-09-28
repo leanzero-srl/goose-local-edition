@@ -13601,6 +13601,13 @@
             "string",
             "null"
           ]
+        },
+        "supersededBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The message that superseded the question, verbatim; set exactly when `status` is\n`superseded`."
         }
       },
       "required": [
@@ -13621,7 +13628,8 @@
       "enum": [
         "open",
         "answered",
-        "dismissed"
+        "dismissed",
+        "superseded"
       ]
     },
     "FailedSessionDto": {

@@ -12,7 +12,7 @@ pub enum NeedsYouStatus {
     Open,
     Answered,
     Dismissed,
-    /// The person sent a chat message while the question was open instead of answering it (Q-298).
+    // The person sent a chat message while the question was open instead of answering it (Q-298).
     Superseded,
 }
 

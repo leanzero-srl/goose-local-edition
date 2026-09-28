@@ -5733,9 +5733,14 @@ export type NeedsYouItemDto = {
     createdAt: string;
     status: NeedsYouStatus;
     answer?: string | null;
+    /**
+     * The message that superseded the question, verbatim; set exactly when `status` is
+     * `superseded`.
+     */
+    supersededBy?: string | null;
 };
 
-export type NeedsYouStatus = 'open' | 'answered' | 'dismissed';
+export type NeedsYouStatus = 'open' | 'answered' | 'dismissed' | 'superseded';
 
 export type FailedSessionDto = {
     sessionId: string;
