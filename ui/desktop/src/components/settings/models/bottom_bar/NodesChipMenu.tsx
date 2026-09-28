@@ -7,11 +7,12 @@ import type {
 } from '@aaif/goose-sdk';
 import { defineMessages, useIntl } from '../../../../i18n';
 import {
+  DropdownMenuCheckboxItem,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '../../../ui/dropdown-menu';
-import { Checkbox, RADIUS, SURFACE, TYPE, WEIGHT, cx } from '../../../lz';
+import { RADIUS, SURFACE, TYPE, WEIGHT, cx } from '../../../lz';
 import { StateChip } from '../../../nodes/NodeChips';
 import { effectiveEntry, namedStrategies, nodeNamesById } from '../../../nodes/model';
 import { chatNodeIds, type ChatNodesNow } from '../../../nodes/chatNodeAvailability';
@@ -164,17 +165,17 @@ function ChatNodesSection({
                 </span>
               )}
               {index > 0 && now.kind === 'set' && (
-                <button
-                  type="button"
+                // A menu item (Q-380): the menu's arrow keys reach it and Enter/Space take the node
+                // out. The menu stays open, so the chip leaving is seen.
+                <DropdownMenuItem
                   className={cx(
-                    'flex size-5 items-center justify-center text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink [&_svg]:size-3.5',
+                    'size-5 justify-center p-0 text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink focus:bg-lz-ink focus:text-lz-surface [&_svg]:size-3.5',
                     RADIUS.control
                   )}
                   aria-label={intl.formatMessage(i18n.takeOut, { node: nameOf(id) })}
                   data-testid={`chat-node-remove-${id}`}
-                  onClick={(e) => {
+                  onSelect={(e) => {
                     e.preventDefault();
-                    e.stopPropagation();
                     control.onSetNodes(
                       ids.filter((other) => other !== id),
                       now.answerOnNext
@@ -182,7 +183,7 @@ function ChatNodesSection({
                   }}
                 >
                   <X />
-                </button>
+                </DropdownMenuItem>
               )}
             </span>
           ))}
@@ -192,13 +193,23 @@ function ChatNodesSection({
         {line}
       </p>
       {now.kind === 'set' && ids.length > 1 && lead && (
-        <Checkbox
+        // A menu checkbox item (Q-380): reached by the arrow keys, toggled by Enter/Space, and the
+        // menu stays open so the switch is seen to flip.
+        <DropdownMenuCheckboxItem
           checked={now.answerOnNext}
-          onChange={(next) => control.onSetNodes(ids, next)}
-          label={intl.formatMessage(i18n.answerOnNext, { lead })}
-          description={intl.formatMessage(i18n.answerOnNextWhy, { lead })}
-          testId="chat-nodes-answer-on-next"
-        />
+          onCheckedChange={(next) => control.onSetNodes(ids, next)}
+          onSelect={(e) => e.preventDefault()}
+          data-testid="chat-nodes-answer-on-next"
+        >
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className={cx('break-words text-lz-body text-lz-ink', WEIGHT.medium)}>
+              {intl.formatMessage(i18n.answerOnNext, { lead })}
+            </span>
+            <span className={cx('break-words', TYPE.meta)}>
+              {intl.formatMessage(i18n.answerOnNextWhy, { lead })}
+            </span>
+          </span>
+        </DropdownMenuCheckboxItem>
       )}
       <div className="flex flex-wrap">
         <DropdownMenuItem data-testid="chat-nodes-add" onClick={control.onAddNode}>
@@ -291,9 +302,7 @@ export function NodesChipMenu({
   return (
     <div data-testid="nodes-chip-menu">
       <DropdownMenuLabel className={TYPE.meta}>{intl.formatMessage(i18n.title)}</DropdownMenuLabel>
-      {chatNodes && (
-        <ChatNodesSection control={chatNodes} names={names} stateOf={stateOf} />
-      )}
+      {chatNodes && <ChatNodesSection control={chatNodes} names={names} stateOf={stateOf} />}
       {strategies.length > 0 && (
         <>
           <p className={cx('mx-2 mt-1 uppercase tracking-wide', TYPE.meta)}>
