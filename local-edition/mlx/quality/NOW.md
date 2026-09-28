@@ -1,11 +1,11 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 18:0x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 18:5x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.71 on BOTH Macs 18:0x (DMG kept), split-start smoke OK ('OK'); Q-350 LIVE-PROVEN (activity read
-  'distributed/mounting … warming' during the restore). E2E #3s RUNNING (RU-2026-09-28-3s-split-tensor, jira brief,
-  session 20260928_30) — Q-390 LIVE-PROVEN (workingDirVerified, opened via Projects → New session here).
+  'distributed/mounting … warming' during the restore). E2E #3s STOPPED at turn 3 (memory hold/Q-397 under 40 GB swap — other sessions + my agents'
+  cargo; see E2E-RUNS). Next E2E (#3t) on 3.0.72 with NO cargo on the MacBook. Was session 20260928_30 — Q-390 LIVE-PROVEN (workingDirVerified, opened via Projects → New session here).
 - Was: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
   Split up. E2E #3r ENDED 17:2x at turn 18 (NOT a hang — my misread: a `find $HOME` shell call ran its 300 s,
   Q-394 compaction lost the work folder; then a memory hold my builds caused failed the turn, Q-397. Q-392 →
