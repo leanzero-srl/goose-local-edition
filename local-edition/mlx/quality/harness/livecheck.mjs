@@ -58,8 +58,12 @@ function judge(act, engineBusy, rows, serving, title, url) {
   }
   // The serving row reads "Chat · <title>" and, since 3.0.57, a trailing "· N requests" / "N requests".
   const names = [...new Set([title, ...serving.map((t) => t.replace(/^Chat · /, '').replace(/\s*·?\s*\d+ requests?$/, ''))].filter(Boolean))];
+  // 2026-09-28 (#3q): the E2E's new chat carried the old run's title, and the title match took the OLD
+  // row ("Needs you · 2") as the running one. The chat the page shows is known by id — its row wins.
+  const openId = (url.match(/resumeSessionId=([^&#]+)/) ?? [])[1];
+  const openRow = openId ? rows.filter((r) => r.id === openId) : [];
   for (const name of names) {
-    const mine = rows.filter((r) => r.text.includes(name));
+    const mine = name === title && openRow.length ? openRow : rows.filter((r) => r.text.includes(name));
     if (rows.length && mine.length === 0) findings.push({ kind: 'LIVE_SESSION_NOT_LISTED', surface: 'sidebar', says: 'no row', truth: name });
     if (mine.length && !mine.some((r) => r.busy || r.liveWord)) {
       findings.push({ kind: 'LIVE_STATE_MISSING', surface: 'sidebar row', says: mine.map((r) => r.text), truth: `${name} is running` });
