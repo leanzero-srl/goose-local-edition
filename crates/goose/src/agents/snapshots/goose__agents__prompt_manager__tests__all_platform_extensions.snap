@@ -75,13 +75,16 @@ Use this extension to create, manage, and iterate on custom HTML/CSS/JavaScript 
 ## chatrecall
 
 ### Instructions
-Chat Recall
+Chat Search
 
-Search past conversations and load session summaries when the user expects some memory or context.
+The person's other chats with goose are searchable. Use it when they refer to
+something discussed before ("what did we decide about…", "the column we added in the
+billing chat"), or when an earlier chat plainly holds what this one needs.
 
-Two modes:
-- Search mode: Use query with keywords/synonyms to find relevant messages
-- Load mode: Use session_id to get first and last messages of a specific session
+- search_chats: words, "phrases", prefix*, -excluded; one line per hit with its
+  message id (m1182) and chat id. Tool output is left out unless you ask for it.
+- read_chat: the messages around a hit (chat + around=m1182), or a chat's newest.
+- list_chats: the chats there are, newest first.
 
 ## developer
 

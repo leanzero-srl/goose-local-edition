@@ -132,12 +132,12 @@ fn a_past_session_names_no_tool_when_chatrecall_is_not_enabled() {
 #[test]
 fn a_past_session_names_the_tool_the_session_lists_when_chatrecall_is_enabled() {
     let extras = Extras {
-        history_tool: Some("chatrecall__chatrecall".to_string()),
+        history_tool: Some("chatrecall__read_chat".to_string()),
         ..Extras::default()
     };
     let block = render_with(&[], &[], Some(&past()), &extras).unwrap();
     assert!(
-        block.contains("chatrecall__chatrecall with session_id \"20260924_19\" loads it"),
+        block.contains("chatrecall__read_chat with chat \"20260924_19\" reads it"),
         "{block}"
     );
     assert!(!block.contains("do not go looking for it"), "{block}");
@@ -183,7 +183,7 @@ async fn the_history_tool_is_the_one_the_session_lists_and_only_when_enabled() -
     agent.add_extension(chatrecall(), &session.id).await?;
     assert_eq!(
         history_tool(&agent.extension_manager, &session.id).await,
-        Some("chatrecall__chatrecall".to_string())
+        Some("chatrecall__read_chat".to_string())
     );
     Ok(())
 }

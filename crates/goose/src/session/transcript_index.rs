@@ -29,9 +29,12 @@ const STATE_TABLE: &str = "messages_fts_state";
 // 5.4 s, 0.22 ms a row), short enough that a chat's own message write waits unnoticed behind a batch.
 pub const BACKFILL_BATCH_ROWS: i64 = 500;
 
-// ratio: what was SAID outranks tool output four to one in bm25 — measured 2026-09-28 on
-// "split mesh" with tool output included: unweighted, the top three hits were `git branch`
-// listings; at 4:1 the chat messages about the split mesh lead and the listings follow.
+// ratio: inside one message the words it SAID count four times its tool traffic in bm25. A weight
+// alone cannot keep chat text above tool output — measured 2026-09-28 on the real history, the
+// ranking of "split mesh", "killpg" and "tenant" with tool output included was the same at weights
+// 1, 2, 4, 8, 10, 20 and 50, and a short `git branch` listing repeating both words outranked a long
+// message saying them once at 4:1 — so `ranked` orders every message whose SAID text matches ahead
+// of every tool-only match first, and the weight ranks within that.
 pub const SAID_WEIGHT: f64 = 4.0;
 // ratio: the unit the said weight is measured against.
 pub const TOOL_IO_WEIGHT: f64 = 1.0;
@@ -664,8 +667,8 @@ type HitRow = (
     f64,
 );
 
-/// The best `limit` hits by bm25 (said weighted above tool traffic), and how many hits and chats
-/// match in all.
+/// The best `limit` hits — every message whose said text matches before any tool-only match, then
+/// by bm25 with said weighted above tool traffic — and how many hits and chats match in all.
 pub(crate) async fn ranked(
     pool: &Pool<Sqlite>,
     query: &str,
@@ -677,9 +680,12 @@ pub(crate) async fn ranked(
     let sql = format!(
         "SELECT m.id, m.session_id, s.name, s.working_dir, m.role, m.timestamp, m.content_json, \
                 bm25({FTS_TABLE}, {SAID_WEIGHT:?}, {TOOL_IO_WEIGHT:?}) AS rank \
-         {FROM_INDEX} WHERE {where_sql} ORDER BY rank LIMIT ?"
+         {FROM_INDEX} WHERE {where_sql} \
+         ORDER BY (m.id IN (SELECT rowid FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH ?)) DESC, rank \
+         LIMIT ?"
     );
     let rows: Vec<HitRow> = bind_all(sqlx::query_as(&sql), binds)
+        .bind(format!("{{said}} : {query}"))
         .bind(limit)
         .fetch_all(pool)
         .await?;
@@ -1087,5 +1093,361 @@ mod tests {
             backfilling: false,
         };
         assert!(broken.footer().contains("1 messages could not be indexed"));
+    }
+
+    use crate::config::GooseMode;
+    use crate::conversation::message::Message;
+    use crate::conversation::Conversation;
+    use crate::session::{SessionManager, SessionType};
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    async fn store() -> (TempDir, SessionManager) {
+        let dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(dir.path().to_path_buf());
+        (dir, sm)
+    }
+
+    async fn chat(sm: &SessionManager, name: &str, session_type: SessionType) -> String {
+        sm.create_session(
+            PathBuf::from("/tmp/transcripts"),
+            name.to_string(),
+            session_type,
+            GooseMode::default(),
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    async fn matching(sm: &SessionManager, expr: &str) -> Vec<i64> {
+        let pool = sm.storage().pool().await.unwrap();
+        sqlx::query_scalar(&format!(
+            "SELECT rowid FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH ? ORDER BY rowid"
+        ))
+        .bind(expr)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn ids_of(sm: &SessionManager, session_id: &str) -> Vec<i64> {
+        let pool = sm.storage().pool().await.unwrap();
+        sqlx::query_scalar("SELECT id FROM messages WHERE session_id = ? ORDER BY id")
+            .bind(session_id)
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn indexed(sm: &SessionManager) -> u64 {
+        coverage(sm.storage().pool().await.unwrap())
+            .await
+            .unwrap()
+            .indexed
+    }
+
+    fn tool_call(id: &str, name: &str) -> Message {
+        Message::assistant().with_tool_request(
+            id.to_string(),
+            Ok(rmcp::model::CallToolRequestParams::new(name.to_string())),
+        )
+    }
+
+    /// Every way a message row changes reaches the index: insert, an update of `content_json`
+    /// (raw, and through `update_tool_request_meta`, the one production UPDATE), a whole-chat
+    /// replace, a truncation and a delete.
+    #[tokio::test]
+    async fn every_write_path_keeps_the_index_current() {
+        let (_dir, sm) = store().await;
+        let id = chat(&sm, "Billing", SessionType::User).await;
+
+        sm.add_message(
+            &id,
+            &Message::user().with_text("the new column is tenant_id"),
+        )
+        .await
+        .unwrap();
+        let first = ids_of(&sm, &id).await;
+        assert_eq!(matching(&sm, "said : tenant").await, first, "insert");
+
+        let pool = sm.storage().pool().await.unwrap();
+        sqlx::query("UPDATE messages SET content_json = ? WHERE id = ?")
+            .bind(r#"[{"type":"text","text":"the billing ledger moved"}]"#)
+            .bind(first[0])
+            .execute(pool)
+            .await
+            .unwrap();
+        assert!(matching(&sm, "tenant").await.is_empty(), "old words gone");
+        assert_eq!(matching(&sm, "ledger").await, first, "new words indexed");
+
+        sm.add_message(&id, &tool_call("call-1", "shell").with_id("msg-tool"))
+            .await
+            .unwrap();
+        let tool_row = *ids_of(&sm, &id).await.last().unwrap();
+        sm.update_tool_request_meta(
+            &id,
+            "msg-tool",
+            "call-1",
+            serde_json::json!({"title": "list files"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            matching(&sm, "tool_io : shell").await,
+            vec![tool_row],
+            "a tool-meta update re-indexes the row once"
+        );
+        assert_eq!(indexed(&sm).await, 2);
+
+        sm.replace_conversation(
+            &id,
+            &Conversation::new_unvalidated(vec![
+                Message::user().with_text("compacted summary of mesh work"),
+                Message::assistant().with_text("the split mesh runs on two Macs"),
+            ]),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matching(&sm, "ledger").await.is_empty(),
+            "replaced rows gone"
+        );
+        assert_eq!(matching(&sm, "mesh").await, ids_of(&sm, &id).await);
+        assert_eq!(indexed(&sm).await, 2);
+
+        sm.truncate_conversation(&id, 0).await.unwrap();
+        assert!(
+            matching(&sm, "mesh").await.is_empty(),
+            "truncated rows gone"
+        );
+
+        sm.add_message(&id, &Message::user().with_text("one more about mesh"))
+            .await
+            .unwrap();
+        assert_eq!(indexed(&sm).await, 1);
+        sm.delete_session(&id).await.unwrap();
+        assert_eq!(
+            indexed(&sm).await,
+            0,
+            "a deleted chat leaves nothing behind"
+        );
+    }
+
+    /// A hidden swarm worker's messages never enter the index — at insert, and when a session
+    /// becomes hidden later; one that stops being hidden is indexed whole.
+    #[tokio::test]
+    async fn a_hidden_session_is_never_indexed() {
+        let (_dir, sm) = store().await;
+        let worker = chat(&sm, "swarm-task", SessionType::Hidden).await;
+        sm.add_message(
+            &worker,
+            &Message::user().with_text("split mesh worker brief"),
+        )
+        .await
+        .unwrap();
+        assert!(matching(&sm, "mesh").await.is_empty());
+        let pool = sm.storage().pool().await.unwrap();
+        let cov = coverage(pool).await.unwrap();
+        assert_eq!((cov.indexed, cov.indexable), (0, 0));
+
+        let person = chat(&sm, "Explore split mesh", SessionType::User).await;
+        sm.add_message(&person, &Message::user().with_text("split mesh plan"))
+            .await
+            .unwrap();
+        assert_eq!(matching(&sm, "mesh").await, ids_of(&sm, &person).await);
+
+        sqlx::query("UPDATE sessions SET session_type = 'hidden' WHERE id = ?")
+            .bind(&person)
+            .execute(pool)
+            .await
+            .unwrap();
+        assert!(
+            matching(&sm, "mesh").await.is_empty(),
+            "hidden later: removed"
+        );
+
+        sqlx::query("UPDATE sessions SET session_type = 'user' WHERE id = ?")
+            .bind(&worker)
+            .execute(pool)
+            .await
+            .unwrap();
+        assert_eq!(matching(&sm, "mesh").await, ids_of(&sm, &worker).await);
+    }
+
+    /// Turn a store back into one that predates the index: no index rows, the watermark one past
+    /// the newest message — what migration v15 leaves on an existing history.
+    async fn unindex(sm: &SessionManager) {
+        let pool = sm.storage().pool().await.unwrap();
+        sqlx::query(&format!(
+            "INSERT INTO {FTS_TABLE} ({FTS_TABLE}) VALUES ('delete-all')"
+        ))
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(&format!(
+            "UPDATE {STATE_TABLE} SET backfill_below = (SELECT MAX(id) + 1 FROM messages)"
+        ))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// The backfill indexes the newest rows first, a batch per transaction, and a later run picks
+    /// up exactly at the watermark the last committed batch left — hidden rows are stepped over.
+    #[tokio::test]
+    async fn the_backfill_resumes_from_its_watermark() {
+        let (_dir, sm) = store().await;
+        let person = chat(&sm, "Person", SessionType::User).await;
+        let worker = chat(&sm, "Worker", SessionType::Hidden).await;
+        for i in 0..5 {
+            sm.add_message(
+                &person,
+                &Message::user().with_text(format!("note {i} mesh")),
+            )
+            .await
+            .unwrap();
+            sm.add_message(
+                &worker,
+                &Message::user().with_text(format!("worker {i} mesh")),
+            )
+            .await
+            .unwrap();
+        }
+        let rows = ids_of(&sm, &person).await;
+        unindex(&sm).await;
+        let pool = sm.storage().pool().await.unwrap();
+        let before = coverage(pool).await.unwrap();
+        assert_eq!((before.indexed, before.indexable), (0, 5));
+        assert!(before.backfilling);
+
+        let step = backfill_step(pool, 2).await.unwrap();
+        assert_eq!(
+            step,
+            BackfillStep::Indexed {
+                rows: 2,
+                from: rows[3]
+            }
+        );
+        assert_eq!(
+            matching(&sm, "mesh").await,
+            rows[3..].to_vec(),
+            "newest first"
+        );
+        assert_eq!(backfill_below(pool).await.unwrap(), rows[3]);
+
+        // A second process (or this one after a restart) reads the watermark and continues below it.
+        let reopened = SessionManager::new(_dir.path().to_path_buf());
+        let pool2 = reopened.storage().pool().await.unwrap();
+        let step = backfill_step(pool2, 2).await.unwrap();
+        assert_eq!(
+            step,
+            BackfillStep::Indexed {
+                rows: 2,
+                from: rows[1]
+            }
+        );
+        assert_eq!(matching(&sm, "mesh").await, rows[1..].to_vec());
+
+        while backfill_step(pool, 2).await.unwrap() != BackfillStep::Done {}
+        let after = coverage(pool).await.unwrap();
+        assert_eq!(
+            (after.indexed, after.indexable, after.backfilling),
+            (5, 5, false)
+        );
+        assert_eq!(matching(&sm, "mesh").await, rows);
+        assert_eq!(backfill_step(pool, 2).await.unwrap(), BackfillStep::Done);
+    }
+
+    /// A store written before v15 is migrated at startup without indexing anything inside the
+    /// migration, and the startup's background backfill then indexes the history.
+    #[tokio::test]
+    async fn a_v14_store_is_indexed_by_the_startup_backfill() {
+        let dir = TempDir::new().unwrap();
+        {
+            let sm = SessionManager::new(dir.path().to_path_buf());
+            let id = chat(&sm, "Old", SessionType::User).await;
+            for i in 0..3 {
+                sm.add_message(&id, &Message::user().with_text(format!("old mesh {i}")))
+                    .await
+                    .unwrap();
+            }
+            let pool = sm.storage().pool().await.unwrap();
+            for statement in [
+                "DROP TRIGGER messages_fts_insert",
+                "DROP TRIGGER messages_fts_delete",
+                "DROP TRIGGER messages_fts_update",
+                "DROP TRIGGER sessions_fts_hidden",
+                "DROP TRIGGER sessions_fts_unhidden",
+                "DROP TABLE messages_fts",
+                "DROP TABLE messages_fts_state",
+                "UPDATE schema_version SET version = 14 WHERE version = 15",
+            ] {
+                sqlx::query(statement).execute(pool).await.unwrap();
+            }
+            pool.close().await;
+        }
+        let sm = SessionManager::new(dir.path().to_path_buf());
+        let pool = sm.storage().pool().await.unwrap();
+        let mut cov = coverage(pool).await.unwrap();
+        for _ in 0..200 {
+            if cov.missing() == 0 && !cov.backfilling {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            cov = coverage(pool).await.unwrap();
+        }
+        assert_eq!((cov.indexed, cov.indexable, cov.backfilling), (3, 3, false));
+        assert_eq!(matching(&sm, "mesh").await.len(), 3);
+    }
+
+    /// Recall's per-turn search reads the index: the message carrying every term wins the limit,
+    /// a kept-out chat and a hidden worker are never returned, and the results carry the coverage.
+    #[tokio::test]
+    async fn recall_reads_the_index_and_honours_the_opt_out() {
+        let (_dir, sm) = store().await;
+        let fact = chat(&sm, "Release notes", SessionType::User).await;
+        sm.add_message(
+            &fact,
+            &Message::user().with_text("release notes are published with just"),
+        )
+        .await
+        .unwrap();
+        let private = chat(&sm, "Private", SessionType::User).await;
+        sm.add_message(
+            &private,
+            &Message::user().with_text("release notes published private copy"),
+        )
+        .await
+        .unwrap();
+        sm.set_extension_state(&private, &ChatSearchState { keep_out: true })
+            .await
+            .unwrap();
+        let worker = chat(&sm, "w", SessionType::Hidden).await;
+        sm.add_message(
+            &worker,
+            &Message::user().with_text("release notes published by a worker"),
+        )
+        .await
+        .unwrap();
+
+        let results = sm
+            .search_chat_history(
+                "release notes published",
+                Some(5),
+                None,
+                None,
+                None,
+                vec![SessionType::User, SessionType::Hidden],
+            )
+            .await
+            .unwrap();
+        let ids: Vec<&str> = results
+            .results
+            .iter()
+            .map(|r| r.session_id.as_str())
+            .collect();
+        assert_eq!(ids, vec![fact.as_str()]);
+        assert_eq!(results.index.missing(), 0);
     }
 }

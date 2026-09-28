@@ -831,4 +831,286 @@ mod tests {
         assert!(err.contains("YYYY-MM-DD"), "{err}");
         assert!(parse_date("2026-09-27", false).unwrap() < parse_date("2026-09-27", true).unwrap());
     }
+
+    use crate::config::GooseMode;
+    use crate::conversation::message::Message;
+    use crate::session::transcript_index::ChatSearchState;
+    use crate::session::SessionManager;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    struct Fixture {
+        _dir: TempDir,
+        sm: Arc<SessionManager>,
+        here: String,
+        client: ChatRecallClient,
+    }
+
+    async fn chat(sm: &SessionManager, name: &str, t: SessionType, texts: &[Message]) -> String {
+        let id = sm
+            .create_session(
+                PathBuf::from("/tmp/chats"),
+                name.to_string(),
+                t,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap()
+            .id;
+        for message in texts {
+            sm.add_message(&id, message).await.unwrap();
+        }
+        id
+    }
+
+    async fn fixture() -> Fixture {
+        let dir = TempDir::new().unwrap();
+        let sm = Arc::new(SessionManager::new(dir.path().to_path_buf()));
+        let here = chat(&sm, "This chat", SessionType::User, &[]).await;
+        let session = sm.get_session(&here, false).await.unwrap();
+        let client = ChatRecallClient::new(PlatformExtensionContext {
+            extension_manager: None,
+            session_manager: sm.clone(),
+            session: Some(Arc::new(session)),
+            use_login_shell_path: false,
+            working_dir: None,
+        })
+        .unwrap();
+        Fixture {
+            _dir: dir,
+            sm,
+            here,
+            client,
+        }
+    }
+
+    async fn call(f: &Fixture, tool: &str, args: serde_json::Value) -> (bool, String) {
+        let result = f
+            .client
+            .call_tool(
+                &ToolCallContext::new(f.here.clone(), None, None),
+                tool,
+                args.as_object().cloned(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let text = result.content[0].as_text().unwrap().text.clone();
+        (result.is_error.unwrap_or(false), text)
+    }
+
+    fn shell_output(id: &str, output: &str) -> Message {
+        Message::user().with_tool_response(
+            id.to_string(),
+            Ok(rmcp::model::CallToolResult::success(vec![
+                rmcp::model::Content::text(output.to_string()),
+            ])),
+        )
+    }
+
+    /// The owner's case (DESIGN-Q358): "split mesh" must lead with chat text, not `git branch`
+    /// listings. Default search never reads tool output; with it, said still outranks it 4:1.
+    #[tokio::test]
+    async fn split_mesh_finds_what_was_said_before_git_branch_listings() {
+        let f = fixture().await;
+        let listings: Vec<Message> = (0..3)
+            .map(|i| {
+                shell_output(
+                    &format!("c{i}"),
+                    "  main\n* split-mesh\n  split-mesh-relay\n  split-mesh-v2\n  mesh-split-probe",
+                )
+            })
+            .collect();
+        chat(&f.sm, "Git work", SessionType::User, &listings).await;
+        let talk = chat(
+            &f.sm,
+            "Explore split mesh",
+            SessionType::User,
+            &[Message::user().with_text(
+                "For the split mesh, rank 0 holds the first half of the layers and the relay \
+                 forwards activations over Thunderbolt; we still need to decide how the two Macs \
+                 agree on the model before loading.",
+            )],
+        )
+        .await;
+
+        let (_, said) = call(&f, SEARCH_TOOL, serde_json::json!({"query": "split mesh"})).await;
+        assert!(said.starts_with("1 hit in 1 chat"), "{said}");
+        assert!(said.contains(&format!("chat {talk}")), "{said}");
+        assert!(!said.contains("split-mesh-relay"), "{said}");
+
+        let (_, all) = call(
+            &f,
+            SEARCH_TOOL,
+            serde_json::json!({"query": "split mesh", "include_tool_output": true}),
+        )
+        .await;
+        assert!(all.starts_with("4 hits in 2 chats"), "{all}");
+        let first_hit = all
+            .lines()
+            .find(|l| l.trim_start().starts_with('m'))
+            .unwrap();
+        assert!(first_hit.contains("you: "), "said leads: {all}");
+    }
+
+    /// Subagent chats only when asked; a kept-out chat never — in search, read and list; the
+    /// current chat is not searched unless named.
+    #[tokio::test]
+    async fn the_scope_rules_hold_for_every_tool() {
+        let f = fixture().await;
+        let text = |t: &str| vec![Message::user().with_text(t)];
+        chat(
+            &f.sm,
+            "Sub",
+            SessionType::SubAgent,
+            &text("tenant_id in a subagent"),
+        )
+        .await;
+        let kept = chat(
+            &f.sm,
+            "Private",
+            SessionType::User,
+            &text("tenant_id private"),
+        )
+        .await;
+        f.sm.set_extension_state(&kept, &ChatSearchState { keep_out: true })
+            .await
+            .unwrap();
+        chat(
+            &f.sm,
+            "Worker",
+            SessionType::Hidden,
+            &text("tenant_id worker"),
+        )
+        .await;
+        f.sm.add_message(&f.here, &Message::user().with_text("tenant_id here"))
+            .await
+            .unwrap();
+
+        let (_, none) = call(&f, SEARCH_TOOL, serde_json::json!({"query": "tenant_id"})).await;
+        assert!(none.starts_with("No message"), "{none}");
+        let (_, sub) = call(
+            &f,
+            SEARCH_TOOL,
+            serde_json::json!({"query": "tenant_id", "include_subagents": true}),
+        )
+        .await;
+        assert!(sub.starts_with("1 hit in 1 chat"), "{sub}");
+        assert!(sub.contains("\"Sub\""), "{sub}");
+        let (_, here) = call(
+            &f,
+            SEARCH_TOOL,
+            serde_json::json!({"query": "tenant_id", "chat": f.here}),
+        )
+        .await;
+        assert!(here.starts_with("1 hit in 1 chat"), "{here}");
+
+        let (err, read) = call(&f, READ_TOOL, serde_json::json!({"chat": kept})).await;
+        assert!(err && read.contains("kept out of search"), "{read}");
+        let (err, worker) = call(&f, READ_TOOL, serde_json::json!({"chat": "Worker"})).await;
+        assert!(err && worker.contains("no chat is named"), "{worker}");
+
+        let (_, list) = call(&f, LIST_TOOL, serde_json::json!({})).await;
+        assert!(!list.contains("Private"), "{list}");
+        assert!(list.contains("1 chat is kept out of search"), "{list}");
+        assert!(
+            !list.contains("Worker") && !list.contains("\"Sub\""),
+            "{list}"
+        );
+        assert!(list.contains("· this chat"), "{list}");
+    }
+
+    /// A read around a hit shows the messages on both sides, the hit marked.
+    #[tokio::test]
+    async fn read_chat_opens_the_stretch_around_a_hit() {
+        let f = fixture().await;
+        let texts: Vec<Message> = (0..20)
+            .map(|i| Message::user().with_text(format!("step {i} of the migration")))
+            .collect();
+        let id = chat(&f.sm, "Migrate billing", SessionType::User, &texts).await;
+        let pool = f.sm.storage().pool().await.unwrap();
+        let ids: Vec<i64> =
+            sqlx::query_scalar("SELECT id FROM messages WHERE session_id = ? ORDER BY id")
+                .bind(&id)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        let (_, read) = call(
+            &f,
+            READ_TOOL,
+            serde_json::json!({"chat": "billing", "around": format!("m{}", ids[10]), "span": 2}),
+        )
+        .await;
+        let shown: Vec<&str> = read.lines().filter(|l| l.contains(" · you: ")).collect();
+        assert_eq!(shown.len(), 5, "{read}");
+        assert!(read.contains(&format!("»m{} ", ids[10])), "{read}");
+        assert!(
+            read.contains("step 8 ") && read.contains("step 12 "),
+            "{read}"
+        );
+        assert!(
+            !read.contains("step 7 ") && !read.contains("step 13 "),
+            "{read}"
+        );
+    }
+
+    /// Output never exceeds the share of the window, and says how many hits it left out.
+    #[tokio::test]
+    async fn a_search_stays_within_its_budget_and_counts_what_it_left_out() {
+        let f = fixture().await;
+        let texts: Vec<Message> = (0..300)
+            .map(|i| {
+                Message::user().with_text(format!(
+                    "ledger entry {i}: {} and the ledger closes here",
+                    "the quarterly numbers were reconciled against the bank export ".repeat(3)
+                ))
+            })
+            .collect();
+        chat(&f.sm, "Ledger", SessionType::User, &texts).await;
+        let (_, out) = call(&f, SEARCH_TOOL, serde_json::json!({"query": "ledger"})).await;
+        let budget = OutputBudget::for_window(goose_providers::model::DEFAULT_CONTEXT_LIMIT, false);
+        assert!(out.starts_with("300 hits in 1 chat"), "{}", &out[..200]);
+        assert!(
+            out.chars().count() <= budget.chars,
+            "{} chars against a budget of {}",
+            out.chars().count(),
+            budget.chars
+        );
+        assert!(out.contains("more hits not shown"), "{out}");
+        assert!(out.contains("sized for goose's default"), "{out}");
+    }
+
+    /// While the backfill has not reached older messages the answer says so — never a quiet
+    /// partial result.
+    #[tokio::test]
+    async fn a_partial_index_is_named_in_the_footer() {
+        let f = fixture().await;
+        let texts: Vec<Message> = (0..4)
+            .map(|i| Message::user().with_text(format!("old tenant_id note {i}")))
+            .collect();
+        chat(&f.sm, "Old", SessionType::User, &texts).await;
+        let pool = f.sm.storage().pool().await.unwrap();
+        sqlx::query("INSERT INTO messages_fts (messages_fts) VALUES ('delete-all')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE messages_fts_state SET backfill_below = (SELECT MAX(id) + 1 FROM messages)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let (_, partial) = call(&f, SEARCH_TOOL, serde_json::json!({"query": "tenant_id"})).await;
+        assert!(
+            partial.contains("Indexed 0 of 4 messages. 4 older messages are not indexed yet"),
+            "{partial}"
+        );
+        while transcript_index::backfill_step(pool, 2).await.unwrap()
+            != transcript_index::BackfillStep::Done
+        {}
+        let (_, full) = call(&f, SEARCH_TOOL, serde_json::json!({"query": "tenant_id"})).await;
+        assert!(full.starts_with("4 hits in 1 chat"), "{full}");
+        assert!(full.ends_with("Indexed 4 of 4 messages."), "{full}");
+    }
 }
