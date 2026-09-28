@@ -49,8 +49,8 @@ use crate::oauth::{oauth_flow, GooseCredentialStore};
 use crate::prompt_template;
 use crate::subprocess::configure_subprocess;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ErrorCode, ErrorData, GetPromptResult, Meta,
-    Prompt, Resource, ResourceContents, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResult, Content, ErrorCode, ErrorData, GetPromptResult,
+    JsonObject, Meta, Prompt, Resource, ResourceContents, ServerInfo, Tool,
 };
 use rmcp::transport::auth::{AuthClient, CredentialStore};
 use schemars::_private::NoSerialize;
@@ -1753,6 +1753,7 @@ impl ExtensionManager {
         &self,
         session_id: &str,
         tool_name: &str,
+        arguments: Option<&JsonObject>,
     ) -> Result<ResolvedTool, ErrorData> {
         let tools = self.get_all_tools_cached(session_id).await.map_err(|e| {
             ErrorData::new(
@@ -1826,18 +1827,9 @@ impl ExtensionManager {
             break;
         }
 
-        let available = tools
-            .iter()
-            .map(|t| t.name.as_ref())
-            .collect::<Vec<&str>>()
-            .join(", ");
-
         Err(ErrorData::new(
             ErrorCode::RESOURCE_NOT_FOUND,
-            format!(
-                "Tool '{}' not found. Available tools: [{}]",
-                tool_name, available
-            ),
+            super::tool_similarity::not_found_message(&tools, tool_name, arguments),
             None,
         ))
     }
@@ -1849,7 +1841,13 @@ impl ExtensionManager {
         cancellation_token: CancellationToken,
     ) -> Result<ToolCallResult> {
         let tool_name_str = tool_call.name.to_string();
-        let resolved = self.resolve_tool(&ctx.session_id, &tool_name_str).await?;
+        let resolved = self
+            .resolve_tool(
+                &ctx.session_id,
+                &tool_name_str,
+                tool_call.arguments.as_ref(),
+            )
+            .await?;
 
         if let Some(extension) = self.extensions.lock().await.get(&resolved.extension_name) {
             if !extension
@@ -2677,7 +2675,7 @@ mod tests {
             .await;
 
         let result = extension_manager
-            .resolve_tool("test-session-id", "definitely_not_a_real_tool")
+            .resolve_tool("test-session-id", "definitely_not_a_real_tool", None)
             .await;
         let err = match result {
             Ok(_) => panic!("resolve_tool should fail for an unknown name"),
@@ -2693,6 +2691,38 @@ mod tests {
             msg.contains("ext_a__"),
             "error should list at least one real tool name; got: {msg}"
         );
+    }
+
+    /// Q-367: a run-together or re-separated name meets the real tool FIRST, with its summary, before
+    /// the full list — the old error was only the list, in extension order.
+    #[tokio::test]
+    async fn test_resolve_tool_error_leads_with_the_closest_tool() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extension_manager =
+            ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
+        extension_manager
+            .add_mock_extension("ext_a".to_string(), Arc::new(MockClient {}))
+            .await;
+
+        let err = match extension_manager
+            .resolve_tool("test-session-id", "availabletool", None)
+            .await
+        {
+            Ok(_) => panic!("resolve_tool should fail for an unknown name"),
+            Err(e) => e,
+        };
+        let msg = err.message.to_string();
+        assert!(
+            msg.starts_with(
+                "Tool 'availabletool' not found. The closest tools by name and purpose:\n\
+                 - ext_a__available_tool: An available tool"
+            ),
+            "got: {msg}"
+        );
+        let list = msg.find("available tools, closest first").unwrap();
+        for name in ["ext_a__tool", "ext_a__available_tool", "ext_a__hidden_tool"] {
+            assert!(msg[list..].contains(name), "{name} missing from: {msg}");
+        }
     }
 
     struct MockDottedClient {}
@@ -2794,7 +2824,7 @@ mod tests {
             .await;
 
         let resolved = extension_manager
-            .resolve_tool("test-session-id", "test_client.tool")
+            .resolve_tool("test-session-id", "test_client.tool", None)
             .await
             .expect("mangled dotted name should resolve to the real tool");
         assert_eq!(resolved.tool_name, "test_client__tool");
@@ -2810,7 +2840,7 @@ mod tests {
             .await;
 
         let resolved = extension_manager
-            .resolve_tool("test-session-id", "functions.test_client__tool")
+            .resolve_tool("test-session-id", "functions.test_client__tool", None)
             .await
             .expect("functions-prefixed name should resolve to the real tool");
         assert_eq!(resolved.tool_name, "test_client__tool");
@@ -2826,7 +2856,7 @@ mod tests {
             .await;
 
         let resolved = extension_manager
-            .resolve_tool("test-session-id", "dotted__db.query")
+            .resolve_tool("test-session-id", "dotted__db.query", None)
             .await
             .expect("exact dotted tool name must resolve");
         assert_eq!(resolved.tool_name, "dotted__db.query");
@@ -2843,7 +2873,7 @@ mod tests {
             .await;
 
         let resolved = extension_manager
-            .resolve_tool("test-session-id", "dotted.db.query")
+            .resolve_tool("test-session-id", "dotted.db.query", None)
             .await
             .expect("mangled extension separator should resolve");
         assert_eq!(resolved.tool_name, "dotted__db.query");
