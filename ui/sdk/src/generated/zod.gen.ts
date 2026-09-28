@@ -1765,7 +1765,9 @@ export const zScanRecipeResponse_unstable = z.object({
     has_security_warnings: z.boolean()
 });
 
-export const zListRecipesRequest_unstable = z.record(z.unknown());
+export const zListRecipesRequest_unstable = z.object({
+    working_dir: z.string()
+});
 
 export const zRecipeListEntryDto = z.object({
     id: z.string(),

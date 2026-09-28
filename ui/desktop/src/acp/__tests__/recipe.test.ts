@@ -80,9 +80,10 @@ describe('ACP recipe helpers', () => {
     ];
     client.goose.recipesList_unstable.mockResolvedValue({ recipes });
 
-    const [first, second] = await Promise.all([listRecipes(), listRecipes()]);
+    const [first, second] = await Promise.all([listRecipes('/work/a'), listRecipes('/work/a')]);
 
     expect(client.goose.recipesList_unstable).toHaveBeenCalledTimes(1);
+    expect(client.goose.recipesList_unstable).toHaveBeenCalledWith({ working_dir: '/work/a' });
     expect(first).toBe(recipes);
     expect(second).toBe(recipes);
   });
@@ -90,9 +91,19 @@ describe('ACP recipe helpers', () => {
   it('fetches recipes again after a list request settles', async () => {
     client.goose.recipesList_unstable.mockResolvedValue({ recipes: [] });
 
-    await listRecipes();
-    await listRecipes();
+    await listRecipes('/work/a');
+    await listRecipes('/work/a');
 
     expect(client.goose.recipesList_unstable).toHaveBeenCalledTimes(2);
+  });
+
+  // Q-265: one goose backend serves every window, so each window lists its own project.
+  it('never shares an in-flight list between two windows folders', async () => {
+    client.goose.recipesList_unstable.mockResolvedValue({ recipes: [] });
+
+    await Promise.all([listRecipes('/work/a'), listRecipes('/work/b')]);
+
+    expect(client.goose.recipesList_unstable).toHaveBeenCalledTimes(2);
+    expect(client.goose.recipesList_unstable).toHaveBeenCalledWith({ working_dir: '/work/b' });
   });
 });

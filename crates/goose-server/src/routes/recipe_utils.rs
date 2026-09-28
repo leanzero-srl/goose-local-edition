@@ -34,7 +34,10 @@ pub struct RecipeManifest {
 }
 
 pub fn get_all_recipes_manifests() -> Result<Vec<RecipeManifest>> {
-    let recipe_manifests_with_path = list_recipe_file_manifests()?
+    // The HTTP server (`goosed`) serves one folder: the one it was started in. The desktop's backend
+    // is `goose serve` (ACP), whose recipe list names the window's folder (Q-265).
+    let project = std::env::current_dir()?;
+    let recipe_manifests_with_path = list_recipe_file_manifests(Some(&project))?
         .into_iter()
         .map(|manifest| RecipeManifest {
             id: manifest.id,
@@ -121,7 +124,7 @@ pub async fn build_recipe_with_parameter_values(
 ) -> Result<Option<Recipe>> {
     let recipe_content = original_recipe.to_yaml()?;
 
-    let recipe_dir = get_recipe_library_dir(true);
+    let recipe_dir = get_recipe_library_dir();
     let params = user_recipe_values.into_iter().collect();
 
     let recipe = match build_recipe_from_template(
