@@ -1,33 +1,29 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 06:27 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 07:0x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed: 3.0.65 on both Macs. LIVE TESTER agent holds the app: J3 FAIL (words/records — Q-254..Q-258),
-  J4 no starvation / no swap mid-reply; finishing Q-231 + Q-232 (red control; Q-232 not in 3.0.65), then restore.
-- 3.0.66 BUILT + notarized (goose-rel/ui/desktop/out/make/Goose-Swarm-3.0.66.dmg, main 005e2b9fb) — INSTALL the
-  moment the tester reports. Then: quit prove (Q-241/242), Q-240 kill -9 prove, loop start + one tick (J1/J2),
-  rerun J4 → start E2E #3o.
-- On main after 3.0.66 (→ 3.0.67): L2c part 1 + Q-239 refuted, Q-248, Q-250, Q-249 banner, Q-237/246, Q-247.
+- Installed: 3.0.66 on both Macs, split up. Q-223/241/242 LIVE-PROVEN (quit waits 0.7 s, peers told, rank 1 verified
+  gone, mesh last). LIVE TESTER resumed (after a spend-limit stop): Q-232 crop on the split, loops J1/J2, Q-240
+  kill -9 prove, Q-243. E2E #3o after it.
+- On main after 3.0.66 (→ 3.0.67): L2c part 1, Q-248/249/250, Q-237/246, Q-247, Q-254/255 (swap words), Q-258
+  (sidecar tests no longer SIGTERM the live engine — the cause of every "silent engine death"), Q-256, Q-259.
 
 ## CI
-- 2b6441ccf RED: Q-248 + Q-249 merged green alone, did not compile together, projsync pushed before the gate.
-  Fixed e423143b8 (gated: sidecar, swarm_engine 52, mlx_engine 10, clippy, schema, wincheck) — CI running.
-- RULE NOW: merge agent batches in a scratch worktree, gate there, then fast-forward main (skill trap).
+- RED from ae1276948: Q-256's restart-measurement test misses the Loading phase on Linux (Q-275) — agent on it.
 
-## Agents (worktrees)
-- L2c rest: mac_wide.rs (same-way yield across processes, WayHeld) · Q-251/252/253 (restart-goose step, Unmount
-  refuses a foreign engine, holder cache) · Q-258/256 (silent single-engine death mid-prefill, load row) ·
-  Q-254/255 (swap words §8.7, chip node names) · Q-257 one goosed per app shared by all windows (design chosen, 75%).
-- Live tester (no worktree).
+## Agents (resumed 07:0x after the spend limit; WIP committed in each worktree first)
+- Q-260 images to text-only engines · Q-263..267 per-session working dir (on top of the Q-257 branch, which is NOT
+  on main — they land together) · L2c mac_wide · Q-251/252/253 port holder · Q-275 (fresh) · live tester.
+- Queued behind the L2c agent (nodes_loader): Q-271, Q-272 → Q-273, Q-274.
 
 ## Next actions (in order)
-1. Tester report → rows → install 3.0.66 → live proves → E2E #3o.
-2. Merge agents as they land, batch-gated in a scratch worktree → build 3.0.67.
-3. Live critic walk: Nodes, Strategies, loop dialog + rail; then L9 (loop harness + ≥5-tick E2E).
+1. Q-275 fix → CI green. Live tester report → rows.
+2. Merge agents via a scratch branch + gate + ff (skill trap) → build 3.0.67 → live proves → E2E #3o.
+3. Live critic walk: Nodes, Strategies, loop dialog + rail; L9 (loop harness + ≥5-tick E2E).
 
 ## Standing rules for every tick
-- CI status, agent audit, disk ≥ 30 GB (77 GB now), clean.sh on both Macs.
+- CI status, agent audit, disk ≥ 30 GB, clean.sh on both Macs; no stale background shells (4 killed 07:0x).
 - A DONE build is installed + split-start smoked in the same tick — unless a live tester holds the app.
-- Merged worktrees: `git worktree remove -f -f` (never rm under .claude/). Crate-wide lib tests before a push.
-- Before pushing a Rust merge: harness/wincheck.sh (serialized). One GPU user at a time. Nothing waits for the owner.
+- Merge via scratch branch, gate, ff main (projsync pushes main every 15 min). Tests never touch port 8090.
+- One GPU user at a time. Nothing waits for the owner.
