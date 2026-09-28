@@ -31,3 +31,9 @@
 
 ## #3r — 2026-09-28 13:24–17:2x · 3.0.70 · split tensor · jira brief
 - 18 turns (0–17 done). Cache 97–99% every turn until compaction. Turn 2: invented websearch/fetch ×12 (Q-367 fixed). Turn 3: a sampled slip dropped `=>` (Q-371 = model; Q-372 parser fix; Q-385). Turn 15: create-doc filed the report under ~/docs (Q-388). Compaction (turn 18): 13:44→14:10, 159,636 prompt 0 cached, 5,740 written = the 3.0.70 baseline for Q-342/347. Post-compaction request 47,210 cold (162 s), reply lost on a CLOSED stream during a memory hold caused by my builds → hang (Q-392). r1 killed 17:2x.
+
+## #3s — 2026-09-28 15:05–15:47 UTC · 3.0.71 · split tensor · jira brief (STOPPED at turn 3)
+- Q-390 LIVE: chat opened in <round>/work via Projects → New session here, verified in sessions.db. Q-350 LIVE (restore reads distributed/mounting).
+- Turn 2 (web): the real leanzerowebsearch tools from the first call, 0 invented names (#3r: 12). Cache warm from call 2 (40,617/41,677).
+- Turn 2 ENDED in "Ran into this error: 503 … not admitting new requests" (Q-397, the memory hold) and turn 3 sat 15 min under the hold: swap 40.3/40 GB used — other sessions' test runs + my two agents' cargo. Stopped: a run under swap measures the machine, not goose. Next E2E only with no cargo on the MacBook.
+- Not reached: needs-you answering (no card raised), compaction (78k/250k).
