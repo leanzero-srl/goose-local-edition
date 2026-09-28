@@ -91,6 +91,13 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   2,048 → 4,096 → 6,144 of 7,226 at 302 → 458 tok/s, first token at ~15 s, 531 tok/s final prompt rate,
   writing 20.6 → 19.6 tok/s; 27B tensor split: 4,694 tokens at 412 → 431 tok/s, writing 16.1 → 12.8.
   `prefilled_tokens` stays 0 until the runner's first 2,048-token chunk (~5 s) — the row reads 0%.
+- PROMPT CACHE ON THE READ SURFACES (Q-337/Q-338, 2026-09-28): `prefilled_tokens` is the prompt POSITION, the
+  restored prefix INCLUDED, in both split modes — mlx_lm 0.31.3's own progress counts only the tokens past the
+  prefix (`total` = len(rest)), so rank_wrapper.py adds `prompt_tokens - total` back (before 9cdf7455c a warm
+  tensor read showed ≤1% and no prefill rate). Rapid-MLX's single engine sends per-request `cached_tokens` but
+  it is the Request default 0 until `cache_hit_type` is set — the parser (`cachedTokensOf`) reads that as
+  UNKNOWN. One split for every surface: engineFigures.ts `promptCacheOf` / `readBarOf`, drawn by
+  PromptReadBar.tsx (teal cached part + reading-blue new part; `--color-lz-cache`, `-on-fill`).
 - TRAP: a second 27B beside the owner's (the engine live test) fits the gate (need 30.6, budget 45.1)
   but macOS pages it out mid-load (resident 26.1 → 10.5 GiB) and the >0.9 resident assertion fails —
   environmental; run that test with the owner's engine unmounted.
