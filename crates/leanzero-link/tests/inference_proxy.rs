@@ -1243,3 +1243,142 @@ async fn a_peer_that_leaves_during_its_hold_ends_the_wait_with_its_words() {
     );
     assert!(!text.contains("no readable body"), "{text}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Q-402: what goose says and logs about a relayed call never carries the relay's capability
+// ---------------------------------------------------------------------------------------------
+
+/// Every log line written while the guard it is installed under lives: this test's own task and
+/// every server of the rig run on the one current-thread runtime, so all of them are heard.
+#[derive(Clone, Default)]
+struct CapturedLog(Arc<StdMutex<Vec<u8>>>);
+
+impl std::io::Write for CapturedLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
+    type Writer = CapturedLog;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl CapturedLog {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+/// The capability a relay's base URL carries (`…/relay/<capability>`).
+fn capability_of(relay: &InferenceRelay) -> String {
+    let (_, capability) = relay.base_url().rsplit_once("/relay/").unwrap();
+    assert!(capability.len() >= 32, "a real capability: {capability}");
+    capability.to_string()
+}
+
+#[tokio::test]
+async fn a_relayed_failure_and_the_hold_wait_never_say_the_relays_capability() {
+    let log = CapturedLog::default();
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(log.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .finish(),
+    );
+
+    // A peer's split holding for memory, reached through the relay; the peer leaves mid-wait.
+    let (engine, engine_base) = start_engine(Script::HoldsForMemory).await;
+    engine.admission.send_replace(false);
+    let (_b, b_base) = start_node_b(Some(serving(engine_base).await)).await;
+    let (say, said) = tokio::sync::watch::channel(None);
+    let relay = InferenceRelay::start(
+        "node-b".into(),
+        Arc::new(LeavingResolver {
+            call: call_to(&b_base),
+            said,
+        }),
+    )
+    .await
+    .unwrap();
+    let capability = capability_of(&relay);
+
+    // goose's own classification of the relayed refusal (`handle_status`, what every
+    // OpenAI-compatible provider runs on a failed call).
+    let hold = goose_providers::http_status::handle_status(post_chat(relay.base_url()).await)
+        .await
+        .expect_err("the hold refuses the chat");
+    let goose_provider_types::errors::ProviderError::EngineHold { admission_url, .. } = &hold
+    else {
+        panic!("not the hold: {hold:?}");
+    };
+    assert_eq!(
+        admission_url.as_deref(),
+        Some(format!("{}/goose/admission", relay.base_url()).as_str()),
+        "the wait itself still goes through the capability"
+    );
+    for said in [hold.to_string(), format!("{hold:?}"), format!("{hold:#?}")] {
+        assert!(!said.contains(&capability), "{said}");
+        assert!(
+            said.contains("/relay/…/"),
+            "the relay is still named: {said}"
+        );
+    }
+
+    let waiting =
+        tokio::spawn(
+            async move { goose_provider_types::engine_hold::wait_for_admission(&hold).await },
+        );
+    until("the peer's engine is asked to wait", || {
+        engine.admission_waits.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    say.send_replace(Some("Work's Mac Studio quit goose".to_string()));
+    let ended = tokio::time::timeout(DEADLINE, waiting)
+        .await
+        .expect("the peer's leaving ends the wait")
+        .unwrap()
+        .unwrap_err();
+    for said in [ended.to_string(), format!("{ended:?}")] {
+        assert!(!said.contains(&capability), "{said}");
+        assert!(said.contains("Work's Mac Studio quit goose"), "{said}");
+    }
+
+    // A relayed call that fails in the relay itself (no route to the peer): a server error whose
+    // text names the URL it was sent to.
+    let lost = InferenceRelay::start(
+        "node-gone".into(),
+        Arc::new(Resolver(Err("node-gone is not on the mesh".to_string()))),
+    )
+    .await
+    .unwrap();
+    let lost_capability = capability_of(&lost);
+    let failed = goose_providers::http_status::handle_status(post_chat(lost.base_url()).await)
+        .await
+        .expect_err("an unreachable peer fails the call");
+    for said in [failed.to_string(), format!("{failed:?}")] {
+        assert!(!said.contains(&lost_capability), "{said}");
+        assert!(
+            said.contains("/relay/…/v1/chat/completions"),
+            "the failure still names where it was sent: {said}"
+        );
+    }
+
+    let logged = log.text();
+    assert!(
+        logged.contains("/relay/…/goose/admission"),
+        "the hold wait's line was heard:\n{logged}"
+    );
+    assert!(
+        !logged.contains(&capability) && !logged.contains(&lost_capability),
+        "a capability was logged:\n{logged}"
+    );
+}

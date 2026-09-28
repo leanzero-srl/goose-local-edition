@@ -51,7 +51,9 @@ libc = "0.2"
 
 [dev-dependencies]
 goose-provider-types = { path = "../goose-provider-types" }
+goose-providers = { path = "../goose-providers" }
 goose-sidecar = { path = "../goose-sidecar" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 wiremock = { workspace = true }

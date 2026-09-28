@@ -18,6 +18,7 @@ use reqwest::StatusCode;
 use serde_json::Value;
 
 use crate::errors::ProviderError;
+use crate::redact::{redact_relay_capability, sanitize_url};
 
 /// The code the refusal carries while the engine holds for memory (goose-sidecar
 /// `distributed::MEMORY_HOLD_CODE`; the goose crate pins the two equal).
@@ -73,7 +74,9 @@ pub fn waiting_words(reason: Option<&str>) -> String {
 /// The hold a refusal names, or `None` for any other response. Only a 503 whose
 /// `error.code` is [`MEMORY_HOLD_CODE`] is a hold; `details` is the framing goose gives every
 /// server error. `url` is the refused request's (already sanitized) URL: the wait path is resolved
-/// against its origin.
+/// against its origin — the engine's `/goose/admission` and the Link relay's re-rooted
+/// `/relay/<capability>/goose/admission` are both origin-absolute, and the sanitized path itself
+/// no longer names a relay's capability (Q-402).
 pub fn hold_of_refusal(
     status: StatusCode,
     payload: Option<&Value>,
@@ -115,18 +118,21 @@ pub async fn wait_for_admission(hold: &ProviderError) -> Result<(), ProviderErro
     else {
         return Err(hold.clone());
     };
+    // Every word below may quote the admission URL, which through a Link relay carries its
+    // capability (Q-402): the GET uses `url`, what is said and logged uses `shown`.
     let ended = |why: String| {
-        ProviderError::ServerError(format!(
+        ProviderError::ServerError(redact_relay_capability(&format!(
             "{details} — goose waited for the engine to admit requests again, but {why}"
-        ))
+        )))
     };
     let Some(url) = admission_url else {
         return Err(ended(
             "its refusal named no admission endpoint to wait on".to_string(),
         ));
     };
+    let shown = sanitize_url(url);
     let words = waiting_words(reason.as_deref());
-    tracing::warn!(admission = %url, "{words}");
+    tracing::warn!(admission = %shown, "{words}");
     notify(EngineHoldEvent::Waiting { words });
     let answer = reqwest::Client::new()
         .get(url.as_str())
@@ -136,7 +142,7 @@ pub async fn wait_for_admission(hold: &ProviderError) -> Result<(), ProviderErro
     let status = answer.status();
     let text = answer.text().await.map_err(|e| {
         ended(format!(
-            "{url} answered {status} and the answer broke off ({e})"
+            "{shown} answered {status} and the answer broke off ({e})"
         ))
     })?;
     // A proxy between goose and the engine (the LeanZero Link relay: a peer that left mid-wait)
@@ -144,9 +150,9 @@ pub async fn wait_for_admission(hold: &ProviderError) -> Result<(), ProviderErro
     let admitted = serde_json::from_str::<Value>(&text)
         .is_ok_and(|body| body.get("admission_open") == Some(&Value::Bool(true)));
     if !status.is_success() || !admitted {
-        return Err(ended(format!("{url} answered {status}: {text}")));
+        return Err(ended(format!("{shown} answered {status}: {text}")));
     }
-    tracing::info!(admission = %url, "{ADMITTED_WORDS}");
+    tracing::info!(admission = %shown, "{ADMITTED_WORDS}");
     notify(EngineHoldEvent::Admitted {
         words: ADMITTED_WORDS.to_string(),
     });
