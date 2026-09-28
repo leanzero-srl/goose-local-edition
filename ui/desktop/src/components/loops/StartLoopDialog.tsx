@@ -375,8 +375,17 @@ function StartLoopBody({
   }
 
   const swap = swapFacts(nodes, chatProvider, chatModel);
-  const formRefusal =
-    refusal && refusalAt === 'form' && form ? refusalWords(intl, refusal, form, workingDir) : null;
+  // Why Start is disabled, said beside it — the field that refuses may be scrolled out of view.
+  const blocked = !form
+    ? null
+    : stopAfter?.kind === 'invalid'
+      ? { text: intl.formatMessage(w.stopAfterInvalid), quiet: false }
+      : refusal
+        ? {
+            text: refusalWords(intl, refusal, form, workingDir),
+            quiet: refusal.code === 'empty_goal' && !goalTouched,
+          }
+        : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="start-loop-dialog">
@@ -419,13 +428,16 @@ function StartLoopBody({
             </p>
           )}
         </div>
-        {formRefusal && (
-          <p className={ERROR_TEXT} data-testid="loop-form-refusal">
-            {formRefusal}
-          </p>
-        )}
       </div>
       <div className="flex flex-col items-end gap-1.5 border-t border-lz-border px-5 py-3">
+        {blocked && !said && (
+          <p
+            className={cx('self-stretch text-right', blocked.quiet ? TYPE.meta : ERROR_TEXT)}
+            data-testid="loop-start-blocked"
+          >
+            {blocked.text}
+          </p>
+        )}
         {said && (
           <p role="alert" className={cx('self-stretch', ERROR_TEXT)} data-testid="loop-start-said">
             {said.kind === 'refused'
@@ -582,7 +594,7 @@ function LoopFormFields({
             const template = templateOf(id);
             if (template) setForm((prev) => (prev ? withTemplate(prev, template) : prev));
           }}
-          className="flex-wrap"
+          className="max-w-full flex-wrap self-start"
         />
         <p className={TYPE.bodyMuted} data-testid="loop-template-description">
           {intl.formatMessage(TEMPLATE_DESCRIPTION[form.template])}
@@ -721,7 +733,7 @@ function LoopFormFields({
           options={cadenceOptions}
           value={form.cadenceKind}
           onChange={(cadenceKind) => set({ cadenceKind })}
-          className="flex-wrap"
+          className="max-w-full flex-wrap self-start"
         />
         {form.cadenceKind === 'every' && (
           <div className="flex flex-col gap-2">
@@ -730,7 +742,7 @@ function LoopFormFields({
               options={presetOptions}
               value={form.every}
               onChange={(every: EveryPreset | 'custom') => set({ every })}
-              className="flex-wrap"
+              className="max-w-full flex-wrap self-start"
             />
             {form.every === 'custom' && (
               <input

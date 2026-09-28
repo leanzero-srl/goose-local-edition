@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose がタイミングを決定"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "ループ"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "このチャットの目標を何度も繰り返し実行 — 1 回の実行が 1 ティックです"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "ティック {n} はバックグラウンドで完了処理中です — 終わったら送信できます"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "ティック {n} を実行中です — 送信した内容はその終了を待ちます。「今すぐ送信」でティックの方向を変えられます。"
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "ループからの応答"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "ティック {n} を停止 — ループは一時停止します"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "ループはチャットのターンを実行します。このチャットは swarm でビルドするため、ティックのたびにフルビルドが始まってしまいます。定期的なビルドには Agent Work を使ってください。"
+  },
   "loops.control.edit": {
     "defaultMessage": "編集"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "ループがあなたの対応待ちです"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "キュー内 · 「今すぐ送信」でティック {n} の方向を変えます"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "今すぐ送信 — ティック {n} の方向を変えます"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "ループパネルを閉じる"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "ループと変更"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "ループの実行元は、ループも拒否も返しませんでした。"
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "このチャットにループはありません。{command} またはループボタンを使ってください。"
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "ティック {n} の後にループを一時停止しました。"
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "最初のティックの前にループを一時停止しました。"
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "ループを再開しました — 次のティックは {time}。"
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "ループを再開しました。{sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "ループを再開しました。次のティックを読み取れませんでした: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "ループ: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "ループ: {goal} · {sentence} · ティック {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "状態を読み取れませんでした: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "ティック {n} の後にループを停止しました。"
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "最初のティックの前にループを停止しました。"
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "ティック {n} を今すぐ開始します。"
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "ティックが終わるとすぐに次のティックが始まります。"
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "次のティックを実行するタイミング"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "各ティックの直後"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "一定間隔"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "数値と s、m、h のいずれかを使ってください — 90m、2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "goose が決めたとき"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "loops.start.check": {
+    "defaultMessage": "goose が証明する方法"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "各ティックの後に {dir} で実行されます。goose が完了と伝えた後にこれが成功すると、ループは終了します。"
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "このテンプレートにはチェックするコマンドが必要です。"
+  },
+  "loops.start.close": {
+    "defaultMessage": "閉じる"
+  },
+  "loops.start.command": {
+    "defaultMessage": "コマンド"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "各ティックは {served} での 1 ターンです。このウィンドウでのあなたのターンが常に優先されます — あなたがチャットしている間、ティックは待機または一時停止します。"
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "各ティックはこのチャットでの 1 ターンです。このウィンドウでのあなたのターンが常に優先されます — あなたがチャットしている間、ティックは待機または一時停止します。"
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "カスタム間隔"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "カスタム: 数値と s、m、h のいずれか（90m、2h）"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "最初のティックを今すぐ実行します。"
+  },
+  "loops.start.goal": {
+    "defaultMessage": "目標"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "ループが何をするべきかを書いてください。"
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "目標の 1 行目"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "各ティックで何を前進させますか？ 例: テストを変更せずに ui/desktop のすべてのテストを通す"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose はこのチャットで目標を何度も繰り返し実行します — 1 回の実行が 1 ティックです。各ティックは状態ファイルを読み、作業し、行ったことを証明し、次に何をするかを伝えます。いつでも方向を変えたり、一時停止や停止をしたりできます。"
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "goose を開いている間、この Mac をスリープさせない"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "スリープの防止が機能していません: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "これはアプリの「スリープを防止」設定です — 今すぐ、すべてのチャットに対して変更されます。"
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "カスタム"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "頻度"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "置き換える"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "現在のループはティック {n} の後に終了します。"
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "現在のループは最初のティックの前に終了します。"
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "現在のループを読み取れませんでした — 新しいループを開始すると置き換えられます。"
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "そのままにする"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "ループを置き換えますか？"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "手順をリセット"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "再試行"
+  },
+  "loops.start.save": {
+    "defaultMessage": "保存"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "各ティックの後、goose が次に戻るタイミングとその理由を決めます — 理由は表示されます。"
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Mac がスリープすることがあります。ティックはスリープ解除まで待機します。"
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "このループの事実: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} は goose が知っている事実ではありません"
+  },
+  "loops.start.start": {
+    "defaultMessage": "ループを開始"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "開始点"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "状態ファイル"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "状態ファイルの名前を指定してください — goose は最初にそれを読み、最後に書き直します。"
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose は最初にこれを読み、最後に書き直すため、長いチャットや圧縮の後もループが続きます。自分で編集することもできます。"
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "状態ファイルは {dir} の中に置いてください。"
+  },
+  "loops.start.steps": {
+    "defaultMessage": "各ティックの内容"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "手順なし — 各ティックは目標だけを基に作業します。手順が必要ならここに書いてください。"
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "goose が各ティックで読む内容"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "強調表示された部分はこのループの事実で、ティックのたびに埋め直されます — チェックや状態ファイルを変えると、手順もそれに従います。"
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "{field} ティック後"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "停止するまでのティック数"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "空欄にすると、目標が達成されるかあなたが停止するまで実行します。"
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "ティック数は 1 以上の整数で指定してください。"
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "停止までのティック数は 1 以上が必要です — 目標が達成されるかあなたが停止するまで実行するには空欄にしてください。"
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "goose が完了を報告した後にチェックが成功する"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose が目標の完了を報告する"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "停止条件"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "あなたが停止する"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "各ティックで {node} を読み込み、{way} を停止する場合があります。"
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "ループはチャットのターンを実行します。このチャットは swarm でビルドするので、ティックのたびにフルビルドが始まってしまいます。定期的なビルドには Agent Work を使ってください。"
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "空白"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "あなたの目標、あなたの手順。"
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "ソフトウェア品質ループ"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "壊れているものを見つけ、最も重要な 1 つを選び、修正し、チェックで証明する。これを繰り返します。"
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "チェックが通るまで"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "指定したコマンドが成功するまで作業を続けます — テスト、ビルド、lint など。"
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "監視して対応"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "スケジュールに従って何かを確認し、変化があれば対応します — ビルド、デプロイ、フォルダーなど。"
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "テンプレートを読み取れませんでした: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "テンプレートを読み込み中…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "このチャットをループ"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "ループを編集"
   },
   "loops.status.checking": {
     "defaultMessage": "チェック中"

@@ -110,8 +110,12 @@ describe('StartLoopDialog', () => {
     await open();
     expect(startButton()).toBeDisabled();
     expect(screen.getByTestId('loop-goal-empty')).toHaveTextContent('Say what the loop should do.');
+    expect(screen.getByTestId('loop-start-blocked')).toHaveTextContent(
+      'Say what the loop should do.'
+    );
     typeGoal('Make every test in ui/desktop pass');
     expect(screen.queryByTestId('loop-goal-empty')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('loop-start-blocked')).not.toBeInTheDocument();
     expect(startButton()).toBeEnabled();
     expect(screen.getByTestId('loop-state-file')).toHaveValue(
       '.goose/loops/make-every-test-in/NOW.md'
@@ -143,7 +147,7 @@ describe('StartLoopDialog', () => {
     });
     const unknown = screen.getByTestId('loop-slot-unknown');
     expect(unknown).toHaveTextContent('{foo}');
-    expect(screen.getByText('{foo} is not a fact goose knows')).toBeInTheDocument();
+    expect(screen.getAllByText('{foo} is not a fact goose knows')).toHaveLength(2);
     expect(startButton()).toBeDisabled();
   });
 
@@ -197,6 +201,10 @@ describe('StartLoopDialog', () => {
       'This template needs a command to check.'
     );
     expect(startButton()).toBeDisabled();
+    // Said beside the disabled Start too: the check field may be scrolled out of view.
+    expect(screen.getByTestId('loop-start-blocked')).toHaveTextContent(
+      'This template needs a command to check.'
+    );
     fireEvent.change(screen.getByTestId('loop-check'), { target: { value: 'pnpm test' } });
     expect(startButton()).toBeEnabled();
     expect(screen.getByText('the check succeeds after goose reports done')).toBeInTheDocument();
@@ -308,7 +316,7 @@ describe('StartLoopDialog', () => {
   it('a swarm-build chat cannot start one, and the dialog says why', async () => {
     mount({ swarmBuild: true });
     await open({ goal: 'Ship it' });
-    expect(screen.getByTestId('loop-form-refusal')).toHaveTextContent(
+    expect(screen.getByTestId('loop-start-blocked')).toHaveTextContent(
       'Loops run chat turns. This chat builds with the swarm, so every tick would start a full build.'
     );
     expect(startButton()).toBeDisabled();

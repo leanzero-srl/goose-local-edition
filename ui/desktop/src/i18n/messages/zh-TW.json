@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "由 goose 決定時間"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "循環"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "反覆執行此聊天的目標——每次執行是一輪"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "第 {n} 輪正在背景完成——結束後即可傳送"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "第 {n} 輪正在執行——你傳送的內容會等它結束。使用「立即傳送」來引導這一輪。"
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "關閉"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "循環的回覆"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "停止第 {n} 輪——循環將暫停"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "循環執行的是聊天回合。此聊天使用 swarm 建置——每一輪都會啟動一次完整建置。定期建置請使用 Agent Work。"
+  },
   "loops.control.edit": {
     "defaultMessage": "編輯"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "循環在等你"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "已排入佇列 · 「立即傳送」會引導第 {n} 輪"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "立即傳送——這會引導第 {n} 輪"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "關閉循環面板"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "循環與變更"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "循環執行器的回覆既不是循環，也不是拒絕。"
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "此聊天中沒有循環。請使用 {command} 或「循環」按鈕。"
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "循環已在第 {n} 輪後暫停。"
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "循環已在第一輪之前暫停。"
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "循環已繼續——下一輪 {time}。"
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "循環已繼續。{sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "循環已繼續。無法讀取它的下一輪：{error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "循環：{goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "循環：{goal} · {sentence} · 第 {n} 輪"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "無法讀取它的狀態：{error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "循環已在第 {n} 輪後停止。"
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "循環已在第一輪之前停止。"
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "第 {n} 輪現在開始。"
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "一輪結束後，下一輪立即開始。"
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "下一輪何時執行"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "每輪結束後立即執行"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "每隔"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "請使用數字加 s、m 或 h——如 90m、2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "由 goose 決定"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "取消"
+  },
+  "loops.start.check": {
+    "defaultMessage": "goose 如何證明"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "每輪結束後在 {dir} 中執行。在 goose 表示完成之後，如果它執行成功，循環就會結束。"
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "此範本需要一個用於檢查的指令。"
+  },
+  "loops.start.close": {
+    "defaultMessage": "關閉"
+  },
+  "loops.start.command": {
+    "defaultMessage": "指令"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "每一輪是在 {served} 上的一個回合。你在此視窗中的回合始終優先——你聊天時，這一輪會等待或暫停。"
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "每一輪是此聊天中的一個回合。你在此視窗中的回合始終優先——你聊天時，這一輪會等待或暫停。"
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "自訂間隔"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "自訂：數字加 s、m 或 h（90m、2h）"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "第一輪現在執行。"
+  },
+  "loops.start.goal": {
+    "defaultMessage": "目標"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "請說明循環要做什麼。"
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "你的目標的第一行"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "每一輪要推進什麼？例如：在不修改測試的前提下讓 ui/desktop 中的所有測試通過"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose 會在此聊天中反覆執行你的目標——每次執行是一輪。每一輪都會讀取狀態檔案、進行工作、證明所做的事情，並說明下一步。你可以隨時引導、暫停或停止它。"
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "goose 開啟期間讓這台 Mac 保持喚醒"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "防止睡眠未生效：{reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "這是應用程式的「防止睡眠」設定——變更會立即生效，並套用到所有聊天。"
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "自訂"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "頻率"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "取代"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "目前的循環將在第 {n} 輪後結束。"
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "目前的循環將在第一輪之前結束。"
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "無法讀取目前的循環——開始新的循環會將其取代。"
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "保留"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "要取代循環嗎？"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "重設步驟"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "重試"
+  },
+  "loops.start.save": {
+    "defaultMessage": "儲存"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "每一輪結束後，goose 會說明何時回來以及原因——你會看到它的理由。"
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "你的 Mac 可能會進入睡眠；各輪會等到它喚醒後再執行。"
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "此循環的事實：{name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} 不是 goose 知道的事實"
+  },
+  "loops.start.start": {
+    "defaultMessage": "開始循環"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "起點"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "狀態檔案"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "請為狀態檔案命名——goose 最先讀取它，最後重寫它。"
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose 最先讀取它、最後重寫它，因此循環能撐過很長的聊天和壓縮。你也可以編輯它。"
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "請將狀態檔案放在 {dir} 內。"
+  },
+  "loops.start.steps": {
+    "defaultMessage": "每一輪做什麼"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "沒有步驟——每一輪只根據你的目標工作。如需步驟，請寫在這裡。"
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "goose 每一輪讀取的內容"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "醒目提示的部分是此循環的事實，每一輪都會重新填入——變更檢查或狀態檔案，步驟會隨之變化。"
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "{field} 輪後"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "在這麼多輪後停止"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "留空則一直執行，直到目標達成或你停止它。"
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "請輸入整數輪數，至少為 1。"
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "停止輪數至少為 1——留空則一直執行，直到目標達成或你停止它。"
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "goose 回報完成後檢查通過"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose 回報目標已完成"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "停止條件"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "你停止它"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "每一輪可能會載入 {node} 並停止 {way}。"
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "循環執行的是聊天回合。此聊天使用 swarm 建置，因此每一輪都會啟動一次完整建置。定期建置請使用 Agent Work。"
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "空白"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "你的目標，你的步驟。"
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "軟體品質循環"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "找出壞掉的地方，挑出最重要的一件，修好它，用檢查來證明。然後重複。"
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "直到檢查通過"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "持續工作，直到你指定的指令成功——測試、建置、lint。"
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "監看並行動"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "依排程查看某樣東西，並在它變化時採取行動——建置、部署、資料夾。"
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "無法讀取範本：{error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "正在讀取範本…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "循環此聊天"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "編輯循環"
   },
   "loops.status.checking": {
     "defaultMessage": "檢查中"

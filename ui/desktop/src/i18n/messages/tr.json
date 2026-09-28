@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "ne zaman olacağına goose karar verir"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Döngü"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Bu sohbetin hedefini tekrar tekrar çalıştır — her çalıştırma bir turdur"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Tur {n} arka planda bitiyor — bitince gönderebilirsin"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Tur {n} çalışıyor — gönderdiğin şey onu bekler. Tura yön vermek için Şimdi Gönder’i kullan."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "Döngü yanıt verdi"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "{n}. turu durdur — döngü duraklar"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Döngüler sohbet sıraları çalıştırır. Bu sohbet swarm ile derliyor — her tur tam bir derleme başlatır. Yinelenen derlemeler için Agent Work’ü kullan."
+  },
   "loops.control.edit": {
     "defaultMessage": "Düzenle"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "Döngü seni bekliyor"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "Sırada · Şimdi Gönder {n}. tura yön verir"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Şimdi gönder — bu, {n}. tura yön verir"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Döngü panelini kapat"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Döngü ve değişiklikler"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "Döngü çalıştırıcısı ne bir döngüyle ne de bir retle yanıt verdi."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "Bu sohbette döngü yok. {command} ya da Döngü düğmesini kullan."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Döngü Tur {n} sonrasında duraklatıldı."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Döngü ilk turundan önce duraklatıldı."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Döngü devam ediyor — sonraki tur {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Döngü devam ediyor. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Döngü devam ediyor. Sonraki turu okunamadı: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Döngü: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Döngü: {goal} · {sentence} · Tur {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "durumu okunamadı: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Döngü Tur {n} sonrasında durduruldu."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Döngü ilk turundan önce durduruldu."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Tur {n} şimdi başlıyor."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "Bir tur biter bitmez sonraki tur başlar."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Sonraki tur ne zaman çalışsın"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Her turun hemen ardından"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Her"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Bir sayı ve s, m ya da h kullan — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "goose karar verdiğinde"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "loops.start.check": {
+    "defaultMessage": "goose bunu nasıl kanıtlar"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Her turdan sonra {dir} içinde çalışır. goose bittiğini söyledikten sonra başarılı olursa döngü sona erer."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Bu şablon, kontrol için bir komut gerektirir."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Kapat"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Komut"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Her tur, {served} üzerinde bir sohbet sırasıdır. Bu penceredeki kendi sıraların her zaman önce gelir — sen sohbet ederken tur bekler ya da duraklar."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Her tur, bu sohbette bir sohbet sırasıdır. Bu penceredeki kendi sıraların her zaman önce gelir — sen sohbet ederken tur bekler ya da duraklar."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Özel aralık"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "özel: bir sayı ve s, m ya da h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "İlk tur şimdi çalışıyor."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Hedef"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Döngünün ne yapması gerektiğini yaz."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "hedefinin ilk satırı"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "Her tur neyi ileri taşımalı? ör. Testleri değiştirmeden ui/desktop içindeki her testin geçmesini sağla"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose hedefini bu sohbette tekrar tekrar çalıştırır — her çalıştırma bir turdur. Her tur durum dosyasını okur, çalışır, yaptığını kanıtlar ve sırada ne olduğunu söyler. İstediğin zaman yön verebilir, duraklatabilir ya da durdurabilirsin."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "goose açıkken bu Mac’i uyanık tut"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Uyanık tutma çalışmıyor: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "Bu, uygulamanın Uykuyu Önleyin ayarıdır — şimdi, tüm sohbetler için değişir."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "özel"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "Ne sıklıkla"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Değiştir"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "Mevcut döngü Tur {n} sonrasında sona erer."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "Mevcut döngü ilk turundan önce sona erer."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "Mevcut döngü okunamadı — yeni bir döngü başlatmak onun yerini alır."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Kalsın"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Döngü değiştirilsin mi?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Adımları sıfırla"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Tekrar dene"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Kaydet"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "Her turdan sonra goose ne zaman ve neden döneceğini belirtir — nedenini görürsün."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Mac’in uyuyabilir; turlar o uyanana kadar bekler."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Bu döngünün bir bilgisi: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot}, goose’un bildiği bir bilgi değil"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Döngüyü başlat"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Şuradan başla"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "Durum dosyası"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Durum dosyasına bir ad ver — goose onu ilk okur ve en son yeniden yazar."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose bunu ilk okur ve en son yeniden yazar; böylece döngü uzun sohbetlere ve sıkıştırmaya dayanır. Sen de düzenleyebilirsin."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Durum dosyasını {dir} içinde tut."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "Her tur ne yapar"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Adım yok — her tur yalnızca hedefinden yola çıkar. İstersen adımları buraya yaz."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "goose her turda ne okur"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "Vurgulanan kısımlar bu döngünün bilgileridir ve her turda yeniden doldurulur — kontrolü ya da durum dosyasını değiştirirsen adımlar da ona uyar."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "{field} turdan sonra"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Bu kadar turdan sonra durdur"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Hedefe ulaşılana ya da sen durdurana kadar çalışması için boş bırak."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "1 veya daha büyük, tam sayı bir tur sayısı kullan."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Tur sınırı en az bir tur olmalı — hedefe ulaşılana ya da sen durdurana kadar çalışması için boş bırak."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "goose bittiğini bildirdikten sonra kontrol başarılı olduğunda"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose hedefin tamamlandığını bildirdiğinde"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Ne zaman dursun"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "sen durdurduğunda"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Her tur {node} yükleyebilir ve {way} durdurabilir."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Döngüler sohbet sıraları çalıştırır. Bu sohbet swarm ile derliyor, bu yüzden her tur tam bir derleme başlatır. Yinelenen derlemeler için Agent Work’ü kullan."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Boş"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Senin hedefin, senin adımların."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Yazılım kalitesi döngüsü"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Neyin bozuk olduğunu bul, en önemli tek şeyi seç, düzelt, bir kontrolle kanıtla. Tekrarla."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Bir kontrol geçene kadar"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Belirttiğin bir komut başarılı olana kadar çalışmaya devam et — testler, bir derleme, bir lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "İzle ve harekete geç"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Bir şeye belirli aralıklarla bak ve değiştiğinde harekete geç — bir derleme, bir dağıtım, bir klasör."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Şablonlar okunamadı: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Şablonlar okunuyor…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Bu sohbeti döngüye al"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Döngüyü düzenle"
   },
   "loops.status.checking": {
     "defaultMessage": "Kontrol ediliyor"

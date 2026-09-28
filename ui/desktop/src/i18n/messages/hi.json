@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose तय करता है कि कब"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "लूप"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "इस चैट के लक्ष्य को बार-बार चलाएँ — हर बार चलना एक टिक है"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "टिक {n} बैकग्राउंड में पूरा हो रहा है — इसके खत्म होने पर आप भेज सकते हैं"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "टिक {n} चल रहा है — आप जो भेजेंगे वह इसका इंतज़ार करेगा। इसे दिशा देने के लिए अभी भेजें का उपयोग करें।"
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "हटाएँ"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "लूप ने उत्तर दिया"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "टिक {n} रोकें — लूप रुक जाएगा"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "लूप चैट टर्न चलाते हैं। यह चैट swarm के साथ बिल्ड करता है — हर टिक एक पूरा बिल्ड शुरू कर देगा। बार-बार होने वाले बिल्ड के लिए Agent Work का उपयोग करें।"
+  },
   "loops.control.edit": {
     "defaultMessage": "संपादित करें"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "लूप आपकी प्रतीक्षा में"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "कतार में · अभी भेजें टिक {n} को दिशा देता है"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "अभी भेजें — यह टिक {n} को दिशा देता है"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "लूप पैनल बंद करें"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "लूप और बदलाव"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "लूप रनर ने ऐसा उत्तर दिया जो न लूप था, न इनकार।"
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "इस चैट में कोई लूप नहीं है। {command} या लूप बटन का उपयोग करें।"
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "टिक {n} के बाद लूप रुका।"
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "लूप अपने पहले टिक से पहले रुका।"
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "लूप फिर शुरू हुआ — अगला टिक {time}।"
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "लूप फिर शुरू हुआ। {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "लूप फिर शुरू हुआ। इसका अगला टिक पढ़ा नहीं जा सका: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "लूप: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "लूप: {goal} · {sentence} · टिक {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "इसकी स्थिति पढ़ी नहीं जा सकी: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "टिक {n} के बाद लूप रोका गया।"
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "लूप अपने पहले टिक से पहले रोका गया।"
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "टिक {n} अभी शुरू हो रहा है।"
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "एक टिक खत्म होते ही अगला टिक शुरू हो जाता है।"
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "अगला टिक कब चले"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "हर टिक के ठीक बाद"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "हर"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "एक संख्या और s, m या h का उपयोग करें — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "जब goose तय करे"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "loops.start.check": {
+    "defaultMessage": "goose इसे कैसे साबित करे"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "हर टिक के बाद {dir} में चलता है। goose के काम पूरा बताने के बाद जब यह सफल होता है, तो लूप खत्म हो जाता है।"
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "इस टेम्पलेट को जाँच के लिए एक कमांड चाहिए।"
+  },
+  "loops.start.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "loops.start.command": {
+    "defaultMessage": "कमांड"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "हर टिक {served} पर एक टर्न है। इस विंडो में आपकी बारी हमेशा पहले आती है — जब आप चैट करते हैं तो टिक इंतज़ार करता है या रुक जाता है।"
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "हर टिक इस चैट में एक टर्न है। इस विंडो में आपकी बारी हमेशा पहले आती है — जब आप चैट करते हैं तो टिक इंतज़ार करता है या रुक जाता है।"
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "कस्टम अंतराल"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "कस्टम: एक संख्या और s, m या h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "पहला टिक अभी चलता है।"
+  },
+  "loops.start.goal": {
+    "defaultMessage": "लक्ष्य"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "बताएँ कि लूप को क्या करना चाहिए।"
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "आपके लक्ष्य की पहली पंक्ति"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "हर टिक को क्या आगे बढ़ाना चाहिए? जैसे: टेस्ट बदले बिना ui/desktop के हर टेस्ट को पास कराएँ"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose इस चैट में आपके लक्ष्य को बार-बार चलाता है — हर बार चलना एक टिक है। हर टिक अपनी स्टेट फ़ाइल पढ़ता है, काम करता है, जो किया उसे साबित करता है, और बताता है कि आगे क्या है। आप कभी भी इसे दिशा दे सकते हैं, रोक सकते हैं या खत्म कर सकते हैं।"
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "goose खुला रहने तक इस Mac को जगाए रखें"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "जगाए रखना काम नहीं कर रहा है: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "यह ऐप की नींद रोकें सेटिंग है — यह अभी बदलती है, हर चैट के लिए।"
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "कस्टम"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "कितनी बार"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "बदलें"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "मौजूदा लूप टिक {n} के बाद खत्म हो जाएगा।"
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "मौजूदा लूप अपने पहले टिक से पहले खत्म हो जाएगा।"
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "मौजूदा लूप पढ़ा नहीं जा सका — नया लूप शुरू करने से यह बदल जाएगा।"
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "इसे रखें"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "लूप बदलें?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "चरण रीसेट करें"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "फिर से प्रयास करें"
+  },
+  "loops.start.save": {
+    "defaultMessage": "सहेजें"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "हर टिक के बाद goose बताता है कि कब लौटना है और क्यों — आपको इसका कारण दिखेगा।"
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "आपका Mac स्लीप में जा सकता है; टिक उसके जागने तक इंतज़ार करते हैं।"
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "इस लूप का एक तथ्य: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} ऐसा तथ्य नहीं है जिसे goose जानता हो"
+  },
+  "loops.start.start": {
+    "defaultMessage": "लूप शुरू करें"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "इससे शुरू करें"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "स्टेट फ़ाइल"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "स्टेट फ़ाइल का नाम दें — goose इसे सबसे पहले पढ़ता है और सबसे अंत में दोबारा लिखता है।"
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose इसे सबसे पहले पढ़ता है और सबसे अंत में दोबारा लिखता है, ताकि लूप लंबी चैट और संघनन के बाद भी बना रहे। आप भी इसे संपादित कर सकते हैं।"
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "स्टेट फ़ाइल को {dir} के अंदर रखें।"
+  },
+  "loops.start.steps": {
+    "defaultMessage": "हर टिक क्या करता है"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "कोई चरण नहीं — हर टिक सिर्फ़ आपके लक्ष्य से काम करता है। अगर आप चाहें तो यहाँ चरण लिखें।"
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "goose हर टिक में क्या पढ़ता है"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "हाइलाइट किए गए हिस्से इस लूप के तथ्य हैं, जो हर टिक पर फिर से भरे जाते हैं — जाँच या स्टेट फ़ाइल बदलें और चरण उसी के अनुसार बदल जाएँगे।"
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "{field} टिक के बाद"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "इतने टिक के बाद रोकें"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "लक्ष्य पूरा होने या आपके रोकने तक चलाने के लिए खाली छोड़ें।"
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "टिक की एक पूर्ण संख्या दें, 1 या उससे अधिक।"
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "टिक की सीमा कम से कम एक टिक होनी चाहिए — लक्ष्य पूरा होने या आपके रोकने तक चलाने के लिए इसे खाली छोड़ें।"
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "goose के काम पूरा बताने के बाद जाँच सफल हो"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose बताए कि लक्ष्य पूरा हो गया"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "कब रोकें"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "आप इसे रोकें"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "हर टिक {node} लोड कर सकता है और {way} रोक सकता है।"
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "लूप चैट टर्न चलाते हैं। यह चैट swarm के साथ बिल्ड करता है, इसलिए हर टिक एक पूरा बिल्ड शुरू कर देगा। बार-बार होने वाले बिल्ड के लिए Agent Work का उपयोग करें।"
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "खाली"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "आपका लक्ष्य, आपके चरण।"
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "सॉफ़्टवेयर गुणवत्ता लूप"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "पता लगाएँ कि क्या टूटा है, सबसे ज़रूरी एक चीज़ चुनें, उसे ठीक करें, एक जाँच से साबित करें। दोहराएँ।"
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "जब तक जाँच पास न हो"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "तब तक काम करते रहें जब तक आपकी बताई कमांड सफल न हो जाए — टेस्ट, बिल्ड, लिंट।"
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "देखें और कार्रवाई करें"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "किसी चीज़ को शेड्यूल पर देखें और उसके बदलने पर कार्रवाई करें — कोई बिल्ड, डिप्लॉय, फ़ोल्डर।"
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "टेम्पलेट पढ़े नहीं जा सके: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "टेम्पलेट पढ़े जा रहे हैं…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "इस चैट को लूप करें"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "लूप संपादित करें"
   },
   "loops.status.checking": {
     "defaultMessage": "जाँच हो रही है"

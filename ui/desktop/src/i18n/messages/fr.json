@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose décide quand"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Boucle"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Exécuter l’objectif de ce chat encore et encore — chaque exécution est un passage"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Le passage {n} se termine en arrière-plan — vous pourrez envoyer quand il aura fini"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Le passage {n} est en cours — ce que vous envoyez l’attend. Utilisez Envoyer maintenant pour le réorienter."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Ignorer"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "La boucle a répondu"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Arrêter le passage {n} — la boucle se met en pause"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Les boucles exécutent des tours de chat. Ce chat construit avec le swarm — chaque passage lancerait un build complet. Utilisez Agent Work pour les builds récurrents."
+  },
   "loops.control.edit": {
     "defaultMessage": "Modifier"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "La boucle vous attend"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "En file d’attente · Envoyer maintenant réoriente le passage {n}"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Envoyer maintenant — cela réoriente le passage {n}"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Fermer le panneau de la boucle"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Boucle et modifications"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "L’exécuteur de boucles n’a répondu ni par une boucle ni par un refus."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "Aucune boucle dans ce chat. Utilisez {command} ou le bouton Boucle."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Boucle mise en pause après le passage {n}."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Boucle mise en pause avant son premier passage."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Boucle reprise — prochain passage {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Boucle reprise. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Boucle reprise. Son prochain passage n’a pas pu être lu : {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Boucle : {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Boucle : {goal} · {sentence} · passage {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "son état n’a pas pu être lu : {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Boucle arrêtée après le passage {n}."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Boucle arrêtée avant son premier passage."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Le passage {n} démarre maintenant."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "Le passage suivant démarre dès qu’un passage se termine."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Quand le prochain passage s’exécute"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Juste après chaque passage"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Toutes les"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Utilisez un nombre suivi de s, m ou h — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "Quand goose le décide"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "loops.start.check": {
+    "defaultMessage": "Comment goose le prouve"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "S’exécute dans {dir} après chaque passage. Quand elle réussit après que goose a dit avoir fini, la boucle se termine."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Ce modèle a besoin d’une commande de vérification."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Fermer"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Commande"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Chaque passage est un tour sur {served}. Vos tours dans cette fenêtre passent toujours en premier — un passage attend ou se met en pause pendant que vous discutez."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Chaque passage est un tour dans ce chat. Vos tours dans cette fenêtre passent toujours en premier — un passage attend ou se met en pause pendant que vous discutez."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Intervalle personnalisé"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "perso : un nombre suivi de s, m ou h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "Le premier passage démarre maintenant."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Objectif"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Dites ce que la boucle doit faire."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "la première ligne de votre objectif"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "Que doit faire avancer chaque passage ? p. ex. Faire passer tous les tests de ui/desktop sans modifier les tests"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose exécute votre objectif encore et encore dans ce chat — chaque exécution est un passage. Chaque passage lit son fichier d’état, travaille, prouve ce qu’il a fait et dit ce qui vient ensuite. Vous pouvez réorienter, mettre en pause ou arrêter la boucle à tout moment."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Garder ce Mac éveillé tant que goose est ouvert"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Le maintien en éveil ne fonctionne pas : {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "Il s’agit du réglage Empêcher la mise en veille de l’app — il change maintenant, pour tous les chats."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "perso"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "À quelle fréquence"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Remplacer"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "La boucle actuelle se termine après le passage {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "La boucle actuelle se termine avant son premier passage."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "La boucle actuelle n’a pas pu être lue — en démarrer une nouvelle la remplace."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "La garder"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Remplacer la boucle ?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Réinitialiser les étapes"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Réessayer"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Enregistrer"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "Après chaque passage, goose indique quand revenir et pourquoi — vous verrez sa raison."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Votre Mac peut se mettre en veille ; les passages attendent qu’il se réveille."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Une donnée de cette boucle : {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} n’est pas une donnée que goose connaît"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Démarrer la boucle"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Partir de"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "Fichier d’état"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Nommez le fichier d’état — goose le lit en premier et le réécrit en dernier."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose le lit en premier et le réécrit en dernier, pour que la boucle survive aux longs chats et au compactage. Vous pouvez aussi le modifier."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Gardez le fichier d’état dans {dir}."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "Ce que fait chaque passage"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Aucune étape — chaque passage travaille à partir de votre seul objectif. Écrivez des étapes ici si vous en voulez."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "Ce que goose lit à chaque passage"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "Les parties en surbrillance sont des données de cette boucle, remplies à nouveau à chaque passage — modifiez la vérification ou le fichier d’état et les étapes suivent."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "après {field} passages"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Arrêter après ce nombre de passages"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Laissez vide pour continuer jusqu’à ce que l’objectif soit atteint ou que vous l’arrêtiez."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Utilisez un nombre entier de passages, 1 ou plus."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Arrêter après nécessite au moins un passage — laissez vide pour continuer jusqu’à ce que l’objectif soit atteint ou que vous l’arrêtiez."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "la vérification réussit après que goose a signalé avoir fini"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose signale que l’objectif est atteint"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Arrêter quand"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "vous l’arrêtez"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Chaque passage peut charger {node} et arrêter {way}."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Les boucles exécutent des tours de chat. Ce chat construit avec le swarm, donc chaque passage lancerait un build complet. Utilisez Agent Work pour les builds récurrents."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Vierge"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Votre objectif, vos étapes."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Boucle de qualité logicielle"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Découvrir ce qui est cassé, choisir la chose qui compte le plus, la corriger, le prouver avec une vérification. Recommencer."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Jusqu’à ce qu’une vérification réussisse"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Continuer à travailler jusqu’à ce qu’une commande que vous indiquez réussisse — des tests, un build, un lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Surveiller et agir"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Regarder quelque chose selon un horaire et agir quand cela change — un build, un déploiement, un dossier."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Les modèles n’ont pas pu être lus : {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Lecture des modèles…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Mettre ce chat en boucle"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Modifier la boucle"
   },
   "loops.status.checking": {
     "defaultMessage": "Vérification"

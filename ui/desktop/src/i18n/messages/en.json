@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose decides when"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Run this chat's goal again and again — each run is a tick"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Tick {n} is finishing in the background — you can send when it ends"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Tick {n} is running — what you send waits for it. Use Send now to steer it."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "The loop answered"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Stop tick {n} — the loop pauses"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Loops run chat turns. This chat builds with the swarm — every tick would start a full build. Use Agent Work for recurring builds."
+  },
   "loops.control.edit": {
     "defaultMessage": "Edit"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "Loop waiting for you"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "Queued · Send now steers tick {n}"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Send now — this steers tick {n}"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Close the loop panel"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Loop and changes"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "The loop runner answered with neither a loop nor a refusal."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "No loop in this chat. Use {command} or the Loop button."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Loop paused after tick {n}."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Loop paused before its first tick."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Loop resumed — next tick {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Loop resumed. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Loop resumed. Its next tick could not be read: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Loop: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Loop: {goal} · {sentence} · tick {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "its status could not be read: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Loop stopped after tick {n}."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Loop stopped before its first tick."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Tick {n} starts now."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "The next tick starts as soon as one ends."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "When the next tick runs"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Right after each tick"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Every"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Use a number and s, m or h — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "When goose decides"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "loops.start.check": {
+    "defaultMessage": "How goose proves it"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Runs in {dir} after every tick. When it succeeds after goose says it's done, the loop ends."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "This template needs a command to check."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Close"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Command"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Each tick is one turn on {served}. Your turns in this window always go first — a tick waits or pauses while you chat."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Each tick is one turn in this chat. Your turns in this window always go first — a tick waits or pauses while you chat."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Custom interval"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "custom: a number and s, m or h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "The first tick runs now."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Goal"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Say what the loop should do."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "the first line of your goal"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "What should every tick move forward? e.g. Make every test in ui/desktop pass without changing the tests"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose runs your goal again and again in this chat — each run is a tick. Every tick reads its state file, works, proves what it did, and says what comes next. You can steer, pause or stop it any time."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Keep this Mac awake while goose is open"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Keep awake is not working: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "This is the app's Prevent Sleep setting — it changes now, for every chat."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "custom"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "How often"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Replace"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "The current loop ends after tick {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "The current loop ends before its first tick."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "The current loop could not be read — starting a new one replaces it."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Keep it"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Replace the loop?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Reset steps"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Try again"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Save"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "After each tick goose names when to come back and why — you'll see its reason."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Your Mac may sleep; ticks wait until it wakes."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "A fact of this loop: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} is not a fact goose knows"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Start loop"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Start from"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "State file"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Name the state file — goose reads it first and rewrites it last."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose reads this first and rewrites it last, so the loop survives long chats and compaction. You can edit it too."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Keep the state file inside {dir}."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "What each tick does"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "No steps — every tick works from your goal alone. Write steps here if you want some."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "What goose reads each tick"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "The highlighted parts are facts of this loop, filled in again at every tick — change the check or the state file and the steps follow."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "after {field} ticks"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Stop after this many ticks"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Leave empty to run until the goal is met or you stop it."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Use a whole number of ticks, 1 or more."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Stop after needs at least one tick — leave it empty to run until the goal is met or you stop it."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "the check succeeds after goose reports done"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose reports the goal is done"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Stop when"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "you stop it"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Each tick may load {node} and stop {way}."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Loops run chat turns. This chat builds with the swarm, so every tick would start a full build. Use Agent Work for recurring builds."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Blank"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Your goal, your steps."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Software quality loop"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Discover what's broken, pick the one thing that matters most, fix it, prove it with a check. Repeat."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Until a check passes"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Keep working until a command you name succeeds — tests, a build, a lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Watch and act"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Look at something on a schedule and act when it changes — a build, a deploy, a folder."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "The templates could not be read: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Reading the templates…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Loop this chat"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Edit loop"
   },
   "loops.status.checking": {
     "defaultMessage": "Checking"

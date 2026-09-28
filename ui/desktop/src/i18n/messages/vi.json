@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose tự quyết định khi nào"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Vòng lặp"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Chạy lại mục tiêu của cuộc trò chuyện này nhiều lần — mỗi lần chạy là một lượt"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Lượt {n} đang hoàn tất trong nền — bạn có thể gửi khi lượt này kết thúc"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Lượt {n} đang chạy — tin bạn gửi sẽ chờ lượt này. Dùng Gửi ngay để điều hướng nó."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Bỏ qua"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "Vòng lặp đã trả lời"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Dừng lượt {n} — vòng lặp tạm dừng"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Vòng lặp chạy các lượt trò chuyện. Cuộc trò chuyện này dựng bằng swarm — mỗi lượt sẽ bắt đầu một bản dựng đầy đủ. Dùng Agent Work cho các bản dựng định kỳ."
+  },
   "loops.control.edit": {
     "defaultMessage": "Chỉnh sửa"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "Vòng lặp đang chờ bạn"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "Đã xếp hàng · Gửi ngay sẽ điều hướng lượt {n}"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Gửi ngay — tin này điều hướng lượt {n}"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Đóng bảng vòng lặp"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Vòng lặp và thay đổi"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "Trình chạy vòng lặp đã trả lời, nhưng không phải bằng vòng lặp cũng không phải lời từ chối."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "Không có vòng lặp nào trong cuộc trò chuyện này. Dùng {command} hoặc nút Vòng lặp."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Vòng lặp đã tạm dừng sau lượt {n}."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Vòng lặp đã tạm dừng trước lượt đầu tiên."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Vòng lặp đã tiếp tục — lượt tiếp theo {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Vòng lặp đã tiếp tục. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Vòng lặp đã tiếp tục. Không đọc được lượt tiếp theo: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Vòng lặp: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Vòng lặp: {goal} · {sentence} · lượt {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "không đọc được trạng thái: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Vòng lặp đã dừng sau lượt {n}."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Vòng lặp đã dừng trước lượt đầu tiên."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Lượt {n} bắt đầu ngay bây giờ."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "Lượt tiếp theo bắt đầu ngay khi một lượt kết thúc."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Khi nào chạy lượt tiếp theo"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Ngay sau mỗi lượt"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Mỗi"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Dùng một số và s, m hoặc h — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "Khi goose quyết định"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "loops.start.check": {
+    "defaultMessage": "goose chứng minh bằng cách nào"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Chạy trong {dir} sau mỗi lượt. Khi lệnh này thành công sau khi goose báo đã xong, vòng lặp kết thúc."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Mẫu này cần một lệnh để kiểm tra."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Đóng"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Lệnh"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Mỗi lượt lặp là một lượt trả lời trên {served}. Lượt của bạn trong cửa sổ này luôn được ưu tiên — lượt lặp sẽ chờ hoặc tạm dừng khi bạn trò chuyện."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Mỗi lượt lặp là một lượt trả lời trong cuộc trò chuyện này. Lượt của bạn trong cửa sổ này luôn được ưu tiên — lượt lặp sẽ chờ hoặc tạm dừng khi bạn trò chuyện."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Khoảng thời gian tùy chỉnh"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "tùy chỉnh: một số và s, m hoặc h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "Lượt đầu tiên chạy ngay bây giờ."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Mục tiêu"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Hãy cho biết vòng lặp cần làm gì."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "dòng đầu tiên của mục tiêu"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "Mỗi lượt nên đẩy việc gì tiến lên? vd. Làm cho mọi bài kiểm thử trong ui/desktop đều đạt mà không sửa các bài kiểm thử"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose chạy mục tiêu của bạn nhiều lần trong cuộc trò chuyện này — mỗi lần chạy là một lượt. Mỗi lượt đọc tệp trạng thái, làm việc, chứng minh những gì đã làm và cho biết bước tiếp theo. Bạn có thể điều hướng, tạm dừng hoặc dừng nó bất cứ lúc nào."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Giữ máy Mac này thức khi goose đang mở"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Giữ máy thức không hoạt động: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "Đây là cài đặt Ngăn chế độ ngủ của ứng dụng — thay đổi ngay, cho mọi cuộc trò chuyện."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "tùy chỉnh"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "Tần suất"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Thay thế"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "Vòng lặp hiện tại kết thúc sau lượt {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "Vòng lặp hiện tại kết thúc trước lượt đầu tiên."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "Không đọc được vòng lặp hiện tại — bắt đầu vòng lặp mới sẽ thay thế nó."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Giữ lại"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Thay thế vòng lặp?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Đặt lại các bước"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Lưu"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "Sau mỗi lượt, goose cho biết khi nào quay lại và vì sao — bạn sẽ thấy lý do."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Máy Mac của bạn có thể ngủ; các lượt sẽ chờ đến khi máy thức dậy."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Một dữ kiện của vòng lặp này: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} không phải là dữ kiện goose biết"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Bắt đầu vòng lặp"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Bắt đầu từ"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "Tệp trạng thái"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Đặt tên tệp trạng thái — goose đọc tệp này đầu tiên và ghi lại sau cùng."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose đọc tệp này đầu tiên và ghi lại sau cùng, để vòng lặp tồn tại qua các cuộc trò chuyện dài và việc nén. Bạn cũng có thể chỉnh sửa nó."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Giữ tệp trạng thái bên trong {dir}."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "Mỗi lượt làm gì"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Không có bước nào — mỗi lượt chỉ làm việc từ mục tiêu của bạn. Viết các bước ở đây nếu bạn muốn."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "goose đọc gì ở mỗi lượt"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "Các phần được đánh dấu là dữ kiện của vòng lặp này, được điền lại ở mỗi lượt — thay đổi bước kiểm tra hoặc tệp trạng thái thì các bước sẽ thay đổi theo."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "sau {field} lượt"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Dừng sau số lượt này"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Để trống để chạy đến khi đạt mục tiêu hoặc bạn dừng nó."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Dùng số lượt là số nguyên, từ 1 trở lên."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Giới hạn lượt cần ít nhất một lượt — để trống để chạy đến khi đạt mục tiêu hoặc bạn dừng nó."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "bước kiểm tra thành công sau khi goose báo đã xong"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose báo mục tiêu đã xong"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Dừng khi"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "bạn dừng nó"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Mỗi lượt có thể tải {node} và dừng {way}."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Vòng lặp chạy các lượt trò chuyện. Cuộc trò chuyện này dựng bằng swarm, nên mỗi lượt sẽ bắt đầu một bản dựng đầy đủ. Dùng Agent Work cho các bản dựng định kỳ."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Trống"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Mục tiêu của bạn, các bước của bạn."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Vòng lặp chất lượng phần mềm"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Tìm ra thứ bị hỏng, chọn một việc quan trọng nhất, sửa nó, chứng minh bằng một bước kiểm tra. Lặp lại."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Đến khi bước kiểm tra đạt"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Tiếp tục làm việc đến khi một lệnh bạn chỉ định thành công — kiểm thử, bản dựng, lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Theo dõi và hành động"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Xem một thứ theo lịch và hành động khi nó thay đổi — một bản dựng, một lần triển khai, một thư mục."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Không đọc được các mẫu: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Đang đọc các mẫu…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Lặp cuộc trò chuyện này"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Chỉnh sửa vòng lặp"
   },
   "loops.status.checking": {
     "defaultMessage": "Đang kiểm tra"

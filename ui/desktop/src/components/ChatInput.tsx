@@ -1,6 +1,6 @@
 import { AppEvents } from '../constants/events';
 import React, { useRef, useState, useEffect, useMemo, useCallback, useContext } from 'react';
-import { ArrowUp, Bug, ScrollText, X } from 'lucide-react';
+import { ArrowUp, Bug, Repeat, ScrollText, X } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
 import type { View } from '../utils/navigationUtils';
@@ -1682,6 +1682,7 @@ export default function ChatInput({
           data-refused={loopReply.refused}
           className="flex items-start gap-2 border-b border-lz-border px-3 py-2"
         >
+          <Repeat aria-hidden className="mt-0.5 size-4 shrink-0 text-lz-accent" />
           <p
             className={cx(
               'min-w-0 flex-1 break-words',
