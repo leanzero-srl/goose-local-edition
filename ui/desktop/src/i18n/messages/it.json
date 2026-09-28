@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Il modello salvato del motore MLX serve {served}; questo nodo vuole {wanted}. Scegli il modello in Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Rispondi su {next} per ora"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Rimanda il tuo messaggio a {next} solo per questo turno. I nodi di questa chat restano come sono e il messaggio successivo torna a {lead}."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Tutti gli slot di questo nodo sono occupati."
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} è su {node} ({rank}): {primary} non può funzionare: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} è su {node} ({rank}) per questo turno, come hai chiesto. Il messaggio successivo torna a {primary}."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Riprova {primary}"

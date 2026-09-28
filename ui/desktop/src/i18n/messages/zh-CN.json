@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 引擎保存的模型提供 {served}；此节点需要 {wanted}。请在 Providers 中选择模型。"
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "暂时在 {next} 上回答"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "仅在这一轮把你的消息重新发送到 {next}。此聊天的节点保持不变，下一条消息会再次发往 {lead}。"
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "此节点的所有槽位都已占用。"
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} 在 {node}（{rank}）上：{primary} 无法运行：{reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "按你的要求，本轮 {role} 在 {node}（{rank}）上。下一条消息会再次发往 {primary}。"
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "重试 {primary}"

@@ -853,6 +853,10 @@ pub struct NodeServedTurnDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loaded_ms: Option<u64>,
     pub at_ms: u64,
+    /// The person asked this one turn to answer past the chain's 1st ("Answer on {next} for now",
+    /// Q-381): the 1st was passed over by that ask, and the next turn goes back to it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asked_for_this_turn: bool,
 }
 
 /// The last served-turn record of a session (this process's, else the one persisted in the

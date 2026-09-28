@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Mô hình đã lưu của công cụ MLX phục vụ {served}; nút này cần {wanted}. Hãy chọn mô hình trong Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Tạm thời trả lời trên {next}"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Gửi lại tin nhắn của bạn tới {next} chỉ cho lượt này. Các nút của cuộc trò chuyện này giữ nguyên, và tin nhắn tiếp theo lại đi tới {lead}."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Mọi vị trí trên nút này đều đang bận."
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} đang chạy trên {node} ({rank}): {primary} không thể chạy: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} đang chạy trên {node} ({rank}) cho lượt này, như bạn yêu cầu. Tin nhắn tiếp theo lại đi tới {primary}."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Thử lại {primary}"

@@ -1851,6 +1851,7 @@ async fn the_served_record_is_kept_in_memory_and_in_the_session() {
         tried: Vec::new(),
         loaded_ms: None,
         at_ms: 1,
+        asked_for_this_turn: false,
     };
     served::record(&sessions, &session.id, turn.clone())
         .await

@@ -2849,6 +2849,16 @@ impl GooseAcpAgent {
         let session_id = args.session_id.0.to_string();
         let sid = sid_short(&session_id);
         let t_start = std::time::Instant::now();
+        // Q-381: "Answer on {next} for now" — this prompt's reply, and no other, answers on the
+        // node it names. A mark that names none is refused by name before anything is taken,
+        // never read as no mark.
+        let answer_on = match crate::nodes::answer_on::answer_on_mark(args.meta.as_ref()) {
+            None => None,
+            Some(Ok(node)) => Some(node),
+            Some(Err(error)) => {
+                return Err(agent_client_protocol::Error::invalid_params().data(error.to_string()))
+            }
+        };
         // Session loops (§5.2 step 1): a loop's tick or the user's prompt, decided first.
         let offer = self
             .accept_tick_offer(&session_id, args.meta.as_ref())
@@ -2860,6 +2870,8 @@ impl GooseAcpAgent {
         self.start_active_run(&session_id, run_id.clone(), cancel_token.clone())
             .await?;
         let mut run = self.run_registration(&session_id, &run_id);
+        // Held for the whole reply (dropped when on_prompt returns, however the reply ends).
+        let _answer_on = answer_on.map(|node| crate::nodes::answer_on::ask(&session_id, node));
         // Q-132: while a user's turn runs, the end-of-turn reviewer of any chat waits and one in
         // flight is dropped; a loop's due tick waits and a running one yields. Taken only once the
         // chat is known not busy, so a prompt refused as busy never yields the tick it collided

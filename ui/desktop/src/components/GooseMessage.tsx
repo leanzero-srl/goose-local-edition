@@ -15,6 +15,7 @@ import {
   getAnyToolConfirmationData,
   ToolConfirmationData,
   NotificationEvent,
+  type AppendOptions,
   type Message,
 } from '../types/message';
 import ToolCallConfirmation from './ToolCallConfirmation';
@@ -23,7 +24,7 @@ import MessageCopyLink from './MessageCopyLink';
 import { cn } from '../utils';
 import { identifyConsecutiveToolCalls, shouldHideTimestamp } from '../utils/toolCallChaining';
 import NoNodeNotice from './noNodeNotice/NoNodeNotice';
-import { splitNoNodeRefusal } from './noNodeNotice/parseNoNodeError';
+import { isOwnNodesChatRefusal, splitNoNodeRefusal } from './noNodeNotice/parseNoNodeError';
 import ToolBoundsNotice from './toolBoundsNotice/ToolBoundsNotice';
 import { parseToolBoundsError } from './toolBoundsNotice/toolSchemaBounds';
 import LinkDropNotice from './linkDropNotice/LinkDropNotice';
@@ -42,7 +43,7 @@ interface GooseMessageProps {
   messages: Message[];
   metadata?: string[];
   toolCallNotifications: Map<string, NotificationEvent[]>;
-  append: (value: string) => void;
+  append: (value: string, options?: AppendOptions) => void;
   isStreaming: boolean;
   submitElicitationResponse?: (
     elicitationId: string,
@@ -193,6 +194,15 @@ export default function GooseMessage({
   }, [failure, linkDrop, noNode, networkCut, providerError, messages, messageIndex]);
   const live = messageIndex === messages.length - 1;
   const createdMs = message.created * 1000;
+  // Q-381: the refusal of a chat on its own nodes whose lead could not run offers its next node for
+  // this one turn; the notice reads the set and the rows to name it.
+  const answerOn =
+    noNode && isOwnNodesChatRefusal(fullText)
+      ? {
+          sessionId,
+          onAnswer: (text: string, node: string) => append(text, { answerOn: node }),
+        }
+      : null;
 
   if (failure) {
     return (
@@ -206,6 +216,7 @@ export default function GooseMessage({
               onRetry={append}
               createdMs={createdMs}
               splitRecord={splitRecord}
+              answerOn={answerOn}
             />
           ) : (
             <ToolBoundsNotice
@@ -241,6 +252,7 @@ export default function GooseMessage({
       createdMs={createdMs}
       hasAnswer={answered}
       splitRecord={splitRecord}
+      answerOn={answerOn}
     />
   );
   const splitCutNotice = networkCut && splitRecord && (

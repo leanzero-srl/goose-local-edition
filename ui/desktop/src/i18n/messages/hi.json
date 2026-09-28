@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX इंजन का सहेजा मॉडल {served} देता है; यह नोड {wanted} चाहता है। Providers में मॉडल चुनें।"
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "अभी के लिए {next} पर जवाब दें"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "आपका संदेश केवल इस बारी के लिए {next} पर फिर से भेजता है। इस चैट के नोड जैसे हैं वैसे ही रहते हैं, और अगला संदेश फिर से {lead} पर जाता है।"
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "इस नोड के सभी स्लॉट व्यस्त हैं।"
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} {node} ({rank}) पर है: {primary} नहीं चल सकता: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} इस बारी के लिए {node} ({rank}) पर है, जैसा आपने कहा। अगला संदेश फिर से {primary} पर जाता है।"
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} फिर से आज़माएँ"

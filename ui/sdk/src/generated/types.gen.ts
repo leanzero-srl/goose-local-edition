@@ -6547,6 +6547,11 @@ export type NodeServedTurnDto = {
      */
     loadedMs?: number | null;
     atMs: number;
+    /**
+     * The person asked this one turn to answer past the chain's 1st ("Answer on {next} for now",
+     * Q-381): the 1st was passed over by that ask, and the next turn goes back to it.
+     */
+    askedForThisTurn?: boolean;
 };
 
 /**

@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Le modèle enregistré du moteur MLX sert {served} ; ce nœud attend {wanted}. Choisissez le modèle dans Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Répondre sur {next} pour l’instant"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Renvoie ton message à {next} pour ce tour seulement. Les nœuds de cette discussion restent tels quels, et le message suivant repart vers {lead}."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Toutes les places de ce nœud sont occupées."
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} est sur {node} ({rank}) : {primary} ne peut pas tourner : {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} est sur {node} ({rank}) pour ce tour, comme demandé. Le message suivant repart vers {primary}."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Réessayer {primary}"

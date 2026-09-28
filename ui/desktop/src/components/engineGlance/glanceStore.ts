@@ -216,6 +216,19 @@ export function useGlanceNodes(): GlanceNodesState {
   return useSyncExternalStore(subscribeNodes, () => nodesState);
 }
 
+const UNREAD: GlanceNodesState = { kind: 'unread' };
+const noSubscription = () => () => undefined;
+
+/**
+ * The nodes at a glance only while `armed` — for a surface rendered many times (a chat message)
+ * that needs the nodes only in one state: unarmed it neither subscribes nor reads, and says unread.
+ */
+export function useGlanceNodesWhen(armed: boolean): GlanceNodesState {
+  return useSyncExternalStore(armed ? subscribeNodes : noSubscription, () =>
+    armed ? nodesState : UNREAD
+  );
+}
+
 /** The swap the loader is making (utils/nodeSwap.ts), from this window's nodes read; null = none. */
 export function swapOfGlanceNodes(
   state: GlanceNodesState,

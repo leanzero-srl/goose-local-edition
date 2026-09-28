@@ -20,6 +20,24 @@ export function needsYouAnswersMeta(itemIds: readonly string[]): AcpPromptMeta {
   return { goose: { needsYouAnswers: [...itemIds] } };
 }
 
+/**
+ * Q-381: "Answer on {next} for now" — THIS prompt's reply answers on `node`, a node of the chat's
+ * own set after its lead, without changing the set; the next prompt carries no mark and goes back
+ * to the lead. goosed refuses the turn by name when the route cannot honour it.
+ */
+export function answerOnMeta(node: string): AcpPromptMeta {
+  return { goose: { answerOn: { node } } };
+}
+
+/** One prompt `_meta` carrying every `goose` mark given; undefined when none is. */
+export function promptMeta(...metas: (AcpPromptMeta | undefined)[]): AcpPromptMeta | undefined {
+  const given = metas.filter((m): m is AcpPromptMeta => m != null);
+  if (given.length === 0) return undefined;
+  return {
+    goose: Object.assign({}, ...given.map((m) => m.goose as Record<string, unknown>)),
+  };
+}
+
 export async function acpPromptSession(
   sessionId: string,
   message: Message,

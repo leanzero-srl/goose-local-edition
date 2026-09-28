@@ -21,7 +21,13 @@ import {
   acpChatSessionStore,
   useAcpChatSessionSnapshot,
 } from '../acp/chatSessionStore';
-import { acpSteerSession, needsYouAnswersMeta, type AcpPromptMeta } from '../acp/prompt';
+import {
+  acpSteerSession,
+  answerOnMeta,
+  needsYouAnswersMeta,
+  promptMeta,
+  type AcpPromptMeta,
+} from '../acp/prompt';
 
 const initialTokenState: TokenState = {
   inputTokens: 0,
@@ -151,7 +157,7 @@ export function useChatSession({
 
   const handleSubmit = useCallback(
     async (input: UserInput) => {
-      const { msg: userMessage, images, needsYouAnswers } = input;
+      const { msg: userMessage, images, needsYouAnswers, answerOn } = input;
       const currentSnapshot = getCurrentSnapshot();
 
       if (
@@ -195,7 +201,10 @@ export function useChatSession({
       await submitToAcpSession(
         sessionId,
         newMessage,
-        needsYouAnswers?.length ? needsYouAnswersMeta(needsYouAnswers) : undefined
+        promptMeta(
+          needsYouAnswers?.length ? needsYouAnswersMeta(needsYouAnswers) : undefined,
+          answerOn ? answerOnMeta(answerOn) : undefined
+        )
       );
     },
     [getCurrentSnapshot, sessionId, submitToAcpSession]

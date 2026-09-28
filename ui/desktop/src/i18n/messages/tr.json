@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX motorunun kayıtlı modeli {served} sunuyor; bu düğüm {wanted} istiyor. Modeli Providers’ta seçin."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Şimdilik {next} üzerinde yanıtla"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Mesajınızı yalnızca bu tur için {next} üzerine yeniden gönderir. Bu sohbetin düğümleri olduğu gibi kalır ve sonraki mesaj yeniden {lead} üzerine gider."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Bu düğümdeki tüm yuvalar dolu."
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role}, {node} üzerinde ({rank}): {primary} çalışamıyor: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role}, istediğiniz gibi bu tur için {node} üzerinde ({rank}). Sonraki mesaj yeniden {primary} üzerine gider."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} yeniden dene"

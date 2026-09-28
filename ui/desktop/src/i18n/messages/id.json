@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Model tersimpan mesin MLX menyajikan {served}; node ini menginginkan {wanted}. Pilih model di Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Jawab di {next} untuk saat ini"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Mengirim ulang pesan Anda ke {next} hanya untuk giliran ini. Node chat ini tetap seperti semula, dan pesan berikutnya kembali ke {lead}."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Semua slot di node ini sedang sibuk."
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} ada di {node} ({rank}): {primary} tidak dapat berjalan: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} ada di {node} ({rank}) untuk giliran ini, sesuai permintaan Anda. Pesan berikutnya kembali ke {primary}."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Coba lagi {primary}"

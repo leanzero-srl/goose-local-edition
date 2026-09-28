@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 엔진에 저장된 모델은 {served}를 제공합니다. 이 노드는 {wanted}를 원합니다. Providers에서 모델을 선택하세요."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "이번에는 {next}에서 응답"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "이번 차례에만 메시지를 {next}(으)로 다시 보냅니다. 이 채팅의 노드는 그대로이며, 다음 메시지는 다시 {lead}(으)로 갑니다."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "이 노드의 모든 슬롯이 사용 중입니다."
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role}은(는) {node}({rank})에서 실행 중: {primary}을(를) 실행할 수 없음: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "요청하신 대로 이번 차례의 {role}은(는) {node}({rank})에서 실행 중입니다. 다음 메시지는 다시 {primary}(으)로 갑니다."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} 다시 시도"

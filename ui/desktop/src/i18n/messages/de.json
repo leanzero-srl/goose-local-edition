@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Das gespeicherte Modell der MLX-Engine stellt {served} bereit; dieser Knoten erwartet {wanted}. Wähle das Modell unter Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Vorerst auf {next} antworten"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Sendet deine Nachricht nur für diesen Zug erneut an {next}. Die Nodes dieses Chats bleiben, wie sie sind, und die nächste Nachricht geht wieder an {lead}."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Alle Plätze auf diesem Knoten sind belegt."
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} läuft auf {node} ({rank}): {primary} kann nicht laufen: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} läuft für diesen Zug auf {node} ({rank}), wie gewünscht. Die nächste Nachricht geht wieder an {primary}."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} erneut versuchen"

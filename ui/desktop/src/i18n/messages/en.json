@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "The MLX engine’s saved model serves {served}; this node wants {wanted}. Pick the model in Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Answer on {next} for now"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Sends your message again to {next} for this turn only. This chat’s nodes stay as they are, and the next message goes to {lead} again."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Every slot on this node is busy."
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} is on {node} ({rank}): {primary} can't run: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} is on {node} ({rank}) for this turn, as you asked. The next message goes to {primary} again."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Retry {primary}"

@@ -6284,6 +6284,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX エンジンの保存済みモデルは {served} を提供しています。このノードは {wanted} を必要とします。Providers でモデルを選んでください。"
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "今回は {next} で応答"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "このターンだけ、メッセージを {next} に送り直します。このチャットのノードはそのままで、次のメッセージは再び {lead} に送られます。"
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "このノードのスロットはすべて使用中です。"
   },
@@ -6508,6 +6514,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} は {node}（{rank}）で動作中: {primary} は実行できません: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "ご指定どおり、このターンの {role} は {node}（{rank}）で動作中です。次のメッセージは再び {primary} に送られます。"
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} を再試行"

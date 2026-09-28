@@ -15871,6 +15871,10 @@
         "atMs": {
           "type": "integer",
           "minimum": 0
+        },
+        "askedForThisTurn": {
+          "type": "boolean",
+          "description": "The person asked this one turn to answer past the chain's 1st (\"Answer on {next} for now\",\nQ-381): the 1st was passed over by that ask, and the next turn goes back to it."
         }
       },
       "required": [
