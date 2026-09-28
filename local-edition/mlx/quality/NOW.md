@@ -40,8 +40,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-441/442/443 (Q-428 follow-ups: honest Retry, waiting behind a queued switch, a way out of Wait) — based on
-  merge-074.
+- none running.
 
 ## Batch 4 → 3.0.74 — merge-074 (/tmp/merge-074, d750166f1) COMPLETE, GATE RUNNING
 - Holds:
@@ -50,15 +49,13 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
   - Q-447 (float32 KV; BOTH Macs), Q-449, Q-450;
   - Q-428/430/432 (b/o demo; break pass fixed 4).
   No ledger row lost; Q-444..446 unused.
-- g074 (full gate): everything green EXCEPT
-  - tsc: fixed b068352cf;
-  - clippy=101: a merge SEAM. Q-434's served-record test lacked Q-428's new `serving_other` field, which also
-    silently skipped the goose lib tests. Fixed da6f4628d;
-  - goose-sidecar `status_reports_a_stray_listener_on_the_configured_port` (engine.rs:3403, port still reported
-    after drop; Q-423 touched engine.rs).
-- g074b (scratchpad/gate074b.sh → /tmp/g074b.out, own session, starts when g074's wincheck ends): fmt, goose lib,
-  that sidecar test ×5 alone plus the full sidecar suite, clippy, tsc, wincheck. If the stray test is red alone
-  → a ledger row + a fix before landing.
+- g074 full gate + g074b re-gate: ALL GREEN at da6f4628d.
+  - Fixed on the branch: tsc b068352cf, and the seam da6f4628d (which is why clippy failed and lib tests were
+    skipped).
+  - The sidecar stray-listener test failed once under load and passed 5/5 alone plus the full suite → Q-452,
+    scheduled on a second red.
+- Q-441/442/443 MERGED (1bedb7b8f). Delta gate g074c → /tmp/g074c.out (own session): UI full, lib, acp_*,
+  server, cli, clippy, dev gates, schema, wincheck.
 - Green → ff main, push → release 3.0.74 (/tmp/rel074.sh) → install BOTH Macs at an #3u turn boundary →
   split-start smoke.
 - Then live-prove:
@@ -76,6 +73,6 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-452. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-453. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
