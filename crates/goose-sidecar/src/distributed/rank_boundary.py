@@ -265,7 +265,9 @@ def keep_entries(cache_order, *kept):
 # (12:32:50, 44,053 tokens: the 101,576-char system prompt + 81 tools + the summary) read 0 from
 # the cache and prefilled for 150 s, although every chat request before it carried the same system
 # prompt and tools byte for byte (the Q-342 captures: req6, req8 and the post-compaction request
-# render one 40,399-token head under the 27B's own template). mlx_lm 0.31.3 snapshots a segment
+# render one 40,361-token head under the 27B's own template, thinking off as the split renders a
+# request carrying tools — the same render gives exactly the engine's 44,053 and 139,503). mlx_lm
+# 0.31.3 snapshots a segment
 # only past the tokens a request read from the cache (`_generate` pops the consumed segments), and
 # it cuts a system segment only on a request that ends on a user message — so the head lived in
 # ONE entry, the session's first request's (10:54:29–10:57:41: system 2 sequences, 1.48 GB = the

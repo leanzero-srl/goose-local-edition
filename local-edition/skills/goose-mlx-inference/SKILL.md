@@ -260,7 +260,7 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 - THE CHAT'S HEAD IS A KEPT ENTRY OF ITS OWN (Q-347, 2026-09-28, fixed 4b16c7ba3, tag
   `mlxLmServerStableHead`, spec `keep_stable_head` — both Macs need the new goose). WHY: mlx_lm 0.31.3
   cuts a "system" segment only on a request ending on a user message and snapshots a segment only past
-  what the request read from cache, so the head (system prompt + tools, #3p: 40,399 tokens = 1.40 GB)
+  what the request read from cache, so the head (system prompt + tools, #3p: 40,361 tokens = 1.40 GB)
   had ONE entry, the session's first request's, and its type-count eviction takes the oldest "system"
   entry once helpers' system segments (fact checker, reviewer, labeler — three distinct prompts)
   outnumber the rest: #3p 10:59:33, five minutes into the chat. After that the head only lived inside
@@ -275,7 +275,9 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   head)/32,768 B (~171k tokens on #3p's plan) still takes the head first. HOW TO MEASURE the head:
   render the captured request with the model's own tokenizer (`AutoTokenizer.from_pretrained(<model
   dir>)`, `apply_chat_template(system + [user ""], tools=…, add_generation_prompt=False)` vs the full
-  prompt → first differing token) — run the script from a dir with no `inspect.py` in it (a scratch
+  prompt → first differing token) UNDER THE SWITCH THE ENGINE RENDERED (`enable_thinking=False` for a
+  tool-carrying request on the split, Q-135 — the template's default writes a reasoning line into the
+  system block: 40,399 vs the true 40,361; check the full render equals the engine's prompt_tokens) — run the script from a dir with no `inspect.py` in it (a scratch
   `inspect.py` shadows the stdlib and transformers dies at import). LIVE: rank log system bytes stay ≥
   the head's through every burst; RANK_ADMISSION `stable_head`; the first post-compaction request's
   first progress ≈ prompt − head. Replays: `a_compacted_chat_reads_its_system_prompt_and_tools_from_

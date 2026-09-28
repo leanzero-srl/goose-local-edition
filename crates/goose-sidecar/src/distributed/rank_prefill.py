@@ -62,8 +62,8 @@ def admits(
     the agent's 3.96 GB stable prefix and its next call read 108,801 tokens cold.
 
     And room for the chat's stable head beside it (`stable_head_bytes`, Q-347): a separate entry
-    (the hybrid's entries are whole snapshots), its own measured bytes — E2E #3p's 40,399-token
-    system prompt + tools, 1,400,766,464 B, 11.8% of that plan's 11,830,886,400 B limit. Replayed
+    (the hybrid's entries are whole snapshots), its own measured bytes — E2E #3p's 40,361-token
+    system prompt + tools, 1,399,521,280 B, 11.8% of that plan's 11,830,886,400 B limit. Replayed
     at #3p's sizes (launch.rs), keeping the head in eviction alone still lost it to the end-of-turn
     bursts once the conversation prefix neared its 4.74 GB; with this room one or two of a burst's
     eight helpers wait for the batch to drain instead."""

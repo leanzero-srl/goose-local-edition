@@ -3687,9 +3687,10 @@ os._exit(0)
 
     /// Q-347 through the REAL mlx_lm 0.31.3 `LRUPromptCache`, at E2E #3p's measured sizes (the 27B
     /// over 2 ranks: 32,768 B of KV per token + 76,972,032 B of state, the 11,830,886,400 B plan of
-    /// #3p's RANK_ADMISSION lines). The chat's stable head is 40,399 tokens — the 27B's own template
+    /// #3p's RANK_ADMISSION lines). The chat's stable head is 40,361 tokens — the 27B's own template
     /// over the Q-342 captures renders one head (system prompt + 81 tools) for req6, req8 and the
-    /// post-compaction request — so its entry holds 1,400,766,464 B (#3p 12:35:27: system 1
+    /// post-compaction request, thinking off as the split renders them (that render gives exactly the
+    /// engine's 44,053 and 139,503) — so its entry holds 1,399,521,280 B (#3p 12:35:27: system 1
     /// sequence, 1.40 GB). The session opens cold at 41,137 tokens (10:54:29), grows by agent steps
     /// each beside its tool label (Q-182's 46-token system segment), and every turn ends in the
     /// helper burst of 12:21:19 (the CANCELLED lines' 2,027 … 10,751 … 7,250 tokens, each a fact
@@ -3720,7 +3721,7 @@ class Layer:
         return False
 
 
-HEAD, FIRST, AFTER = 40399, 41137, 44053
+HEAD, FIRST, AFTER = 40361, 41137, 44053
 TAIL, OUT = 668, 150
 LABEL_SYSTEM, LABEL, LABEL_OUT = 46, 154, 9
 HELPERS = [2027, 1525, 1981, 986, 922, 10751, 6340, 7250]
@@ -3827,7 +3828,7 @@ assert control["after"] == 0, f"E2E 3p read 0 of 44,053; the replay read {contro
 assert replay(keep_head=True, reserve_head=False)["after"] == 0, "the eviction alone"
 assert replay(keep_head=False, reserve_head=True)["after"] == 0, "the room alone"
 assert fixed["after"] == HEAD, fixed["after"]
-assert fixed["head"] == HEAD * 32768 + 76972032 == 1400766464, fixed["head"]
+assert fixed["head"] == HEAD * 32768 + 76972032 == 1399521280, fixed["head"]
 assert fixed["reads"] == control["reads"], "no agent step reads less"
 assert all(read == FIRST + (i - 1) * STEP - TAIL for i, read in enumerate(fixed["reads"]) if i)
 assert fixed["compaction"] == control["compaction"]
