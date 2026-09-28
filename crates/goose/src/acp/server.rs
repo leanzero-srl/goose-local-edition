@@ -2229,12 +2229,12 @@ fn status_message_from_system_notification(
                     output_tokens: stopped.output_tokens,
                 }
             }),
-            compaction: crate::agents::compaction_run::compaction_of(notification),
+            compaction: crate::agents::compaction_run::compaction_of(notification).map(Box::new),
         }),
         SystemNotificationType::ThinkingMessage => Some(StatusMessage::Progress {
             message: notification.msg.clone(),
             forming: None,
-            compaction: crate::agents::compaction_run::compaction_of(notification),
+            compaction: crate::agents::compaction_run::compaction_of(notification).map(Box::new),
         }),
         SystemNotificationType::CreditsExhausted => None,
     }
@@ -4022,7 +4022,7 @@ mod tests {
         else {
             panic!("a progress status with the compaction");
         };
-        assert_eq!(sent, status);
+        assert_eq!(*sent, status);
         assert_eq!(
             message,
             "Compacting the conversation · writing the summary · 1.2k tokens written · part 2 of 3"

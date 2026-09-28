@@ -173,10 +173,10 @@ pub enum NoteOutcome {
 pub enum ChatCompacted {
     Compacted {
         conversation: Conversation,
-        usage: ProviderUsage,
+        usage: Box<ProviderUsage>,
         note: NoteOutcome,
         /// What goose kept word for word; `None` for a caller with no chat inputs.
-        kept: Option<Pillars>,
+        kept: Option<Box<Pillars>>,
     },
     /// The model asked about the note instead of summarizing; the conversation is unchanged.
     Asked { question: String },
@@ -296,7 +296,7 @@ pub async fn compact_messages_with_tail(
             conversation,
             usage,
             ..
-        } => Ok((conversation, usage)),
+        } => Ok((conversation, *usage)),
         ChatCompacted::Asked { question } => Err(anyhow::anyhow!(
             "a compaction without a note was answered with a question about one: {question}"
         )),
@@ -456,7 +456,7 @@ async fn compact_core(
             message,
             usage,
             note,
-        } => (message, usage, note),
+        } => (*message, usage, note),
         Summary::Asked { question } => return Ok(ChatCompacted::Asked { question }),
     };
     let summary_message = match &kept {
@@ -526,9 +526,9 @@ async fn compact_core(
 
     Ok(ChatCompacted::Compacted {
         conversation: Conversation::new_unvalidated(final_messages),
-        usage: summarization_usage,
+        usage: Box::new(summarization_usage),
         note,
-        kept,
+        kept: kept.map(Box::new),
     })
 }
 
@@ -682,7 +682,7 @@ fn filter_tool_responses(messages: &[Message], remove_percent: u32) -> Vec<&Mess
 /// What the summary call produced.
 enum Summary {
     Written {
-        message: Message,
+        message: Box<Message>,
         usage: ProviderUsage,
         note: NoteOutcome,
     },
@@ -741,7 +741,7 @@ async fn do_compact(
         _ => NoteOutcome::NoNote,
     };
     Ok(Summary::Written {
-        message,
+        message: Box::new(message),
         usage,
         note,
     })
@@ -777,7 +777,7 @@ fn thousands(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -954,7 +954,7 @@ async fn summarize_as_the_chat(
     .await
     .map_err(|e| anyhow::anyhow!("Failed to ensure usage tokens: {}", e))?;
     Ok(ChatSummary::Written(Box::new(Summary::Written {
-        message: response,
+        message: Box::new(response),
         usage: provider_usage,
         note,
     })))

@@ -355,7 +355,7 @@ fn common_dir<'a>(mut paths: impl Iterator<Item = &'a str>) -> Option<&'a str> {
     let dir = first.as_bytes()[..shared]
         .iter()
         .rposition(|b| *b == b'/' || *b == b'\\')?;
-    (count > 1 && dir > 0).then(|| &first[..dir])
+    first.get(..dir).filter(|_| count > 1 && dir > 0)
 }
 
 fn failed_line(failed: &Failed) -> String {
@@ -546,7 +546,7 @@ fn note_line(line: &str) -> Option<NoteVerdict> {
 fn without_analysis(text: &str) -> (String, bool) {
     let mut text = text.to_string();
     while let Some(start) = text.find("<analysis>") {
-        let Some(end) = text[start..].find("</analysis>") else {
+        let Some(end) = text.get(start..).and_then(|rest| rest.find("</analysis>")) else {
             return (text, true);
         };
         text.replace_range(start..start + end + "</analysis>".len(), "");
@@ -595,8 +595,8 @@ pub fn stored_summary(model_text: &str, kept: &Pillars) -> String {
 
 /// The model-written part of a stored summary (what goose wrote before its kept block).
 pub fn model_part(stored: &str) -> &str {
-    match stored.find(KEPT_OPEN) {
-        Some(at) => stored[..at].trim_end(),
+    match stored.split_once(KEPT_OPEN) {
+        Some((written, _)) => written.trim_end(),
         None => stored,
     }
 }

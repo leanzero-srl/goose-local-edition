@@ -73,7 +73,7 @@ pub enum StatusMessage {
         /// person's note, or failed — the card at the compaction point. Absent for every other
         /// notice.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        compaction: Option<CompactionStatus>,
+        compaction: Option<Box<CompactionStatus>>,
     },
     #[serde(rename_all = "camelCase")]
     Progress {
@@ -85,7 +85,7 @@ pub enum StatusMessage {
         /// A compaction of this chat under way (Q-357): reading the conversation, then writing the
         /// summary. Absent for every other progress status.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        compaction: Option<CompactionStatus>,
+        compaction: Option<Box<CompactionStatus>>,
     },
 }
 
