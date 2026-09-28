@@ -57,13 +57,18 @@ const builtin = [
   `Summarise this whole session: the package layout, every command, and the test count. Then continue: add a 'search' command filtering by memo text with a test.`,
 ];
 const steps = brief ? brief.turns.map((t) => t.say.replaceAll('{WORK}', work)) : builtin;
-// Every provider call goose makes lands in a rotating llm_request.<n>.jsonl whose LAST line carries usage
-// (input, output, cache_read). Read on every poll so no call of a many-tool turn is missed.
+// Every provider call goose makes is logged under an in-flight name (llm_request.<pid>.<uuid>.jsonl) and renamed
+// into the rotating llm_request.<n>.jsonl when it ends, however it ends (Q-343) — so a numbered file IS a finished
+// call. Its LAST line says how it ended: usage (input, output, cache_read), an error, or neither (`no-usage`: a
+// cancelled stream — the Stop, a cut turn — or an answer that never sent usage). Every finished call is counted,
+// one with no usage line too: the old reader skipped those forever, and #3p turn 8 made tool calls and logged none. Read on every poll, the view away included (ten slots rotate out within one many-tool
+// turn), and once more when the turn ends.
 const LOGS = `${process.env.HOME}/.local/state/goose/logs`;
 const seenCalls = new Map();
-const pollCalls = () => { const got = []; for (const f of readdirSync(LOGS)) { if (!/^llm_request\.\d+\.jsonl$/.test(f)) continue; let st; try { st = statSync(`${LOGS}/${f}`); } catch { continue; } /* goose rotates these between readdir and stat (E2E #4b died on ENOENT) */ const key = `${st.ino}:${st.mtimeMs}`; /* inode, not name: goose renames .0→.1→… on rotation and E2E #3i re-counted every old call under each new name */ if (seenCalls.has(key)) continue; try { const L = readFileSync(`${LOGS}/${f}`, 'utf8').trimEnd().split('\n'); const u = JSON.parse(L.at(-1)).usage; if (!u) continue; seenCalls.set(key, 1); got.push(u); } catch {} } return got; };
+const pollCalls = () => { const got = []; for (const f of readdirSync(LOGS)) { if (!/^llm_request\.\d+\.jsonl$/.test(f)) continue; let st; try { st = statSync(`${LOGS}/${f}`); } catch { continue; } /* goose rotates these between readdir and stat (E2E #4b died on ENOENT) */ const key = `${st.ino}:${st.mtimeMs}`; /* inode, not name: goose renames .0→.1→… on rotation and E2E #3i re-counted every old call under each new name */ if (seenCalls.has(key)) continue; let last; try { last = JSON.parse(readFileSync(`${LOGS}/${f}`, 'utf8').trimEnd().split('\n').at(-1)); } catch (e) { if (e.code === 'ENOENT') continue; last = null; } seenCalls.set(key, 1); got.push({ ...(last?.usage ?? {}), ended: !last ? 'unreadable' : last.usage ? 'usage' : last.error ? 'error' : 'no-usage' }); } return got; };
+const logCalls = (turn) => { for (const u of pollCalls()) appendFileSync(`${dir}/calls.tsv`, [turn, u.input_tokens ?? '', u.output_tokens ?? '', u.cache_read_input_tokens ?? '', u.ended].join('\t') + '\n'); };
 pollCalls();
-writeFileSync(`${dir}/calls.tsv`, 'turn\tinput\toutput\tcache_read\n');
+writeFileSync(`${dir}/calls.tsv`, 'turn\tinput\toutput\tcache_read\tended\n');
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
 const p = await mainPage(b);
 await p.goto(p.url().split('#')[0] + '#/'); await p.waitForTimeout(2500);
@@ -107,6 +112,7 @@ async function runTurn(label, n0, start) {
       // Q-186: with the view away, the turn's end is invisible — #3i waited until a human navigated back.
       // When the engine serves nothing for a few polls in a row, goose is between calls or done: go back
       // to the chat, where the boundary can be read (a person on another page is only moved while idle).
+      logCalls(label);
       const busy = await p.evaluate(async () => (await window.electron.mlxEngineActivity())?.stats?.numRunning ?? 0).catch(() => 1);
       idleAway = busy ? 0 : idleAway + 1;
       if (idleAway >= AWAY_IDLE_POLLS) {
@@ -116,7 +122,7 @@ async function runTurn(label, n0, start) {
       lastChange = Date.now(); await p.waitForTimeout(2000); continue;
     }
     away = false;
-    for (const u of pollCalls()) appendFileSync(`${dir}/calls.tsv`, [label, u.input_tokens, u.output_tokens, u.cache_read_input_tokens ?? ''].join('\t') + '\n');
+    logCalls(label);
     const s = await screen();
     if (!prev || s.len !== prev.len || s.chip !== prev.chip) lastChange = Date.now();
     prev = s;
@@ -127,6 +133,7 @@ async function runTurn(label, n0, start) {
     await p.waitForTimeout(2000);
   }
   const end = Date.now(); const secs = (end - start) / 1000; const s = await screen();
+  logCalls(label);
   const a = await added(n0); const failed = a.text.match(FAIL);
   if (failed && ended === 'done') { ended = 'notice'; await p.screenshot({ path: `${dir}/notice-${label}.png` }); }
   if (ended === 'done') lengths.push(secs);
