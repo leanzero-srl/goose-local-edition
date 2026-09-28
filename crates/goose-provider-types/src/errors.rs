@@ -223,6 +223,25 @@ impl From<reqwest::Error> for ProviderError {
     }
 }
 
+/// A failed read of a streamed response body, as the `io::Error` a line reader carries, its words
+/// the WHOLE cause chain. reqwest names every cut body "error decoding response body" and keeps
+/// why (a reset connection, an early EOF) only in `source()`, and the line codec wrapping the read
+/// drops `source()` — so a connection reset mid-answer reached the chat as a decoding problem
+/// (Q-392: "Stream decode error: error decoding response body" for an engine's RST).
+pub fn body_read_error(error: reqwest::Error) -> std::io::Error {
+    let mut said = error.to_string();
+    let mut cause = std::error::Error::source(&error);
+    while let Some(reason) = cause {
+        let words = reason.to_string();
+        if !said.contains(&words) {
+            said.push_str(": ");
+            said.push_str(&words);
+        }
+        cause = reason.source();
+    }
+    std::io::Error::other(said)
+}
+
 impl From<LogError> for ProviderError {
     fn from(value: LogError) -> Self {
         ProviderError::ExecutionError(value.to_string())
@@ -269,6 +288,7 @@ impl GoogleErrorCode {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]

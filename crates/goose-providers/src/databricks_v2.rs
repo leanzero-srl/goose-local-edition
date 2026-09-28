@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use futures::TryStreamExt;
 use serde::Serialize;
 use serde_json::Value;
-use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::pin;
@@ -284,7 +283,9 @@ impl DatabricksV2Provider {
                 let _ = log.error(e);
             })?;
 
-        let stream = response.bytes_stream().map_err(io::Error::other);
+        let stream = response
+            .bytes_stream()
+            .map_err(crate::errors::body_read_error);
 
         Ok(Box::pin(try_stream! {
             let stream_reader = StreamReader::new(stream);
