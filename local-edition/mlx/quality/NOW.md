@@ -39,8 +39,8 @@ Updated: 2026-09-28 15:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 ## 3.0.71 integration
 - ONE branch /tmp/merge-071 = main + q350/343 + q347 + q367/369 + q359 + q371/372 + q358 search; ONE full gate
   /tmp/g071.out (scratchpad/gate071.sh, own session) after g350 — per-lane gates dropped (each lane gated in its
-  worktree). Green → ff main → build 3.0.71 → install both Macs at a #3r turn boundary. Q-364 (turn chat search
-  on for existing configs) cutting on merge-071; ledger_resolve now base-aware (lost Q-368 twice).
+  worktree). Green → ff main → build 3.0.71 → install both Macs at a #3r turn boundary. Q-364 DONE (branch worktree-agent-a9eba4640e56e14fc,
+  2 commits on merge-071) — merge into merge-071 AFTER g071 ends (never mid-gate), then lib+clippy+wincheck; ledger_resolve now base-aware (lost Q-368 twice).
 
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.
