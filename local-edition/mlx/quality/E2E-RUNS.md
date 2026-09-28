@@ -37,3 +37,21 @@
 - Turn 2 (web): the real leanzerowebsearch tools from the first call, 0 invented names (#3r: 12). Cache warm from call 2 (40,617/41,677).
 - Turn 2 ENDED in "Ran into this error: 503 … not admitting new requests" (Q-397, the memory hold) and turn 3 sat 15 min under the hold: swap 40.3/40 GB used — other sessions' test runs + my two agents' cargo. Stopped: a run under swap measures the machine, not goose. Next E2E only with no cargo on the MacBook.
 - Not reached: needs-you answering (no card raised), compaction (78k/250k).
+
+### E2E #3u — 3.0.73, split tensor (262,144), jira-migration-readiness, session 20260928_47 — COMPLETE, 30/30 turns (23:08 → 02:59)
+- All 30 turns done; no needs-you card was raised (so Q-376 was not exercised); no hang, no 503.
+- Found this run:
+  - goose: Q-447 (split decode 4 vs 11 tok/s: float32 KV promotion; fixed in 3.0.74), Q-450 (claim check missed
+    an unrun re-run), Q-454 (create-doc wrote tables as prose), Q-455 (the compaction countdown read as a work
+    budget).
+  - model: Q-448, Q-451, Q-453 (parked to forge-tuner).
+- Compaction at 02:26 (209,739/262,144):
+  - Q-342 PROVEN (the summary read 209,120 from cache);
+  - Q-347 PROVEN (the next request read the 41,780-token head from cache).
+  - Turn 28's recall after compaction was correct: 24-month cutoff, lead rule incl. svc-edi, FRT a separate wave.
+- Turn 2 web: 0 invented tool names (#3r: 13 of 30).
+- Deliverables: notes, gen-users/identity-plan/plan-projects/audit scripts + 37 tests + refresh.sh, README
+  (followed from clean), readiness docx + PDF (rebuilt with real tables), email, status note.
+- Model slips: 3,728 vs 4,328 (it caught this itself); "no command" (Q-453); "send first thing Monday", which
+  is after Friday's call.
+- Long turns: 20 (1,625 s, 24 tools) and 26 (1,853 s, 37 tools), docx surgery by regex.
