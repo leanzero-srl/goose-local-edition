@@ -924,13 +924,24 @@ mod tests {
             // Q-88: a chat agent condenses pairs into records built from their facts; a swarm
             // worker keeps the model-written summary. Both run here, one after the other, because
             // the cutoff override is process-global.
-            let chat = batch_condensation(false, goose::context_mgmt::TOOL_RECORD_HEADER).await;
-            let swarm = batch_condensation(true, "Summary of tool call #").await;
+            let chat =
+                batch_condensation(false, goose::context_mgmt::TOOL_RECORD_HEADER, false).await;
+            let swarm = batch_condensation(true, "Summary of tool call #", false).await;
+            // Q-294: a chat whose last call was served from the provider's prompt cache keeps its
+            // pairs (condensing them made E2E #3o's next turns re-read the whole conversation); a
+            // swarm worker condenses as its golden benchmark was measured.
+            let cached_chat =
+                batch_condensation(false, goose::context_mgmt::TOOL_RECORD_HEADER, true).await;
+            let cached_swarm = batch_condensation(true, "Summary of tool call #", true).await;
             Config::global().delete("GOOSE_TOOL_CALL_CUTOFF").unwrap();
-            chat.and(swarm)
+            chat.and(swarm).and(cached_chat).and(cached_swarm)
         }
 
-        async fn batch_condensation(swarm_worker: bool, marker: &str) -> Result<()> {
+        async fn batch_condensation(
+            swarm_worker: bool,
+            marker: &str,
+            served_from_cache: bool,
+        ) -> Result<()> {
             let temp_dir = tempfile::tempdir()?;
             let session_manager = Arc::new(SessionManager::new(temp_dir.path().join("data")));
             let agent = Agent::with_config(AgentConfig::new(
@@ -991,6 +1002,19 @@ mod tests {
                 session_manager.add_message(&session.id, &resp_msg).await?;
             }
 
+            if served_from_cache {
+                // The last call read most of its prompt from the provider's cache (E2E #3o's turn 4
+                // read 112,257 of 113,451); sized inside this mock's window so no compaction runs.
+                session_manager
+                    .update(&session.id)
+                    .usage(
+                        Usage::new(Some(1_200), Some(20), None)
+                            .with_cache_tokens(Some(1_100), None),
+                    )
+                    .apply()
+                    .await?;
+            }
+
             // Send a user message to trigger the reply loop
             let user_message = Message::user().with_text("summarize what you found");
 
@@ -1030,6 +1054,24 @@ mod tests {
                         && m.as_concat_text().starts_with(marker)
                 })
                 .collect();
+
+            if served_from_cache && !swarm_worker {
+                assert!(
+                    summaries.is_empty()
+                        && messages.iter().all(|m| m.metadata.agent_visible
+                            || !(m.is_tool_call() || m.is_tool_response())),
+                    "a prompt served from cache keeps every pair as it was sent: {:?}",
+                    messages
+                        .iter()
+                        .map(|m| (
+                            m.metadata.agent_visible,
+                            m.metadata.user_visible,
+                            m.as_concat_text().chars().take(40).collect::<String>()
+                        ))
+                        .collect::<Vec<_>>()
+                );
+                return Ok(());
+            }
 
             assert_eq!(
                 summaries.len(),

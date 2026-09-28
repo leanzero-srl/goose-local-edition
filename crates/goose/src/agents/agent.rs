@@ -2116,6 +2116,13 @@ impl Agent {
             .flat_map(|m| m.content.iter())
             .filter(|c| matches!(c, MessageContent::ToolRequest(_)))
             .count();
+        // Q-294: whether the provider serves this conversation's prompt from its cache, as the
+        // latest call reported it — the swarm's workers keep their golden-measured condensation.
+        let mut cached_prompt = if self.is_swarm_worker() {
+            None
+        } else {
+            crate::context_mgmt::prompt_cache_read(&session.usage)
+        };
 
         let working_dir = session.working_dir.clone();
         let reply_stream_span = tracing::info_span!(
@@ -2304,6 +2311,8 @@ impl Agent {
                 let tool_pair_summarization_task = if tool_pair_summarization_done {
                     None
                 } else {
+                    // A prompt served from cache keeps its pairs for the rest of this reply too.
+                    tool_pair_summarization_done = cached_prompt.is_some();
                     crate::context_mgmt::maybe_summarize_tool_pairs(
                         self.provider().await?,
                         model_config.clone(),
@@ -2312,6 +2321,7 @@ impl Agent {
                         tool_call_cut_off,
                         current_turn_tool_count,
                         !self.is_swarm_worker(),
+                        cached_prompt,
                     )
                 };
 
@@ -2378,6 +2388,9 @@ impl Agent {
 
                             if let Some(ref usage) = usage {
                                 self.update_session_metrics(&session_config.id, session_config.schedule_id.clone(), usage, false).await?;
+                                if !self.is_swarm_worker() {
+                                    cached_prompt = crate::context_mgmt::prompt_cache_read(&usage.usage);
+                                }
                                 yield AgentEvent::Usage(usage.clone());
                             }
 

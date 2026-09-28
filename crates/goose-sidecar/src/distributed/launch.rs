@@ -147,8 +147,18 @@ pub enum RankProgram {
     /// whose wrapper keeps upstream's loop must refuse the rank. `mlxLmServerNewestPrefix` (a 3.0.60
     /// requester) still reads, with `prefill_step_yields` off: that requester's ranks loop upstream's
     /// way alike.
+    ///
+    /// Tagged `mlxLmServerConversationPrefix` since Q-294: `keep_conversation_prefix` makes every
+    /// rank's prompt cache keep the stable prefix a request naming its transient tail cut
+    /// (`rank_boundary.py` `ConversationPrefix`) — not the newest "user" entry, which an
+    /// end-of-turn helper's segment took over on E2E #3o. It changes what is evicted, and each rank
+    /// runs its own cache over the same requests, so a peer whose wrapper keeps the newest "user"
+    /// entry would reuse a different prefix and run a different number of prefill steps.
+    /// `mlxLmServerPrefillYield` (a 3.0.66 requester) still reads, with `keep_conversation_prefix`
+    /// off: that requester's ranks keep the newest "user" entry alike.
     #[serde(
-        rename = "mlxLmServerPrefillYield",
+        rename = "mlxLmServerConversationPrefix",
+        alias = "mlxLmServerPrefillYield",
         alias = "mlxLmServerNewestPrefix",
         alias = "mlxLmServerRowProcessors",
         alias = "mlxLmServerSkeletonGuard",
@@ -218,6 +228,12 @@ pub enum RankProgram {
         /// are handled between prompt slices.
         #[serde(default)]
         prefill_step_yields: bool,
+        /// Every rank's prompt cache keeps the stable prefix the latest request naming its
+        /// transient tail cut (goose's agent requests) while anything else is left to evict, and
+        /// rank 0 admits a request into a live batch only while the batch leaves room for it
+        /// (`rank_boundary.py` `ConversationPrefix`, Q-294). Supersedes `keep_newest_prefix`.
+        #[serde(default)]
+        keep_conversation_prefix: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -426,6 +442,7 @@ pub fn rank_specs(
             row_processors: true,
             keep_newest_prefix: true,
             prefill_step_yields: true,
+            keep_conversation_prefix: true,
             sampling_defaults: Box::default(),
         }
     })
@@ -1084,6 +1101,7 @@ pub(crate) mod tests {
                 row_processors: true,
                 keep_newest_prefix: true,
                 prefill_step_yields: true,
+                keep_conversation_prefix: true,
                 sampling_defaults: _,
             }
         ));
@@ -2940,6 +2958,48 @@ cut, kinds = cut_at_boundary([system, context, think], ["system", "user", "assis
 assert cut == [system, prompt[30:]] and kinds == ["system", "assistant"], "an end already there stays"
 for outside in (0, 100, 120):
     assert cut_at_boundary([prompt], ["assistant"], outside) == ([prompt], ["assistant"]), outside
+
+# Q-294: the conversation prefix is the key a cut named, matched by its tokens, held by identity.
+from collections import deque
+
+
+class Order:
+    def __init__(self):
+        self._lrus = {kind: deque() for kind in ("assistant", "user", "system")}
+
+    def __len__(self):
+        return sum(len(lru) for lru in self._lrus.values())
+
+
+def oldest_user_first(order):
+    for kind in ("user", "assistant", "system"):
+        if order._lrus[kind]:
+            return order._lrus[kind].popleft()
+
+
+prefix = ConversationPrefix()
+conversation = list(range(60))
+prefix.cut(conversation)
+prefix.inserted(list(range(59)) + [-1], 7)
+assert prefix.tokens is None, "same length, other tokens: not the conversation's"
+helper, older, key = [-5] * 10, [-6] * 20, conversation[:]
+prefix.inserted(key, 42)
+assert prefix.tokens is key and prefix.nbytes == 42 and not prefix.cut_keys
+order = Order()
+order._lrus["user"].extend([("m", older), ("m", key), ("m", helper)])
+order._lrus["system"].append(("m", [-7] * 5))
+assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix) == ("m", older)
+assert [t for _, t in order._lrus["user"]] == [key, helper], "held back in place"
+assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix) == ("m", helper)
+assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix)[1] == [-7] * 5
+assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix) == ("m", key)
+assert prefix.tokens is None and prefix.nbytes == 0, "the last entry goes when the bound needs it"
+prefix.cut(conversation)
+prefix.inserted(key, 42)
+order._lrus["user"].append(("m", key[:]))
+order._lrus["assistant"].append(("m", [-8] * 3))
+assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix)[1] == key
+assert prefix.tokens is None, "a key the cache replaced is no longer held"
 print("ok")
 "#;
         let out = std::process::Command::new("/usr/bin/python3")
@@ -3034,6 +3094,157 @@ assert replay(grown, keep=True, gated=True) == prefixes
 assert replay(grown, keep=True, gated=False)[7] == prefixes[7], "95,789 reads 94,932"
 assert replay(grown, keep=True, gated=False)[8:] == [0] * (len(grown) - 8), "wider, the room is gone"
 assert replay(grown, keep=False, gated=True)[7] == 0, "admission alone: the old eviction order"
+LRUPromptCache.CacheOrder.pop = upstream_pop
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_boundary.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// Q-294 through the REAL mlx_lm 0.31.3 `LRUPromptCache`: E2E #3o's turn 6 → 7 (rank0 log
+    /// 06:08:30–06:09:24Z) replayed with its measured sizes. The agent's last call of turn 6 read
+    /// 116,845 tokens and wrote 540; its stable prefix ends 668 tokens before its end (a turn-4
+    /// call sent 108,076 and the next read 107,408). goose's end-of-turn helpers then arrived one
+    /// after another — req-204..211, the CANCELLED lines' prompt_tokens, req-204 a 150-token
+    /// label — each with its own 380-token system segment (every fact check's first prefill
+    /// report) and a context segment ending 384 tokens before its prompt does (1,452 → 1,068,
+    /// 1,248 → 864, 2,144 → 1,760 prefilled when goose dropped them). The NEGATIVE CONTROL is the
+    /// 3.0.66 rule (Q-182's newest "user" entry, a batch leaving room as wide as itself): all
+    /// eight join, the helpers' context segments take the protection, and the agent's next call
+    /// reads 0 — the run's own shape (06:09:24: user 4 sequences, 0.47 GB, no prefix). Each half
+    /// of the fix alone still reads 0; both read the whole prefix, the eighth helper waiting.
+    /// E2E #3h (Q-182's replay) still reads every prefix under the new rule.
+    #[test]
+    fn end_of_turn_helpers_leave_the_conversation_prefix_cached_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models.cache import LRUPromptCache
+
+p = {"kv_bytes_per_token": 32768, "sequence_state_bytes": 76972032, "batch_transient_ratio": 2.2}
+limit = 17333813248
+
+
+class Layer:
+    def __init__(self, tokens):
+        self.nbytes = batch_kv_charge(p, 1, tokens)
+
+    def is_trimmable(self):
+        return False
+
+
+AGENT, AGENT_OUT, TAIL = 116845, 540, 668
+HELPERS = [150, 6462, 2144, 3331, 1452, 7611, 23686, 1248]
+HELPER_SYSTEM, HELPER_TAIL = 380, 384
+NEXT_TURN = 1956
+upstream_pop = LRUPromptCache.CacheOrder.pop
+
+
+def replay(keep, gated):
+    """What the agent's first call of the next turn reads, the helpers that joined, the helpers
+    held, and the cache it meets. `keep`: the conversation rule's eviction (else Q-182's);
+    `gated`: rank 0's admission leaves room for the conversation prefix."""
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    prefix = ConversationPrefix()
+    if keep:
+        keep_conversation_prefix(LRUPromptCache.CacheOrder, prefix)
+    else:
+        keep_newest_prefix(LRUPromptCache.CacheOrder)
+    cache = LRUPromptCache(max_size=limit // batch_kv_charge(p, 1, 256), max_bytes=limit)
+    conversation = list(range(AGENT + NEXT_TURN))
+    stable = conversation[: AGENT - TAIL]
+
+    def insert(tokens, cache_type, room):
+        layers = [Layer(len(tokens))]
+        prefix.inserted(tokens, sum(layer.nbytes for layer in layers))
+        cache.insert_cache("m", tokens, layers, cache_type=cache_type)
+        cache.trim_to(n_bytes=room)
+
+    prefix.cut(stable)
+    insert(stable[:], "user", limit - batch_kv_charge(p, 1, AGENT))
+    insert(stable + [-1] * (TAIL + AGENT_OUT), "assistant", limit - batch_kv_charge(p, 1, AGENT))
+    rows, width, held = 0, 0, []
+    for i, tokens in enumerate(HELPERS):
+        if not admits(p, limit, rows, width, tokens, prefix.nbytes if gated else 0):
+            held.append(tokens)
+            continue
+        rows, width = rows + 1, max(width, tokens)
+        room = limit - batch_kv_charge(p, rows, width)
+        cache.trim_to(n_bytes=room)
+        system = [-(100 + i)] * HELPER_SYSTEM
+        insert(system, "system", room)
+        insert(system + [-(200 + i)] * (tokens - HELPER_TAIL - HELPER_SYSTEM), "user", room)
+    found, rest = cache.fetch_nearest_cache("m", conversation)
+    read = len(conversation) - len(rest) if found is not None else 0
+    return read, rows, held, cache
+
+
+read, rows, held, cache = replay(keep=False, gated=False)
+assert (read, rows, held) == (0, len(HELPERS), []), (read, rows, held)
+users = [len(tokens) for _, tokens in cache._lru._lrus["user"]]
+assert users and max(users) < max(HELPERS), f"the helpers' segments only: {users}"
+assert replay(keep=True, gated=False)[:3] == (0, len(HELPERS), []), "the eviction alone"
+assert replay(keep=False, gated=True)[:3] == (0, 7, [1248]), "the admission alone"
+assert replay(keep=True, gated=True)[:3] == (AGENT - TAIL, 7, [1248])
+
+run = [(93025, 92443, 108), (93168, 92586, 178), (93410, 92828, 213), (93967, 93385, 198),
+       (94229, 93647, 117), (94457, 93875, 235), (95514, 94932, 167), (95789, 95207, 98)]
+grown = run + [(95789 + 700 * k, 95789 + 700 * k - 582, 150) for k in range(1, 30)]
+LABEL_SYSTEM, LABEL, LABEL_OUT = 46, 154, 9
+
+
+def replay_3h(steps):
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    prefix = ConversationPrefix()
+    keep_conversation_prefix(LRUPromptCache.CacheOrder, prefix)
+    cache = LRUPromptCache(max_size=limit // batch_kv_charge(p, 1, 256), max_bytes=limit)
+
+    def insert(tokens, layers, cache_type="assistant"):
+        prefix.inserted(tokens, sum(layer.nbytes for layer in layers))
+        cache.insert_cache("m", tokens, layers, cache_type=cache_type)
+
+    conversation = list(range(steps[-1][0]))
+    label_system = [-1] * LABEL_SYSTEM
+    reads = []
+    for i, (prompt_tokens, stable_tokens, out) in enumerate(steps):
+        stable = conversation[:stable_tokens]
+        prompt = stable + [-(1000 + i)] * (prompt_tokens - stable_tokens)
+        label = label_system + [-(2000 + i)] * (LABEL - LABEL_SYSTEM + LABEL_OUT)
+        insert(label_system[:], [Layer(LABEL_SYSTEM)], "system")
+        cache.trim_to(n_bytes=limit - batch_kv_charge(p, 1, LABEL))
+        found, rest = cache.fetch_nearest_cache("m", prompt)
+        reads.append(prompt_tokens - len(rest) if found is not None else 0)
+        joins = admits(p, limit, 1, LABEL, prompt_tokens, prefix.nbytes)
+        if not joins:
+            insert(label, [Layer(LABEL + LABEL_OUT)])
+        room = limit - batch_kv_charge(p, 2 if joins else 1, prompt_tokens)
+        cache.trim_to(n_bytes=room)
+        prefix.cut(stable)
+        insert(stable[:], [Layer(stable_tokens)], "user")
+        cache.trim_to(n_bytes=room)
+        if joins:
+            insert(label, [Layer(LABEL + LABEL_OUT)])
+            cache.trim_to(n_bytes=room)
+        insert(prompt + [-(3000 + i)] * out, [Layer(prompt_tokens + out)])
+        cache.trim_to(n_bytes=limit - batch_kv_charge(p, 1, prompt_tokens + out))
+    return reads
+
+
+assert replay_3h(grown) == [0] + [stable for _, stable, _ in grown[:-1]]
 LRUPromptCache.CacheOrder.pop = upstream_pop
 print("ok")
 "#;
@@ -3230,6 +3441,8 @@ def replay(requests, named):
 goose = "You are goose, a general-purpose agent. " * 40
 named = conversation("A. " + goose, 3)
 tailed = replay(named, True)
+kept = conversation_prefix.tokens
+kept_prefix = [len(kept), conversation_prefix.nbytes] if kept is not None else None
 untailed = replay(conversation("B. " + goose, 3), False)
 system_end = next(i for i, (a, b) in enumerate(zip(
     render(named[0][0]), render(named[0][0][:1] + [{"role": "user", "content": ""}], generation=False))) if a != b)
@@ -3247,6 +3460,8 @@ print("GOOSE_TEST " + json.dumps({
     "system_end": system_end,
     "bounds": bounds,
     "prompts": prompts,
+    "kept_prefix": kept_prefix,
+    "kept_after_untailed": conversation_prefix.tokens is kept,
     "restored_kinds": sorted({type(layer).__name__ for layer in restored}),
     "warm_equals_cold": bool(mx.allclose(warm, cold, atol=1e-4).item())
         and int(mx.argmax(warm).item()) == int(mx.argmax(cold).item()),
@@ -3295,6 +3510,19 @@ os._exit(0)
                  {step} — E2E #3c's shape: {untailed:?}"
             );
         }
+        assert_eq!(
+            seen["kept_prefix"][0].as_u64(),
+            bounds.last().copied(),
+            "Q-294: the conversation prefix is the last tail-naming request's boundary: {}",
+            seen["kept_prefix"]
+        );
+        assert!(seen["kept_prefix"][1]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0));
+        assert_eq!(
+            seen["kept_after_untailed"], true,
+            "requests that name no tail (goose's helpers) never become the conversation prefix"
+        );
         assert_eq!(
             seen["restored_kinds"],
             serde_json::json!(["ArraysCache", "KVCache"]),
@@ -6786,13 +7014,62 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerPrefillYield");
+        assert_eq!(json["program"], "mlxLmServerConversationPrefix");
+        assert_eq!(json["keep_conversation_prefix"], true);
         assert_eq!(json["prefill_step_yields"], true);
         assert_eq!(json["keep_newest_prefix"], true);
         assert_eq!(json["row_processors"], true);
         assert_eq!(json["xml_skeleton_guard"], true);
         assert_eq!(json["transient_tail_boundary"], true);
         assert_eq!(json["formation"]["rounds"], FORMATION_ROUNDS);
+
+        // A 3.0.66 requester's spec (the prefill-yield tag, no keep_conversation_prefix) keeps the
+        // newest "user" entry here: its own ranks keep it too.
+        let mut yields = json.clone();
+        yields["program"] = "mlxLmServerPrefillYield".into();
+        yields
+            .as_object_mut()
+            .unwrap()
+            .remove("keep_conversation_prefix");
+        let read: RankSpec = serde_json::from_value(yields).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                keep_conversation_prefix: false,
+                keep_newest_prefix: true,
+                prefill_step_yields: true,
+                ..
+            }
+        ));
+
+        // A 3.0.66 peer's goosed (its enum knows the prefill-yield tag, not this one) refuses this
+        // spec: its cache would keep a helper's segment where this Mac's keeps the conversation's.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum PrefillYieldProgram {
+            #[serde(
+                rename = "mlxLmServerPrefillYield",
+                alias = "mlxLmServerNewestPrefix",
+                alias = "mlxLmServerRowProcessors",
+                alias = "mlxLmServerSkeletonGuard",
+                alias = "mlxLmServerTransientTail",
+                alias = "mlxLmServerFormation",
+                alias = "mlxLmServerPrefill",
+                alias = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<PrefillYieldProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
 
         // A 3.0.60 requester's spec (the newest-prefix tag, no prefill_step_yields) runs mlx_lm's
         // own step loop here: its own ranks run it too.

@@ -92,6 +92,11 @@
 #   newest stable prefix last (rank_boundary.py `pop_keeping_newest_prefix`). E2E #3h: a tool-label
 #   helper joined each ~70–95k-token agent call, mlx_lm's type-count eviction kept the previous
 #   call's unreusable end entry and dropped the prefix, and six calls re-read the whole prompt.
+# - the prefix kept is the conversation's (Q-294, rank_boundary.py `ConversationPrefix`, on a spec
+#   that asks for `keep_conversation_prefix`): the key a request naming its transient tail cut, not
+#   the newest "user" entry, and a batch leaves room for it. E2E #3o turn 7: eight end-of-turn
+#   helper rows took the newest-"user" protection with their own context segments, the cache was
+#   trimmed below the agent's 3.96 GB prefix, and its next call read 108,801 tokens cold.
 # - a request that names no sampling field samples as on the single engine (Q-159,
 #   rank_sampling.py): mlx_lm filled the absence with its `--temp` 0.0 — greedy; E2E #3d wrote one
 #   answer of 54 identical tool calls over 40 minutes. Rank 0 resolves each field request > goose's
@@ -747,13 +752,31 @@ server.LRUPromptCache = LookupPromptCache
 # the latest conversation request left only when nothing else is left to evict. It changes what is
 # evicted — every rank runs its own cache over the same requests and must reuse the same prefix —
 # so only a launch whose every rank runs it asks for it (`keep_newest_prefix`).
-if spec.get("keep_newest_prefix"):
+#
+# Q-294 (rank_boundary.py `ConversationPrefix`): the entry kept is the stable prefix a request that
+# names its transient tail cut — goose's agent requests — not whichever request inserted the newest
+# "user" entry (an end-of-turn helper's took the protection on E2E #3o), and rank 0 admits a request
+# into a live batch only while the batch leaves room for it (`room_for`). Tracked on every rank over
+# the same requests, it changes what every rank evicts, so it rides its own ask
+# (`keep_conversation_prefix`), which supersedes `keep_newest_prefix`.
+conversation_prefix = ConversationPrefix() if spec.get("keep_conversation_prefix") else None
+if conversation_prefix is not None or spec.get("keep_newest_prefix"):
     if not hasattr(server.LRUPromptCache.CacheOrder, "pop"):
         raise SystemExit(
             f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache.CacheOrder has no "
             "pop; the kept prefix was written against mlx_lm 0.31.3"
         )
+if conversation_prefix is not None:
+    keep_conversation_prefix(server.LRUPromptCache.CacheOrder, conversation_prefix)
+elif spec.get("keep_newest_prefix"):
     keep_newest_prefix(server.LRUPromptCache.CacheOrder)
+
+
+def cache_inserting(tokens, prompt_cache):
+    """What the prompt cache is about to hold, as the conversation prefix sees it (Q-294)."""
+    if conversation_prefix is not None:
+        conversation_prefix.inserted(tokens, sum(layer.nbytes for layer in prompt_cache))
+
 
 if "prompt_cache_limit_bytes" in spec:
     prompt_cache_limit = int(spec["prompt_cache_limit_bytes"])
@@ -778,6 +801,7 @@ if "prompt_cache_limit_bytes" in spec:
 
         def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
             compact(prompt_cache)
+            cache_inserting(tokens, prompt_cache)
             super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)
             if live_bound and live_batch:
                 self.trim_to(n_bytes=prompt_cache_limit - live_batch[0].prompt_cache_nbytes)
@@ -789,6 +813,7 @@ else:
     class CompactPromptCache(LookupPromptCache):
         def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
             compact(prompt_cache)
+            cache_inserting(tokens, prompt_cache)
             super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)
 
     server.LRUPromptCache = CompactPromptCache
@@ -831,10 +856,16 @@ original_next = server.ResponseGenerator._next_request
 held = deque()
 
 
+def conversation_prefix_bytes():
+    return conversation_prefix.nbytes if conversation_prefix is not None else 0
+
+
 def room_for(prompt_tokens):
     batch = live_batch[0] if live_batch else None
     rows, width = batch_shape(batch) if batch is not None else (0, 0)
-    return admits(prefill, prompt_cache_limit, rows, width, prompt_tokens)
+    return admits(
+        prefill, prompt_cache_limit, rows, width, prompt_tokens, conversation_prefix_bytes()
+    )
 
 
 def publish_held():
@@ -874,6 +905,7 @@ def rank0_request(self, timeout):
             "width": width,
             "charge": batch_kv_charge(prefill, rows + 1, max(width, tokens)),
             "kept_prefix": kept_prefix_bytes(prefill, max(width, tokens)),
+            "conversation_prefix": conversation_prefix_bytes(),
             "limit": prompt_cache_limit,
         },
     )
@@ -1212,9 +1244,10 @@ def _tokenize(self, tokenizer, request, args):
         add_generation_prompt=False,
         **template_args,
     )
-    segments, segment_types = cut_at_boundary(
-        segments, segment_types, stable_boundary(prompt, future)
-    )
+    boundary = stable_boundary(prompt, future)
+    if conversation_prefix is not None and 0 < boundary < len(prompt):
+        conversation_prefix.cut(prompt[:boundary])
+    segments, segment_types = cut_at_boundary(segments, segment_types, boundary)
     return prompt, segments, segment_types, initial_state
 
 
