@@ -165,6 +165,7 @@ describe('deriveChatServedBy — the split stopped, said everywhere (Q-81)', () 
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       readiness: {
         kind: 'split-stopped',

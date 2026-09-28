@@ -258,3 +258,62 @@ export const DIST_WRITING_STATUS = {
     },
   ],
 };
+
+/**
+ * E2E #3m turn 3 (3.0.63, 27B tensor split, 2026-09-27 20:16:2xZ) as rank 0 answers it since Q-231:
+ * goose's three end-of-turn fact checks (1,775 / 1,770 / 5,453 prompt tokens, POST 20:16:14Z) were
+ * dropped at 20:16:17Z when the user's turn started — `leaving`, stopped `cancelled_by_client` in
+ * prefill — while the user's 88,660-token call waits `queued` behind them, not held for room.
+ * `elapsed_s` is read ~6.9 s after they arrived; the rank named the stop 3.642 s in (the figure in
+ * launch.rs's Q-231 test).
+ */
+const leavingFactCheck = (id: string, client: string, promptTokens: number) => ({
+  request_id: id,
+  status: 'running',
+  phase: 'prefill',
+  elapsed_s: 6.9,
+  prompt_tokens: promptTokens,
+  prefilled_tokens: 380,
+  prompt_tokens_per_second: null,
+  completion_tokens: 0,
+  max_tokens: 6476,
+  tokens_per_second: null,
+  ttft_s: null,
+  cached_tokens: 0,
+  client,
+  held_for_room: false,
+  stopped: { reason: 'cancelled_by_client' },
+  stopped_after_s: 3.642,
+  leaving: true,
+});
+
+export const SPLIT_TURN_BEHIND_LEAVING_3M = {
+  num_running: 3,
+  num_waiting: 1,
+  status: 'generating',
+  generation_tps: null,
+  requests: [
+    leavingFactCheck('req-31', '127.0.0.1:50001', 1775),
+    leavingFactCheck('req-32', '127.0.0.1:50002', 1770),
+    leavingFactCheck('req-33', '127.0.0.1:50003', 5453),
+    {
+      request_id: 'req-34',
+      status: 'waiting',
+      phase: 'queued',
+      elapsed_s: 2.1,
+      prompt_tokens: 88660,
+      prefilled_tokens: 0,
+      prompt_tokens_per_second: null,
+      completion_tokens: 0,
+      max_tokens: 173484,
+      tokens_per_second: null,
+      ttft_s: null,
+      cached_tokens: null,
+      client: '127.0.0.1:50004',
+      held_for_room: false,
+      stopped: null,
+      stopped_after_s: null,
+      leaving: false,
+    },
+  ],
+};

@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose souhaite appeler {toolName}. Autoriser ?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {En file derrière # requête arrêtée qui quitte encore le moteur} other {En file derrière # requêtes arrêtées qui quittent encore le moteur}}{since, select, none {} other { · arrêtée il y a {since}}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "En file jusqu’à la fin des requêtes en cours — pas de place en mémoire pour les rejoindre"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose téléchargera la mise à jour en arrière-plan et l'installera lors de votre prochaine fermeture ou redémarrage."
   },

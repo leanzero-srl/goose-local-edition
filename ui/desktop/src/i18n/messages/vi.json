@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose muốn gọi {toolName}. Cho phép?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {Đang xếp hàng sau # yêu cầu đã dừng vẫn đang rời khỏi engine} other {Đang xếp hàng sau # yêu cầu đã dừng vẫn đang rời khỏi engine}}{since, select, none {} other { · đã dừng {since} trước}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "Đang xếp hàng cho tới khi các yêu cầu đang chạy xong — không đủ bộ nhớ để tham gia cùng"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose sẽ tải bản cập nhật ở chế độ nền và cài đặt vào lần tiếp theo khi bạn thoát hoặc khởi động lại."
   },

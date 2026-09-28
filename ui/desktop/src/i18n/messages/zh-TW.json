@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose 想要呼叫 {toolName}。要允許嗎？"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {排在 # 個已停止但仍在退出引擎的請求之後} other {排在 # 個已停止但仍在退出引擎的請求之後}}{since, select, none {} other { · {since} 前已停止}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "排隊中，等正在執行的請求完成 — 記憶體沒有空間加入它們"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose 會在背景下載更新，並於您下次結束或重新啟動時安裝。"
   },

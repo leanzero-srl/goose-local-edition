@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows,plural,one{{since,select,none{Queued behind {rows, number} stopped request still leaving the engine} other{Queued behind {rows, number} stopped request still leaving the engine · stopped {since} ago}}} other{{since,select,none{Queued behind {rows, number} stopped requests still leaving the engine} other{Queued behind {rows, number} stopped requests still leaving the engine · stopped {since} ago}}}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "Queued until the running requests finish — no memory room to join them"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose will download the update in the background and install it the next time you quit or restart."
   },

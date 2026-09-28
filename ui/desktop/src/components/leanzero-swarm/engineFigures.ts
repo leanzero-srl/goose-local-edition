@@ -1,5 +1,6 @@
 import type { MeasuredFigure } from '../../utils/mlxMeasuredRuns';
 import {
+  answeredRequests,
   liveDecodeTps,
   measuredPrefillTps,
   mlxActivity,
@@ -31,13 +32,7 @@ export interface MeasuredPair {
   reading: MeasuredFigure | null;
 }
 
-/**
- * The request with the largest prompt. A chat's turn carries the whole conversation; goose's own
- * calls beside it (a title, the fact check, a tool label — Q-185) carry a few hundred tokens. So the
- * largest prompt is the one a person waits on — the rule the composer's `turnRequestOf`, the glance's
- * lead and every headline below use.
- */
-export function largestPrompt(requests: readonly MlxLiveRequest[]): MlxLiveRequest | undefined {
+function largestOf(requests: readonly MlxLiveRequest[]): MlxLiveRequest | undefined {
   return requests.reduce<MlxLiveRequest | undefined>(
     (best, r) => (best == null || (r.promptTokens ?? 0) > (best.promptTokens ?? 0) ? r : best),
     undefined
@@ -45,14 +40,24 @@ export function largestPrompt(requests: readonly MlxLiveRequest[]): MlxLiveReque
 }
 
 /**
+ * The request with the largest prompt. A chat's turn carries the whole conversation; goose's own
+ * calls beside it (a title, the fact check, a tool label — Q-185) carry a few hundred tokens. So the
+ * largest prompt is the one a person waits on — the rule the composer's `turnRequestOf`, the glance's
+ * lead and every headline below use. A `leaving` row (its answer already ended, Q-231) is waited on
+ * by nobody, so it is never that request.
+ */
+export function largestPrompt(requests: readonly MlxLiveRequest[]): MlxLiveRequest | undefined {
+  return largestOf(answeredRequests(requests));
+}
+
+/**
  * The request still reading its prompt that a headline names: the LARGEST prompt being read. Q-218:
  * the old rule (the one read longest) named a 174-token side call read for 12 s ("Reading prompt ·
- * 174 prompt tokens") while the chat's own 77k prompt was 1% in.
+ * 174 prompt tokens") while the chat's own 77k prompt was 1% in. It speaks for the ENGINE, so a
+ * `leaving` row the engine is still reading counts: that is what the engine is doing.
  */
 export function readingRequest(stats: MlxLiveStats): MlxLiveRequest | undefined {
-  return largestPrompt(
-    stats.requests.filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
-  );
+  return largestOf(stats.requests.filter((r) => r.status !== 'waiting' && r.phase === 'prefill'));
 }
 
 /**

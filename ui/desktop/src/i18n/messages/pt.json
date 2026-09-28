@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "O Goose gostaria de invocar {toolName}. Permitir?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {Na fila atrás de # solicitação interrompida que ainda está saindo do motor} other {Na fila atrás de # solicitações interrompidas que ainda estão saindo do motor}}{since, select, none {} other { · interrompida há {since}}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "Na fila até as solicitações em andamento terminarem — sem espaço de memória para se juntar a elas"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "O Goose transferirá a atualização em segundo plano e instalá-la-á da próxima vez que sair ou reiniciar."
   },

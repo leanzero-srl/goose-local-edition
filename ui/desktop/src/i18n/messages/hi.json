@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose {toolName} को कॉल करना चाहेंगे। अनुमति दें?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {# रोके गए अनुरोध के पीछे कतार में, जो अभी भी इंजन छोड़ रहा है} other {# रोके गए अनुरोधों के पीछे कतार में, जो अभी भी इंजन छोड़ रहे हैं}}{since, select, none {} other { · {since} पहले रोका गया}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "चल रहे अनुरोध पूरे होने तक कतार में — उनके साथ जुड़ने के लिए मेमोरी में जगह नहीं"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "अपडेट बैकग्राउंड में अपने आप डाउनलोड हो जाएगा."
   },

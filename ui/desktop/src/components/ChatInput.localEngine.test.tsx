@@ -83,6 +83,7 @@ const splitServing = (contextWindow: number | null, kind: 'ready' | 'unknown'): 
     busyWithOthers: null,
     busyIn: null,
     turnRequest: null,
+    turnWait: null,
     readTps: null,
     readiness: { kind },
   }) as unknown as ChatServedBy;

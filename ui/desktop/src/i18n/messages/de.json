@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose möchte {toolName} aufrufen. Erlauben?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {In der Warteschlange hinter # gestoppten Anfrage, die die Engine noch verlässt} other {In der Warteschlange hinter # gestoppten Anfragen, die die Engine noch verlassen}}{since, select, none {} other { · vor {since} gestoppt}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "In der Warteschlange, bis die laufenden Anfragen fertig sind — kein Speicherplatz, um dazuzukommen"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose lädt das Update im Hintergrund herunter und installiert es beim nächsten Beenden oder Neustart."
   },

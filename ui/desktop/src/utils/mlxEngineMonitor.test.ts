@@ -15,6 +15,7 @@ import {
   DIST_READING_STATUS,
   GENERATING_STATUS,
   IDLE_STATUS,
+  SPLIT_TURN_BEHIND_LEAVING_3M,
 } from '../components/leanzero-swarm/mlxLiveStatus.fixtures';
 
 const BASE = 'http://127.0.0.1:8090';
@@ -228,6 +229,37 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
     expect(serving.clients.map((c) => c.kind)).toEqual(['chat']);
     expect(serving.unattributed).toBe(2);
     expect(serving.swarmRuns).toEqual(['bench-r9']);
+  });
+
+  it('Q-238: rows LEAVING the batch answer nobody — never counted as work goose cannot name', async () => {
+    // E2E #3m on the split since Q-231: goose dropped its three fact checks when the turn started,
+    // so its list holds only the turn's lease; rank 0 still lists the three as `leaving`.
+    const h = harness({
+      status: () => answered(SPLIT_TURN_BEHIND_LEAVING_3M),
+      serving: () => ({
+        ok: true,
+        rows: [
+          {
+            id: 7,
+            via: 'swarmRouter',
+            sessionId: '20260927_5',
+            provider: 'omlx',
+            model: 'm',
+            nodeId: 'mihai-mlx',
+            startedAt: '2026-09-27T20:16:20Z',
+            sessionName: 'Jira Migration Kickoff Notes',
+            sessionType: 'user',
+            sessionError: null,
+          },
+        ],
+      }),
+    });
+    await h.monitor.tick();
+    const s = h.monitor.current();
+    expect(s.stats?.requests).toHaveLength(4);
+    // Before: 4 engine rows − 1 lease = 3 "unattributed" — the chip said "Shared with other work".
+    expect(s.serving).toMatchObject({ unattributed: 0 });
+    expect(s.serving?.clients.map((c) => c.kind)).toEqual(['chat']);
   });
 
   it('goose’s list failing is carried as the reason, the requests all unattributed', async () => {

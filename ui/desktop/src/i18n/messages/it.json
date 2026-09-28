@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose desidera richiamare {toolName}. Consentire?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {In coda dietro # richiesta fermata che sta ancora lasciando il motore} other {In coda dietro # richieste fermate che stanno ancora lasciando il motore}}{since, select, none {} other { · fermata {since} fa}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "In coda finché le richieste in corso non finiscono — non c’è memoria per unirsi a loro"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose scaricherà l'aggiornamento in background e lo installerà al prossimo arresto o riavvio."
   },
