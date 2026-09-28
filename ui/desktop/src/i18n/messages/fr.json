@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} lit le prompt de {tokens} jetons d’une autre requête — votre message attend son tour"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} lit le prompt de {tokens} jetons d’une autre requête — {cached} depuis le cache, {fresh} nouveaux — votre message attend son tour"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} lit le prompt de {tokens} jetons d’une autre requête, rien en cache — votre message attend son tour"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Détails"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Masquer débits et mémoire"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Masquer pourquoi ce prompt se lit vite, débits et mémoire"
+  },
   "engineGlance.more": {
     "defaultMessage": "Afficher débits et mémoire"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Afficher pourquoi ce prompt se lit vite, débits et mémoire"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, one {# a besoin de vous} other {# ont besoin de vous}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Session sans titre"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} depuis le cache, {done} sur {fresh} nouveaux lus"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} jetons · rien en cache — tout est lu"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "rien en cache — tout est lu"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "{done} sur {fresh} nouveaux lus"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "{elapsed} jusqu’ici"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} jetons · <c>{cached} depuis le cache</c> · <n>{fresh} nouveaux</n> — lecture de la partie nouvelle"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} depuis le cache</c> · <n>{fresh} nouveaux</n> — lecture de la partie nouvelle"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose garde le début de cette conversation dans la mémoire du moteur ; seule la partie nouvelle est relue"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Toutes les invites ont été réinitialisées aux valeurs par défaut"

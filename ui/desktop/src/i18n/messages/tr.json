@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} başka bir isteğin {tokens} tokenlik istemini okuyor — mesajınız sırasını bekliyor"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} başka bir isteğin {tokens} tokenlık istemini okuyor — {cached} tanesi önbellekten, {fresh} yeni — mesajınız sırasını bekliyor"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} başka bir isteğin {tokens} tokenlık istemini okuyor, önbellekte hiçbir şey yok — mesajınız sırasını bekliyor"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Ayrıntılar"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Hızları ve belleği gizle"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Bu istemin neden hızlı okunduğunu, hızları ve belleği gizle"
+  },
   "engineGlance.more": {
     "defaultMessage": "Hızları ve belleği göster"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Bu istemin neden hızlı okunduğunu, hızları ve belleği göster"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, other {# sizi bekliyor}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Adsız oturum"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} önbellekten, {fresh} yeni tokenın {done} tanesi okundu"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} token · önbellekte hiçbir şey yok — tamamı okunuyor"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "önbellekte hiçbir şey yok — tamamı okunuyor"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "{fresh} yeni tokenın {done} tanesi okundu"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "şimdiye kadar {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} token · <c>{cached} önbellekten</c> · <n>{fresh} yeni</n> — yeni kısım okunuyor"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} önbellekten</c> · <n>{fresh} yeni</n> — yeni kısım okunuyor"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose bu konuşmanın başını motorun belleğinde tutar; yalnızca yeni kısım yeniden okunur"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Tüm istemler varsayılanlara sıfırlandı"

@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} читает промпт другого запроса на {tokens} токенов — ваше сообщение ждёт своей очереди"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} читает промпт другого запроса на {tokens} токенов — {cached} из кеша, {fresh} новых — ваше сообщение ждёт своей очереди"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} читает промпт другого запроса на {tokens} токенов, в кеше ничего — ваше сообщение ждёт своей очереди"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Подробности"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Скрыть скорости и память"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Скрыть, почему этот промпт читается быстро, скорости и память"
+  },
   "engineGlance.more": {
     "defaultMessage": "Показать скорости и память"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Показать, почему этот промпт читается быстро, скорости и память"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, one {# ждёт вас} few {# ждут вас} many {# ждут вас} other {# ждут вас}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Сеанс без названия"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} из кеша, прочитано {done} из {fresh} новых"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} токенов · в кеше ничего — читается всё"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "в кеше ничего — читается всё"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "прочитано {done} из {fresh} новых"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "уже {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} токенов · <c>{cached} из кеша</c> · <n>{fresh} новых</n> — читается новая часть"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} из кеша</c> · <n>{fresh} новых</n> — читается новая часть"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose хранит начало этого разговора в памяти движка; заново читается только новая часть"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Все промпты сброшены к значениям по умолчанию"

@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} sedang membaca prompt {tokens} token bagi permintaan lain — mesej anda menunggu gilirannya"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} sedang membaca prompt {tokens} token permintaan lain — {cached} daripadanya dari cache, {fresh} baharu — mesej anda menunggu giliran"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} sedang membaca prompt {tokens} token permintaan lain, tiada dalam cache — mesej anda menunggu giliran"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Butiran"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Sembunyikan kadar dan memori"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Sembunyikan sebab prompt ini dibaca dengan pantas, kadar dan memori"
+  },
   "engineGlance.more": {
     "defaultMessage": "Tunjukkan kadar dan memori"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Tunjukkan sebab prompt ini dibaca dengan pantas, kadar dan memori"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, other {# memerlukan anda}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sesi tanpa tajuk"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} dari cache, {done} daripada {fresh} baharu telah dibaca"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} token · tiada dalam cache — membaca semuanya"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "tiada dalam cache — membaca semuanya"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "{done} daripada {fresh} baharu telah dibaca"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "setakat ini {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} token · <c>{cached} dari cache</c> · <n>{fresh} baharu</n> — membaca bahagian baharu"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} dari cache</c> · <n>{fresh} baharu</n> — membaca bahagian baharu"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose menyimpan permulaan perbualan ini dalam memori enjin; hanya bahagian baharu dibaca semula"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Semua gesaan ditetapkan semula kepada lalai"

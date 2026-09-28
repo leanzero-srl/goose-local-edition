@@ -9,8 +9,10 @@ import {
 import {
   engineFigures,
   largestPrompt,
+  promptCache,
   promptProgress,
   type EngineFigure,
+  type PromptCache,
   type MeasuredPair,
 } from '../components/leanzero-swarm/engineFigures';
 import type { LoadProgress, MlxModeSummary } from '../components/leanzero-swarm/mlxDistributed';
@@ -132,6 +134,12 @@ export interface EngineGlance {
   second: EngineFigure | null;
   /** How far the read / the load is; `indeterminate` when it moves with no measured figure. */
   progress: { done: number; total: number; unit: 'tokens' | 'bytes' } | 'indeterminate' | null;
+  /**
+   * While a prompt is read: what the prefix cache supplied of it and what is new (Q-337,
+   * engineFigures.ts `promptCache` — the same request `progress` measures). null = no read, or the
+   * engine has not looked it up: the bar is drawn plain, nothing is guessed.
+   */
+  readCache: PromptCache | null;
   /** Requests the engine holds waiting; null = no live read to count them from. */
   waiting: number | null;
   /** The split's in-flight count when no live read of its rank 0 exists. */
@@ -315,7 +323,15 @@ function liveParts(
   pair: MeasuredPair
 ): Pick<
   EngineGlance,
-  'stage' | 'hero' | 'second' | 'progress' | 'waiting' | 'chat' | 'side' | 'otherClients'
+  | 'stage'
+  | 'hero'
+  | 'second'
+  | 'progress'
+  | 'readCache'
+  | 'waiting'
+  | 'chat'
+  | 'side'
+  | 'otherClients'
 > & { activity: MlxActivity | null } {
   const stats = snapshot.stats;
   const { turn, ...named } = servingOf(snapshot);
@@ -328,6 +344,7 @@ function liveParts(
         : null,
       second: null,
       progress: null,
+      readCache: null,
       waiting: null,
       ...named,
     };
@@ -335,13 +352,15 @@ function liveParts(
   const lead = leadRequest(stats.requests, turn);
   const activity = lead ? requestActivity(lead) : mlxActivity(stats);
   const { hero, second } = engineFigures(stats, pair, lead);
-  const read = activity === 'prefill' ? promptProgress(stats, lead) : null;
+  const reading = activity === 'prefill';
+  const read = reading ? promptProgress(stats, lead) : null;
   return {
     activity,
     stage: lead ? activity : engineHeadline(stats),
     hero,
     second,
     progress: read ? { ...read, unit: 'tokens' } : null,
+    readCache: reading ? promptCache(stats, lead) : null,
     waiting: stats.numWaiting ?? stats.requests.filter((r) => r.status === 'waiting').length,
     ...named,
   };
@@ -365,6 +384,7 @@ function swapping(swap: NodeSwap, engine: GlanceEngine, pair: MeasuredPair): Eng
     hero: null,
     second: null,
     progress: 'indeterminate',
+    readCache: null,
     waiting: null,
     inflight: null,
     chat: null,
@@ -500,6 +520,7 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
       hero: null,
       second: null,
       progress: loading && !stale ? (hosting.load ?? 'indeterminate') : null,
+      readCache: null,
       waiting: null,
       inflight: null,
       chat: null,
@@ -568,6 +589,7 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
       hero: live?.hero ?? null,
       second: live?.second ?? null,
       progress: live ? live.progress : starting && !stale ? splitLoad(report) : null,
+      readCache: live?.readCache ?? null,
       waiting: live?.waiting ?? null,
       inflight: live ? null : up ? report.inflight : null,
       chat: live?.chat ?? null,
@@ -614,6 +636,7 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
       hero: live?.hero ?? null,
       second: live?.second ?? null,
       progress: live ? live.progress : state === 'mounting' ? 'indeterminate' : null,
+      readCache: live?.readCache ?? null,
       waiting: live?.waiting ?? null,
       inflight: null,
       chat: live?.chat ?? null,
@@ -646,6 +669,7 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
       hero: live.hero,
       second: live.second,
       progress: live.progress,
+      readCache: live.readCache,
       waiting: live.waiting,
       chat: live.chat,
       side: live.side,
@@ -681,6 +705,7 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
     hero: null,
     second: null,
     progress: stage === 'loading' ? 'indeterminate' : null,
+    readCache: null,
     waiting: null,
     chat: null,
     side: [],

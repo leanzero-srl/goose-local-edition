@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} está leyendo el prompt de {tokens} tokens de otra solicitud — tu mensaje espera su turno"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} está leyendo el prompt de {tokens} tokens de otra solicitud — {cached} desde la caché, {fresh} nuevos — tu mensaje espera su turno"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} está leyendo el prompt de {tokens} tokens de otra solicitud, nada en caché — tu mensaje espera su turno"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Detalles"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Ocultar velocidades y memoria"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Ocultar por qué este prompt se lee rápido, velocidades y memoria"
+  },
   "engineGlance.more": {
     "defaultMessage": "Mostrar velocidades y memoria"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Mostrar por qué este prompt se lee rápido, velocidades y memoria"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, one {# te necesita} other {# te necesitan}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sesión sin título"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} desde la caché, {done} de {fresh} nuevos leídos"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} tokens · nada en caché — se lee todo"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "nada en caché — se lee todo"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "{done} de {fresh} nuevos leídos"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "{elapsed} hasta ahora"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} tokens · <c>{cached} desde la caché</c> · <n>{fresh} nuevos</n> — leyendo la parte nueva"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} desde la caché</c> · <n>{fresh} nuevos</n> — leyendo la parte nueva"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose guarda el inicio de esta conversación en la memoria del motor; solo se vuelve a leer la parte nueva"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Todos los prompts se restablecieron a sus valores por defecto"

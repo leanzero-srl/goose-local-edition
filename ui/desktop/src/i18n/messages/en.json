@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} is reading another request’s {tokens}-token prompt — your message waits its turn"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} is reading another request’s {tokens}-token prompt — {cached} of it from cache, {fresh} new — your message waits its turn"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} is reading another request’s {tokens}-token prompt, nothing cached — your message waits its turn"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Details"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Hide rates and memory"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Hide why this prompt reads fast, rates and memory"
+  },
   "engineGlance.more": {
     "defaultMessage": "Show rates and memory"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Show why this prompt reads fast, rates and memory"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count,plural,one{# needs you} other{# need you}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Untitled session"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} from cache, {done} of {fresh} new read"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} tokens · nothing cached — reading all of it"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "nothing cached — reading all of it"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "{done} of {fresh} new read"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "{elapsed} so far"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} tokens · <c>{cached} from cache</c> · <n>{fresh} new</n> — reading the new part"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} from cache</c> · <n>{fresh} new</n> — reading the new part"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose keeps the start of this conversation in the engine’s memory; only the new part is read again"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "All prompts reset to defaults"

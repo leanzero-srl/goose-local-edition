@@ -18,6 +18,7 @@ import {
   PREFILL_STATUS,
   SPLIT_TURN_BEHIND_LEAVING_3M,
 } from '../leanzero-swarm/mlxLiveStatus.fixtures';
+import { SINGLE_WARM_READ } from '../leanzero-swarm/promptCache.fixtures';
 import type { MountLookup } from './mlxMount';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
@@ -885,11 +886,30 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
     const strip = await screen.findByTestId('composer-readiness');
     expect(strip).toHaveAttribute('data-readiness', 'busy');
     expect(strip.textContent).toMatch(
-      /^Work's Mac Studio is reading another request’s [\d.]+k?-token prompt — your message waits its turn/
+      /^Work's Mac Studio is reading another request’s [\d.]+k?-token prompt, nothing cached — your message waits its turn/
     );
     expect(strip.className).toContain('bg-lz-phase-held');
     expect(strip.textContent).not.toContain('ready');
     expect(screen.getByTestId('composer-readiness-open-engine')).toBeInTheDocument();
+  });
+
+  it('Q-337: the prompt it reads came mostly from the cache — the bar says how much is new', async () => {
+    const warm = {
+      ...SINGLE_WARM_READ,
+      num_waiting: 1,
+      requests: [GENERATING_STATUS.requests[0], ...SINGLE_WARM_READ.requests],
+    };
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async () =>
+        snapshot({ clients: [], unattributed: 1, swarmRuns: [], error: null }, warm),
+    };
+    mockExtMethod.mockResolvedValue({ status: ROUTE });
+    await mlxRemoteSingleStatus();
+    wrap('swarm', 's-mine');
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip.textContent).toMatch(
+      /^Work's Mac Studio is reading another request’s 115k-token prompt — 114k of it from cache, 1\.1k new — your message waits its turn/
+    );
   });
 
   it('this chat’s own request is never "another request" — no bar', async () => {

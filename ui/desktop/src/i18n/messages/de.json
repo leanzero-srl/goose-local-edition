@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} liest den {tokens}-Token-Prompt einer anderen Anfrage — deine Nachricht wartet, bis sie dran ist"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} liest den {tokens}-Token-Prompt einer anderen Anfrage — {cached} davon aus dem Cache, {fresh} neu — deine Nachricht wartet, bis sie dran ist"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} liest den {tokens}-Token-Prompt einer anderen Anfrage, nichts im Cache — deine Nachricht wartet, bis sie dran ist"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Details"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Raten und Speicher ausblenden"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Ausblenden: warum dieser Prompt schnell gelesen wird, Raten und Speicher"
+  },
   "engineGlance.more": {
     "defaultMessage": "Raten und Speicher zeigen"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Zeigen: warum dieser Prompt schnell gelesen wird, Raten und Speicher"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, one {# braucht dich} other {# brauchen dich}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Unbenannte Sitzung"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} aus dem Cache, {done} von {fresh} neuen gelesen"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} Tokens · nichts im Cache — alles wird gelesen"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "nichts im Cache — alles wird gelesen"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "{done} von {fresh} neuen gelesen"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "bisher {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} Tokens · <c>{cached} aus dem Cache</c> · <n>{fresh} neu</n> — der neue Teil wird gelesen"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} aus dem Cache</c> · <n>{fresh} neu</n> — der neue Teil wird gelesen"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose behält den Anfang dieses Gesprächs im Speicher der Engine; nur der neue Teil wird erneut gelesen"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Alle Prompts auf die Standardwerte zurückgesetzt"

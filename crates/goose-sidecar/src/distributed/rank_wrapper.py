@@ -1085,7 +1085,12 @@ def generate(
         raise ClientGone(how)
 
     def progress(processed, total):
-        entry["prefilled"] = processed
+        # mlx_lm 0.31.3 counts only what it computes: `total` is the prompt past the restored prefix
+        # (the batch's `_currently_processing` sums the segments `fetch_nearest_cache` left). The
+        # row reports the prompt POSITION (rank_live.py), so the prefix goes back in (Q-338: E2E
+        # #3p's turn 7, 113,824 of 114,948 cached, read "1,124 of 114,948" and no prefill rate).
+        # Only drained after the context set `prompt_tokens` below.
+        entry["prefilled"] = entry["prompt_tokens"] - total + processed
         still_there("prefill")
         if progress_callback is not None:
             progress_callback(processed, total)
@@ -1127,6 +1132,8 @@ def generate(
     entry["prompt_tokens"] = len(ctx.prompt)
     if ctx.prompt_cache_count >= 0:
         entry["cached_tokens"] = ctx.prompt_cache_count
+        # The read starts after the restored prefix, as the pipeline's does (pipeline_rank.py).
+        entry["prefilled"] = ctx.prompt_cache_count
 
     if watch is not None:
         watch.request_id = request_id

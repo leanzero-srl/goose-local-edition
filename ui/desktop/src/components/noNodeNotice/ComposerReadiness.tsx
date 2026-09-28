@@ -170,6 +170,16 @@ const i18n = defineMessages({
     defaultMessage:
       '{where} is reading another request’s {tokens}-token prompt — your message waits its turn',
   },
+  busyReadingCached: {
+    id: 'composerReadiness.busyReadingCached',
+    defaultMessage:
+      '{where} is reading another request’s {tokens}-token prompt — {cached} of it from cache, {fresh} new — your message waits its turn',
+  },
+  busyReadingCold: {
+    id: 'composerReadiness.busyReadingCold',
+    defaultMessage:
+      '{where} is reading another request’s {tokens}-token prompt, nothing cached — your message waits its turn',
+  },
   splitStart: { id: 'composerReadiness.splitStart', defaultMessage: 'Start the split again' },
   splitStarting: { id: 'composerReadiness.splitStarting', defaultMessage: 'Starting the split…' },
   splitStartFailed: {
@@ -442,13 +452,22 @@ function BusyBar({ served, busy }: { served: ChatServedBy; busy: ChatBusy }) {
   const where = served.where.length
     ? intl.formatList(served.where, { type: 'conjunction' })
     : intl.formatMessage(i18n.theEngine);
+  // A mostly-cached read is a short wait: the words say how much is new (Q-337).
+  const cache = busy.readingCache;
   const headline =
-    busy.readingTokens != null
-      ? intl.formatMessage(i18n.busyReading, {
-          where,
-          tokens: compactTokens(busy.readingTokens),
-        })
-      : intl.formatMessage(i18n.busy, { where, count: busy.requests });
+    busy.readingTokens == null
+      ? intl.formatMessage(i18n.busy, { where, count: busy.requests })
+      : cache && cache.cached > 0
+        ? intl.formatMessage(i18n.busyReadingCached, {
+            where,
+            tokens: compactTokens(busy.readingTokens),
+            cached: compactTokens(cache.cached),
+            fresh: compactTokens(cache.fresh),
+          })
+        : intl.formatMessage(cache ? i18n.busyReadingCold : i18n.busyReading, {
+            where,
+            tokens: compactTokens(busy.readingTokens),
+          });
   return (
     <div
       role="status"

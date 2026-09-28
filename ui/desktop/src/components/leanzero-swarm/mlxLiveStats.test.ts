@@ -79,6 +79,8 @@ describe('parseMlxLiveStatus — the real engine body', () => {
     expect(gen.tokensPerSecond).toBe(19.9);
     expect(gen.ttftS).toBe(165);
     expect(gen.cachedTokens).toBe(0);
+    // Q-337: the waiting row was not looked up yet (cache_hit_type null) — its 0 is a default.
+    expect(s.requests[0].cachedTokens).toBeNull();
     expect(s.requests[2].ttftS).toBeNull();
     expect(s.activeMemoryGb).toBe(50.7);
     expect(s.cacheHitRate).toBe(0.78);

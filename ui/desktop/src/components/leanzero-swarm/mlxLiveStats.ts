@@ -34,11 +34,15 @@ export interface MlxLiveRequest {
   tokensPerSecond: number | null;
   /** Seconds from ARRIVAL to the first token (queue wait included); null until that token lands. */
   ttftS: number | null;
-  /** Prompt tokens the prefix cache supplied, so the engine never computed them. */
+  /**
+   * Prompt tokens the prefix cache supplied, so the engine never computed them; null until the
+   * engine has looked the prompt up (`cachedTokensOf`).
+   */
   cachedTokens: number | null;
   /**
-   * How far into the prompt the prefill is, and the prefill's own rate — reported by the
-   * distributed engine's rank 0 (rank_live.py `prefilled_tokens`, `prompt_tokens_per_second`);
+   * How far into the prompt the prefill is — the prompt POSITION, a restored prefix included — and
+   * the prefill's own rate over the tokens it computed — reported by the distributed engine's rank 0
+   * (rank_live.py `prefilled_tokens`, `prompt_tokens_per_second`);
    * Rapid-MLX's single engine reports neither, so both stay null there.
    */
   prefilledTokens: number | null;
@@ -192,6 +196,18 @@ export function leavingRowsOf(requests: readonly MlxLiveRequest[]): LeavingRows 
   return { rows: leaving.length, sinceStopS: since.length > 0 ? Math.max(...since) : null };
 }
 
+/**
+ * What the prefix cache supplied of a request's prompt, or null while that is not known. The split's
+ * rank 0 sends null until it has looked the prompt up. Rapid-MLX's single engine sends its
+ * `Request.cached_tokens` default (0) from arrival and names the lookup's result in
+ * `cache_hit_type` (`hit`/`prefix`/`lcp`/… or `miss`) once it has run: while that is null, the 0 is
+ * a default, not "nothing cached" (Q-337).
+ */
+function cachedTokensOf(r: Record<string, unknown>): number | null {
+  if ('cache_hit_type' in r && r.cache_hit_type == null) return null;
+  return num(r.cached_tokens);
+}
+
 /** A `/v1/status` body → typed stats, or a named reason it is not one. Absent fields stay null. */
 export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
   const root = obj(body);
@@ -215,7 +231,7 @@ export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
       maxTokens: num(r.max_tokens),
       tokensPerSecond: num(r.tokens_per_second),
       ttftS: num(r.ttft_s),
-      cachedTokens: num(r.cached_tokens),
+      cachedTokens: cachedTokensOf(r),
       prefilledTokens: num(r.prefilled_tokens),
       promptTps: num(r.prompt_tokens_per_second),
       client: typeof r.client === 'string' && r.client ? r.client : null,

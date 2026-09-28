@@ -130,27 +130,105 @@ export function promptProgress(
   stats: MlxLiveStats,
   lead: MlxLiveRequest | null = null
 ): { done: number; total: number } | null {
-  const r = lead ? (lead.phase === 'prefill' ? lead : undefined) : readingRequest(stats);
+  const r = namedRead(stats, lead);
   return r ? readProgressOf(r) : null;
 }
 
-function readProgressOf(r: MlxLiveRequest): { done: number; total: number } | null {
+/** What the prefix cache supplied of the named read (`promptCacheOf`'s rule); null = not known. */
+export function promptCache(
+  stats: MlxLiveStats,
+  lead: MlxLiveRequest | null = null
+): PromptCache | null {
+  const r = namedRead(stats, lead);
+  return r ? promptCacheOf(r) : null;
+}
+
+function namedRead(stats: MlxLiveStats, lead: MlxLiveRequest | null): MlxLiveRequest | undefined {
+  return lead ? (lead.phase === 'prefill' ? lead : undefined) : readingRequest(stats);
+}
+
+/**
+ * How far into its prompt a request is: the prompt POSITION the engine reports (`prefilled_tokens`
+ * counts a restored prefix — rank_live.py, both split modes since Q-338), of the prompt. null =
+ * the engine reports no position (Rapid-MLX's single engine).
+ */
+export function readProgressOf(r: MlxLiveRequest): { done: number; total: number } | null {
   if (r.prefilledTokens == null || !r.promptTokens) return null;
   return { done: Math.min(r.prefilledTokens, r.promptTokens), total: r.promptTokens };
 }
 
 /**
+ * A prompt being read, split the way the engine reads it (Q-337: E2E #3p's 114,948-token turn read
+ * 113,824 of it from the prefix cache and finished in seconds, while every surface showed one bar
+ * and "115K"):
+ *  - `cached`: tokens the prefix cache supplied — already in the engine's memory, never computed;
+ *  - `fresh`: the rest — the part the engine computes;
+ *  - `freshDone`: how much of `fresh` is computed, from the reported position; null where the
+ *    engine reports no position (the single engine: its split is known, its progress is not).
+ * `cached` 0 is a measured "nothing cached". No split at all (null) = the engine has not looked the
+ * prompt up yet, or reports no per-request figure: surfaces then draw the plain bar, never a guess.
+ */
+export interface PromptCache {
+  total: number;
+  cached: number;
+  fresh: number;
+  freshDone: number | null;
+}
+
+export function promptCacheOf(r: MlxLiveRequest): PromptCache | null {
+  if (r.cachedTokens == null || !r.promptTokens) return null;
+  const total = r.promptTokens;
+  const cached = Math.min(r.cachedTokens, total);
+  const progress = readProgressOf(r);
+  return {
+    total,
+    cached,
+    fresh: total - cached,
+    // The position starts at the restored prefix; one reported before the first chunk (0) is
+    // nothing of the new part read yet.
+    freshDone: progress ? Math.max(0, progress.done - cached) : null,
+  };
+}
+
+/**
+ * A read bar's two parts, as fractions of the WHOLE prompt: the cached part (full at once — it is
+ * already in memory) and, after it, the part of the new tokens read so far. With no split known it
+ * is the one plain bar (`cached` 0, `read` = the position). null = no position is reported, so no
+ * bar is drawn (the words still say the split).
+ */
+export interface ReadBar {
+  cached: number;
+  read: number;
+}
+
+export function readBarOf(
+  progress: { done: number; total: number } | null,
+  cache: PromptCache | null
+): ReadBar | null {
+  if (!progress || progress.total <= 0) return null;
+  if (!cache || cache.freshDone == null) {
+    return { cached: 0, read: Math.min(1, Math.max(0, progress.done / progress.total)) };
+  }
+  return {
+    cached: cache.cached / cache.total,
+    read: Math.min(cache.fresh, cache.freshDone) / cache.total,
+  };
+}
+
+/**
  * A chat's turn while its prompt is read, in the figures the card leads with for it (Q-301 — the
  * chat's own working row repeats them): the prompt's size, how long it has been read, how far in
- * (`promptProgress`'s rule), the rate it is read at NOW (the request's own prefill rate — the
- * card's "tok/s reading this prompt"), and the time left AT THAT RATE. Every figure is one the
- * engine measured; one it does not report is null, and with no live rate or no progress there is
- * no time left — never a guessed rate, never a guessed share.
+ * (`promptProgress`'s rule), what the prefix cache supplied of it (`promptCacheOf`, Q-337), the rate
+ * it is read at NOW (the request's own prefill rate — the card's "tok/s reading this prompt"), and
+ * the time left AT THAT RATE over the tokens still to COMPUTE — cached ones are never waited on.
+ * Every figure is one the engine measured; one it does not report is null, and with no live rate or
+ * no progress there is no time left — never a guessed rate, never a guessed share.
  */
 export interface PromptRead {
   tokens: number | null;
   elapsedS: number;
   progress: { done: number; total: number } | null;
+  cache: PromptCache | null;
   tps: number | null;
   leftS: number | null;
 }
@@ -158,12 +236,22 @@ export interface PromptRead {
 export function promptRead(lead: MlxLiveRequest): PromptRead | null {
   if (requestActivity(lead) !== 'prefill') return null;
   const progress = readProgressOf(lead);
+  const cache = promptCacheOf(lead);
   const tps = lead.promptTps != null && lead.promptTps > 0 ? lead.promptTps : null;
   return {
     tokens: lead.promptTokens,
     elapsedS: lead.elapsedS ?? 0,
     progress,
+    cache,
     tps,
-    leftS: progress && tps ? (progress.total - progress.done) / tps : null,
+    leftS: progress && tps ? tokensLeftToCompute(progress, cache) / tps : null,
   };
+}
+
+function tokensLeftToCompute(
+  progress: { done: number; total: number },
+  cache: PromptCache | null
+): number {
+  const position = cache ? Math.max(progress.done, cache.cached) : progress.done;
+  return Math.max(0, progress.total - position);
 }

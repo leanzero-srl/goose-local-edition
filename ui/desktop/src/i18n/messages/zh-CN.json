@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} 正在读取另一个请求的 {tokens} 词元提示 — 你的消息将排队等候"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} 正在读取另一个请求的 {tokens} 词元提示 — 其中 {cached} 来自缓存，{fresh} 为新内容 — 你的消息将排队等候"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} 正在读取另一个请求的 {tokens} 词元提示，缓存中没有内容 — 你的消息将排队等候"
+  },
   "composerReadiness.details": {
     "defaultMessage": "详细信息"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "隐藏速率和内存"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "隐藏此提示读取快的原因、速率和内存"
+  },
   "engineGlance.more": {
     "defaultMessage": "显示速率和内存"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "显示此提示读取快的原因、速率和内存"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, other {# 个等你处理}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "无标题会话"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} 来自缓存，新内容 {fresh} 中已读 {done}"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} 词元 · 缓存中没有内容 — 正在全部读取"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "缓存中没有内容 — 正在全部读取"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "新内容 {fresh} 中已读 {done}"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "已用 {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} 词元 · <c>{cached} 来自缓存</c> · <n>{fresh} 为新内容</n> — 正在读取新部分"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} 来自缓存</c> · <n>{fresh} 为新内容</n> — 正在读取新部分"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose 会把这段对话的开头保留在引擎内存中；只有新部分需要重新读取"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "所有提示词已重置为默认"

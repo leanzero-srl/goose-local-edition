@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import { IntlProvider } from 'react-intl';
 
 const acp = vi.hoisted(() => ({
@@ -88,6 +88,7 @@ describe('Q-301: the chat says its turn works while nothing is written yet', () 
       tokens: 40_500,
       elapsedS: 71,
       progress: { done: 22_862, total: 40_500 },
+      cache: null,
       tps: 322,
       leftS: (40_500 - 22_862) / 322,
     });
@@ -96,6 +97,7 @@ describe('Q-301: the chat says its turn works while nothing is written yet', () 
       tokens: 40_500,
       elapsedS: 71,
       progress: null,
+      cache: null,
       tps: null,
       leftS: null,
     });
@@ -114,8 +116,10 @@ describe('Q-301: the chat says its turn works while nothing is written yet', () 
     );
     const bar = screen.getByTestId('turn-working-progress');
     expect(bar.getAttribute('aria-valuenow')).toBe('56');
-    const fill = bar.firstElementChild as HTMLElement;
-    expect(fill.style.width).toBe('56%');
+    // No cache figure (the lookup not reported): the one plain bar, never a guessed cached part.
+    expect(within(bar).queryByTestId('prompt-read-cached')).toBeNull();
+    const fill = within(bar).getByTestId('prompt-read-new');
+    expect(fill.style.width).toBe('56.45%');
     expect(fill.className).toContain(PHASE_DOT.reading);
     for (const c of PHASE_FILL.reading.split(' ')) {
       expect(row.querySelector('span')!.className).toContain(c);
