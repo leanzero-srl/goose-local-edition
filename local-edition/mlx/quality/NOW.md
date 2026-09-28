@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 23:3x (tick 2) (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 23:3x (tick 3, 23:4x) (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.73 on BOTH Macs; the app serves the 27B SPLIT (Thunderbolt/jaccl, 0.46 ms).
@@ -9,15 +9,16 @@ Updated: 2026-09-28 23:3x (tick 2) (date) · heartbeat cron 90b0083a + runwatch.
   - Turn 0: 905 s, notes file OK.
   - Turn 1: 212 s. Both memories were saved, but it invented a reason for the 24/9 date conflict in the client
     file (Q-448, model behaviour, parked to the training round, forge-tuner 42b1893).
-  - Turn 2 (DC end-of-support web research) is running. Watch for invented tool names; the Q-367 hint has been
-    live since 3.0.71.
-- Q-447 FOUND this tick (STABILITY/perf):
-  - Split decode is ~2.7× slower on cache-hit chat turns since the FIRST 3.0.71 launch (18:12).
-  - Before: 8.2–9.5 tok/s at 159k–211k. After: 2.8–4.1 tok/s at 41k–90k. Cold 21k demo delegates still run 6.9–12.1.
-  - Launch caps, link and thermals are identical.
-  - Suspect: Q-347's stable-head snapshot (4b16c7ba3) sharing KV buffers, so a copy is made per step. Unproven.
-  - An mlx-backend agent is root-causing it on a tiny-model repro (no touch of the live engine).
-  - #3u keeps running meanwhile: it measures needs-you and compaction, not speed.
+  - Turn 2: 346 s, 9 tools, a correct sourced answer (EOL 2029-03-28, end of sale to existing customers
+    2028-03-30, JCMA floor 7.6+). Zero invented tool names (#3r: 13 of 30). It guessed 2 URLs (404), then searched.
+    Q-367's error text was NOT exercised, so it stays "awaiting live prove".
+  - Turn 3 (synthetic users.csv script) is running.
+- Q-447 (STABILITY/perf), REFINED at 23:40:
+  - It is not "cache hit ⇒ slow". Within ONE launch, decode flipped from 4.1 to 11.5 tok/s at 20:29:56Z, right
+    after a 2-row batch (a helper beside the agent call) returned to 1 row.
+  - Signature: MLX free-buffer cache while busy. Slow runs sit at 0.05–0.09 GB, fast ones at 1.6–3.5 GB (limit 3.54).
+    A live row whose KV is shared with a cache entry is copied per step; this is suspected, not proven.
+  - Sent to the mlx-backend agent (tiny-model repro). #3u is fast again now.
 - Owner demo done (nodes: Studio single, both Macs, deepseek-v4.1-flash · OpenRouter; strategy "Studio chat, split
   for heavy work"; screenshots ~/goose-builds/quality/DEMO-2026-09-28-strategy).
 
