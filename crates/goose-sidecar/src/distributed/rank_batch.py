@@ -3,6 +3,7 @@
 # which installs it; importable on its own beside a real mlx_lm (launch.rs's tests run it there).
 import inspect  # noqa: E402
 
+import mlx.core as mx  # noqa: E402
 from mlx_lm.models.cache import ArraysCache, BatchKVCache, KVCache  # noqa: E402
 
 
@@ -27,6 +28,38 @@ def batch_shape(batch):
     for row in batch._unprocessed_sequences:
         width = max(width, cache_width(row[3]) + sum(map(len, row[1])))
     return rows, width
+
+
+# Q-447: mlx_lm 0.31.3's BatchKVCache.extend pads a side that holds no KV yet with
+# `mx.array([])` — FLOAT32 — and concatenates it with the other side's bfloat16 KV, so the whole
+# batch's KV becomes float32. That happens whenever a request whose prompt is read cold joins a
+# prompt batch another row has already stepped (or a row with KV joins one that has not). From
+# there the attention output, the residual stream and every later layer run in float32, every
+# prompt-cache entry the row leaves is float32 (twice the bytes per token), and every request
+# restored from one inherits it (BatchKVCache.merge keeps the first row's dtype) — through the
+# chat's conversation prefix and its kept stable head, for as long as the launch lives. The 27B
+# tensor split's 22:57 launch of 2026-09-28 (rank0 log ...1790625429786): the first chat request
+# (42,642 tokens, cold) joined a 206-token helper after the helper's first step; its stable head
+# measured 2,816,448,512 B = 41,780 x 65,536 + 78,354,432 (3.0.70's head: 1.40 GB = 40,421 x
+# 32,768 + 76,972,032) and every chat turn decoded 4.05-4.19 tok/s, until a two-row merge led by
+# a bfloat16 row cast the chat back (20:29:54Z): 10.35-12.26 tok/s on the same chat, its new
+# entries back at 32,768 B per token.
+def extend_in_its_dtype(cache, other, upstream_extend):
+    """BatchKVCache.extend with a side that holds no KV padded in the other side's dtype: the
+    same shapes, padding and values as upstream, never a float32 promotion."""
+    filled = [c for c in (cache, other) if c.keys is not None]
+    if len(filled) == 1:
+        keys, values = filled[0].keys, filled[0].values
+        for empty in (c for c in (cache, other) if c.keys is None):
+            rows = empty.offset.shape[0]
+            empty.keys = mx.zeros((rows, keys.shape[1], 0, keys.shape[3]), dtype=keys.dtype)
+            empty.values = mx.zeros((rows, values.shape[1], 0, values.shape[3]), dtype=values.dtype)
+    return upstream_extend(cache, other)
+
+
+def kv_dtypes(caches):
+    """The distinct dtypes of the KV the given layer caches hold (names, sorted)."""
+    return sorted({str(c.keys.dtype) for c in caches if getattr(c, "keys", None) is not None})
 
 
 def settle_left_padding(cache):
