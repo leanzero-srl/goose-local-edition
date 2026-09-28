@@ -355,7 +355,7 @@ interface NodesConfig {                           // config key `nodes`
 - Every chain names an existing node, and has at least one entry.
 - Weights are integers of 1 or more.
 - `placement.macs` names Macs that the roster knows. The key `local` is always this Mac (the node config lives on this Mac and is never shared). An unknown Link node id is **kept** and shown as "not connected", never dropped.
-- Removing a node is refused, with the names, while a strategy uses it (the UI offers "Remove from those strategies too") or while `forNewChats` names it (the UI offers "and start new chats on Any node (Auto)").
+- Removing a node is refused, with the names, while a strategy uses it or while `forNewChats` names it. The dialog knows both from the config it opened on and offers each as a box before anything is tried ("Also remove it from Everyday", "Start new chats on Any node (Auto) instead"); Remove stays disabled, with "Tick the box above to remove it" beside it, until each is ticked. A refusal a box answers is never shown as a red "Not removed"; only a refusal no box answers is, in the engine's words, after the attempt (Q-259).
 - Removing a node that live sessions are set to is allowed only with the count acknowledged ("3 chats are set to this node. Their next message will say it was removed"). Those sessions' next turn ends with `nodes.removedNode` naming the node and offering the chip; it never falls to Auto (gate 1).
 - Removing a `poolDevice` node adds its device id to `declined`; the pool itself is untouched.
 - A write that changes `forNewChats` also writes the global defaults (`GOOSE_PROVIDER=swarm`, `GOOSE_MODEL=node:<id>|strategy:<id>|swarm`) in the same call, so there is one door for "new chats start on".
@@ -845,8 +845,10 @@ The `⋯` menu is a Radix dropdown: Keep loaded (checkbox), Duplicate, Show in R
 | `nodes.duplicate` | "Duplicate" |
 | `nodes.showInRunIt` | "Show in Run it" |
 | `nodes.remove` | "Remove" |
-| `nodes.removeUsedByChats` | "{count, plural, one {# chat is} other {# chats are}} set to this node. Their next message will say it was removed." |
-| `nodes.removeAndAuto` | "Remove, and start new chats on Any node (Auto)" |
+| `nodes.removeAlsoFromStrategies` | "Also remove it from {strategies}" (a box on open when a strategy names the node; Q-259) |
+| `nodes.removeNewChatsAuto` | "Start new chats on Any node (Auto) instead" (a box on open when new chats start on the node) |
+| `nodes.removeLiveChats` | "Remove it anyway: {count, plural, one {# chat is} other {# chats are}} set to this node" (a box the moment the engine counts them; its description: "Its/Their next message will say the node was removed and ask you to pick another.") |
+| `nodes.removeBlocked` | "{count, plural, one {Tick the box above to remove it} other {Tick the # boxes above to remove it}}" (beside the disabled Remove) |
 | `nodes.emptyTitle` | "No nodes yet" |
 | `nodes.emptyBody` | "Connect your Macs and run a model, or add a cloud model." |
 | `nodes.setUpMacs` | "Set up your Macs" |

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight, Cloud, Cpu, ExternalLink, Loader2, Plug, RefreshCw, X } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import {
@@ -142,6 +142,10 @@ const i18n = defineMessages({
   save: { id: 'nodes.newSave', defaultMessage: 'Save node' },
   refused: { id: 'nodes.newRefused', defaultMessage: 'Not saved' },
   writeFailed: { id: 'nodes.newWriteFailed', defaultMessage: 'The node could not be saved' },
+  needModel: { id: 'nodes.newNeedModel', defaultMessage: 'Pick a model to go on' },
+  needWay: { id: 'nodes.newNeedWay', defaultMessage: 'Pick a way to run it to go on' },
+  needProvider: { id: 'nodes.newNeedProvider', defaultMessage: 'Pick a provider to go on' },
+  needName: { id: 'nodes.newNeedName', defaultMessage: 'Give it a name to save it' },
 });
 
 type Kind = 'mlx' | 'cloud' | 'endpoint';
@@ -301,6 +305,7 @@ function NewNodeDialogBody({
   const [planAgain, setPlanAgain] = useState(0);
   const [saving, setSaving] = useState(false);
   const [refusals, setRefusals] = useState<string[]>([]);
+  const blockedId = useId();
 
   const [providers, setProviders] = useState<ProvidersRead>({ kind: 'reading' });
   useEffect(() => {
@@ -788,6 +793,21 @@ function NewNodeDialogBody({
     </div>
   );
 
+  // A disabled Next/Create says why beside it (Q-259: never a button that silently does nothing).
+  // Steps whose own body already says why (no models, no ways, reading, a failed read) add nothing.
+  const blocked: string | null =
+    step === 'model' && model == null && localModels.length > 0
+      ? intl.formatMessage(i18n.needModel)
+      : step === 'way' && placement == null && plannedWays.length > 0
+        ? intl.formatMessage(i18n.needWay)
+        : step === 'provider' && provider == null && providerChoices.length > 0
+          ? intl.formatMessage(i18n.needProvider)
+          : step === 'providerModel' && providerModel.trim() === '' && models.kind !== 'reading'
+            ? intl.formatMessage(i18n.needModel)
+            : step === 'name' && name.trim() === ''
+              ? intl.formatMessage(i18n.needName)
+              : null;
+
   const body =
     step === 'kind'
       ? kindStep
@@ -870,6 +890,15 @@ function NewNodeDialogBody({
       )}
 
       <div className="flex flex-wrap items-center justify-end gap-2">
+        {blocked && (
+          <span
+            id={blockedId}
+            className={cx('mr-auto', TYPE.meta, WEIGHT.semibold)}
+            data-testid="new-node-blocked"
+          >
+            {blocked}
+          </span>
+        )}
         {at > 0 && !(editDef && step === 'name' && kind !== 'mlx') && (
           <Button variant="ghost" onClick={() => goTo(steps[at - 1])} data-testid="new-node-back">
             {intl.formatMessage(i18n.back)}
@@ -879,6 +908,7 @@ function NewNodeDialogBody({
           <Button
             variant="primary"
             disabled={!canNext}
+            aria-describedby={blocked ? blockedId : undefined}
             onClick={() => goTo(steps[at + 1])}
             data-testid="new-node-next"
           >
@@ -889,6 +919,7 @@ function NewNodeDialogBody({
             <Button
               variant={kind === 'mlx' && !editDef ? 'secondary' : 'primary'}
               disabled={saving || name.trim() === ''}
+              aria-describedby={blocked ? blockedId : undefined}
               icon={saving ? <Loader2 className="animate-spin" /> : undefined}
               onClick={() => void save(false)}
               data-testid="new-node-create"
@@ -899,6 +930,7 @@ function NewNodeDialogBody({
               <Button
                 variant="primary"
                 disabled={saving || name.trim() === ''}
+                aria-describedby={blocked ? blockedId : undefined}
                 onClick={() => void save(true)}
                 data-testid="new-node-create-start"
               >

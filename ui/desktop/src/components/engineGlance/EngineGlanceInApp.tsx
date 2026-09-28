@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Gauge } from 'lucide-react';
-import { EngineGlanceCard, StageIcon, stageWord } from './EngineGlanceCard';
+import { EngineGlanceCard, StageIcon, glanceHeadline } from './EngineGlanceCard';
 import { setGlancePrefs, useEngineGlance } from './glanceStore';
 import { dockRestorable, dockShown } from '../../utils/engineGlanceRules';
 import { nodeHref } from '../../utils/navigationUtils';
@@ -115,7 +115,7 @@ function EngineGlanceRestore() {
           <span
             data-testid="engine-glance-restore-stage"
             data-phase={engine.phase}
-            title={stageWord(intl, engine.stage)}
+            title={glanceHeadline(intl, engine)}
             className={cx(
               'inline-flex size-6 shrink-0 items-center justify-center [&_svg]:size-3.5',
               RADIUS.pill,
@@ -123,7 +123,7 @@ function EngineGlanceRestore() {
             )}
           >
             <StageIcon stage={engine.stage} />
-            <span className="sr-only">{stageWord(intl, engine.stage)}</span>
+            <span className="sr-only">{glanceHeadline(intl, engine)}</span>
           </span>
         )}
       </button>

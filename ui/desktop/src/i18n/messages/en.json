@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Not refreshed"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Swapping"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Turn off the floating window"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Resolved model"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Select Model"
   },
@@ -6443,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Name it"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Pick a model to go on"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Give it a name to save it"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Pick a provider to go on"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Pick a way to run it to go on"
+  },
   "nodes.newNext": {
     "defaultMessage": "Next"
   },
@@ -6578,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "Remove"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Remove, and start new chats on Any node (Auto)"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Also remove it from {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{A strategy uses this node, so it can’t be removed on its own.} other{# strategies use this node, so it can’t be removed on its own.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Also remove it from the strategies that use it"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Tick the box above to remove it} other{Tick the # boxes above to remove it}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "The node is removed from your nodes. Your Macs, models and providers stay as they are."
@@ -6587,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Remove"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Remove it from those strategies too"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Remove it anyway: # chat is set to this node} other{Remove it anyway: # chats are set to this node}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Its next message will say the node was removed and ask you to pick another.} other{Their next message will say the node was removed and ask you to pick another.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Start new chats on Any node (Auto) instead"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "New chats start on this node now, so it can’t be removed on its own."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Your swarm pool keeps its device; this node is not shown here again. Edit the pool itself below."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Remove {node}?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# chat is set to this node. Their next message will say it was removed.} other{# chats are set to this node. Their next message will say it was removed.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Read again"
@@ -6677,6 +6710,9 @@
   "nodes.subtitle": {
     "defaultMessage": "A node is a model you can hand work to, on your Macs or in the cloud. Chats start on a node or a strategy; swarm builds use a strategy or your swarm pool."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Swapping to {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Your swarm pool could not be read"
   },
@@ -6688,6 +6724,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodes"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Loading {node} for this chat: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "The change could not be saved"
@@ -9380,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: node {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Not removed"
-  },
   "strategies.note": {
     "defaultMessage": "Note (your words)"
   },
@@ -9416,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "Remove"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Remove, and start new chats on Any node (Auto)"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Remove, and let swarm builds use your swarm pool"
-  },
   "strategies.removeBody": {
     "defaultMessage": "The strategy is removed. Its nodes stay as they are."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Remove"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Let swarm builds use your swarm pool instead"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Swarm builds use this strategy now, so it can’t be removed on its own."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Take {node} out of {role}"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Start new chats on Any node (Auto) instead"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "New chats start on this strategy now, so it can’t be removed on its own."
   },
   "strategies.removeTitle": {
     "defaultMessage": "Remove {name}?"

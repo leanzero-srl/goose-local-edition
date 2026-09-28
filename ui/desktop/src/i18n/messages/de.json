@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Nicht aktualisiert"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Wechselt"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Das schwebende Fenster ausschalten"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Aufgelöstes Modell"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Modell auswählen"
   },
@@ -6443,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Benenne ihn"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Wähle ein Modell, um weiterzugehen"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Gib ihm einen Namen, um ihn zu speichern"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Wähle einen Anbieter, um weiterzugehen"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Wähle einen Weg, ihn auszuführen, um weiterzugehen"
+  },
   "nodes.newNext": {
     "defaultMessage": "Weiter"
   },
@@ -6578,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "Entfernen"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Entfernen und neue Chats auf „Beliebiger Node (Auto)“ starten"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Auch aus {strategies} entfernen"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Eine Strategie nutzt diesen Node, daher kann er nicht allein entfernt werden.} other{# Strategien nutzen diesen Node, daher kann er nicht allein entfernt werden.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Auch aus den Strategien entfernen, die ihn nutzen"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Hake das Kästchen oben an, um ihn zu entfernen} other{Hake die # Kästchen oben an, um ihn zu entfernen}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "Der Node wird aus deinen Nodes entfernt. Deine Macs, Modelle und Anbieter bleiben, wie sie sind."
@@ -6587,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Entfernen"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Auch aus diesen Strategien entfernen"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Trotzdem entfernen: # Chat ist auf diesen Node eingestellt} other{Trotzdem entfernen: # Chats sind auf diesen Node eingestellt}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Seine nächste Nachricht meldet, dass der Node entfernt wurde, und bittet dich, einen anderen zu wählen.} other{Ihre nächste Nachricht meldet, dass der Node entfernt wurde, und bittet dich, einen anderen zu wählen.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Neue Chats stattdessen auf „Beliebiger Node (Auto)“ starten"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Neue Chats starten derzeit auf diesem Node, daher kann er nicht allein entfernt werden."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Dein Schwarm-Pool behält sein Gerät; dieser Node wird hier nicht mehr angezeigt. Bearbeite den Pool selbst unten."
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node} entfernen?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# Chat ist auf diesen Node eingestellt. Seine nächste Nachricht meldet, dass er entfernt wurde.} other{# Chats sind auf diesen Node eingestellt. Ihre nächste Nachricht meldet, dass er entfernt wurde.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Erneut lesen"
@@ -6677,6 +6710,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Ein Node ist ein Modell, dem du Arbeit übergeben kannst, auf deinen Macs oder in der Cloud. Chats starten auf einem Node oder einer Strategie; Schwarm-Builds nutzen eine Strategie oder deinen Schwarm-Pool."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Wechsel zu {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Dein Schwarm-Pool konnte nicht gelesen werden"
   },
@@ -6688,6 +6724,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodes"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "{node} wird für diesen Chat geladen: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Die Änderung konnte nicht gespeichert werden"
@@ -9380,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: Node {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Nicht entfernt"
-  },
   "strategies.note": {
     "defaultMessage": "Notiz (in deinen Worten)"
   },
@@ -9416,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "Entfernen"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Entfernen und neue Chats auf „Beliebiger Node (Auto)“ starten"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Entfernen und Schwarm-Builds deinen Schwarm-Pool nutzen lassen"
-  },
   "strategies.removeBody": {
     "defaultMessage": "Die Strategie wird entfernt. Ihre Nodes bleiben unverändert."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Entfernen"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Schwarm-Builds stattdessen deinen Schwarm-Pool nutzen lassen"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Schwarm-Builds nutzen derzeit diese Strategie, daher kann sie nicht allein entfernt werden."
   },
   "strategies.removeEntry": {
     "defaultMessage": "{node} aus {role} entfernen"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Neue Chats stattdessen auf „Beliebiger Node (Auto)“ starten"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Neue Chats starten derzeit mit dieser Strategie, daher kann sie nicht allein entfernt werden."
   },
   "strategies.removeTitle": {
     "defaultMessage": "{name} entfernen?"
