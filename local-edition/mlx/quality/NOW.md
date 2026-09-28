@@ -59,8 +59,9 @@ Updated: 2026-09-28 19:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   MERGED into merge-072 (6ada7bcd0); its full gate QUEUED behind: a cargo slot — #3s runs on the split and
   Q-394/Q-397 agents hold the MacBook's cargo (≤1 job rule). Q-394(a) DONE (worktree-agent-a54da611728175b1f: compaction keeps the work folder + absolute paths) — joins
   merge-072 after g072b; Q-394(b) (find ~ sat 300 s in the app) investigating; Q-397 DONE (worktree-agent-a55855b8d10a78827: memory_hold code + blocking /goose/admission
-  wait, only the rank-0 Mac needs it) — joins merge-072 after g072b with Q-394a. Q-399 (relay forwards the wait)
-  + Q-400 (queue_depth 55) cutting; Q-398 (pipeline fork's 503 has no code) QUEUED behind: agent cap. Was BATCH 2b list: Q-379..382 (worktree-agent-ad123d197e6e9ffd8), Q-388/389
+  wait, only the rank-0 Mac needs it) — joins merge-072 after g072b with Q-394a. BATCH 3 (→ 3.0.73): Q-399 DONE (worktree-agent-a77c5e29f0ce12c86, + Q-401
+  fixed; both Macs need it), Q-402 (relay capability in logs) + Q-400 (queue_depth 55) + Q-406 (shell timeout kills
+  only bash; TCC-blocked find — the Q-394b root cause) cutting; Q-398 (pipeline fork's 503 has no code) QUEUED behind: agent cap. Was BATCH 2b list: Q-379..382 (worktree-agent-ad123d197e6e9ffd8), Q-388/389
   (worktree-agent-a1d887d0d5490caf6: create-doc path + xlsx read, MCP patch), Q-383, Q-391, Q-392 when done.
   Q-390 (r1 opens the chat in <round>/work) cutting.
 - 429 at 16:5x (limit resets 18:40): resumed by SendMessage — Q-383 (a3e9aab…, WIP untracked testClock.ts +
