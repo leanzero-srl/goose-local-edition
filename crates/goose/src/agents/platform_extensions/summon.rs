@@ -2104,6 +2104,7 @@ mod tests {
             session_manager: Arc::new(crate::session::SessionManager::instance()),
             session: None,
             use_login_shell_path: false,
+            working_dir: None,
         }
     }
 

@@ -101,7 +101,7 @@ async fn dropping_the_session_extension_manager_kills_its_stdio_child_and_its_gr
                 bundled: None,
                 available_tools: Vec::new(),
             },
-            Some(dir.path().to_path_buf()),
+            dir.path().to_path_buf(),
             None,
             None,
         )

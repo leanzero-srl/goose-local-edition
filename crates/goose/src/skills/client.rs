@@ -22,12 +22,16 @@ pub struct SkillsClient {
 }
 
 impl SkillsClient {
+    /// Q-267: the folder was the session's or else the process cwd — goosed's, since Q-257 the
+    /// shared $HOME. It is the folder the extension manager started this client for.
     pub fn new(context: PlatformExtensionContext) -> anyhow::Result<Self> {
         let working_dir = context
-            .session
-            .as_ref()
-            .map(|s| s.working_dir.clone())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            .working_dir
+            .clone()
+            .or_else(|| context.session.as_ref().map(|s| s.working_dir.clone()))
+            .ok_or_else(|| {
+                anyhow::anyhow!("the skills extension was started without a folder, so it has no project skills to read")
+            })?;
 
         let info = InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(EXTENSION_NAME, "1.0.0").with_title("Skills"));
@@ -323,6 +327,7 @@ mod tests {
             session_manager: Arc::new(crate::session::SessionManager::instance()),
             session: Some(session),
             use_login_shell_path: false,
+            working_dir: None,
         })
         .unwrap()
         .with_builtin_skills(false);
@@ -356,6 +361,7 @@ mod tests {
             session_manager: Arc::new(crate::session::SessionManager::instance()),
             session: None,
             use_login_shell_path: false,
+            working_dir: None,
         })
         .unwrap();
 

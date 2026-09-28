@@ -75,6 +75,19 @@ impl Paths {
         Self::agents_home_dir().join(subpath)
     }
 
+    /// The folder for work that belongs to NO session — Settings' extension test, a provider built
+    /// only to list its models: the user's home folder, chosen here by name. Never the process cwd:
+    /// goosed's cwd is an accident of how it was started (since Q-257 the desktop starts it in
+    /// $HOME; a terminal `goose serve` in wherever the terminal was), and work for a session always
+    /// runs in the session's own folder (Q-263..Q-267).
+    pub fn sessionless_dir() -> anyhow::Result<PathBuf> {
+        dirs::home_dir().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no home folder is known for this user, so work outside a chat has no folder"
+            )
+        })
+    }
+
     /// goose's legacy `~/.goose` (global agents and recipes predate `.agents`): the sibling of
     /// [`Self::agents_home_dir`], so `<GOOSE_PATH_ROOT>/.goose` under a root (Q-197).
     pub fn in_legacy_home_dir(subpath: &str) -> PathBuf {

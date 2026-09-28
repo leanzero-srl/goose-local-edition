@@ -491,7 +491,10 @@ const MentionPopover = forwardRef<
         setIsLoading(true);
         try {
           if (isSlashCommand) {
-            const commandItems = await listSlashCommandItems(currentWorkingDir);
+            const commandItems = await listSlashCommandItems(
+              currentWorkingDir,
+              sessionId ?? undefined
+            );
             if (cancelled) return;
             setItems(commandItems);
           } else {

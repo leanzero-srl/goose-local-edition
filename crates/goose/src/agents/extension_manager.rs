@@ -900,6 +900,7 @@ impl ExtensionManager {
                 session_manager,
                 session: None,
                 use_login_shell_path,
+                working_dir: None,
             },
             provider,
             tools_cache: Mutex::new(None),
@@ -949,13 +950,15 @@ impl ExtensionManager {
             .any(|ext| ext.supports_resources())
     }
 
-    /// Add an extension with an optional working directory.
-    /// If working_dir is None, falls back to current_dir.
+    /// Add an extension that starts in `working_dir` — the session's folder, or for a start with no
+    /// session a folder the caller names. Q-267: this took an `Option` that fell back to
+    /// `GOOSE_WORKING_DIR` and then the process cwd; since Q-257 goosed serves every window from
+    /// $HOME, so an extension the model enabled mid-chat started in $HOME.
     #[allow(clippy::too_many_lines)]
     pub async fn add_extension(
         self: &Arc<Self>,
         config: ExtensionConfig,
-        working_dir: Option<PathBuf>,
+        working_dir: PathBuf,
         container: Option<&Container>,
         session_id: Option<&str>,
     ) -> ExtensionResult<()> {
@@ -979,10 +982,7 @@ impl ExtensionManager {
 
         let mut temp_dir = None;
 
-        let effective_working_dir = working_dir
-            .clone()
-            .or_else(|| std::env::var("GOOSE_WORKING_DIR").ok().map(PathBuf::from))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let effective_working_dir = working_dir;
 
         let client: Box<dyn McpClientTrait> = match &config {
             ExtensionConfig::Sse { .. } => {
@@ -1035,6 +1035,7 @@ impl ExtensionManager {
                     // Platform extension: create via in-process client factory
                     let mut context = self.context.clone();
                     context.extension_manager = Some(Arc::downgrade(self));
+                    context.working_dir = Some(effective_working_dir.clone());
                     if let Some(id) = session_id {
                         if let Ok(session) =
                             self.context.session_manager.get_session(id, false).await
@@ -2989,7 +2990,9 @@ mod tests {
         assert_eq!(em.extensions.lock().await.len(), 1);
 
         // Calling add_extension with the same config must be a no-op (Ok, count unchanged).
-        let result = em.add_extension(config, None, None, None).await;
+        let result = em
+            .add_extension(config, std::env::temp_dir(), None, None)
+            .await;
         assert!(result.is_ok(), "identical config should be a no-op");
         assert_eq!(
             em.extensions.lock().await.len(),
@@ -3037,7 +3040,9 @@ mod tests {
         // add_extension with changed config attempts to create a new client (fails here
         // because Frontend configs cannot be added as server extensions), but must preserve
         // the old extension so the session isn't left without it.
-        let result = em.add_extension(config_b, None, None, None).await;
+        let result = em
+            .add_extension(config_b, std::env::temp_dir(), None, None)
+            .await;
         assert!(result.is_err(), "Frontend add_extension must return Err");
         assert_eq!(
             em.extensions.lock().await.len(),

@@ -1494,7 +1494,10 @@ mod tests {
     #[test]
     fn the_memory_words_never_ask_for_a_reason_the_user_did_not_give() {
         let temp_dir = tempdir().unwrap();
-        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"), temp_dir.path().join("working"));
+        let server = MemoryServer::with_global_dir(
+            temp_dir.path().join("global"),
+            temp_dir.path().join("working"),
+        );
         let instructions = server.get_instructions();
         assert!(
             !instructions.contains("the reason behind it"),
@@ -1527,7 +1530,10 @@ mod tests {
             "ISO dates British spelling client deliverables Node zero dependencies scripts";
         let temp_dir = tempdir().unwrap();
         let wd = temp_dir.path().join("project");
-        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"), temp_dir.path().join("working"));
+        let server = MemoryServer::with_global_dir(
+            temp_dir.path().join("global"),
+            temp_dir.path().join("working"),
+        );
         let save = |category: &str, data: &str, tags: &[&str]| {
             server
                 .remember("context", category, data, tags, true, Some(&wd))
@@ -1738,7 +1744,8 @@ mod tests {
         let config = crate::goose_config_dir_under(Some(root.path().as_os_str().to_owned()));
         assert_eq!(config, root.path().join("config"));
 
-        let server = MemoryServer::with_global_dir(config.join("memory"), root.path().join("project"));
+        let server =
+            MemoryServer::with_global_dir(config.join("memory"), root.path().join("project"));
         assert_eq!(
             server.global_memory_dir(),
             root.path().join("config/memory")

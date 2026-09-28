@@ -1588,18 +1588,17 @@ impl Agent {
         extensions: Vec<ExtensionConfig>,
         session_id: &str,
     ) -> anyhow::Result<Vec<ExtensionLoadResult>> {
-        let working_dir = match self
+        // Q-267: an unreadable session refuses the load instead of starting every extension in
+        // goosed's own cwd (since Q-257 the shared $HOME).
+        let working_dir = self
             .config
             .session_manager
             .get_session(session_id, false)
             .await
-        {
-            Ok(session) => Some(session.working_dir),
-            Err(e) => {
-                warn!("Failed to get session for bulk load: {}", e);
-                None
-            }
-        };
+            .with_context(|| {
+                format!("session {session_id} is unreadable, so its extensions have no folder")
+            })?
+            .working_dir;
         let container = self.container.lock().await.clone();
 
         let extension_futures = extensions
@@ -1660,7 +1659,7 @@ impl Agent {
                     session_id, e
                 ))
             })?;
-        let working_dir = Some(session.working_dir);
+        let working_dir = session.working_dir;
 
         match &extension {
             ExtensionConfig::Frontend { .. } => {

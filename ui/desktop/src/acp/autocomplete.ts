@@ -55,9 +55,15 @@ export function agentMentionToDisplayItem(agent: AgentMention): AutocompleteDisp
   };
 }
 
-export async function listSlashCommandItems(cwd: string): Promise<AutocompleteDisplayItem[]> {
+export async function listSlashCommandItems(
+  cwd: string,
+  sessionId?: string
+): Promise<AutocompleteDisplayItem[]> {
   const client = await getAcpClient();
-  const response = await client.goose.slashCommandsList_unstable(cwdParam(cwd));
+  const response = await client.goose.slashCommandsList_unstable({
+    ...cwdParam(cwd),
+    ...(sessionId ? { sessionId } : {}),
+  });
   return response.availableCommands
     .map(availableCommandToDisplayItem)
     .filter((item): item is AutocompleteDisplayItem => item !== null);
