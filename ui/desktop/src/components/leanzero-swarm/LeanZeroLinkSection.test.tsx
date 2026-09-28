@@ -284,8 +284,13 @@ describe('LeanZeroLinkSection — login flow', () => {
     render();
     await screen.findByTestId('link-login-card');
 
-    mockRequestCode.mockResolvedValue({ email: 'user@example.com', expiresInSeconds: 300 });
-    currentState = codeSent(300);
+    // Q-383: the server's state moves when the code is REQUESTED, as it does for real. Moved before
+    // the typing, the 3 s status poll could land mid-typing on a loaded machine and swap the card out
+    // from under the click.
+    mockRequestCode.mockImplementation(async () => {
+      currentState = codeSent(300);
+      return { email: 'user@example.com', expiresInSeconds: 300 };
+    });
 
     await userEvent.type(screen.getByTestId('link-email-input'), 'user@example.com');
     await userEvent.click(screen.getByTestId('link-send-code'));
@@ -300,12 +305,11 @@ describe('LeanZeroLinkSection — login flow', () => {
     render();
     await screen.findByTestId('link-code-input');
 
-    mockVerify.mockResolvedValue({
-      state: 'loggedIn',
-      email: 'user@example.com',
-      audienceSync: 'synced',
+    // Logged in once the code is VERIFIED, not before the typing (Q-383: the poll races slow typing).
+    mockVerify.mockImplementation(async () => {
+      currentState = LOGGED_IN;
+      return { state: 'loggedIn', email: 'user@example.com', audienceSync: 'synced' };
     });
-    currentState = LOGGED_IN;
 
     await userEvent.type(screen.getByTestId('link-code-input'), '123456');
     await userEvent.click(screen.getByTestId('link-verify'));
@@ -319,12 +323,11 @@ describe('LeanZeroLinkSection — login flow', () => {
     render();
     await screen.findByTestId('link-code-input');
 
-    mockVerify.mockResolvedValue({
-      state: 'loggedIn',
-      email: 'user@example.com',
-      audienceSync: 'failed',
+    // Logged in once the code is VERIFIED, not before the typing (Q-383: the poll races slow typing).
+    mockVerify.mockImplementation(async () => {
+      currentState = LOGGED_IN;
+      return { state: 'loggedIn', email: 'user@example.com', audienceSync: 'failed' };
     });
-    currentState = LOGGED_IN;
 
     await userEvent.type(screen.getByTestId('link-code-input'), '654321');
     await userEvent.click(screen.getByTestId('link-verify'));

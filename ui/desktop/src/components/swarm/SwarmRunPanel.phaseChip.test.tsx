@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { testClock } from '../../test/testClock';
 import { SwarmRunPanel } from './SwarmRunPanel';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 
@@ -23,7 +24,13 @@ const BUILDING_EVENTS = [
     task_count: 1,
     tasks: [{ id: 'store', description: 'Build the store', files: ['store.py'], deps: [] }],
   },
-  { event: 'task_dispatched', task_id: 'store', device: POOL[0].id, model: POOL[0].model_id, ts: TS },
+  {
+    event: 'task_dispatched',
+    task_id: 'store',
+    device: POOL[0].id,
+    model: POOL[0].model_id,
+    ts: TS,
+  },
 ];
 
 type ElectronMock = Record<string, unknown>;
@@ -93,7 +100,9 @@ describe('the header phase chip never claims work on a run whose engine is gone'
   it('a project with no run renders no panel and no chip', async () => {
     mockRun(null);
     const { container } = mount();
-    await vi.waitFor(() => expect(electron().readSwarmRun).toHaveBeenCalled());
+    await vi.waitFor(() => expect(electron().readSwarmRun).toHaveBeenCalled(), {
+      timeout: testClock(),
+    });
     expect(container.textContent).toBe('');
     expect(screen.queryByText('Building')).toBeNull();
   });

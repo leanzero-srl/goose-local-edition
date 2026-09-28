@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { testClock } from '../../test/testClock';
 import type { MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 
 let route: MlxRemoteSingleStatus | null = null;
@@ -41,12 +42,14 @@ describe('dropRoute — the one way chat leaves a route', () => {
     const drop = dropRoute();
     await drop.routeGone;
     expect(mockStop).toHaveBeenCalledWith(true);
-    await vi.waitFor(() =>
-      expect(latestPeerHeld()).toEqual({
-        phase: 'asking',
-        peerNodeId: STUDIO.peer,
-        peerName: "Work's Mac Studio",
-      })
+    await vi.waitFor(
+      () =>
+        expect(latestPeerHeld()).toEqual({
+          phase: 'asking',
+          peerNodeId: STUDIO.peer,
+          peerName: "Work's Mac Studio",
+        }),
+      { timeout: testClock() }
     );
     expect(mockUnmount).toHaveBeenCalledWith(STUDIO.peer);
     answer();

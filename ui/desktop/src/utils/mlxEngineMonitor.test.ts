@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { testClock } from '../test/testClock';
 import {
   MlxEngineMonitor,
   isMlxEngineReport,
@@ -167,13 +168,13 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
     let body: MlxLiveStatusResult = refused;
     const h = harness({ status: () => body });
     h.monitor.reportFromRenderer({ state: 'mounting', baseUrl: BASE, modelId: 'org/m' });
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1), { timeout: testClock() });
     expect(h.monitor.current().mode).toBe('mounting');
     expect(h.monitor.current().modelId).toBe('org/m');
     expect(h.scheduled).toHaveLength(1);
     body = answered(IDLE_STATUS);
     h.scheduled.shift()!();
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(2));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(2), { timeout: testClock() });
     expect(h.monitor.current().mode).toBe('running');
   });
 
@@ -184,7 +185,7 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
       baseUrl: BASE,
       lastError: 'port never opened',
     });
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1), { timeout: testClock() });
     expect(h.monitor.current()).toMatchObject({ mode: 'failed', failedError: 'port never opened' });
     expect(h.scheduled).toHaveLength(0);
   });
@@ -194,7 +195,7 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
       'the engine process (pid 83454) exited: signal: 9 (SIGKILL) — not restarted automatically; Mount restarts it (the crash breaker applies). Last log lines:\nINFO: loaded';
     const h = harness({ status: () => refused });
     h.monitor.reportFromRenderer({ state: 'failed', modelId: 'org/m', lastError: exit });
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1), { timeout: testClock() });
     expect(h.monitor.current()).toMatchObject({ mode: 'failed', failedError: exit });
     expect(h.scheduled).toHaveLength(0);
   });
@@ -351,7 +352,7 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
     const h = harness({ status: () => answered(IDLE_STATUS) });
     h.monitor.wake();
     h.monitor.wake();
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1), { timeout: testClock() });
     expect(h.readStatus).toHaveBeenCalledTimes(1);
     expect(h.scheduled).toHaveLength(1);
     h.monitor.stop();
@@ -817,7 +818,7 @@ describe('MlxEngineMonitor — goose stopped over its own leftover is OFF (Q-277
   it('the leftover answering is not goose running: OFF, named, the loop stops', async () => {
     const h = harness({ status: () => answered(IDLE_STATUS) });
     h.monitor.reportFromRenderer({ state: 'stopped', leftoverBaseUrl: BASE });
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1), { timeout: testClock() });
     const s = h.monitor.current();
     expect(s).toMatchObject({ engine: 'single', mode: 'off', modelId: null, stats: null });
     expect(s.statusDetail).toBe(
@@ -830,16 +831,16 @@ describe('MlxEngineMonitor — goose stopped over its own leftover is OFF (Q-277
   it('the start that stops it: goose running again reads the port again', async () => {
     const h = harness({ status: () => answered(IDLE_STATUS) });
     h.monitor.reportFromRenderer({ state: 'stopped', leftoverBaseUrl: BASE });
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1), { timeout: testClock() });
     h.monitor.reportFromRenderer({ state: 'running', baseUrl: BASE, modelId: 'org/m' });
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(2));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(2), { timeout: testClock() });
     expect(h.monitor.current().mode).toBe('running');
   });
 
   it('stopped with no leftover of its own (another goose runs what answers): read as before', async () => {
     const h = harness({ status: () => answered(IDLE_STATUS) });
     h.monitor.reportFromRenderer({ state: 'stopped' });
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1), { timeout: testClock() });
     expect(h.monitor.current().mode).toBe('running');
   });
 

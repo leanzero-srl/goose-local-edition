@@ -244,9 +244,7 @@ describe('NoNodeNotice', () => {
     // Between the call and the next poll the stale "stopped" must not bring Mount back.
     expect(screen.getByText('Mounting')).toBeInTheDocument();
     expect(screen.queryByTestId('no-node-mount-mihai-mlx')).toBeNull();
-    await waitFor(() => expect(mockStatus.mock.calls.length).toBeGreaterThan(pollsBefore), {
-      timeout: 4000,
-    });
+    await waitFor(() => expect(mockStatus.mock.calls.length).toBeGreaterThan(pollsBefore));
     // Now the engine's own "mounting" drives the chip.
     expect(await screen.findByText('Mounting')).toBeInTheDocument();
     expect(screen.queryByTestId('no-node-mount-mihai-mlx')).toBeNull();

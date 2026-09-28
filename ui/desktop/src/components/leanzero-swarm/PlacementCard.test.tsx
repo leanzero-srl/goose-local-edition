@@ -259,7 +259,7 @@ describe('Run across both Macs for a model the split is not set up with', () => 
     renderCard({ distributed: STOPPED_FLASH });
     const split = await screen.findByTestId('placement-way-split');
     await userEvent.click(within(split).getByTestId('placement-run-split'));
-    await waitFor(() => expect(mockDistributedStart).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    await waitFor(() => expect(mockDistributedStart).toHaveBeenCalledTimes(1));
     expect(mockProvision).toHaveBeenCalledTimes(1);
     expect(mockProvision.mock.calls[0][0].modelId).toBe(MODEL);
   });
@@ -1063,9 +1063,7 @@ describe('Run it on the real 27B plan', () => {
     expect(mockReplicate).toHaveBeenCalledWith(MODEL, 'wh', undefined);
     expect(
       await within(peer).findByText(
-        'Copying to Work’s Mac Studio — 42% · it starts when the copy lands',
-        undefined,
-        { timeout: 3000 }
+        'Copying to Work’s Mac Studio — 42% · it starts when the copy lands'
       )
     ).toBeInTheDocument();
     expect(mockRemoteStart).not.toHaveBeenCalled();
@@ -1080,9 +1078,7 @@ describe('Run it on the real 27B plan', () => {
       wireMillis: 31000,
       elapsedMillis: 31000,
     });
-    await waitFor(() => expect(mockRemoteStart).toHaveBeenCalledWith('wh', MODEL), {
-      timeout: 3000,
-    });
+    await waitFor(() => expect(mockRemoteStart).toHaveBeenCalledWith('wh', MODEL));
   });
 
   it('a way goose says does not fit offers no Run — only why', async () => {

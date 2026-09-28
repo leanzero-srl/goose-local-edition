@@ -49,9 +49,7 @@ const mount = () => {
 };
 
 const rowOf = async (title: string) =>
-  (await screen.findByText(title, { selector: 'button *' }, { timeout: 3000 })).closest(
-    'button'
-  ) as HTMLElement;
+  (await screen.findByText(title, { selector: 'button *' })).closest('button') as HTMLElement;
 
 describe('MemoriesView — a selected memory is visible in both themes', () => {
   it('light theme → click a memory → accent fill with accent ink; hover deepens the fill, never a neutral step', async () => {

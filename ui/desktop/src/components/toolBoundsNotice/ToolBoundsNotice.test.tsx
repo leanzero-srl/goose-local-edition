@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { IntlProvider } from 'react-intl';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { testClock } from '../../test/testClock';
 import type { ToolListItem } from '@aaif/goose-sdk';
 import type { ExtensionConfig } from '../../types/extensions';
 import { createUserMessage, type Message } from '../../types/message';
@@ -394,7 +395,9 @@ describe('ToolBoundsNotice', () => {
     expect(action).toHaveTextContent('Turn off these 2 and retry');
 
     await user.click(action);
-    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledWith('edit my skill'));
+    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledWith('edit my skill'), {
+      timeout: testClock(),
+    });
     expect(mockRemove.mock.calls).toEqual([
       [SESSION, 'leanzerodocuments'],
       [SESSION, 'playwright'],

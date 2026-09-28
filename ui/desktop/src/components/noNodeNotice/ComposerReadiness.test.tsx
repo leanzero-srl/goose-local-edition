@@ -633,10 +633,9 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
         serving: { clients: [], unattributed: 0, swarmRuns: [], error: null },
       })
     );
-    // Well inside one poll interval (2 s): only the push can have done it.
-    await waitFor(() => expect(screen.queryByTestId('composer-readiness')).toBeNull(), {
-      timeout: 500,
-    });
+    // Every read of main (the 2 s poll) answers `lost`, so only the push can clear the bar — the proof
+    // needs no clock shorter than the test's own (Q-383: a 500 ms deadline failed under load).
+    await waitFor(() => expect(screen.queryByTestId('composer-readiness')).toBeNull());
   });
 
   it('"Run on this Mac instead" drops the route on THIS Mac and mounts here at once — never waiting on the Mac that is not answering', async () => {
@@ -1218,9 +1217,7 @@ describe('ComposerReadinessStrip — the split chat was on stopped (Q-81, E2E #2
       'data-for',
       'split-stopped'
     );
-    expect(
-      await screen.findByTestId('composer-readiness-mounting', {}, { timeout: 4000 })
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId('composer-readiness-mounting')).toBeInTheDocument();
   });
 
   it('a model this Mac does not hold is never offered to run here', async () => {

@@ -51,9 +51,7 @@ const mount = () =>
   );
 
 const rowOf = async (name: string) =>
-  (await screen.findByText(name, { selector: 'button *' }, { timeout: 3000 })).closest(
-    'button'
-  ) as HTMLElement;
+  (await screen.findByText(name, { selector: 'button *' })).closest('button') as HTMLElement;
 
 describe('SkillsView — a selected skill is visible in both themes', () => {
   it('light theme → click a skill → accent fill with accent ink; hover deepens the fill', async () => {
