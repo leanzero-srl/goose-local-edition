@@ -25,8 +25,13 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       But "resumable" was never exercised ("state: undefined rows checkpointed") and it was called verified,
       after an assert-then-retract about its own code → Q-451 (model behaviour, parked; forge-tuner c0cf851).
     - Turns 7–8: 340 s, then 105 s. 13/13 node:test pass. The totals and the 4 leads the rule saved are correct.
-    - Turn 9 (prove resumable by interrupting) is running. It read "state: undefined" honestly this time; its
-      first kill came too late (exit 0, all 430 rows saved). Decode is 9.5–11.9 tok/s since the 23:30 flip.
+    - Turns 9–11: it could not interrupt an 82 ms run, said so plainly, and proved the resume path with a test
+      instead (15/15). It found the official JCMA doc ("one account is always chosen as the main one (randomly)")
+      and put it above the merge rule. Turns 12–13: plan-projects 13/13, refresh.sh 28/28.
+      Turn 14 ("just the command" for CPU use) got NO command → Q-453, model behaviour; the stream and rank were
+      checked intact. Turn 15 (client .docx): the leanzero-documents
+      create-doc tool wrote every markdown TABLE as prose (0 `<w:tbl>`) while reporting tables:true → Q-454, agent
+      dispatched. The model caught it itself by unzipping the file. Decode is 9.5–11.9 tok/s since the 23:30 flip.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -39,25 +44,29 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-428 (+Q-430/432; break pass fixed 4 more, a3174fdab) the owner's "don't interrupt a node doing its thing" per-role option — agent-a626efc4490c889b7.
-- MERGED into /tmp/merge-074 (branch merge-074, 00:0x; no ledger row lost, gains Q-424/425):
-  - Q-417 (servedModel), Q-407 (dead goosed's commands), Q-423 (engine stderr; BOTH Macs), Q-426 (PiP X);
-  - Q-450 (claim_check: an announced action with no tool, a count no output holds; 0 false in 9,615 replies, 89b9d3c79);
-  - Q-449 (Linux pgrep counted a zombie; shutdown now waits for the exit it caused, 2b0473e56);
-  - Q-447 (float32 KV fix; BOTH Macs); Q-429/431/433..440 (demo fixes, ea2f02977). Medium confidence, live-only: Q-431's banner under share,
-    Q-434's delegate card, Q-436's remote load phases.
+- Q-454 (create-doc renders GFM tables as Word tables; honest formattingQuality).
 
-## Batch 4 → 3.0.74 (next)
-1. When Q-428 reports (it has committed 111443cbf/93c0be18b/00e442205 plus its ledger, and is finishing), merge them into /tmp/merge-074 via ledger_resolve, with main merged in before the ff.
-2. ONE full gate in its own session (scratchpad/gate074.sh, target ~/goose-targets/g074), when #3u is at a turn
-   boundary or done. NO cargo on the MacBook while #3u decodes. The Q-447 agent is the one allowed job.
-3. ff main, push, release 3.0.74 (/tmp/rel074.sh), install on BOTH Macs (Q-423, maybe Q-447), split-start smoke.
-4. Live prove:
-   - Q-447 (decode ≥ 8 tok/s on a cache-hit turn);
-   - Q-428 (re-run the demo's shared-Mac case);
-   - Q-426 (PiP);
-   - Q-417.
-5. Tell the owner Q-428's result (his ask).
+## Batch 4 → 3.0.74 — merge-074 (/tmp/merge-074, d750166f1) COMPLETE, GATE RUNNING
+- Holds:
+  - Q-417, Q-407, Q-423 (BOTH Macs), Q-426;
+  - Q-429/431/433..440;
+  - Q-447 (float32 KV; BOTH Macs), Q-449, Q-450;
+  - Q-428/430/432 (b/o demo; break pass fixed 4).
+  No ledger row lost; Q-444..446 unused.
+- g074 full gate + g074b re-gate: ALL GREEN at da6f4628d.
+  - Fixed on the branch: tsc b068352cf, and the seam da6f4628d (which is why clippy failed and lib tests were
+    skipped).
+  - The sidecar stray-listener test failed once under load and passed 5/5 alone plus the full suite → Q-452,
+    scheduled on a second red.
+- Q-441/442/443 MERGED (1bedb7b8f). Delta gate g074c → /tmp/g074c.out (own session): UI full, lib, acp_*,
+  server, cli, clippy, dev gates, schema, wincheck.
+- Green → ff main, push → release 3.0.74 (/tmp/rel074.sh) → install BOTH Macs at an #3u turn boundary →
+  split-start smoke.
+- Then live-prove:
+  - Q-447 (decode ≥ 8 tok/s on cache-hit turns; entry bytes 32,768/token);
+  - Q-428 (the demo strategy with its Chat role on "Use the next node" and on "Wait");
+  - Q-426, Q-417, Q-450.
+- Then tell the owner about Q-428.
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
@@ -68,6 +77,6 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-452. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-455. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
