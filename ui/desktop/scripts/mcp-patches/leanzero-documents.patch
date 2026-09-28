@@ -712,7 +712,7 @@
      const { sections } = splitSections(title, markdown, parsedInput.description);
 --- /dev/null
 +++ b/test/test-output-location.js
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,256 @@
 +// goose Q-139: an agent launches this server with cwd = the user's project. The
 +// server's own files (server.log, insights, registry) must never land there, and a
 +// document goes where the caller or DOC_OUTPUT_DIR says — not under <cwd>/docs.
@@ -945,6 +945,10 @@
 +    }
 +    const read = await s.call("read-doc", { filePath: "out/readout.pptx", mode: "summary" }, s.chat);
 +    assert.equal(read.isError, false, read.text);
++    // Q-389: the workbook this server just wrote must read back (SheetJS 0.20 ESM has no readFile fs).
++    const sheet = await s.call("read-doc", { filePath: "out/users.xlsx", mode: "indepth" }, s.chat);
++    assert.equal(sheet.isError, false, sheet.text);
++    assert.match(sheet.text, /migrate\t280/);
 +    const unknown = await s.call("read-doc", { filePath: "out/users.xlsx", mode: "summary" });
 +    assert.equal(unknown.isError, true);
 +    assert.match(unknown.message, /filePath "out\/users\.xlsx" is relative, so it must be absolute here/);
@@ -1225,3 +1229,15 @@
  import { createPptx } from "../src/tools/create-pptx.js";
  import { editPptx } from "../src/tools/edit-pptx.js";
  import { documentProcessor } from "../src/services/document-processor.js";
+--- a/src/parsers/excel-parser.js
++++ b/src/parsers/excel-parser.js
+@@ -19,7 +19,8 @@
+    */
+   async parse(filePath) {
+     try {
+-      const workbook = xlsx.readFile(filePath, { type: "file" });
++      // SheetJS 0.20 (ESM) has no fs of its own: readFile fails "Cannot access file" (goose Q-389).
++      const workbook = xlsx.read(fs.readFileSync(filePath), { type: "buffer" });
+ 
+       return {
+         success: true,
