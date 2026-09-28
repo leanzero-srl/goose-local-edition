@@ -8,7 +8,10 @@
 //!   `GET /v1/swarm/inference/v1/status`, `GET /v1/swarm/inference/goose/admission`. Each is
 //!   forwarded to the SAME path on this node's own engine at [`ChatServing::engine_base_url`] (loopback — the engine never binds anything
 //!   else). Request and response bodies are streamed through byte for byte: the engine's status
-//!   code, `content-type` and every SSE byte arrive unchanged, nothing is appended — so a stream
+//!   code, `content-type` and every SSE byte arrive unchanged, nothing is appended — save one
+//!   thing: an SSE error frame in a chat stream has its `error.message` explained HERE by
+//!   [`ChatServing::stream_errors`] (Q-423: Rapid-MLX sends only "Internal error during streaming"
+//!   and logs the exception on this node, where the requester cannot read it) — so a stream
 //!   the engine ends without `finish_reason`/`[DONE]` still ends without them, and the
 //!   requester's parser names the cut (50ca4247d). An engine that dies mid-stream aborts the
 //!   proxied body (the chunked response is never terminated), which the requester reads as a
@@ -80,7 +83,7 @@ use tokio::task::JoinHandle;
 
 use crate::manager::MESH_POLL_FAILURE_LOOKS;
 use crate::peer_dial::{peer_http_client, MeshProxy, PeerTimeout};
-use crate::state::ChatServing;
+use crate::state::{ChatServing, StreamErrorExplainer};
 
 /// The control-service prefix the engine's OpenAI paths are served under.
 pub const INFERENCE_ROUTE_PREFIX: &str = "/v1/swarm/inference";
@@ -195,6 +198,116 @@ fn passthrough(response: reqwest::Response, held: Option<StreamHold>) -> Respons
     framed(builder, body)
 }
 
+fn is_event_stream(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"))
+}
+
+/// A chat stream from this node's engine, passed through line by line so an error frame the
+/// engine sends can be explained HERE, where its log is (Q-423): `explainer` answers for the frame's
+/// `error.message` and the frame is re-sent with its words; every other byte passes unchanged.
+/// Bytes after the last newline wait for the next chunk (an SSE frame ends in one), so a frame is
+/// never split around the rewrite; what is left at the end passes as it came.
+fn explained_passthrough(
+    response: reqwest::Response,
+    held: Option<StreamHold>,
+    explainer: Box<dyn StreamErrorExplainer>,
+) -> Response {
+    let builder = passed_head(&response);
+    let body = explained_body(response.bytes_stream(), explainer).map(move |item| {
+        let _held = &held;
+        item
+    });
+    framed(builder, Body::from_stream(body))
+}
+
+struct Explaining<S> {
+    upstream: S,
+    explainer: Box<dyn StreamErrorExplainer>,
+    partial: Vec<u8>,
+    ended: bool,
+}
+
+fn explained_body<S>(
+    upstream: S,
+    explainer: Box<dyn StreamErrorExplainer>,
+) -> impl Stream<Item = Result<axum::body::Bytes, reqwest::Error>> + Send
+where
+    S: Stream<Item = Result<axum::body::Bytes, reqwest::Error>> + Send + Unpin + 'static,
+{
+    let start = Explaining {
+        upstream,
+        explainer,
+        partial: Vec::new(),
+        ended: false,
+    };
+    futures::stream::unfold(start, |mut state| async move {
+        loop {
+            if state.ended {
+                return None;
+            }
+            match state.upstream.next().await {
+                Some(Ok(bytes)) => {
+                    state.partial.extend_from_slice(&bytes);
+                    let Some(last_newline) = state.partial.iter().rposition(|b| *b == b'\n') else {
+                        continue;
+                    };
+                    let rest = state.partial.split_off(last_newline + 1);
+                    let lines = std::mem::replace(&mut state.partial, rest);
+                    let out = explain_lines(&lines, state.explainer.as_ref()).await;
+                    return Some((Ok(axum::body::Bytes::from(out)), state));
+                }
+                Some(Err(err)) => {
+                    state.ended = true;
+                    return Some((Err(err), state));
+                }
+                None => {
+                    state.ended = true;
+                    if state.partial.is_empty() {
+                        return None;
+                    }
+                    let rest = std::mem::take(&mut state.partial);
+                    return Some((Ok(axum::body::Bytes::from(rest)), state));
+                }
+            }
+        }
+    })
+}
+
+/// Complete lines with every SSE error frame's `error.message` put through `explainer`.
+async fn explain_lines(lines: &[u8], explainer: &dyn StreamErrorExplainer) -> Vec<u8> {
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines.split_inclusive(|b| *b == b'\n') {
+        match explained_error_frame(line, explainer).await {
+            Some(frame) => out.extend_from_slice(frame.as_bytes()),
+            None => out.extend_from_slice(line),
+        }
+    }
+    out
+}
+
+/// `data: {"error":{"message":…}}` with the message explained, or `None` for any other line and
+/// for an error the explainer leaves as it is.
+async fn explained_error_frame(
+    line: &[u8],
+    explainer: &dyn StreamErrorExplainer,
+) -> Option<String> {
+    let text = std::str::from_utf8(line).ok()?;
+    let payload = text.strip_prefix("data:")?.trim();
+    if !payload.contains("\"error\"") {
+        return None;
+    }
+    let mut frame: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let message = frame.get("error")?.get("message")?.as_str()?.to_string();
+    let explained = explainer.explain(&message).await?;
+    frame["error"]["message"] = serde_json::Value::String(explained);
+    let ending = &text[text.trim_end_matches(['\r', '\n']).len()..];
+    Some(format!("data: {frame}{ending}"))
+}
+
 fn framed(builder: axum::http::response::Builder, body: Body) -> Response {
     builder.body(body).unwrap_or_else(|err| {
         (
@@ -270,11 +383,20 @@ where
         }
     };
     let url = format!("{}/{}", base.trim_end_matches('/'), path.path());
+    let explainer = match path {
+        EnginePath::ChatCompletions => Some(serving.stream_errors().await),
+        EnginePath::Models | EnginePath::Status | EnginePath::Admission => None,
+    };
     match forward_request(engine_http, url, path, &headers, body)
         .send()
         .await
     {
-        Ok(response) => passthrough(response, held),
+        Ok(response) => match explainer {
+            Some(explainer) if is_event_stream(&response) => {
+                explained_passthrough(response, held, explainer)
+            }
+            _ => passthrough(response, held),
+        },
         Err(err) => (
             StatusCode::BAD_GATEWAY,
             format!(

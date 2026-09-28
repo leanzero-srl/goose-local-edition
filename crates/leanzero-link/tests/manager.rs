@@ -2125,12 +2125,23 @@ async fn the_chat_relay_reaches_a_peer_through_the_connected_managers_registry()
         .mount(&engine)
         .await;
     struct Serving(String);
+    struct Unexplained;
+    #[async_trait::async_trait]
+    impl leanzero_link::state::StreamErrorExplainer for Unexplained {
+        async fn explain(&self, _message: &str) -> Option<String> {
+            None
+        }
+    }
+    #[async_trait::async_trait]
     impl ChatServing for Serving {
         fn serving_allowed(&self) -> bool {
             true
         }
         fn engine_base_url(&self) -> Result<String, String> {
             Ok(self.0.clone())
+        }
+        async fn stream_errors(&self) -> Box<dyn leanzero_link::state::StreamErrorExplainer> {
+            Box::new(Unexplained)
         }
     }
     let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);

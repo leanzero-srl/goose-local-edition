@@ -1535,6 +1535,12 @@ async fn stream_on(
     if let Some(kwargs) = kwargs {
         add_template_kwargs(&mut node_cfg, kwargs)?;
     }
+    // This Mac's own engine: its sanitized mid-stream failure is explained from its log here
+    // (Q-423); a linked Mac's engine is explained by that Mac's inference proxy.
+    let stream_errors = match lease.node.kind {
+        NodeKind::MlxSidecar => Some(super::mlx_stream_errors::EngineStreamErrors::mark().await),
+        _ => None,
+    };
     // A node's memory hold comes back here at once (Q-397): the router tries the other nodes
     // first and waits on the hold only when none can serve (`wait_out_hold`).
     match goose_providers::engine_hold::HOLD_GOES_TO_CALLER
@@ -1545,6 +1551,10 @@ async fn stream_on(
         .await
     {
         Ok(inner) => {
+            let inner = match stream_errors {
+                Some(errors) => errors.explaining(inner),
+                None => inner,
+            };
             let inner = if matches!(
                 lease.node.kind,
                 NodeKind::MlxSidecar | NodeKind::MlxRemote(_)

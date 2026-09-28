@@ -22,7 +22,7 @@ use leanzero_link::inference::{
     InferenceRelay, PeerCall, PeerCallResolver, ENGINE_UNREACHABLE, RELAY_FAILED,
 };
 use leanzero_link::manager::MESH_POLL_FAILURE_LOOKS;
-use leanzero_link::state::{ChatServing, SwarmStateSource};
+use leanzero_link::state::{ChatServing, StreamErrorExplainer, SwarmStateSource};
 use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus};
 
 const TOKEN: &str = "inference-node-token";
@@ -36,6 +36,12 @@ const CHUNK_2: &str =
 const CHUNK_END: &str =
     "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
 const DONE: &str = "data: [DONE]\n\n";
+/// Rapid-MLX's sanitized failure (helpers.py disconnect_guard), cut mid-frame by the transport.
+const GENERIC_FRAME_HEAD: &str = "data: {\"error\":{\"message\":\"Internal error dur";
+const GENERIC_FRAME_TAIL: &str = "ing streaming\",\"type\":\"internal_error\"}}\n\n";
+/// An error the engine words itself: passed through untouched.
+const WORDED_FRAME: &str = "data: {\"error\":{\"message\":\"Request cancelled by model \
+                            replacement\",\"type\":\"server_error\",\"code\":\"model_replacement\"}}\n\n";
 const MODELS: &str =
     r#"{"object":"list","data":[{"id":"qwen3.8-27b","object":"model","context_window":262144}]}"#;
 const STATUS: &str = r#"{"num_running":1,"num_waiting":0}"#;
@@ -56,6 +62,9 @@ enum Script {
     Endless,
     /// never answers — not even a response head (a long prefill, a non-streamed answer)
     Silent,
+    /// Rapid-MLX's failed stream (Q-423): one chunk, the sanitized error frame split across two
+    /// writes, an error the engine words itself, then [DONE]
+    FailsMidStream,
     /// a slow, HEALTHY generation: no response head for `head_after`, one chunk, then
     /// `gap` of silence, then the rest — the case the in-flight watch must never cut
     SlowAlive { head_after: Duration, gap: Duration },
@@ -167,6 +176,14 @@ async fn engine_chat(
             )
         }
         Script::CutClean => sse(futures::stream::iter(vec![ok(CHUNK_1), ok(CHUNK_2)]).boxed()),
+        Script::FailsMidStream => sse(futures::stream::iter(vec![
+            ok(CHUNK_1),
+            ok(GENERIC_FRAME_HEAD),
+            ok(GENERIC_FRAME_TAIL),
+            ok(WORDED_FRAME),
+            ok(DONE),
+        ])
+        .boxed()),
         // Paced like a real generation, so the headers and the first chunks are on the wire
         // before the death (an immediately-failing body never sends a response at all).
         Script::DiesMidStream => sse(futures::stream::iter(vec![
@@ -248,12 +265,29 @@ struct FakeServing {
     base: Result<String, String>,
 }
 
+#[async_trait::async_trait]
 impl ChatServing for FakeServing {
     fn serving_allowed(&self) -> bool {
         self.allowed.load(Ordering::SeqCst)
     }
     fn engine_base_url(&self) -> Result<String, String> {
         self.base.clone()
+    }
+    async fn stream_errors(&self) -> Box<dyn StreamErrorExplainer> {
+        Box::new(FakeExplainer)
+    }
+}
+
+/// The serving node's account of its engine's sanitized failure (goose's is the sidecar's log).
+struct FakeExplainer;
+
+const LOGGED: &str = "the MLX engine logged: [disconnect_guard] generator raised RuntimeError: \
+                      [metal::malloc] Unable to allocate 1 bytes.";
+
+#[async_trait::async_trait]
+impl StreamErrorExplainer for FakeExplainer {
+    async fn explain(&self, message: &str) -> Option<String> {
+        (message == "Internal error during streaming").then(|| format!("{message} — {LOGGED}"))
     }
 }
 
@@ -455,6 +489,30 @@ async fn a_chat_stream_crosses_both_hops_byte_for_byte_through_the_mesh_proxy() 
     assert!(
         support::fake_tailnet().connects_to(&mesh_ip) > before,
         "the relay reached B only through the mesh proxy"
+    );
+}
+
+/// Q-423: the serving node explains its engine's sanitized "Internal error during streaming"
+/// with what the engine logged there — the requester, on another Mac, sees the cause, not the
+/// generic words — even when the frame reaches the proxy in two pieces; an error the engine words
+/// itself, and every other byte, crosses unchanged.
+#[tokio::test]
+async fn a_sanitized_engine_error_is_explained_by_the_node_that_logged_it() {
+    let rig = rig(Script::FailsMidStream).await;
+    let response = post_chat(rig.relay.base_url()).await;
+    assert_eq!(response.status(), 200);
+    let body = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    let explained = format!(
+        "data: {}\n\n",
+        serde_json::json!({"error": {
+            "message": format!("Internal error during streaming — {LOGGED}"),
+            "type": "internal_error",
+        }})
+    );
+    assert_eq!(
+        body,
+        format!("{CHUNK_1}{explained}{WORDED_FRAME}{DONE}"),
+        "only the sanitized frame's message is replaced"
     );
 }
 
