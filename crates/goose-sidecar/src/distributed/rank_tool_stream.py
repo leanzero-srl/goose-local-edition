@@ -24,11 +24,89 @@
 # checkpoint the tensor runner serves); its reading, mirrored:
 #   <function=NAME>                  NAME = up to the first ">"
 #   <parameter=KEY>\nVALUE\n</parameter>   one leading and one trailing "\n" are not the value;
-#                                    a value ends at the FIRST "</parameter>" (non-greedy regex)
+#                                    a value ends at the LAST "</parameter>" before the next
+#                                    declared parameter's header (Q-372, below), else before the
+#                                    call's end
 #   a string-typed VALUE is itself, except the exact word "null" (any case) is None; any other type
 #   is converted from the whole value — so only string values can stream before their close.
+#
+# Q-372 (2026-09-28): mlx_lm 0.31.3 ends a value at its FIRST `</parameter>` (`_parameter_regex`,
+# non-greedy), so a written file that holds the text `</parameter>` — code or docs about this very
+# format, a JS string `"</parameter>"` — arrived CUT there, with the call reported as a success:
+# measured offline, `const close = "</parameter>";` in a `write` became content ending at
+# `const close = "` and nothing said so (the streamer mirrored the parser, so the two agreed on the
+# cut). The single engine reads the same wire positionally (Rapid-MLX `tool_call_scan.py`,
+# omlx#2507): a value runs to the next SIBLING header — a `<parameter=NAME>` whose NAME the tool
+# declares, with a `</parameter>` before it — and ends at the last `</parameter>` before that
+# sibling (or before the call's end). `install_positional_parameters` puts that reading under
+# mlx_lm's own `parse_tool_call`, and the streamer below reads the same rule, so a value that holds
+# the close tag streams up to it and is finished when the sibling or the call's end places it.
 
 import json  # noqa: E402
+import re  # noqa: E402
+
+PARAMETER_HEADER = re.compile(r"<parameter=([^>]*)>")
+PARAMETER_CLOSE = "</parameter>"
+
+
+def _trim_wrapping_newlines(value):
+    if value.startswith("\n"):
+        value = value[1:]
+    if value.endswith("\n"):
+        value = value[:-1]
+    return value
+
+
+def sibling_header(text, value_start, valid_names, headers=None):
+    """The header that ends the value opened at `value_start`: the first `<parameter=NAME>` after
+    it whose NAME is declared (any NAME when the tool declares none) with a `</parameter>` between
+    the value's start and it. None while there is none."""
+    for header in headers if headers is not None else PARAMETER_HEADER.finditer(text, value_start):
+        if header.start() < value_start:
+            continue
+        if valid_names is not None and header.group(1) not in valid_names:
+            continue
+        if text.find(PARAMETER_CLOSE, value_start, header.start()) >= 0:
+            return header
+    return None
+
+
+def parameters_by_position(text, valid_names):
+    """`[(KEY, VALUE)]` of a function body, in the order written: each value runs to its sibling
+    header (or the body's end) and ends at the last `</parameter>` before it; a value with no
+    `</parameter>` at all is not read (mlx_lm's regex required the close too)."""
+    headers = list(PARAMETER_HEADER.finditer(text))
+    read = []
+    i = 0
+    while i < len(headers):
+        sibling = sibling_header(text, headers[i].end(), valid_names, headers[i + 1:])
+        end = sibling.start() if sibling is not None else len(text)
+        cut = text.rfind(PARAMETER_CLOSE, headers[i].end(), end)
+        if cut >= 0:
+            read.append((headers[i].group(1), _trim_wrapping_newlines(text[headers[i].end():cut])))
+        if sibling is None:
+            break
+        i = headers.index(sibling)
+    return read
+
+
+def install_positional_parameters(qwen3_coder):
+    """mlx_lm's `_parse_xml_function_call`, reading its parameters by position (Q-372). The name,
+    the schema lookup and every value's conversion stay mlx_lm's own functions, read from the
+    module when a call is parsed (so Q-232's `_get_arguments_config` is the one used)."""
+
+    def _parse_xml_function_call(function_call_str, tools):
+        end_index = function_call_str.index(">")
+        function_name = function_call_str[:end_index]
+        param_config = qwen3_coder._get_arguments_config(function_name, tools)
+        arguments = {}
+        for name, value in parameters_by_position(
+            function_call_str[end_index + 1:], set(param_config) or None
+        ):
+            arguments[name] = qwen3_coder._convert_param_value(value, name, param_config)
+        return dict(name=function_name, arguments=arguments)
+
+    qwen3_coder._parse_xml_function_call = _parse_xml_function_call
 
 
 class ToolCallStream:
@@ -67,6 +145,10 @@ class ToolCallStream:
         # Where the markup the streamer is waiting on starts: the call's first character, then the
         # end of the function header or of the last `</parameter>` (Q-146's `stray`).
         self._markup = 0
+        # The open value's first `</parameter>` (Q-372: it may be the value's own text) and where
+        # the search for its sibling header resumes.
+        self._first_close = None
+        self._header_scan = 0
 
     def feed(self, piece, tools):
         """Append generated text; returns (name when the call just opened else None, fragment)."""
@@ -128,16 +210,28 @@ class ToolCallStream:
 
     def stray(self):
         """Text where the streamer waits for the qwen3_coder frame (`<function=` at the head,
-        `<parameter=` or `</function>` between parameters) that is not that frame — a call written
-        another way (JSON inside `<tool_call>`, prose between parameters), of which the streamer
-        reads, and so sends, nothing. None while the text is the frame or a prefix of it."""
-        if self.broken is not None or self._phase not in ("head", "between"):
+        `<parameter=` or `</function>` between parameters and after a value's `</parameter>`) that
+        is not that frame — a call written another way (JSON inside `<tool_call>`, prose between
+        parameters), of which the streamer reads, and so sends, nothing. After a `</parameter>`
+        inside a value (Q-372) the same text may still be the value's own: the parser decides when
+        the next declared header or the call's end places the value's last `</parameter>`. None
+        while the text is the frame or a prefix of it."""
+        if self.broken is not None:
             return None
-        waiting = self.text[self._markup :].lstrip()
-        if self._phase == "head":
-            frames = (self.FUNCTION_OPEN,)
-        else:
+        if self._phase == "value":
+            if self._first_close is None:
+                return None
+            last = self.text.rfind(self.PARAM_CLOSE, self._first_close)
+            waiting = self.text[last + len(self.PARAM_CLOSE):].lstrip()
             frames = (self.PARAM_OPEN, self.FUNCTION_CLOSE)
+        elif self._phase == "head":
+            waiting = self.text[self._markup :].lstrip()
+            frames = (self.FUNCTION_OPEN,)
+        elif self._phase == "between":
+            waiting = self.text[self._markup :].lstrip()
+            frames = (self.PARAM_OPEN, self.FUNCTION_CLOSE)
+        else:
+            return None
         if not waiting or any(f.startswith(waiting) or waiting.startswith(f) for f in frames):
             return None
         return waiting
@@ -202,15 +296,21 @@ class ToolCallStream:
         return f"{separator}{json.dumps(self._key, ensure_ascii=False)}: "
 
     def _value(self):
-        close = self.text.find(self.PARAM_CLOSE, max(self._value_start, self._cursor))
-        if close < 0:
-            self._cursor = max(self._value_start, len(self.text) - len(self.PARAM_CLOSE) + 1)
-            return self._string_increment()
-        value = self.text[self._value_start:close]
-        if value.startswith("\n"):
-            value = value[1:]
-        if value.endswith("\n"):
-            value = value[:-1]
+        if self._first_close is None:
+            close = self.text.find(self.PARAM_CLOSE, max(self._value_start, self._cursor))
+            if close < 0:
+                self._cursor = max(self._value_start, len(self.text) - len(self.PARAM_CLOSE) + 1)
+                return self._string_increment(len(self.text) - self.HOLD)
+            self._first_close = close
+            self._header_scan = close + len(self.PARAM_CLOSE)
+        sibling = self._sibling()
+        if sibling is None:
+            # Everything before the first `</parameter>` is the value's whatever follows, but its
+            # last "\n" is markup if the value ends there.
+            return self._string_increment(self._first_close - 1)
+        end = sibling.start()
+        cut = self.text.rfind(self.PARAM_CLOSE, self._value_start, end)
+        value = _trim_wrapping_newlines(self.text[self._value_start:cut])
         if self._string and self._value_sent:
             fragment = json.dumps(value[self._value_sent:], ensure_ascii=False)[1:-1] + '"'
         else:
@@ -221,19 +321,34 @@ class ToolCallStream:
                 return None
             fragment = self._key_prefix() + json.dumps(converted, ensure_ascii=False)
         self._keys.append(self._key)
-        self._cursor = close + len(self.PARAM_CLOSE)
-        self._markup = self._cursor
+        self._cursor = end
+        self._markup = cut + len(self.PARAM_CLOSE)
+        self._first_close = None
         self._phase = "between"
         return None, fragment
 
-    def _string_increment(self):
-        """The certain part of an open string value: nothing until more of it is certain than the
-        word "null" (a string value that is exactly that word is None), then all of it but the
-        HOLD characters that may still be its trailing newline and close tag."""
+    def _sibling(self):
+        """The open value's sibling header (`sibling_header`), searched from where the last search
+        stopped: every header after the first `</parameter>` has one before it."""
+        valid = set(self._config) or None
+        complete_end = self._header_scan
+        for header in PARAMETER_HEADER.finditer(self.text, self._header_scan):
+            if valid is None or header.group(1) in valid:
+                return header
+            complete_end = header.end()
+        pending = self.text.rfind(self.PARAM_OPEN, complete_end)
+        if pending < 0:
+            pending = max(complete_end, len(self.text) - len(self.PARAM_OPEN) + 1)
+        self._header_scan = pending
+        return None
+
+    def _string_increment(self, safe_end):
+        """The certain part of an open string value, up to `safe_end`: nothing until more of it is
+        certain than the word "null" (a string value that is exactly that word is None), then all
+        of it but what may still be its trailing newline and close tag."""
         if not self._string:
             return None
         lead = 1 if self.text.startswith("\n", self._value_start) else 0
-        safe_end = len(self.text) - self.HOLD
         certain = self.text[self._value_start + lead : safe_end] if safe_end > self._value_start else ""
         if len(certain) <= (self._value_sent or len(self.NULL)):
             return None

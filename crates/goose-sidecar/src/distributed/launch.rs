@@ -3626,6 +3626,7 @@ os._exit(0)
         let checks = r#"
 import random
 from mlx_lm.tool_parsers import qwen3_coder as q
+install_positional_parameters(q)
 
 def schema(name, **props):
     return {"type": "function", "function": {"name": name, "parameters": {"type": "object", "properties": props}}}
@@ -3728,6 +3729,98 @@ run(list(PROSE), TOOLS)
 assert strays[-1] == "and now the timeout: 30\n", strays[-1]
 print("ok")
 "#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_tool_stream.py")))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "ok",
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Q-371 / Q-372: the text of a written file goes through the split's tool-call path (mlx_lm
+    /// 0.31.3's qwen3_coder parse as the wrapper installs it, and the streamer, in every chunking)
+    /// byte for byte — arrows and comparisons (`=>`, `->`, `>=`, `<=`, `>>>`, `a=>b`), HTML
+    /// entities, header-shaped text (`<parameter=x>`, `<function=…>`, `</function>`,
+    /// `</tool_call>`) and the close tag itself inside a string (`"</parameter>"`), with the value
+    /// written first or last. Q-371 (E2E #3r, sessions.db 771288) lost 15 of 16 `=>` — the rank's
+    /// token trail proved the MODEL sampled them away, not this path; this pins that the path
+    /// keeps them. NEGATIVE CONTROL: mlx_lm's own first-`</parameter>` reading (before
+    /// `install_positional_parameters`) cuts the same content at `const close = "` and still
+    /// returns the call as a success — Q-372, the silent truncation this fixes.
+    #[test]
+    fn a_written_file_crosses_the_tensor_tool_path_byte_for_byte() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r##"
+import random
+from mlx_lm.tool_parsers import qwen3_coder as q
+
+TOOLS = [{"type": "function", "function": {"name": "write", "parameters": {"type": "object",
+    "properties": {"path": {"type": "string"}, "content": {"type": "string"}}}}}]
+CONTENT = "\n".join([
+    "const rnd = () => ((_s = (_s * 1664525 + 1013904223) >>> 0) / 4294967296);",
+    "const pick = (a) => a[Math.floor(rnd() * a.length)];",
+    "rows.map((r) =>\n  [r.username].join(','));",
+    "x->y; a >= b; a <= b; z >>> 0; a=>b; f(a)=>a; if (a<b && c>d) {}",
+    "html: &lt;div&gt; &amp; &quot;q&quot; &#62; &#x3E; &gt;= <br/>",
+    "fake markup: <parameter=x> <function=shell> </function> </tool_call> <parameter=path",
+    'const close = "</parameter>";  // the close tag inside a string',
+    "  </parameter>  (indented, still the file's own text)",
+    "tail => done",
+])
+
+def call(*params):
+    body = "".join(f"<parameter={key}>\n{value}\n</parameter>\n" for key, value in params)
+    return f"\n<function=write>\n{body}</function>\n"
+
+LAST = call(("path", "/tmp/gen.js"), ("content", CONTENT))
+FIRST = call(("content", CONTENT), ("path", "/tmp/gen.js"))
+
+shipped = q.parse_tool_call(LAST, TOOLS)["arguments"]["content"]
+assert shipped == CONTENT[:CONTENT.index('"</parameter>') + 1], ("the shipped reading", shipped[-60:])
+
+install_positional_parameters(q)
+
+def chunkings(text):
+    yield "whole", [text]
+    yield "chars", list(text)
+    rng = random.Random(371)
+    for seed in range(4):
+        pieces, i = [], 0
+        while i < len(text):
+            n = rng.randint(1, 7)
+            pieces.append(text[i:i + n])
+            i += n
+        yield f"random{seed}", pieces
+
+for label, text in (("content_last", LAST), ("content_first", FIRST)):
+    parsed = q.parse_tool_call(text, TOOLS)
+    assert parsed["name"] == "write", parsed
+    assert parsed["arguments"] == {"path": "/tmp/gen.js", "content": CONTENT}, (label, parsed)
+    expected = json.dumps(parsed["arguments"], ensure_ascii=False)
+    for how, pieces in chunkings(text):
+        stream = ToolCallStream(q._convert_param_value, q._get_arguments_config)
+        sent = ""
+        streamed_before_first_close = None
+        for piece in pieces:
+            _, fragment = stream.feed(piece, TOOLS)
+            sent += fragment
+            if streamed_before_first_close is None and '"</parameter>' in stream.text:
+                streamed_before_first_close = len(sent)
+        rest, why = stream.close(q.parse_tool_call, TOOLS)
+        assert why is None, (label, how, why)
+        assert sent + rest == expected, (label, how, sent + rest, expected)
+        assert json.loads(sent + rest)["content"] == CONTENT, (label, how)
+        assert streamed_before_first_close > len(CONTENT[:CONTENT.index("</parameter>")]) // 2, (
+            label, how, "the value streamed while it was written", streamed_before_first_close)
+print("ok")
+"##;
         let out = std::process::Command::new(&python)
             .arg("-c")
             .arg(format!("{}{checks}", include_str!("rank_tool_stream.py")))
@@ -4367,6 +4460,28 @@ print("GOOSE_TEST " + json.dumps({"fixed": fixed, "shipped": shipped, "calls": C
         assert!(
             !PIPELINE_PROGRAM.contains(schema),
             "the pipeline fork's parser reads these itself"
+        );
+    }
+
+    /// Q-372: the tensor program installs the positional parameter reading over mlx_lm's
+    /// `_parse_xml_function_call` once, after checking mlx_lm has it and after Q-232's schema
+    /// install (the reading looks both up on the module per call), before anything parses a call.
+    #[test]
+    fn the_tensor_program_reads_parameter_values_positionally() {
+        let at = |needle: &str| {
+            TENSOR_PROGRAM
+                .find(needle)
+                .unwrap_or_else(|| panic!("the tensor program carries {needle:?}"))
+        };
+        let install = "\ninstall_positional_parameters(qwen3_coder)\n";
+        assert_eq!(TENSOR_PROGRAM.matches(install).count(), 1);
+        assert!(at("def install_positional_parameters(qwen3_coder):") < at(install));
+        assert!(at("(qwen3_coder, \"_parse_xml_function_call\"),") < at(install));
+        assert!(at("qwen3_coder._get_arguments_config = typed_arguments_config(") < at(install));
+        assert!(at(install) < at("class StreamedCall:"));
+        assert!(
+            !PIPELINE_PROGRAM.contains(install),
+            "the pipeline fork's parser reads values positionally itself"
         );
     }
 
@@ -6877,8 +6992,9 @@ print("GOOSE_TEST " + json.dumps({
         );
     }
 
-    /// The tensor wrapper's own module prelude — its imports, both upstream-attribute checks and
-    /// the Q-232 install over qwen3_coder's `_get_arguments_config`, exactly as shipped — run
+    /// The tensor wrapper's own module prelude — its imports, both upstream-attribute checks, the
+    /// Q-232 install over qwen3_coder's `_get_arguments_config` and the Q-372 install over its
+    /// `_parse_xml_function_call`, exactly as shipped — run
     /// against the REAL mlx_lm 0.31.3. The stubbed tests never executed
     /// these lines, so 3.0.44 shipped `import mlx_lm.generate as mlx_generate`, which binds the
     /// re-exported `generate` function, and every split died at startup.
@@ -6896,13 +7012,15 @@ print("GOOSE_TEST " + json.dumps({
                 .find("\nserved = spec[")
                 .expect("the prelude ends where the spec is read");
         let program = format!(
-            "{}import types\nfrom mlx_lm.models.cache import ArraysCache, BatchKVCache\n\
+            "{}{}import types\nfrom mlx_lm.models.cache import ArraysCache, BatchKVCache\n\
              spec = {{\"prefill\": {{}}, \"prompt_cache_limit_bytes\": 1}}\n{}\n\
              assert isinstance(mlx_generate, types.ModuleType), mlx_generate\n\
              assert isinstance(server, types.ModuleType), server\n\
              assert qwen3_coder._get_arguments_config.__wrapped__.__module__ == qwen3_coder.__name__\n\
+             assert qwen3_coder._parse_xml_function_call.__qualname__.startswith(\"install_positional_parameters.\")\n\
              print(\"ok\")\n",
             include_str!("rank_tool_schema.py"),
+            include_str!("rank_tool_stream.py"),
             &wrapper[start..end]
         );
         let out = std::process::Command::new(&python)
@@ -7666,6 +7784,7 @@ print("ok")
         std::fs::write(
             site.join("mlx_lm/tool_parsers/qwen3_coder.py"),
             "def parse_tool_call(model_output, tools=None): pass\n\
+             def _parse_xml_function_call(function_call_str, tools): pass\n\
              def _convert_param_value(param_value, param_name, param_config): pass\n\
              def _get_arguments_config(func_name, tools): pass\n",
         )
