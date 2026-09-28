@@ -145,6 +145,15 @@ class StreamWatch:
                 "nothing more of it is sent",
             )
         if self.streamer.stray() is not None:
+            position = self.streamer.position()
+            if position["phase"] == "value":
+                return (
+                    "tool_close_pending",
+                    f"the value of {position['parameter']!r} met </parameter> and what follows is not "
+                    "the next <parameter=KEY> or </function>: it is more of the value (sent when the "
+                    "next declared parameter or the call's end places its last </parameter>) or text "
+                    "the parser drops (Q-372)",
+                )
             return (
                 "tool_unread",
                 f"the call's text at its {self.streamer.position()['phase']} is not the "

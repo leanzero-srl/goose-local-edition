@@ -149,6 +149,11 @@
 #   `true` under ["boolean", "null"] was dropped, and a `$ref` object parameter arrived as its JSON
 #   text. The parser's `_get_arguments_config` is wrapped so the whole-call parse and the streamer
 #   read the type Rapid-MLX's parser reads (single engine, pipeline fork).
+# - a parameter value that holds the text `</parameter>` arrives whole (Q-372, rank_tool_stream.py
+#   `install_positional_parameters`): mlx_lm cut every value at its first `</parameter>` and the
+#   call still succeeded — a `write` of `const close = "</parameter>";` became a file ending at
+#   `const close = "`. The whole-call parse and the streamer read values positionally, as the
+#   single engine's parser does (Rapid-MLX `tool_call_scan.py`).
 # - a non-streamed answer whose tool call the parser refuses is a named 500 (Q-233,
 #   `NamedToolCallFormatter`): mlx_lm's ToolCallFormatter skipped a ValueError (the call silently
 #   gone from a 200) and let any other refusal escape after its 200 was buffered — a SyntaxError
@@ -264,6 +269,7 @@ for owner, name in (
     (server, "ToolCallFormatter"),
     (server, "process_message_content"),
     (qwen3_coder, "parse_tool_call"),
+    (qwen3_coder, "_parse_xml_function_call"),
     (qwen3_coder, "_convert_param_value"),
     (qwen3_coder, "_get_arguments_config"),
     (server.ModelProvider, "load"),
@@ -295,6 +301,8 @@ for owner, name in (
 
 # Q-232 (rank_tool_schema.py): before any parse or streamer reads a tool's parameters.
 qwen3_coder._get_arguments_config = typed_arguments_config(qwen3_coder._get_arguments_config)
+# Q-372 (rank_tool_stream.py): a value runs to its last `</parameter>` before the next declared header.
+install_positional_parameters(qwen3_coder)
 
 prefill = spec.get("prefill")
 if prefill is not None:

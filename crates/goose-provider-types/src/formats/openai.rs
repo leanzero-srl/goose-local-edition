@@ -4085,6 +4085,80 @@ data: [DONE]
         Ok(())
     }
 
+    /// Q-371: goose's own decode of a streamed tool call keeps a written file's text byte for byte
+    /// — `=>`, `->`, `>=`, `<=`, `>>>`, `a=>b`, HTML entities, qwen3_coder header-shaped text and
+    /// `"</parameter>"` inside a string — however the server cuts `function.arguments` into
+    /// fragments (every width 1–7, so every fragment boundary falls inside `=>` and inside a JSON
+    /// escape somewhere) and whether it writes `>`/`<` raw (the tensor split, Rapid-MLX) or as
+    /// `>`/`<` escapes. E2E #3r's `write` (sessions.db 771288) held 1 `=>` of 16; the
+    /// rank's token trail showed the model never sampled the other 15, and this pins that the
+    /// decode is not where such a loss can happen.
+    #[tokio::test]
+    async fn test_streamed_write_arguments_keep_arrows_and_markup_byte_for_byte(
+    ) -> anyhow::Result<()> {
+        let content = [
+            "const rnd = () => ((_s = (_s * 1664525 + 1013904223) >>> 0) / 4294967296);",
+            "const pick = (a) => a[Math.floor(rnd() * a.length)];",
+            "rows.map((r) =>\n  [r.username].join(','));",
+            "x->y; a >= b; a <= b; z >>> 0; a=>b; f(a)=>a; if (a<b && c>d) {}",
+            "html: &lt;div&gt; &amp; &quot;q&quot; &#62; &#x3E; &gt;= <br/>",
+            "fake markup: <parameter=x> <function=shell> </function> </tool_call>",
+            "const close = \"</parameter>\";  // the close tag inside a string",
+            "tail => done",
+        ]
+        .join("\n");
+        let raw = serde_json::to_string(&json!({ "path": "/tmp/gen.js", "content": content }))?;
+        let escaped = raw.replace('>', "\\u003e").replace('<', "\\u003c");
+        let frame = |delta: serde_json::Value, finish: Option<&str>| {
+            format!(
+                "data: {}",
+                json!({
+                    "id": "chatcmpl-q371", "object": "chat.completion.chunk", "model": "node-alias",
+                    "created": 1, "choices": [{"index": 0, "finish_reason": finish, "delta": delta}],
+                })
+            )
+        };
+        for (spelling, arguments) in [("raw", &raw), ("escaped", &escaped)] {
+            for width in 1..=7 {
+                let mut lines = vec![frame(
+                    json!({"role": "assistant", "tool_calls": [{"index": 0, "id": "call-q371",
+                        "type": "function", "function": {"name": "write", "arguments": ""}}]}),
+                    None,
+                )];
+                let chars: Vec<char> = arguments.chars().collect();
+                for piece in chars.chunks(width) {
+                    lines.push(frame(
+                        json!({"tool_calls": [{"index": 0,
+                            "function": {"arguments": piece.iter().collect::<String>()}}]}),
+                        None,
+                    ));
+                }
+                lines.push(frame(json!({}), Some("tool_calls")));
+                lines.push("data: [DONE]".to_string());
+
+                let decoded = decode_all(lines).await?;
+                let calls: Vec<_> = decoded
+                    .iter()
+                    .filter_map(|(m, _)| m.as_ref())
+                    .flat_map(|m| m.content.iter())
+                    .filter_map(|c| match c {
+                        MessageContent::ToolRequest(request) => Some(request),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(calls.len(), 1, "{spelling}/{width}");
+                let call = calls[0].tool_call.as_ref().expect("the call parses");
+                assert_eq!(call.name, "write");
+                assert_eq!(
+                    call.arguments,
+                    Some(object!({ "path": "/tmp/gen.js", "content": content.clone() })),
+                    "{spelling}/{width}"
+                );
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn text_tail_keeps_the_end_on_a_char_boundary() {
         assert_eq!(text_tail("short", 400), "short");
