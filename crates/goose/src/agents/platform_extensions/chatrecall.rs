@@ -539,11 +539,17 @@ fn render_search(
             break;
         }
         for hit in list {
-            let text = message_text(&hit.content_json);
+            let text = message_text(&hit.content_json, hit.metadata_json.as_deref());
+            let kept_for_itself = transcript_index::agent_only(hit.metadata_json.as_deref());
             let terms: Vec<&transcript_index::Term> = query.terms().collect();
+            let tool_label = if kept_for_itself {
+                "goose's own note, not shown in the chat"
+            } else {
+                "tool"
+            };
             let (who, snippet) = match scope {
                 Scope::Tools => (
-                    "tool",
+                    tool_label,
                     transcript_index::snippet(&text.tool_io, terms.iter().copied(), SNIPPET_CHARS),
                 ),
                 _ => match transcript_index::snippet(
@@ -553,7 +559,7 @@ fn render_search(
                 ) {
                     Some(s) => (speaker(&hit.role), Some(s)),
                     None => (
-                        "tool",
+                        tool_label,
                         transcript_index::snippet(
                             &text.tool_io,
                             terms.iter().copied(),
@@ -624,7 +630,7 @@ fn render_read(
     let reserve = out.chars().count() + budget.note.as_ref().map_or(0, |n| n.chars().count());
     let share = budget.chars.saturating_sub(reserve) / messages.len().max(1);
     for message in messages {
-        let text = message_text(&message.content_json);
+        let text = message_text(&message.content_json, message.metadata_json.as_deref());
         let mark = if Some(message.message_id) == around {
             "»"
         } else {
@@ -635,7 +641,9 @@ fn render_read(
             body.push(format!("{}: {}", speaker(&message.role), text.said));
         }
         if !text.tool_io.is_empty() {
-            let label = if message.role == "assistant" {
+            let label = if transcript_index::agent_only(message.metadata_json.as_deref()) {
+                "goose's own note, not shown in the chat"
+            } else if message.role == "assistant" {
                 "tool call"
             } else {
                 "tool output"
@@ -1112,5 +1120,142 @@ mod tests {
         let (_, full) = call(&f, SEARCH_TOOL, serde_json::json!({"query": "tenant_id"})).await;
         assert!(full.starts_with("4 hits in 1 chat"), "{full}");
         assert!(full.ends_with("Indexed 4 of 4 messages."), "{full}");
+    }
+
+    /// The Q-358 measurement, run by hand on a COPY of a real history — never the live file:
+    /// `Q358_DATA_DIR=<dir holding sessions/sessions.db> cargo test -p goose --lib
+    /// measure_on_a_copy_of_the_history -- --ignored --nocapture`. It migrates the copy, times the
+    /// startup backfill, and times five queries through recall's per-turn search and search_chats.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn measure_on_a_copy_of_the_history() {
+        let Some(dir) = std::env::var_os("Q358_DATA_DIR") else {
+            panic!("set Q358_DATA_DIR to a directory holding a COPY at sessions/sessions.db");
+        };
+        let db = PathBuf::from(&dir).join("sessions").join("sessions.db");
+        {
+            // The index objects and the backfill, timed batch by batch on a bare pool, so no
+            // startup task races the clock; the SessionManager below then finds them in place.
+            let raw = sqlx::sqlite::SqlitePoolOptions::new()
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::new()
+                        .filename(&db)
+                        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+                )
+                .await
+                .unwrap();
+            let started = std::time::Instant::now();
+            let mut tx = raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
+            transcript_index::create_objects(&mut tx).await.unwrap();
+            tx.commit().await.unwrap();
+            println!("index objects created: {:?}", started.elapsed());
+            let mut times = Vec::new();
+            let mut rows = 0;
+            loop {
+                let t = std::time::Instant::now();
+                match transcript_index::backfill_step(&raw, transcript_index::BACKFILL_BATCH_ROWS)
+                    .await
+                    .unwrap()
+                {
+                    transcript_index::BackfillStep::Indexed { rows: n, .. } => {
+                        rows += n;
+                        times.push(t.elapsed());
+                    }
+                    transcript_index::BackfillStep::Done => break,
+                }
+            }
+            times.sort();
+            let total: std::time::Duration = times.iter().sum();
+            println!(
+                "backfill: {rows} rows in {} batches, {total:?} in batches; median batch {:?}, slowest {:?}",
+                times.len(),
+                times[times.len() / 2],
+                times[times.len() - 1]
+            );
+            raw.close().await;
+        }
+        let started = std::time::Instant::now();
+        let sm = Arc::new(SessionManager::new(PathBuf::from(dir)));
+        let pool = sm.storage().pool().await.unwrap();
+        println!("migration v15 + startup: {:?}", started.elapsed());
+        let cov = transcript_index::coverage(pool).await.unwrap();
+        println!("coverage: {cov:?}");
+        assert!(!cov.backfilling);
+
+        let here = chat(&sm, "measure", SessionType::User, &[]).await;
+        let session = sm.get_session(&here, false).await.unwrap();
+        let f = Fixture {
+            _dir: TempDir::new().unwrap(),
+            sm: sm.clone(),
+            here,
+            client: ChatRecallClient::new(PlatformExtensionContext {
+                extension_manager: None,
+                session_manager: sm.clone(),
+                session: Some(Arc::new(session)),
+                use_login_shell_path: false,
+                working_dir: None,
+            })
+            .unwrap(),
+        };
+        for query in [
+            "split mesh",
+            "killpg",
+            "tenant",
+            "compaction pillars",
+            "notarized release build",
+        ] {
+            let t = std::time::Instant::now();
+            let recall = sm
+                .search_chat_history(
+                    query,
+                    Some(super::super::recall::PAST_SESSION_ROWS),
+                    None,
+                    None,
+                    None,
+                    vec![SessionType::User, SessionType::Scheduled],
+                )
+                .await
+                .unwrap();
+            let recall_time = t.elapsed();
+            // The LIKE scan recall ran before Q-358 (chat_history_search.rs at 2b17dd44d), same
+            // build, same file, for the comparison.
+            let keywords: Vec<String> = query
+                .split_whitespace()
+                .map(|w| format!("%{}%", w.to_lowercase()))
+                .collect();
+            let any =
+                vec!["LOWER(json_extract(value, '$.text')) LIKE ?"; keywords.len()].join(" OR ");
+            let score = vec!["(m.content_json LIKE ?)"; keywords.len()].join(" + ");
+            let old_sql = format!(
+                "SELECT s.id, m.content_json FROM messages m INNER JOIN sessions s ON m.session_id = s.id \
+                 WHERE EXISTS (SELECT 1 FROM json_each(m.content_json) WHERE json_extract(value, '$.type') = 'text' AND ({any})) \
+                 AND s.session_type IN ('user', 'scheduled') ORDER BY ({score}) DESC, m.timestamp DESC LIMIT 20"
+            );
+            let t = std::time::Instant::now();
+            let mut old = sqlx::query_as::<_, (String, String)>(&old_sql);
+            for k in keywords.iter().chain(keywords.iter()) {
+                old = old.bind(k.clone());
+            }
+            let old_rows = old.fetch_all(pool).await.unwrap().len();
+            println!("old LIKE scan: {:?} ({old_rows} rows)", t.elapsed());
+            let t = std::time::Instant::now();
+            let (_, out) = call(&f, SEARCH_TOOL, serde_json::json!({"query": query})).await;
+            let search_time = t.elapsed();
+            let t = std::time::Instant::now();
+            let (_, with_tools) = call(
+                &f,
+                SEARCH_TOOL,
+                serde_json::json!({"query": query, "include_tool_output": true}),
+            )
+            .await;
+            let tools_time = t.elapsed();
+            println!(
+                "\n=== {query}: recall {recall_time:?} ({} rows), search_chats {search_time:?}, with tool output {tools_time:?}",
+                recall.total_matches
+            );
+            println!("{}", out.chars().take(1400).collect::<String>());
+            println!("--- with tool output ---");
+            println!("{}", with_tools.chars().take(900).collect::<String>());
+        }
     }
 }

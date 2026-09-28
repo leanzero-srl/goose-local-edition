@@ -100,18 +100,23 @@ impl<'a> ChatHistorySearch<'a> {
             });
         }
 
-        let mut coverage: HashMap<i64, (usize, DateTime<Utc>)> = HashMap::new();
+        let kept_out = transcript_index::kept_out_sessions(self.pool).await?;
+        let mut coverage: HashMap<i64, usize> = HashMap::new();
         for word in words {
             let term = recall_term(word);
-            for (id, at) in transcript_index::matching_ids(self.pool, &term, &self.filter).await? {
-                coverage.entry(id).or_insert((0, at)).0 += 1;
+            for id in
+                transcript_index::matching_ids(self.pool, &term, &self.filter, &kept_out).await?
+            {
+                *coverage.entry(id).or_insert(0) += 1;
             }
         }
-        let mut ranked: Vec<(i64, usize, DateTime<Utc>)> = coverage
-            .into_iter()
-            .map(|(id, (count, at))| (id, count, at))
-            .collect();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)).then(b.0.cmp(&a.0)));
+        // Newest by id, not by timestamp: the id is the order messages were stored in, and a
+        // row's timestamp sits after its content, so reading it for every match doubled the
+        // search's time. A chat whose conversation was replaced (compaction) re-stores its
+        // messages under new ids and wins ties among equally covered rows; the past-session law
+        // that reads these rows then picks by timestamp.
+        let mut ranked: Vec<(i64, usize)> = coverage.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
         ranked.truncate(self.limit);
 
         let rows = self.fetch_rows(&ranked).await?;
@@ -124,9 +129,9 @@ impl<'a> ChatHistorySearch<'a> {
         ))
     }
 
-    async fn fetch_rows(&self, ranked: &[(i64, usize, DateTime<Utc>)]) -> Result<Vec<MessageRow>> {
+    async fn fetch_rows(&self, ranked: &[(i64, usize)]) -> Result<Vec<MessageRow>> {
         let mut rows = Vec::with_capacity(ranked.len());
-        for (id, _, _) in ranked {
+        for (id, _) in ranked {
             let row: MessageRow = sqlx::query_as(
                 r#"
                 SELECT m.id, s.id,

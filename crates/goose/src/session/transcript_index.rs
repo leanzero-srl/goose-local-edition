@@ -4,8 +4,9 @@
 //! turn before.
 //!
 //! Two columns: `said` (the message's text parts — what the person and goose said) and `tool_io`
-//! (each tool call's name and arguments, each tool result's text and error). SQL triggers on
-//! `messages` keep it current for every write path (insert, delete, update of `content_json`) and
+//! (each tool call's name and arguments, each tool result's text and error, and the text of a
+//! message goose keeps for itself). SQL triggers on `messages` keep it current for every write path
+//! (insert, delete, update of `content_json` or `metadata_json`) and
 //! on `sessions` for a session that becomes or stops being hidden. Rows older than the migration
 //! are indexed by `backfill`, newest first, in batches OUTSIDE the startup migration transaction;
 //! `messages_fts_state.backfill_below` is its watermark, so a process that dies mid-way resumes
@@ -25,8 +26,16 @@ use sqlx::{Pool, Sqlite, Transaction};
 pub const FTS_TABLE: &str = "messages_fts";
 const STATE_TABLE: &str = "messages_fts_state";
 
-// measured: 500 rows hold the write lock ~0.1 s on the 2026-09-28 history (24,661 rows indexed in
-// 5.4 s, 0.22 ms a row), short enough that a chat's own message write waits unnoticed behind a batch.
+/// Every session that is not a hidden swarm worker. Written as two ranges, not `!= 'hidden'`, so
+/// SQLite reads it from `idx_sessions_type` instead of scanning the sessions table — measured on
+/// the 2026-09-28 history (73,267 sessions, 72,658 hidden): the count of readable messages took
+/// 27 ms with `!=` and 4 ms with the ranges.
+const READABLE_SESSIONS: &str =
+    "SELECT id FROM sessions WHERE session_type < 'hidden' OR session_type > 'hidden'";
+
+// measured: on a copy of the 2026-09-28 history (24,661 readable rows, debug build) 50 batches of 500
+// took 5.5 s — median 60 ms, slowest 0.3 s (a batch of long tool outputs) — so a chat's own message
+// write waits at most that long behind one batch, well inside the pool's 30 s busy timeout.
 pub const BACKFILL_BATCH_ROWS: i64 = 500;
 
 // ratio: inside one message the words it SAID count four times its tool traffic in bm25. A weight
@@ -39,19 +48,35 @@ pub const SAID_WEIGHT: f64 = 4.0;
 // ratio: the unit the said weight is measured against.
 pub const TOOL_IO_WEIGHT: f64 = 1.0;
 
-/// The text a message SAID: its text parts joined by newlines. Mirrors `message_text`'s `said`.
-fn said_sql(content: &str) -> String {
+/// A message goose keeps for itself and never shows in the chat (`userVisible: false`): a
+/// compaction summary, or "goose's record of an earlier tool call, condensed to save context" —
+/// 1,547 of the 24,661 readable messages on 2026-09-28. Its text is not what anyone SAID, so it is
+/// indexed as goose's own traffic, with the tool calls; searched as said, the condensed records
+/// came back labelled as the person's words.
+fn agent_only_sql(meta: &str) -> String {
+    format!("(json_valid({meta}) AND json_extract({meta}, '$.userVisible') = 0)")
+}
+
+/// The text a message SAID: its text parts joined by newlines, unless goose kept it for itself.
+/// Mirrors `message_text`'s `said`.
+fn said_sql(content: &str, meta: &str) -> String {
     format!(
-        "(SELECT group_concat(json_extract(p.value, '$.text'), char(10)) FROM json_each({content}) p \
-         WHERE json_extract(p.value, '$.type') = 'text')"
+        "(CASE WHEN {} THEN NULL ELSE \
+          (SELECT group_concat(json_extract(p.value, '$.text'), char(10)) FROM json_each({content}) p \
+            WHERE json_extract(p.value, '$.type') = 'text') END)",
+        agent_only_sql(meta)
     )
 }
 
-/// The tool traffic of a message: each call's name and arguments, each result's text parts and
-/// error. Mirrors `message_text`'s `tool_io`.
-fn tool_io_sql(content: &str) -> String {
+/// The tool traffic of a message: the text goose kept for itself, each call's name and arguments,
+/// each result's text parts and error. Mirrors `message_text`'s `tool_io`.
+fn tool_io_sql(content: &str, meta: &str) -> String {
+    let agent_only = agent_only_sql(meta);
     format!(
         "(SELECT group_concat(t, char(10)) FROM ( \
+           SELECT json_extract(p.value, '$.text') AS t \
+             FROM json_each({content}) p WHERE json_extract(p.value, '$.type') = 'text' AND {agent_only} \
+           UNION ALL \
            SELECT json_extract(p.value, '$.toolCall.value.name') || ' ' || \
                   COALESCE(json_extract(p.value, '$.toolCall.value.arguments'), '') AS t \
              FROM json_each({content}) p WHERE json_extract(p.value, '$.type') = 'toolRequest' \
@@ -80,11 +105,11 @@ fn indexable_sql(session_id: &str, content: &str) -> String {
 /// schema; both are the startup transaction, so this does no per-row work: the watermark is set to
 /// one past the newest message, and `backfill` indexes everything below it later.
 pub(crate) async fn create_objects(tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
-    let said_new = said_sql("NEW.content_json");
-    let tool_new = tool_io_sql("NEW.content_json");
+    let said_new = said_sql("NEW.content_json", "NEW.metadata_json");
+    let tool_new = tool_io_sql("NEW.content_json", "NEW.metadata_json");
     let new_ok = indexable_sql("NEW.session_id", "NEW.content_json");
-    let said_m = said_sql("m.content_json");
-    let tool_m = tool_io_sql("m.content_json");
+    let said_m = said_sql("m.content_json", "m.metadata_json");
+    let tool_m = tool_io_sql("m.content_json", "m.metadata_json");
     let statements = [
         format!(
             "CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5(said, tool_io, content='', contentless_delete=1)"
@@ -110,7 +135,7 @@ pub(crate) async fn create_objects(tx: &mut Transaction<'_, Sqlite>) -> Result<(
              END"
         ),
         format!(
-            "CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content_json ON messages BEGIN \
+            "CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content_json, metadata_json ON messages BEGIN \
                DELETE FROM {FTS_TABLE} WHERE rowid = OLD.id; \
                INSERT INTO {FTS_TABLE} (rowid, said, tool_io) SELECT NEW.id, {said_new}, {tool_new} WHERE {new_ok}; \
              END"
@@ -195,8 +220,8 @@ pub(crate) async fn coverage(pool: &Pool<Sqlite>) -> Result<IndexCoverage> {
         .fetch_one(pool)
         .await?;
     let indexable: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM messages WHERE session_id IN \
-         (SELECT id FROM sessions WHERE session_type != 'hidden')",
+        "SELECT COUNT(*) FROM sessions s JOIN messages m ON m.session_id = s.id \
+         WHERE s.session_type < 'hidden' OR s.session_type > 'hidden'",
     )
     .fetch_one(pool)
     .await?;
@@ -239,23 +264,23 @@ pub(crate) async fn backfill_step(pool: &Pool<Sqlite>, batch: i64) -> Result<Bac
         tx.commit().await?;
         return Ok(BackfillStep::Done);
     }
-    let from: Option<i64> = sqlx::query_scalar(
+    let from: Option<i64> = sqlx::query_scalar(&format!(
         "SELECT MIN(id) FROM (SELECT id FROM messages WHERE id < ? AND session_id IN \
-         (SELECT id FROM sessions WHERE session_type != 'hidden') ORDER BY id DESC LIMIT ?)",
-    )
+         ({READABLE_SESSIONS}) ORDER BY id DESC LIMIT ?)"
+    ))
     .bind(below)
     .bind(batch)
     .fetch_one(&mut *tx)
     .await?;
     let step = match from {
         Some(from) => {
-            let said = said_sql("m.content_json");
-            let tool = tool_io_sql("m.content_json");
+            let said = said_sql("m.content_json", "m.metadata_json");
+            let tool = tool_io_sql("m.content_json", "m.metadata_json");
             let rows = sqlx::query(&format!(
                 "INSERT OR REPLACE INTO {FTS_TABLE} (rowid, said, tool_io) \
                  SELECT m.id, {said}, {tool} FROM messages m \
-                  WHERE m.id >= ? AND m.id < ? AND json_valid(m.content_json) AND m.session_id IN \
-                        (SELECT id FROM sessions WHERE session_type != 'hidden')"
+                  WHERE m.id >= ? AND m.id < ? AND json_valid(m.content_json) \
+                    AND m.session_id IN ({READABLE_SESSIONS})"
             ))
             .bind(from)
             .bind(below)
@@ -289,15 +314,22 @@ pub(crate) async fn backfill_step(pool: &Pool<Sqlite>, batch: i64) -> Result<Bac
 pub(crate) async fn backfill(pool: Pool<Sqlite>) {
     let started = std::time::Instant::now();
     let mut indexed = 0u64;
+    let mut batches = 0u64;
+    let mut slowest_batch = std::time::Duration::ZERO;
     loop {
+        let step_started = std::time::Instant::now();
         match backfill_step(&pool, BACKFILL_BATCH_ROWS).await {
             Ok(BackfillStep::Indexed { rows, .. }) => {
                 indexed += rows;
+                batches += 1;
+                slowest_batch = slowest_batch.max(step_started.elapsed());
                 tokio::task::yield_now().await;
             }
             Ok(BackfillStep::Done) => {
                 tracing::info!(
                     indexed,
+                    batches,
+                    slowest_batch_ms = slowest_batch.as_millis(),
                     elapsed_ms = started.elapsed().as_millis(),
                     "transcript_index_backfilled"
                 );
@@ -341,11 +373,20 @@ pub struct MessageText {
     pub tool_io: String,
 }
 
-pub fn message_text(content_json: &str) -> MessageText {
+/// Whether a stored message is one goose keeps for itself (`userVisible: false` in its metadata).
+pub fn agent_only(metadata_json: Option<&str>) -> bool {
+    metadata_json
+        .and_then(|meta| serde_json::from_str::<Value>(meta).ok())
+        .and_then(|meta| meta.get("userVisible").and_then(Value::as_bool))
+        == Some(false)
+}
+
+pub fn message_text(content_json: &str, metadata_json: Option<&str>) -> MessageText {
     let parts: Vec<Value> = match serde_json::from_str(content_json) {
         Ok(Value::Array(parts)) => parts,
         _ => return MessageText::default(),
     };
+    let agent_only = agent_only(metadata_json);
     let str_at = |v: &Value, path: &[&str]| -> Option<String> {
         let mut cur = v;
         for key in path {
@@ -388,11 +429,17 @@ pub fn message_text(content_json: &str) -> MessageText {
             _ => {}
         }
     }
-    requests.extend(results);
-    requests.extend(errors);
+    let (said, mut tool_io) = if agent_only {
+        (Vec::new(), said)
+    } else {
+        (said, Vec::new())
+    };
+    tool_io.extend(requests);
+    tool_io.extend(results);
+    tool_io.extend(errors);
     MessageText {
         said: said.join("\n"),
-        tool_io: requests.join("\n"),
+        tool_io: tool_io.join("\n"),
     }
 }
 
@@ -565,9 +612,22 @@ enum Bind {
     Time(DateTime<Utc>),
 }
 
+/// The chats kept out of search, read once per search: a `json_extract` of `extension_data` per
+/// MATCHING row cost 5 of 8 ms on a 1,602-hit term (2026-09-28 history); the LIKE finds the few
+/// sessions carrying the key at all before any JSON is parsed.
+pub(crate) async fn kept_out_sessions(pool: &Pool<Sqlite>) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT s.id FROM sessions s WHERE s.id IN ({READABLE_SESSIONS}) \
+           AND s.extension_data LIKE '%chat\\_search.v0%' ESCAPE '\\' \
+           AND NOT ({SEARCHABLE_SESSION_SQL})"
+    ))
+    .fetch_all(pool)
+    .await?)
+}
+
 impl SearchFilter {
     /// The MATCH expression and the WHERE clause after it, with their binds in order.
-    fn clause(&self, query: &str, scope: Scope) -> (String, Vec<Bind>) {
+    fn clause(&self, query: &str, scope: Scope, kept_out: &[String]) -> (String, Vec<Bind>) {
         let mut expr = format!("{} : {query}", scope.columns());
         if let Some(tool) = &self.tool {
             let tool = Term {
@@ -587,8 +647,13 @@ impl SearchFilter {
                 expr = format!("({expr}) AND ({{said tool_io}} : {})", file.fts());
             }
         }
-        let mut sql = format!("{FTS_TABLE} MATCH ? AND {SEARCHABLE_SESSION_SQL}");
+        let mut sql = format!("{FTS_TABLE} MATCH ?");
         let mut binds = vec![Bind::Text(expr)];
+        if !kept_out.is_empty() {
+            let marks = vec!["?"; kept_out.len()].join(", ");
+            sql.push_str(&format!(" AND m.session_id NOT IN ({marks})"));
+            binds.extend(kept_out.iter().cloned().map(Bind::Text));
+        }
         if !self.session_types.is_empty() {
             let marks = vec!["?"; self.session_types.len()].join(", ");
             sql.push_str(&format!(" AND s.session_type IN ({marks})"));
@@ -653,22 +718,24 @@ pub struct Hit {
     pub role: String,
     pub timestamp: DateTime<Utc>,
     pub content_json: String,
+    pub metadata_json: Option<String>,
     pub rank: f64,
 }
 
 type HitRow = (
-    i64,
     String,
     String,
     String,
     String,
     DateTime<Utc>,
     String,
-    f64,
+    Option<String>,
 );
 
 /// The best `limit` hits — every message whose said text matches before any tool-only match, then
-/// by bm25 with said weighted above tool traffic — and how many hits and chats match in all.
+/// by bm25 with said weighted above tool traffic — and how many hits and chats match in all. The
+/// ranking reads ids only; content is fetched for the `limit` winners alone (reading it for every
+/// match took 176 ms on a 3,723-hit query of the 2026-09-28 history).
 pub(crate) async fn ranked(
     pool: &Pool<Sqlite>,
     query: &str,
@@ -676,20 +743,20 @@ pub(crate) async fn ranked(
     filter: &SearchFilter,
     limit: i64,
 ) -> Result<(Vec<Hit>, u64, u64)> {
-    let (where_sql, binds) = filter.clause(query, scope);
+    let kept_out = kept_out_sessions(pool).await?;
+    let (where_sql, binds) = filter.clause(query, scope, &kept_out);
     let sql = format!(
-        "SELECT m.id, m.session_id, s.name, s.working_dir, m.role, m.timestamp, m.content_json, \
-                bm25({FTS_TABLE}, {SAID_WEIGHT:?}, {TOOL_IO_WEIGHT:?}) AS rank \
+        "SELECT m.id, bm25({FTS_TABLE}, {SAID_WEIGHT:?}, {TOOL_IO_WEIGHT:?}) AS rank \
          {FROM_INDEX} WHERE {where_sql} \
          ORDER BY (m.id IN (SELECT rowid FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH ?)) DESC, rank \
          LIMIT ?"
     );
-    let rows: Vec<HitRow> = bind_all(sqlx::query_as(&sql), binds)
+    let winners: Vec<(i64, f64)> = bind_all(sqlx::query_as(&sql), binds)
         .bind(format!("{{said}} : {query}"))
         .bind(limit)
         .fetch_all(pool)
         .await?;
-    let (where_sql, binds) = filter.clause(query, scope);
+    let (where_sql, binds) = filter.clause(query, scope, &kept_out);
     let (hits, chats): (i64, i64) = bind_all(
         sqlx::query_as(&format!(
             "SELECT COUNT(*), COUNT(DISTINCT m.session_id) {FROM_INDEX} WHERE {where_sql}"
@@ -698,49 +765,51 @@ pub(crate) async fn ranked(
     )
     .fetch_one(pool)
     .await?;
-    let hits_out = rows
-        .into_iter()
-        .map(
-            |(
-                message_id,
-                session_id,
-                session_name,
-                working_dir,
-                role,
-                timestamp,
-                content_json,
-                rank,
-            )| Hit {
-                message_id,
-                session_id,
-                session_name,
-                working_dir,
-                role,
-                timestamp,
-                content_json,
-                rank,
-            },
-        )
-        .collect();
-    Ok((hits_out, hits as u64, chats as u64))
+    let mut out = Vec::with_capacity(winners.len());
+    for (message_id, rank) in winners {
+        let (session_id, session_name, working_dir, role, timestamp, content_json, metadata_json): HitRow =
+            sqlx::query_as(
+                "SELECT m.session_id, s.name, s.working_dir, m.role, m.timestamp, m.content_json, \
+                        m.metadata_json \
+                 FROM messages m JOIN sessions s ON s.id = m.session_id WHERE m.id = ?",
+            )
+            .bind(message_id)
+            .fetch_one(pool)
+            .await?;
+        out.push(Hit {
+            message_id,
+            session_id,
+            session_name,
+            working_dir,
+            role,
+            timestamp,
+            content_json,
+            metadata_json,
+            rank,
+        });
+    }
+    Ok((out, hits as u64, chats as u64))
 }
 
-/// Every message matching one term in `said`, with its timestamp — the rowid sets recall's
-/// coverage ranking counts across terms.
+/// Every message matching one term in `said` — the id sets recall's coverage ranking counts across
+/// terms. Ids only: reading each row's timestamp, stored after its content, doubled a 1,602-hit
+/// term's time (3 → 15 ms on the 2026-09-28 history).
 pub(crate) async fn matching_ids(
     pool: &Pool<Sqlite>,
     term: &Term,
     filter: &SearchFilter,
-) -> Result<Vec<(i64, DateTime<Utc>)>> {
-    let (where_sql, binds) = filter.clause(&term.fts(), Scope::Said);
+    kept_out: &[String],
+) -> Result<Vec<i64>> {
+    let (where_sql, binds) = filter.clause(&term.fts(), Scope::Said, kept_out);
     Ok(bind_all(
-        sqlx::query_as(&format!(
-            "SELECT m.id, m.timestamp {FROM_INDEX} WHERE {where_sql}"
-        )),
+        sqlx::query_as::<_, (i64,)>(&format!("SELECT m.id {FROM_INDEX} WHERE {where_sql}")),
         binds,
     )
     .fetch_all(pool)
-    .await?)
+    .await?
+    .into_iter()
+    .map(|(id,)| id)
+    .collect())
 }
 
 /// One stored message of a chat, as `read_chat` shows it.
@@ -750,6 +819,7 @@ pub struct StoredMessage {
     pub role: String,
     pub timestamp: DateTime<Utc>,
     pub content_json: String,
+    pub metadata_json: Option<String>,
 }
 
 /// A chat as the chat tools name it.
@@ -874,11 +944,11 @@ pub(crate) async fn window(
     around: Option<i64>,
     span: i64,
 ) -> Result<Vec<StoredMessage>> {
-    type Row = (i64, String, DateTime<Utc>, String);
+    type Row = (i64, String, DateTime<Utc>, String, Option<String>);
     let rows: Vec<Row> = match around {
         Some(around) => {
             let mut earlier: Vec<Row> = sqlx::query_as(
-                "SELECT id, role, timestamp, content_json FROM messages \
+                "SELECT id, role, timestamp, content_json, metadata_json FROM messages \
                  WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
             )
             .bind(session_id)
@@ -888,7 +958,7 @@ pub(crate) async fn window(
             .await?;
             earlier.reverse();
             let later: Vec<Row> = sqlx::query_as(
-                "SELECT id, role, timestamp, content_json FROM messages \
+                "SELECT id, role, timestamp, content_json, metadata_json FROM messages \
                  WHERE session_id = ? AND id >= ? ORDER BY id ASC LIMIT ?",
             )
             .bind(session_id)
@@ -900,7 +970,7 @@ pub(crate) async fn window(
         }
         None => {
             let mut newest: Vec<Row> = sqlx::query_as(
-                "SELECT id, role, timestamp, content_json FROM messages \
+                "SELECT id, role, timestamp, content_json, metadata_json FROM messages \
                  WHERE session_id = ? ORDER BY id DESC LIMIT ?",
             )
             .bind(session_id)
@@ -914,11 +984,12 @@ pub(crate) async fn window(
     Ok(rows
         .into_iter()
         .map(
-            |(message_id, role, timestamp, content_json)| StoredMessage {
+            |(message_id, role, timestamp, content_json, metadata_json)| StoredMessage {
                 message_id,
                 role,
                 timestamp,
                 content_json,
+                metadata_json,
             },
         )
         .collect())
@@ -1041,7 +1112,7 @@ mod tests {
             {"type":"toolResponse","id":"a","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"split-mesh-branch"}]}}},
             {"type":"toolResponse","id":"b","toolResult":{"status":"error","error":"Tool 'read' not found"}},
             {"type":"thinking","thinking":"hidden thought"}]"#;
-        let text = message_text(content);
+        let text = message_text(content, None);
         assert_eq!(text.said, "about the split mesh");
         assert_eq!(
             text.tool_io,
@@ -1231,6 +1302,35 @@ mod tests {
             indexed(&sm).await,
             0,
             "a deleted chat leaves nothing behind"
+        );
+    }
+
+    /// What goose keeps for itself (a compaction summary, a condensed tool record) is its own
+    /// traffic, not what anyone said — and a later metadata update moves the row between columns.
+    #[tokio::test]
+    async fn goose_s_own_notes_are_indexed_as_its_traffic_not_as_said() {
+        let (_dir, sm) = store().await;
+        let id = chat(&sm, "Compacted", SessionType::User).await;
+        sm.add_message(
+            &id,
+            &Message::user()
+                .with_text("[goose's record of an earlier tool call] shell ls split-tensor")
+                .agent_only()
+                .with_id("note-1"),
+        )
+        .await
+        .unwrap();
+        let row = ids_of(&sm, &id).await;
+        assert!(matching(&sm, "said : tensor").await.is_empty());
+        assert_eq!(matching(&sm, "tool_io : tensor").await, row);
+
+        sm.update_message_metadata(&id, "note-1", |meta| meta.with_user_visible())
+            .await
+            .unwrap();
+        assert_eq!(
+            matching(&sm, "said : tensor").await,
+            row,
+            "a metadata update re-indexes"
         );
     }
 
