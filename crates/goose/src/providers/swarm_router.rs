@@ -49,8 +49,8 @@ use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
 use goose_providers::redact::redact_relay_capability;
 use goose_sdk_types::custom_requests::{
-    MlxPlacementKeyDto, MlxPlacementKindDto, NodeEnsureServing, NodeLoadRefusalCode,
-    NodeServedTurnDto, NodeTriedDto, NodesServingKind,
+    MlxPlacementKeyDto, MlxPlacementKindDto, NodeEnsureServing, NodeIfServingOther,
+    NodeLoadRefusalCode, NodeServedTurnDto, NodeServingOtherDto, NodeTriedDto, NodesServingKind,
 };
 use goose_sidecar::engine::{served_model_id, EngineSettings, EngineStatus};
 
@@ -1428,6 +1428,7 @@ pub(crate) async fn route_stream(
                     loaded_ms: None,
                     at_ms: now_ms(),
                     asked_for_this_turn: false,
+                    serving_other: None,
                 });
                 return Ok(stream);
             }
@@ -1953,6 +1954,8 @@ fn asked_entry(
             chain,
             when: NodeWhen::Failover,
             if_not_loaded: NodeIfNotLoaded::Load,
+            // The person picked this node for this one turn: it loads as a pick always did.
+            if_serving_other: NodeIfServingOther::TakeOver,
         },
         (lead.clone(), words),
     ))
@@ -1998,6 +2001,10 @@ fn chain_plan(
                     }],
                     when: NodeWhen::Failover,
                     if_not_loaded: NodeIfNotLoaded::Load,
+                    // A `node:` chat is the person's one pick, with no strategy to carry a
+                    // setting: it takes the Mac over as it did before Q-428 (a running reply is
+                    // still never cut).
+                    if_serving_other: NodeIfServingOther::TakeOver,
                 },
                 defs,
                 asked_past: None,
@@ -2409,8 +2416,13 @@ fn chain_record(
     node: &str,
     tried: &[Tried],
     loaded_ms: Option<u64>,
+    serving_other: &HashMap<String, NodeServingOtherDto>,
 ) -> NodeServedTurnDto {
     let first = plan.entry.chain.first().map(|l| l.node.as_str());
+    let first_serving_other = first
+        .filter(|first| *first != node)
+        .and_then(|first| serving_other.get(first))
+        .cloned();
     let reason = first
         .filter(|first| *first != node)
         .and_then(|first| tried.iter().find(|t| t.node == first))
@@ -2433,6 +2445,7 @@ fn chain_record(
             .asked_past
             .as_ref()
             .is_some_and(|(lead, _)| lead != node),
+        serving_other: first_serving_other,
     }
 }
 
@@ -2466,6 +2479,8 @@ pub(crate) async fn route_chain(
     let mut held: Option<(String, ProviderError)> = None;
     // Node → how long the loader took to answer Ready for this turn.
     let mut loaded: HashMap<String, u64> = HashMap::new();
+    // Node → the other node its Mac serves, when the role's `useNext` passed it over (Q-428).
+    let mut serving_other: HashMap<String, NodeServingOtherDto> = HashMap::new();
     loop {
         let current = chain_facts(router, plan, members, probe, &overrides, &saturated).await;
         let sticky = router
@@ -2512,6 +2527,7 @@ pub(crate) async fn route_chain(
                             node: plan.defs[&node].def.clone(),
                             from: DemandFrom::Turn(session),
                             role: plan.role,
+                            if_serving_other: plan.entry.if_serving_other,
                         })
                         .await;
                     match answer {
@@ -2522,7 +2538,16 @@ pub(crate) async fn route_chain(
                             );
                             None
                         }
-                        NodeEnsureServing::Refused { code, reason } => {
+                        NodeEnsureServing::Refused {
+                            code,
+                            reason,
+                            facts,
+                        } => {
+                            if let Some(other) =
+                                facts.as_ref().and_then(NodeServingOtherDto::of_facts)
+                            {
+                                serving_other.insert(node.clone(), other);
+                            }
                             Some(EntryFact::LoadFailed {
                                 words: refusal_words(code, &reason),
                             })
@@ -2595,7 +2620,13 @@ pub(crate) async fn route_chain(
             Streamed::Served(stream, node) => {
                 let way = way.or_else(|| pool_lease_way(seam, &node));
                 note_served(seam, way, || {
-                    chain_record(plan, &node.id, &tried, loaded.get(&node.id).copied())
+                    chain_record(
+                        plan,
+                        &node.id,
+                        &tried,
+                        loaded.get(&node.id).copied(),
+                        &serving_other,
+                    )
                 });
                 return Ok(stream);
             }
@@ -5050,6 +5081,8 @@ devices:
         becomes: StdMutex<Option<(MemberMap, String, Member)>>,
         loader: bool,
         demands: StdMutex<Vec<String>>,
+        /// Each demand's `ifServingOther` (Q-428).
+        settings: StdMutex<Vec<NodeIfServingOther>>,
         served: StdMutex<Vec<(String, NodeServedTurnDto)>>,
         notes: StdMutex<Vec<(String, MlxPlacementKeyDto)>>,
         /// What each "is a switch queued ahead?" is answered, in order; none left = nothing is.
@@ -5080,10 +5113,12 @@ devices:
     impl NodesSeam for RecordingSeam {
         async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing {
             self.demands.lock().unwrap().push(demand.node.id.clone());
+            self.settings.lock().unwrap().push(demand.if_serving_other);
             let answer = self.answers.lock().unwrap().pop_front().unwrap_or_else(|| {
                 NodeEnsureServing::Refused {
                     code: NodeLoadRefusalCode::LoaderAbsent,
                     reason: crate::nodes::seam::loader_absent_reason(&demand.node.name),
+                    facts: None,
                 }
             });
             if answer == NodeEnsureServing::Ready {
@@ -5194,6 +5229,7 @@ devices:
                 .collect(),
             when,
             if_not_loaded,
+            if_serving_other: NodeIfServingOther::TakeOver,
         }
     }
 
@@ -5433,6 +5469,7 @@ devices:
         let seam = RecordingSeam::answering(vec![NodeEnsureServing::Refused {
             code: NodeLoadRefusalCode::LoadFailed,
             reason: "memory gate BLOCK".to_string(),
+            facts: None,
         }]);
         let stream = chain_turn(
             &Router::new(),
@@ -5463,6 +5500,64 @@ devices:
         );
         assert_eq!(record.loaded_ms, None);
         assert_eq!(seam.served.lock().unwrap()[0].0, SESSION);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Q-428: a role's "If its Mac is serving another node" reaches the loader on every demand,
+    // and a `useNext` pass names the other node on the turn line (the served record).
+    // -----------------------------------------------------------------------------------------
+
+    fn studio_serving_split() -> NodeServingOtherDto {
+        NodeServingOtherDto {
+            mac: "Work’s Mac Studio".into(),
+            serving: "27B · both Macs".into(),
+            chats: vec!["Kickoff notes".into()],
+            replies: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn use_next_reaches_the_loader_and_the_turn_line_names_the_node_serving_its_mac() {
+        let mut entry = role(
+            &[("a", 1), ("b", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::Load,
+        );
+        entry.if_serving_other = NodeIfServingOther::UseNext;
+        let plan = chain(entry);
+        let map = members(vec![
+            ("a", Err(EntryFact::NotLoaded)),
+            ("b", Ok(member("b"))),
+        ]);
+        let other = studio_serving_split();
+        let seam = RecordingSeam::answering(vec![NodeEnsureServing::Refused {
+            code: NodeLoadRefusalCode::ServingOther,
+            reason: "Work’s Mac Studio is serving 27B · both Macs for chat \"Kickoff notes\"; Node a is left to it".to_string(),
+            facts: Some(other.as_facts()),
+        }]);
+        let stream = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(map),
+            &FakeProbe::all_idle(&[node("b", 1, 1)]),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        assert_eq!(
+            *seam.settings.lock().unwrap(),
+            vec![NodeIfServingOther::UseNext]
+        );
+        let record = seam.last();
+        assert_eq!((record.node.as_str(), record.rank), ("b", 2));
+        assert_eq!(record.serving_other, Some(other));
+        assert_eq!(
+            record.reason.as_deref(),
+            Some("Work’s Mac Studio is serving 27B · both Macs for chat \"Kickoff notes\"; Node a is left to it")
+        );
     }
 
     #[tokio::test]
@@ -6061,6 +6156,7 @@ devices:
         let seam = RecordingSeam::answering(vec![NodeEnsureServing::Refused {
             code: NodeLoadRefusalCode::LoadFailed,
             reason: "not connected".to_string(),
+            facts: None,
         }]);
         let refused = chain_turn(
             &Router::new(),

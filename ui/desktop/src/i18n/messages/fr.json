@@ -6776,6 +6776,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "Réessayer {primary}"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} est sur {node} ({rank}) : {mac} sert {serving} pour {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "Premier démarrage pas encore mesuré"
   },
@@ -7133,6 +7136,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Libérer de la place"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} n’a pas été chargé : {mac} sert {serving} pour {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Supprimer"
   },
@@ -7192,6 +7198,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Sections des nœuds"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "une autre conversation"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "« {chat} »"
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, one {la conversation {names}} other {les conversations {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Configurer vos Mac"
@@ -10169,6 +10184,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Si non chargé"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Si son Mac sert un autre nœud"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Nœuds dans l’ordre"
   },
@@ -10372,6 +10390,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "Si {node} n’est pas chargé, {next} prend le travail entre-temps et rien n’est chargé."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Ajoutez un deuxième nœud pour utiliser le suivant."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Prendre la main"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Celui-ci se charge dès que les réponses en cours de l’autre nœud se terminent. Une conversation au repos entre deux messages perd son nœud."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Utiliser le nœud suivant"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Tant que son Mac répond à une autre conversation, ou garde le nœud d’une autre conversation entre ses messages, le nœud suivant prend le tour. Rien n’est arrêté."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Attendre"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "Le tour attend que les autres conversations en aient fini avec leur nœud — leurs réponses se terminent, et chacune est fermée ou passe à un autre nœud — puis celui-ci se charge."
   },
   "strategies.setOwn": {
     "defaultMessage": "Définir ses propres nœuds"

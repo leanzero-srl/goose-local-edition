@@ -542,6 +542,26 @@ Because one MLX way serves at a time (§6.4), `share` and `overflow` across **tw
 | `load` (default) | "Load it and wait" | The turn waits while the loader makes the node servable (§6.4) |
 | `useNext` | "Use the next one meanwhile" | The next chain entry that is servable now takes the turn, and no load is started. The turn line says why |
 
+`ifServingOther` (Q-428, 2026-09-28) applies to MLX entries under `ifNotLoaded: load`. The owner: "the strategy should have the option hopefully to avoid interrupting a node doing its thing."
+
+| Value | UI label | Behaviour |
+|---|---|---|
+| `useNext` | "Use the next node" | While the Mac serves another node for other chats, the next chain entry takes the turn and nothing is stopped. The turn line says so (`nodes.fellBackServingOther`: "Chat is on {node} ({rank}): {mac} is serving {serving} for chat \"…\""). |
+| `wait` | "Wait" | The turn waits for the other node's running replies, then until each chat resting on it is closed or moves to another node, and then it loads. The waiting demand holds nobody behind it: the other chat's next reply is not made to wait behind it, and no other demand queues behind it. |
+| `takeOver` | "Take it over" | The node loads as soon as the other node's running replies end. This is the behaviour before Q-428. |
+
+**"Serving another node"** is the loader's own fact, never a clock (gate 5). It holds when a way the switch would stop has either:
+- a reply running on it, in any goose process on this Mac (the holders of step 7); or
+- a chat of this goosed whose last reply leased that way and which is still open in a connected window.
+
+The chat's last way is `Holds.last_way`. It is kept after the reply ends, and a helper's lease outside a reply never moves it. A way nobody uses is switched under every setting. A running reply is never cut under any setting. Only running replies are published by other goose processes, so an idle chat of another process is not seen; its next reply is.
+
+**Migration.** A role entry saved before Q-428 carries no field and reads `takeOver`, so stored strategies keep today's behaviour. `takeOver` is written back as absent, so they round-trip byte-identical. A new strategy from the editor gets `useNext` when its chain has a next node, and `wait` otherwise. Routes with no strategy to carry a setting keep `takeOver`:
+- a `node:` chat;
+- a chat's own node set made from the chip (Q-359);
+- the one-turn "Answer on {next}" pick;
+- a card's Start.
+
 A chain whose entries are all exhausted is a **loud refusal** that names every entry and its reason, exactly the router's "no node can serve this turn" contract. It never falls to "any node", because that would be a silent substitution (gate 1). The user-configured chain is the only fallback, and every step down it is announced.
 
 ### 6.4 The load rule: what the MLX engine does physically
@@ -982,6 +1002,7 @@ Strings (`strategies.*`):
 | whenShare | "share" |
 | loadWait | "Load it and wait" |
 | useNext | "Use the next meanwhile" |
+| colIfServingOther | "If its Mac is serving another node" (Q-428; values "Use the next node" · "Wait" · "Take it over", each with its sentence under it) |
 | sameAs | "Same as {role}" |
 | setOwn | "Set its own nodes" |
 | usedByBuilds | "Used by swarm builds." |

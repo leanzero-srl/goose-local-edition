@@ -6776,6 +6776,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "Повторить {primary}"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} работает на {node} ({rank}): {mac} обслуживает {serving} для {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "Первый запуск ещё не измерен"
   },
@@ -7133,6 +7136,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Освободить место"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} не загружен: {mac} обслуживает {serving} для {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Удалить"
   },
@@ -7192,6 +7198,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Разделы узлов"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "другого чата"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "«{chat}»"
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, one {чата {names}} few {чатов {names}} many {чатов {names}} other {чатов {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Настройте свои Mac"
@@ -10169,6 +10184,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Если не загружен"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Если его Mac обслуживает другой узел"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Узлы по порядку"
   },
@@ -10372,6 +10390,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "Если {node} не загружен, тем временем работу берёт {next}, и ничего не загружается."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Добавьте второй узел, чтобы использовать следующий."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Перехватить"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Этот узел загрузится, как только закончатся текущие ответы другого узла. Чат, отдыхающий между сообщениями, теряет свой узел."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Использовать следующий узел"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Пока его Mac отвечает другому чату или держит узел другого чата между его сообщениями, ход берёт следующий узел. Ничего не останавливается."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Ждать"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "Ход ждёт, пока другие чаты не закончат со своим узлом — их ответы завершатся, и каждый чат будет закрыт или перейдёт на другой узел, — затем загружается этот."
   },
   "strategies.setOwn": {
     "defaultMessage": "Задать собственные узлы"

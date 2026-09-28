@@ -6776,6 +6776,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "Coba lagi {primary}"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} berjalan di {node} ({rank}): {mac} sedang melayani {serving} untuk {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "Mulai pertama belum diukur"
   },
@@ -7133,6 +7136,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Kosongkan ruang"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} tidak dimuat: {mac} sedang melayani {serving} untuk {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Hapus"
   },
@@ -7192,6 +7198,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Bagian node"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "obrolan lain"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "\"{chat}\""
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, other {obrolan {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Siapkan Mac Anda"
@@ -10169,6 +10184,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Jika tidak dimuat"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Jika Mac-nya sedang melayani node lain"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Node berurutan"
   },
@@ -10372,6 +10390,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "Jika {node} tidak dimuat, sementara itu {next} mengambil alih pekerjaan dan tidak ada yang dimuat."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Tambahkan node kedua untuk memakai node berikutnya."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Ambil alih"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Node ini dimuat begitu balasan yang sedang berjalan di node lain selesai. Obrolan yang sedang jeda di antara pesan kehilangan node-nya."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Pakai node berikutnya"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Selama Mac-nya menjawab obrolan lain, atau menyimpan node obrolan lain di antara pesannya, node berikutnya mengambil giliran. Tidak ada yang dihentikan."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Tunggu"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "Giliran menunggu sampai obrolan lain selesai dengan node-nya — balasan mereka berakhir, dan tiap obrolan ditutup atau pindah ke node lain — lalu node ini dimuat."
   },
   "strategies.setOwn": {
     "defaultMessage": "Atur node sendiri"

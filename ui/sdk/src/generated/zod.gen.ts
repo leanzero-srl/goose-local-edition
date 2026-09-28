@@ -6287,10 +6287,25 @@ export const zNodeIfNotLoaded = z.union([
     z.literal('useNext')
 ]);
 
+/**
+ * What a not-loaded MLX entry under `load` does when its Mac is serving ANOTHER node for other
+ * work (Q-428, the owner: "the strategy should have the option hopefully to avoid interrupting a
+ * node doing its thing"). "Serving another node" is the loader's own fact: a way this switch
+ * would stop has a reply running on it, or an open chat whose last turn was served on it — never
+ * a clock. A way nobody uses is not "serving another node": it is switched under every setting.
+ * A running reply is never cut under any of them (design §6.4 step 7).
+ */
+export const zNodeIfServingOther = z.union([
+    z.literal('useNext'),
+    z.literal('wait'),
+    z.literal('takeOver')
+]);
+
 export const zNodeRoleEntry = z.object({
     chain: z.array(zNodeChainEntry),
     when: zNodeWhen.optional().default('failover'),
-    ifNotLoaded: zNodeIfNotLoaded.optional().default('load')
+    ifNotLoaded: zNodeIfNotLoaded.optional().default('load'),
+    ifServingOther: zNodeIfServingOther.optional()
 });
 
 /**
@@ -6650,7 +6665,19 @@ export const zNodesResidencyRequest_unstable = z.record(z.unknown());
 export const zNodeRepliesWaitDto = z.object({
     way: z.string(),
     wayNodes: z.array(z.string()).optional().default([]),
-    count: z.number().int().gte(0)
+    count: z.number().int().gte(0),
+    chats: z.array(z.string()).optional().default([])
+});
+
+/**
+ * The Mac a node runs on is serving another node for other chats (Q-428): what a turn line, a
+ * refusal and a wait name.
+ */
+export const zNodeServingOtherDto = z.object({
+    mac: z.string(),
+    serving: z.string(),
+    chats: z.array(z.string()),
+    replies: z.number().int().gte(0)
 });
 
 /**
@@ -6675,6 +6702,13 @@ export const zNodeRefusalFactsDto = z.union([
     z.object({
         words: z.string(),
         kind: z.literal('loadFailed')
+    }),
+    z.object({
+        mac: z.string(),
+        serving: z.string(),
+        chats: z.array(z.string()),
+        replies: z.number().int().gte(0),
+        kind: z.literal('servingOther')
     })
 ]);
 
@@ -6697,6 +6731,10 @@ export const zNodeResidency = z.union([
         reason: z.string(),
         replies: z.union([
             zNodeRepliesWaitDto,
+            z.null()
+        ]).optional(),
+        servingOther: z.union([
+            zNodeServingOtherDto,
             z.null()
         ]).optional(),
         kind: z.literal('waiting')
@@ -6917,7 +6955,11 @@ export const zNodeServedTurnDto = z.object({
         z.null()
     ]).optional(),
     atMs: z.number().int().gte(0),
-    askedForThisTurn: z.boolean().optional()
+    askedForThisTurn: z.boolean().optional(),
+    servingOther: z.union([
+        zNodeServingOtherDto,
+        z.null()
+    ]).optional()
 });
 
 export const zNodesServedLastResponse_unstable = z.object({
@@ -6947,6 +6989,7 @@ export const zNodeLoadRefusalCode = z.union([
     z.literal('fit'),
     z.literal('loadFailed'),
     z.literal('loaderAbsent'),
+    z.literal('servingOther'),
     z.literal('unknown')
 ]);
 
@@ -6964,6 +7007,10 @@ export const zNodeEnsureServing = z.union([
     z.object({
         code: zNodeLoadRefusalCode,
         reason: z.string(),
+        facts: z.union([
+            zNodeRefusalFactsDto,
+            z.null()
+        ]).optional(),
         kind: z.literal('refused')
     })
 ]);

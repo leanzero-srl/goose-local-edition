@@ -6776,6 +6776,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} yeniden dene"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role}, {node} ({rank}) üzerinde: {mac}, {chats} için {serving} sunuyor"
+  },
   "nodes.firstStart": {
     "defaultMessage": "İlk başlatma henüz ölçülmedi"
   },
@@ -7133,6 +7136,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Yer aç"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} yüklenmedi: {mac}, {chats} için {serving} sunuyor."
+  },
   "nodes.remove": {
     "defaultMessage": "Kaldır"
   },
@@ -7192,6 +7198,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Düğüm bölümleri"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "başka bir sohbet"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "\"{chat}\""
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, one {{names} sohbeti} other {{names} sohbetleri}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Mac’lerinizi kurun"
@@ -10169,6 +10184,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Yüklü değilse"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Mac’i başka bir düğüm sunuyorsa"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Sırayla düğümler"
   },
@@ -10372,6 +10390,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "{node} yüklü değilse, bu arada işi {next} üstlenir ve hiçbir şey yüklenmez."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Sonrakini kullanmak için ikinci bir düğüm ekleyin."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Devral"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Bu, diğer düğümün süren yanıtları biter bitmez yüklenir. Mesajlar arasında bekleyen bir sohbet düğümünü kaybeder."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Sonraki düğümü kullan"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Mac’i başka bir sohbete yanıt verirken veya başka bir sohbetin düğümünü mesajları arasında tutarken sırayı sonraki düğüm alır. Hiçbir şey durdurulmaz."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Bekle"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "Sıra, diğer sohbetler düğümleriyle işini bitirene kadar bekler — yanıtları biter ve her sohbet kapatılır ya da başka bir düğüme geçer — sonra bu yüklenir."
   },
   "strategies.setOwn": {
     "defaultMessage": "Kendi düğümlerini ayarla"

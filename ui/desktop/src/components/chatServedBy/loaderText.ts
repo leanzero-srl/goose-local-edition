@@ -9,6 +9,7 @@ import type {
 } from '../../utils/nodeSwap';
 import { formatElapsed } from '../leanzero-swarm/mlxLiveStats';
 import { loadPhaseWord } from '../nodes/loadPhaseWord';
+import { servingChatsText } from './turnLine';
 
 const i18n = defineMessages({
   // DESIGN-NODES-AND-STRATEGIES.md §8.7, as the table words them.
@@ -55,6 +56,11 @@ const i18n = defineMessages({
     defaultMessage: "Can't load {node} on {mac}: {verdict}",
   },
   loadFailed: { id: 'nodes.loadFailed', defaultMessage: '{node} failed to load: {words}' },
+  // Q-428 "Use the next node": the node was left to the one its Mac serves for other chats.
+  refusedServingOther: {
+    id: 'nodes.refusedServingOther',
+    defaultMessage: '{node} was not loaded: {mac} is serving {serving} for {chats}.',
+  },
   // The ledger's words for a way the loader stopped (Q-254): what the stopped way reads, on every
   // surface, while the loader loads the node — never "Failed" or "No model is mounted".
   swappingTo: { id: 'nodes.swappingTo', defaultMessage: 'Swapping to {node}' },
@@ -114,6 +120,13 @@ export function refusalText(intl: IntlShape, refusal: NodeRefusal): string {
       return intl.formatMessage(i18n.refusedFit, { node, mac: facts.mac, verdict: facts.verdict });
     case 'loadFailed':
       return intl.formatMessage(i18n.loadFailed, { node, words: facts.words });
+    case 'servingOther':
+      return intl.formatMessage(i18n.refusedServingOther, {
+        node,
+        mac: facts.mac,
+        serving: facts.serving,
+        chats: servingChatsText(intl, facts.chats),
+      });
     case undefined:
       return headline(refusal.reason);
   }

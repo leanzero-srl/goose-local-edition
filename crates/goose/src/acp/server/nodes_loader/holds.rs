@@ -52,6 +52,9 @@ struct State {
     parents: HashMap<String, String>,
     /// A synchronous delegate session's own parent: the sessions blocked in a tool call on it.
     summoned_by: HashMap<String, String>,
+    /// Each chat's (root's) last way — kept after its reply ends: an open chat between replies
+    /// still counts as that way's (Q-428). A chat's next lease elsewhere moves it.
+    last_way: HashMap<String, PlacementKey>,
 }
 
 /// Whose replies a look at the open replies leaves out.
@@ -270,6 +273,25 @@ impl Holds {
         }
     }
 
+    /// The chats (roots, other than `own_root`) whose last reply leased a way in `stops`, with that
+    /// way in the loader's words — whether a reply of theirs runs now or not (Q-428).
+    pub fn last_on(&self, stops: &[Stop], own_root: Option<&str>) -> Vec<(String, String)> {
+        let state = self.state.lock().unwrap();
+        let mut out: Vec<(String, String)> = state
+            .last_way
+            .iter()
+            .filter(|(root, _)| Some(root.as_str()) != own_root)
+            .filter_map(|(root, key)| {
+                stops
+                    .iter()
+                    .find(|s| s.held_by(key))
+                    .map(|s| (root.clone(), s.way.words()))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
     /// The way the reply open at `root` holds, once it has leased one.
     pub fn way_of(&self, root: &str) -> Option<PlacementKey> {
         let state = self.state.lock().unwrap();
@@ -283,11 +305,13 @@ impl Holds {
             let mut state = self.state.lock().unwrap();
             let root = root_in(&state, session);
             let Some(&id) = state.open.get(&root) else {
-                // A lease with no reply open (a scheduled job, the Link mirror's executor): it
-                // holds nothing across calls. Named, so an unexpected door shows in the log.
+                // A lease with no reply open (a scheduled job, the Link mirror's executor, an
+                // end-of-turn helper): it holds nothing across calls, and it is not the chat's
+                // turn, so the chat's last way stays. Named, so an unexpected door shows in the log.
                 tracing::debug!(%session, %root, "nodes loader: a lease of a session with no open reply holds nothing");
                 return;
             };
+            state.last_way.insert(root.clone(), way.clone());
             let reply = state
                 .replies
                 .get_mut(&id)

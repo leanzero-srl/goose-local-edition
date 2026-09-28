@@ -32,6 +32,8 @@ struct Fake {
     /// A start that waits here until the test releases it.
     start_gate: StdMutex<Option<Arc<Notify>>>,
     prepares: StdMutex<usize>,
+    /// Chats closed in every window (the rest are open).
+    closed: StdMutex<std::collections::HashSet<String>>,
 }
 
 impl Fake {
@@ -218,6 +220,14 @@ impl Ways for Fake {
     async fn chat_name(&self, session_id: &str) -> Result<String, String> {
         Ok(format!("Chat {session_id}"))
     }
+
+    async fn chat_open(&self, session_id: &str) -> bool {
+        !self.closed.lock().unwrap().contains(session_id)
+    }
+
+    async fn shared_mac(&self, _node: &ResolvedNodeDef) -> Result<String, Refusal> {
+        Ok("Work’s Mac Studio".to_string())
+    }
 }
 
 fn demand(fake: &Fake, node: &str, session: Option<&str>) -> Demand {
@@ -225,6 +235,7 @@ fn demand(fake: &Fake, node: &str, session: Option<&str>) -> Demand {
         node: def(node, fake),
         from: session.map_or(DemandFrom::Ui, |s| DemandFrom::Turn(s.to_string())),
         role: None,
+        if_serving_other: NodeIfServingOther::TakeOver,
     }
 }
 
@@ -349,6 +360,7 @@ async fn two_chats_in_tool_loops_swap_once_per_reply_never_per_call() {
             way: "this Mac's engine".into(),
             way_nodes: vec!["flash".into()],
             count: 1,
+            chats: vec!["Chat chat-1".into()],
         })
     );
     // Chat 1's second and third calls of the same reply: served on Flash, no swap.
@@ -695,7 +707,7 @@ async fn a_failed_load_is_not_restored_and_the_turn_gets_its_words() {
         .ensure_serving(demand(&fake, "split", Some("chat-2")))
         .await;
     match got {
-        NodeEnsureServing::Refused { code, reason } => {
+        NodeEnsureServing::Refused { code, reason, .. } => {
             assert_eq!(code, NodeLoadRefusalCode::LoadFailed);
             assert!(
                 reason.contains("short 1.6 GB on Work's Mac Studio"),
@@ -747,7 +759,7 @@ async fn a_kept_loaded_way_and_a_step_refuse_before_anything_stops() {
     let core = Core::new(fake.clone(), None);
     let got = core.ensure_serving(demand(&fake, "split", Some("s"))).await;
     assert!(
-        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::KeptLoaded, reason } if reason == "Can't load split node: flash node is kept loaded on this Mac"),
+        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::KeptLoaded, reason, .. } if reason == "Can't load split node: flash node is kept loaded on this Mac"),
         "{got:?}"
     );
     // Q-272: the refusal carries what §8.7's `nodes.refusedKept` names.
@@ -766,7 +778,7 @@ async fn a_kept_loaded_way_and_a_step_refuse_before_anything_stops() {
     ));
     let got = core.ensure_serving(demand(&fake, "split", Some("s"))).await;
     assert!(
-        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::NeedsStep, reason } if reason.contains("copy it there")),
+        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::NeedsStep, reason, .. } if reason.contains("copy it there")),
         "{got:?}"
     );
     assert!(fake.log().is_empty());
@@ -942,7 +954,7 @@ async fn a_build_holding_the_engine_refuses_and_stops_nothing() {
     .unwrap();
     let got = core.ensure_serving(demand(&fake, "split", Some("s"))).await;
     match got {
-        NodeEnsureServing::Refused { code, reason } => {
+        NodeEnsureServing::Refused { code, reason, .. } => {
             assert_eq!(code, NodeLoadRefusalCode::HeldByBuild);
             assert!(reason.contains("swarm build run-7"), "{reason}");
         }
@@ -1099,7 +1111,7 @@ async fn a_node_that_follows_this_mac_is_never_loaded() {
     d.node.placement = Some(NodePlacement::Follows);
     let got = core.ensure_serving(d).await;
     assert!(
-        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::NeedsStep, reason } if reason.contains("Run it")),
+        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::NeedsStep, reason, .. } if reason.contains("Run it")),
         "{got:?}"
     );
 }
@@ -2006,4 +2018,262 @@ async fn a_swap_records_what_it_displaced_until_that_node_serves_again() {
         (split.by_session.clone(), split.by_chat.clone()),
         (None, None)
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Q-428: "If its Mac is serving another node: Use the next node · Wait · Take it over". Chat A's
+// last turn was served on the split; chat B's turn wants the Studio single (the owner's demo,
+// 2026-09-28): the split is its Mac's other node. The three states the demo measured — A's reply
+// running (scenario a), A idle but open (scenario b), nobody on the split — under each setting.
+// ---------------------------------------------------------------------------------------------
+
+fn demand_as(fake: &Fake, node: &str, session: &str, setting: NodeIfServingOther) -> Demand {
+    Demand {
+        if_serving_other: setting,
+        ..demand(fake, node, Some(session))
+    }
+}
+
+fn serving_split() -> Arc<Fake> {
+    let fake = flash_and_split();
+    *fake.serving.lock().unwrap() = Some("split".into());
+    fake
+}
+
+fn serving_other_of(core: &Core, node: &str) -> Option<NodeServingOtherDto> {
+    core.in_progress().into_iter().find_map(|a| match a {
+        LoaderActivity::Waiting {
+            node: n,
+            serving_other,
+            ..
+        } if n == node => serving_other,
+        _ => None,
+    })
+}
+
+fn split_for_a(replies: u32) -> NodeServingOtherDto {
+    NodeServingOtherDto {
+        mac: "Work’s Mac Studio".into(),
+        serving: "split node".into(),
+        chats: vec!["Chat chat-a".into()],
+        replies,
+    }
+}
+
+fn switched(fake: &Fake) -> bool {
+    fake.log()
+        == vec![
+            "stop Split Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+            "start studio".to_string(),
+        ]
+}
+
+/// Scenario a — chat A's reply RUNS on the split when chat B's turn wants the Studio.
+#[tokio::test]
+async fn a_running_reply_on_another_node_under_each_setting() {
+    // Use the next node: refused at once, the other node and its chat named; nothing stops.
+    let fake = serving_split();
+    let core = Core::new(fake.clone(), None);
+    let _a = core.holds().open_reply("chat-a");
+    lease(&core, "chat-a", &fake, "split");
+    let _b = core.holds().open_reply("chat-b");
+    let got = tokio::time::timeout(
+        SETTLE,
+        core.ensure_serving(demand_as(
+            &fake,
+            "studio",
+            "chat-b",
+            NodeIfServingOther::UseNext,
+        )),
+    )
+    .await
+    .expect("use the next node never waits");
+    assert_eq!(
+        got,
+        NodeEnsureServing::Refused {
+            code: NodeLoadRefusalCode::ServingOther,
+            reason: "Work’s Mac Studio is serving split node for chat \"Chat chat-a\"; studio node is left to it".into(),
+            facts: Some(split_for_a(1).as_facts()),
+        }
+    );
+    assert!(fake.log().is_empty(), "nothing stopped: {:?}", fake.log());
+
+    // Wait: waits for A's reply, then — A still open between turns — for A to be done with it.
+    let fake = serving_split();
+    let core = Core::new(fake.clone(), None);
+    let a = core.holds().open_reply("chat-a");
+    lease(&core, "chat-a", &fake, "split");
+    let _b = core.holds().open_reply("chat-b");
+    let c = Arc::clone(&core);
+    let d = demand_as(&fake, "studio", "chat-b", NodeIfServingOther::Wait);
+    let b = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("B waits for A's reply", || {
+        replies_of(&core, "studio").is_some()
+    })
+    .await;
+    assert_eq!(
+        replies_of(&core, "studio").unwrap().chats,
+        vec!["Chat chat-a".to_string()]
+    );
+    drop(a);
+    until("B waits for A, now between replies", || {
+        serving_other_of(&core, "studio") == Some(split_for_a(0))
+    })
+    .await;
+    assert!(fake.log().is_empty(), "A's idle split is not displaced");
+    fake.closed.lock().unwrap().insert("chat-a".into());
+    assert_eq!(answer(b).await, NodeEnsureServing::Ready);
+    assert!(switched(&fake), "{:?}", fake.log());
+
+    // Take it over: waits for A's reply only (never cuts it), then switches — the pre-Q-428 rule.
+    let fake = serving_split();
+    let core = Core::new(fake.clone(), None);
+    let a = core.holds().open_reply("chat-a");
+    lease(&core, "chat-a", &fake, "split");
+    let _b = core.holds().open_reply("chat-b");
+    let c = Arc::clone(&core);
+    let d = demand_as(&fake, "studio", "chat-b", NodeIfServingOther::TakeOver);
+    let b = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("B waits for A's reply", || {
+        waiting(&core, "studio").is_some()
+    })
+    .await;
+    assert!(fake.log().is_empty(), "a running reply is never cut");
+    drop(a);
+    assert_eq!(answer(b).await, NodeEnsureServing::Ready);
+    assert!(switched(&fake), "{:?}", fake.log());
+}
+
+/// Scenario b — chat A is IDLE between turns (its last turn was on the split, it is still open).
+/// Before Q-428 every demand displaced it without asking.
+#[tokio::test]
+async fn an_idle_chat_on_another_node_under_each_setting() {
+    let idle_a = |fake: &Arc<Fake>| {
+        let core = Core::new(fake.clone(), None);
+        let a = core.holds().open_reply("chat-a");
+        lease(&core, "chat-a", fake, "split");
+        drop(a);
+        core
+    };
+
+    let fake = serving_split();
+    let core = idle_a(&fake);
+    let _b = core.holds().open_reply("chat-b");
+    let got = tokio::time::timeout(
+        SETTLE,
+        core.ensure_serving(demand_as(
+            &fake,
+            "studio",
+            "chat-b",
+            NodeIfServingOther::UseNext,
+        )),
+    )
+    .await
+    .expect("use the next node never waits");
+    assert!(
+        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::ServingOther, facts: Some(f), .. } if *f == split_for_a(0).as_facts()),
+        "{got:?}"
+    );
+    assert!(fake.log().is_empty());
+
+    let fake = serving_split();
+    let core = idle_a(&fake);
+    let _b = core.holds().open_reply("chat-b");
+    let c = Arc::clone(&core);
+    let d = demand_as(&fake, "studio", "chat-b", NodeIfServingOther::Wait);
+    let b = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("B waits while A is open", || {
+        serving_other_of(&core, "studio") == Some(split_for_a(0))
+    })
+    .await;
+    assert!(
+        waiting(&core, "studio")
+            .unwrap()
+            .contains("studio node loads when that chat is closed or moved to another node"),
+        "{:?}",
+        waiting(&core, "studio")
+    );
+    assert!(fake.log().is_empty());
+    fake.closed.lock().unwrap().insert("chat-a".into());
+    assert_eq!(answer(b).await, NodeEnsureServing::Ready);
+    assert!(switched(&fake), "{:?}", fake.log());
+
+    let fake = serving_split();
+    let core = idle_a(&fake);
+    let _b = core.holds().open_reply("chat-b");
+    let got = tokio::time::timeout(
+        SETTLE,
+        core.ensure_serving(demand_as(
+            &fake,
+            "studio",
+            "chat-b",
+            NodeIfServingOther::TakeOver,
+        )),
+    )
+    .await
+    .expect("take it over does not wait for an idle chat");
+    assert_eq!(got, NodeEnsureServing::Ready);
+    assert!(switched(&fake), "{:?}", fake.log());
+}
+
+/// Nobody uses the split (the chat whose turn was on it moved to another way): every setting
+/// loads — "serving another node" is a fact about chats, never "something is loaded".
+#[tokio::test]
+async fn a_way_nobody_uses_is_switched_under_every_setting() {
+    for setting in [
+        NodeIfServingOther::UseNext,
+        NodeIfServingOther::Wait,
+        NodeIfServingOther::TakeOver,
+    ] {
+        let fake = serving_split();
+        let core = Core::new(fake.clone(), None);
+        let a = core.holds().open_reply("chat-a");
+        lease(&core, "chat-a", &fake, "split");
+        lease(&core, "chat-a", &fake, "flash");
+        drop(a);
+        let _b = core.holds().open_reply("chat-b");
+        let got = tokio::time::timeout(
+            SETTLE,
+            core.ensure_serving(demand_as(&fake, "studio", "chat-b", setting)),
+        )
+        .await
+        .expect("an unused way never holds a demand");
+        assert_eq!(got, NodeEnsureServing::Ready, "{setting:?}");
+        assert!(switched(&fake), "{setting:?}: {:?}", fake.log());
+    }
+}
+
+/// Under `wait` the waiting demand holds no one behind it: chat A's next reply on its own split
+/// is not made to wait behind B's switch (that would deadlock: B waits for A). Under `take it
+/// over` A's next reply waits behind B's switch, as before Q-428.
+#[tokio::test]
+async fn a_waiting_demand_under_wait_holds_no_reply_of_the_chat_it_waits_for() {
+    for (setting, a_waits) in [
+        (NodeIfServingOther::Wait, false),
+        (NodeIfServingOther::TakeOver, true),
+    ] {
+        let fake = serving_split();
+        let core = Core::new(fake.clone(), None);
+        let a = core.holds().open_reply("chat-a");
+        lease(&core, "chat-a", &fake, "split");
+        let _b = core.holds().open_reply("chat-b");
+        let c = Arc::clone(&core);
+        let d = demand_as(&fake, "studio", "chat-b", setting);
+        let b = tokio::spawn(async move { c.ensure_serving(d).await });
+        until("B waits for A's reply", || {
+            waiting(&core, "studio").is_some()
+        })
+        .await;
+        drop(a);
+        // A answers again before B loads: its NEW reply opens after B's demand.
+        let a_next = core.holds().open_reply("chat-a");
+        assert_eq!(
+            core.queued_switch_ahead("chat-a", "split").is_some(),
+            a_waits,
+            "{setting:?}"
+        );
+        drop(a_next);
+        fake.closed.lock().unwrap().insert("chat-a".into());
+        assert_eq!(answer(b).await, NodeEnsureServing::Ready, "{setting:?}");
+    }
 }

@@ -6776,6 +6776,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} फिर से आज़माएँ"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} {node} ({rank}) पर है: {mac} {chats} के लिए {serving} चला रहा है"
+  },
   "nodes.firstStart": {
     "defaultMessage": "पहली शुरुआत अभी मापी नहीं गई"
   },
@@ -7133,6 +7136,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "जगह बनाएँ"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} लोड नहीं हुआ: {mac} {chats} के लिए {serving} चला रहा है।"
+  },
   "nodes.remove": {
     "defaultMessage": "हटाएँ"
   },
@@ -7192,6 +7198,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "नोड अनुभाग"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "कोई और चैट"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "\"{chat}\""
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, one {चैट {names}} other {चैट {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "अपने Mac सेट अप करें"
@@ -10169,6 +10184,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "अगर लोड नहीं है"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "अगर उसका Mac कोई और नोड चला रहा हो"
+  },
   "strategies.colNodes": {
     "defaultMessage": "क्रम में नोड"
   },
@@ -10372,6 +10390,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "अगर {node} लोड नहीं है, तो इस बीच काम {next} लेता है और कुछ भी लोड नहीं होता।"
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "अगला नोड इस्तेमाल करने के लिए दूसरा नोड जोड़ें।"
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "इसे अपने हाथ में लें"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "दूसरे नोड के चल रहे जवाब खत्म होते ही यह लोड होगा। संदेशों के बीच रुकी हुई चैट अपना नोड खो देती है।"
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "अगला नोड इस्तेमाल करें"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "जब तक उसका Mac किसी और चैट को जवाब दे रहा है, या किसी और चैट का नोड उसके संदेशों के बीच रखे हुए है, अगला नोड यह बारी लेता है। कुछ भी रोका नहीं जाता।"
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "प्रतीक्षा करें"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "बारी तब तक रुकती है जब तक दूसरी चैट अपने नोड से पूरी न हो जाएँ — उनके जवाब खत्म हों, और हर चैट बंद हो या किसी और नोड पर जाए — फिर यह लोड होता है।"
   },
   "strategies.setOwn": {
     "defaultMessage": "अपने खुद के नोड सेट करें"

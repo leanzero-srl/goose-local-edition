@@ -6226,6 +6226,11 @@ export type NodeRoleEntry = {
     chain: Array<NodeChainEntry>;
     when?: NodeWhen;
     ifNotLoaded?: NodeIfNotLoaded;
+    /**
+     * Read only under `ifNotLoaded: load`. Absent = saved before Q-428 = `takeOver`, and
+     * `takeOver` is written as absent, so a config saved before Q-428 round-trips unchanged.
+     */
+    ifServingOther?: NodeIfServingOther;
 };
 
 export type NodeChainEntry = {
@@ -6245,6 +6250,16 @@ export type NodeWhen = 'failover' | 'overflow' | 'share';
  * What a not-loaded MLX entry does (cloud is always loaded).
  */
 export type NodeIfNotLoaded = 'load' | 'useNext';
+
+/**
+ * What a not-loaded MLX entry under `load` does when its Mac is serving ANOTHER node for other
+ * work (Q-428, the owner: "the strategy should have the option hopefully to avoid interrupting a
+ * node doing its thing"). "Serving another node" is the loader's own fact: a way this switch
+ * would stop has a reply running on it, or an open chat whose last turn was served on it — never
+ * a clock. A way nobody uses is not "serving another node": it is switched under every setting.
+ * A running reply is never cut under any of them (design §6.4 step 7).
+ */
+export type NodeIfServingOther = 'useNext' | 'wait' | 'takeOver';
 
 /**
  * What a new chat starts on. `auto` = "Any node (Auto)", today's pool routing.
@@ -6527,6 +6542,11 @@ export type NodeResidency = {
 } | {
     reason: string;
     replies?: NodeRepliesWaitDto | null;
+    /**
+     * Set when the demand waits because its role says `wait` while the Mac serves another
+     * node for chats that are between replies (Q-428).
+     */
+    servingOther?: NodeServingOtherDto | null;
     kind: 'waiting';
 } | {
     otherWay?: string | null;
@@ -6558,6 +6578,33 @@ export type NodeRepliesWaitDto = {
      * The replies open on it that the switch waits for.
      */
     count: number;
+    /**
+     * The chats those replies answer, by the names the person sees (Q-430).
+     */
+    chats?: Array<string>;
+};
+
+/**
+ * The Mac a node runs on is serving another node for other chats (Q-428): what a turn line, a
+ * refusal and a wait name.
+ */
+export type NodeServingOtherDto = {
+    /**
+     * The Mac(s) the wanted node shares with the way serving now, by name ("Work's Mac Studio").
+     */
+    mac: string;
+    /**
+     * The node serving now, as the Nodes page names it (the way's words when no node names it).
+     */
+    serving: string;
+    /**
+     * The chats it serves, by name: running a reply on it, or last served on it and still open.
+     */
+    chats: Array<string>;
+    /**
+     * How many of their replies run on it now (0 = every one of those chats is between replies).
+     */
+    replies: number;
 };
 
 /**
@@ -6584,6 +6631,12 @@ export type NodeRefusalFactsDto = {
 } | {
     words: string;
     kind: 'loadFailed';
+} | {
+    mac: string;
+    serving: string;
+    chats: Array<string>;
+    replies: number;
+    kind: 'servingOther';
 };
 
 /**
@@ -6770,6 +6823,11 @@ export type NodeServedTurnDto = {
      * Q-381): the 1st was passed over by that ask, and the next turn goes back to it.
      */
     askedForThisTurn?: boolean;
+    /**
+     * The 1st was passed over because its Mac serves another node for other chats and the role
+     * says `useNext` (Q-428): what the turn line names.
+     */
+    servingOther?: NodeServingOtherDto | null;
 };
 
 /**
@@ -6807,10 +6865,15 @@ export type NodeEnsureServing = {
 } | {
     code: NodeLoadRefusalCode;
     reason: string;
+    /**
+     * What the refusal names, when it is one the surfaces word (the router's turn line reads
+     * `servingOther`).
+     */
+    facts?: NodeRefusalFactsDto | null;
     kind: 'refused';
 };
 
-export type NodeLoadRefusalCode = 'unknownNode' | 'heldByBuild' | 'keptLoaded' | 'needsStep' | 'fit' | 'loadFailed' | 'loaderAbsent' | 'unknown';
+export type NodeLoadRefusalCode = 'unknownNode' | 'heldByBuild' | 'keptLoaded' | 'needsStep' | 'fit' | 'loadFailed' | 'loaderAbsent' | 'servingOther' | 'unknown';
 
 /**
  * What the next compaction of this chat would keep, computed by code alone — no model call.

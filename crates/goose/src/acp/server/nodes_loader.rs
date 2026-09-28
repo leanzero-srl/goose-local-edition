@@ -54,7 +54,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use goose_sdk_types::custom_requests::{
     MlxDistributedConfigDto, MlxPlacementKeyDto, MlxPlacementKindDto, NodeDisplacedDto,
-    NodeEnsureServing, NodeLoadRefusalCode, NodeRefusalFactsDto, NodeRepliesWaitDto,
+    NodeEnsureServing, NodeIfServingOther, NodeLoadRefusalCode, NodeRefusalFactsDto,
+    NodeRepliesWaitDto, NodeServingOtherDto,
 };
 use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
 use tokio::sync::{oneshot, Notify};
@@ -161,6 +162,13 @@ pub(crate) trait Ways: Send + Sync {
     async fn unexplained_requests(&self) -> Result<Option<u32>, String>;
     /// The chat a session is, by the name the person sees.
     async fn chat_name(&self, session_id: &str) -> Result<String, String>;
+    /// The chat is open in a goose window of this process (loaded by a connection that is still
+    /// served): an open chat whose last turn was served on a way still counts as that way's
+    /// (Q-428). No window connected = no chat open.
+    async fn chat_open(&self, session_id: &str) -> bool;
+    /// The Mac(s) `node` shares with the way serving now, by name ("Work's Mac Studio"); every Mac
+    /// of the serving way when they share none the records name.
+    async fn shared_mac(&self, node: &ResolvedNodeDef) -> Result<String, Refusal>;
 }
 
 /// Why a waiting demand looks again.
@@ -180,6 +188,11 @@ enum Look {
         reason: String,
         wake: Wake,
         replies: Option<NodeRepliesWaitDto>,
+        /// The role says `wait` and the Mac serves another node for chats between replies.
+        serving_other: Option<NodeServingOtherDto>,
+        /// This demand waits for the other node's chats to be done (the `wait` setting): it is
+        /// no switch those chats' next replies wait behind, nor one other demands queue behind.
+        yields: bool,
     },
     Go(Box<(Prepared, SwitchPlan)>),
 }
@@ -194,6 +207,9 @@ struct Queued {
     tick: bool,
     /// Its stops are about to begin: it runs to its end, whoever asked after it (§6.4 step 12).
     swapping: bool,
+    /// It waits under `wait` for another node's chats (Q-428): it keeps its place in the queue
+    /// but holds no one behind it (see `Look::Wait::yields`).
+    yields: bool,
 }
 
 impl Queued {
@@ -206,6 +222,9 @@ impl Queued {
         }
         if self.swapping {
             return true;
+        }
+        if self.yields {
+            return false;
         }
         match (self.tick, asker_is_tick) {
             (false, true) => true,
@@ -455,6 +474,7 @@ impl Core {
         answer.await.unwrap_or_else(|_| NodeEnsureServing::Refused {
             code: NodeLoadRefusalCode::Unknown,
             reason: "the loader's task ended without an answer".to_string(),
+            facts: None,
         })
     }
 
@@ -491,10 +511,12 @@ impl Core {
                 NodeEnsureServing::Refused {
                     code: r.code,
                     reason: r.reason,
+                    facts: r.facts.clone(),
                 },
                 r.facts,
             )
         };
+        let setting = demand.if_serving_other;
         let node = match self.ways.resolve(&demand.node).await {
             Ok(node) => node,
             Err(r) => return refused(r),
@@ -515,6 +537,7 @@ impl Core {
             session: session.clone(),
             tick,
             swapping: false,
+            yields: false,
         });
         let ticket = Ticket {
             core: Arc::clone(self),
@@ -543,6 +566,7 @@ impl Core {
                     reply_opened,
                     tick,
                     looks == 1,
+                    setting,
                 )
                 .await;
             let (first_prepared, _) = match look {
@@ -552,14 +576,18 @@ impl Core {
                     reason,
                     wake,
                     replies,
+                    serving_other,
+                    yields,
                 } => {
                     if let (None, Some(root), Some(session)) = (&paused, &root, &session) {
                         paused = Some(self.pause(root, session));
                     }
+                    self.set_yields(seq, yields);
                     self.set_activity(LoaderActivity::Waiting {
                         node: node.def.id.clone(),
                         reason: reason.clone(),
                         replies,
+                        serving_other,
                     });
                     tell_first(first, &reason);
                     wait(notified, wake).await;
@@ -590,6 +618,7 @@ impl Core {
                     reply_opened,
                     tick,
                     true,
+                    setting,
                 )
                 .await
             {
@@ -603,6 +632,7 @@ impl Core {
             };
             if let Some(queued) = self.queue.lock().unwrap().iter_mut().find(|q| q.seq == seq) {
                 queued.swapping = true;
+                queued.yields = false;
             }
             let loading = format!("loading {} for this chat", node.def.name);
             tell_first(first, &loading);
@@ -631,6 +661,7 @@ impl Core {
                     NodeEnsureServing::Refused {
                         code: NodeLoadRefusalCode::Unknown,
                         reason: "the loader's swap task ended without an answer".to_string(),
+                        facts: None,
                     },
                     None,
                 )
@@ -685,6 +716,7 @@ impl Core {
             node: node.def.id.clone(),
             reason: reason.clone(),
             replies: None,
+            serving_other: None,
         });
         if let Some(tx) = first.take() {
             let _ = tx.send(NodeEnsureServing::Wait { reason });
@@ -708,6 +740,7 @@ impl Core {
         reply_opened: Option<u64>,
         tick: bool,
         prepare_now: bool,
+        setting: NodeIfServingOther,
     ) -> Look {
         let name = &node.def.name;
         // 1. Served already?
@@ -723,6 +756,8 @@ impl Core {
                         ),
                         wake: Wake::Changed,
                         replies: None,
+                        serving_other: None,
+                        yields: false,
                     },
                     None => Look::Ready,
                 };
@@ -735,6 +770,8 @@ impl Core {
                     },
                     wake: Wake::LookAgain,
                     replies: None,
+                    serving_other: None,
+                    yields: false,
                 }
             }
             Ok(Residency::NotServing) => {}
@@ -761,10 +798,20 @@ impl Core {
         }
         // One way at a time is one queue: only the demand at its head switches.
         if let Some(ahead) = self.queue_ahead(seq, tick) {
+            // Q-428: a switch to another node is next on this Mac — under `useNext` that is the
+            // Mac serving another node, and the next node of the chain takes the work.
+            if setting == NodeIfServingOther::UseNext {
+                return Look::Refused(self.switching_to_other(node, &ahead).await);
+            }
             return Look::Wait {
-                reason: format!("waiting for the switch to {ahead} first; then {name}"),
+                reason: format!(
+                    "waiting for the switch to {} first; then {name}",
+                    ahead.node_name
+                ),
                 wake: Wake::Changed,
                 replies: None,
+                serving_other: None,
+                yields: false,
             };
         }
         // 4. The stop set.
@@ -780,6 +827,8 @@ impl Core {
                 reason: format!("{loading}; then {name}"),
                 wake: Wake::LookAgain,
                 replies: None,
+                serving_other: None,
+                yields: false,
             };
         }
         for stop in &plan.stops {
@@ -800,6 +849,40 @@ impl Core {
                     );
                 }
                 Ok(None) => {}
+            }
+        }
+        // Q-428: the Mac serves another node for other chats — the role's setting decides. A way
+        // no one uses is not "serving another node": it is switched under every setting.
+        let mut yields = false;
+        if setting != NodeIfServingOther::TakeOver {
+            match self.serving_other(node, &plan, own).await {
+                Err(r) => return Look::Refused(r),
+                Ok(None) => {}
+                Ok(Some(other)) => match setting {
+                    NodeIfServingOther::UseNext => {
+                        return Look::Refused(serving_other_refusal(name, &other));
+                    }
+                    // Between their replies: wait for the chats to be done with it. What ends it
+                    // is a chat closing or moving to another node — read at each look, woken by
+                    // this process's changes or the next look (no event announces a chat closing).
+                    _ if other.replies == 0 => {
+                        return Look::Wait {
+                            reason: format!(
+                                "{} is serving {} for {}; {name} loads when {} closed or moved to another node",
+                                other.mac,
+                                other.serving,
+                                chats_words(&other.chats),
+                                if other.chats.len() == 1 { "that chat is" } else { "those chats are" }
+                            ),
+                            wake: Wake::LookAgain,
+                            replies: None,
+                            serving_other: Some(other),
+                            yields: true,
+                        };
+                    }
+                    // Replies run on it: step 7 waits for them, this demand yielding meanwhile.
+                    _ => yields = true,
+                },
             }
         }
         // 5–6. A step, or the fit: judged at the first look (a refusal is known before any wait)
@@ -842,6 +925,8 @@ impl Core {
                     Blocker::Elsewhere { lock, .. } => Wake::ReplyEnd(lock.clone()),
                 },
                 replies: None,
+                serving_other: None,
+                yields,
             };
         }
         if let Some(blocker) = blockers.first() {
@@ -860,6 +945,13 @@ impl Core {
                 },
                 None => Vec::new(),
             };
+            let mut chats: Vec<String> = Vec::new();
+            for b in blockers.iter().filter(|b| b.way() == blocker.way()) {
+                let chat = self.chat_words(&self.holds.root_of(b.session())).await;
+                if !chats.contains(&chat) {
+                    chats.push(chat);
+                }
+            }
             return Look::Wait {
                 reason: format!(
                     "{} is answering {count} {replies}; loading {name} when {finish}",
@@ -873,7 +965,10 @@ impl Core {
                     way: blocker.way().to_string(),
                     way_nodes,
                     count: count as u32,
+                    chats,
                 }),
+                serving_other: None,
+                yields,
             };
         }
         if plan.stops.iter().any(|s| s.way == WayRef::local()) {
@@ -893,6 +988,8 @@ impl Core {
                     ),
                     wake: Wake::LookAgain,
                     replies: None,
+                    serving_other: None,
+                    yields: false,
                 };
             }
         }
@@ -925,6 +1022,7 @@ impl Core {
                 q.seq < seq
                     && q.seq < opened
                     && q.node != node
+                    && (!q.yields || q.swapping)
                     && (asker_is_tick || !q.tick || q.swapping)
             })
             .map(|q| q.node_name.clone())
@@ -995,13 +1093,129 @@ impl Core {
         }
     }
 
-    fn queue_ahead(&self, seq: u64, asker_is_tick: bool) -> Option<String> {
+    fn queue_ahead(&self, seq: u64, asker_is_tick: bool) -> Option<Ahead> {
         self.queue
             .lock()
             .unwrap()
             .iter()
             .find(|q| q.goes_before(seq, asker_is_tick))
-            .map(|q| q.node_name.clone())
+            .map(|q| Ahead {
+                node_name: q.node_name.clone(),
+                session: q.session.clone(),
+            })
+    }
+
+    fn set_yields(&self, seq: u64, yields: bool) {
+        let changed = match self.queue.lock().unwrap().iter_mut().find(|q| q.seq == seq) {
+            Some(queued) if queued.yields != yields => {
+                queued.yields = yields;
+                true
+            }
+            _ => false,
+        };
+        // Who waits behind this demand looks again; an unchanged flag wakes no one.
+        if changed {
+            self.changed.notify_waiters();
+        }
+    }
+
+    /// A chat by its name, or by its id with the read's failure logged.
+    async fn chat_words(&self, session: &str) -> String {
+        match self.ways.chat_name(session).await {
+            Ok(chat) => chat,
+            Err(error) => {
+                tracing::warn!(session, %error, "nodes loader: a chat's name could not be read; it is named by its id");
+                session.to_string()
+            }
+        }
+    }
+
+    /// Q-428's fact: whether the ways this switch would stop serve other chats — a reply running
+    /// on one (any goose process on this Mac), or an open chat of this process whose last turn
+    /// was served on one — and, if so, what a turn line names. `None` = nobody uses what would
+    /// stop. Other processes publish only their running replies, so an idle chat of another goose
+    /// process is not seen (its next turn is).
+    async fn serving_other(
+        &self,
+        node: &ResolvedNodeDef,
+        plan: &SwitchPlan,
+        own: holds::Own<'_>,
+    ) -> Result<Option<NodeServingOtherDto>, Refusal> {
+        if plan.stops.is_empty() {
+            return Ok(None);
+        }
+        let running = self
+            .holds
+            .blockers(&plan.stops, own)
+            .map_err(|reason| Refusal::new(NodeLoadRefusalCode::Unknown, reason))?;
+        let own_root = match own {
+            holds::Own::Demand { root, .. } | holds::Own::Root(root) => Some(root),
+            holds::Own::Nobody => None,
+        };
+        let mut roots: Vec<String> = Vec::new();
+        for b in &running {
+            let root = self.holds.root_of(b.session());
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        let mut idle_way: Option<String> = None;
+        for (root, way) in self.holds.last_on(&plan.stops, own_root) {
+            if roots.contains(&root) || !self.ways.chat_open(&root).await {
+                continue;
+            }
+            idle_way.get_or_insert(way);
+            roots.push(root);
+        }
+        if roots.is_empty() {
+            return Ok(None);
+        }
+        let way = running
+            .first()
+            .map(|b| b.way().to_string())
+            .or(idle_way)
+            .expect("a chat was found on a way that would stop");
+        let serving = match plan.stops.iter().find(|s| s.way.words() == way) {
+            Some(stop) => self
+                .ways
+                .named_by(stop)
+                .await?
+                .into_iter()
+                .next()
+                .map_or_else(|| way.clone(), |n| n.name),
+            None => way,
+        };
+        let mut chats = Vec::new();
+        for root in &roots {
+            chats.push(self.chat_words(root).await);
+        }
+        Ok(Some(NodeServingOtherDto {
+            mac: self.ways.shared_mac(node).await?,
+            serving,
+            chats,
+            replies: running.len() as u32,
+        }))
+    }
+
+    /// `useNext` while a switch to another node is next on this Mac.
+    async fn switching_to_other(&self, node: &ResolvedNodeDef, ahead: &Ahead) -> Refusal {
+        let chats = match &ahead.session {
+            Some(session) => vec![self.chat_words(&self.holds.root_of(session)).await],
+            None => Vec::new(),
+        };
+        let mac = match self.ways.shared_mac(node).await {
+            Ok(mac) => mac,
+            Err(r) => return r,
+        };
+        serving_other_refusal(
+            &node.def.name,
+            &NodeServingOtherDto {
+                mac,
+                serving: ahead.node_name.clone(),
+                chats,
+                replies: 0,
+            },
+        )
     }
 
     async fn execute(
@@ -1018,12 +1232,14 @@ impl Core {
             demanded_by: Vec::new(),
         });
         let failed = |reason: String, words: String| {
+            let facts = NodeRefusalFactsDto::LoadFailed { words };
             (
                 NodeEnsureServing::Refused {
                     code: NodeLoadRefusalCode::LoadFailed,
                     reason,
+                    facts: Some(facts.clone()),
                 },
-                Some(NodeRefusalFactsDto::LoadFailed { words }),
+                Some(facts),
             )
         };
         let expected = rows::expect(&prepared.model, prepared.key.clone(), cancelled);
@@ -1110,6 +1326,36 @@ impl Core {
             );
         }
     }
+}
+
+/// A queued switch ahead of a demand: the node it loads and the session it loads it for.
+struct Ahead {
+    node_name: String,
+    session: Option<String>,
+}
+
+/// "chat "Kickoff notes"", "chats "A" and "B"" — the loader's words for the chats a way serves.
+fn chats_words(chats: &[String]) -> String {
+    let quoted: Vec<String> = chats.iter().map(|c| format!("\"{c}\"")).collect();
+    match quoted.as_slice() {
+        [] => "another chat".to_string(),
+        [one] => format!("chat {one}"),
+        [rest @ .., last] => format!("chats {} and {last}", rest.join(", ")),
+    }
+}
+
+/// The `useNext` answer: the next node of the chain takes the work, and the turn line says why.
+fn serving_other_refusal(name: &str, other: &NodeServingOtherDto) -> Refusal {
+    Refusal::new(
+        NodeLoadRefusalCode::ServingOther,
+        format!(
+            "{} is serving {} for {}; {name} is left to it",
+            other.mac,
+            other.serving,
+            chats_words(&other.chats)
+        ),
+    )
+    .with_facts(other.as_facts())
 }
 
 fn person_hold(reply: Blocker) -> seam::PersonHold {
@@ -1274,6 +1520,13 @@ impl<T> LiveAgents<T> {
         let mut agents = self.agents.lock().unwrap();
         agents.retain(|weak| weak.strong_count() > 0);
         agents.push(Arc::downgrade(agent));
+    }
+
+    /// Every agent whose connection is still served, oldest first.
+    pub(super) fn all(&self) -> Vec<Arc<T>> {
+        let mut agents = self.agents.lock().unwrap();
+        agents.retain(|weak| weak.strong_count() > 0);
+        agents.iter().filter_map(Weak::upgrade).collect()
     }
 
     /// The newest agent whose connection is still served, if any.

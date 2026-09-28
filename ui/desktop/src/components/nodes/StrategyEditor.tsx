@@ -17,9 +17,12 @@ import {
   ROLES,
   effectiveEntry,
   effectiveRole,
+  ifServingOtherForNewChain,
+  ifServingOtherOf,
   inheritsFrom,
   nodeNamesById,
   type NodeIfNotLoaded,
+  type NodeIfServingOther,
   type NodeRole,
   type NodeRoleEntry,
   type NodeStrategy,
@@ -70,6 +73,37 @@ const i18n = defineMessages({
   whenShare: { id: 'strategies.whenShare', defaultMessage: 'share' },
   loadWait: { id: 'strategies.loadWait', defaultMessage: 'Load it and wait' },
   useNext: { id: 'strategies.useNext', defaultMessage: 'Use the next meanwhile' },
+  // Q-428, the owner: "the strategy should have the option hopefully to avoid interrupting a node
+  // doing its thing".
+  colIfServingOther: {
+    id: 'strategies.colIfServingOther',
+    defaultMessage: 'If its Mac is serving another node',
+  },
+  servingOtherUseNext: {
+    id: 'strategies.servingOtherUseNext',
+    defaultMessage: 'Use the next node',
+  },
+  servingOtherWait: { id: 'strategies.servingOtherWait', defaultMessage: 'Wait' },
+  servingOtherTakeOver: { id: 'strategies.servingOtherTakeOver', defaultMessage: 'Take it over' },
+  servingOtherUseNextSays: {
+    id: 'strategies.servingOtherUseNextSays',
+    defaultMessage:
+      'While its Mac answers another chat, or keeps another chat’s node between its messages, the next node takes the turn. Nothing is stopped.',
+  },
+  servingOtherWaitSays: {
+    id: 'strategies.servingOtherWaitSays',
+    defaultMessage:
+      'The turn waits until the other chats are done with their node — their replies end, and each chat is closed or moves to another node — then this one loads.',
+  },
+  servingOtherTakeOverSays: {
+    id: 'strategies.servingOtherTakeOverSays',
+    defaultMessage:
+      'This one loads as soon as the other node’s running replies end. A chat resting between messages loses its node.',
+  },
+  servingOtherNeedsNext: {
+    id: 'strategies.servingOtherNeedsNext',
+    defaultMessage: 'Add a second node to use the next one.',
+  },
   setOwn: { id: 'strategies.setOwn', defaultMessage: 'Set its own nodes' },
   useSameAs: { id: 'strategies.useSameAs', defaultMessage: 'Same as {role} instead' },
   usedByBuilds: { id: 'strategies.usedByBuilds', defaultMessage: 'Used by swarm builds.' },
@@ -186,6 +220,9 @@ export function newStrategyDraft(
       ifNotLoaded: 'load',
     };
   }
+  // Q-428: a new strategy never displaces another chat's node by default — the next node when
+  // the chain has one, otherwise wait. A setting the copied chain chose itself is kept.
+  chat.ifServingOther = chat.ifServingOther ?? ifServingOtherForNewChain(chat.chain.length);
   return { id, name, roles: { chat } };
 }
 
@@ -302,6 +339,7 @@ export function StrategyEditor({
                         chain: nodes[0] ? [{ node: nodes[0].def.id, weight: 1 }] : [],
                         when: 'failover',
                         ifNotLoaded: 'load',
+                        ifServingOther: ifServingOtherForNewChain(nodes[0] ? 1 : 0),
                       }
                 )
               }
@@ -326,8 +364,20 @@ export function StrategyEditor({
       nextFree || nodes.length === 0
         ? null
         : intl.formatMessage(nodes.length === 1 ? i18n.addNodeOnlyOne : i18n.addNodeAllIn);
+    const ifServingOther: NodeIfServingOther = ifServingOtherOf(entry);
     const change = (next: Partial<NodeRoleEntry>) => setRole(role, { ...entry, ...next });
-    const setChain = (chain: NodeRoleEntry['chain']) => change({ chain });
+    // A chain down to one node has no next node to use: the setting says so by waiting instead.
+    const setChain = (chain: NodeRoleEntry['chain']) =>
+      change(
+        chain.length < 2 && ifServingOther === 'useNext'
+          ? { chain, ifServingOther: 'wait' }
+          : { chain }
+      );
+    const servingOtherSays = {
+      useNext: i18n.servingOtherUseNextSays,
+      wait: i18n.servingOtherWaitSays,
+      takeOver: i18n.servingOtherTakeOverSays,
+    }[ifServingOther];
 
     return (
       <section
@@ -492,6 +542,56 @@ export function StrategyEditor({
                       { value: 'useNext', label: intl.formatMessage(i18n.useNext) },
                     ]}
                   />
+                </div>
+              )}
+              {anyMlx && ifNotLoaded === 'load' && (
+                <div
+                  className="flex min-w-0 max-w-[32rem] flex-col gap-1"
+                  data-testid="strategy-serving-other"
+                >
+                  <span className={TYPE.meta}>{intl.formatMessage(i18n.colIfServingOther)}</span>
+                  <Segmented<NodeIfServingOther>
+                    aria-label={intl.formatMessage(i18n.roleField, {
+                      role: roleWord,
+                      field: intl.formatMessage(i18n.colIfServingOther),
+                    })}
+                    value={ifServingOther}
+                    onChange={(next) => change({ ifServingOther: next })}
+                    options={[
+                      {
+                        value: 'useNext',
+                        label: intl.formatMessage(i18n.servingOtherUseNext),
+                        disabled: entry.chain.length < 2,
+                        describedBy:
+                          entry.chain.length < 2 ? `${addWhyId}-${role}-next` : undefined,
+                        testId: 'strategy-serving-other-useNext',
+                      },
+                      {
+                        value: 'wait',
+                        label: intl.formatMessage(i18n.servingOtherWait),
+                        testId: 'strategy-serving-other-wait',
+                      },
+                      {
+                        value: 'takeOver',
+                        label: intl.formatMessage(i18n.servingOtherTakeOver),
+                        testId: 'strategy-serving-other-takeOver',
+                      },
+                    ]}
+                  />
+                  <p
+                    className={cx('break-words', TYPE.meta)}
+                    data-testid="strategy-serving-other-says"
+                  >
+                    {intl.formatMessage(servingOtherSays)}
+                  </p>
+                  {entry.chain.length < 2 && (
+                    <p
+                      id={`${addWhyId}-${role}-next`}
+                      className={cx('break-words', TYPE.meta, WEIGHT.semibold)}
+                    >
+                      {intl.formatMessage(i18n.servingOtherNeedsNext)}
+                    </p>
+                  )}
                 </div>
               )}
             </div>

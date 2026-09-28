@@ -6776,6 +6776,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} erneut versuchen"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} läuft auf {node} ({rank}): {mac} bedient {serving} für {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "Erster Start noch nicht gemessen"
   },
@@ -7133,6 +7136,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Platz schaffen"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} wurde nicht geladen: {mac} bedient {serving} für {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Entfernen"
   },
@@ -7192,6 +7198,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Nodes-Bereiche"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "einen anderen Chat"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "„{chat}“"
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, one {den Chat {names}} other {die Chats {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Richte deine Macs ein"
@@ -10169,6 +10184,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Falls nicht geladen"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Wenn sein Mac einen anderen Knoten bedient"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Nodes in Reihenfolge"
   },
@@ -10372,6 +10390,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "Falls {node} nicht geladen ist, übernimmt {next} währenddessen die Arbeit, und nichts wird geladen."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Füge einen zweiten Knoten hinzu, um den nächsten zu nutzen."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Übernehmen"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Dieser wird geladen, sobald die laufenden Antworten des anderen Knotens enden. Ein Chat, der zwischen Nachrichten ruht, verliert seinen Knoten."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Den nächsten Knoten nutzen"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Solange sein Mac einem anderen Chat antwortet oder den Knoten eines anderen Chats zwischen dessen Nachrichten behält, übernimmt der nächste Knoten die Runde. Nichts wird gestoppt."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Warten"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "Die Runde wartet, bis die anderen Chats mit ihrem Knoten fertig sind – ihre Antworten enden und jeder Chat wird geschlossen oder wechselt zu einem anderen Knoten –, dann wird dieser geladen."
   },
   "strategies.setOwn": {
     "defaultMessage": "Eigene Nodes festlegen"

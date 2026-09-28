@@ -455,6 +455,39 @@ describe('the strategy editor', () => {
     await waitFor(() => expect(screen.queryByTestId('strategy-editor')).toBeNull());
   });
 
+  it('Q-428: “If its Mac is serving another node” — the next node by default, Wait with one node, a saved strategy keeps Take it over', async () => {
+    renderTab();
+    await userEvent.click(screen.getByTestId('strategies-new'));
+    const chat = roleRow('chat');
+    const setting = within(chat).getByTestId('strategy-serving-other');
+    expect(setting).toHaveTextContent('If its Mac is serving another node');
+    expect(within(setting).getByRole('radio', { name: 'Use the next node' })).toBeChecked();
+    expect(within(setting).getByTestId('strategy-serving-other-says')).toHaveTextContent(
+      'the next node takes the turn. Nothing is stopped.'
+    );
+    // Down to one node, there is no next node to use: the setting waits instead, and says why.
+    await userEvent.click(
+      within(chat).getByRole('button', { name: 'Take Claude Sonnet · OpenRouter out of Chat' })
+    );
+    expect(within(setting).getByRole('radio', { name: 'Wait' })).toBeChecked();
+    expect(within(setting).getByRole('radio', { name: 'Use the next node' })).toBeDisabled();
+    expect(setting).toHaveTextContent('Add a second node to use the next one.');
+    await userEvent.click(within(setting).getByRole('radio', { name: 'Take it over' }));
+    expect(within(setting).getByTestId('strategy-serving-other-says')).toHaveTextContent(
+      'A chat resting between messages loses its node.'
+    );
+    await userEvent.click(screen.getByTestId('strategy-save'));
+    await waitFor(() => expect(mockWrite).toHaveBeenCalledTimes(1));
+    const written = mockWrite.mock.calls[0][0] as NodesConfig;
+    expect(written.strategies?.[3]?.roles?.chat?.ifServingOther).toBe('takeOver');
+  });
+
+  it('Q-428: a strategy saved before the setting existed reads Take it over — the behaviour it had', async () => {
+    renderTab('/nodes?tab=strategies&strategy=quick');
+    const setting = within(roleRow('chat')).getByTestId('strategy-serving-other');
+    expect(within(setting).getByRole('radio', { name: 'Take it over' })).toBeChecked();
+  });
+
   it('Set its own nodes, then share with two MLX ways: flagged before save, refused verbatim on save', async () => {
     mockWrite.mockResolvedValueOnce({
       written: false,

@@ -139,6 +139,43 @@ pub enum NodeIfNotLoaded {
     UseNext,
 }
 
+/// What a not-loaded MLX entry under `load` does when its Mac is serving ANOTHER node for other
+/// work (Q-428, the owner: "the strategy should have the option hopefully to avoid interrupting a
+/// node doing its thing"). "Serving another node" is the loader's own fact: a way this switch
+/// would stop has a reply running on it, or an open chat whose last turn was served on it — never
+/// a clock. A way nobody uses is not "serving another node": it is switched under every setting.
+/// A running reply is never cut under any of them (design §6.4 step 7).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum NodeIfServingOther {
+    /// The next chain entry takes the work; nothing is stopped.
+    UseNext,
+    /// The work waits until the other node's chats are done with it (their replies end, and each
+    /// chat closes or moves to another node), then loads.
+    Wait,
+    /// Load it: the other node is stopped once its running replies end.
+    ///
+    /// MIGRATION (Q-428): a role entry saved before the setting existed carries none and reads
+    /// this — exactly the behaviour it had. New entries are written with [`Self::for_new_chain`].
+    #[default]
+    TakeOver,
+}
+
+impl NodeIfServingOther {
+    pub fn is_take_over(&self) -> bool {
+        *self == NodeIfServingOther::TakeOver
+    }
+
+    /// A new role entry's setting: the next node when the chain has one, otherwise wait.
+    pub fn for_new_chain(entries: usize) -> Self {
+        if entries > 1 {
+            NodeIfServingOther::UseNext
+        } else {
+            NodeIfServingOther::Wait
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeRoleEntry {
@@ -148,6 +185,10 @@ pub struct NodeRoleEntry {
     pub when: NodeWhen,
     #[serde(default)]
     pub if_not_loaded: NodeIfNotLoaded,
+    /// Read only under `ifNotLoaded: load`. Absent = saved before Q-428 = `takeOver`, and
+    /// `takeOver` is written as absent, so a config saved before Q-428 round-trips unchanged.
+    #[serde(default, skip_serializing_if = "NodeIfServingOther::is_take_over")]
+    pub if_serving_other: NodeIfServingOther,
 }
 
 /// The roles a strategy sets; an unset role inherits (Chat ← Build, Planning ← Chat, Build ←
@@ -636,6 +677,10 @@ pub enum NodeResidency {
         reason: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         replies: Option<NodeRepliesWaitDto>,
+        /// Set when the demand waits because its role says `wait` while the Mac serves another
+        /// node for chats that are between replies (Q-428).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        serving_other: Option<NodeServingOtherDto>,
     },
     /// Not running. `otherWay` names the way that serves instead, when one does.
     NotRunning {
@@ -677,6 +722,24 @@ pub struct NodeRepliesWaitDto {
     pub way_nodes: Vec<String>,
     /// The replies open on it that the switch waits for.
     pub count: u32,
+    /// The chats those replies answer, by the names the person sees (Q-430).
+    #[serde(default)]
+    pub chats: Vec<String>,
+}
+
+/// The Mac a node runs on is serving another node for other chats (Q-428): what a turn line, a
+/// refusal and a wait name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeServingOtherDto {
+    /// The Mac(s) the wanted node shares with the way serving now, by name ("Work's Mac Studio").
+    pub mac: String,
+    /// The node serving now, as the Nodes page names it (the way's words when no node names it).
+    pub serving: String,
+    /// The chats it serves, by name: running a reply on it, or last served on it and still open.
+    pub chats: Vec<String>,
+    /// How many of their replies run on it now (0 = every one of those chats is between replies).
+    pub replies: u32,
 }
 
 /// What a refusal names, for the refusals the composer words (design §8.7).
@@ -701,6 +764,41 @@ pub enum NodeRefusalFactsDto {
     Fit { mac: String, verdict: String },
     /// The switch ran and the node's way failed to start; `words` are the engine's.
     LoadFailed { words: String },
+    /// Its Mac serves another node for other chats and the role says `useNext` (Q-428).
+    ServingOther {
+        mac: String,
+        serving: String,
+        chats: Vec<String>,
+        replies: u32,
+    },
+}
+
+impl NodeServingOtherDto {
+    pub fn as_facts(&self) -> NodeRefusalFactsDto {
+        NodeRefusalFactsDto::ServingOther {
+            mac: self.mac.clone(),
+            serving: self.serving.clone(),
+            chats: self.chats.clone(),
+            replies: self.replies,
+        }
+    }
+
+    pub fn of_facts(facts: &NodeRefusalFactsDto) -> Option<Self> {
+        match facts {
+            NodeRefusalFactsDto::ServingOther {
+                mac,
+                serving,
+                chats,
+                replies,
+            } => Some(NodeServingOtherDto {
+                mac: mac.clone(),
+                serving: serving.clone(),
+                chats: chats.clone(),
+                replies: *replies,
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// The median of a node's measured Ready loads.
@@ -862,6 +960,10 @@ pub struct NodeServedTurnDto {
     /// Q-381): the 1st was passed over by that ask, and the next turn goes back to it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub asked_for_this_turn: bool,
+    /// The 1st was passed over because its Mac serves another node for other chats and the role
+    /// says `useNext` (Q-428): what the turn line names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving_other: Option<NodeServingOtherDto>,
 }
 
 /// The last served-turn record of a session (this process's, else the one persisted in the
@@ -892,6 +994,8 @@ pub enum NodeLoadRefusalCode {
     NeedsStep,
     Fit,
     LoadFailed,
+    /// Its Mac serves another node for other chats, and the role says use the next node (Q-428).
+    ServingOther,
     /// Which way serves is unknown (an unreadable record).
     Unknown,
 }
@@ -911,6 +1015,10 @@ pub enum NodeEnsureServing {
     Refused {
         code: NodeLoadRefusalCode,
         reason: String,
+        /// What the refusal names, when it is one the surfaces word (the router's turn line reads
+        /// `servingOther`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        facts: Option<NodeRefusalFactsDto>,
     },
 }
 

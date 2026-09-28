@@ -465,6 +465,7 @@ pub async fn ensure_serving(
             answer: NodeEnsureServing::Refused {
                 code: NodeLoadRefusalCode::UnknownNode,
                 reason: format!("there is no node '{}'", req.node),
+                facts: None,
             },
         });
     };
@@ -481,6 +482,7 @@ pub async fn ensure_serving(
             NodeEnsureServing::Refused {
                 code: NodeLoadRefusalCode::Unknown,
                 reason,
+                facts: None,
             }
         }
         _ => {
@@ -490,6 +492,9 @@ pub async fn ensure_serving(
                     .session_id
                     .map_or(seam::DemandFrom::Ui, seam::DemandFrom::Turn),
                 role: None,
+                // A person's Start (or a caller naming a node outright) takes the Mac over as it
+                // always did; the running reply is still never cut.
+                if_serving_other: goose_sdk_types::custom_requests::NodeIfServingOther::TakeOver,
             })
             .await
         }

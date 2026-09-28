@@ -15021,6 +15021,10 @@
         "ifNotLoaded": {
           "$ref": "#/$defs/NodeIfNotLoaded",
           "default": "load"
+        },
+        "ifServingOther": {
+          "$ref": "#/$defs/NodeIfServingOther",
+          "description": "Read only under `ifNotLoaded: load`. Absent = saved before Q-428 = `takeOver`, and\n`takeOver` is written as absent, so a config saved before Q-428 round-trips unchanged."
         }
       },
       "required": [
@@ -15078,6 +15082,26 @@
         }
       ],
       "description": "What a not-loaded MLX entry does (cloud is always loaded)."
+    },
+    "NodeIfServingOther": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "useNext",
+          "description": "The next chain entry takes the work; nothing is stopped."
+        },
+        {
+          "type": "string",
+          "const": "wait",
+          "description": "The work waits until the other node's chats are done with it (their replies end, and each\nchat closes or moves to another node), then loads."
+        },
+        {
+          "type": "string",
+          "const": "takeOver",
+          "description": "Load it: the other node is stopped once its running replies end.\n\nMIGRATION (Q-428): a role entry saved before the setting existed carries none and reads\nthis — exactly the behaviour it had. New entries are written with [`Self::for_new_chain`]."
+        }
+      ],
+      "description": "What a not-loaded MLX entry under `load` does when its Mac is serving ANOTHER node for other\nwork (Q-428, the owner: \"the strategy should have the option hopefully to avoid interrupting a\nnode doing its thing\"). \"Serving another node\" is the loader's own fact: a way this switch\nwould stop has a reply running on it, or an open chat whose last turn was served on it — never\na clock. A way nobody uses is not \"serving another node\": it is switched under every setting.\nA running reply is never cut under any of them (design §6.4 step 7)."
     },
     "NodesForNewChats": {
       "oneOf": [
@@ -15910,6 +15934,17 @@
                 }
               ]
             },
+            "servingOther": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NodeServingOtherDto"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Set when the demand waits because its role says `wait` while the Mac serves another\nnode for chats that are between replies (Q-428)."
+            },
             "kind": {
               "type": "string",
               "const": "waiting"
@@ -16019,6 +16054,14 @@
           "type": "integer",
           "description": "The replies open on it that the switch waits for.",
           "minimum": 0
+        },
+        "chats": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The chats those replies answer, by the names the person sees (Q-430).",
+          "default": []
         }
       },
       "required": [
@@ -16026,6 +16069,38 @@
         "count"
       ],
       "description": "Replies on a way the switch would stop, which the loader waits for before it stops it."
+    },
+    "NodeServingOtherDto": {
+      "type": "object",
+      "properties": {
+        "mac": {
+          "type": "string",
+          "description": "The Mac(s) the wanted node shares with the way serving now, by name (\"Work's Mac Studio\")."
+        },
+        "serving": {
+          "type": "string",
+          "description": "The node serving now, as the Nodes page names it (the way's words when no node names it)."
+        },
+        "chats": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The chats it serves, by name: running a reply on it, or last served on it and still open."
+        },
+        "replies": {
+          "type": "integer",
+          "description": "How many of their replies run on it now (0 = every one of those chats is between replies).",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "mac",
+        "serving",
+        "chats",
+        "replies"
+      ],
+      "description": "The Mac a node runs on is serving another node for other chats (Q-428): what a turn line, a\nrefusal and a wait name."
     },
     "NodeRefusalFactsDto": {
       "oneOf": [
@@ -16110,6 +16185,39 @@
             "words"
           ],
           "description": "The switch ran and the node's way failed to start; `words` are the engine's."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mac": {
+              "type": "string"
+            },
+            "serving": {
+              "type": "string"
+            },
+            "chats": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "replies": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "servingOther"
+            }
+          },
+          "required": [
+            "kind",
+            "mac",
+            "serving",
+            "chats",
+            "replies"
+          ],
+          "description": "Its Mac serves another node for other chats and the role says `useNext` (Q-428)."
         }
       ],
       "description": "What a refusal names, for the refusals the composer words (design §8.7)."
@@ -16527,6 +16635,17 @@
         "askedForThisTurn": {
           "type": "boolean",
           "description": "The person asked this one turn to answer past the chain's 1st (\"Answer on {next} for now\",\nQ-381): the 1st was passed over by that ask, and the next turn goes back to it."
+        },
+        "servingOther": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeServingOtherDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The 1st was passed over because its Mac serves another node for other chats and the role\nsays `useNext` (Q-428): what the turn line names."
         }
       },
       "required": [
@@ -16625,6 +16744,17 @@
             "reason": {
               "type": "string"
             },
+            "facts": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NodeRefusalFactsDto"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What the refusal names, when it is one the surfaces word (the router's turn line reads\n`servingOther`)."
+            },
             "kind": {
               "type": "string",
               "const": "refused"
@@ -16656,6 +16786,11 @@
           "type": "string",
           "const": "loaderAbsent",
           "description": "No node loader in this goose process: start the node in Run it."
+        },
+        {
+          "type": "string",
+          "const": "servingOther",
+          "description": "Its Mac serves another node for other chats, and the role says use the next node (Q-428)."
         },
         {
           "type": "string",

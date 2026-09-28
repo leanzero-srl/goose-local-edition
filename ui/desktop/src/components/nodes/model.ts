@@ -9,6 +9,7 @@ import type {
   NodeDef,
   NodeDefKind,
   NodeIfNotLoaded,
+  NodeIfServingOther,
   NodePlacement,
   NodeRole,
   NodeRoleEntry,
@@ -26,6 +27,7 @@ export type {
   NodeDef,
   NodeDefKind,
   NodeIfNotLoaded,
+  NodeIfServingOther,
   NodePlacement,
   NodeRole,
   NodeRoleEntry,
@@ -37,6 +39,20 @@ export type {
   NodesForNewChats,
   ResolvedNodeDef,
 };
+
+/**
+ * A role's "If its Mac is serving another node" (Q-428). An entry saved before the setting existed
+ * carries none and reads `takeOver` — exactly the behaviour it had (goosed's
+ * `NodeIfServingOther` default; `takeOver` is written as absent).
+ */
+export function ifServingOtherOf(entry: NodeRoleEntry): NodeIfServingOther {
+  return entry.ifServingOther ?? 'takeOver';
+}
+
+/** A new role entry's setting: the next node when the chain has one, otherwise wait. */
+export function ifServingOtherForNewChain(entries: number): NodeIfServingOther {
+  return entries > 1 ? 'useNext' : 'wait';
+}
 
 export const ROLES: readonly NodeRole[] = [
   'chat',
