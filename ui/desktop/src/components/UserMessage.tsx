@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Repeat } from 'lucide-react';
 import ImagePreview from './ImagePreview';
 import MarkdownContent from './MarkdownContent';
 import { getTextAndImageContent, type Message } from '../types/message';
@@ -8,6 +9,10 @@ import Edit from './icons/Edit';
 import { Button } from './ui/button';
 import { defineMessages, useIntl } from '../i18n';
 import { cx } from './lz';
+import { TickMarker } from './loops/TickMarker';
+import { loopWords } from './loops/loopWords';
+import { parseTickId } from './loops/model';
+import { LoopSessionContext, requestStartLoop } from './loops/startLoopRequest';
 
 const i18n = defineMessages({
   editPlaceholder: {
@@ -122,12 +127,24 @@ interface UserMessageProps {
   opensConversation?: boolean;
 }
 
-export default function UserMessage({
-  message,
-  onMessageUpdate,
-  opensConversation = false,
-}: UserMessageProps) {
+/**
+ * A user message: the person's bubble — or, for a loop tick's prompt (its id is the runner-minted
+ * `looptick_…`), the tick's divider (§8.5), which is never edited, forked or looped.
+ */
+export default function UserMessage(props: UserMessageProps) {
+  const { message } = props;
+  const parsed = message.metadata.loopTick ? null : message.id ? parseTickId(message.id) : null;
+  const tick =
+    message.metadata.loopTick ??
+    (parsed && message.id ? { loopId: parsed.loopId, n: parsed.n, messageId: message.id } : null);
+  if (tick) return <TickMarker message={message} tick={tick} />;
+  return <PersonMessage {...props} />;
+}
+
+function PersonMessage({ message, onMessageUpdate, opensConversation = false }: UserMessageProps) {
   const intl = useIntl();
+  const loopSession = useContext(LoopSessionContext);
+  const [loopThisRefused, setLoopThisRefused] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -408,8 +425,37 @@ export default function UserMessage({
                       <span>{intl.formatMessage(i18n.editButton)}</span>
                     </button>
                     <MessageCopyLink text={textContent} contentRef={contentRef} />
+                    {loopSession && textContent.trim() && (
+                      <button
+                        type="button"
+                        data-testid="user-message-loop-this"
+                        onClick={() =>
+                          setLoopThisRefused(
+                            !requestStartLoop({
+                              sessionId: loopSession.sessionId,
+                              mode: 'start',
+                              goal: textContent,
+                            })
+                          )
+                        }
+                        title={intl.formatMessage(loopWords.loopThisTitle)}
+                        className="flex items-center gap-1 text-xs text-text-secondary hover:cursor-pointer hover:text-text-primary transition-all duration-200 opacity-0 group-hover:opacity-100 -translate-y-4 group-hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-lz-accent rounded"
+                      >
+                        <Repeat aria-hidden className="h-3 w-3" />
+                        <span>{intl.formatMessage(loopWords.loopThis)}</span>
+                      </button>
+                    )}
                   </div>
                 </div>
+                {loopThisRefused && (
+                  <p
+                    data-testid="user-message-loop-this-refused"
+                    role="alert"
+                    className="mt-1 text-right text-xs font-lz-semibold text-lz-err"
+                  >
+                    {intl.formatMessage(loopWords.startDialogAbsent)}
+                  </p>
+                )}
               </div>
             </div>
           </div>

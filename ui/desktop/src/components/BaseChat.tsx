@@ -38,7 +38,9 @@ import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
 import NeedsYouTray from './sessionActivity/NeedsYouCard';
 import { BackgroundWorkLine } from './sessionActivity/BackgroundWorkLine';
-import ChangesRail from './changes/ChangesRail';
+import SessionRail from './session-rail/SessionRail';
+import { useSessionLoop } from './loops/useSessionLoop';
+import { LoopSessionContext } from './loops/startLoopRequest';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 import {
   Button,
@@ -294,6 +296,17 @@ export default function BaseChat({
   usePublishForming(
     sessionId,
     chatState === ChatState.Idle ? null : formingOf(messages[messages.length - 1])
+  );
+
+  // The chat's session loop (Q-228): re-read when the transcript grows or the chat's state moves —
+  // a tick's marker landing, a turn ending — so the rail and the tick dividers follow the loop.
+  const sessionLoop = useSessionLoop(sessionId, `${messages.length}:${chatState}`);
+  const loopSession = useMemo(
+    () => ({
+      sessionId,
+      loop: sessionLoop.state.kind === 'loop' ? sessionLoop.state.loop : null,
+    }),
+    [sessionId, sessionLoop.state]
   );
 
   const recipe = session?.recipe as Recipe | null | undefined;
@@ -582,156 +595,162 @@ export default function BaseChat({
   // decide that and nothing else — no staleness timer may hide a run whose model is merely slow.
   const showSwarmWorkspace = shouldSplitSwarmWorkspace({ isLocal, run: swarmRun });
   const conversationPane = (
-    <div
-      className="relative flex flex-1 min-h-0 min-w-0 flex-col bg-background-primary"
-      data-testid="conversation-pane"
-    >
-      <ScrollArea
-        ref={scrollRef}
-        className={cx('flex-1 min-h-0 relative pr-1 pb-10', !isLocal && headerSpacingClassName)}
-        autoScroll
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        data-drop-zone="true"
-        paddingX={6}
-        paddingY={0}
+    <LoopSessionContext.Provider value={loopSession}>
+      <div
+        className="relative flex flex-1 min-h-0 min-w-0 flex-col bg-background-primary"
+        data-testid="conversation-pane"
       >
-        {recipe?.title && (
-          <div className="sticky top-0 z-10 bg-background-primary px-0 -mx-6 mb-6 pt-6">
-            <RecipeHeader title={recipe.title} />
-          </div>
-        )}
+        <ScrollArea
+          ref={scrollRef}
+          className={cx('flex-1 min-h-0 relative pr-1 pb-10', !isLocal && headerSpacingClassName)}
+          autoScroll
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          data-drop-zone="true"
+          paddingX={6}
+          paddingY={0}
+        >
+          {recipe?.title && (
+            <div className="sticky top-0 z-10 bg-background-primary px-0 -mx-6 mb-6 pt-6">
+              <RecipeHeader title={recipe.title} />
+            </div>
+          )}
 
-        {recipe && (
-          <div className={hasStartedUsingRecipe ? 'mb-6' : ''}>
-            <RecipeActivities
-              append={(text: string) => handleSubmit({ msg: text, images: [] })}
-              activities={Array.isArray(recipe.activities) ? recipe.activities : null}
-              title={recipe.title}
-              parameterValues={session?.user_recipe_values || {}}
-            />
-          </div>
-        )}
-
-        {messages.length > 0 || recipe ? (
-          <>
-            <SearchView>
-              <ProgressiveMessageList
-                messages={messages}
-                chat={{ sessionId }}
-                toolCallNotifications={toolCallNotifications}
+          {recipe && (
+            <div className={hasStartedUsingRecipe ? 'mb-6' : ''}>
+              <RecipeActivities
                 append={(text: string) => handleSubmit({ msg: text, images: [] })}
-                isUserMessage={(m: Message) => m.role === 'user'}
-                isStreamingMessage={chatState !== ChatState.Idle}
-                onRenderingComplete={handleRenderingComplete}
-                onMessageUpdate={onMessageUpdate}
-                submitElicitationResponse={submitElicitationResponse}
+                activities={Array.isArray(recipe.activities) ? recipe.activities : null}
+                title={recipe.title}
+                parameterValues={session?.user_recipe_values || {}}
               />
-            </SearchView>
+            </div>
+          )}
 
-            {/* Q-185: goose still working for this chat after the reply (the fact check). */}
-            {chatState === ChatState.Idle && <BackgroundWorkLine sessionId={sessionId} />}
+          {messages.length > 0 || recipe ? (
+            <>
+              <SearchView>
+                <ProgressiveMessageList
+                  messages={messages}
+                  chat={{ sessionId }}
+                  toolCallNotifications={toolCallNotifications}
+                  append={(text: string) => handleSubmit({ msg: text, images: [] })}
+                  isUserMessage={(m: Message) => m.role === 'user'}
+                  isStreamingMessage={chatState !== ChatState.Idle}
+                  onRenderingComplete={handleRenderingComplete}
+                  onMessageUpdate={onMessageUpdate}
+                  submitElicitationResponse={submitElicitationResponse}
+                />
+              </SearchView>
 
-            {/* FRAME 1.14 event B: what the agent asked to remember at the end of the turn — a card,
+              {/* Q-185: goose still working for this chat after the reply (the fact check). */}
+              {chatState === ChatState.Idle && <BackgroundWorkLine sessionId={sessionId} />}
+
+              {/* FRAME 1.14 event B: what the agent asked to remember at the end of the turn — a card,
                 never a modal, never an elicitation. Not edition-gated: a memory proposal is
                 upstream-worthy, so it renders on every build. */}
-            <MemoryProposalCards
-              sessionId={sessionId}
-              chatState={chatState}
-              lastQuestionAt={lastQuestionAt}
-              className="mt-2"
-            />
+              <MemoryProposalCards
+                sessionId={sessionId}
+                chatState={chatState}
+                lastQuestionAt={lastQuestionAt}
+                className="mt-2"
+              />
 
-            <div className="block h-8" />
-          </>
-        ) : null}
+              <div className="block h-8" />
+            </>
+          ) : null}
 
-        {/* With the split up, the run has its OWN pane — leaving these here too would render the whole
+          {/* With the split up, the run has its OWN pane — leaving these here too would render the whole
             panel twice. Inline in the conversation is the layout for every other moment. */}
-        {isLocal && !showSwarmWorkspace && (
-          <RunSamplingStrip
-            workingDir={session?.working_dir}
-            active={swarmRun.inProgress}
-            sessionModel={sessionModel}
-            className="mb-2"
-          />
-        )}
-        {isLocal && !showSwarmWorkspace && (
-          <SwarmRunPanel workingDir={session?.working_dir} run={swarmRun} className="mb-2" />
-        )}
-      </ScrollArea>
+          {isLocal && !showSwarmWorkspace && (
+            <RunSamplingStrip
+              workingDir={session?.working_dir}
+              active={swarmRun.inProgress}
+              sessionModel={sessionModel}
+              className="mb-2"
+            />
+          )}
+          {isLocal && !showSwarmWorkspace && (
+            <SwarmRunPanel workingDir={session?.working_dir} run={swarmRun} className="mb-2" />
+          )}
+        </ScrollArea>
 
-      {/* What this chat's write/edit calls changed (Q-190): a pill in the corner that opens over
-          the chat — it never takes width from the conversation. */}
-      <ChangesRail
-        messages={messages}
-        className={cx(
-          'absolute right-4',
-          LAYER.chrome,
-          isLocal ? 'top-2' : isMobile || isNavCollapsed ? 'top-[4.5rem]' : 'top-14'
-        )}
-      />
-
-      {/* What the model (or an extension) needs from the person: pinned outside the scroll area so
-          it never scrolls away, and kept until it is answered or dismissed. */}
-      <NeedsYouTray
-        sessionId={sessionId}
-        chatState={chatState}
-        sendAnswer={(text) => chatInputSubmit({ msg: text, images: [] })}
-        submitElicitationResponse={submitElicitationResponse}
-        className="relative z-10 mx-4 mb-2"
-      />
-
-      <div
-        data-testid="chat-input-card"
-        data-chat-state={chatState}
-        className={cx(
-          SURFACE.card,
-          'relative z-10 mx-4 mb-4 overflow-hidden',
-          !disableAnimation && 'animate-[fadein_400ms_ease-in_forwards]'
-        )}
-      >
-        <ChatInput
-          inputRef={chatInputRef}
+        {/* The chat's right rail (Q-190 + Q-228): its loop and what its write/edit calls changed — pills
+          in the corner that open one panel over the chat; it never takes width from the conversation. */}
+        <SessionRail
           sessionId={sessionId}
-          handleSubmit={chatInputSubmit}
-          chatState={chatState}
-          onStop={stopStreaming}
-          onSteerQueuedMessage={onSteerQueuedMessage}
-          pauseQueueOnStop={pauseQueueOnStop}
-          queueProcessingBlocked={queueProcessingBlocked}
-          commandHistory={commandHistory}
-          initialValue={initialPrompt}
-          setView={setView}
-          totalTokens={tokenState?.totalTokens ?? session?.usage?.total_tokens ?? undefined}
-          accumulatedInputTokens={
-            tokenState?.accumulatedInputTokens ??
-            session?.accumulated_usage?.input_tokens ??
-            undefined
-          }
-          accumulatedOutputTokens={
-            tokenState?.accumulatedOutputTokens ??
-            session?.accumulated_usage?.output_tokens ??
-            undefined
-          }
-          accumulatedCost={tokenState?.accumulatedCost ?? session?.accumulated_cost ?? undefined}
-          droppedFiles={droppedFiles}
-          onFilesProcessed={() => setDroppedFiles([])}
           messages={messages}
-          disableAnimation={disableAnimation}
-          recipe={recipe}
-          recipeAccepted={!hasNotAcceptedRecipe}
-          initialPrompt={initialPrompt}
-          sessionModel={sessionModel}
-          sessionProvider={sessionProvider}
-          sessionLoaded={sessionLoaded}
+          loop={sessionLoop.state}
+          control={sessionLoop.control}
           workingDir={session?.working_dir}
-          onWorkingDirChange={handleWorkingDirChange}
-          latestInference={latestInference}
-          {...customChatInputProps}
+          className={cx(
+            'absolute right-4',
+            LAYER.chrome,
+            isLocal ? 'top-2' : isMobile || isNavCollapsed ? 'top-[4.5rem]' : 'top-14'
+          )}
         />
+
+        {/* What the model (or an extension) needs from the person: pinned outside the scroll area so
+          it never scrolls away, and kept until it is answered or dismissed. */}
+        <NeedsYouTray
+          sessionId={sessionId}
+          chatState={chatState}
+          sendAnswer={(text) => chatInputSubmit({ msg: text, images: [] })}
+          submitElicitationResponse={submitElicitationResponse}
+          className="relative z-10 mx-4 mb-2"
+        />
+
+        <div
+          data-testid="chat-input-card"
+          data-chat-state={chatState}
+          className={cx(
+            SURFACE.card,
+            'relative z-10 mx-4 mb-4 overflow-hidden',
+            !disableAnimation && 'animate-[fadein_400ms_ease-in_forwards]'
+          )}
+        >
+          <ChatInput
+            inputRef={chatInputRef}
+            sessionId={sessionId}
+            handleSubmit={chatInputSubmit}
+            chatState={chatState}
+            onStop={stopStreaming}
+            onSteerQueuedMessage={onSteerQueuedMessage}
+            pauseQueueOnStop={pauseQueueOnStop}
+            queueProcessingBlocked={queueProcessingBlocked}
+            commandHistory={commandHistory}
+            initialValue={initialPrompt}
+            setView={setView}
+            totalTokens={tokenState?.totalTokens ?? session?.usage?.total_tokens ?? undefined}
+            accumulatedInputTokens={
+              tokenState?.accumulatedInputTokens ??
+              session?.accumulated_usage?.input_tokens ??
+              undefined
+            }
+            accumulatedOutputTokens={
+              tokenState?.accumulatedOutputTokens ??
+              session?.accumulated_usage?.output_tokens ??
+              undefined
+            }
+            accumulatedCost={tokenState?.accumulatedCost ?? session?.accumulated_cost ?? undefined}
+            droppedFiles={droppedFiles}
+            onFilesProcessed={() => setDroppedFiles([])}
+            messages={messages}
+            disableAnimation={disableAnimation}
+            recipe={recipe}
+            recipeAccepted={!hasNotAcceptedRecipe}
+            initialPrompt={initialPrompt}
+            sessionModel={sessionModel}
+            sessionProvider={sessionProvider}
+            sessionLoaded={sessionLoaded}
+            workingDir={session?.working_dir}
+            onWorkingDirChange={handleWorkingDirChange}
+            latestInference={latestInference}
+            {...customChatInputProps}
+          />
+        </div>
       </div>
-    </div>
+    </LoopSessionContext.Provider>
   );
 
   const runPane = showSwarmWorkspace ? (

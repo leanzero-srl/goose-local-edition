@@ -169,9 +169,17 @@ export type InferenceMetadata = {
   resolvedModel?: string | null;
 };
 
+/** A session loop's tick marker: the tick's prompt message (DESIGN-SESSION-LOOPS §4.4, §8.5). */
+export type LoopTickMetadata = {
+  loopId: string;
+  n: number;
+  messageId: string;
+};
+
 export type MessageMetadata = {
   agentVisible: boolean;
   inference?: InferenceMetadata | null;
+  loopTick?: LoopTickMetadata;
   steer?: boolean;
   userVisible: boolean;
 };

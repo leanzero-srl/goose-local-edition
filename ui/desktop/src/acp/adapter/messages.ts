@@ -2,7 +2,8 @@ import type {
   ContentBlock as AcpContentBlock,
   SessionNotification,
 } from '@agentclientprotocol/sdk';
-import type { ContentBlock, Message } from '../../types/message';
+import { parseTickId } from '../../components/loops/model';
+import type { ContentBlock, LoopTickMetadata, Message } from '../../types/message';
 import {
   type AcpChatStateChange,
   type AdapterState,
@@ -46,6 +47,7 @@ export function applyContentChunk(
 
     return messagesChangeWithLocalSteerConfirmation(state, existing, gooseMeta.steer);
   } else {
+    const loopTick = role === 'user' ? loopTickOf(messageId) : undefined;
     state.messages.push({
       ...(messageId ? { id: messageId } : {}),
       role,
@@ -54,11 +56,23 @@ export function applyContentChunk(
       metadata: {
         ...DEFAULT_VISIBLE_MESSAGE_METADATA,
         ...(gooseMeta.steer ? { steer: true } : {}),
+        ...(loopTick ? { loopTick } : {}),
       },
     });
   }
 
   return messagesChange(state);
+}
+
+/**
+ * A tick's prompt carries the runner-minted id `looptick_<loopId>_<n>_<uuid>` (goosed stamps it only
+ * on an accepted offer), so a replay from sessions.db marks the same message the live transcript
+ * marked. Any other id is an ordinary message.
+ */
+export function loopTickOf(messageId: string | undefined): LoopTickMetadata | undefined {
+  if (!messageId) return undefined;
+  const parsed = parseTickId(messageId);
+  return parsed ? { loopId: parsed.loopId, n: parsed.n, messageId } : undefined;
 }
 
 export function applyThoughtChunk(
@@ -138,6 +152,8 @@ export function findMessageForChunk(
   if (pending && !pending.id) {
     pending.id = messageId;
     pending.created = created ?? pending.created;
+    const loopTick = role === 'user' ? loopTickOf(messageId) : undefined;
+    if (loopTick) pending.metadata = { ...pending.metadata, loopTick };
     return pending;
   }
 
