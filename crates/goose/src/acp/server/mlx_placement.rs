@@ -70,13 +70,16 @@ mod imp {
         }
     }
 
-    /// Why a Mac's figures count another serving model's memory as free, in plain words: Run
-    /// stops what serves before it starts anything (Q-120 — only a switch to the SAME model used
-    /// to count it, so Flash read "too big" beside the 27B).
+    /// Why a Mac's figures count another serving model's memory as free, in plain words: starting
+    /// any way stops what serves before it starts anything (Q-120 — only a switch to the SAME model
+    /// used to count it, so Flash read "too big" beside the 27B). Worded for every door that starts
+    /// a way — Run it's Run and the New node dialog's "Create and start" (Q-304: the dialog repeated
+    /// "Run stops…" with no Run button) — and naming the model by its short name (Q-308).
     pub(super) fn replaced_note(serving: &str, bytes: u64, mac: &str) -> String {
         format!(
-            "Run stops {serving} on {mac} first, so the {} it holds there counts as free: Run \
+            "Starting it stops {} on {mac} first, so the {} it holds there counts as free: goose \
              replaces that model, it never adds a second one",
+            goose_sidecar::model_identity::model_short_name(serving),
             gb_words(bytes)
         )
     }
@@ -84,7 +87,8 @@ mod imp {
     /// Why the linked Mac's figures count this model's memory there as free, in plain words.
     pub(super) fn moved_from_peer_note(mac: &str, bytes: u64) -> String {
         format!(
-            "Moving it frees its {} on {mac}: Run moves the model, it never adds a second copy",
+            "Starting it frees the {} this model holds on {mac} now: goose moves the model, it \
+             never adds a second copy",
             gb_words(bytes)
         )
     }
@@ -1303,16 +1307,28 @@ mod tests {
         assert_eq!(imp::gb_words(goose_sidecar::GIB / 2), "0.5 GB");
         assert_eq!(
             imp::moved_from_peer_note("Work's Mac Studio", bytes),
-            "Moving it frees its 31 GB on Work's Mac Studio: Run moves the model, it never adds \
-             a second copy"
+            "Starting it frees the 31 GB this model holds on Work's Mac Studio now: goose moves \
+             the model, it never adds a second copy"
         );
         let here = imp::replaced_note("Qwen3.8-Flash", 18 * goose_sidecar::GIB, "this Mac");
         assert_eq!(
             here,
-            "Run stops Qwen3.8-Flash on this Mac first, so the 18 GB it holds there counts as \
-             free: Run replaces that model, it never adds a second one"
+            "Starting it stops Qwen3.8-Flash on this Mac first, so the 18 GB it holds there \
+             counts as free: goose replaces that model, it never adds a second one"
         );
         assert!(!here.contains("GiB"));
+        // Q-304: worded for every door that starts a way, never for Run it's button alone; Q-308:
+        // the model by its short name, never the repo id.
+        let repo = imp::replaced_note(
+            "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+            17 * goose_sidecar::GIB,
+            "Mihai Macbook",
+        );
+        assert!(repo.starts_with("Starting it stops Qwen3.8-27B-Atlassian-Q8-mlx on Mihai Macbook"));
+        assert!(
+            !repo.contains("Mihai-LeanZero/") && !repo.contains("Run "),
+            "{repo}"
+        );
     }
 
     /// Q-167 (a): the split's memory was "not counted as free for other placements", although Run

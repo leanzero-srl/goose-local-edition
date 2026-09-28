@@ -21,6 +21,16 @@
 use crate::engine::{served_model_id, EngineSettings};
 use serde::{Deserialize, Serialize};
 
+/// A model as a person reads its name: the repo's last path segment, as it is spelled
+/// (`Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx` → `Qwen3.8-27B-Atlassian-Q8-mlx`). The desktop's
+/// `modelShortName` is the same rule; every sentence that names a model uses one of the two (Q-308).
+pub fn model_short_name(repo_id: &str) -> &str {
+    repo_id
+        .rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(repo_id)
+}
+
 /// The Add-node model tag: the repo name, lowercased, with its `mlx` tokens dropped (the alias
 /// re-appends `-mlx` as its engine marker). `Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx` →
 /// `qwen3.8-27b-atlassian-q8`.
@@ -137,6 +147,22 @@ mod tests {
             "../../../ui/desktop/src/components/noNodeNotice/model_identity.fixture.json"
         ))
         .unwrap()
+    }
+
+    /// The one short-name rule, pinned beside the desktop's `modelShortName` (Q-308).
+    #[test]
+    fn the_short_name_is_the_desktops() {
+        #[derive(Deserialize)]
+        struct Names {
+            cases: Vec<(String, String)>,
+        }
+        let names: Names = serde_json::from_str(include_str!(
+            "../../../ui/desktop/src/utils/modelShortName.fixture.json"
+        ))
+        .unwrap();
+        for (repo, short) in names.cases {
+            assert_eq!(model_short_name(&repo), short, "{repo}");
+        }
     }
 
     #[test]

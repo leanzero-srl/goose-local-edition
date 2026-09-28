@@ -6272,7 +6272,11 @@ export const zNodesRemoveStrategyRequest_unstable = z.object({
  * Whether a strategy can drive a swarm build (Tier A), and every reason when it cannot.
  */
 export const zNodesBuildEligibilityRequest_unstable = z.object({
-    strategy: z.string()
+    strategy: z.string(),
+    draft: z.union([
+        zNodeStrategy,
+        z.null()
+    ]).optional()
 });
 
 /**

@@ -14762,6 +14762,17 @@
       "properties": {
         "strategy": {
           "type": "string"
+        },
+        "draft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeStrategy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The strategy as the editor holds it now, unsaved: checked in place of the stored one (or as\na new one), so the editor answers while the person edits instead of after Save (Q-311).\nNothing is written."
         }
       },
       "required": [

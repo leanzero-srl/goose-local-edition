@@ -1,0 +1,11 @@
+{
+  "cases": [
+    ["Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx", "Qwen3.8-27B-Atlassian-Q8-mlx"],
+    ["rapid-mlx/Qwen3.8-Flash-Next-4bit", "Qwen3.8-Flash-Next-4bit"],
+    ["mihai-qwen3.8-27b-atlassian-q8-mlx", "mihai-qwen3.8-27b-atlassian-q8-mlx"],
+    ["anthropic/claude-sonnet-4", "claude-sonnet-4"],
+    ["org/sub/model-name", "model-name"],
+    ["rapid-mlx/Qwen3.8-Flash-Next-4bit/", "Qwen3.8-Flash-Next-4bit"],
+    ["", ""]
+  ]
+}

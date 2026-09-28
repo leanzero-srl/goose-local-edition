@@ -133,10 +133,14 @@ pub async fn build_eligibility(
     let config = Config::global();
     let current = super::read(config, this_mac_name().await).map_err(internal)?;
     let engine = engine_settings(config);
+    let mut nodes = current.config;
+    if let Some(draft) = req.draft {
+        super::with_draft_strategy(&mut nodes, &req.strategy, draft);
+    }
     let inputs = project::BuildInputs::from_reads(
         config.get_param::<serde_json::Value>(SWARM_KEY),
         &engine,
-        &current.config,
+        &nodes,
     );
     Ok(match project::build_eligibility(&inputs, &req.strategy) {
         Ok(planned) => NodesBuildEligibilityResponse {
