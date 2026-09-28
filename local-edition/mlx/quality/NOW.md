@@ -93,6 +93,8 @@ Updated: 2026-09-28 21:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   author); FULL GATE /tmp/g073.out (scratchpad/gate073.sh, target g073); Q-406 MERGED (13280e94d: own process groups, proof-gated
   group kill, named TCC cause; #3r trace YES); Q-407 (goosed crash leaves commands running) cutting.
 
+- CI: red 6× 17:15–18:10 on three timing-flaky integration tests (Q-397's hold test ×4, needs-you superseded,
+  link control Offline) → Q-420 cutting; green runs interleave.
 - BATCH 4 (→ 3.0.74): Q-417 DONE (worktree-agent-ad33799988ff81b4d: one servedModel() for single/split/remote;
   also the split's running modelId was null); Q-407 (goosed crash leaves commands) cutting.
 
