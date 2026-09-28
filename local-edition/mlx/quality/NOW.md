@@ -31,7 +31,11 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       Turn 14 ("just the command" for CPU use) got NO command → Q-453, model behaviour; the stream and rank were
       checked intact. Turn 15 (client .docx): the leanzero-documents
       create-doc tool wrote every markdown TABLE as prose (0 `<w:tbl>`) while reporting tables:true → Q-454, agent
-      dispatched. The model caught it itself by unzipping the file. Decode is 9.5–11.9 tok/s since the 23:30 flip.
+      dispatched. The model caught it itself by unzipping the file.
+    - Turns 16–17: it rebuilt the docx with real tables and renamed the owners. Q-451-class self-contradiction
+      again ("Zero occurrences of 'Mihai' is not what I asked for"), then it corrected itself. Context is
+      173k/262k, so compaction is near: watch that Q-357 keeps the work folder. Turn 18 (PDF via LibreOffice)
+      is running.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
