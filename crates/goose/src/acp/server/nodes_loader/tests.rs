@@ -1662,7 +1662,7 @@ async fn a_tick_yields_only_to_another_windows_person_on_its_way_and_waits_for_t
         "no tick while a person holds the engine"
     );
 
-    window.holds(&[others_tick.clone()]).await;
+    window.holds(std::slice::from_ref(&others_tick)).await;
     let second = events.due(2).await;
     assert_eq!(
         events.dues.borrow().len(),
