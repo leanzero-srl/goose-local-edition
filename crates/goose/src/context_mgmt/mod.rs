@@ -458,7 +458,7 @@ async fn do_compact(
         if summary_model.model_name == model_config.model_name {
             match summarize_as_the_chat(provider, model_config, session_id, messages, frame).await?
             {
-                ChatSummary::Written(summary) => return Ok(summary),
+                ChatSummary::Written(summary) => return Ok(*summary),
                 ChatSummary::NotWritten(why) => warn!(
                     "compaction: the summary request that extends the chat {why}; summarizing \
                      from a transcript of the conversation instead"
@@ -477,7 +477,7 @@ async fn do_compact(
 }
 
 enum ChatSummary {
-    Written((Message, ProviderUsage)),
+    Written(Box<(Message, ProviderUsage)>),
     /// The provider refused the request as too long, or the model answered it with a tool call:
     /// which, for the log.
     NotWritten(String),
@@ -545,7 +545,7 @@ async fn summarize_as_the_chat(
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to ensure usage tokens: {}", e))?;
-    Ok(ChatSummary::Written((response, provider_usage)))
+    Ok(ChatSummary::Written(Box::new((response, provider_usage))))
 }
 
 /// [`SummaryRequest::Transcript`], trying progressively more of the tool responses removed from
