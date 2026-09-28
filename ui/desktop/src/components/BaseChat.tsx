@@ -718,6 +718,7 @@ export default function BaseChat({
           control={sessionLoop.control}
           workingDir={session?.working_dir}
           onPillsHeight={setRailPillsHeight}
+          onSend={(text: string) => handleSubmit({ msg: text, images: [] })}
           className={cx(
             'absolute right-4',
             LAYER.chrome,

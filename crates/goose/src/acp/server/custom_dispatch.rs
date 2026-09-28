@@ -1504,6 +1504,23 @@ impl GooseAcpAgent {
         crate::nodes::acp::ensure_serving(req).await
     }
 
+    #[custom_method(CompactionPreviewRequest)]
+    async fn dispatch_compaction_preview(
+        &self,
+        req: CompactionPreviewRequest,
+    ) -> Result<CompactionPreviewResponse, agent_client_protocol::Error> {
+        let agent = self.get_session_agent(&req.session_id).await?;
+        crate::context_mgmt::acp::preview(&agent, &self.session_manager, req).await
+    }
+
+    #[custom_method(CompactionSteerRequest)]
+    async fn dispatch_compaction_steer(
+        &self,
+        req: CompactionSteerRequest,
+    ) -> Result<CompactionSteerResponse, agent_client_protocol::Error> {
+        crate::context_mgmt::acp::steer(&self.session_manager, req).await
+    }
+
     #[custom_method(LoopsGetRequest)]
     async fn dispatch_loops_get(
         &self,

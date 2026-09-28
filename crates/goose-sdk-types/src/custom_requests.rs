@@ -16,6 +16,8 @@ mod nodes;
 pub use nodes::*;
 mod loops;
 pub use loops::*;
+mod compaction;
+pub use compaction::*;
 mod notes;
 pub use notes::*;
 

@@ -6971,6 +6971,148 @@ export const zNodesEnsureServingResponse_unstable = z.object({
 });
 
 /**
+ * What the next compaction of this chat would keep, computed by code alone — no model call.
+ */
+export const zCompactionPreviewRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+export const zKeptPillarId = z.union([
+    z.literal('asked'),
+    z.literal('files'),
+    z.literal('failed'),
+    z.literal('notes'),
+    z.literal('ledger')
+]);
+
+/**
+ * One part goose keeps word for word, as the next compaction would keep it now.
+ */
+export const zKeptPillarDto = z.object({
+    id: zKeptPillarId,
+    items: z.array(z.string()),
+    leftOut: z.number().int().gte(0).optional().default(0),
+    cut: z.number().int().gte(0).optional().default(0),
+    tokens: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * A section the model writes.
+ */
+export const zWrittenPartDto = z.object({
+    heading: z.string(),
+    ask: z.string()
+});
+
+/**
+ * What rides every turn already, beside the conversation.
+ */
+export const zAlwaysHereDto = z.object({
+    scratchpad: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    ledgerTail: z.array(z.string()).optional().default([])
+});
+
+/**
+ * What the person set for this chat's compactions (`compaction.v0` in the session).
+ */
+export const zCompactionSteerDto = z.object({
+    note: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    standing: z.boolean().optional().default(false),
+    pins: z.array(z.string()).optional().default([]),
+    followAsWritten: z.boolean().optional().default(false)
+});
+
+export const zCompactionTriggerKind = z.union([
+    z.literal('manual'),
+    z.literal('auto'),
+    z.literal('recovery')
+]);
+
+/**
+ * How the model read the person's note (its NOTE line).
+ */
+export const zCompactionNoteVerdict = z.union([
+    z.literal('ok'),
+    z.literal('question'),
+    z.literal('concern'),
+    z.literal('missing'),
+    z.literal('notSent')
+]);
+
+/**
+ * The chat's latest compaction.
+ */
+export const zLastCompactionDto = z.object({
+    at: z.string(),
+    trigger: zCompactionTriggerKind,
+    tokensBefore: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    tokensAfter: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    elapsedMs: z.number().int().gte(0),
+    noteVerdict: z.union([
+        zCompactionNoteVerdict,
+        z.null()
+    ]).optional(),
+    said: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zCompactionPreviewResponse_unstable = z.object({
+    kept: z.array(zKeptPillarDto),
+    writtenParts: z.array(zWrittenPartDto),
+    alwaysHere: zAlwaysHereDto,
+    steer: zCompactionSteerDto,
+    last: z.union([
+        zLastCompactionDto,
+        z.null()
+    ]).optional(),
+    lastKept: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    keptBudgetTokens: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    steerError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Replaces what the person set for this chat's compactions.
+ */
+export const zCompactionSteerRequest_unstable = z.object({
+    sessionId: z.string(),
+    steer: zCompactionSteerDto
+});
+
+export const zCompactionSteerResponse_unstable = z.object({
+    steer: zCompactionSteerDto
+});
+
+/**
  * The loop of one chat. A PURE read: never claims the clock, never writes.
  */
 export const zLoopsGetRequest_unstable = z.object({
@@ -7617,6 +7759,62 @@ export const zStoppedTurnStatus = z.object({
     ]).optional()
 });
 
+export const zCompactionStage = z.union([
+    z.enum(['done']),
+    z.literal('reading'),
+    z.literal('writing'),
+    z.literal('question'),
+    z.literal('failed')
+]);
+
+/**
+ * One compaction of a chat as its card shows it. Every figure is goose's own measurement; a figure
+ * goose could not take is absent, never zero.
+ */
+export const zCompactionStatus = z.object({
+    stage: zCompactionStage,
+    trigger: zCompactionTriggerKind,
+    tokensBefore: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    tokensAfter: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    writtenTokens: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    parts: z.array(z.string()).optional().default([]),
+    partsTotal: z.number().int().gte(0),
+    elapsedMs: z.number().int().gte(0),
+    writingMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    note: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    noteVerdict: z.union([
+        zCompactionNoteVerdict,
+        z.null()
+    ]).optional(),
+    said: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    warning: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
 export const zFormingCallStatus = z.object({
     name: z.string(),
     title: z.string(),
@@ -7647,12 +7845,20 @@ export const zStatusMessage = z.union([
             zStoppedTurnStatus,
             z.null()
         ]).optional(),
+        compaction: z.union([
+            zCompactionStatus,
+            z.null()
+        ]).optional(),
         type: z.literal('notice')
     }),
     z.object({
         message: z.string(),
         forming: z.union([
             zFormingStatus,
+            z.null()
+        ]).optional(),
+        compaction: z.union([
+            zCompactionStatus,
             z.null()
         ]).optional(),
         type: z.literal('progress')
@@ -7937,6 +8143,8 @@ export const zExtRequest = z.object({
             zNodesLoadHistoryRequest_unstable,
             zNodesServedLastRequest_unstable,
             zNodesEnsureServingRequest_unstable,
+            zCompactionPreviewRequest_unstable,
+            zCompactionSteerRequest_unstable,
             zLoopsGetRequest_unstable,
             zLoopsStartRequest_unstable,
             zLoopsUpdateRequest_unstable,
@@ -8089,6 +8297,8 @@ export const zExtResponse = z.union([
                 zNodesLoadHistoryResponse_unstable,
                 zNodesServedLastResponse_unstable,
                 zNodesEnsureServingResponse_unstable,
+                zCompactionPreviewResponse_unstable,
+                zCompactionSteerResponse_unstable,
                 zLoopsGetResponse_unstable,
                 zLoopsChangeResponse_unstable,
                 zLoopsTickRefusedResponse_unstable,

@@ -127,7 +127,7 @@ pub fn stopped_line(stopped: Stopped) -> String {
     }
 }
 
-fn elapsed_words(elapsed_ms: u64) -> String {
+pub(crate) fn elapsed_words(elapsed_ms: u64) -> String {
     let seconds = elapsed_ms / 1000;
     match seconds {
         0..=59 => format!("{seconds} s"),
@@ -137,7 +137,7 @@ fn elapsed_words(elapsed_ms: u64) -> String {
 }
 
 /// The desktop's `compactTokens`: "850", "1.9k", "24k".
-fn compact_tokens(tokens: u64) -> String {
+pub(crate) fn compact_tokens(tokens: u64) -> String {
     match tokens {
         0..=999 => tokens.to_string(),
         1000..=9999 => format!("{:.1}k", tokens as f64 / 1000.0),

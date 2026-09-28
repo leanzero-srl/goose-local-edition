@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "Şimdi sıkıştır"
   },
+  "alertBox.context": {
+    "defaultMessage": "Bağlam · {current} / {total} token · %{percent}"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "Bağlam · {current} token"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "goose'un ne zaman sıkıştıracağını değiştir"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "Eşik kaydedilemedi: {error}"
+    "defaultMessage": "Kaydedilemedi: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "Kaydet"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "Anladım!"
@@ -827,6 +839,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Kur"
   },
+  "compaction.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "Yazıldığı gibi sıkıştır"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "Otomatik"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} token"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "Sıkıştırılmadı — konuşma olduğu gibi."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "Konuşma sıkıştırılıyor"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "Notunuza göre sıkıştırıldı. goose'un notu: “{concern}”"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "Konuşma sıkıştırıldı"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "Notu düzenle"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "Bu sıkıştırma için notunuz"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "Sıkıştırma başarısız"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. Konuşmanız değişmedi."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "Siz istediniz"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose notunuzun açık olup olmadığını söylemedi — not yazıldığı gibi uygulandı."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "Konuşma, notunuzu birlikte göndermek için fazla uzundu — goose notunuzu kelimesi kelimesine sakladı."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "Notunuza göre sıkıştırıldı."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "{total} bölümden {done}. bölüm"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "Özetin bölümleri"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose notunuz hakkında soruyor"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "“{question}”"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} token/sn"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "Konuşma okunuyor"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "Sohbet fazla uzundu"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "Kaydet ve sıkıştır"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "Tekrar dene"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "Saklananlar"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "Özet yazılıyor"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} token yazıldı"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "Notunuz: “{note}”"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "Şimdi sıkıştır"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "Sonraki sıkıştırma için not"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "Kalması gereken — bir kural, bir sayı, bir karar"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "Bu sohbet için kaydedilen not okunamadı: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "Not kaydedilemedi: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "Neleri sakladığını gör"
+  },
+  "compaction.standing": {
+    "defaultMessage": "Bu sohbetteki her sıkıştırmada bu notu kullan"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "Başlık ekle"
   },
@@ -1150,6 +1276,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "İşleniyor..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "Sabitle"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "Her zaman burada"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "Sıkıştırılsın ya da sıkıştırılmasın, zaten her turda var."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "İstedikleriniz"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "{tokens} token içinde tutulur — pencerenin on altıda biri"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "Pencere bilinmiyor, bu yüzden hiçbir şey kesilmez"
+  },
+  "contextRail.close": {
+    "defaultMessage": "Bağlamı kapat"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# öğe} other{# öğe}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# tanesi sığması için başına kadar kısaltıldı} other{# tanesi sığması için başına kadar kısaltıldı}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "Başarısız araç çağrıları"
+  },
+  "contextRail.files": {
+    "defaultMessage": "Yazılan dosyalar"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "goose tarafından kelimesi kelimesine saklanır"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "Sıkıştırma bunları tam olduğu gibi saklar — goose tüm sohbetten oluşturur, model asla yeniden yazmaz."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "Son sıkıştırma: {before} → {after} token · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "Son sıkıştırma: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "Bu sohbette henüz sıkıştırma yapılmadı."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "Son sıkıştırmanın sakladıkları"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "Defter"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "En yeni defter kayıtları"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{Sığması için # eski kayıt burada saklanmıyor} other{Sığması için # eski kayıt burada saklanmıyor}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "Bir sıkıştırmanın neleri saklayacağı okunamadı: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "Bu sohbet okunuyor…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "Bu sohbet henüz sıkıştırılmadı."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "Defterde kayıt yok."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "Sabitlenmiş bir şey yok."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "Karalama defteri boş."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "Notunuz"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "Notunuz ve sabitledikleriniz"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "Henüz yok"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "Her zaman kalması gereken bir satır"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "Sabitlenenler"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "Bu sohbetin her sıkıştırmasında kelimesi kelimesine saklanır."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "“{pin}” sabitlemesini kaldır"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "Notu kaydet"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "Karalama defteri"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "Bağlam"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "Döngü, değişiklikler ve bağlam"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "Okunamadı: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose'un yazdıkları"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "Yalnızca modelin bildikleri, her sıkıştırmada konuşmanın kendisinden yazılır:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} token bağlam + şu anda yazılan {live}, {limit} tokenlik pencereden"
@@ -4012,6 +4261,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "Kopyala"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "Sıkıştırmadan hemen sonra gönderilir"
   },
   "messageQueue.cancel": {
     "defaultMessage": "İptal"

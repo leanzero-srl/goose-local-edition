@@ -22,6 +22,10 @@ import type {
   ArchiveSessionRequest_unstable,
   CanonicalModelInfoRequest_unstable,
   CanonicalModelInfoResponse_unstable,
+  CompactionPreviewRequest_unstable,
+  CompactionPreviewResponse_unstable,
+  CompactionSteerRequest_unstable,
+  CompactionSteerResponse_unstable,
   ConfigReadAllRequest_unstable,
   ConfigReadAllResponse_unstable,
   ConfigReadRequest_unstable,
@@ -350,6 +354,8 @@ import {
   zAppsImportResponse_unstable,
   zAppsListResponse_unstable,
   zCanonicalModelInfoResponse_unstable,
+  zCompactionPreviewResponse_unstable,
+  zCompactionSteerResponse_unstable,
   zConfigReadAllResponse_unstable,
   zConfigReadResponse_unstable,
   zCreateRecipeResponse_unstable,
@@ -2450,6 +2456,30 @@ export class GooseExtClient {
     return zNodesEnsureServingResponse_unstable.parse(
       raw,
     ) as NodesEnsureServingResponse_unstable;
+  }
+
+  async sessionCompactionPreview_unstable(
+    params: CompactionPreviewRequest_unstable,
+  ): Promise<CompactionPreviewResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/session/compaction/preview",
+      params,
+    );
+    return zCompactionPreviewResponse_unstable.parse(
+      raw,
+    ) as CompactionPreviewResponse_unstable;
+  }
+
+  async sessionCompactionSteer_unstable(
+    params: CompactionSteerRequest_unstable,
+  ): Promise<CompactionSteerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/session/compaction/steer",
+      params,
+    );
+    return zCompactionSteerResponse_unstable.parse(
+      raw,
+    ) as CompactionSteerResponse_unstable;
   }
 
   async loopsGet_unstable(

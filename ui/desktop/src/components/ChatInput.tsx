@@ -24,6 +24,7 @@ import { ContextWindowIndicator } from './bottom_menu/ContextWindowIndicator';
 import { DroppedFile, useFileDrop } from '../hooks/useFileDrop';
 import { Recipe } from '../recipe';
 import { MessageQueue, QueuedMessage } from './MessageQueue';
+import { compactingNow } from './compaction/compactionStatus';
 import { detectInterruption } from '../utils/interruptionDetector';
 import { ReportProblemDialog, reportProblemMessage } from './ui/ReportProblemDialog';
 import type { Message } from '../types/message';
@@ -824,12 +825,13 @@ export default function ChatInput({
           handleSubmit({ msg: MANUAL_COMPACT_TRIGGER, images: [] });
         },
         compactIcon: <ScrollText size={12} />,
+        ...(sessionId ? { sessionId } : {}),
       });
     }
 
     // Keep alert recalculation scoped to token state changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shownTokens, totalTokens, tokenLimit, isTokenLimitLoaded, addAlert, clearAlerts]);
+  }, [shownTokens, totalTokens, tokenLimit, isTokenLimitLoaded, addAlert, clearAlerts, sessionId]);
 
   // Cleanup effect for component unmount - prevent memory leaks
   useEffect(() => {
@@ -1695,6 +1697,7 @@ export default function ChatInput({
       {queuedMessages.length > 0 && (
         <MessageQueue
           steersTick={tickHere}
+          afterCompaction={compactingNow(messages)}
           queuedMessages={queuedMessages}
           onRemoveMessage={handleRemoveQueuedMessage}
           onClearQueue={handleClearQueue}

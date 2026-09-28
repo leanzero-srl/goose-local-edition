@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "Compacter maintenant"
   },
+  "alertBox.context": {
+    "defaultMessage": "Contexte · {current} sur {total} jetons · {percent} %"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "Contexte · {current} jetons"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "Changer quand goose compacte"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "Échec de l'enregistrement du seuil : {error}"
+    "defaultMessage": "Impossible d’enregistrer : {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "Enregistrer"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "Compris !"
@@ -827,6 +839,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Configurer"
   },
+  "compaction.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "Compacter tel quel"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "Automatique"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} jetons"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "Non compactée — la conversation est restée telle quelle."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "Compaction de la conversation"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "Compactée selon ta note. goose a relevé : « {concern} »"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "Conversation compactée"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "Modifier la note"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "Ta note pour cette compaction"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "La compaction a échoué"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. Ta conversation n’a pas changé."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "À ta demande"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose n’a pas dit si ta note était claire — elle a été suivie telle quelle."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "La conversation était trop longue pour y joindre ta note — goose a gardé ta note mot pour mot."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "Compactée selon ta note."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "partie {done} sur {total}"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "Parties du résumé"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose a une question sur ta note"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "« {question} »"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} jetons/s"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "Lecture de la conversation"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} jetons"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "Le chat était trop long"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "Enregistrer et compacter"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "Réessayer"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "Ce qui a été gardé"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "Rédaction du résumé"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} jetons écrits"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "Ta note : « {note} »"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "Compacter maintenant"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "Note pour la prochaine compaction"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "Ce qui doit survivre — une règle, un nombre, une décision"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "Impossible de lire la note enregistrée pour ce chat : {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "Impossible d’enregistrer la note : {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "Voir ce qu’elle garde"
+  },
+  "compaction.standing": {
+    "defaultMessage": "Utiliser cette note pour chaque compaction de ce chat"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "Ajouter un en-tête"
   },
@@ -1150,6 +1276,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Traitement en cours..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "Épingler"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "Toujours présent"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "Déjà dans chaque tour, compacté ou non."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "Ce que tu as demandé"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "Gardé dans {tokens} jetons — un seizième de la fenêtre"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "La fenêtre est inconnue, donc rien n’est coupé"
+  },
+  "contextRail.close": {
+    "defaultMessage": "Fermer le contexte"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# élément} other{# éléments}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# est coupé à son début pour tenir} other{# sont coupés à leur début pour tenir}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "Appels d’outils échoués"
+  },
+  "contextRail.files": {
+    "defaultMessage": "Fichiers écrits"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "Gardé mot pour mot par goose"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "Une compaction garde ces éléments tels quels — construits par goose à partir de tout le chat, jamais réécrits par le modèle."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "Dernière compaction : {before} → {after} jetons · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "Dernière compaction : {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "Aucune compaction n’a encore eu lieu dans ce chat."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "Ce que la dernière compaction a gardé"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "Registre"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "Entrées les plus récentes du registre"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{# plus ancien n’est pas gardé ici pour tenir} other{# plus anciens ne sont pas gardés ici pour tenir}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "Impossible de lire ce qu’une compaction garderait : {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "Lecture de ce chat…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "Ce chat n’a pas encore été compacté."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "Le registre ne contient aucune entrée."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "Rien d’épinglé."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "Le bloc-notes est vide."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "Ta note"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "Ta note et tes épingles"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "Rien pour l’instant"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "Une ligne qui doit toujours survivre"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "Épinglé"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "Gardé mot pour mot dans chaque compaction de ce chat."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "Désépingler « {pin} »"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "Enregistrer la note"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "Bloc-notes"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "Contexte"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "Boucle, modifications et contexte"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} jetons"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "Illisible : {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose écrit"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "Ce que seul le modèle sait, écrit à chaque compaction à partir de la conversation elle-même :"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} jetons de contexte + {live} en cours d’écriture, sur une fenêtre de {limit} jetons"
@@ -4012,6 +4261,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "Copier"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "Envoyé juste après la compaction"
   },
   "messageQueue.cancel": {
     "defaultMessage": "Annuler"

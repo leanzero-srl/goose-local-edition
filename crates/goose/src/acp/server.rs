@@ -2212,6 +2212,7 @@ fn forming_progress_observer(
                 status: StatusMessage::Progress {
                     message: message.clone(),
                     forming: Some(forming_status(&progress)),
+                    compaction: None,
                 },
             }),
         };
@@ -2238,10 +2239,12 @@ fn status_message_from_system_notification(
                     output_tokens: stopped.output_tokens,
                 }
             }),
+            compaction: crate::agents::compaction_run::compaction_of(notification).map(Box::new),
         }),
         SystemNotificationType::ThinkingMessage => Some(StatusMessage::Progress {
             message: notification.msg.clone(),
             forming: None,
+            compaction: crate::agents::compaction_run::compaction_of(notification).map(Box::new),
         }),
         SystemNotificationType::CreditsExhausted => None,
     }
@@ -4036,6 +4039,7 @@ mod tests {
         let wire = serde_json::to_value(StatusMessage::Progress {
             message: forming_progress_text(&progress).unwrap(),
             forming: Some(status),
+            compaction: None,
         })
         .unwrap();
         assert_eq!(wire["type"], "progress");
@@ -4057,12 +4061,92 @@ mod tests {
         let plain = serde_json::to_value(StatusMessage::Progress {
             message: "Compacting".to_string(),
             forming: None,
+            compaction: None,
         })
         .unwrap();
         assert!(
-            plain.get("forming").is_none(),
+            plain.get("forming").is_none() && plain.get("compaction").is_none(),
             "every other progress status keeps its old shape: {plain}"
         );
+    }
+
+    /// Q-357: a compaction's status rides the progress line while it runs and the notice once it
+    /// ends; a notice that is not a compaction's carries none.
+    #[test]
+    fn a_compaction_status_reaches_the_client_on_its_progress_and_its_notice() {
+        use goose_sdk_types::custom_notifications::{
+            CompactionStage, CompactionStatus, CompactionTriggerKind,
+        };
+        let mut status = CompactionStatus {
+            stage: CompactionStage::Writing,
+            trigger: CompactionTriggerKind::Auto,
+            tokens_before: Some(142_100),
+            tokens_after: None,
+            written_tokens: Some(1_200),
+            parts: vec!["Where we are".to_string(), "Next step".to_string()],
+            parts_total: 3,
+            elapsed_ms: 60_000,
+            writing_ms: Some(20_000),
+            note: None,
+            note_verdict: None,
+            said: None,
+            error: None,
+            warning: None,
+        };
+        let notification = |status: &CompactionStatus, kind| {
+            let mut data = serde_json::to_value(status).unwrap();
+            data["kind"] = "compaction".into();
+            SystemNotificationContent {
+                notification_type: kind,
+                msg: crate::agents::compaction_run::status_line(status),
+                data: Some(data),
+            }
+        };
+        let progress = status_message_from_system_notification(&notification(
+            &status,
+            SystemNotificationType::ThinkingMessage,
+        ));
+        let Some(StatusMessage::Progress {
+            message,
+            compaction: Some(sent),
+            ..
+        }) = progress
+        else {
+            panic!("a progress status with the compaction");
+        };
+        assert_eq!(*sent, status);
+        assert_eq!(
+            message,
+            "Compacting the conversation · writing the summary · 1.2k tokens written · part 2 of 3"
+        );
+
+        status.stage = CompactionStage::Done;
+        status.tokens_after = Some(6_300);
+        let Some(StatusMessage::Notice {
+            compaction: Some(sent),
+            stopped: None,
+            ..
+        }) = status_message_from_system_notification(&notification(
+            &status,
+            SystemNotificationType::InlineMessage,
+        ))
+        else {
+            panic!("a notice with the compaction");
+        };
+        assert_eq!(sent.stage, CompactionStage::Done);
+
+        let plain = SystemNotificationContent {
+            notification_type: SystemNotificationType::InlineMessage,
+            msg: "goose check: something".to_string(),
+            data: None,
+        };
+        assert!(matches!(
+            status_message_from_system_notification(&plain),
+            Some(StatusMessage::Notice {
+                compaction: None,
+                ..
+            })
+        ));
     }
 
     #[test_case(

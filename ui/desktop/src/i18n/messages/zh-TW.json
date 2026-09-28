@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "立即壓縮"
   },
+  "alertBox.context": {
+    "defaultMessage": "內容脈絡 · {current} / {total} 個 token · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "內容脈絡 · {current} 個 token"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "變更 goose 壓縮的時機"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "無法儲存閾值：{error}"
+    "defaultMessage": "無法儲存：{error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "儲存"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "知道了！"
@@ -827,6 +839,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "設定"
   },
+  "compaction.cancel": {
+    "defaultMessage": "取消"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "按原樣壓縮"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "自動"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} 個 token"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "取消"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "未壓縮 — 對話維持原樣。"
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "正在壓縮對話"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "已依你的備註壓縮。goose 提醒：「{concern}」"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "對話已壓縮"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "編輯備註"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "你對這次壓縮的備註"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "壓縮失敗"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}。你的對話沒有改變。"
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "由你發起"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose 沒有說明你的備註是否清楚 — 已依原文執行。"
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "對話太長，無法隨附你的備註 — goose 已逐字保留你的備註。"
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "已依你的備註壓縮。"
+  },
+  "compaction.card.part": {
+    "defaultMessage": "第 {done} 部分，共 {total} 部分"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "摘要的各部分"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose 對你的備註有疑問"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "「{question}」"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} token/秒"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "正在讀取對話"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} 個 token"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "聊天太長了"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "儲存並壓縮"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "重試"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "保留的內容"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "正在撰寫摘要"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "已寫入 {tokens} 個 token"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "你的備註：「{note}」"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "立即壓縮"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "下次壓縮的備註"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "必須保留的內容 — 一條規則、一個數字、一個決定"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "無法讀取為此聊天儲存的備註：{error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "無法儲存備註：{error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "查看保留的內容"
+  },
+  "compaction.standing": {
+    "defaultMessage": "此聊天的每次壓縮都使用此備註"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "新增標頭"
   },
@@ -1150,6 +1276,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "正在處理…"
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "釘選"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "始終存在"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "無論是否壓縮，每一輪都已包含。"
+  },
+  "contextRail.asked": {
+    "defaultMessage": "你的要求"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "保留在 {tokens} 個 token 以內 — 視窗的十六分之一"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "視窗大小未知，因此不做裁剪"
+  },
+  "contextRail.close": {
+    "defaultMessage": "關閉內容脈絡"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# 項} other{# 項}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# 項被截至開頭以便容納} other{# 項被截至開頭以便容納}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "失敗的工具呼叫"
+  },
+  "contextRail.files": {
+    "defaultMessage": "寫入的檔案"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "由 goose 逐字保留"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "壓縮會原樣保留這些內容 — 由 goose 從整個聊天中建立，模型從不改寫。"
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "上次壓縮：{before} → {after} 個 token · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "上次壓縮：{elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "此聊天中尚未進行過壓縮。"
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "上次壓縮保留的內容"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "帳本"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "最新的帳本條目"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{為了容納，# 條較舊的條目未在此保留} other{為了容納，# 條較舊的條目未在此保留}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "無法讀取壓縮將保留的內容：{error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "正在讀取此聊天…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "此聊天尚未壓縮。"
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "帳本中沒有條目。"
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "沒有釘選的內容。"
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "草稿板是空的。"
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "你的備註"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "你的備註和釘選項目"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "尚無"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "一行必須始終保留的內容"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "已釘選"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "在此聊天的每次壓縮中逐字保留。"
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "取消釘選「{pin}」"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "儲存備註"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "草稿板"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "內容脈絡"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "迴圈、變更和內容脈絡"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} 個 token"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "無法讀取：{error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose 撰寫"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "只有模型知道的內容，在每次壓縮時根據對話本身寫出："
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} 個上下文 token + 正在寫入的 {live} 個，視窗共 {limit} 個 token"
@@ -4012,6 +4261,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "複製"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "壓縮完成後立即傳送"
   },
   "messageQueue.cancel": {
     "defaultMessage": "取消"

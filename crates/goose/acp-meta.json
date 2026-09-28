@@ -911,6 +911,16 @@
       "responseType": "NodesEnsureServingResponse_unstable"
     },
     {
+      "method": "_goose/unstable/session/compaction/preview",
+      "requestType": "CompactionPreviewRequest_unstable",
+      "responseType": "CompactionPreviewResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/session/compaction/steer",
+      "requestType": "CompactionSteerRequest_unstable",
+      "responseType": "CompactionSteerResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/loops/get",
       "requestType": "LoopsGetRequest_unstable",
       "responseType": "LoopsGetResponse_unstable"

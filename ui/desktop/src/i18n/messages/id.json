@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "Padatkan sekarang"
   },
+  "alertBox.context": {
+    "defaultMessage": "Konteks · {current} dari {total} token · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "Konteks · {current} token"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "Ubah kapan goose memadatkan"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "Gagal menyimpan ambang batas: {error}"
+    "defaultMessage": "Tidak dapat disimpan: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "Simpan"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "Mengerti!"
@@ -827,6 +839,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Siapkan"
   },
+  "compaction.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "Padatkan sesuai tulisan"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "Otomatis"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} token"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "Tidak dipadatkan — percakapan tetap seperti semula."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "Memadatkan percakapan"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "Dipadatkan sesuai catatan Anda. goose mencatat: “{concern}”"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "Percakapan dipadatkan"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "Edit catatan"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "Catatan Anda untuk pemadatan ini"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "Pemadatan gagal"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. Percakapan Anda tidak berubah."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "Anda yang meminta"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose tidak menyebutkan apakah catatan Anda jelas — catatan diikuti sesuai tulisannya."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "Percakapan terlalu panjang untuk mengirim catatan Anda — goose menyimpan catatan Anda kata per kata."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "Dipadatkan sesuai catatan Anda."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "bagian {done} dari {total}"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "Bagian ringkasan"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose bertanya tentang catatan Anda"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "“{question}”"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} tok/dtk"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "Membaca percakapan"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "Chat terlalu panjang"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "Simpan dan padatkan"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "Coba lagi"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "Apa yang disimpan"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "Menulis ringkasan"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} token ditulis"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "Catatan Anda: “{note}”"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "Padatkan sekarang"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "Catatan untuk pemadatan berikutnya"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "Yang harus tetap ada — aturan, angka, keputusan"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "Catatan yang disimpan untuk chat ini tidak dapat dibaca: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "Catatan tidak dapat disimpan: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "Lihat apa yang disimpan"
+  },
+  "compaction.standing": {
+    "defaultMessage": "Gunakan catatan ini untuk setiap pemadatan di chat ini"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "Tambah header"
   },
@@ -1150,6 +1276,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Memproses..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "Sematkan"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "Selalu ada"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "Sudah ada di setiap giliran, dipadatkan atau tidak."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "Yang Anda minta"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "Disimpan dalam {tokens} token — seperenam belas jendela"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "Jendela tidak diketahui, jadi tidak ada yang dipotong"
+  },
+  "contextRail.close": {
+    "defaultMessage": "Tutup konteks"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# item} other{# item}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# dipotong ke awalnya agar muat} other{# dipotong ke awalnya agar muat}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "Panggilan alat yang gagal"
+  },
+  "contextRail.files": {
+    "defaultMessage": "File yang ditulis"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "Disimpan kata per kata oleh goose"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "Pemadatan menyimpan ini persis apa adanya — dibangun goose dari seluruh chat, tidak pernah ditulis ulang oleh model."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "Pemadatan terakhir: {before} → {after} token · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "Pemadatan terakhir: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "Belum ada pemadatan di chat ini."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "Yang disimpan pemadatan terakhir"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "Ledger"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "Entri ledger terbaru"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{# yang lebih lama tidak disimpan di sini agar muat} other{# yang lebih lama tidak disimpan di sini agar muat}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "Tidak dapat membaca apa yang akan disimpan pemadatan: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "Membaca chat ini…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "Chat ini belum pernah dipadatkan."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "Ledger tidak memiliki entri."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "Tidak ada yang disematkan."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "Scratchpad kosong."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "Catatan Anda"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "Catatan dan sematan Anda"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "Belum ada"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "Satu baris yang harus selalu ada"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "Disematkan"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "Disimpan kata per kata di setiap pemadatan chat ini."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "Lepas sematan “{pin}”"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "Simpan catatan"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "Scratchpad"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "Konteks"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "Loop, perubahan, dan konteks"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "Tidak dapat dibaca: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose menulis"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "Yang hanya diketahui model, ditulis di setiap pemadatan dari percakapan itu sendiri:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} token konteks + {live} sedang ditulis, dari jendela {limit} token"
@@ -4012,6 +4261,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "Salin"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "Dikirim tepat setelah pemadatan"
   },
   "messageQueue.cancel": {
     "defaultMessage": "Batal"
