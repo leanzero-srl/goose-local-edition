@@ -167,8 +167,16 @@ pub enum RankProgram {
     /// and one that evicted it would reuse a different prefix. `mlxLmServerConversationPrefix` (a
     /// 3.0.69 requester) still reads, with `keep_stable_head` off: that requester's ranks cut and
     /// keep no head alike.
+    ///
+    /// Tagged `mlxLmServerKvDtype` since Q-447: `batch_kv_dtype` keeps a batch's KV in the model's
+    /// dtype where mlx_lm 0.31.3 promoted it to float32 (a cold row joining a row that already
+    /// held KV). The dtype sets the byte count of every tensor-parallel all_sum, so a peer whose
+    /// wrapper still promoted would pair a float32 collective with this Mac's bfloat16 one.
+    /// `mlxLmServerStableHead` (a 3.0.71–3.0.73 requester) still reads, with `batch_kv_dtype`
+    /// off: that requester's ranks promote alike.
     #[serde(
-        rename = "mlxLmServerStableHead",
+        rename = "mlxLmServerKvDtype",
+        alias = "mlxLmServerStableHead",
         alias = "mlxLmServerConversationPrefix",
         alias = "mlxLmServerPrefillYield",
         alias = "mlxLmServerNewestPrefix",
@@ -254,6 +262,12 @@ pub enum RankProgram {
         /// after a compaction, a new chat with the same tools — reads the head from the cache.
         #[serde(default)]
         keep_stable_head: bool,
+        /// Every rank keeps a batch's KV in the dtype its rows already hold when a row with no KV
+        /// yet joins them, or they join it (`rank_batch.py` `extend_in_its_dtype`, Q-447): mlx_lm
+        /// padded the empty side in float32, and the batch, its cache entries and every request
+        /// restored from them decoded in float32.
+        #[serde(default)]
+        batch_kv_dtype: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -464,6 +478,7 @@ pub fn rank_specs(
             prefill_step_yields: true,
             keep_conversation_prefix: true,
             keep_stable_head: true,
+            batch_kv_dtype: true,
             sampling_defaults: Box::default(),
         }
     })
@@ -1124,6 +1139,7 @@ pub(crate) mod tests {
                 prefill_step_yields: true,
                 keep_conversation_prefix: true,
                 keep_stable_head: true,
+                batch_kv_dtype: true,
                 sampling_defaults: _,
             }
         ));
@@ -4253,6 +4269,306 @@ os._exit(0)
              compacted chat reads nothing — #3p's shape: {control}"
         );
         assert_eq!(control["head"], serde_json::Value::Null);
+    }
+
+    /// Q-447 through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5 in bfloat16 (the 27B's
+    /// compute dtype). E2E #3u's first chat request (rank0 ...1790625429786, 19:57:18Z: the
+    /// 42,642-token agent request, read cold) joined the prompt batch of a 206-token helper after
+    /// the helper's first step; mlx_lm's `BatchKVCache.extend` padded the agent row's empty KV with
+    /// `mx.array([])` — float32 — and the batch, the residual stream and every entry the chat left
+    /// ran in float32: its stable head measured 2,816,448,512 B = 41,780 × 65,536 + 78,354,432
+    /// (bfloat16 is 32,768 B a token), and every turn decoded 4.05–4.19 tok/s until a two-row merge
+    /// led by a bfloat16 row cast the chat back (20:29:54Z; 10.35–12.26 tok/s on the same chat).
+    /// Here the helper's first prompt step is held until the agent request is queued, so the join
+    /// happens exactly as it did. NEGATIVE CONTROLS (the 3.0.73 spec, and the 3.0.70 one — no
+    /// kept head): the agent row decodes in float32, every entry it leaves holds twice the KV bytes
+    /// a token, and the compacted chat restored from the head inherits float32 — Q-347's kept head
+    /// carries it, but the promotion happens without the head too. With `batch_kv_dtype`
+    /// everything stays in the dtype a request read alone decodes in, and the head is still kept
+    /// and read.
+    #[test]
+    fn a_cold_request_joining_a_row_mid_prefill_keeps_the_models_dtype_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 6,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
+        };
+        let spec_with = |keep_stable_head: bool, batch_kv_dtype: bool| {
+            let mut spec = rank_specs(
+                &config,
+                &ServedNames::only("node-alias"),
+                &[tensor, tensor],
+                141_568,
+                2.0,
+            )
+            .remove(0);
+            if let RankProgram::MlxLmServer {
+                doorbell,
+                keep_stable_head: head,
+                batch_kv_dtype: dtype,
+                ..
+            } = &mut spec.program
+            {
+                *doorbell = false;
+                *head = keep_stable_head;
+                *dtype = batch_kv_dtype;
+            }
+            spec.load_lock = Some(launch_load_lock());
+            spec
+        };
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let in_float32 = "mx.eval(tiny.parameters())\n";
+        assert_eq!(TINY_QWEN35_SERVER.matches(in_float32).count(), 1);
+        let tiny_bf16 = TINY_QWEN35_SERVER.replace(
+            in_float32,
+            "tiny.set_dtype(mx.bfloat16)\nmx.eval(tiny.parameters())\n",
+        );
+        let checks = r#"
+import time
+
+cold_joins = []
+upstream_kv_extend_seen = BatchKVCache.extend
+
+
+def watching_extend(self, other):
+    if [c.keys is None for c in (self, other)].count(True) == 1:
+        cold_joins.append([str(c.keys.dtype) for c in (self, other) if c.keys is not None][0])
+    return upstream_kv_extend_seen(self, other)
+
+
+BatchKVCache.extend = watching_extend
+
+# The helper's first prompt step is held until the agent request is queued: the agent request
+# joins a prompt batch whose row already holds KV, as #3u's first chat request did.
+helper_stepped = threading.Event()
+hold_after_first_step = threading.Event()
+live = {"dtypes": [], "steps": []}
+upstream_gated_next = server.BatchGenerator.next
+
+
+def gated_next(self):
+    answer = upstream_gated_next(self)
+    kv = [c for c in self._prompt_batch.prompt_cache if isinstance(c, BatchKVCache)]
+    if hold_after_first_step.is_set() and kv and kv[0].keys is not None and self._currently_processing:
+        hold_after_first_step.clear()
+        helper_stepped.set()
+        while responses.requests.empty():
+            time.sleep(0.001)
+    if answer[1] and not answer[0]:
+        generating = [c for c in self._generation_batch.prompt_cache if isinstance(c, BatchKVCache)]
+        if generating and generating[0].keys is not None:
+            live["dtypes"].append(str(generating[0].keys.dtype))
+            live["steps"].append(time.perf_counter())
+    return answer
+
+
+server.BatchGenerator.next = gated_next
+
+
+def send(messages, tail=None, tools=TOOLS, max_tokens=2):
+    body = {"model": served, "messages": messages, "max_tokens": max_tokens, "temperature": 0.0}
+    if tools:
+        body["tools"] = tools
+    if tail is not None:
+        body[TRANSIENT_TAIL] = tail
+    status, reply = call("/v1/chat/completions", body)
+    assert status == 200, reply
+    return [reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]]
+
+
+def decoding(messages, tail=None):
+    live["dtypes"].clear()
+    live["steps"].clear()
+    usage = send(messages, tail, max_tokens=24)
+    steps = sorted(b - a for a, b in zip(live["steps"], live["steps"][1:]))
+    return {"usage": usage, "kv": sorted(set(live["dtypes"])),
+            "step_ms": round(1000 * steps[len(steps) // 2], 3) if steps else None}
+
+
+def entries():
+    out = []
+    for kind, lru in cache._lru._lrus.items():
+        for _, tokens in lru:
+            entry = cache._trie.get(provider.model_key, tokens)
+            kv = [layer for layer in entry.prompt_cache if isinstance(layer, KVCache)]
+            out.append({"kind": kind, "tokens": len(tokens), "kv": str(kv[0].keys.dtype),
+                        "kv_bytes_per_token": sum(l.keys.nbytes + l.values.nbytes for l in kv) / len(tokens)})
+    return out
+
+
+SYSTEM = "A. " + "You are goose, a general-purpose agent. " * 40
+steps = conversation(SYSTEM, 1)
+HELPER = [{"role": "system", "content": "You are goose's end-of-turn fact checker. Check each reply against the tool results. " * 2},
+          {"role": "user", "content": "Reply 0: the script wrote 3 users.\n" * 160}]
+
+hold_after_first_step.set()
+helper_reply = []
+helper = threading.Thread(target=lambda: helper_reply.append(send(HELPER, tools=None, max_tokens=4)))
+helper.start()
+helper_stepped.wait()
+joined = decoding(*steps[0])
+helper.join()
+joined_entries = entries()
+system_end = next(i for i, (a, b) in enumerate(zip(
+    render(steps[0][0]), render(steps[0][0][:1] + [{"role": "user", "content": ""}], generation=False))) if a != b)
+
+compacted = [{"role": "system", "content": SYSTEM},
+             {"role": "user", "content": "<analysis>\nThe users script ran.\n</analysis>"},
+             {"role": "assistant", "content": "Your context was compacted. The previous message contains a summary of the conversation so far."},
+             {"role": "user", "content": "Run the plan on the fake data." + block(58)}]
+after = decoding(compacted, block(58))
+
+cache.trim_to(n_sequences=0)
+alone = decoding(*steps[1])
+alone_entries = entries()
+
+print("GOOSE_TEST " + json.dumps({
+    "cold_joins": cold_joins,
+    "helper": helper_reply,
+    "joined": joined,
+    "joined_entries": joined_entries,
+    "system_end": system_end,
+    "after": after,
+    "alone": alone,
+    "alone_entries": alone_entries,
+}), flush=True)
+os._exit(0)
+"#;
+        let run = |keep_stable_head: bool, batch_kv_dtype: bool| {
+            let program = format!(
+                "{}\
+                 class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+                 group = _Group()\n{}QWEN38 = {qwen}\n{tiny_bf16}{checks}",
+                tensor_modules(),
+                &wrapper[start..end],
+                qwen = serde_json::to_string(QWEN38).unwrap(),
+            );
+            run_against_real_packages(
+                &python,
+                &program,
+                &spec_with(keep_stable_head, batch_kv_dtype),
+            )
+        };
+        let dtypes = |arm: &serde_json::Value, key: &str| -> Vec<String> {
+            serde_json::from_value(arm[key]["kv"].clone()).unwrap()
+        };
+        let entry_dtypes = |arm: &serde_json::Value, key: &str| -> Vec<(String, u64, String)> {
+            arm[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| {
+                    (
+                        e["kind"].as_str().unwrap().to_string(),
+                        e["tokens"].as_u64().unwrap(),
+                        e["kv"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect()
+        };
+        let bytes_per_token = |arm: &serde_json::Value, key: &str, tokens: u64| -> f64 {
+            arm[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["tokens"].as_u64() == Some(tokens))
+                .unwrap_or_else(|| panic!("no {tokens}-token entry in {}", arm[key]))
+                ["kv_bytes_per_token"]
+                .as_f64()
+                .unwrap()
+        };
+
+        let fixed = run(true, true);
+        let model_dtype = dtypes(&fixed, "alone");
+        assert_eq!(
+            model_dtype,
+            vec!["mlx.core.bfloat16".to_string()],
+            "a request read alone decodes in the model's dtype: {fixed}"
+        );
+        assert!(
+            !fixed["cold_joins"].as_array().unwrap().is_empty(),
+            "the agent request joined a prompt batch whose row already held KV: {fixed}"
+        );
+        let system_end = fixed["system_end"].as_u64().unwrap();
+        assert_eq!(
+            dtypes(&fixed, "joined"),
+            model_dtype,
+            "Q-447: the agent row that joined the helper mid-prefill decodes in the model's dtype: \
+             {fixed}"
+        );
+        assert!(
+            entry_dtypes(&fixed, "joined_entries")
+                .iter()
+                .all(|(_, _, dtype)| *dtype == model_dtype[0]),
+            "and every entry it left holds the model's dtype: {}",
+            fixed["joined_entries"]
+        );
+        let alone_bytes = bytes_per_token(&fixed, "alone_entries", system_end);
+        assert_eq!(
+            bytes_per_token(&fixed, "joined_entries", system_end),
+            alone_bytes,
+            "the head it left holds the KV bytes a token a request read alone leaves: {fixed}"
+        );
+        assert_eq!(
+            fixed["after"]["usage"][1].as_u64(),
+            Some(system_end),
+            "Q-347 kept: the compacted chat reads the head from the cache: {fixed}"
+        );
+        assert_eq!(dtypes(&fixed, "after"), model_dtype);
+
+        for (keep_stable_head, spec) in [(true, "3.0.73"), (false, "3.0.70")] {
+            let control = run(keep_stable_head, false);
+            assert!(
+                !control["cold_joins"].as_array().unwrap().is_empty(),
+                "{spec}: the same join happened: {control}"
+            );
+            assert_eq!(
+                dtypes(&control, "joined"),
+                vec!["mlx.core.float32".to_string()],
+                "NEGATIVE CONTROL ({spec} spec): the joined agent row decodes in float32 — #3u's \
+                 4 tok/s chat: {control}"
+            );
+            assert_eq!(
+                bytes_per_token(&control, "joined_entries", system_end),
+                2.0 * alone_bytes,
+                "NEGATIVE CONTROL ({spec} spec): the head holds twice the KV bytes a token — #3u's \
+                 41,780 × 65,536: {control}"
+            );
+            assert_eq!(
+                dtypes(&control, "alone"),
+                model_dtype,
+                "{spec}: a request read alone was never promoted: {control}"
+            );
+            if keep_stable_head {
+                assert_eq!(control["after"]["usage"][1].as_u64(), Some(system_end));
+                assert_eq!(
+                    dtypes(&control, "after"),
+                    vec!["mlx.core.float32".to_string()],
+                    "NEGATIVE CONTROL ({spec} spec): the compacted chat restored from the kept \
+                     head inherits float32: {control}"
+                );
+            }
+            eprintln!(
+                "Q-447 {spec}: joined {} after {} alone {}",
+                control["joined"], control["after"], control["alone"]
+            );
+        }
+        eprintln!(
+            "Q-447 fixed: joined {} after {} alone {}",
+            fixed["joined"], fixed["after"], fixed["alone"]
+        );
     }
 
     /// Q-141: the streamer against the REAL qwen3_coder parser of mlx_lm 0.31.3. For every call
@@ -8376,9 +8692,56 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerStableHead");
+        assert_eq!(json["program"], "mlxLmServerKvDtype");
+        assert_eq!(json["batch_kv_dtype"], true);
         assert_eq!(json["keep_stable_head"], true);
         assert_eq!(json["keep_conversation_prefix"], true);
+
+        // A 3.0.71–3.0.73 requester's spec (the stable-head tag, no batch_kv_dtype) keeps
+        // upstream's float32 padding here: its own ranks promote alike.
+        let mut head = json.clone();
+        head["program"] = "mlxLmServerStableHead".into();
+        head.as_object_mut().unwrap().remove("batch_kv_dtype");
+        let read: RankSpec = serde_json::from_value(head).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                batch_kv_dtype: false,
+                keep_stable_head: true,
+                ..
+            }
+        ));
+
+        // A 3.0.73 peer's goosed (its enum knows the stable-head tag, not this one) refuses this
+        // spec: its batches would all_sum float32 where this Mac's all_sum bfloat16.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum StableHeadProgram {
+            #[serde(
+                rename = "mlxLmServerStableHead",
+                alias = "mlxLmServerConversationPrefix",
+                alias = "mlxLmServerPrefillYield",
+                alias = "mlxLmServerNewestPrefix",
+                alias = "mlxLmServerRowProcessors",
+                alias = "mlxLmServerSkeletonGuard",
+                alias = "mlxLmServerTransientTail",
+                alias = "mlxLmServerFormation",
+                alias = "mlxLmServerPrefill",
+                alias = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<StableHeadProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
 
         // A 3.0.69 requester's spec (the conversation-prefix tag, no keep_stable_head) cuts and
         // keeps no head here: its own ranks cut and keep none either.
@@ -8906,6 +9269,9 @@ print("ok")
              \x20   def advance(self, N): pass\n\
              class BatchKVCache:\n\
              \x20   step = 256\n\
+             \x20   def extend(self, other): pass\n\
+             \x20   @classmethod\n\
+             \x20   def merge(cls, caches): pass\n\
              class PromptTrieResult: pass\n\
              class PromptTrie:\n\
              \x20   def __init__(self): self._trie = {}\n\

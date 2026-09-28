@@ -103,6 +103,10 @@
 #   `keep_stable_head`): every agent request ends a segment where mlx_lm's own system segment
 #   would end, and a batch leaves room for it too. E2E #3p: the head's only entry was evicted five
 #   minutes into the chat, and the first request after the compaction re-read 44,053 tokens cold.
+# - a batch's KV keeps the model's dtype (Q-447, rank_batch.py `extend_in_its_dtype`, on a spec
+#   that asks for `batch_kv_dtype`): mlx_lm padded a row holding no KV yet in float32, so a cold
+#   request joining a row mid-prefill turned the batch, its cache entries and every request
+#   restored from them float32 — the 27B split decoded 4 tok/s instead of 10-12.
 # - a request that names no sampling field samples as on the single engine (Q-159,
 #   rank_sampling.py): mlx_lm filled the absence with its `--temp` 0.0 — greedy; E2E #3d wrote one
 #   answer of 54 identical tool calls over 40 minutes. Rank 0 resolves each field request > goose's
@@ -1549,6 +1553,37 @@ if xml_skeleton_guard:
 if spec.get("row_processors"):
     mlx_generate.GenerationBatch.__init__ = generation_init(mlx_generate.GenerationBatch.__init__)
     mlx_generate.GenerationBatch.filter = generation_filter(mlx_generate.GenerationBatch.filter)
+
+# Q-447 (rank_batch.py `extend_in_its_dtype`): a batch's KV keeps the model's dtype when a row
+# whose prompt is read cold joins a row that already holds KV — mlx_lm padded the empty side in
+# float32 and the whole batch, and every cache entry after it, ran in float32 (2.7x slower decode
+# on the 27B split). The dtype decides the byte count of every tensor-parallel all_sum, so only a
+# launch whose every rank runs it asks for it (`batch_kv_dtype`). KV of two different dtypes still
+# meeting in a batch (upstream casts or promotes it silently) is named: RANK_KV_DTYPE_MIXED.
+if spec.get("batch_kv_dtype"):
+    for name in ("extend", "merge"):
+        if not hasattr(BatchKVCache, name):
+            raise SystemExit(
+                f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no BatchKVCache.{name}; "
+                "the batch's KV dtype was written against mlx_lm 0.31.3"
+            )
+    upstream_kv_extend = BatchKVCache.extend
+    upstream_kv_merge = BatchKVCache.merge
+
+    def kv_extend(self, other):
+        mixed = kv_dtypes((self, other))
+        if len(mixed) > 1:
+            emit("RANK_KV_DTYPE_MIXED", {"rank": group.rank(), "where": "extend", "dtypes": mixed})
+        return extend_in_its_dtype(self, other, upstream_kv_extend)
+
+    def kv_merge(cls, caches):
+        mixed = kv_dtypes(caches)
+        if len(mixed) > 1:
+            emit("RANK_KV_DTYPE_MIXED", {"rank": group.rank(), "where": "merge", "dtypes": mixed})
+        return upstream_kv_merge(caches)
+
+    BatchKVCache.extend = kv_extend
+    BatchKVCache.merge = classmethod(kv_merge)
 
 
 # A BaseException so mlx_lm's handle_completion (`except Exception` → 404) lets it through to

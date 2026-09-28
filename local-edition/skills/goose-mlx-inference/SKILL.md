@@ -308,6 +308,25 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   the_cache_through_real_mlx_lm` (tiny server; control 0) and `a_compacted_chat_reads_its_head_at_e2e_
   3p_sizes_through_real_mlx_lm` (#3p sizes; control, eviction alone and room alone all 0). TRAP: a
   Rust `r#"…"#` test program must not contain `"#` (an f-string `f"#3p…"` ended the raw string).
+- A COLD ROW JOINING A ROW MID-PREFILL TURNED THE SPLIT FLOAT32 (Q-447, 2026-09-28, fixed b49982c26, tag
+  `mlxLmServerKvDtype`, spec `batch_kv_dtype` — BOTH MACS NEED THE NEW GOOSE: the dtype sets every
+  tensor-parallel all_sum's byte count, a mixed pair would pair float32 with bfloat16). WHY: mlx_lm 0.31.3
+  `BatchKVCache.extend` (models/cache.py:1060) pads a side with no KV via `mx.array([])` = FLOAT32; a cold
+  request joining a prompt batch whose row already stepped (a helper at chat start) promotes the batch; the
+  residual stream, every later layer and every cache entry go float32, and `merge` (first row's dtype)
+  carries it to every restore — prefix chain and kept head — until a merge led by a bfloat16 row casts back.
+  COST measured on the 27B split: 4.05–4.19 tok/s vs 10.35–12.26 on the same chat after the flip. DETECT
+  FROM LOGS (no attach): entry bytes = H × 65,536 + 78,354,432 (float32) vs H × 32,768 + 76,972,032
+  (bfloat16) — read `stable_head`/`conversation_prefix` in RANK_ADMISSION against the head position in the
+  `Prompt processing progress` lines; decode tokens per `_generate` loop from RANK_STATE (steps vs
+  trails.generated every 2 s: ~2 float32, 5–7 bfloat16); MLX free-buffer cache (RANK_MEM `cache`) ≤ 0.1 GB
+  while decoding float32 vs 2–3.5 GB bfloat16. The rank now emits RANK_KV_DTYPE_MIXED if two dtypes ever
+  meet in an extend/merge. The buffer-sharing/per-step-copy theory was REFUTED (0 buffer moves, pointer
+  tracking). Replay: `a_cold_request_joining_a_row_mid_prefill_keeps_the_models_dtype_through_real_mlx_lm`
+  (tiny qwen3_5 in BFLOAT16 — the float32 tiny model cannot show a promotion; the helper's first prompt
+  step is held until the agent request is queued; CPU step times do NOT show the slowdown, float32 is not
+  slower on the CPU). TRAP: numpy's buffer protocol refuses bfloat16 (`'oat16'` PEP 3118 error) — probe
+  bf16 arrays by dtype/nbytes, not `np.array(x, copy=False)`.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
