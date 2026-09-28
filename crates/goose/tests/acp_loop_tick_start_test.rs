@@ -197,16 +197,19 @@ async fn hold_the_store() -> sqlx::pool::PoolConnection<sqlx::Sqlite> {
     lock
 }
 
-/// Wait until goose has taken the chat's run — asked through the steer door, each probe an
-/// answered request.
-async fn until_goose_holds_a_run(window: &mut Window, chat: &str) {
-    // Well inside the store's own busy wait (30 s), after which the held write would fail.
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+/// Wait until goose has taken the chat's run for `prompt` — asked through the steer door, each
+/// probe an answered request. Taking the run waits on no write to the store (the runner decides
+/// on reads and writes only a change, Q-286), so nothing held here stands in its way; the prompt
+/// answering first means it ended without a run, and its answer is the failure.
+async fn until_goose_holds_a_run(window: &mut Window, chat: &str, prompt: u64) {
     while !holds_a_run(window, chat).await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "goose never took the run"
-        );
+        if let Some(answer) = window
+            .seen
+            .iter()
+            .find(|f| f["id"] == prompt && f.get("method").is_none())
+        {
+            panic!("the prompt ended before goose took its run: {answer}");
+        }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 }
@@ -292,7 +295,7 @@ async fn a_persons_stop_while_the_tick_starts_is_noticed_and_its_marker_stored()
 
     let mut lock = hold_the_store().await;
     let tick = submit(&mut window, &due).await;
-    until_goose_holds_a_run(&mut window, &chat).await;
+    until_goose_holds_a_run(&mut window, &chat, tick).await;
     assert!(
         stored(&chat).await.ticks.is_empty(),
         "the tick's record write is still held"
@@ -363,7 +366,7 @@ async fn a_persons_prompt_stopped_while_it_starts(
 
     let mut lock = hold_the_store().await;
     let prompt = window.prompt(chat, text, None).await;
-    until_goose_holds_a_run(window, chat).await;
+    until_goose_holds_a_run(window, chat, prompt).await;
     window.cancel(chat).await;
     // The cancel is handled inline, in order: a later request's answer means it was.
     assert!(holds_a_run(window, chat).await);
