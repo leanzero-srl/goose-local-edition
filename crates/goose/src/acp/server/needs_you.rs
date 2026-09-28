@@ -1,5 +1,6 @@
 //! Session activity over ACP: which sessions have a turn in flight and which are waiting on the
-//! person (`ask_user` items), and closing an item with the person's answer or a dismissal.
+//! person (`ask_user` items), and closing an item with the person's answer or a dismissal — or,
+//! when the person writes a chat message instead, as superseded by it (Q-298).
 
 use std::collections::HashMap;
 
@@ -11,6 +12,7 @@ use goose_sdk_types::custom_requests::{
 use tracing::warn;
 
 use super::{GooseAcpAgent, ResultExt};
+use crate::conversation::message::Message;
 use crate::execution::manager::AgentManager;
 use crate::needs_you::{self, NeedsYouItem, NeedsYouStatus, Resolution};
 use crate::session::{SessionManager, SessionType};
@@ -30,6 +32,31 @@ async fn resolve_then_tell_the_loop(
     let item = needs_you::resolve(session_manager, session_id, item_id, resolution).await?;
     loop_resolved(session_id, item_id);
     Ok(item)
+}
+
+/// Q-298: the person's own chat message arrived while this chat had open questions. They close as
+/// superseded by it, the model's note is stored BEFORE the message (agent-only: the person sees
+/// their words unchanged, the model reads the note and their message as one turn, since
+/// consecutive user messages merge), and only then is the loop told — the same order
+/// `resolve_then_tell_the_loop` keeps. Returns the superseded items (empty = none was open).
+async fn supersede_then_tell_the_loop(
+    session_manager: &SessionManager,
+    session_id: &str,
+    message_text: &str,
+    loop_resolved: impl Fn(&str, &str),
+) -> anyhow::Result<Vec<NeedsYouItem>> {
+    let superseded = needs_you::supersede_open(session_manager, session_id, message_text).await?;
+    if superseded.is_empty() {
+        return Ok(superseded);
+    }
+    let note = Message::user()
+        .with_text(needs_you::superseded_note(&superseded, message_text))
+        .with_visibility(false, true);
+    session_manager.add_message(session_id, &note).await?;
+    for item in &superseded {
+        loop_resolved(session_id, &item.id);
+    }
+    Ok(superseded)
 }
 
 fn dto(
@@ -52,8 +79,10 @@ fn dto(
             NeedsYouStatus::Open => NeedsYouStatusDto::Open,
             NeedsYouStatus::Answered => NeedsYouStatusDto::Answered,
             NeedsYouStatus::Dismissed => NeedsYouStatusDto::Dismissed,
+            NeedsYouStatus::Superseded => NeedsYouStatusDto::Superseded,
         },
         answer: item.answer,
+        superseded_by: item.superseded_by,
     }
 }
 
@@ -190,6 +219,28 @@ impl GooseAcpAgent {
         })
     }
 
+    /// Called by `on_prompt` for the person's own plain message (not a loop tick, not a slash
+    /// command) just before the reply stores it. A failed write is logged as an error and the
+    /// person's message still goes to the model: when the needs-you store could not be written the
+    /// questions stay open and the card stays up where the person sees it; when only the note
+    /// could not be stored, the questions are closed and the model reads the message without it.
+    pub(super) async fn supersede_open_questions(&self, session_id: &str, message_text: &str) {
+        if let Err(error) = supersede_then_tell_the_loop(
+            &self.session_manager,
+            session_id,
+            message_text,
+            crate::session_loops::seam::needs_you_resolved,
+        )
+        .await
+        {
+            tracing::error!(
+                session_id,
+                %error,
+                "the person's message could not close this chat's open questions as superseded"
+            );
+        }
+    }
+
     pub(super) async fn on_resolve_needs_you(
         &self,
         req: ResolveNeedsYouRequest,
@@ -315,6 +366,108 @@ mod tests {
         assert_eq!(
             seen.into_inner().unwrap(),
             vec![(session_id, item_id, NeedsYouStatus::Dismissed)]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn needs_you_a_message_supersedes_the_open_question_then_tells_the_loop() {
+        let (_dir, manager, session_id, item_id) = a_chat_with_a_question().await;
+        let seen = Mutex::new(Vec::new());
+        let wrote = "Semicolons — and stop after the next file";
+        let superseded = supersede_then_tell_the_loop(&manager, &session_id, wrote, |s, i| {
+            told(&manager, &seen, s, i)
+        })
+        .await
+        .unwrap();
+        assert_eq!(superseded.len(), 1);
+        assert_eq!(superseded[0].status, NeedsYouStatus::Superseded);
+        assert_eq!(superseded[0].superseded_by.as_deref(), Some(wrote));
+        assert_eq!(
+            seen.into_inner().unwrap(),
+            vec![(session_id.clone(), item_id, NeedsYouStatus::Superseded)]
+        );
+        assert!(needs_you::open_items(&manager).await.unwrap().is_empty());
+
+        let messages = manager
+            .get_session(&session_id, true)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap()
+            .messages()
+            .to_vec();
+        let note = messages.last().unwrap();
+        assert!(!note.is_user_visible() && note.is_agent_visible());
+        assert_eq!(
+            note.as_concat_text(),
+            "Your question \"Which CSV delimiter does the owner want?\" was still open on the \
+             person's card when they sent the message below instead of answering there. It is \
+             now closed as superseded by that message: not answered from the card, and not \
+             dismissed. Their message: \"Semicolons — and stop after the next file\"\n\
+             Read their words: if they settle it, go on with that; if they do not and you still \
+             cannot proceed without an answer, ask again with ask_user."
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn needs_you_a_message_with_nothing_open_changes_nothing() {
+        let (_dir, manager, session_id, item_id) = a_chat_with_a_question().await;
+        // The card closes its own item before it sends the answer as a message.
+        needs_you::resolve(
+            &manager,
+            &session_id,
+            &item_id,
+            Resolution::Answered("A comma".into()),
+        )
+        .await
+        .unwrap();
+        let seen = Mutex::new(Vec::new());
+        let superseded = supersede_then_tell_the_loop(
+            &manager,
+            &session_id,
+            "Answer to your question \"Which CSV delimiter does the owner want?\": A comma",
+            |s, i| told(&manager, &seen, s, i),
+        )
+        .await
+        .unwrap();
+        assert!(superseded.is_empty());
+        assert!(seen.into_inner().unwrap().is_empty());
+        let session = manager.get_session(&session_id, true).await.unwrap();
+        assert!(session.conversation.unwrap().messages().is_empty());
+        let item = NeedsYouState::from_extension_data(&session.extension_data)
+            .unwrap()
+            .items
+            .remove(0);
+        assert_eq!(item.status, NeedsYouStatus::Answered);
+        assert_eq!(item.superseded_by, None);
+    }
+
+    #[test]
+    fn needs_you_the_superseded_note_names_every_question_and_an_empty_message() {
+        let item = |question: &str| NeedsYouItem {
+            id: "ny_1".into(),
+            question: question.into(),
+            why: "w".into(),
+            recommended_answer: "r".into(),
+            options: vec![],
+            created_at: chrono::Utc::now(),
+            status: NeedsYouStatus::Superseded,
+            answer: None,
+            superseded_by: Some(String::new()),
+            resolved_at: None,
+        };
+        let note = needs_you::superseded_note(&[item("Comma?"), item("Which folder?")], "  ");
+        assert!(
+            note.starts_with(
+                "Your questions \"Comma?\" and \"Which folder?\" were still open on the person's \
+                 card"
+            ),
+            "{note}"
+        );
+        assert!(note.contains("They are now closed as superseded"), "{note}");
+        assert!(
+            note.contains("Their message has no text, only attachments."),
+            "{note}"
         );
     }
 

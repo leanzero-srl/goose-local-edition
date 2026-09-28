@@ -131,7 +131,9 @@ Always fill `recommended_answer` with what you would choose, and `why` with what
 answer unblocks. Add `options` when the answer is one of a few choices.
 Do not ask for anything you can find out yourself by reading files, running commands
 or searching. Ask one question per call, and only when you cannot sensibly proceed.
-Calling `ask_user` ends your turn. The person's answer arrives as their next message.
+Calling `ask_user` ends your turn. If the person answers on the card, their next
+message says it is the answer to your question; if they write to you instead, the
+question closes as superseded and you are told so, with their message quoted.
 
 ## orchestrator
 

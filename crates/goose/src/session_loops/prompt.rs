@@ -28,8 +28,14 @@ use super::rules::{
     rename_all_fields = "camelCase"
 )]
 pub enum AskedResolution {
-    Answered { answer: String },
+    Answered {
+        answer: String,
+    },
     Dismissed,
+    /// The person wrote a message instead of answering (Q-298), quoted from the item.
+    Superseded {
+        message: String,
+    },
     Open,
 }
 
@@ -237,6 +243,9 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
                     format!("they answered: \"{answer}\"")
                 }
                 Some(AskedResolution::Dismissed) => "they dismissed it".to_string(),
+                Some(AskedResolution::Superseded { message }) => {
+                    format!("they did not answer it and wrote instead: \"{message}\"")
+                }
                 Some(AskedResolution::Open) | None => "it is still open".to_string(),
             };
             lines.push(format!(

@@ -930,6 +930,10 @@ impl Runner {
                             None => AskedResolution::Open,
                         },
                         NeedsYouStatus::Dismissed => AskedResolution::Dismissed,
+                        NeedsYouStatus::Superseded => match item.superseded_by {
+                            Some(message) => AskedResolution::Superseded { message },
+                            None => AskedResolution::Open,
+                        },
                         NeedsYouStatus::Open => AskedResolution::Open,
                     },
                     None => AskedResolution::Open,
@@ -1769,7 +1773,9 @@ impl Runner {
                     _ => return Err(Skip::Idle),
                 };
                 match status {
-                    NeedsYouStatus::Answered => {
+                    // The person's message runs as their turn either way: the card's answer, or
+                    // the message that superseded the question (Q-298).
+                    NeedsYouStatus::Answered | NeedsYouStatus::Superseded => {
                         rec.status_reason = Some(LoopStatusReason::AnswerRunning { n });
                     }
                     NeedsYouStatus::Dismissed => {

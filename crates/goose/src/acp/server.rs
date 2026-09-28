@@ -2988,6 +2988,15 @@ impl GooseAcpAgent {
             }
         }
 
+        // Q-298: the person wrote instead of answering, so their message supersedes the chat's
+        // open questions. A loop tick is not the person, and a slash command is not a reply.
+        if tick.is_none()
+            && crate::agents::execute_commands::parse_slash_command(&message_text).is_none()
+        {
+            self.supersede_open_questions(&session_id, &message_text)
+                .await;
+        }
+
         let session_config = SessionConfig {
             id: session_id.clone(),
             schedule_id: None,

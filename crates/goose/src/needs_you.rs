@@ -8,6 +8,14 @@
 //! the answer arrives later as the person's next message. Nothing waits in memory, so there is no
 //! timeout to expire, no turn held open across a restart, and the answer is an ordinary user message
 //! in the conversation — the one place goose already never loses.
+//!
+//! THE PERSON MAY WRITE INSTEAD OF ANSWERING (Q-298). Their next chat message then closes every
+//! open question of that chat as SUPERSEDED — its own status, never folded into "answered" or
+//! "dismissed" — with the message recorded on the question, and the model is told so in words that
+//! quote it. Keeping the question open across the message was the bug: the model's next turn ran
+//! on while five surfaces still said "Needs you" for as long as the chat stood. Reporting it as a
+//! dismissal is the other known failure (anthropics/claude-code#88850: the model reads a refusal the
+//! person never made). Superseded names what happened and decides nothing for them.
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -27,6 +35,8 @@ pub enum NeedsYouStatus {
     Open,
     Answered,
     Dismissed,
+    /// The person sent a chat message while the question was open instead of answering it.
+    Superseded,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,6 +51,10 @@ pub struct NeedsYouItem {
     pub status: NeedsYouStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// The text of the message that superseded the question, verbatim (empty when it carried only
+    /// attachments). Set exactly when `status` is `Superseded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<DateTime<Utc>>,
 }
@@ -128,6 +142,7 @@ pub async fn raise(
         created_at: Utc::now(),
         status: NeedsYouStatus::Open,
         answer: None,
+        superseded_by: None,
         resolved_at: None,
     };
     session_manager
@@ -172,6 +187,62 @@ pub async fn resolve(
             Ok((state, resolved))
         })
         .await
+}
+
+/// The person's chat message arrived while questions were open: every open item of the session is
+/// closed as superseded by it, in one transaction, and returned oldest first (empty = none was
+/// open). Called for the person's own plain message only — never a loop tick, a slash command, or
+/// the card's answer (the card closes its item before it sends).
+pub async fn supersede_open(
+    session_manager: &SessionManager,
+    session_id: &str,
+    message_text: &str,
+) -> Result<Vec<NeedsYouItem>> {
+    session_manager
+        .update_extension_state::<NeedsYouState, _>(session_id, |state| {
+            let mut state = state.unwrap_or_default();
+            let now = Utc::now();
+            let mut superseded = Vec::new();
+            for item in state
+                .items
+                .iter_mut()
+                .filter(|item| item.status == NeedsYouStatus::Open)
+            {
+                item.status = NeedsYouStatus::Superseded;
+                item.superseded_by = Some(message_text.to_string());
+                item.resolved_at = Some(now);
+                superseded.push(item.clone());
+            }
+            superseded.sort_by_key(|item| item.created_at);
+            Ok((state, superseded))
+        })
+        .await
+}
+
+/// What the model reads just before the person's message when that message superseded its open
+/// questions: which questions, that they were neither answered nor dismissed, and the message
+/// quoted — so it decides from the person's words, not from a status it has to guess.
+pub fn superseded_note(items: &[NeedsYouItem], message_text: &str) -> String {
+    let questions = items
+        .iter()
+        .map(|item| format!("\"{}\"", item.question))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let (subject, was, they_are) = match items.len() {
+        1 => ("Your question", "was", "It is"),
+        _ => ("Your questions", "were", "They are"),
+    };
+    let quoted = match message_text.trim() {
+        "" => "Their message has no text, only attachments.".to_string(),
+        text => format!("Their message: \"{text}\""),
+    };
+    format!(
+        "{subject} {questions} {was} still open on the person's card when they sent the message \
+         below instead of answering there. {they_are} now closed as superseded by that message: \
+         not answered from the card, and not dismissed. {quoted}\n\
+         Read their words: if they settle it, go on with that; if they do not and you still cannot \
+         proceed without an answer, ask again with ask_user."
+    )
 }
 
 /// Every open item in every session, oldest first.
