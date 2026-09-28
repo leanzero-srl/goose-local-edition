@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Открыть «Конфиденциальность и безопасность»"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "каждые {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "одна за другой"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "каждые {n} ч"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "каждые {n} мин"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "каждые {n} с"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose решает, когда"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Изменить"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "Запрос не выполнен: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "К вопросу"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Пауза"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose отказал: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Возобновить"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Возобновить — запустить итерацию сейчас"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Запустить следующую итерацию"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Показать в чате"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "Диалога циклов в этой сборке пока нет."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Запустить цикл"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Запустить новый цикл"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Остановить проверку"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Остановить цикл"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Итерация уже выполняется"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Запустить итерацию сейчас"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Цикл снова и снова выполняет здесь цель — по расписанию или когда решит goose. Запустите его кнопкой «Цикл», командой {command} или кнопкой «Зациклить» у сообщения."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "В этом чате нет цикла."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Цель достигнута — `{check}` прошла после итерации {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "Выполнено итераций: {k}, как вы задали"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose сообщил, что цель достигнута, после итерации {n} — проверка не была задана"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Остановлен вами после итерации {n}"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Проверка: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Без проверки — цикл завершится, когда goose сообщит о готовности или вы его остановите"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Открыть"
+  },
+  "loops.header.since": {
+    "defaultMessage": "с {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "Файл состояния: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "ещё не записан"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "не удалось прочитать: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "итерация {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "итерация {n} из {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "токенов: {tokens}"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Скопировано"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Копировать промпт"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Скрыть промпт"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Показать промпт"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Итерация цикла {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Итерация цикла {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Остановлено в {time} ради вашего сообщения в «{chat}» — цикл продолжится после вашего хода."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Зациклить"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Выполнять это сообщение снова и снова как цикл"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Ваш ответ на итерацию {n} выполняется — следующая итерация начнётся после него"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "Итерация {n} спросила вас: «{question}»"
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "Итерация {n} указала задержку, которую goose не может прочитать: «{given}»."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Проверка `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Пора итерации {next} — она начнётся, когда goose закончит проверку итерации {n}"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Пора итерации {next} — она начнётся, когда ответ, который вы здесь остановили, завершится"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Пора итерации {next} — она начнётся после вашего сообщения здесь"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Пора итерации {next} — она начнётся, когда закончится ваш ход в «{chat}»"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Пора итерации {next} — этот чат не удалось открыть в окне: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Пора итерации {next} — goose отклонил её сообщение: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Пора итерации {next} — {node} отвечает вам в «{chat}»; после этого итерация загрузит {target}"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Этот цикл выполняется в другом окне goose."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Следующая итерация {time} · через {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "Итерация {n} не сказала, когда вернуться."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Итерация {n} · начата {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Итерация {n} · начата {time} · {elapsed} · на {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Следующая итерация {time} — goose выбрал {interval}: «{reason}»"
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Следующая итерация {time} — goose выбрал {interval} и не назвал причину"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "Следующая итерация начинается сейчас"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Ни одна итерация ещё не завершилась."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Сейчас"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "Не удалось прочитать состояние цикла: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Итерации"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "Не удалось прочитать запись цикла: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Заблокирован — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Поставлен вами на паузу после итерации {n}."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Поставлен вами на паузу до первой итерации."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "Не удалось запустить проверку: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,one{goose был закрыт; была запланирована # итерация.} few{goose был закрыт; были запланированы # итерации.} many{goose был закрыт; было запланировано # итераций.} other{goose был закрыт; было запланировано # итерации.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,one{goose был закрыт в {time}; была запланирована # итерация.} few{goose был закрыт в {time}; были запланированы # итерации.} many{goose был закрыт в {time}; было запланировано # итераций.} other{goose был закрыт в {time}; было запланировано # итерации.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "На паузе — итерация {n} завершается в другом окне"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "Итерации {prev} и {n} завершились без отчёта цикла"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "Итерации {prev} и {n} завершились одинаковой ошибкой: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Застрял — итерация {n} назвала тот же следующий шаг, что и итерация {prev}, и ничего не записала и не изменила вне файла состояния"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Вы остановили итерацию {n}."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Следующая итерация — после того, как goose проверит итерацию {n}"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Следующая итерация, когда {node} закончит вам отвечать"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Следующая итерация после вашего хода"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Проверка · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Не удалось начать следующую итерацию"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "Цикл в другом окне"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Цикл завершён"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "Циклу нужен ваш ответ"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Следующая итерация {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Показать цикл этого чата — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Цикл на паузе"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Итерация {n} выполняется · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "Следующая итерация начинается сейчас"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Цикл не читается"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "Цикл ждёт вас"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Закрыть панель цикла"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Изменения {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Цикл"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Цикл и изменения"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Проверка"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "В другом окне"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Завершён"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Нужен ваш ответ"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "На паузе"
+  },
+  "loops.status.running": {
+    "defaultMessage": "Выполняется"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "Ожидает"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Ждёт вашего хода"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Ждёт вас"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "Он завершится до первой итерации."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "После итерации {n} больше не будет итераций."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Продолжить выполнение"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "Итерация {n} остановится сейчас и сохранит сделанное."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Остановить цикл?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Ваш ответ: «{answer}»"
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Спросила вас: «{question}»"
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "Не удалось запустить проверку {command}: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "Проверка {command} завершилась с кодом {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "Проверка {command} завершилась с кодом {code} — «{line}»"
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "Проверка {command} завершилась без кода выхода"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "Проверка {command} пройдена"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Проверка {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Спросила вас"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Заблокирована"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Готово"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Ошибка"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Цель достигнута"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Без отчёта"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Прогресс"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Застряла"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Остановлена вами"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Уступила ход"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Скрыть итерацию {n}"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Показать итерацию {n}"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Ошибка: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Записано или изменено goose"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Последние слова: «{line}»"
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Далее: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "За эту итерацию goose не записал и не изменил ни одного файла."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Завершилась без отчёта цикла"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "на {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Открыть журнал"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · ничего не записано и не изменено вне файла состояния · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "Сообщения этой итерации удалены при редактировании"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose выбрал {interval}: «{reason}»"
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose выбрал {interval} и не назвал причину"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Вы остановили эту итерацию."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "токенов: {tokens}"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Уступила ход вам в «{chat}»"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Не удалось отменить."
   },

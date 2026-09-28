@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Buka Privasi & Keamanan"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "setiap {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "berturut-turut"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "setiap {n} jam"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "setiap {n} mnt"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "setiap {n} dtk"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose yang menentukan kapan"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Edit"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "Permintaan gagal: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Buka pertanyaan"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Jeda"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose menolak: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Lanjutkan"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Lanjutkan — jalankan satu putaran sekarang"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Jalankan putaran berikutnya"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Tampilkan di chat"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "Dialog loop belum ada di build ini."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Mulai loop"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Mulai loop baru"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Hentikan pemeriksaan"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Hentikan loop"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Satu putaran sudah berjalan"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Jalankan satu putaran sekarang"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Loop menjalankan satu tujuan di sini berulang kali, sesuai jadwal atau saat goose memutuskan. Mulai loop dari tombol Loop, dengan {command}, atau dengan \"Jadikan loop\" pada sebuah pesan."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "Tidak ada loop di chat ini."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Tujuan tercapai — `{check}` lolos setelah putaran {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "Mencapai {k} putaran, sesuai pengaturan Anda"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose melaporkan tujuan selesai setelah putaran {n} — tidak ada pemeriksaan yang ditetapkan"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Dihentikan oleh Anda setelah putaran {n}"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Pemeriksaan: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Tanpa pemeriksaan — loop berakhir saat goose melaporkan selesai atau Anda menghentikannya"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Buka"
+  },
+  "loops.header.since": {
+    "defaultMessage": "sejak {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "File status: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "belum ditulis"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "tidak dapat dibaca: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "putaran {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "putaran {n} dari {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Disalin"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Salin prompt"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Sembunyikan prompt"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Tampilkan prompt"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Putaran loop {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Putaran loop {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Berhenti pada {time} untuk pesan Anda di \"{chat}\" — loop berlanjut setelah giliran Anda."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Jadikan loop"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Jalankan pesan ini berulang kali sebagai loop"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Jawaban Anda untuk putaran {n} sedang berjalan — putaran berikutnya dimulai setelahnya"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "Putaran {n} bertanya kepada Anda: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "Putaran {n} menyebut jeda yang tidak dapat dibaca goose: \"{given}\"."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Memeriksa `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Putaran {next} sudah waktunya — dimulai saat pemeriksaan goose atas putaran {n} selesai"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Putaran {next} sudah waktunya — dimulai saat jawaban yang Anda hentikan di sini sudah tuntas"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Putaran {next} sudah waktunya — dimulai setelah pesan Anda di sini"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Putaran {next} sudah waktunya — dimulai saat giliran Anda di \"{chat}\" selesai"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Putaran {next} sudah waktunya — chat ini tidak dapat dibuka di jendela: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Putaran {next} sudah waktunya — goose menolak pesannya: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Putaran {next} sudah waktunya — {node} sedang menjawab Anda di \"{chat}\"; putaran memuat {target} setelahnya"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Loop ini berjalan di jendela goose lain."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Putaran berikutnya {time} · dalam {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "Putaran {n} tidak menyebutkan kapan harus kembali."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Putaran {n} · dimulai {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Putaran {n} · dimulai {time} · {elapsed} · di {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Putaran berikutnya {time} — goose memilih {interval}: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Putaran berikutnya {time} — goose memilih {interval} tanpa memberi alasan"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "Putaran berikutnya dimulai sekarang"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Belum ada putaran yang selesai."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Sekarang"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "Status loop tidak dapat dibaca: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Putaran"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "Catatan loop tidak dapat dibaca: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Terhambat — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Dijeda oleh Anda setelah putaran {n}."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Dijeda oleh Anda sebelum putaran pertama."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "Pemeriksaan tidak dapat dijalankan: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,other{goose ditutup; # putaran sudah waktunya.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,other{goose ditutup pada {time}; # putaran sudah waktunya.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "Dijeda — putaran {n} sedang diselesaikan di jendela lain"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "Putaran {prev} dan {n} berakhir tanpa laporan loop"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "Putaran {prev} dan {n} gagal dengan cara yang sama: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Macet — putaran {n} menyebut langkah berikutnya yang sama dengan putaran {prev} dan tidak menulis atau mengedit apa pun di luar file status"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Anda menghentikan putaran {n}."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Putaran berikutnya setelah pemeriksaan goose atas putaran {n}"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Putaran berikutnya setelah {node} selesai menjawab Anda"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Putaran berikutnya setelah giliran Anda"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Memeriksa · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Putaran berikutnya tidak dapat dimulai"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "Berulang di jendela lain"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Loop berakhir"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "Loop membutuhkan Anda"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Putaran berikutnya {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Tampilkan loop chat ini — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Loop dijeda"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Putaran {n} berjalan · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "Putaran berikutnya dimulai sekarang"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Loop tidak terbaca"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "Loop menunggu Anda"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Tutup panel loop"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Perubahan {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Loop"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Loop dan perubahan"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Memeriksa"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "Di jendela lain"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Berakhir"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Membutuhkan Anda"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "Dijeda"
+  },
+  "loops.status.running": {
+    "defaultMessage": "Berjalan"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "Menunggu"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Menunggu giliran Anda"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Menunggu Anda"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "Loop berakhir sebelum putaran pertamanya."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "Tidak ada putaran yang berjalan setelah putaran {n}."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Tetap jalankan"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "Putaran {n} berhenti sekarang dan menyimpan apa yang sudah dikerjakannya."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Hentikan loop?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Anda menjawab: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Bertanya kepada Anda: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "Pemeriksaan {command} tidak dapat dijalankan: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "Pemeriksaan {command} keluar dengan {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "Pemeriksaan {command} keluar dengan {code} — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "Pemeriksaan {command} berakhir tanpa kode keluar"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "Pemeriksaan {command} lolos"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Memeriksa {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Bertanya kepada Anda"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Terhambat"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Selesai"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Tujuan tercapai"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Tanpa laporan"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Kemajuan"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Macet"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Dihentikan oleh Anda"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Memberi giliran"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Sembunyikan putaran {n}"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Tampilkan putaran {n}"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Gagal: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Ditulis atau diedit oleh goose"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Kata-kata terakhirnya: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Berikutnya: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose tidak menulis atau mengedit file apa pun di putaran ini."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Berakhir tanpa laporan loop"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "di {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Buka log"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · tidak ada penulisan atau pengeditan di luar file status · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "Pesan-pesan putaran ini dihapus oleh sebuah pengeditan"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose memilih {interval}: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose memilih {interval} tanpa memberi alasan"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Anda menghentikan putaran ini."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Memberi giliran kepada Anda di \"{chat}\""
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Gagal membatalkan."
   },

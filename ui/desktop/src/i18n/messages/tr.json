@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Gizlilik ve Güvenlik ayarlarını aç"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "her {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "art arda"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "her {n} sa"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "her {n} dk"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "her {n} sn"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "ne zaman olacağına goose karar verir"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Düzenle"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "İstek başarısız oldu: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Soruya git"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Duraklat"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose reddetti: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Devam et"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Devam et — şimdi bir tur çalıştır"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Sonraki turu çalıştır"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Sohbette göster"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "Döngü penceresi bu sürümde henüz yok."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Döngü başlat"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Yeni döngü başlat"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Kontrolü durdur"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Döngüyü durdur"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Zaten bir tur çalışıyor"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Şimdi bir tur çalıştır"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Döngü, bir hedefi burada bir programa göre ya da goose karar verdiğinde tekrar tekrar çalıştırır. Döngü düğmesinden, {command} ile ya da bir mesajdaki \"Döngüye al\" ile bir tane başlat."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "Bu sohbette döngü yok."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Hedefe ulaşıldı — `{check}` Tur {n} sonrasında geçti"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "Belirlediğin gibi {k} tura ulaşıldı"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose hedefin Tur {n} sonrasında tamamlandığını bildirdi — kontrol belirlenmemişti"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Tur {n} sonrasında senin tarafından durduruldu"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Kontrol: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Kontrol yok — döngü, goose bittiğini bildirdiğinde ya da sen durdurduğunda sona erer"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Aç"
+  },
+  "loops.header.since": {
+    "defaultMessage": "başlangıç: {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "Durum dosyası: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "henüz yazılmadı"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "okunamadı: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "Tur {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "Tur {n}/{k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Kopyalandı"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "İstemi kopyala"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "İstemi gizle"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "İstemi göster"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Döngü turu {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Döngü turu {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "\"{chat}\" sohbetindeki mesajın için {time} saatinde durdu — döngü senin sıran bitince devam eder."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Döngüye al"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Bu mesajı bir döngü olarak tekrar tekrar çalıştır"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Tur {n} için verdiğin yanıt çalışıyor — sonraki tur ondan sonra başlar"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "Tur {n} sana sordu: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "Tur {n}, goose tarafından okunamayan bir bekleme süresi belirtti: \"{given}\"."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "`{check}` kontrol ediliyor · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Tur {next} zamanı geldi — goose Tur {n} kontrolünü bitirince başlar"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Tur {next} zamanı geldi — burada durdurduğun yanıt tamamlanınca başlar"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Tur {next} zamanı geldi — buradaki mesajından sonra başlar"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Tur {next} zamanı geldi — \"{chat}\" sohbetindeki sıran bitince başlar"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Tur {next} zamanı geldi — bu sohbet pencerede açılamadı: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Tur {next} zamanı geldi — goose mesajını reddetti: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Tur {next} zamanı geldi — {node} \"{chat}\" sohbetinde sana yanıt veriyor; tur ardından {target} yükleyecek"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Bu döngü başka bir goose penceresinde çalışıyor."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Sonraki tur {time} · {rel} içinde"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "Tur {n} ne zaman döneceğini söylemedi."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Tur {n} · başladı {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Tur {n} · başladı {time} · {elapsed} · {node} üzerinde"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Sonraki tur {time} — goose {interval} seçti: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Sonraki tur {time} — goose {interval} seçti ve bir neden belirtmedi"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "Sonraki tur şimdi başlıyor"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Henüz hiçbir tur bitmedi."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Şimdi"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "Döngünün durumu okunamadı: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Turlar"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "Döngü kaydı okunamadı: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Engellendi — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Tur {n} sonrasında senin tarafından duraklatıldı."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "İlk turdan önce senin tarafından duraklatıldı."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "Kontrol çalıştırılamadı: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,other{goose kapalıydı; # turun zamanı gelmişti.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,other{goose {time} saatinde kapandı; # turun zamanı gelmişti.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "Duraklatıldı — Tur {n} diğer pencerede bitiyor"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "Tur {prev} ve Tur {n} döngü raporu olmadan bitti"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "Tur {prev} ve Tur {n} aynı şekilde başarısız oldu: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Takıldı — Tur {n}, Tur {prev} ile aynı sonraki adımı belirtti ve durum dosyası dışında hiçbir şey yazmadı ya da düzenlemedi"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Tur {n} senin tarafından durduruldu."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Sonraki tur, goose Tur {n} kontrolünü bitirince"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Sonraki tur, {node} sana yanıt vermeyi bitirince"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Sonraki tur senin sırandan sonra"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Kontrol ediliyor · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Sonraki tur başlatılamadı"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "Başka bir pencerede döngüde"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Döngü bitti"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "Döngünün sana ihtiyacı var"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Sonraki tur {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Bu sohbetin döngüsünü göster — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Döngü duraklatıldı"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Tur {n} çalışıyor · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "Sonraki tur şimdi başlıyor"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Döngü okunamıyor"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "Döngü seni bekliyor"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Döngü panelini kapat"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Değişiklikler {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Döngü"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Döngü ve değişiklikler"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Kontrol ediliyor"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "Başka bir pencerede"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Bitti"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Sana ihtiyaç var"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "Duraklatıldı"
+  },
+  "loops.status.running": {
+    "defaultMessage": "Çalışıyor"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "Bekliyor"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Sıranı bekliyor"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Seni bekliyor"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "İlk turundan önce sona erer."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "Tur {n} sonrasında başka tur çalışmaz."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Çalışmaya devam et"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "Tur {n} şimdi durur ve yaptıklarını korur."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Döngü durdurulsun mu?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Yanıtın: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Sana sordu: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "{command} kontrolü çalıştırılamadı: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "{command} kontrolü {code} koduyla çıktı"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "{command} kontrolü {code} koduyla çıktı — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "{command} kontrolü çıkış kodu olmadan bitti"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "{command} kontrolü geçti"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "{command} kontrol ediliyor…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Sana sordu"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Engellendi"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Tamamlandı"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Hedefe ulaşıldı"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Rapor yok"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "İlerleme"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Takıldı"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Sen durdurdun"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Sırayı bıraktı"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "{n}. turu gizle"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "{n}. turu göster"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Başarısız: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "goose tarafından yazılan veya düzenlenen"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Son sözleri: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Sonraki: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose bu turda hiçbir dosya yazmadı ya da düzenlemedi."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Döngü raporu olmadan bitti"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "{node} üzerinde"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Günlüğü aç"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · durum dosyası dışında yazma veya düzenleme yok · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "Bu turun mesajları bir düzenlemeyle kaldırıldı"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose {interval} seçti: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose {interval} seçti ve bir neden belirtmedi"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Bu turu sen durdurdun."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "\"{chat}\" sohbetindeki sırana yer açtı"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "İptal edilemedi."
   },

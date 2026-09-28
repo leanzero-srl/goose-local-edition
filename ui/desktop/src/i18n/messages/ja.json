@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "プライバシーとセキュリティを開く"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "{every}ごと"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "連続して"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "{n}時間ごと"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "{n}分ごと"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "{n}秒ごと"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose がタイミングを決定"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "編集"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "リクエストに失敗しました: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "質問へ移動"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "一時停止"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose が拒否しました: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "再開"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "再開 — 今すぐティックを1回実行"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "次のティックを実行"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "チャットで表示"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "このビルドにはまだループのダイアログがありません。"
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "ループを開始"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "新しいループを開始"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "チェックを停止"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "ループを停止"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "ティックはすでに実行中です"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "今すぐティックを実行"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "ループは、スケジュールに従って、または goose の判断で、ここで目標を繰り返し実行します。ループボタン、{command}、またはメッセージの「ループする」から開始できます。"
+  },
+  "loops.empty.title": {
+    "defaultMessage": "このチャットにループはありません。"
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "目標達成 — ティック {n} の後に `{check}` が成功しました"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "設定どおり {k} ティックに到達しました"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose がティック {n} の後に目標完了を報告しました — チェックは設定されていませんでした"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "ティック {n} の後にあなたが停止しました"
+  },
+  "loops.header.check": {
+    "defaultMessage": "チェック: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "チェックなし — goose が完了を報告するか、あなたが停止するとループは終了します"
+  },
+  "loops.header.open": {
+    "defaultMessage": "開く"
+  },
+  "loops.header.since": {
+    "defaultMessage": "{time} から"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "状態ファイル: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "まだ書き込まれていません"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "読み取れませんでした: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "ティック {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "ティック {n}/{k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} トークン"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "コピーしました"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "プロンプトをコピー"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "プロンプトを隠す"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "プロンプトを表示"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "ループのティック {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "ループのティック {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "「{chat}」でのあなたのメッセージのため {time} に停止しました — あなたのターンの後にループは続きます。"
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "ループする"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "このメッセージをループとして繰り返し実行"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "ティック {n} へのあなたの回答を実行中です — 次のティックはその後に始まります"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "ティック {n} からの質問:「{question}」"
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "ティック {n} が goose の読み取れない待ち時間を指定しました:「{given}」。"
+  },
+  "loops.now.checking": {
+    "defaultMessage": "`{check}` をチェック中 · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "ティック {next} の予定時刻です — goose によるティック {n} のチェックが終わると始まります"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "ティック {next} の予定時刻です — ここで停止した回答が落ち着くと始まります"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "ティック {next} の予定時刻です — ここでのあなたのメッセージの後に始まります"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "ティック {next} の予定時刻です — 「{chat}」でのあなたのターンが終わると始まります"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "ティック {next} の予定時刻です — このチャットをウィンドウで開けませんでした: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "ティック {next} の予定時刻です — goose がそのメッセージを拒否しました: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "ティック {next} の予定時刻です — {node} が「{chat}」であなたに回答中です。その後ティックが {target} を読み込みます"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "このループは別の goose ウィンドウで実行中です。"
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "次のティック {time} · {rel}後"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "ティック {n} はいつ戻るかを示しませんでした。"
+  },
+  "loops.now.running": {
+    "defaultMessage": "ティック {n} · {time} 開始 · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "ティック {n} · {time} 開始 · {elapsed} · {node} で実行"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "次のティック {time} — goose が {interval} を選択:「{reason}」"
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "次のティック {time} — goose が {interval} を選択し、理由は示しませんでした"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "次のティックを今すぐ開始します"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "終了したティックはまだありません。"
+  },
+  "loops.panel.now": {
+    "defaultMessage": "現在"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "ループの状態を読み取れませんでした: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "ティック"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "ループの記録を読み取れませんでした: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "ブロック中 — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "ティック {n} の後にあなたが一時停止しました。"
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "最初のティックの前にあなたが一時停止しました。"
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "チェックを実行できませんでした: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,other{goose が閉じられていました。# 回のティックが予定されていました。}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,other{goose は {time} に閉じられました。# 回のティックが予定されていました。}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "一時停止中 — ティック {n} は別のウィンドウで完了処理中です"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "ティック {prev} と {n} がループの報告なしで終了しました"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "ティック {prev} と {n} が同じ理由で失敗しました: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "停滞 — ティック {n} がティック {prev} と同じ次のステップを示し、状態ファイル以外に何も書き込み・編集しませんでした"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "ティック {n} をあなたが停止しました。"
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "goose によるティック {n} のチェック後に次のティック"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "{node} があなたへの回答を終えた後に次のティック"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "あなたのターンの後に次のティック"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "チェック中 · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "次のティックを開始できませんでした"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "別のウィンドウでループ中"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "ループ終了"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "ループがあなたを待っています"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "次のティック {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "このチャットのループを表示 — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "ループ一時停止中"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "ティック {n} 実行中 · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "次のティックを今すぐ開始"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "ループを読み取れません"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "ループがあなたの対応待ちです"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "ループパネルを閉じる"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "変更 {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "ループ"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "ループと変更"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "チェック中"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "別のウィンドウ"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "終了"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "対応が必要"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "一時停止中"
+  },
+  "loops.status.running": {
+    "defaultMessage": "実行中"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "待機中"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "あなたのターン待ち"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "あなたを待っています"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "最初のティックの前に終了します。"
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "ティック {n} の後はティックを実行しません。"
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "実行を続ける"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "ティック {n} は今すぐ停止し、それまでの作業は保持されます。"
+  },
+  "loops.stop.title": {
+    "defaultMessage": "ループを停止しますか？"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "あなたの回答:「{answer}」"
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "あなたへの質問:「{question}」"
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "チェック {command} を実行できませんでした: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "チェック {command} が {code} で終了しました"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "チェック {command} が {code} で終了しました —「{line}」"
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "チェック {command} が終了コードなしで終了しました"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "チェック {command} に成功しました"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "{command} をチェック中…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "質問あり"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "ブロック"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "完了"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "失敗"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "目標達成"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "報告なし"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "進捗"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "停滞"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "あなたが停止"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "譲った"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "ティック {n} を隠す"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "ティック {n} を表示"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "失敗: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "goose が書き込み・編集したファイル"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "最後の言葉:「{line}」"
+  },
+  "loops.tick.next": {
+    "defaultMessage": "次: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "このティックで goose が書き込み・編集したファイルはありません。"
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "ループの報告なしで終了"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "{node} で実行"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "ログを開く"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · 状態ファイル以外の書き込み・編集なし · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "このティックのメッセージは編集によって削除されました"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose が {interval} を選択:「{reason}」"
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose が {interval} を選択し、理由は示しませんでした"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "このティックはあなたが停止しました。"
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} トークン"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "「{chat}」でのあなたのターンに譲りました"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "キャンセルできませんでした。"
   },

@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Mở Quyền riêng tư & Bảo mật"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "mỗi {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "liên tiếp"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "mỗi {n} giờ"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "mỗi {n} phút"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "mỗi {n} giây"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose tự quyết định khi nào"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Chỉnh sửa"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "Yêu cầu thất bại: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Đến câu hỏi"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Tạm dừng"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose từ chối: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Tiếp tục"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Tiếp tục — chạy một lượt ngay"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Chạy lượt tiếp theo"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Hiển thị trong cuộc trò chuyện"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "Hộp thoại vòng lặp chưa có trong bản dựng này."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Bắt đầu vòng lặp"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Bắt đầu vòng lặp mới"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Dừng kiểm tra"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Dừng vòng lặp"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Một lượt đang chạy"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Chạy một lượt ngay"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Vòng lặp chạy một mục tiêu ở đây nhiều lần, theo lịch hoặc khi goose quyết định. Bắt đầu một vòng lặp từ nút Vòng lặp, bằng {command}, hoặc bằng \"Lặp lại\" trên một tin nhắn."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "Không có vòng lặp nào trong cuộc trò chuyện này."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Đã đạt mục tiêu — `{check}` đạt sau lượt {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "Đã đạt {k} lượt, như bạn đã đặt"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose báo cáo mục tiêu đã xong sau lượt {n} — không có bước kiểm tra nào được đặt"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Bạn đã dừng sau lượt {n}"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Kiểm tra: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Không có kiểm tra — vòng lặp kết thúc khi goose báo đã xong hoặc khi bạn dừng nó"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Mở"
+  },
+  "loops.header.since": {
+    "defaultMessage": "từ {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "Tệp trạng thái: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "chưa được ghi"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "không đọc được: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "lượt {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "lượt {n}/{k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Đã sao chép"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Sao chép prompt"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Ẩn prompt"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Hiện prompt"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Lượt lặp {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Lượt lặp {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Đã dừng lúc {time} để nhường tin nhắn của bạn trong \"{chat}\" — vòng lặp tiếp tục sau lượt của bạn."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Lặp lại"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Chạy tin nhắn này nhiều lần như một vòng lặp"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Câu trả lời của bạn cho lượt {n} đang chạy — lượt tiếp theo bắt đầu sau đó"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "Lượt {n} đã hỏi bạn: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "Lượt {n} đưa ra thời gian chờ mà goose không đọc được: \"{given}\"."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Đang kiểm tra `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Đã đến lượt {next} — lượt này bắt đầu khi goose kiểm tra xong lượt {n}"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Đã đến lượt {next} — lượt này bắt đầu khi câu trả lời bạn đã dừng ở đây hoàn tất"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Đã đến lượt {next} — lượt này bắt đầu sau tin nhắn của bạn ở đây"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Đã đến lượt {next} — lượt này bắt đầu khi lượt của bạn trong \"{chat}\" kết thúc"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Đã đến lượt {next} — không thể mở cuộc trò chuyện này trong cửa sổ: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Đã đến lượt {next} — goose từ chối tin nhắn của lượt này: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Đã đến lượt {next} — {node} đang trả lời bạn trong \"{chat}\"; sau đó lượt này sẽ tải {target}"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Vòng lặp này chạy trong một cửa sổ goose khác."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Lượt tiếp theo {time} · sau {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "Lượt {n} không nói khi nào quay lại."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Lượt {n} · bắt đầu {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Lượt {n} · bắt đầu {time} · {elapsed} · trên {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Lượt tiếp theo {time} — goose chọn {interval}: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Lượt tiếp theo {time} — goose chọn {interval} và không nêu lý do"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "Lượt tiếp theo bắt đầu ngay bây giờ"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Chưa có lượt nào kết thúc."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Hiện tại"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "Không đọc được trạng thái của vòng lặp: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Các lượt"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "Không đọc được bản ghi của vòng lặp: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Bị chặn — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Bạn đã tạm dừng sau lượt {n}."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Bạn đã tạm dừng trước lượt đầu tiên."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "Không thể chạy bước kiểm tra: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,other{goose đã bị đóng; # lượt đã đến hạn.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,other{goose đã bị đóng lúc {time}; # lượt đã đến hạn.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "Đã tạm dừng — lượt {n} đang hoàn tất trong cửa sổ kia"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "Lượt {prev} và {n} kết thúc mà không có báo cáo vòng lặp"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "Lượt {prev} và {n} thất bại theo cùng một cách: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Bị kẹt — lượt {n} nêu cùng bước tiếp theo như lượt {prev} và không ghi hay chỉnh sửa gì ngoài tệp trạng thái"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Bạn đã dừng lượt {n}."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Lượt tiếp theo sau khi goose kiểm tra lượt {n}"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Lượt tiếp theo sau khi {node} trả lời bạn xong"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Lượt tiếp theo sau lượt của bạn"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Đang kiểm tra · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Không thể bắt đầu lượt tiếp theo"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "Đang lặp trong cửa sổ khác"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Vòng lặp đã kết thúc"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "Vòng lặp cần bạn"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Lượt tiếp theo {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Hiển thị vòng lặp của cuộc trò chuyện này — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Vòng lặp đã tạm dừng"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Lượt {n} đang chạy · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "Lượt tiếp theo bắt đầu ngay bây giờ"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Không đọc được vòng lặp"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "Vòng lặp đang chờ bạn"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Đóng bảng vòng lặp"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Thay đổi {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Vòng lặp"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Vòng lặp và thay đổi"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Đang kiểm tra"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "Trong cửa sổ khác"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Đã kết thúc"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Cần bạn"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "Đã tạm dừng"
+  },
+  "loops.status.running": {
+    "defaultMessage": "Đang chạy"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "Đang chờ"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Đang chờ lượt của bạn"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Đang chờ bạn"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "Vòng lặp kết thúc trước lượt đầu tiên."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "Không có lượt nào chạy sau lượt {n}."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Tiếp tục chạy"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "Lượt {n} dừng ngay bây giờ và giữ lại những gì đã làm."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Dừng vòng lặp?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Bạn đã trả lời: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Đã hỏi bạn: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "Không thể chạy kiểm tra {command}: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "Kiểm tra {command} thoát với mã {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "Kiểm tra {command} thoát với mã {code} — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "Kiểm tra {command} kết thúc mà không có mã thoát"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "Kiểm tra {command} đạt"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Đang kiểm tra {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Đã hỏi bạn"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Bị chặn"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Xong"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Đạt mục tiêu"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Không có báo cáo"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Tiến triển"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Bị kẹt"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Bạn đã dừng"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Đã nhường"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Ẩn lượt {n}"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Hiện lượt {n}"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Thất bại: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Được goose ghi hoặc chỉnh sửa"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Những lời cuối của nó: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Tiếp theo: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose không ghi hay chỉnh sửa tệp nào trong lượt này."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Kết thúc mà không có báo cáo vòng lặp"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "trên {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Mở nhật ký"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · không ghi hay chỉnh sửa gì ngoài tệp trạng thái · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "Các tin nhắn của lượt này đã bị xóa bởi một lần chỉnh sửa"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose chọn {interval}: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose chọn {interval} và không nêu lý do"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Bạn đã dừng lượt này."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Đã nhường cho lượt của bạn trong \"{chat}\""
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Không hủy được."
   },

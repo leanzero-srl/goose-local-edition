@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Apri Privacy e sicurezza"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "ogni {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "uno dopo l’altro"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "ogni {n} h"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "ogni {n} min"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "ogni {n} s"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "decide goose quando"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Modifica"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "La richiesta non è riuscita: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Vai alla domanda"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Metti in pausa"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose ha rifiutato: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Riprendi"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Riprendi — esegui un giro ora"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Esegui il prossimo giro"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Mostra nella chat"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "La finestra dei cicli non è ancora in questa build."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Avvia un ciclo"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Avvia un nuovo ciclo"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Ferma il controllo"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Ferma il ciclo"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Un giro è già in esecuzione"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Esegui un giro ora"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Un ciclo esegue qui un obiettivo più e più volte, secondo una pianificazione o quando lo decide goose. Avviane uno dal pulsante Ciclo, con {command} o con \"Ripeti in ciclo\" su un messaggio."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "Nessun ciclo in questa chat."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Obiettivo raggiunto — `{check}` superato dopo il giro {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "Raggiunti {k} giri, come avevi impostato"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose ha segnalato l’obiettivo come raggiunto dopo il giro {n} — non era impostato alcun controllo"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Fermato da te dopo il giro {n}"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Controllo: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Nessun controllo — il ciclo termina quando goose segnala di aver finito o quando lo fermi"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Apri"
+  },
+  "loops.header.since": {
+    "defaultMessage": "dalle {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "File di stato: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "non ancora scritto"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "impossibile leggerlo: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "giro {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "giro {n} di {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Copiato"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Copia prompt"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Nascondi prompt"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Mostra prompt"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Giro del ciclo {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Giro del ciclo {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Fermato alle {time} per il tuo messaggio in \"{chat}\" — il ciclo continua dopo il tuo turno."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Ripeti in ciclo"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Esegui questo messaggio più e più volte come ciclo"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "La tua risposta al giro {n} è in esecuzione — il prossimo giro parte dopo"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "Il giro {n} ti ha chiesto: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "Il giro {n} ha indicato un’attesa che goose non riesce a leggere: \"{given}\"."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Controllo di `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Il giro {next} è previsto — parte quando finisce il controllo del giro {n} da parte di goose"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Il giro {next} è previsto — parte quando la risposta che hai fermato qui si è conclusa"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Il giro {next} è previsto — parte dopo il tuo messaggio qui"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Il giro {next} è previsto — parte quando finisce il tuo turno in \"{chat}\""
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Il giro {next} è previsto — impossibile aprire questa chat nella finestra: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Il giro {next} è previsto — goose ha rifiutato il suo messaggio: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Il giro {next} è previsto — {node} ti sta rispondendo in \"{chat}\"; il giro carica {target} dopo"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Questo ciclo è in esecuzione in un’altra finestra di goose."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Prossimo giro {time} · tra {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "Il giro {n} non ha detto quando tornare."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Giro {n} · avviato {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Giro {n} · avviato {time} · {elapsed} · su {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Prossimo giro {time} — goose ha scelto {interval}: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Prossimo giro {time} — goose ha scelto {interval} senza dare un motivo"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "Il prossimo giro parte ora"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Nessun giro è ancora terminato."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Ora"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "Impossibile leggere lo stato del ciclo: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Giri"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "Impossibile leggere il record del ciclo: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Bloccato — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Messo in pausa da te dopo il giro {n}."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Messo in pausa da te prima del primo giro."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "Impossibile eseguire il controllo: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,one{goose era chiuso; era previsto # giro.} other{goose era chiuso; erano previsti # giri.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,one{goose è stato chiuso alle {time}; era previsto # giro.} other{goose è stato chiuso alle {time}; erano previsti # giri.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "In pausa — il giro {n} sta finendo nell’altra finestra"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "I giri {prev} e {n} sono terminati senza un resoconto del ciclo"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "I giri {prev} e {n} non sono riusciti nello stesso modo: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Bloccato sul posto — il giro {n} ha indicato lo stesso passo successivo del giro {prev} e non ha scritto né modificato nulla fuori dal file di stato"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Hai fermato il giro {n}."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Prossimo giro dopo il controllo del giro {n} da parte di goose"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Prossimo giro quando {node} avrà finito di risponderti"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Prossimo giro dopo il tuo turno"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Controllo · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Impossibile avviare il prossimo giro"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "In ciclo in un’altra finestra"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Ciclo terminato"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "Il ciclo ha bisogno di te"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Prossimo giro {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Mostra il ciclo di questa chat — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Ciclo in pausa"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Giro {n} in corso · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "Il prossimo giro parte ora"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Ciclo illeggibile"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "Il ciclo ti aspetta"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Chiudi il pannello del ciclo"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Modifiche {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Ciclo"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Ciclo e modifiche"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Controllo"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "In un’altra finestra"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Terminato"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Ha bisogno di te"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "In pausa"
+  },
+  "loops.status.running": {
+    "defaultMessage": "In corso"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "In attesa"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Attende il tuo turno"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Ti aspetta"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "Termina prima del suo primo giro."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "Dopo il giro {n} non verrà eseguito nessun altro giro."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Continua a eseguire"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "Il giro {n} si ferma ora e conserva ciò che ha fatto."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Fermare il ciclo?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Hai risposto: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Ti ha chiesto: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "Impossibile eseguire il controllo {command}: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "Il controllo {command} è uscito con {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "Il controllo {command} è uscito con {code} — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "Il controllo {command} è terminato senza codice di uscita"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "Controllo {command} superato"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Controllo di {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Ti ha chiesto"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Bloccato"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Fatto"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Non riuscito"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Obiettivo raggiunto"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Nessun resoconto"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Progresso"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Bloccato sul posto"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Fermato da te"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Ha ceduto il turno"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Nascondi il giro {n}"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Mostra il giro {n}"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Non riuscito: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Scritti o modificati da goose"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Le sue ultime parole: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Prossimo passo: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose non ha scritto né modificato alcun file in questo giro."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Terminato senza un resoconto del ciclo"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "su {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Apri log"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · nulla scritto o modificato fuori dal file di stato · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "I messaggi di questo giro sono stati rimossi da una modifica"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose ha scelto {interval}: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose ha scelto {interval} senza dare un motivo"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Hai fermato questo giro."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Ha ceduto il passo al tuo turno in \"{chat}\""
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Annullamento non riuscito."
   },

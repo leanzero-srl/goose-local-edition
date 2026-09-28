@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Buka Privasi & Keselamatan"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "setiap {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "berturut-turut"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "setiap {n} jam"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "setiap {n} min"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "setiap {n} saat"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose yang menentukan bila"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Edit"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "Permintaan gagal: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Pergi ke soalan"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Jeda"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose menolak: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Sambung semula"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Sambung semula — jalankan satu pusingan sekarang"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Jalankan pusingan seterusnya"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Tunjukkan dalam sembang"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "Dialog gelung belum ada dalam binaan ini."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Mulakan gelung"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Mulakan gelung baharu"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Hentikan semakan"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Hentikan gelung"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Satu pusingan sudah berjalan"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Jalankan satu pusingan sekarang"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Gelung menjalankan satu matlamat di sini berulang kali, mengikut jadual atau apabila goose memutuskan. Mulakan satu daripada butang Gelung, dengan {command}, atau dengan \"Jadikan gelung\" pada sesuatu mesej."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "Tiada gelung dalam sembang ini."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Matlamat tercapai — `{check}` lulus selepas pusingan {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "Mencapai {k} pusingan, seperti yang anda tetapkan"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose melaporkan matlamat selesai selepas pusingan {n} — tiada semakan ditetapkan"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Dihentikan oleh anda selepas pusingan {n}"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Semakan: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Tiada semakan — gelung tamat apabila goose melaporkan selesai atau anda menghentikannya"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Buka"
+  },
+  "loops.header.since": {
+    "defaultMessage": "sejak {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "Fail keadaan: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "belum ditulis"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "tidak dapat dibaca: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "pusingan {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "pusingan {n} daripada {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Disalin"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Salin prompt"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Sembunyikan prompt"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Tunjukkan prompt"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Pusingan gelung {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Pusingan gelung {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Berhenti pada {time} untuk mesej anda dalam \"{chat}\" — gelung bersambung selepas giliran anda."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Jadikan gelung"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Jalankan mesej ini berulang kali sebagai gelung"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Jawapan anda kepada pusingan {n} sedang berjalan — pusingan seterusnya bermula selepas itu"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "Pusingan {n} bertanya kepada anda: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "Pusingan {n} menyebut tempoh tunggu yang tidak dapat dibaca oleh goose: \"{given}\"."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Menyemak `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Pusingan {next} sudah tiba masanya — ia bermula apabila semakan goose terhadap pusingan {n} tamat"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Pusingan {next} sudah tiba masanya — ia bermula apabila jawapan yang anda hentikan di sini sudah selesai"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Pusingan {next} sudah tiba masanya — ia bermula selepas mesej anda di sini"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Pusingan {next} sudah tiba masanya — ia bermula apabila giliran anda dalam \"{chat}\" tamat"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Pusingan {next} sudah tiba masanya — sembang ini tidak dapat dibuka dalam tetingkap: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Pusingan {next} sudah tiba masanya — goose menolak mesejnya: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Pusingan {next} sudah tiba masanya — {node} sedang menjawab anda dalam \"{chat}\"; pusingan akan memuatkan {target} selepas itu"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Gelung ini berjalan dalam tetingkap goose yang lain."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Pusingan seterusnya {time} · dalam {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "Pusingan {n} tidak menyatakan bila hendak kembali."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Pusingan {n} · bermula {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Pusingan {n} · bermula {time} · {elapsed} · pada {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Pusingan seterusnya {time} — goose memilih {interval}: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Pusingan seterusnya {time} — goose memilih {interval} tanpa memberi sebab"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "Pusingan seterusnya bermula sekarang"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Belum ada pusingan yang tamat."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Sekarang"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "Status gelung tidak dapat dibaca: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Pusingan"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "Rekod gelung tidak dapat dibaca: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Tersekat — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Dijeda oleh anda selepas pusingan {n}."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Dijeda oleh anda sebelum pusingan pertama."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "Semakan tidak dapat dijalankan: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,other{goose telah ditutup; # pusingan sudah tiba masanya.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,other{goose ditutup pada {time}; # pusingan sudah tiba masanya.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "Dijeda — pusingan {n} sedang diselesaikan dalam tetingkap yang lain"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "Pusingan {prev} dan {n} tamat tanpa laporan gelung"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "Pusingan {prev} dan {n} gagal dengan cara yang sama: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Terhenti — pusingan {n} menyebut langkah seterusnya yang sama seperti pusingan {prev} dan tidak menulis atau mengedit apa-apa di luar fail keadaan"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Anda menghentikan pusingan {n}."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Pusingan seterusnya selepas semakan goose terhadap pusingan {n}"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Pusingan seterusnya selepas {node} selesai menjawab anda"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Pusingan seterusnya selepas giliran anda"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Menyemak · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Pusingan seterusnya tidak dapat bermula"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "Bergelung dalam tetingkap lain"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Gelung tamat"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "Gelung memerlukan anda"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Pusingan seterusnya {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Tunjukkan gelung sembang ini — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Gelung dijeda"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Pusingan {n} berjalan · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "Pusingan seterusnya bermula sekarang"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Gelung tidak dapat dibaca"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "Gelung menunggu anda"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Tutup panel gelung"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Perubahan {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Gelung"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Gelung dan perubahan"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Menyemak"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "Dalam tetingkap lain"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Tamat"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Memerlukan anda"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "Dijeda"
+  },
+  "loops.status.running": {
+    "defaultMessage": "Berjalan"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "Menunggu"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Menunggu giliran anda"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Menunggu anda"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "Ia tamat sebelum pusingan pertamanya."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "Tiada pusingan berjalan selepas pusingan {n}."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Teruskan larian"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "Pusingan {n} berhenti sekarang dan menyimpan apa yang telah dilakukannya."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Hentikan gelung?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Anda menjawab: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Bertanya kepada anda: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "Semakan {command} tidak dapat dijalankan: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "Semakan {command} keluar dengan {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "Semakan {command} keluar dengan {code} — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "Semakan {command} tamat tanpa kod keluar"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "Semakan {command} lulus"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Menyemak {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Bertanya kepada anda"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Tersekat"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Selesai"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Matlamat tercapai"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Tiada laporan"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Kemajuan"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Terhenti"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Dihentikan oleh anda"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Memberi laluan"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Sembunyikan pusingan {n}"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Tunjukkan pusingan {n}"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Gagal: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Ditulis atau diedit oleh goose"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Kata-kata terakhirnya: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Seterusnya: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose tidak menulis atau mengedit sebarang fail dalam pusingan ini."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Tamat tanpa laporan gelung"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "pada {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Buka log"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · tiada tulisan atau suntingan di luar fail keadaan · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "Mesej pusingan ini telah dialih keluar oleh suntingan"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose memilih {interval}: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose memilih {interval} tanpa memberi sebab"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Anda menghentikan pusingan ini."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} token"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Memberi laluan kepada giliran anda dalam \"{chat}\""
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Gagal membatalkan."
   },

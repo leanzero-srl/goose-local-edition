@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "गोपनीयता और सुरक्षा खोलें"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "हर {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "एक के बाद एक"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "हर {n} घंटे"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "हर {n} मिनट"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "हर {n} सेकंड"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose तय करता है कि कब"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "संपादित करें"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "अनुरोध विफल रहा: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "प्रश्न पर जाएँ"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "रोकें"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose ने मना कर दिया: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "फिर शुरू करें"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "फिर शुरू करें — अभी एक टिक चलाएँ"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "अगला टिक चलाएँ"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "चैट में दिखाएँ"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "लूप डायलॉग अभी इस बिल्ड में नहीं है।"
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "लूप शुरू करें"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "नया लूप शुरू करें"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "जाँच रोकें"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "लूप रोकें"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "एक टिक पहले से चल रहा है"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "अभी एक टिक चलाएँ"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "लूप यहाँ किसी लक्ष्य को बार-बार चलाता है, किसी शेड्यूल पर या जब goose तय करे। लूप बटन से, {command} से, या किसी संदेश पर \"इसे लूप करें\" से एक शुरू करें।"
+  },
+  "loops.empty.title": {
+    "defaultMessage": "इस चैट में कोई लूप नहीं है।"
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "लक्ष्य पूरा — टिक {n} के बाद `{check}` पास हुआ"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "{k} टिक पूरे हुए, जैसा आपने तय किया था"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose ने टिक {n} के बाद लक्ष्य पूरा बताया — कोई जाँच तय नहीं थी"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "टिक {n} के बाद आपने रोका"
+  },
+  "loops.header.check": {
+    "defaultMessage": "जाँच: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "कोई जाँच नहीं — लूप तब खत्म होगा जब goose काम पूरा बताए या आप इसे रोकें"
+  },
+  "loops.header.open": {
+    "defaultMessage": "खोलें"
+  },
+  "loops.header.since": {
+    "defaultMessage": "{time} से"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "स्टेट फ़ाइल: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "अभी लिखी नहीं गई"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "पढ़ी नहीं जा सकी: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "टिक {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "टिक {n} / {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} टोकन"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "कॉपी किया गया"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "प्रॉम्प्ट कॉपी करें"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "प्रॉम्प्ट छिपाएँ"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "प्रॉम्प्ट दिखाएँ"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "लूप टिक {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "लूप टिक {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "\"{chat}\" में आपके संदेश के लिए {time} पर रुका — आपकी बारी के बाद लूप जारी रहेगा।"
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "इसे लूप करें"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "इस संदेश को लूप के रूप में बार-बार चलाएँ"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "टिक {n} पर आपका उत्तर चल रहा है — अगला टिक इसके बाद शुरू होगा"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "टिक {n} ने आपसे पूछा: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "टिक {n} ने ऐसी देरी बताई जिसे goose पढ़ नहीं सकता: \"{given}\"।"
+  },
+  "loops.now.checking": {
+    "defaultMessage": "`{check}` की जाँच · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "टिक {next} का समय हो गया है — यह तब शुरू होगा जब goose टिक {n} की जाँच पूरी कर लेगा"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "टिक {next} का समय हो गया है — यह तब शुरू होगा जब आपके द्वारा यहाँ रोका गया उत्तर स्थिर हो जाएगा"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "टिक {next} का समय हो गया है — यह यहाँ आपके संदेश के बाद शुरू होगा"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "टिक {next} का समय हो गया है — यह \"{chat}\" में आपकी बारी खत्म होने पर शुरू होगा"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "टिक {next} का समय हो गया है — यह चैट विंडो में नहीं खुल सकी: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "टिक {next} का समय हो गया है — goose ने इसका संदेश अस्वीकार कर दिया: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "टिक {next} का समय हो गया है — {node} \"{chat}\" में आपको उत्तर दे रहा है; इसके बाद टिक {target} लोड करेगा"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "यह लूप goose की दूसरी विंडो में चल रहा है।"
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "अगला टिक {time} · {rel} में"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "टिक {n} ने नहीं बताया कि कब लौटना है।"
+  },
+  "loops.now.running": {
+    "defaultMessage": "टिक {n} · {time} पर शुरू · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "टिक {n} · {time} पर शुरू · {elapsed} · {node} पर"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "अगला टिक {time} — goose ने {interval} चुना: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "अगला टिक {time} — goose ने {interval} चुना और कोई कारण नहीं बताया"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "अगला टिक अभी शुरू हो रहा है"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "अभी तक कोई टिक पूरा नहीं हुआ है।"
+  },
+  "loops.panel.now": {
+    "defaultMessage": "अभी"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "लूप की स्थिति पढ़ी नहीं जा सकी: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "टिक"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "लूप का रिकॉर्ड पढ़ा नहीं जा सका: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "अवरुद्ध — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "टिक {n} के बाद आपने रोका।"
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "पहले टिक से पहले आपने रोका।"
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "जाँच नहीं चल सकी: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,one{goose बंद था; # टिक बाकी था।} other{goose बंद था; # टिक बाकी थे।}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,one{goose {time} पर बंद हुआ; # टिक बाकी था।} other{goose {time} पर बंद हुआ; # टिक बाकी थे।}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "रुका हुआ — टिक {n} दूसरी विंडो में पूरा हो रहा है"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "टिक {prev} और {n} बिना लूप रिपोर्ट के खत्म हुए"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "टिक {prev} और {n} एक ही तरह से विफल हुए: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "अटका हुआ — टिक {n} ने टिक {prev} वाला ही अगला कदम बताया और स्टेट फ़ाइल के बाहर कुछ नहीं लिखा या संपादित किया"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "आपने टिक {n} रोका।"
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "goose द्वारा टिक {n} की जाँच के बाद अगला टिक"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "{node} के उत्तर पूरा करने के बाद अगला टिक"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "आपकी बारी के बाद अगला टिक"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "जाँच · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "अगला टिक शुरू नहीं हो सका"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "दूसरी विंडो में लूप चालू"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "लूप खत्म"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "लूप को आपकी ज़रूरत है"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "अगला टिक {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "इस चैट का लूप दिखाएँ — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "लूप रुका हुआ"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "टिक {n} चल रहा है · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "अगला टिक अभी शुरू हो रहा है"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "लूप पढ़ा नहीं जा सका"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "लूप आपकी प्रतीक्षा में"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "लूप पैनल बंद करें"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "बदलाव {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "लूप"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "लूप और बदलाव"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "जाँच हो रही है"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "दूसरी विंडो में"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "खत्म"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "आपकी ज़रूरत है"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "रुका हुआ"
+  },
+  "loops.status.running": {
+    "defaultMessage": "चल रहा है"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "प्रतीक्षा में"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "आपकी बारी की प्रतीक्षा में"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "आपकी प्रतीक्षा में"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "यह अपने पहले टिक से पहले खत्म हो जाएगा।"
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "टिक {n} के बाद कोई टिक नहीं चलेगा।"
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "चलने दें"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "टिक {n} अभी रुकेगा और जो उसने किया है उसे रखेगा।"
+  },
+  "loops.stop.title": {
+    "defaultMessage": "लूप रोकें?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "आपका उत्तर: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "आपसे पूछा: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "जाँच {command} नहीं चल सकी: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "जाँच {command} कोड {code} के साथ खत्म हुई"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "जाँच {command} कोड {code} के साथ खत्म हुई — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "जाँच {command} बिना एग्ज़िट कोड के खत्म हुई"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "जाँच {command} पास हुई"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "{command} की जाँच हो रही है…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "आपसे पूछा"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "अवरुद्ध"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "पूरा"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "विफल"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "लक्ष्य पूरा"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "कोई रिपोर्ट नहीं"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "प्रगति"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "अटका हुआ"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "आपने रोका"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "बारी छोड़ी"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "टिक {n} छिपाएँ"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "टिक {n} दिखाएँ"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "विफल: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "goose द्वारा लिखा या संपादित किया गया"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "इसके अंतिम शब्द: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "अगला: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose ने इस टिक में कोई फ़ाइल नहीं लिखी या संपादित की।"
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "बिना लूप रिपोर्ट के खत्म हुआ"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "{node} पर"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "लॉग खोलें"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · स्टेट फ़ाइल के बाहर कुछ नहीं लिखा या संपादित किया · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "इस टिक के संदेश एक संपादन से हटा दिए गए"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose ने {interval} चुना: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose ने {interval} चुना और कोई कारण नहीं बताया"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "आपने यह टिक रोका।"
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} टोकन"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "\"{chat}\" में आपकी बारी के लिए रुका"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "रद्द नहीं हो सका।"
   },

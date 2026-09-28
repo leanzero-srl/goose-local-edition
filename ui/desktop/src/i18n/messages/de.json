@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Datenschutz & Sicherheit öffnen"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "alle {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "direkt nacheinander"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "alle {n} Std."
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "alle {n} Min."
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "alle {n} s"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose entscheidet, wann"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Bearbeiten"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "Die Anfrage ist fehlgeschlagen: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Zur Frage"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Pausieren"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose hat abgelehnt: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Fortsetzen"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Fortsetzen — jetzt einen Durchlauf starten"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Nächsten Durchlauf starten"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Im Chat anzeigen"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "Der Schleifen-Dialog ist in diesem Build noch nicht enthalten."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Schleife starten"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Neue Schleife starten"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Prüfung stoppen"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Schleife stoppen"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Ein Durchlauf läuft bereits"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Jetzt einen Durchlauf starten"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Eine Schleife führt hier ein Ziel immer wieder aus, nach Zeitplan oder wenn goose es entscheidet. Starte eine über die Schaltfläche „Schleife“, mit {command} oder mit „Als Schleife“ an einer Nachricht."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "Keine Schleife in diesem Chat."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Ziel erreicht — `{check}` bestanden nach Durchlauf {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "{k} Durchläufe erreicht, wie von dir festgelegt"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose hat das Ziel nach Durchlauf {n} als erledigt gemeldet — es war keine Prüfung festgelegt"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Von dir nach Durchlauf {n} gestoppt"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Prüfung: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Keine Prüfung — die Schleife endet, wenn goose „erledigt“ meldet oder du sie stoppst"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Öffnen"
+  },
+  "loops.header.since": {
+    "defaultMessage": "seit {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "Statusdatei: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "noch nicht geschrieben"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "konnte nicht gelesen werden: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "Durchlauf {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "Durchlauf {n} von {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} Tokens"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Kopiert"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Prompt kopieren"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Prompt ausblenden"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Prompt anzeigen"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Schleifendurchlauf {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Schleifendurchlauf {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Um {time} für deine Nachricht in „{chat}“ angehalten — die Schleife geht nach deinem Zug weiter."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Als Schleife"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Diese Nachricht als Schleife immer wieder ausführen"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Deine Antwort auf Durchlauf {n} läuft — der nächste Durchlauf startet danach"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "Durchlauf {n} hat dich gefragt: „{question}“"
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "Durchlauf {n} hat eine Wartezeit genannt, die goose nicht lesen kann: „{given}“."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Prüfe `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Durchlauf {next} ist fällig — er startet, wenn die Prüfung von Durchlauf {n} durch goose endet"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Durchlauf {next} ist fällig — er startet, sobald die Antwort, die du hier gestoppt hast, abgeschlossen ist"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Durchlauf {next} ist fällig — er startet nach deiner Nachricht hier"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Durchlauf {next} ist fällig — er startet, wenn dein Zug in „{chat}“ endet"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Durchlauf {next} ist fällig — dieser Chat konnte im Fenster nicht geöffnet werden: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Durchlauf {next} ist fällig — goose hat seine Nachricht abgelehnt: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Durchlauf {next} ist fällig — {node} antwortet dir in „{chat}“; der Durchlauf lädt danach {target}"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Diese Schleife läuft in einem anderen goose-Fenster."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Nächster Durchlauf {time} · in {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "Durchlauf {n} hat nicht gesagt, wann er wiederkommt."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Durchlauf {n} · gestartet {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Durchlauf {n} · gestartet {time} · {elapsed} · auf {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Nächster Durchlauf {time} — goose hat {interval} gewählt: „{reason}“"
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Nächster Durchlauf {time} — goose hat {interval} gewählt und keinen Grund genannt"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "Nächster Durchlauf startet jetzt"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Noch ist kein Durchlauf beendet."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Jetzt"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "Der Status der Schleife konnte nicht gelesen werden: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Durchläufe"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "Der Datensatz der Schleife konnte nicht gelesen werden: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Blockiert — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Von dir nach Durchlauf {n} angehalten."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Von dir vor dem ersten Durchlauf angehalten."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "Die Prüfung konnte nicht laufen: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,one{goose war geschlossen; # Durchlauf war fällig.} other{goose war geschlossen; # Durchläufe waren fällig.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,one{goose wurde um {time} geschlossen; # Durchlauf war fällig.} other{goose wurde um {time} geschlossen; # Durchläufe waren fällig.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "Angehalten — Durchlauf {n} wird im anderen Fenster abgeschlossen"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "Durchläufe {prev} und {n} endeten ohne Schleifenbericht"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "Durchläufe {prev} und {n} sind auf dieselbe Weise fehlgeschlagen: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Festgefahren — Durchlauf {n} nannte denselben nächsten Schritt wie Durchlauf {prev} und hat außerhalb der Statusdatei nichts geschrieben oder bearbeitet"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Du hast Durchlauf {n} gestoppt."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Nächster Durchlauf nach der Prüfung von Durchlauf {n} durch goose"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Nächster Durchlauf, sobald {node} dir fertig geantwortet hat"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Nächster Durchlauf nach deinem Zug"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Prüfung · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Nächster Durchlauf konnte nicht starten"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "Schleife in anderem Fenster"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Schleife beendet"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "Schleife braucht dich"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Nächster Durchlauf {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Schleife dieses Chats anzeigen — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Schleife angehalten"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Durchlauf {n} läuft · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "Nächster Durchlauf startet jetzt"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Schleife unlesbar"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "Schleife wartet auf dich"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Schleifenbereich schließen"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Änderungen {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Schleife"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Schleife und Änderungen"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Prüfung"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "In anderem Fenster"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Beendet"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Braucht dich"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "Angehalten"
+  },
+  "loops.status.running": {
+    "defaultMessage": "Läuft"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "Wartet"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Wartet auf deinen Zug"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Wartet auf dich"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "Sie endet vor ihrem ersten Durchlauf."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "Nach Durchlauf {n} läuft kein weiterer Durchlauf."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Weiterlaufen lassen"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "Durchlauf {n} stoppt jetzt und behält, was er getan hat."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Schleife stoppen?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Deine Antwort: „{answer}“"
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Hat dich gefragt: „{question}“"
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "Prüfung {command} konnte nicht laufen: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "Prüfung {command} endete mit Code {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "Prüfung {command} endete mit Code {code} — „{line}“"
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "Prüfung {command} endete ohne Exit-Code"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "Prüfung {command} bestanden"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Prüfe {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Hat gefragt"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Blockiert"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Erledigt"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Fehlgeschlagen"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Ziel erreicht"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Kein Bericht"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Fortschritt"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Festgefahren"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Von dir gestoppt"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Zurückgestellt"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Durchlauf {n} ausblenden"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Durchlauf {n} anzeigen"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Fehlgeschlagen: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Von goose geschrieben oder bearbeitet"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Seine letzten Worte: „{line}“"
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Als Nächstes: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose hat in diesem Durchlauf keine Datei geschrieben oder bearbeitet."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Ohne Schleifenbericht beendet"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "auf {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Log öffnen"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · nichts außerhalb der Statusdatei geschrieben oder bearbeitet · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "Die Nachrichten dieses Durchlaufs wurden durch eine Bearbeitung entfernt"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose hat {interval} gewählt: „{reason}“"
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose hat {interval} gewählt und keinen Grund genannt"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Du hast diesen Durchlauf gestoppt."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} Tokens"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Hat deinem Zug in „{chat}“ Vorrang gegeben"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Abbrechen fehlgeschlagen."
   },

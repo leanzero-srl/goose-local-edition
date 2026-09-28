@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Abrir Privacidad y seguridad"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "cada {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "una tras otra"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "cada {n} h"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "cada {n} min"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "cada {n} s"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose decide cuándo"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Editar"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "La solicitud falló: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Ir a la pregunta"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Pausar"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose se negó: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Reanudar"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Reanudar — hacer una pasada ahora"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Hacer la siguiente pasada"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Mostrar en el chat"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "El diálogo de bucles aún no está en esta versión."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Iniciar un bucle"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Iniciar un bucle nuevo"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Detener comprobación"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Detener bucle"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Ya hay una pasada en curso"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Hacer una pasada ahora"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Un bucle ejecuta un objetivo aquí una y otra vez, según un horario o cuando goose lo decide. Inicia uno desde el botón Bucle, con {command} o con \"Repetir en bucle\" en un mensaje."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "No hay ningún bucle en este chat."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Objetivo cumplido — `{check}` pasó tras la pasada {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "Se alcanzaron {k} pasadas, como indicaste"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose dio el objetivo por cumplido tras la pasada {n} — no había ninguna comprobación"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Detenido por ti tras la pasada {n}"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Comprobación: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Sin comprobación — el bucle termina cuando goose informa que ha terminado o cuando lo detienes"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Abrir"
+  },
+  "loops.header.since": {
+    "defaultMessage": "desde {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "Archivo de estado: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "aún no escrito"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "no se pudo leer: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "pasada {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "pasada {n} de {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Copiado"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Copiar prompt"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Ocultar prompt"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Mostrar prompt"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Pasada del bucle {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Pasada del bucle {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Se detuvo a las {time} por tu mensaje en \"{chat}\" — el bucle continúa después de tu turno."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Repetir en bucle"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Ejecutar este mensaje una y otra vez como bucle"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Tu respuesta a la pasada {n} se está ejecutando — la siguiente pasada empieza después"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "La pasada {n} te preguntó: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "La pasada {n} indicó una espera que goose no puede leer: \"{given}\"."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Comprobando `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Toca la pasada {next} — empieza cuando termine la comprobación de goose de la pasada {n}"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Toca la pasada {next} — empieza cuando se haya asentado la respuesta que detuviste aquí"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Toca la pasada {next} — empieza después de tu mensaje aquí"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Toca la pasada {next} — empieza cuando termine tu turno en \"{chat}\""
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Toca la pasada {next} — no se pudo abrir este chat en la ventana: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Toca la pasada {next} — goose rechazó su mensaje: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Toca la pasada {next} — {node} te está respondiendo en \"{chat}\"; la pasada carga {target} después"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Este bucle se ejecuta en otra ventana de goose."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Siguiente pasada {time} · en {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "La pasada {n} no dijo cuándo volver."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Pasada {n} · iniciada {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Pasada {n} · iniciada {time} · {elapsed} · en {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Siguiente pasada {time} — goose eligió {interval}: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Siguiente pasada {time} — goose eligió {interval} y no dio ningún motivo"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "La siguiente pasada empieza ahora"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Todavía no ha terminado ninguna pasada."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Ahora"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "No se pudo leer el estado del bucle: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Pasadas"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "No se pudo leer el registro del bucle: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Bloqueado — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Pausado por ti tras la pasada {n}."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Pausado por ti antes de la primera pasada."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "No se pudo ejecutar la comprobación: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,one{goose estaba cerrado; tocaba # pasada.} other{goose estaba cerrado; tocaban # pasadas.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,one{goose se cerró a las {time}; tocaba # pasada.} other{goose se cerró a las {time}; tocaban # pasadas.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "En pausa — la pasada {n} está terminando en la otra ventana"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "Las pasadas {prev} y {n} terminaron sin informe del bucle"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "Las pasadas {prev} y {n} fallaron de la misma manera: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Estancado — la pasada {n} indicó el mismo siguiente paso que la pasada {prev} y no escribió ni editó nada fuera del archivo de estado"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Detuviste la pasada {n}."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Siguiente pasada tras la comprobación de goose de la pasada {n}"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Siguiente pasada cuando {node} termine de responderte"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Siguiente pasada después de tu turno"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Comprobando · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "No se pudo iniciar la siguiente pasada"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "En bucle en otra ventana"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Bucle terminado"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "El bucle te necesita"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Siguiente pasada {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Mostrar el bucle de este chat — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Bucle en pausa"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Pasada {n} en curso · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "La siguiente pasada empieza ahora"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Bucle ilegible"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "El bucle te espera"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Cerrar el panel del bucle"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Cambios {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Bucle"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Bucle y cambios"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Comprobando"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "En otra ventana"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Terminado"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Te necesita"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "En pausa"
+  },
+  "loops.status.running": {
+    "defaultMessage": "En curso"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "En espera"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Esperando tu turno"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Esperándote"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "Termina antes de su primera pasada."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "No habrá más pasadas después de la pasada {n}."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Seguir ejecutando"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "La pasada {n} se detiene ahora y conserva lo que hizo."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "¿Detener el bucle?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Respondiste: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Te preguntó: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "No se pudo ejecutar la comprobación {command}: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "La comprobación {command} salió con {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "La comprobación {command} salió con {code} — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "La comprobación {command} terminó sin código de salida"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "La comprobación {command} pasó"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Comprobando {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Te preguntó"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Bloqueado"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Hecho"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Falló"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Objetivo cumplido"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Sin informe"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Avance"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Estancado"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Detenido por ti"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Cedió el turno"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Ocultar la pasada {n}"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Mostrar la pasada {n}"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Falló: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Escrito o editado por goose"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Sus últimas palabras: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Siguiente: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose no escribió ni editó ningún archivo en esta pasada."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Terminó sin informe del bucle"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "en {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Abrir registro"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · sin escrituras ni ediciones fuera del archivo de estado · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "Una edición eliminó los mensajes de esta pasada"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose eligió {interval}: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose eligió {interval} y no dio ningún motivo"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Detuviste esta pasada."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Cedió el paso a tu turno en \"{chat}\""
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "No se pudo cancelar."
   },

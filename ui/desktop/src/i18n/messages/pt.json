@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Abrir Privacidade e Segurança"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "a cada {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "uma após a outra"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "a cada {n} h"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "a cada {n} min"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "a cada {n} s"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "o goose decide quando"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Editar"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "A solicitação falhou: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Ir para a pergunta"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Pausar"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "O goose recusou: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Retomar"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Retomar — fazer uma rodada agora"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Fazer a próxima rodada"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Mostrar no chat"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "A caixa de diálogo de loops ainda não está nesta versão."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Iniciar um loop"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Iniciar um novo loop"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Parar verificação"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Parar loop"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "Uma rodada já está em andamento"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Fazer uma rodada agora"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "Um loop executa um objetivo aqui de novo e de novo, em um horário definido ou quando o goose decide. Inicie um pelo botão Loop, com {command} ou com \"Repetir em loop\" em uma mensagem."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "Nenhum loop neste chat."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Objetivo atingido — `{check}` passou após a rodada {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "{k} rodadas atingidas, como você definiu"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "O goose informou o objetivo como concluído após a rodada {n} — nenhuma verificação foi definida"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Parado por você após a rodada {n}"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Verificação: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "Sem verificação — o loop termina quando o goose informa que concluiu ou quando você o para"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Abrir"
+  },
+  "loops.header.since": {
+    "defaultMessage": "desde {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "Arquivo de estado: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "ainda não gravado"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "não foi possível ler: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "rodada {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "rodada {n} de {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Copiado"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Copiar prompt"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Ocultar prompt"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Mostrar prompt"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Rodada do loop {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Rodada do loop {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Parado às {time} por causa da sua mensagem em \"{chat}\" — o loop continua depois do seu turno."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Repetir em loop"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Executar esta mensagem de novo e de novo como um loop"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Sua resposta à rodada {n} está em execução — a próxima rodada começa depois dela"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "A rodada {n} perguntou a você: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "A rodada {n} indicou uma espera que o goose não consegue ler: \"{given}\"."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Verificando `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "A rodada {next} está pendente — ela começa quando a verificação do goose da rodada {n} terminar"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "A rodada {next} está pendente — ela começa quando a resposta que você parou aqui tiver se concluído"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "A rodada {next} está pendente — ela começa depois da sua mensagem aqui"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "A rodada {next} está pendente — ela começa quando seu turno em \"{chat}\" terminar"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "A rodada {next} está pendente — não foi possível abrir este chat na janela: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "A rodada {next} está pendente — o goose recusou a mensagem dela: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "A rodada {next} está pendente — {node} está respondendo a você em \"{chat}\"; a rodada carrega {target} depois"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "Este loop está rodando em outra janela do goose."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Próxima rodada {time} · em {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "A rodada {n} não disse quando voltar."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Rodada {n} · iniciada {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Rodada {n} · iniciada {time} · {elapsed} · em {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Próxima rodada {time} — o goose escolheu {interval}: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Próxima rodada {time} — o goose escolheu {interval} e não deu motivo"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "A próxima rodada começa agora"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "Nenhuma rodada terminou ainda."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Agora"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "Não foi possível ler o status do loop: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Rodadas"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "Não foi possível ler o registro do loop: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Bloqueado — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Pausado por você após a rodada {n}."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Pausado por você antes da primeira rodada."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "Não foi possível executar a verificação: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,one{O goose estava fechado; # rodada estava pendente.} other{O goose estava fechado; # rodadas estavam pendentes.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,one{O goose foi fechado às {time}; # rodada estava pendente.} other{O goose foi fechado às {time}; # rodadas estavam pendentes.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "Pausado — a rodada {n} está terminando na outra janela"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "As rodadas {prev} e {n} terminaram sem relatório do loop"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "As rodadas {prev} e {n} falharam da mesma forma: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Travado — a rodada {n} indicou o mesmo próximo passo da rodada {prev} e não gravou nem editou nada fora do arquivo de estado"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "Você parou a rodada {n}."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Próxima rodada após a verificação do goose da rodada {n}"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Próxima rodada quando {node} terminar de responder a você"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Próxima rodada depois do seu turno"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Verificando · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Não foi possível iniciar a próxima rodada"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "Em loop em outra janela"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Loop encerrado"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "O loop precisa de você"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Próxima rodada {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Mostrar o loop deste chat — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Loop pausado"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Rodada {n} em andamento · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "A próxima rodada começa agora"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Loop ilegível"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "O loop está aguardando você"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Fechar o painel do loop"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Alterações {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Loop"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Loop e alterações"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Verificando"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "Em outra janela"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Encerrado"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Precisa de você"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "Pausado"
+  },
+  "loops.status.running": {
+    "defaultMessage": "Em andamento"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "Aguardando"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Aguardando seu turno"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Aguardando você"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "Ele termina antes da primeira rodada."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "Nenhuma rodada será executada após a rodada {n}."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Continuar executando"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "A rodada {n} para agora e mantém o que fez."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Parar o loop?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "Você respondeu: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Perguntou a você: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "Não foi possível executar a verificação {command}: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "A verificação {command} saiu com {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "A verificação {command} saiu com {code} — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "A verificação {command} terminou sem código de saída"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "A verificação {command} passou"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Verificando {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Perguntou a você"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Bloqueado"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Concluído"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Falhou"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Objetivo atingido"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "Sem relatório"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Progresso"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Travado"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Parado por você"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Cedeu a vez"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Ocultar a rodada {n}"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Mostrar a rodada {n}"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Falhou: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Gravado ou editado pelo goose"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Suas últimas palavras: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Próximo: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "O goose não gravou nem editou nenhum arquivo nesta rodada."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Terminou sem relatório do loop"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "em {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Abrir log"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · nada gravado ou editado fora do arquivo de estado · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "As mensagens desta rodada foram removidas por uma edição"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "O goose escolheu {interval}: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "O goose escolheu {interval} e não deu motivo"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "Você parou esta rodada."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Cedeu a vez ao seu turno em \"{chat}\""
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Falha ao cancelar."
   },

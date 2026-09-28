@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "打開「隱私權與安全性」"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "每 {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "連續執行"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "每 {n} 小時"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "每 {n} 分鐘"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "每 {n} 秒"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "由 goose 決定時間"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "編輯"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "要求失敗：{error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "前往問題"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "暫停"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose 拒絕了：{reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "繼續"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "繼續——立即執行一輪"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "執行下一輪"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "在聊天中顯示"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "此版本尚未包含循環對話框。"
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "開始循環"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "開始新的循環"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "停止檢查"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "停止循環"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "已有一輪正在執行"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "立即執行一輪"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "循環會在這裡依排程或由 goose 決定，一次又一次地執行一個目標。可透過「循環」按鈕、{command}，或訊息上的「循環執行」來啟動。"
+  },
+  "loops.empty.title": {
+    "defaultMessage": "此聊天中沒有循環。"
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "目標已達成——第 {n} 輪後 `{check}` 通過"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "已依你的設定達到 {k} 輪"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose 在第 {n} 輪後回報目標已完成——未設定檢查"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "你在第 {n} 輪後停止了循環"
+  },
+  "loops.header.check": {
+    "defaultMessage": "檢查：{command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "無檢查——當 goose 回報完成或你停止時，循環結束"
+  },
+  "loops.header.open": {
+    "defaultMessage": "開啟"
+  },
+  "loops.header.since": {
+    "defaultMessage": "自 {time} 起"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "狀態檔案：{path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "尚未寫入"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "無法讀取：{error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "第 {n} 輪"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "第 {n} 輪，共 {k} 輪"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} 個 token"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "已複製"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "複製提示詞"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "隱藏提示詞"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "顯示提示詞"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "循環第 {n} 輪 · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "循環第 {n} 輪 · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "於 {time} 為你在「{chat}」中的訊息暫停——你的回合結束後循環繼續。"
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "循環執行"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "將此訊息作為循環反覆執行"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "你對第 {n} 輪的回答正在執行——下一輪將在其後開始"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "第 {n} 輪問你：「{question}」"
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "第 {n} 輪給出了 goose 無法識別的等待時間：「{given}」。"
+  },
+  "loops.now.checking": {
+    "defaultMessage": "正在檢查 `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "第 {next} 輪已到時間——將在 goose 對第 {n} 輪的檢查結束後開始"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "第 {next} 輪已到時間——將在你於此處停止的回答穩定後開始"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "第 {next} 輪已到時間——將在你在此處的訊息之後開始"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "第 {next} 輪已到時間——將在你在「{chat}」中的回合結束後開始"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "第 {next} 輪已到時間——無法在視窗中開啟此聊天：{error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "第 {next} 輪已到時間——goose 拒絕了它的訊息：{error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "第 {next} 輪已到時間——{node} 正在「{chat}」中回答你；之後這一輪會載入 {target}"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "此循環正在另一個 goose 視窗中執行。"
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "下一輪 {time} · {rel}後"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "第 {n} 輪沒有說明何時回來。"
+  },
+  "loops.now.running": {
+    "defaultMessage": "第 {n} 輪 · {time} 開始 · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "第 {n} 輪 · {time} 開始 · {elapsed} · 在 {node} 上"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "下一輪 {time}——goose 選擇了 {interval}：「{reason}」"
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "下一輪 {time}——goose 選擇了 {interval}，未提供原因"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "下一輪現在開始"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "還沒有任何一輪結束。"
+  },
+  "loops.panel.now": {
+    "defaultMessage": "目前"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "無法讀取循環的狀態：{error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "各輪"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "無法讀取循環紀錄：{error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "受阻——{blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "你在第 {n} 輪後暫停了循環。"
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "你在第一輪之前暫停了循環。"
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "檢查無法執行：{error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,other{goose 已關閉；有 # 輪到期。}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,other{goose 於 {time} 關閉；有 # 輪到期。}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "已暫停——第 {n} 輪正在另一個視窗中完成"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "第 {prev} 輪和第 {n} 輪都沒有循環報告就結束了"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "第 {prev} 輪和第 {n} 輪以相同方式失敗：{error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "停滯——第 {n} 輪給出的下一步與第 {prev} 輪相同，且沒有在狀態檔案之外寫入或編輯任何內容"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "你停止了第 {n} 輪。"
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "goose 檢查完第 {n} 輪後開始下一輪"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "{node} 回答完你之後開始下一輪"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "你的回合結束後開始下一輪"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "檢查中 · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "下一輪無法開始"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "在另一個視窗中循環"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "循環已結束"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "循環需要你"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "下一輪 {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "顯示此聊天的循環——{label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "循環已暫停"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "第 {n} 輪執行中 · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "下一輪現在開始"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "循環無法讀取"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "循環在等你"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "關閉循環面板"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "變更 {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "循環"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "循環與變更"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "檢查中"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "在另一個視窗中"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "已結束"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "需要你"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "已暫停"
+  },
+  "loops.status.running": {
+    "defaultMessage": "執行中"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "等待中"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "等待你的回合"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "等待你"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "它會在第一輪之前結束。"
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "第 {n} 輪之後不再執行任何一輪。"
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "繼續執行"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "第 {n} 輪現在停止，並保留已完成的工作。"
+  },
+  "loops.stop.title": {
+    "defaultMessage": "停止循環？"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "你的回答：「{answer}」"
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "問你：「{question}」"
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "檢查 {command} 無法執行：{error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "檢查 {command} 以 {code} 結束"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "檢查 {command} 以 {code} 結束——「{line}」"
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "檢查 {command} 結束時沒有結束代碼"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "檢查 {command} 通過"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "正在檢查 {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "已提問"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "受阻"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "完成"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "失敗"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "目標達成"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "無報告"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "有進展"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "停滯"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "被你停止"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "已讓出"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "隱藏第 {n} 輪"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "顯示第 {n} 輪"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "失敗：{error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "goose 寫入或編輯的檔案"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "最後的話：「{line}」"
+  },
+  "loops.tick.next": {
+    "defaultMessage": "下一步：{step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose 在這一輪中沒有寫入或編輯任何檔案。"
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "沒有循環報告就結束了"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "在 {node} 上"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "開啟記錄檔"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · 狀態檔案之外沒有寫入或編輯 · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "這一輪的訊息已被一次編輯刪除"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose 選擇了 {interval}：「{reason}」"
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose 選擇了 {interval}，未提供原因"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "你停止了這一輪。"
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} 個 token"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "已讓位於你在「{chat}」中的回合"
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "取消失敗。"
   },
