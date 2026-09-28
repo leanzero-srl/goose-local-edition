@@ -34,16 +34,16 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-450 claim_check (unrun action, unmeasured count) — general.
 - Q-428 (+Q-430/432) the owner's "don't interrupt a node doing its thing" per-role option — agent-a626efc4490c889b7.
 - MERGED into /tmp/merge-074 (branch merge-074, 00:0x; no ledger row lost, gains Q-424/425):
   - Q-417 (servedModel), Q-407 (dead goosed's commands), Q-423 (engine stderr; BOTH Macs), Q-426 (PiP X);
+  - Q-450 (claim_check: an announced action with no tool, a count no output holds; 0 false in 9,615 replies, 89b9d3c79);
   - Q-449 (Linux pgrep counted a zombie; shutdown now waits for the exit it caused, 2b0473e56);
   - Q-447 (float32 KV fix; BOTH Macs); Q-429/431/433..440 (demo fixes, ea2f02977). Medium confidence, live-only: Q-431's banner under share,
     Q-434's delegate card, Q-436's remote load phases.
 
 ## Batch 4 → 3.0.74 (next)
-1. When Q-428 and Q-450 report, merge them into /tmp/merge-074 via ledger_resolve, with main merged in before the ff.
+1. When Q-428 reports (it has committed 111443cbf/93c0be18b/00e442205 plus its ledger, and is finishing), merge them into /tmp/merge-074 via ledger_resolve, with main merged in before the ff.
 2. ONE full gate in its own session (scratchpad/gate074.sh, target ~/goose-targets/g074), when #3u is at a turn
    boundary or done. NO cargo on the MacBook while #3u decodes. The Q-447 agent is the one allowed job.
 3. ff main, push, release 3.0.74 (/tmp/rel074.sh), install on BOTH Macs (Q-423, maybe Q-447), split-start smoke.
