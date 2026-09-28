@@ -25,7 +25,7 @@ function fakeGoosed() {
       end = () => controller.close();
     },
   });
-  const writable = new WritableStream<Wire>({
+  const writable = new globalThis.WritableStream<Wire>({
     write(message) {
       if (message.method === 'initialize') {
         push({
