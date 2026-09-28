@@ -262,7 +262,7 @@ pub fn split_readiness_of(
     match state {
         RunState::Ready | RunState::Serving => SplitReadiness::Serving,
         RunState::Preflight | RunState::Starting => {
-            let has = |p: &str| rank_phases.iter().any(|r| *r == Some(p));
+            let has = |p: &str| rank_phases.contains(&Some(p));
             let phase = if has("loading") {
                 "loading"
             } else if has("warming") {
