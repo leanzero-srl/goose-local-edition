@@ -505,6 +505,12 @@ impl Sidecar {
     /// caller holding that frame gets the line, never a race lost to the reader. `Err` says why
     /// there is no answer: another process serves now, or the supervisor is mid-restart.
     pub async fn error_logged_since(&self, mark: ErrorMark) -> Result<LoggedError, String> {
+        self.error_lookup(mark)?.logged().await
+    }
+
+    /// [`Self::error_logged_since`] in two steps: the lookup is taken under the supervisor's
+    /// state, the wait for the reader runs after it is released.
+    pub fn error_lookup(&self, mark: ErrorMark) -> Result<ErrorLookup, String> {
         let progress = {
             let state = self.state.try_lock().map_err(|_| {
                 "the engine's supervisor is starting or restarting it, so its log cannot be matched \
@@ -528,7 +534,10 @@ impl Sidecar {
             }
             Arc::clone(&handle.progress)
         };
-        progress.logged_since(mark.errors).await
+        Ok(ErrorLookup {
+            progress,
+            errors: mark.errors,
+        })
     }
 
     /// [`Self::ensure_running`], ended by `cancel` if it has to restart the engine and the owner
@@ -1580,6 +1589,18 @@ pub struct LoggedError {
     pub line: Option<String>,
     /// Where the engine's whole stderr is kept, or why it is kept nowhere.
     pub log: String,
+}
+
+/// One engine's logged errors after a mark, answered by [`ErrorLookup::logged`].
+pub struct ErrorLookup {
+    progress: Arc<StderrProgress>,
+    errors: u64,
+}
+
+impl ErrorLookup {
+    pub async fn logged(self) -> Result<LoggedError, String> {
+        self.progress.logged_since(self.errors).await
+    }
 }
 
 #[derive(Default)]
