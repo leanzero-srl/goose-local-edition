@@ -142,6 +142,26 @@ export const J3_SERVING_SINGLE = residency(
   }
 );
 
+/** 15-j3-chat-open.png / 37-j4-peek-r1.png: the 27B split serves; the single on this Mac is stopped. */
+export const J3_SERVING_SPLIT = residency(
+  {
+    [J3_POOL_NODE.def.id]: { kind: 'serving' },
+    [J3_CHAT_NODE.def.id]: {
+      kind: 'notRunning',
+      otherWay: 'Qwen3.8-27B-Atlassian-Q8-mlx split across Mihai Macbook and Work’s Mac Studio',
+    },
+    [J3_BUILD_NODE.def.id]: { kind: 'serving' },
+  },
+  {
+    kind: 'split',
+    macs: ['local', 'link:worksmacstudio-lan-9c1e2a'],
+    link: 'jaccl',
+    modelId: J3_MODEL,
+    servedModelId: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+    macNames: ['Mihai Macbook', 'Work’s Mac Studio'],
+  }
+);
+
 /** The negative control: the loader loads the 27B single and ITS mount fails — a real failure. */
 export const J3_OWN_LOAD = residency({
   [J3_POOL_NODE.def.id]: { kind: 'loading' },

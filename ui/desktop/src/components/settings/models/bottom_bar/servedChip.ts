@@ -60,14 +60,14 @@ export function servedChipWords(
   const loader = !isModelLoading ? (served?.loader ?? null) : null;
   const loaderWords = loader ? loaderText(intl, loader) : null;
   // A `node:` / `strategy:` chat names what it runs on by the Nodes page's names (design §8.5,
-  // Q-255): the node, or the strategy and its node that serves — never `node:<id>`.
+  // Q-255): the node, or the strategy and the node its turns go to — never `node:<id>`.
   const route = !isModelLoading ? (served?.route ?? null) : null;
   const routeLabel =
     route == null
       ? null
-      : route.kind === 'node' || route.serving == null
+      : route.kind === 'node' || route.node == null
         ? route.name
-        : intl.formatMessage(i18n.routeChip, { route: route.name, node: route.serving });
+        : intl.formatMessage(i18n.routeChip, { route: route.name, node: route.node });
   const engineLabel =
     servedModel == null
       ? null

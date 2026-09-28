@@ -30,7 +30,7 @@ import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { splitStopAt, type SplitStop } from './splitStop';
 import type { ChatLoader } from './loaderText';
-import { nodeNameOfDevice, nodeNamesById } from '../nodes/model';
+import { effectiveEntry, nodeNameOfDevice, nodeNamesById } from '../nodes/model';
 import { nodeSwapOf, routeNodeIds, swapStopsEngine, type NodeSwap } from '../../utils/nodeSwap';
 import {
   distributedFact,
@@ -452,7 +452,7 @@ export interface ChatServedBy extends MlxEngineServing {
   loader?: ChatLoader | null;
   /**
    * What this chat's model names, by the names the Nodes page shows (Q-255) — a `node:` session its
-   * node, a `strategy:` session its strategy and the node of it that serves; null = not a nodes
+   * node, a `strategy:` session its strategy and the node its turns go to; null = not a nodes
    * route, or no nodes read. Never the raw id.
    */
   route?: ChatRoute | null;
@@ -460,13 +460,24 @@ export interface ChatServedBy extends MlxEngineServing {
 
 /** A `node:` / `strategy:` chat's model, named (design §8.5's chip label). */
 export type ChatRoute =
-  | { kind: 'node'; name: string }
-  | { kind: 'strategy'; name: string; serving: string | null };
+  | { kind: 'node'; name: string; nodeId: string }
+  | {
+      kind: 'strategy';
+      name: string;
+      /** The node its turns go to (the last served, else the Chat role's first), by name. */
+      node: string | null;
+      nodeId: string | null;
+    };
 
 /** goosed's nodes read as the chat surfaces take it: the defs and their residency. */
 export interface ChatNodesFacts {
   read: NodesReadResponse_unstable;
   residency: NodesResidencyResponse_unstable;
+  /**
+   * The node the router says served this chat's last turn (`nodes/servedLast`): null = read, no
+   * turn served yet; undefined = not read (or the read failed) — then no node is named.
+   */
+  servedNode?: string | null;
 }
 
 export interface ChatServedInputs {
@@ -757,7 +768,12 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
   const named = withNodeNames(core, facts.read);
   const route = routeOf(facts, given.model);
   const loader = chatLoaderOf(facts, routeIds, given);
-  if (!loader) return { ...named, loader: null, route };
+  if (!loader) {
+    if (!servedReady(named) && routeServes(route, facts)) {
+      return { ...named, readiness: { kind: 'ready' }, loader: null, route };
+    }
+    return { ...named, loader: null, route };
+  }
   const waits = loader.kind === 'waiting';
   if (servedReady(named)) {
     // The engine still answers — the chat's turn waits on the loader all the same.
@@ -797,28 +813,47 @@ function withNodeNames(served: ChatServedBy, read: NodesReadResponse_unstable): 
 
 function routeOf(facts: ChatNodesFacts, model: string | null | undefined): ChatRoute | null {
   if (!model) return null;
-  const { read, residency } = facts;
+  const { read } = facts;
   const names = nodeNamesById(read.nodes);
   if (model.startsWith('node:')) {
-    const name = names[model.slice('node:'.length)];
-    return name != null ? { kind: 'node', name } : null;
+    const nodeId = model.slice('node:'.length);
+    const name = names[nodeId];
+    return name != null ? { kind: 'node', name, nodeId } : null;
   }
   if (!model.startsWith('strategy:')) return null;
   const id = model.slice('strategy:'.length).split('@')[0];
   const strategy = (read.config.strategies ?? []).find((s) => s.id === id);
   if (!strategy) return null;
+  // Design §8.5: the node that served this chat's last turn (the router's served record); before a
+  // first turn, the Chat role's first node — where the next message goes (the loader loads it).
+  // Never whichever of its nodes happens to serve: a Build node serving between delegate calls is
+  // not where this chat's next message goes (Q-255: "a strategy chat names the split").
   const ids = routeNodeIds(read, model) ?? [];
-  // The node of the strategy that serves now — a pinned node before one that follows this Mac.
-  const serving = residency.nodes
-    .filter((r) => r.residency.kind === 'serving' && ids.includes(r.node))
-    .map((r) => read.nodes.find((n) => n.def.id === r.node))
-    .filter((n) => n != null)
-    .sort(
-      (a, b) =>
-        Number(a.def.placement == null || a.def.placement.kind === 'follows') -
-        Number(b.def.placement == null || b.def.placement.kind === 'follows')
-    )[0];
-  return { kind: 'strategy', name: strategy.name, serving: serving?.def.name ?? null };
+  const nodeId =
+    facts.servedNode === undefined
+      ? null
+      : facts.servedNode != null && ids.includes(facts.servedNode)
+        ? facts.servedNode
+        : facts.servedNode === null
+          ? (effectiveEntry(strategy, 'chat')?.chain[0]?.node ?? null)
+          : null;
+  return {
+    kind: 'strategy',
+    name: strategy.name,
+    node: nodeId != null ? (names[nodeId] ?? null) : null,
+    nodeId,
+  };
+}
+
+/**
+ * A `node:` / `strategy:` chat's readiness is its node's, not the pool's (Q-255, 37-j4-peek-r1.png:
+ * "No model is mounted — mihai-mlx · the node wants …" under a node chat its split was serving):
+ * the node its next message goes to serving is ready, whatever the pool's device would mount.
+ */
+function routeServes(route: ChatRoute | null, facts: ChatNodesFacts): boolean {
+  if (route?.nodeId == null) return false;
+  const row = facts.residency.nodes.find((r) => r.node === route.nodeId);
+  return row?.residency.kind === 'serving';
 }
 
 /**

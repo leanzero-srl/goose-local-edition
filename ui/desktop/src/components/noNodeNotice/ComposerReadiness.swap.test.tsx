@@ -10,11 +10,13 @@ import { useChatServedBy } from '../chatServedBy/useChatServedBy';
 import { resetEngineGlanceForTests } from '../engineGlance/glanceStore';
 import ModelsBottomBar from '../settings/models/bottom_bar/ModelsBottomBar';
 import {
+  J3_BUILD_NODE,
   J3_CHAT_NODE,
   J3_EXIT_143,
   J3_MODEL,
   J3_READ,
   J3_SERVING_SINGLE,
+  J3_SERVING_SPLIT,
   J3_STRATEGY,
   J3_SWAP_TO_SINGLE,
   J3_SWAP_TO_SPLIT,
@@ -39,10 +41,13 @@ vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineSettingsRead: async () => SETTINGS,
 }));
 let residency: NodesResidencyResponse_unstable = J3_SERVING_SINGLE;
+let servedLastNode: string | null = null;
 const mockExtMethod = vi.fn(async (method: string) => {
   if (method.endsWith('/nodes/read')) return J3_READ;
   if (method.endsWith('/nodes/residency')) return residency;
-  if (method.endsWith('/nodes/servedLast')) return { record: null };
+  if (method.endsWith('/nodes/servedLast')) {
+    return { record: servedLastNode ? { node: servedLastNode } : null };
+  }
   return { status: { state: 'off' } };
 });
 vi.mock('../../acp/acpConnection', () => ({
@@ -140,6 +145,7 @@ function show(model: string, turnInFlight: boolean) {
 beforeEach(() => {
   mockExtMethod.mockClear();
   devices = [MLX_DEVICE];
+  servedLastNode = null;
 });
 afterEach(() => resetEngineGlanceForTests(null));
 
@@ -217,7 +223,7 @@ describe('Q-254: the composer during a strategy swap says the loader’s words',
 });
 
 describe('Q-255: the chip names a node or strategy chat by the Nodes page’s names', () => {
-  it('a strategy chat: "<strategy> · <its node that serves>", never strategy:<id>', async () => {
+  it('a strategy chat before its first turn: "<strategy> · <its Chat node>", never strategy:<id>', async () => {
     residency = J3_SERVING_SINGLE;
     mockStatus.mockResolvedValue(RUNNING);
     show(J3_STRATEGY, false);
@@ -242,6 +248,42 @@ describe('Q-255: the chip names a node or strategy chat by the Nodes page’s na
       )
     );
     expect(document.body.textContent).not.toContain('strategy:new-strategy');
+  });
+
+  it('15-j3-chat-open: a strategy chat does not name the split that happens to serve before its first turn', async () => {
+    residency = J3_SERVING_SPLIT;
+    mockStatus.mockResolvedValue(BASE);
+    show(J3_STRATEGY, false);
+    await waitFor(() =>
+      expect(screen.getByTestId('model-chip-served').textContent).toBe(
+        'Quick · Qwen3.8-27B-Atlassian-Q8-mlx · this Mac'
+      )
+    );
+  });
+
+  it('after a turn, the node the router says served it (nodes/servedLast)', async () => {
+    residency = J3_SERVING_SPLIT;
+    servedLastNode = J3_BUILD_NODE.def.id;
+    mockStatus.mockResolvedValue(BASE);
+    show(J3_STRATEGY, false);
+    await waitFor(() =>
+      expect(screen.getByTestId('model-chip-served').textContent).toBe(
+        'Quick · Qwen3.8-27B-Atlassian-Q8-mlx · both Macs'
+      )
+    );
+  });
+
+  it('37-j4-peek-r1: a node chat its split serves has no "No model is mounted — mihai-mlx" bar', async () => {
+    residency = J3_SERVING_SPLIT;
+    // The pool's device wants the 27B single, which is stopped: the pool alone reads "unmounted".
+    mockStatus.mockResolvedValue(BASE);
+    show(`node:${J3_BUILD_NODE.def.id}`, false);
+    await waitFor(() =>
+      expect(screen.getByTestId('model-chip-served').textContent).toBe(
+        'Qwen3.8-27B-Atlassian-Q8-mlx · both Macs'
+      )
+    );
+    expect(screen.queryByTestId('composer-readiness')).toBeNull();
   });
 
   it('a node chat: the node’s name, never node:<id>', async () => {

@@ -24,6 +24,7 @@ import {
   useMountLookup,
 } from '../noNodeNotice/mlxMount';
 import { useGlanceNodes } from '../engineGlance/glanceStore';
+import { nodesServedLast } from '../../acp/nodes';
 import { deriveChatServedBy, type ChatNodesFacts, type ChatServedBy } from './chatServedBy';
 
 const i18n = defineMessages({
@@ -82,6 +83,35 @@ function useMainEngineSnapshot(enabled: boolean): MlxEngineSnapshot | null {
   return snapshot;
 }
 
+/**
+ * The node the router says served this `node:`/`strategy:` chat's last turn (design §8.5's
+ * `nodes/servedLast`), read when the chat opens and each time a turn ends — an event, never a poll.
+ * null = read, no turn served yet; undefined = not read, or the read failed (no node is then named).
+ */
+function useServedLast(
+  sessionId: string | null,
+  model: string | null,
+  turnInFlight: boolean
+): string | null | undefined {
+  const routed = model != null && (model.startsWith('node:') || model.startsWith('strategy:'));
+  const [read, setRead] = useState<{ sessionId: string; node: string | null } | null>(null);
+  useEffect(() => {
+    if (!routed || !sessionId || turnInFlight) return undefined;
+    let alive = true;
+    nodesServedLast(sessionId)
+      .then((r) => {
+        if (alive) setRead({ sessionId, node: r.record?.node ?? null });
+      })
+      .catch(() => {
+        if (alive) setRead(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [routed, sessionId, turnInFlight]);
+  return read && read.sessionId === sessionId ? read.node : undefined;
+}
+
 export interface ChatServing {
   served: ChatServedBy;
   /** This Mac's single engine as the composer polled it — the readiness bar's Mount follows it. */
@@ -137,12 +167,13 @@ export function useChatServedBy(
   // goosed's nodes read — the loader's marks and the node names (Q-254, Q-255): the glance store's
   // one read per window, re-read on each engine change and while the loader is at work.
   const glanceNodes = useGlanceNodes();
+  const servedNode = useServedLast(sessionId, model, turnInFlight);
   const nodes: ChatNodesFacts | null = useMemo(
     () =>
       glanceNodes.kind === 'read'
-        ? { read: glanceNodes.read, residency: glanceNodes.residency }
+        ? { read: glanceNodes.read, residency: glanceNodes.residency, servedNode }
         : null,
-    [glanceNodes]
+    [glanceNodes, servedNode]
   );
   const nowServed = `${singleServedId(status) ?? ''}|${distributed ? (distributedServedId(distributed) ?? '') : ''}`;
   useEffect(() => setServedKey(nowServed), [nowServed]);
