@@ -3,14 +3,22 @@ import type { SteerSessionRequest_unstable, SteerSessionResponse_unstable } from
 import type { Message } from '../types/message';
 import { getAcpClient } from './acpConnection';
 
+/**
+ * The prompt's ACP `_meta`. A loop tick carries `goose.loopTick`, which goosed matches against
+ * the runner's open offer; anything else it reads as an ordinary user prompt.
+ */
+export type AcpPromptMeta = Record<string, unknown>;
+
 export async function acpPromptSession(
   sessionId: string,
-  message: Message
+  message: Message,
+  meta?: AcpPromptMeta
 ): Promise<PromptResponse> {
   const client = await getAcpClient();
   return client.prompt({
     sessionId,
     prompt: messageToAcpPromptContent(message),
+    ...(meta ? { _meta: meta } : {}),
   });
 }
 
