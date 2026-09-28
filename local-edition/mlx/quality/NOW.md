@@ -43,7 +43,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       - Q-342 PROVEN: the summary request read 209,120 of 217,026 from cache.
       - Q-347 PROVEN: the next request read the 41,780-token head from cache.
       - Right after, decode was 4.0 tok/s again (the Q-447 float32 promotion; fixed in 3.0.74), back to 11 by 02:35.
-      Turn 26 (Standard vs Premium) continues at 64k.
+      Turn 26 (Standard vs Premium): 1,853 s, 37 tools; section 6 added and the PDF regenerated. Turn 27 (email)
+      is running; then 28 (recall) and 29 (status note) → #3u ENDS → install 3.0.74.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -56,8 +57,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- none. Q-455 DONE (fc6043cb4: chats read `context: N of M used (P%)`, prompt says usage is not a budget)
-  → /tmp/merge-q455, gate /tmp/gq455.out (own session) → ff main for 3.0.75.
+- none. Q-455 ON MAIN 8a7f8a27a (gate green) for 3.0.75, with Q-454 and the Linux lint fix.
 
 ## 3.0.74 = main edd009c6b — DMG BUILT 01:5x (notarized; ~/goose-builds/dmg + the Studio's ~/Downloads)
 - Install on BOTH Macs AFTER #3u ends (10 turns left at 02:00, incl. the turn-28 recall check). Installing
