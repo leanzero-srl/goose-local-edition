@@ -269,6 +269,8 @@ struct ChildHandle {
     pid: Option<u32>,
     stderr_tail: Arc<StdMutex<VecDeque<String>>>,
     stderr_lines: Arc<AtomicU64>,
+    /// What the engine logged as an error, and how far its stderr has been read (Q-423).
+    progress: Arc<StderrProgress>,
     /// The task filling `stderr_tail`; it ends at the pipe's EOF, which the kernel delivers once
     /// every process holding the write end has exited. `None` once it has been awaited.
     stderr_reader: Option<tokio::task::JoinHandle<()>>,
@@ -485,6 +487,48 @@ impl Sidecar {
 
     pub async fn healthy(&self) -> bool {
         self.probe().await.is_ok()
+    }
+
+    /// Where the running child's logged errors stand now — taken as a request is sent (Q-423).
+    /// `None` while no child is settled: nothing runs, or a start or restart holds the supervisor.
+    pub fn error_mark(&self) -> Option<ErrorMark> {
+        let state = self.state.try_lock().ok()?;
+        let handle = state.handle.as_ref()?;
+        Some(ErrorMark {
+            pid: handle.pid?,
+            errors: handle.progress.errors(),
+        })
+    }
+
+    /// The error the engine logged after `mark`, answered once its stderr has been read up to
+    /// now — the engine logs a stream's exception BEFORE it sends the stream's error frame, so a
+    /// caller holding that frame gets the line, never a race lost to the reader. `Err` says why
+    /// there is no answer: another process serves now, or the supervisor is mid-restart.
+    pub async fn error_logged_since(&self, mark: ErrorMark) -> Result<LoggedError, String> {
+        let progress = {
+            let state = self.state.try_lock().map_err(|_| {
+                "the engine's supervisor is starting or restarting it, so its log cannot be matched \
+                 to this answer"
+                    .to_string()
+            })?;
+            let handle = state
+                .handle
+                .as_ref()
+                .ok_or("no engine process is supervised any more")?;
+            if handle.pid != Some(mark.pid) {
+                return Err(format!(
+                    "the engine process that served this answer (pid {}) is gone; {} serves now",
+                    mark.pid,
+                    handle
+                        .pid
+                        .map_or("a process of unknown pid".to_string(), |p| format!(
+                            "pid {p}"
+                        ))
+                ));
+            }
+            Arc::clone(&handle.progress)
+        };
+        progress.logged_since(mark.errors).await
     }
 
     /// [`Self::ensure_running`], ended by `cancel` if it has to restart the engine and the owner
@@ -715,7 +759,12 @@ impl Sidecar {
             .log_dir
             .as_deref()
             .map(|dir| child_log::open(dir, &self.config.name, pid));
+        let progress = Arc::new(StderrProgress::new(
+            child.stderr.as_ref(),
+            child_log::describe(&log),
+        ));
         let stderr_reader = child.stderr.take().map(|stderr| {
+            let progress = Arc::clone(&progress);
             let tail = Arc::clone(&stderr_tail);
             let count = Arc::clone(&stderr_lines);
             let name = self.config.name.clone();
@@ -738,7 +787,10 @@ impl Sidecar {
                 }
                 // Bytes, decoded lossily: `lines()` ends at the first non-UTF-8 byte, and every
                 // line after it — the traceback that explains a failed load — would be dropped.
-                let mut stderr = BufReader::new(stderr);
+                let mut stderr = BufReader::new(WatchedPipe {
+                    inner: stderr,
+                    progress: Arc::clone(&progress),
+                });
                 let mut buf = Vec::new();
                 loop {
                     buf.clear();
@@ -758,12 +810,16 @@ impl Sidecar {
                                     log = %child_log::describe(&log),
                                     "engine error: {line}"
                                 );
+                                progress.logged_error(&line);
                             }
                             count.fetch_add(1, Ordering::Relaxed);
                             if shutdown_line.is_some_and(|is_shutdown| is_shutdown(&line)) {
                                 announce_shutdown(&name, pid, &line, &stopped_by, &shutting_down);
                             }
                             push(line);
+                            if stderr.buffer().is_empty() {
+                                progress.read_up();
+                            }
                         }
                         Err(e) => {
                             push(format!("(reading this engine's stderr failed: {e})"));
@@ -771,6 +827,7 @@ impl Sidecar {
                         }
                     }
                 }
+                progress.close();
                 stderr_closed.send_replace(true);
             })
         });
@@ -789,6 +846,7 @@ impl Sidecar {
             child,
             stderr_tail,
             stderr_lines,
+            progress,
             stderr_reader,
             stopped_by,
             shutting_down,
@@ -1507,6 +1565,182 @@ fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {
         .unwrap_or_default()
 }
 
+/// Where a child's logged errors stood when a request began (Q-423): taken before the request is
+/// sent, handed back to [`Sidecar::error_logged_since`] when its stream fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErrorMark {
+    pub pid: u32,
+    pub errors: u64,
+}
+
+/// What the engine logged as an error after a mark, read up to the moment of the question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoggedError {
+    /// The last ERROR/CRITICAL line the engine printed after the mark; `None` when it printed none.
+    pub line: Option<String>,
+    /// Where the engine's whole stderr is kept, or why it is kept nowhere.
+    pub log: String,
+}
+
+#[derive(Default)]
+struct ProgressState {
+    errors: u64,
+    last_error: Option<String>,
+    closed: bool,
+}
+
+/// How far a child's stderr has been read, and the errors it logged — the barrier that matches a
+/// failed stream with the exception its engine logged for it WITHOUT a clock.
+///
+/// Rapid-MLX logs a stream's exception on stderr and only THEN sends the client its sanitized SSE
+/// error (helpers.py, disconnect_guard): by the time goose holds that error frame, the line is in
+/// the pipe or already read. So "every byte written to the pipe so far has been read into lines"
+/// is an event that must come, and it decides the lookup: the pipe's unread byte count
+/// (`FIONREAD`) is zero AND the reader holds no byte it has not yet turned into a line. `pending`
+/// goes up BEFORE each read reaches the pipe and comes down only once every byte that read took
+/// has been handled, so a lookup that reads the pipe count first and `pending` second never misses
+/// bytes in the reader's hands.
+struct StderrProgress {
+    state: StdMutex<ProgressState>,
+    pending: std::sync::atomic::AtomicBool,
+    changed: tokio::sync::Notify,
+    log: String,
+    #[cfg(unix)]
+    fd: Option<std::os::fd::RawFd>,
+}
+
+impl StderrProgress {
+    fn new(stderr: Option<&tokio::process::ChildStderr>, log: String) -> Self {
+        #[cfg(not(unix))]
+        let _ = stderr;
+        Self {
+            state: StdMutex::new(ProgressState::default()),
+            pending: std::sync::atomic::AtomicBool::new(false),
+            changed: tokio::sync::Notify::new(),
+            log,
+            #[cfg(unix)]
+            fd: stderr.map(std::os::fd::AsRawFd::as_raw_fd),
+        }
+    }
+
+    #[cfg(all(test, unix))]
+    fn over_fd(fd: std::os::fd::RawFd) -> Self {
+        let mut progress = Self::new(None, "test log".to_string());
+        progress.fd = Some(fd);
+        progress
+    }
+
+    fn logged_error(&self, line: &str) {
+        let mut state = self.state.lock().unwrap();
+        state.errors += 1;
+        state.last_error = Some(line.to_string());
+    }
+
+    /// The reader has handled every byte it took from the pipe.
+    fn read_up(&self) {
+        self.pending.store(false, Ordering::SeqCst);
+        self.changed.notify_waiters();
+    }
+
+    /// The pipe reached EOF or failed: nothing more will be read. Set before the reader drops the
+    /// pipe, under the lock the unread count is read under, so that read never reaches a closed fd.
+    fn close(&self) {
+        self.state.lock().unwrap().closed = true;
+        self.read_up();
+    }
+
+    fn errors(&self) -> u64 {
+        self.state.lock().unwrap().errors
+    }
+
+    /// Whether every byte written to the pipe so far has been read into lines.
+    fn read_up_to_now(&self) -> Result<bool, String> {
+        let state = self.state.lock().unwrap();
+        if state.closed {
+            return Ok(true);
+        }
+        let unread = self.unread_in_pipe()?;
+        drop(state);
+        Ok(unread == 0 && !self.pending.load(Ordering::SeqCst))
+    }
+
+    #[cfg(unix)]
+    fn unread_in_pipe(&self) -> Result<usize, String> {
+        let fd = self
+            .fd
+            .ok_or("the engine's stderr was never piped to goose")?;
+        let mut unread: libc::c_int = 0;
+        // SAFETY: `fd` is the pipe's read end, open while `closed` is false (checked under the lock
+        // the caller holds; the reader sets `closed` under it before it drops the pipe), and
+        // `unread` is a valid out-pointer for FIONREAD's int.
+        if unsafe { libc::ioctl(fd, libc::FIONREAD, &mut unread) } != 0 {
+            return Err(format!(
+                "reading how much of the engine's stderr is unread failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(usize::try_from(unread).unwrap_or(0))
+    }
+
+    #[cfg(not(unix))]
+    fn unread_in_pipe(&self) -> Result<usize, String> {
+        Err("how much of the engine's stderr is unread is measured on unix only".to_string())
+    }
+
+    /// The error logged after `errors` (a mark's count), once the stderr is read up to now.
+    async fn logged_since(&self, errors: u64) -> Result<LoggedError, String> {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let state = self.state.lock().unwrap();
+                if state.errors > errors {
+                    return Ok(LoggedError {
+                        line: state.last_error.clone(),
+                        log: self.log.clone(),
+                    });
+                }
+            }
+            if self.read_up_to_now()? {
+                return Ok(LoggedError {
+                    line: None,
+                    log: self.log.clone(),
+                });
+            }
+            changed.await;
+        }
+    }
+}
+
+/// The child's stderr as the reader polls it: `pending` goes up before each poll reaches the pipe
+/// and comes down when the poll took nothing (the reader lowers it once it has handled what a
+/// read took — [`StderrProgress::read_up`]).
+struct WatchedPipe<R> {
+    inner: R,
+    progress: Arc<StderrProgress>,
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for WatchedPipe<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.progress.pending.store(true, Ordering::SeqCst);
+        let before = buf.filled().len();
+        let polled = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        let took_nothing = match &polled {
+            std::task::Poll::Ready(Ok(())) => buf.filled().len() == before,
+            std::task::Poll::Pending | std::task::Poll::Ready(Err(_)) => true,
+        };
+        if took_nothing {
+            self.progress.read_up();
+        }
+        polled
+    }
+}
+
 /// The durable copy of a child's stderr (`SidecarConfig::log_dir`): the file, or the line that
 /// says why there is none — never a silent absence.
 mod child_log {
@@ -1595,6 +1829,51 @@ mod child_log {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Q-423's barrier, with the race forced: the engine's ERROR line sits UNREAD in the pipe when
+    /// the lookup is asked (the order Rapid-MLX guarantees — log first, then the error frame). The
+    /// lookup must wait for the reader, not answer "nothing logged"; once the reader has taken and
+    /// handled the line, it answers with it. An empty pipe with nothing in the reader's hands
+    /// answers `None` at once.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_lookup_waits_for_a_line_still_unread_in_the_pipe() {
+        use std::io::{Read, Write};
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let mut fds = [0 as libc::c_int; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (mut read_end, mut write_end) = unsafe {
+            (
+                std::fs::File::from_raw_fd(fds[0]),
+                std::fs::File::from_raw_fd(fds[1]),
+            )
+        };
+        let progress = Arc::new(StderrProgress::over_fd(read_end.as_raw_fd()));
+
+        assert_eq!(progress.logged_since(0).await.unwrap().line, None);
+
+        let line =
+            "ERROR:rapid_mlx.service.helpers:[disconnect_guard] generator raised RuntimeError: x";
+        write_end.write_all(format!("{line}\n").as_bytes()).unwrap();
+        let lookup = tokio::spawn({
+            let progress = Arc::clone(&progress);
+            async move { progress.logged_since(0).await }
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !lookup.is_finished(),
+            "the line is still in the pipe: the lookup must wait for the reader"
+        );
+
+        progress.pending.store(true, Ordering::SeqCst);
+        let mut taken = vec![0u8; line.len() + 1];
+        read_end.read_exact(&mut taken).unwrap();
+        progress.logged_error(line);
+        progress.read_up();
+        let logged = lookup.await.unwrap().unwrap();
+        assert_eq!(logged.line.as_deref(), Some(line));
+        assert_eq!(progress.logged_since(1).await.unwrap().line, None);
+    }
 
     /// The real lsof, all three answers: our own listener, a port nobody listens on, and an lsof
     /// that failed — which must be an error, never an empty (and so unsignalled-but-"clear") port.

@@ -397,3 +397,85 @@ async fn an_engine_log_that_cannot_be_opened_is_said_in_the_tail() {
     );
     assert!(err.contains("ValueError: no weights"), "{err}");
 }
+
+/// An engine that answers `GET /fail` the way Rapid-MLX ends a failed stream: it logs the
+/// exception on stderr FIRST, then sends the client only the sanitized words.
+fn failing_engine(port: u16) -> SidecarConfig {
+    let mut config = fake_engine_config(port);
+    let script = format!(
+        r#"
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/v1/models":
+            body = b'{{"object":"list","data":[{{"id":"fake"}}]}}'
+        elif self.path == "/fail":
+            print("INFO:rapid_mlx.service.helpers:[disconnect_guard] poll #10", file=sys.stderr, flush=True)
+            print({STREAM_ERROR_LINE:?}, file=sys.stderr, flush=True)
+            print("Traceback (most recent call last):", file=sys.stderr, flush=True)
+            body = b'data: {{"error":{{"message":"Internal error during streaming","type":"internal_error"}}}}'
+        else:
+            body = b'{{}}'
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+"#
+    );
+    config.command = vec![
+        "python3".to_string(),
+        "-c".to_string(),
+        script,
+        port.to_string(),
+    ];
+    config
+}
+
+/// Q-423: a stream's failure is matched with the exception its engine logged for it — asked the
+/// moment the client holds the error, with no clock — and a request that logged nothing is
+/// answered `None` at once (the stderr is read up to now), never waited on.
+#[tokio::test]
+async fn a_failed_request_is_matched_with_the_error_its_engine_logged() {
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = failing_engine(port);
+    config.log_dir = Some(dir.path().to_path_buf());
+    let sidecar = Sidecar::start(config).await.unwrap();
+    let client = reqwest::Client::new();
+
+    for _ in 0..20 {
+        let mark = sidecar.error_mark().expect("a running engine has a mark");
+        let body = client
+            .get(format!("http://127.0.0.1:{port}/fail"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(body.contains("Internal error during streaming"), "{body}");
+        let logged = sidecar.error_logged_since(mark).await.unwrap();
+        assert_eq!(logged.line.as_deref(), Some(STREAM_ERROR_LINE));
+        assert!(logged.log.contains("fake-engine-"), "{}", logged.log);
+    }
+
+    let mark = sidecar.error_mark().unwrap();
+    client
+        .get(format!("http://127.0.0.1:{port}/v1/models"))
+        .send()
+        .await
+        .unwrap();
+    let logged = sidecar.error_logged_since(mark).await.unwrap();
+    assert_eq!(logged.line, None, "no error was logged after this mark");
+
+    let stale = goose_sidecar::ErrorMark {
+        pid: mark.pid + 1,
+        errors: 0,
+    };
+    let refused = sidecar.error_logged_since(stale).await.unwrap_err();
+    assert!(refused.contains("is gone"), "{refused}");
+    sidecar.shutdown().await;
+}
