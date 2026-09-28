@@ -1175,3 +1175,88 @@ fn test_custom_provider_supported_models_lists_raw_provider_models() {
         );
     });
 }
+
+/// Q-359 C0: `nodes/setChatNodes` stores the chat's own node set AND sets the chat's model to it in
+/// the same call; deleting the chat removes the set.
+#[test]
+#[serial]
+fn test_nodes_set_chat_nodes_sets_the_chats_model_and_a_deleted_chat_takes_its_set() {
+    let config_dir = write_acp_global_config(
+        "GOOSE_MODEL: gpt-4o\nGOOSE_PROVIDER: openai\nnodes:\n  version: 1\n  defs:\n  - id: gpt\n    name: GPT\n    kind: cloud\n    model: gpt-4o\n    provider: openai\n    origin: user\n  - id: mini\n    name: GPT mini\n    kind: cloud\n    model: gpt-4o-mini\n    provider: openai\n    origin: user\n",
+    );
+    run_test(async move {
+        let openai = OpenAiFixture::new(vec![], Arc::new(EnforceSessionId::default())).await;
+        let config = TestConnectionConfig {
+            data_root: config_dir,
+            ..Default::default()
+        };
+        let mut conn = AcpServerConnection::new(config, openai).await;
+        let SessionData { session, .. } = conn.new_session().await.unwrap();
+        let session_id = session.session_id().0.to_string();
+
+        let answer = send_custom(
+            conn.cx(),
+            "_goose/unstable/nodes/setChatNodes",
+            serde_json::json!({ "session": session_id, "nodes": ["gpt", "mini"], "answerOnNext": false }),
+        )
+        .await
+        .expect("setChatNodes should answer");
+        assert_eq!(answer["write"]["written"], true, "{answer}");
+        let model = format!("strategy:chat-{session_id}");
+        assert_eq!(answer["model"], serde_json::json!(model), "{answer}");
+        let sets: Vec<_> = answer["write"]["read"]["config"]["strategies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["chat"] == serde_json::json!(session_id))
+            .collect();
+        assert_eq!(sets.len(), 1, "{answer}");
+        assert_eq!(sets[0]["roles"]["build"]["when"], "share");
+
+        let info = send_custom(
+            conn.cx(),
+            "_goose/unstable/session/info",
+            serde_json::json!({ "sessionId": session_id }),
+        )
+        .await
+        .expect("session info");
+        let text = info.to_string();
+        assert!(
+            text.contains(&model) && text.contains("\"swarm\""),
+            "the chat runs on its set in the same call: {text}"
+        );
+
+        let refused = send_custom(
+            conn.cx(),
+            "_goose/unstable/nodes/setChatNodes",
+            serde_json::json!({ "session": session_id, "nodes": ["gpt", "ghost"] }),
+        )
+        .await
+        .expect("a refused set still answers");
+        assert_eq!(refused["write"]["written"], false, "{refused}");
+        assert!(refused.get("model").is_none(), "{refused}");
+
+        let nobody = send_custom(
+            conn.cx(),
+            "_goose/unstable/nodes/setChatNodes",
+            serde_json::json!({ "session": "no-such-chat", "nodes": ["gpt"] }),
+        )
+        .await;
+        assert!(nobody.is_err(), "a set for no chat is refused: {nobody:?}");
+
+        conn.delete_session(&session_id).await.unwrap();
+        let read = send_custom(
+            conn.cx(),
+            "_goose/unstable/nodes/read",
+            serde_json::json!({}),
+        )
+        .await
+        .expect("nodes read");
+        assert!(
+            read["config"]["strategies"]
+                .as_array()
+                .is_none_or(|s| s.iter().all(|s| s["chat"] != serde_json::json!(session_id))),
+            "the deleted chat's set went with it: {read}"
+        );
+    });
+}

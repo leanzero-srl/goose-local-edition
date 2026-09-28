@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "正在等待影像儲存…"
   },
+  "chatNodes.add": {
+    "defaultMessage": "新增"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "你新增的第一個節點會回答這個聊天。"
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} 回答這個聊天。你新增的每個節點都由它的委派共用。"
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "僅新增到此聊天；{strategy} 保持不變。{lead} 繼續回答這個聊天。"
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "將 {node} 新增到此聊天"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "為此聊天新增節點"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "取消"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "關閉"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "首次啟動尚未測量"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "載入中 · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "服務中"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{未載入 · 約 {duration} 後啟動 · # 次載入的中位數} other{未載入 · 約 {duration} 後啟動 · # 次載入的中位數}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac} 正在 {node} 上回答聊天「{chat}」。新增它會在其回答完成後停止此操作"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "等待載入 · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "你已有的每個節點都已在執行此聊天。"
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "暫時無法與 {lead} 一起執行：你的 Mac 一次只能為 goose 提供一個模型"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} 跨兩台 Mac 執行，因此沒有 Mac 空出來執行其他模型"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "執行於 {mac} 上，{lead} 就是在那裡回答這個聊天的。一台 Mac 一次只為 goose 執行一個模型"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "未儲存"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "無法讀取你的節點：{error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "正在讀取你的節點…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "未新增"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "另存為策略"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "此聊天會繼續在其上執行。它會列在「策略」下，新聊天和 swarm 建置也可以使用它。"
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "為它命名以儲存"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "此策略無法儲存"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "名稱"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "將此聊天的節點另存為策略"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "這台 Mac"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "這台 Mac"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {{peer} 上的 goose 未在執行} other {{peer} 自 {time} 起沒有回應 — goose 可能已關閉，或它已離線}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "顯示 {count} 個選項"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "在 {node} 上 · 為此委派在 {duration} 內載入完成"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "在 {node} 上"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "在 {node} 上：{primary} 無法執行（{reason}）"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "無法讀取此委派執行所在的節點：{error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "回報問題"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "此聊天的節點未變更"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "正在檢查…"
   },
@@ -6764,6 +6869,12 @@
   "nodes.remove": {
     "defaultMessage": "移除"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{同時將其從 # 個聊天的節點集中移除} other{同時將其從 # 個聊天的節點集中移除}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{有聊天與其他節點一起在此執行。失去節點的聊天會在下一則訊息中收到提示。} other{有 # 個聊天與其他節點一起在此執行。失去節點的聊天會在下一則訊息中收到提示。}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "同時從 {strategies} 中移除"
   },
@@ -6929,6 +7040,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "這台 Mac"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "為此聊天新增節點…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "如果 {lead} 無法執行，在下一個節點上回答"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "關閉：當 {lead} 無法執行時，這一輪結束並說明原因。"
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "回答"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "此聊天的節點"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "聊天 → {node}"
   },
@@ -6944,17 +7070,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "節點"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "沒有節點依名稱回答此聊天。你新增的第一個節點會回答它。"
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "聊天及其委派都在 {lead} 上執行。"
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "其他模型和提供者…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "雲端模型和你的端點"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "另存為策略…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "委派共用這些節點。聊天在 {lead} 上回答。"
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "約 {duration} 啟動"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "策略"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "在 {strategy} 上：聊天在 {lead} 上回答。新增節點會讓此聊天擁有自己的節點；{strategy} 保持不變。"
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "將 {node} 從此聊天中移除"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "在此執行這個聊天"
@@ -9625,6 +9769,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "取消"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# 個聊天有自己的節點集，由它的標籤生成：它在那裡執行，此處不列出} other{# 個聊天有各自的節點集，由它們的標籤生成：它們在那裡執行，此處不列出}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}：一律可用"

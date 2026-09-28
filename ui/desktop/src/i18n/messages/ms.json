@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Menunggu imej disimpan..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "Tambah"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "Nod pertama yang anda tambah akan menjawab sembang ini."
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} menjawab sembang ini. Wakilannya berkongsi setiap nod yang anda tambah."
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "Hanya ditambah pada sembang ini; {strategy} kekal seperti sedia ada. {lead} terus menjawab sembang ini."
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "Tambah {node} pada sembang ini"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "Tambah nod pada sembang ini"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "Tutup"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "Permulaan pertama belum diukur"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "Memuatkan · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "Melayan"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{Tidak dimuatkan · bermula dalam kira-kira {duration} · median daripada # pemuatan} other{Tidak dimuatkan · bermula dalam kira-kira {duration} · median daripada # pemuatan}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac} sedang menjawab sembang \"{chat}\" pada {node}. Menambahnya akan menghentikan itu selepas jawapannya"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "Menunggu untuk dimuatkan · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "Setiap nod yang anda ada sudah menjalankan sembang ini."
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "Belum boleh berjalan bersebelahan {lead}: Mac anda melayan goose satu model pada satu masa"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} berjalan merentasi kedua-dua Mac, jadi tiada Mac yang bebas untuk model lain"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "Berjalan pada {mac}, tempat {lead} menjawab sembang ini. Satu Mac menjalankan satu model pada satu masa untuk goose"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "Tidak disimpan"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "Nod anda tidak dapat dibaca: {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "Membaca nod anda…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "Tidak ditambah"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "Simpan sebagai strategi"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "Sembang ini terus berjalan padanya. Ia disenaraikan di bawah Strategi, tempat sembang baharu dan binaan swarm juga boleh menggunakannya."
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "Beri nama untuk menyimpannya"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "Strategi tidak dapat disimpan"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "Nama"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "Simpan nod sembang ini sebagai strategi"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "Mac ini"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "Mac ini"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {goose tidak berjalan pada {peer}} other {{peer} tidak menjawab sejak {time} — goose mungkin ditutup, atau ia di luar talian}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Tunjukkan {count} pilihan"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "pada {node} · dimuatkan untuk wakilan ini dalam {duration}"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "pada {node}"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "pada {node}: {primary} tidak boleh berjalan ({reason})"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "Nod tempat wakilan ini berjalan tidak dapat dibaca: {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Laporkan Masalah"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "Nod sembang ini tidak diubah"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "Menyemak…"
   },
@@ -6764,6 +6869,12 @@
   "nodes.remove": {
     "defaultMessage": "Alih keluar"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{Alih keluar juga daripada set nod # sembang} other{Alih keluar juga daripada set nod # sembang}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{Satu sembang berjalan padanya bersama nod lain. Sembang yang tiada nod akan diberitahu pada mesej seterusnya.} other{# sembang berjalan padanya bersama nod lain. Sembang yang tiada nod akan diberitahu pada mesej seterusnya.}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "Alih keluar juga daripada {strategies}"
   },
@@ -6929,6 +7040,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "Mac ini"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "Tambah nod pada sembang ini…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "Jika {lead} tidak boleh berjalan, jawab pada nod seterusnya"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "Mati: apabila {lead} tidak boleh berjalan, giliran tamat dan menyatakan sebabnya."
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "menjawab"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "Nod sembang ini"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "Sembang → {node}"
   },
@@ -6944,17 +7070,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "Nod"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "Tiada nod menjawab sembang ini mengikut nama. Nod pertama yang anda tambah akan menjawabnya."
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "Sembang dan wakilannya berjalan pada {lead}."
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "Model dan pembekal lain…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "Model awan dan titik akhir anda"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "Simpan sebagai strategi…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "Wakilan berkongsi nod ini. Sembang menjawab pada {lead}."
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "bermula dalam kira-kira {duration}"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "Strategi"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "Pada {strategy}: sembang menjawab pada {lead}. Menambah nod memberikan sembang ini nod sendiri; {strategy} kekal seperti sedia ada."
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "Alih keluar {node} daripada sembang ini"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Jalankan sembang ini pada"
@@ -9625,6 +9769,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "Batal"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# sembang mempunyai set nod sendiri, dibuat daripada cipnya: ia berjalan di sana, tidak disenaraikan di sini} other{# sembang mempunyai set nod sendiri, dibuat daripada cipnya: ia berjalan di sana, tidak disenaraikan di sini}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}: sentiasa tersedia"

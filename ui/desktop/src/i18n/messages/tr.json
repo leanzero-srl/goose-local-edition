@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Resimlerin kaydedilmesi bekleniyor..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "Ekle"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "Eklediğiniz ilk düğüm bu sohbeti yanıtlar."
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} bu sohbeti yanıtlar. Eklediğiniz her düğümü onun devretmeleri paylaşır."
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "Yalnızca bu sohbete eklenir; {strategy} olduğu gibi kalır. {lead} bu sohbeti yanıtlamaya devam eder."
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "{node} öğesini bu sohbete ekle"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "Bu sohbete bir düğüm ekle"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "Kapat"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "İlk başlatma henüz ölçülmedi"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "Yükleniyor · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "Hizmet veriyor"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{Yüklü değil · yaklaşık {duration} içinde başlar · # yüklemenin medyanı} other{Yüklü değil · yaklaşık {duration} içinde başlar · # yüklemenin medyanı}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac}, {node} üzerinde \"{chat}\" sohbetini yanıtlıyor. Onu eklemek, yanıtından sonra bunu durdurur"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "Yüklenmeyi bekliyor · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "Sahip olduğunuz her düğüm zaten bu sohbeti çalıştırıyor."
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "{lead} ile birlikte henüz çalışamaz: Mac'leriniz goose'a aynı anda yalnızca bir model hizmeti verir"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} her iki Mac'te birden çalışıyor, bu yüzden başka bir model için boş Mac yok"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "{mac} üzerinde çalışır; burada {lead} bu sohbeti yanıtlar. Bir Mac, goose için aynı anda yalnızca bir model çalıştırır"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "Kaydedilmedi"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "Düğümleriniz okunamadı: {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "Düğümleriniz okunuyor…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "Eklenmedi"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "Strateji olarak kaydet"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "Bu sohbet üzerinde çalışmaya devam eder. Stratejiler altında listelenir, burada yeni sohbetler ve swarm derlemeleri de onu kullanabilir."
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "Kaydetmek için ona bir ad verin"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "Strateji kaydedilemedi"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "Ad"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "Bu sohbetin düğümlerini strateji olarak kaydet"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "bu Mac"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "Bu Mac"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {{peer} üzerinde goose çalışmıyor} other {{peer} {time} saatinden beri yanıt vermiyor — goose kapalı olabilir ya da çevrimdışı}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count} seçeneklerini göster"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "{node} üzerinde · bu devretme için {duration} içinde yüklendi"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "{node} üzerinde"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "{node} üzerinde: {primary} çalışamıyor ({reason})"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "Bu devretmenin çalıştığı düğüm okunamadı: {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Sorun Bildir"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "Bu sohbetin düğümleri değiştirilmedi"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "Kontrol ediliyor…"
   },
@@ -6764,6 +6869,12 @@
   "nodes.remove": {
     "defaultMessage": "Kaldır"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{Onu # sohbetin düğüm kümesinden de çıkar} other{Onu # sohbetin düğüm kümelerinden de çıkar}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{Bir sohbet, başka düğümlerle birlikte bunun üzerinde çalışıyor. Düğümsüz kalan bir sohbete bu durum bir sonraki mesajında bildirilir.} other{# sohbet, başka düğümlerle birlikte bunun üzerinde çalışıyor. Düğümsüz kalan bir sohbete bu durum bir sonraki mesajında bildirilir.}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "Onu şunlardan da kaldır: {strategies}"
   },
@@ -6929,6 +7040,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "Bu Mac"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "Bu sohbete bir düğüm ekle…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "{lead} çalışamıyorsa, sonraki düğümde yanıtla"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "Kapalı: {lead} çalışamadığında sıra sona erer ve nedenini belirtir."
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "yanıtlıyor"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "Bu sohbetin düğümleri"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "Sohbet → {node}"
   },
@@ -6944,17 +7070,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "Düğümler"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "Hiçbir düğüm bu sohbeti adıyla yanıtlamıyor. Eklediğiniz ilk düğüm onu yanıtlar."
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "Sohbet ve devretmeleri {lead} üzerinde çalışır."
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "Diğer modeller ve sağlayıcılar…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "Bulut modelleri ve uç noktalarınız"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "Strateji olarak kaydet…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "Devretmeler bu düğümleri paylaşır. Sohbet {lead} üzerinde yanıtlar."
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "yaklaşık {duration} içinde başlar"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "Stratejiler"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "{strategy} üzerinde: sohbet {lead} üzerinde yanıtlar. Düğüm eklemek bu sohbete kendi düğümlerini verir; {strategy} olduğu gibi kalır."
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "{node} öğesini bu sohbetten çıkar"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Bu sohbeti şurada çalıştır"
@@ -9625,6 +9769,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "İptal"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# sohbetin kendi çipinden oluşturulmuş kendi düğüm kümesi var: orada çalışır, burada listelenmez} other{# sohbetin kendi çipinden oluşturulmuş kendi düğüm kümeleri var: orada çalışırlar, burada listelenmezler}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}: her zaman kullanılabilir"

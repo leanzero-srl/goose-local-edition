@@ -7,7 +7,8 @@ use goose_sdk_types::custom_requests::{
     NodesBuildEligibilityRequest, NodesBuildEligibilityResponse, NodesEnsureServingRequest,
     NodesEnsureServingResponse, NodesLoadHistoryRequest, NodesLoadHistoryResponse,
     NodesReadRequest, NodesRemoveNodeRequest, NodesRemoveStrategyRequest, NodesResidencyRequest,
-    NodesResidencyResponse, NodesServedLastRequest, NodesServedLastResponse, NodesWriteRequest,
+    NodesResidencyResponse, NodesServedLastRequest, NodesServedLastResponse,
+    NodesSetChatNodesRequest, NodesSetChatNodesResponse, NodesWriteRequest,
 };
 use goose_sidecar::engine::EngineSettings;
 
@@ -95,6 +96,7 @@ pub async fn remove_node(
         super::RemoveNode {
             id: &req.id,
             also_from_strategies: req.also_from_strategies,
+            also_from_chat_node_sets: req.also_from_chat_node_sets,
             and_new_chats_auto: req.and_new_chats_auto,
             acknowledged_sessions: req.acknowledged_sessions,
             live_sessions,
@@ -105,6 +107,64 @@ pub async fn remove_node(
         },
     )
     .map_err(internal)
+}
+
+/// A chat's own nodes, stored through the one write door. The chat must exist: a set for a
+/// session nobody has would be kept for nothing. The caller sets the chat's model to `model`.
+pub async fn set_chat_nodes(
+    session_manager: &SessionManager,
+    req: NodesSetChatNodesRequest,
+) -> Result<NodesSetChatNodesResponse, AcpError> {
+    session_manager
+        .get_session(&req.session, false)
+        .await
+        .map_err(|e| {
+            AcpError::invalid_params().data(format!("there is no chat '{}' ({e})", req.session))
+        })?;
+    let config = Config::global();
+    let engine = engine_settings(config);
+    let write = super::set_chat_nodes(
+        config,
+        super::SetChatNodes {
+            session: &req.session,
+            nodes: req.nodes,
+            answer_on_next: req.answer_on_next,
+        },
+        super::WriteFacts {
+            this_mac: this_mac_name().await,
+            engine: &engine,
+        },
+    )
+    .map_err(internal)?;
+    let model = write
+        .written
+        .then(|| super::chat_set_route(&write.read.config, &req.session))
+        .flatten();
+    Ok(NodesSetChatNodesResponse { write, model })
+}
+
+/// A deleted chat's node set goes with it. The chat is already deleted, so a set that could not be
+/// removed is said in the log by its chat, never raised as the delete's failure.
+pub async fn forget_chat(session: &str) {
+    let config = Config::global();
+    let engine = engine_settings(config);
+    let facts = super::WriteFacts {
+        this_mac: this_mac_name().await,
+        engine: &engine,
+    };
+    match super::forget_chat(config, session, facts) {
+        Ok(Some(write)) if !write.written => tracing::error!(
+            %session,
+            refusals = ?write.refusals,
+            "nodes: the deleted chat's node set was refused removal; it stays in the nodes config"
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::error!(
+            %session,
+            error = %format!("{e:#}"),
+            "nodes: the deleted chat's node set could not be removed; it stays in the nodes config"
+        ),
+    }
 }
 
 pub async fn remove_strategy(

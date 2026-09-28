@@ -22,6 +22,7 @@ import type { ContentBlock } from '../types/message';
 import McpAppRenderer from './McpApps/McpAppRenderer';
 import ToolApprovalButtons from './ToolApprovalButtons';
 import { defineMessages, useIntl } from '../i18n';
+import { DelegateServedLine } from './chatServedBy/DelegateServedLine';
 import { DiffCounts, DiffView } from './changes/DiffView';
 import {
   type FileDiff,
@@ -982,6 +983,7 @@ function ToolCallView({
         if (!subagentSessionId) return null;
         return (
           <div className="border-t border-border-primary">
+            <DelegateServedLine sessionId={subagentSessionId} />
             <button
               onClick={() => {
                 window.electron.createChatWindow({

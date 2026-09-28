@@ -18,7 +18,13 @@ import {
 } from '../leanzero-swarm/macs';
 import { providerRowState } from '../leanzero-swarm/cloudProviderState';
 import type { PlacementPlansRead } from '../leanzero-swarm/usePlacementPlans';
-import { ROLES, THIS_MAC, type NodesConfig, type ResolvedNodeDef } from './model';
+import {
+  ROLES,
+  THIS_MAC,
+  namedStrategies,
+  type NodesConfig,
+  type ResolvedNodeDef,
+} from './model';
 import type { StateHue } from './hues';
 import { placementOfKey, samePlacement } from './nodeDraft';
 
@@ -497,10 +503,14 @@ export interface UsedBy {
   strategyName: string;
 }
 
-/** Every strategy role whose chain names this node, in the strategy's and the roles' order. */
+/**
+ * Every NAMED strategy role whose chain names this node, in the strategy's and the roles' order. A
+ * chat's own node set is no strategy the person named: it is counted (`chatNodeSetCount`), never
+ * listed by its generated name.
+ */
 export function usedByOf(config: NodesConfig, nodeId: string): UsedBy[] {
   const out: UsedBy[] = [];
-  for (const strategy of config.strategies ?? []) {
+  for (const strategy of namedStrategies(config)) {
     for (const role of ROLES) {
       const entry = strategy.roles?.[role];
       const at = entry?.chain.findIndex((link) => link.node === nodeId) ?? -1;

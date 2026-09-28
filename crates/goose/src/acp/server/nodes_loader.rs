@@ -246,11 +246,14 @@ impl Drop for Ticket {
 struct Paused {
     core: Arc<Core>,
     root: String,
+    session: String,
 }
 
 impl Drop for Paused {
     fn drop(&mut self) {
-        self.core.holds.set_waiting(&self.root, false);
+        self.core
+            .holds
+            .set_waiting(&self.root, &self.session, false);
     }
 }
 
@@ -455,7 +458,8 @@ impl Core {
             Ok(target) => target,
             Err(r) => return refused(r),
         };
-        let root = demand.session_id().map(|s| self.holds.root_of(s));
+        let session = demand.session_id().map(str::to_string);
+        let root = session.as_deref().map(|s| self.holds.root_of(s));
         let reply_opened = root.as_deref().and_then(|r| self.holds.reply_opened(r));
         let tick = root.as_deref().is_some_and(|r| self.holds.is_tick(r));
         let seq = self.holds.next_seq();
@@ -489,7 +493,7 @@ impl Core {
                     &node,
                     &target,
                     seq,
-                    root.as_deref(),
+                    own_of(&root, &session),
                     reply_opened,
                     tick,
                     looks == 1,
@@ -503,8 +507,8 @@ impl Core {
                     wake,
                     replies,
                 } => {
-                    if let (None, Some(root)) = (&paused, &root) {
-                        paused = Some(self.pause(root));
+                    if let (None, Some(root), Some(session)) = (&paused, &root, &session) {
+                        paused = Some(self.pause(root, session));
                     }
                     self.set_activity(LoaderActivity::Waiting {
                         node: node.def.id.clone(),
@@ -518,8 +522,8 @@ impl Core {
                 Look::Go(go) => *go,
             };
             // From here the demanding reply has no model call in flight: it holds nothing.
-            if let (None, Some(root)) = (&paused, &root) {
-                paused = Some(self.pause(root));
+            if let (None, Some(root), Some(session)) = (&paused, &root, &session) {
+                paused = Some(self.pause(root, session));
             }
             // The swap: this process's one swap, then the Mac's swap claim — both waited for, and
             // both cancellable (a cancel here leaves nothing: no stop has begun).
@@ -536,7 +540,7 @@ impl Core {
                     &node,
                     &target,
                     seq,
-                    root.as_deref(),
+                    own_of(&root, &session),
                     reply_opened,
                     tick,
                     true,
@@ -562,13 +566,16 @@ impl Core {
             let core = Arc::clone(self);
             let owned = (ticket, paused, claim, swapping);
             let holder = root.clone();
+            let leaser = session.clone();
             tokio::spawn(async move {
                 let way = prepared.key.clone();
                 let answer = core
                     .execute(&node, prepared, plan, cancelled, holder.as_deref())
                     .await;
-                if let ((NodeEnsureServing::Ready, _), Some(root)) = (&answer, &holder) {
-                    core.holds.note_lease(root, way);
+                // The demanding session leased it: its turn holds it, and — for a delegate — so
+                // does the delegate, against its own turn's other delegates.
+                if let ((NodeEnsureServing::Ready, _), Some(session)) = (&answer, &leaser) {
+                    core.holds.note_lease(session, way);
                 }
                 drop(owned);
                 let _ = done.send(answer);
@@ -651,7 +658,7 @@ impl Core {
         node: &ResolvedNodeDef,
         target: &WayRef,
         seq: u64,
-        root: Option<&str>,
+        own: holds::Own<'_>,
         reply_opened: Option<u64>,
         tick: bool,
         prepare_now: bool,
@@ -760,7 +767,7 @@ impl Core {
             None
         };
         // 7. Replies in flight on a way that would stop.
-        let blockers = match self.holds.blockers(&plan.stops, root) {
+        let blockers = match self.holds.blockers(&plan.stops, own) {
             Ok(blockers) => blockers,
             Err(reason) => {
                 return Look::Refused(Refusal::new(NodeLoadRefusalCode::Unknown, reason))
@@ -902,7 +909,7 @@ impl Core {
             };
             if paused.is_none() {
                 tracing::info!(%session, %node, switch_to = %ahead, "nodes loader: this reply opened after a queued switch; its lease waits behind it");
-                paused = Some(self.pause(&root));
+                paused = Some(self.pause(&root, session));
             }
             notified.await;
         }
@@ -931,12 +938,14 @@ impl Core {
             .collect())
     }
 
-    /// The reply at `root` holds nothing until the pause is dropped (a count: pauses nest).
-    fn pause(self: &Arc<Self>, root: &str) -> Paused {
-        self.holds.set_waiting(root, true);
+    /// The reply at `root` holds nothing for `session`'s wait until the pause is dropped (a
+    /// count: pauses nest).
+    fn pause(self: &Arc<Self>, root: &str, session: &str) -> Paused {
+        self.holds.set_waiting(root, session, true);
         Paused {
             core: Arc::clone(self),
             root: root.to_string(),
+            session: session.to_string(),
         }
     }
 
@@ -1098,6 +1107,15 @@ async fn wait(notified: std::pin::Pin<&mut tokio::sync::futures::Notified<'_>>, 
     }
 }
 
+/// Whose replies a demand's look leaves out: its own and the sessions blocked on it (see
+/// [`holds::Own::Demand`]); a demand from no session leaves out nobody's.
+fn own_of<'a>(root: &'a Option<String>, session: &'a Option<String>) -> holds::Own<'a> {
+    match (root, session) {
+        (Some(root), Some(session)) => holds::Own::Demand { root, session },
+        _ => holds::Own::Nobody,
+    }
+}
+
 struct Seam(Arc<Core>);
 
 #[async_trait]
@@ -1120,7 +1138,11 @@ impl NodeLoader for Seam {
 
     fn pause_reply(&self, session: &str) -> seam::Hold {
         let root = self.0.holds.root_of(session);
-        Box::new(self.0.pause(&root))
+        Box::new(self.0.pause(&root, session))
+    }
+
+    fn child_ended(&self, child_session: &str) {
+        self.0.holds.child_ended(child_session);
     }
 
     fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {

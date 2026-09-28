@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Warten auf das Speichern der Bilder..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "Hinzufügen"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "Der erste Node, den du hinzufügst, beantwortet diesen Chat."
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} beantwortet diesen Chat. Seine Delegationen teilen sich jeden Node, den du hinzufügst."
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "Wird nur zu diesem Chat hinzugefügt; {strategy} bleibt unverändert. {lead} beantwortet diesen Chat weiterhin."
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "{node} zu diesem Chat hinzufügen"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "Einen Node zu diesem Chat hinzufügen"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "Schließen"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "Erster Start noch nicht gemessen"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "Lädt · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "Bedient"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{Nicht geladen · startet in etwa {duration} · Median aus # Ladevorgang} other{Nicht geladen · startet in etwa {duration} · Median aus # Ladevorgängen}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac} beantwortet gerade den Chat „{chat}“ auf {node}. Ihn hinzuzufügen stoppt das nach der Antwort"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "Wartet aufs Laden · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "Jeder Node, den du hast, führt diesen Chat bereits aus."
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "Kann noch nicht neben {lead} laufen: Deine Macs bedienen goose jeweils mit einem Modell auf einmal"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} läuft über beide Macs, daher ist kein Mac für ein anderes Modell frei"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "Läuft auf {mac}, wo {lead} diesen Chat beantwortet. Ein Mac führt für goose jeweils nur ein Modell aus"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "Nicht gespeichert"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "Deine Nodes konnten nicht gelesen werden: {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "Deine Nodes werden gelesen…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "Nicht hinzugefügt"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "Als Strategie speichern"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "Dieser Chat läuft weiterhin damit. Sie wird unter Strategien aufgeführt, wo auch neue Chats und Schwarm-Builds sie nutzen können."
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "Gib ihr einen Namen, um sie zu speichern"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "Die Strategie konnte nicht gespeichert werden"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "Name"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "Die Nodes dieses Chats als Strategie speichern"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "dieser Mac"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "Dieser Mac"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {goose auf {peer} läuft nicht} other {{peer} antwortet seit {time} nicht — sein goose ist vielleicht geschlossen oder er ist offline}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count} Optionen anzeigen"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "auf {node} · für diese Delegation in {duration} geladen"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "auf {node}"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "auf {node}: {primary} kann nicht laufen ({reason})"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "Der Node, auf dem diese Delegation lief, konnte nicht gelesen werden: {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Problem melden"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "Die Nodes dieses Chats wurden nicht geändert"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "Prüfe…"
   },
@@ -6764,6 +6869,12 @@
   "nodes.remove": {
     "defaultMessage": "Entfernen"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{Auch aus dem Node-Set von # Chat entfernen} other{Auch aus den Node-Sets von # Chats entfernen}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{Ein Chat läuft mit weiteren Nodes darauf. Ein Chat ohne Node wird bei seiner nächsten Nachricht darüber informiert.} other{# Chats laufen mit weiteren Nodes darauf. Ein Chat ohne Node wird bei seiner nächsten Nachricht darüber informiert.}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "Auch aus {strategies} entfernen"
   },
@@ -6929,6 +7040,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "Dieser Mac"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "Einen Node zu diesem Chat hinzufügen…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "Wenn {lead} nicht laufen kann, auf dem nächsten Node antworten"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "Aus: Wenn {lead} nicht laufen kann, endet die Antwort und nennt den Grund."
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "antwortet"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "Die Nodes dieses Chats"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "Chat → {node}"
   },
@@ -6944,17 +7070,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "Nodes"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "Kein Node beantwortet diesen Chat namentlich. Der erste Node, den du hinzufügst, beantwortet ihn."
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "Der Chat und seine Delegationen laufen auf {lead}."
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "Andere Modelle und Anbieter…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "Cloud-Modelle und deine Endpunkte"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "Als Strategie speichern…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "Delegationen teilen sich diese Nodes. Der Chat beantwortet auf {lead}."
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "startet in etwa {duration}"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "Strategien"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "Auf {strategy}: Der Chat beantwortet auf {lead}. Einen Node hinzuzufügen gibt diesem Chat eigene Nodes; {strategy} bleibt unverändert."
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "{node} aus diesem Chat entfernen"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Diesen Chat ausführen auf"
@@ -9625,6 +9769,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "Abbrechen"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# Chat hat sein eigenes Node-Set, erstellt über sein Chip: Er läuft dort, nicht hier aufgeführt} other{# Chats haben ihre eigenen Node-Sets, erstellt über ihre Chips: Sie laufen dort, nicht hier aufgeführt}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}: immer verfügbar"

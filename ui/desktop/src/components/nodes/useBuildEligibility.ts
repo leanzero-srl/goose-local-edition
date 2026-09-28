@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { nodesBuildEligibility, type BuildEligibility } from '../../acp/nodes';
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
-import type { NodeStrategy, NodesConfig } from './model';
+import { namedStrategies, type NodeStrategy, type NodesConfig } from './model';
 import type { Read } from './nodeGlance';
 
 /**
@@ -14,8 +14,10 @@ export function useBuildEligibility(
   config: NodesConfig | null
 ): Record<string, Read<BuildEligibility>> {
   const [answers, setAnswers] = useState<Record<string, Read<BuildEligibility>>>({});
-  const ids = (config?.strategies ?? []).map((s) => s.id);
-  const key = JSON.stringify([config?.strategies ?? [], config?.defs ?? []]);
+  // A chat's own node set never drives a build (goosed refuses it): it is never asked about.
+  const named = namedStrategies(config);
+  const ids = named.map((s) => s.id);
+  const key = JSON.stringify([named, config?.defs ?? []]);
   const idsKey = ids.join('\n');
   useEffect(() => {
     let alive = true;

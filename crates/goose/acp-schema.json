@@ -14278,6 +14278,13 @@
         "roles": {
           "$ref": "#/$defs/NodeStrategyRoles",
           "default": {}
+        },
+        "chat": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set when the strategy is ONE chat's node set (Q-359): the session it belongs to. Made only by\n`nodes/setChatNodes`; never what new chats start on or what swarm builds use; removed with\nits chat. \"Save as a strategy\" names it and clears this."
         }
       },
       "required": [
@@ -14711,6 +14718,21 @@
           "type": "string",
           "const": "duplicateEntry",
           "description": "A chain names the same node twice."
+        },
+        {
+          "type": "string",
+          "const": "chatNodeSetNotShared",
+          "description": "A chat's node set is that chat's alone: it is never what new chats start on or what swarm\nbuilds use."
+        },
+        {
+          "type": "string",
+          "const": "badChatNodeSet",
+          "description": "Two node sets name the same chat, or one names no chat."
+        },
+        {
+          "type": "string",
+          "const": "nodeInChatNodeSets",
+          "description": "A node is in chats' node sets; `alsoFromChatNodeSets` takes it out of them."
         }
       ]
     },
@@ -14734,6 +14756,11 @@
             "null"
           ],
           "minimum": 0
+        },
+        "alsoFromChatNodeSets": {
+          "type": "boolean",
+          "description": "\"Also take it out of N chats' node sets\": a set left empty goes, and its chat is told on its\nnext message.",
+          "default": false
         }
       },
       "required": [
@@ -14764,6 +14791,52 @@
       "description": "Remove a strategy. Refused while new chats start on it (unless `andNewChatsAuto`) or while\nswarm builds use it (unless `andBuildsPool`).",
       "x-side": "agent",
       "x-method": "_goose/unstable/nodes/removeStrategy"
+    },
+    "NodesSetChatNodesRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": "string",
+          "description": "The chat's session id."
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "answerOnNext": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "session",
+        "nodes"
+      ],
+      "description": "One chat's own nodes (Q-359): `nodes[0]` answers the chat, delegates share every node of the\nset (Build, `share`, weight 1 each); with `answerOnNext` the chat fails over down the set when\nits 1st can't run. goosed builds the chat's strategy and sets the chat's model to\n`strategy:<id>` in the same call. An empty `nodes` removes the chat's set and leaves its model\nalone (the caller has already moved the chat to what it runs on next).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/setChatNodes"
+    },
+    "NodesSetChatNodesResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "write": {
+          "$ref": "#/$defs/NodesWriteResponse_unstable"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The model the chat now runs on (`strategy:<id>`), set in this call; absent when nothing was\nwritten or the set was removed."
+        }
+      },
+      "required": [
+        "write"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/setChatNodes"
     },
     "NodesBuildEligibilityRequest_unstable": {
       "type": "object",
@@ -19574,6 +19647,15 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/NodesSetChatNodesRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/setChatNodes",
+                  "title": "NodesSetChatNodesRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/NodesBuildEligibilityRequest_unstable"
                     }
                   ],
@@ -20670,6 +20752,14 @@
                         }
                       ],
                       "title": "NodesWriteResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesSetChatNodesResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesSetChatNodesResponse_unstable"
                     },
                     {
                       "allOf": [

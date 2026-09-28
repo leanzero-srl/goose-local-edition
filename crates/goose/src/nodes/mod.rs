@@ -541,6 +541,7 @@ pub fn validate(config: &NodesConfig) -> Vec<NodesRefusal> {
 
     let mut strategy_ids = HashSet::new();
     let mut strategy_names = HashSet::new();
+    let mut chats = HashSet::new();
     let defs: HashMap<&str, &NodeDef> = config.defs.iter().map(|d| (d.id.as_str(), d)).collect();
     for strategy in &config.strategies {
         if !valid_id(&strategy.id) {
@@ -574,7 +575,28 @@ pub fn validate(config: &NodesConfig) -> Vec<NodesRefusal> {
             ));
         }
         validate_strategy(strategy, &defs, &mut out);
+        if let Some(chat) = &strategy.chat {
+            if chat.trim().is_empty() {
+                out.push(refusal(
+                    C::BadChatNodeSet,
+                    Some(&strategy.id),
+                    format!("the node set '{}' names no chat", strategy.id),
+                ));
+            } else if !chats.insert(chat.as_str()) {
+                out.push(refusal(
+                    C::BadChatNodeSet,
+                    Some(&strategy.id),
+                    format!("two node sets belong to the chat '{chat}'"),
+                ));
+            }
+        }
     }
+    let chat_set = |id: &str| {
+        config
+            .strategies
+            .iter()
+            .any(|s| s.id == id && s.chat.is_some())
+    };
 
     match &config.for_new_chats {
         NodesForNewChats::Auto => {}
@@ -590,6 +612,12 @@ pub fn validate(config: &NodesConfig) -> Vec<NodesRefusal> {
                 format!("new chats are set to start on the strategy '{id}', which does not exist"),
             ))
         }
+        NodesForNewChats::Strategy { id } if chat_set(id) => out.push(refusal(
+            C::ChatNodeSetNotShared,
+            Some(id),
+            "new chats can't start on one chat's own nodes; save them as a strategy first"
+                .to_string(),
+        )),
         _ => {}
     }
     if let NodesForBuilds::Strategy { id } = &config.for_builds {
@@ -598,6 +626,13 @@ pub fn validate(config: &NodesConfig) -> Vec<NodesRefusal> {
                 C::UnknownStrategy,
                 Some(id),
                 format!("swarm builds are set to use the strategy '{id}', which does not exist"),
+            ));
+        } else if chat_set(id) {
+            out.push(refusal(
+                C::ChatNodeSetNotShared,
+                Some(id),
+                "swarm builds can't use one chat's own nodes; save them as a strategy first"
+                    .to_string(),
             ));
         }
     }
@@ -964,10 +999,30 @@ fn store(
 pub struct RemoveNode<'a> {
     pub id: &'a str,
     pub also_from_strategies: bool,
+    pub also_from_chat_node_sets: bool,
     pub and_new_chats_auto: bool,
     pub acknowledged_sessions: Option<u32>,
     /// Sessions whose model is `node:<id>` (counted by the caller from the session store).
     pub live_sessions: u32,
+}
+
+/// Every chat node set without `node`: the rest of the set in its order, the lead moving to the
+/// next node; a set left empty goes (its chat is told it was removed on its next message).
+fn take_out_of_chat_sets(config: &mut NodesConfig, node: &str) {
+    config.strategies.retain_mut(|strategy| {
+        let Some((mut nodes, answer_on_next)) = chat_set_of(strategy) else {
+            return true;
+        };
+        if !nodes.iter().any(|n| n == node) {
+            return true;
+        }
+        nodes.retain(|n| n != node);
+        if nodes.is_empty() {
+            return false;
+        }
+        strategy.roles = chat_set_roles(&nodes, answer_on_next);
+        true
+    });
 }
 
 pub fn remove_node(
@@ -992,20 +1047,44 @@ pub fn remove_node(
         });
     };
     let def = next.defs.remove(index);
+    let uses = |s: &NodeStrategy| {
+        ROLES
+            .iter()
+            .filter_map(|r| s.roles.get(*r))
+            .any(|e| e.chain.iter().any(|l| l.node == req.id))
+    };
     let users: Vec<String> = next
         .strategies
         .iter()
-        .filter(|s| {
-            ROLES
-                .iter()
-                .filter_map(|r| s.roles.get(*r))
-                .any(|e| e.chain.iter().any(|l| l.node == req.id))
-        })
+        .filter(|s| s.chat.is_none() && uses(s))
         .map(|s| s.name.clone())
         .collect();
+    let chat_sets = next
+        .strategies
+        .iter()
+        .filter(|s| s.chat.is_some() && uses(s))
+        .count();
+    if chat_sets > 0 {
+        if req.also_from_chat_node_sets {
+            take_out_of_chat_sets(&mut next, req.id);
+        } else {
+            let one = chat_sets == 1;
+            refusals.push(refusal(
+                C::NodeInChatNodeSets,
+                Some(req.id),
+                format!(
+                    "\"{}\" is in {chat_sets} {} node {}; take it out of {} too",
+                    def.name,
+                    if one { "chat's" } else { "chats'" },
+                    if one { "set" } else { "sets" },
+                    if one { "it" } else { "them" },
+                ),
+            ));
+        }
+    }
     if !users.is_empty() {
         if req.also_from_strategies {
-            for strategy in &mut next.strategies {
+            for strategy in next.strategies.iter_mut().filter(|s| s.chat.is_none()) {
                 for role in ROLES {
                     let slot = strategy.roles.get_mut(role);
                     if let Some(entry) = slot {
@@ -1072,6 +1151,196 @@ pub fn remove_node(
     }
     let previous = current.config.for_new_chats.clone();
     store(config, next, &previous, facts, &mut refusals, current)
+}
+
+// ---------------------------------------------------------------------------------------------
+// One chat's own nodes (Q-359, DESIGN-Q359-CHAT-NODES.md "Mapping"): a strategy owned by the chat,
+// so the router, resolve, summon's `@build`, the context window, the loader and the served record
+// read it exactly as they read any strategy — no second copy of routing.
+// ---------------------------------------------------------------------------------------------
+
+/// The roles of a chat's node set: the chat answers on its lead, loading it when it is not loaded,
+/// and fails over down the rest of the set only with `answer_on_next`; its delegates share every
+/// node of the set (Build, `share`, weight 1 each — sticky per delegate, busy nodes skipped).
+pub fn chat_set_roles(nodes: &[String], answer_on_next: bool) -> NodeStrategyRoles {
+    let link = |node: &String| NodeChainEntry {
+        node: node.clone(),
+        weight: 1,
+    };
+    let answering = if answer_on_next {
+        nodes
+    } else {
+        &nodes[..nodes.len().min(1)]
+    };
+    NodeStrategyRoles {
+        chat: Some(NodeRoleEntry {
+            chain: answering.iter().map(link).collect(),
+            when: NodeWhen::Failover,
+            if_not_loaded: NodeIfNotLoaded::Load,
+        }),
+        build: Some(NodeRoleEntry {
+            chain: nodes.iter().map(link).collect(),
+            when: NodeWhen::Share,
+            if_not_loaded: NodeIfNotLoaded::Load,
+        }),
+        ..NodeStrategyRoles::default()
+    }
+}
+
+/// The set a chat's strategy holds — its nodes, lead first, and whether the chat answers down the
+/// set — or `None` for a named strategy.
+pub fn chat_set_of(strategy: &NodeStrategy) -> Option<(Vec<String>, bool)> {
+    strategy.chat.as_ref()?;
+    let nodes = strategy
+        .roles
+        .build
+        .as_ref()?
+        .chain
+        .iter()
+        .map(|l| l.node.clone())
+        .collect();
+    let answer_on_next = strategy
+        .roles
+        .chat
+        .as_ref()
+        .is_some_and(|e| e.chain.len() > 1);
+    Some((nodes, answer_on_next))
+}
+
+/// The strategy `session`'s node set is, if it has one.
+pub fn chat_set_for<'a>(config: &'a NodesConfig, session: &str) -> Option<&'a NodeStrategy> {
+    config
+        .strategies
+        .iter()
+        .find(|s| s.chat.as_deref() == Some(session))
+}
+
+/// The id a new chat set gets: `chat-<session>` with the grammar's delimiters made plain,
+/// numbered until no strategy holds it.
+fn chat_set_id(strategies: &[NodeStrategy], session: &str) -> String {
+    let plain: String = session
+        .trim()
+        .chars()
+        .map(|c| {
+            if matches!(c, ':' | '@') || c.is_whitespace() {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let base = format!("chat-{plain}");
+    let taken = |id: &str| strategies.iter().any(|s| s.id == id);
+    let mut id = base.clone();
+    let mut n = 1;
+    while taken(&id) {
+        n += 1;
+        id = format!("{base}-{n}");
+    }
+    id
+}
+
+fn free_strategy_name(strategies: &[NodeStrategy], wanted: String) -> String {
+    let taken = |name: &str| strategies.iter().any(|s| s.name == name);
+    if !taken(&wanted) {
+        return wanted;
+    }
+    let mut n = 2;
+    loop {
+        let name = format!("{wanted} ({n})");
+        if !taken(&name) {
+            return name;
+        }
+        n += 1;
+    }
+}
+
+pub struct SetChatNodes<'a> {
+    pub session: &'a str,
+    pub nodes: Vec<String>,
+    pub answer_on_next: bool,
+}
+
+/// THE door of a chat's node set: builds (or replaces) the chat's strategy and stores it through
+/// the one write door, so every refusal a strategy can meet applies (an unknown node, a node named
+/// twice, two MLX ways shared on one Mac's goose). An empty `nodes` removes the set. The caller
+/// sets the chat's model to the answered route in the same call.
+pub fn set_chat_nodes(
+    config: &Config,
+    req: SetChatNodes,
+    facts: WriteFacts,
+) -> Result<NodesWriteResponse> {
+    let current = read(config, facts.this_mac.clone())?;
+    let mut next = current.config.clone();
+    let existing = next
+        .strategies
+        .iter()
+        .position(|s| s.chat.as_deref() == Some(req.session));
+    match (existing, req.nodes.is_empty()) {
+        (None, true) => {
+            return Ok(NodesWriteResponse {
+                written: false,
+                refusals: Vec::new(),
+                read: current,
+            })
+        }
+        (Some(index), true) => {
+            next.strategies.remove(index);
+        }
+        (Some(index), false) => {
+            next.strategies[index].roles = chat_set_roles(&req.nodes, req.answer_on_next);
+        }
+        (None, false) => {
+            let id = chat_set_id(&next.strategies, req.session);
+            let name = free_strategy_name(
+                &next.strategies,
+                format!("This chat's nodes ({})", req.session),
+            );
+            next.strategies.push(NodeStrategy {
+                id,
+                name,
+                note: None,
+                roles: chat_set_roles(&req.nodes, req.answer_on_next),
+                chat: Some(req.session.to_string()),
+            });
+        }
+    }
+    let previous = current.config.for_new_chats.clone();
+    store(config, next, &previous, facts, &mut Vec::new(), current)
+}
+
+/// The route a chat on its node set runs on (`strategy:<id>`).
+pub fn chat_set_route(config: &NodesConfig, session: &str) -> Option<String> {
+    chat_set_for(config, session).map(|s| {
+        format_route_model(&RouteModel::Strategy {
+            id: s.id.clone(),
+            role: None,
+        })
+    })
+}
+
+/// A deleted chat's node set goes with it. `Ok(None)` = the chat had none (nothing is written).
+pub fn forget_chat(
+    config: &Config,
+    session: &str,
+    facts: WriteFacts,
+) -> Result<Option<NodesWriteResponse>> {
+    let Some(stored) = read_stored(config)? else {
+        return Ok(None);
+    };
+    if chat_set_for(&stored, session).is_none() {
+        return Ok(None);
+    }
+    set_chat_nodes(
+        config,
+        SetChatNodes {
+            session,
+            nodes: Vec::new(),
+            answer_on_next: false,
+        },
+        facts,
+    )
+    .map(Some)
 }
 
 /// The config with `draft` in place of the strategy `id` (appended when none has it yet) — what the

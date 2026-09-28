@@ -1388,6 +1388,34 @@ impl GooseAcpAgent {
         crate::nodes::acp::remove_strategy(req).await
     }
 
+    /// Q-359: the chat's node set is stored, then the chat's model is set to it in the same call
+    /// (the same provider switch the chip's "Run this chat on" makes), and the client is told.
+    #[custom_method(NodesSetChatNodesRequest)]
+    async fn dispatch_nodes_set_chat_nodes(
+        &self,
+        req: NodesSetChatNodesRequest,
+    ) -> Result<NodesSetChatNodesResponse, agent_client_protocol::Error> {
+        let session = req.session.clone();
+        let answer = crate::nodes::acp::set_chat_nodes(&self.session_manager, req).await?;
+        if let Some(model) = &answer.model {
+            self.update_provider(
+                &session,
+                crate::nodes::SWARM_PROVIDER,
+                Some(model),
+                None,
+                None,
+            )
+            .await?;
+            if let Some(cx) = self.client_cx.get() {
+                let (notification, _) = self
+                    .build_config_update(&SessionId::new(session.clone()))
+                    .await?;
+                cx.send_notification(notification)?;
+            }
+        }
+        Ok(answer)
+    }
+
     #[custom_method(NodesBuildEligibilityRequest)]
     async fn dispatch_nodes_build_eligibility(
         &self,

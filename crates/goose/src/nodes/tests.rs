@@ -25,6 +25,17 @@ struct Fixture {
     effective_role: Vec<EffectiveCase>,
     resolve: Vec<ResolveCase>,
     sentence_facts: Vec<SentenceCase>,
+    chat_node_sets: Vec<ChatNodeSetCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatNodeSetCase {
+    name: String,
+    session: String,
+    nodes: Vec<String>,
+    answer_on_next: bool,
+    strategy: NodeStrategy,
 }
 
 #[derive(Deserialize)]
@@ -168,6 +179,42 @@ fn sentence_facts_match_the_fixture() {
             "{} / {:?}",
             case.strategy.name,
             case.role
+        );
+    }
+}
+
+#[test]
+fn chat_node_sets_match_the_fixture() {
+    let cases = fixture().chat_node_sets;
+    assert!(cases.len() >= 4, "{}", cases.len());
+    for case in cases {
+        assert_eq!(
+            chat_set_roles(&case.nodes, case.answer_on_next),
+            case.strategy.roles,
+            "{}",
+            case.name
+        );
+        assert_eq!(
+            chat_set_of(&case.strategy),
+            Some((case.nodes.clone(), case.answer_on_next)),
+            "{}",
+            case.name
+        );
+        assert_eq!(
+            chat_set_id(&[], &case.session),
+            case.strategy.id,
+            "{}",
+            case.name
+        );
+        let named = NodeStrategy {
+            chat: None,
+            ..case.strategy.clone()
+        };
+        assert_eq!(
+            chat_set_of(&named),
+            None,
+            "{}: a named strategy is no chat's set",
+            case.name
         );
     }
 }
@@ -415,6 +462,18 @@ fn strategy(id: &str, chat: Option<NodeRoleEntry>, build: Option<NodeRoleEntry>)
             build,
             ..NodeStrategyRoles::default()
         },
+        chat: None,
+    }
+}
+
+fn chat_set(id: &str, session: &str, nodes: &[&str]) -> NodeStrategy {
+    let nodes: Vec<String> = nodes.iter().map(|n| n.to_string()).collect();
+    NodeStrategy {
+        id: id.into(),
+        name: format!("This chat's nodes ({id})"),
+        note: None,
+        roles: chat_set_roles(&nodes, false),
+        chat: Some(session.into()),
     }
 }
 
@@ -617,6 +676,46 @@ fn each_validation_rule_refuses_by_code() {
             "builds on a missing strategy",
             Box::new(|c| c.for_builds = NodesForBuilds::Strategy { id: "ghost".into() }),
             C::UnknownStrategy,
+        ),
+        (
+            "new chats on one chat's own nodes",
+            Box::new(|c| {
+                c.strategies = vec![chat_set("chat-1", "1", &["sonnet"])];
+                c.for_new_chats = NodesForNewChats::Strategy {
+                    id: "chat-1".into(),
+                };
+            }),
+            C::ChatNodeSetNotShared,
+        ),
+        (
+            "builds on one chat's own nodes",
+            Box::new(|c| {
+                c.strategies = vec![chat_set("chat-1", "1", &["sonnet"])];
+                c.for_builds = NodesForBuilds::Strategy {
+                    id: "chat-1".into(),
+                };
+            }),
+            C::ChatNodeSetNotShared,
+        ),
+        (
+            "two node sets for one chat",
+            Box::new(|c| {
+                c.strategies = vec![
+                    chat_set("chat-1", "1", &["sonnet"]),
+                    chat_set("chat-1-2", "1", &["flash"]),
+                ];
+            }),
+            C::BadChatNodeSet,
+        ),
+        (
+            "a node set of no chat",
+            Box::new(|c| c.strategies = vec![chat_set("chat-", " ", &["sonnet"])]),
+            C::BadChatNodeSet,
+        ),
+        (
+            "a chat's set sharing two MLX ways",
+            Box::new(|c| c.strategies = vec![chat_set("chat-1", "1", &["split", "flash"])]),
+            C::SharesTwoWays,
         ),
     ];
     for (name, mutate, code) in cases {
@@ -830,6 +929,7 @@ fn remove(id: &str) -> RemoveNode<'_> {
     RemoveNode {
         id,
         also_from_strategies: false,
+        also_from_chat_node_sets: false,
         and_new_chats_auto: false,
         acknowledged_sessions: None,
         live_sessions: 0,
@@ -940,6 +1040,224 @@ fn removing_a_node_a_strategy_uses_or_live_chats_are_set_to_needs_consent() {
     assert!(done.written, "{:?}", done.refusals);
     let chat = done.read.config.strategies[0].roles.chat.as_ref().unwrap();
     assert_eq!(chat.chain.len(), 1);
+}
+
+fn set_chat<'a>(session: &'a str, nodes: &[&str], answer_on_next: bool) -> SetChatNodes<'a> {
+    SetChatNodes {
+        session,
+        nodes: nodes.iter().map(|n| n.to_string()).collect(),
+        answer_on_next,
+    }
+}
+
+#[test]
+fn a_chats_node_set_is_one_strategy_owned_by_the_chat_and_replaced_in_place() {
+    let t = test_config(POOL_YAML);
+    let engine = no_engine();
+    let mut next = read(&t.config, Ok("Mac".into())).unwrap().config;
+    next.defs.push(sonnet("sonnet"));
+    assert!(write(&t.config, next, facts(&engine)).unwrap().written);
+
+    let first = set_chat_nodes(
+        &t.config,
+        set_chat("20260928_7", &["mihai-mlx"], false),
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(first.written, "{:?}", first.refusals);
+    let set = chat_set_for(&first.read.config, "20260928_7").unwrap();
+    assert_eq!(set.id, "chat-20260928_7");
+    assert_eq!(
+        chat_set_route(&first.read.config, "20260928_7").as_deref(),
+        Some("strategy:chat-20260928_7")
+    );
+    assert_eq!(
+        first.read.config.for_new_chats,
+        NodesForNewChats::Auto,
+        "a chat's set never touches what new chats start on"
+    );
+
+    let second = set_chat_nodes(
+        &t.config,
+        set_chat("20260928_7", &["mihai-mlx", "sonnet"], true),
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(second.written, "{:?}", second.refusals);
+    let sets: Vec<_> = second
+        .read
+        .config
+        .strategies
+        .iter()
+        .filter(|s| s.chat.is_some())
+        .collect();
+    assert_eq!(sets.len(), 1, "one chat, one set: replaced in place");
+    assert_eq!(sets[0].id, "chat-20260928_7");
+    assert_eq!(
+        chat_set_of(sets[0]),
+        Some((vec!["mihai-mlx".to_string(), "sonnet".to_string()], true))
+    );
+
+    let refused = set_chat_nodes(
+        &t.config,
+        set_chat("20260928_7", &["mihai-mlx", "ghost"], false),
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(!refused.written);
+    assert!(refused
+        .refusals
+        .iter()
+        .any(|r| r.code == NodesRefusalCode::UnknownNode));
+    assert_eq!(
+        chat_set_of(chat_set_for(&refused.read.config, "20260928_7").unwrap()),
+        Some((vec!["mihai-mlx".to_string(), "sonnet".to_string()], true)),
+        "a refused set leaves the stored one as it was"
+    );
+
+    let other = set_chat_nodes(
+        &t.config,
+        set_chat("20260928_8", &["sonnet"], false),
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(other.written, "{:?}", other.refusals);
+    assert_eq!(
+        other
+            .read
+            .config
+            .strategies
+            .iter()
+            .filter(|s| s.chat.is_some())
+            .count(),
+        2
+    );
+
+    let cleared = set_chat_nodes(
+        &t.config,
+        set_chat("20260928_7", &[], false),
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(cleared.written);
+    assert!(chat_set_for(&cleared.read.config, "20260928_7").is_none());
+    assert!(chat_set_for(&cleared.read.config, "20260928_8").is_some());
+}
+
+#[test]
+fn a_deleted_chats_set_goes_and_a_chat_with_none_writes_nothing() {
+    let t = test_config(POOL_YAML);
+    let engine = no_engine();
+    let before = std::fs::read(&t.path).unwrap();
+    assert!(forget_chat(&t.config, "20260928_7", facts(&engine))
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        std::fs::read(&t.path).unwrap(),
+        before,
+        "no nodes key: nothing is written"
+    );
+
+    let mut next = read(&t.config, Ok("Mac".into())).unwrap().config;
+    next.defs.push(sonnet("sonnet"));
+    assert!(write(&t.config, next, facts(&engine)).unwrap().written);
+    assert!(
+        set_chat_nodes(
+            &t.config,
+            set_chat("20260928_7", &["sonnet"], false),
+            facts(&engine)
+        )
+        .unwrap()
+        .written
+    );
+    let stored = std::fs::read(&t.path).unwrap();
+    assert!(forget_chat(&t.config, "another-chat", facts(&engine))
+        .unwrap()
+        .is_none());
+    assert_eq!(std::fs::read(&t.path).unwrap(), stored);
+
+    let forgot = forget_chat(&t.config, "20260928_7", facts(&engine))
+        .unwrap()
+        .unwrap();
+    assert!(forgot.written, "{:?}", forgot.refusals);
+    assert!(read_stored(&t.config)
+        .unwrap()
+        .unwrap()
+        .strategies
+        .is_empty());
+}
+
+#[test]
+fn removing_a_node_in_chats_sets_needs_its_own_box_and_moves_the_lead() {
+    let t = test_config(POOL_YAML);
+    let engine = no_engine();
+    let mut next = read(&t.config, Ok("Mac".into())).unwrap().config;
+    next.defs.push(sonnet("sonnet"));
+    assert!(write(&t.config, next, facts(&engine)).unwrap().written);
+    for (session, nodes, answer) in [
+        ("a", vec!["sonnet", "mihai-mlx"], true),
+        ("b", vec!["sonnet"], false),
+    ] {
+        let out =
+            set_chat_nodes(&t.config, set_chat(session, &nodes, answer), facts(&engine)).unwrap();
+        assert!(out.written, "{:?}", out.refusals);
+    }
+
+    let refused = remove_node(&t.config, remove("sonnet"), facts(&engine)).unwrap();
+    assert!(!refused.written);
+    let in_sets = refused
+        .refusals
+        .iter()
+        .find(|r| r.code == NodesRefusalCode::NodeInChatNodeSets)
+        .unwrap_or_else(|| panic!("{:?}", refused.refusals));
+    assert!(
+        in_sets.message.contains("2 chats' node sets"),
+        "{}",
+        in_sets.message
+    );
+    assert!(
+        refused
+            .refusals
+            .iter()
+            .all(|r| r.code != NodesRefusalCode::NodeInUse),
+        "no named strategy uses it: {:?}",
+        refused.refusals
+    );
+
+    let only_strategies = remove_node(
+        &t.config,
+        RemoveNode {
+            also_from_strategies: true,
+            ..remove("sonnet")
+        },
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(
+        !only_strategies.written,
+        "the strategies box never answers for the chats' sets"
+    );
+
+    let done = remove_node(
+        &t.config,
+        RemoveNode {
+            also_from_chat_node_sets: true,
+            ..remove("sonnet")
+        },
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(done.written, "{:?}", done.refusals);
+    let a = chat_set_for(&done.read.config, "a").unwrap();
+    assert_eq!(
+        chat_set_of(a),
+        Some((vec!["mihai-mlx".to_string()], false)),
+        "the next node leads; one node left answers alone"
+    );
+    assert!(
+        chat_set_for(&done.read.config, "b").is_none(),
+        "a set left empty goes"
+    );
 }
 
 #[test]

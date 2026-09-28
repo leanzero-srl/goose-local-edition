@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "画像の保存を待機中..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "追加"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "最初に追加したノードがこのチャットに応答します。"
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} がこのチャットに応答します。追加するノードはすべて、そのデリゲートで共有されます。"
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "このチャットにのみ追加されます。{strategy} はそのままです。{lead} は引き続きこのチャットに応答します。"
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "{node} をこのチャットに追加"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "このチャットにノードを追加"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "閉じる"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "初回起動はまだ計測されていません"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "読み込み中 · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "提供中"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{未ロード · 約 {duration} で起動 · # 回のロードの中央値} other{未ロード · 約 {duration} で起動 · # 回のロードの中央値}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac} は {node} でチャット「{chat}」に応答中です。追加すると、その応答後に停止します"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "ロード待ち · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "すでに持っているすべてのノードがこのチャットを実行しています。"
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "{lead} と並べてはまだ実行できません: あなたの Mac は goose に一度に 1 つのモデルしか提供できません"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} は両方の Mac にまたがって実行されているため、他のモデル用に空いている Mac がありません"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "{mac} で実行されており、そこで {lead} がこのチャットに応答しています。Mac は goose に対して一度に 1 つのモデルしか実行しません"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "保存されませんでした"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "ノードを読み取れませんでした: {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "ノードを読み取り中…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "追加されませんでした"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "ストラテジーとして保存"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "このチャットは引き続きそこで実行されます。ストラテジーの下に一覧表示され、新しいチャットや swarm のビルドもそこから使えます。"
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "保存するには名前を付けてください"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "ストラテジーを保存できませんでした"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "名前"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "このチャットのノードをストラテジーとして保存"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "この Mac"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "この Mac"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {{peer} の goose は起動していません} other {{peer} から {time} 以降応答がありません — goose が閉じているか、オフラインの可能性があります}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count}件のオプションを表示"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "{node} で · このデリゲート用に {duration} でロード済み"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "{node} で"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "{node} で: {primary} は実行できません（{reason}）"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "このデリゲートが実行されたノードを読み取れませんでした: {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "問題を報告"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "このチャットのノードは変更されませんでした"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "確認中…"
   },
@@ -6764,6 +6869,12 @@
   "nodes.remove": {
     "defaultMessage": "削除"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{# 件のチャットのノードセットからも削除する} other{# 件のチャットのノードセットからも削除する}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{他のノードと一緒にこれで実行しているチャットがあります。ノードがなくなったチャットには、次のメッセージでその旨が伝えられます。} other{# 件のチャットが他のノードと一緒にこれで実行されています。ノードがなくなったチャットには、次のメッセージでその旨が伝えられます。}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "{strategies} からも削除する"
   },
@@ -6929,6 +7040,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "この Mac"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "このチャットにノードを追加…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "{lead} が実行できない場合、次のノードで応答する"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "オフ: {lead} が実行できないとき、ターンは終了し理由が表示されます。"
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "応答"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "このチャットのノード"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "チャット → {node}"
   },
@@ -6944,17 +7070,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "ノード"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "名指しでこのチャットに応答するノードはありません。最初に追加したノードが応答します。"
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "チャットとそのデリゲートは {lead} で実行されます。"
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "他のモデルとプロバイダー…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "クラウドモデルとあなたのエンドポイント"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "ストラテジーとして保存…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "デリゲートはこれらのノードを共有します。チャットは {lead} で応答します。"
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "約 {duration} で起動"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "戦略"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "{strategy} では: チャットは {lead} で応答します。ノードを追加すると、このチャットは独自のノードを持ちます。{strategy} はそのままです。"
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "{node} をこのチャットから削除"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "このチャットの実行先"
@@ -9625,6 +9769,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "キャンセル"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# 件のチャットが自分のチップから作った独自のノードセットを持っています: そこで実行され、ここには表示されません} other{# 件のチャットが自分のチップから作った独自のノードセットを持っています: そこで実行され、ここには表示されません}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}: 常に利用可能"
