@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 18:5x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 19:3x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.71 on BOTH Macs 18:0x (DMG kept), split-start smoke OK ('OK'); Q-350 LIVE-PROVEN (activity read
@@ -66,6 +66,12 @@ Updated: 2026-09-28 18:5x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - 429 at 16:5x (limit resets 18:40): resumed by SendMessage — Q-383 (a3e9aab…, WIP untracked testClock.ts +
   waitClock.test.ts) and Q-388 (a1d887d…, 3 commits + an uncommitted patch edit, its /tmp/q388/gate.sh still
   running). If either dies again: re-send after 18:40, same ids.
+
+- 3.0.72 = merge-072 49e2269d0: batch 2 + 2b (g072b GREEN but the waitClock guard → fixed 967ef755d) + Q-397 +
+  Q-394a (acp_ws harness conflict hand-unioned, shared brace fixed, rustfmt ok). FINAL gate /tmp/g072c.out
+  (scratchpad/gate072c.sh, own session). Green → ff main → release 3.0.72 → install both → E2E #3t, NO cargo.
+- Spend/usage limit hit 19:1x (resets 21:50): Q-399, Q-400, Q-394b agents RESUMED by SendMessage on the owner's
+  "retry please all"; if they die again, re-send after 21:50.
 
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.
