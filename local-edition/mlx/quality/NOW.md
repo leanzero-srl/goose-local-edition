@@ -39,7 +39,11 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       (its reply said "Four of the six"). Turns 22–25: README written and followed from clean; 37/37 pass.
       Q-455 FOUND: goose's `<compaction>~Nk tokens remaining` makes the model cut work ("Compaction is at about
       1k, so I'll leave the table as it stands"). It is VA-107's twin for chats; agent dispatched.
-      At 02:26 the conversation reached 209,739/262,144 (80%) and COMPACTION is running — Q-357's live path.
+      COMPACTION at 02:26–02:31 (209,739/262,144):
+      - Q-342 PROVEN: the summary request read 209,120 of 217,026 from cache.
+      - Q-347 PROVEN: the next request read the 41,780-token head from cache.
+      - Right after, decode was 4.0 tok/s again (the Q-447 float32 promotion; fixed in 3.0.74), back to 11 by 02:35.
+      Turn 26 (Standard vs Premium) continues at 64k.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
