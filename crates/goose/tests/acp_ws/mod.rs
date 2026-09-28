@@ -54,9 +54,16 @@ pub struct Model {
     pub requests: Arc<Mutex<Vec<String>>>,
     /// Set by [`Model::keep_side_requests_off_the_script`].
     side_requests_apart: Arc<std::sync::atomic::AtomicBool>,
-    /// Every `GET /goose/admission` received, and the ones still waiting for [`Model::admit`].
-    admission_waits: Arc<Mutex<usize>>,
-    waiting_for_admission: Arc<Mutex<Vec<TcpStream>>>,
+    admission: Arc<Mutex<Admission>>,
+}
+
+/// Every `GET /goose/admission` received, and the ones still waiting for [`Model::admit`] — one
+/// lock, so a wait a test has counted is always one `admit` answers (Q-420: counted under one
+/// lock and parked under another, an `admit` between the two answered nobody and the turn hung).
+#[derive(Default)]
+struct Admission {
+    waits: usize,
+    waiting: Vec<TcpStream>,
 }
 
 fn json_response(status: &str, body: &str) -> String {
@@ -112,8 +119,7 @@ impl Model {
             held: Arc::default(),
             requests: Arc::default(),
             side_requests_apart: Arc::default(),
-            admission_waits: Arc::default(),
-            waiting_for_admission: Arc::default(),
+            admission: Arc::default(),
         };
         let serving = model.clone();
         tokio::spawn(async move {
@@ -124,8 +130,9 @@ impl Model {
                 };
                 let request = read_request(&mut socket).await;
                 if request.starts_with("GET /goose/admission ") {
-                    *serving.admission_waits.lock().unwrap() += 1;
-                    serving.waiting_for_admission.lock().unwrap().push(socket);
+                    let mut admission = serving.admission.lock().unwrap();
+                    admission.waits += 1;
+                    admission.waiting.push(socket);
                     continue;
                 }
                 if request.starts_with("GET") {
@@ -235,7 +242,7 @@ impl Model {
 
     /// The engine admits again: every waiting `GET /goose/admission` is answered.
     pub async fn admit(&self) {
-        let waiting = std::mem::take(&mut *self.waiting_for_admission.lock().unwrap());
+        let waiting = std::mem::take(&mut self.admission.lock().unwrap().waiting);
         let response = json_response("200 OK", r#"{"admission_open": true}"#);
         for mut socket in waiting {
             let _ = socket.write_all(response.as_bytes()).await;
@@ -243,7 +250,7 @@ impl Model {
     }
 
     pub fn admission_waits(&self) -> usize {
-        *self.admission_waits.lock().unwrap()
+        self.admission.lock().unwrap().waits
     }
 
     pub fn completion_requests(&self) -> usize {

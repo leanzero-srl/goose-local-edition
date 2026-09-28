@@ -3089,7 +3089,7 @@ impl GooseAcpAgent {
         let user_message = Self::convert_acp_prompt_to_message(&args.prompt);
         // A tick's message takes the id the runner minted with the offer (§5.2 step 2): the
         // window's marker and the stored message are the same message.
-        let user_message = match (tick_message_id, &cross_note) {
+        let mut user_message = match (tick_message_id, &cross_note) {
             (Some(id), _) => user_message.with_id(id),
             (None, Some(note)) => user_message.with_id(note.message_id()),
             (None, None) => user_message,
@@ -3157,6 +3157,12 @@ impl GooseAcpAgent {
             self.notes_before_message(cx, &args.session_id, cross_note.is_none())
                 .await;
         }
+        // Q-421: the messages stored above go BEFORE the person's message, but each was created
+        // after it was converted, and a chat is read back ordered by `created` in whole seconds
+        // (ties by insertion). When a second ticked between the two, the superseded note sorted
+        // after the message it introduces — for this turn's model and on every reload. The
+        // message is stamped as it enters the chat, after everything that precedes it.
+        user_message.created = chrono::Utc::now().timestamp();
 
         let session_config = SessionConfig {
             id: session_id.clone(),

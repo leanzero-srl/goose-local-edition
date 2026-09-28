@@ -100,7 +100,15 @@ async fn stop_reason(window: &mut Window, prompt: u64) -> Value {
     window.response(prompt).await.expect("the prompt answered")["stopReason"].clone()
 }
 
-async fn until_waiting(window: &mut Window, model: &Model, session_id: &str) -> Value {
+/// The first "Waiting:" line, then the engine's `waits`-th admission wait. `waits` counts from the
+/// start of the binary: the three tests share one scripted model, run in whatever order the serial
+/// lock grants, and a stopped hold's wait stays counted (Q-420).
+async fn until_waiting(
+    window: &mut Window,
+    model: &Model,
+    session_id: &str,
+    waits: usize,
+) -> Value {
     let line = window
         .notification(SESSION_UPDATE, |p| {
             p["sessionId"] == session_id
@@ -111,7 +119,7 @@ async fn until_waiting(window: &mut Window, model: &Model, session_id: &str) -> 
         })
         .await;
     eventually("goose waits on the engine's admission", || async {
-        model.admission_waits() == 1
+        model.admission_waits() == waits
     })
     .await;
     line
@@ -129,7 +137,7 @@ async fn a_hold_is_waited_out_on_the_engines_admission_and_the_turn_completes() 
         Answer::Finish(AFTER_THE_HOLD),
     ])
     .await;
-    let requests_before = model.completion_requests();
+    let (requests_before, waits_before) = (model.completion_requests(), model.admission_waits());
     let mut window = Window::open(addr, true).await;
     let work = tempfile::tempdir().unwrap();
     let session_id = window.new_chat(work.path()).await;
@@ -137,7 +145,7 @@ async fn a_hold_is_waited_out_on_the_engines_admission_and_the_turn_completes() 
     let prompt = window
         .prompt(&session_id, "Plan the Jira migration", None)
         .await;
-    let waiting = until_waiting(&mut window, &model, &session_id).await;
+    let waiting = until_waiting(&mut window, &model, &session_id, waits_before + 1).await;
     assert_eq!(
         waiting["update"]["status"]["message"],
         format!("Waiting: {REASON}")
@@ -151,7 +159,7 @@ async fn a_hold_is_waited_out_on_the_engines_admission_and_the_turn_completes() 
 
     model.admit().await;
     eventually("the second hold is waited on too", || async {
-        model.admission_waits() == 2
+        model.admission_waits() == waits_before + 2
     })
     .await;
     assert_eq!(model.completion_requests() - requests_before, 2);
@@ -185,18 +193,7 @@ async fn stop_during_a_hold_ends_the_turn_cleanly() {
     let prompt = window
         .prompt(&session_id, "Plan the Jira migration", None)
         .await;
-    window
-        .notification(SESSION_UPDATE, |p| {
-            p["sessionId"] == session_id
-                && p["update"]["status"]["message"]
-                    .as_str()
-                    .is_some_and(|m| m.starts_with("Waiting: "))
-        })
-        .await;
-    eventually("goose waits on the engine's admission", || async {
-        model.admission_waits() == waits_before + 1
-    })
-    .await;
+    until_waiting(&mut window, &model, &session_id, waits_before + 1).await;
     window.cancel(&session_id).await;
     assert_eq!(stop_reason(&mut window, prompt).await, "cancelled");
     assert_eq!(model.completion_requests() - requests_before, 1);
