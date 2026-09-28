@@ -13894,7 +13894,7 @@
         "itemId",
         "action"
       ],
-      "description": "Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.\nThe answer itself reaches the model as the person's next chat message, sent by the client.",
+      "description": "Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.\nThe answer itself reaches the model as the person's next chat message, sent by the client with\n`_meta.goose.needsYouAnswers = [itemId, …]` on the prompt: without that mark the message reads as\ntyped and closes every question still open in the chat as superseded.",
       "x-side": "agent",
       "x-method": "_goose/unstable/needs_you/resolve"
     },
