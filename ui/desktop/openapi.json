@@ -3241,7 +3241,8 @@
         "required": [
           "id",
           "recipe",
-          "cron"
+          "cron",
+          "working_dir"
         ],
         "properties": {
           "cron": {
@@ -3252,6 +3253,10 @@
           },
           "recipe": {
             "$ref": "#/components/schemas/Recipe"
+          },
+          "working_dir": {
+            "type": "string",
+            "description": "The folder the job runs in (Q-282): the caller names it; the server's own cwd is not it."
           }
         }
       },
@@ -4975,6 +4980,14 @@
             ],
             "nullable": true
           },
+          "providerError": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProviderErrorNotice"
+              }
+            ],
+            "nullable": true
+          },
           "steer": {
             "type": "boolean",
             "description": "Whether this message is a steer injected into an active run. UI-only:\nsurfaced as `_meta.goose.steer` so clients can mark the steer boundary\nwithout matching user-visible text. Never sent to providers."
@@ -5394,6 +5407,31 @@
           "ollama",
           "anthropic"
         ]
+      },
+      "ProviderErrorNotice": {
+        "type": "object",
+        "description": "A provider error as a client shows it: what the serving engine said, whether resending can\nhelp (by the error's class — `ProviderError::is_transient`), and the whole error — endpoint\nand body — for a Details view.",
+        "required": [
+          "class",
+          "transient",
+          "said",
+          "detail"
+        ],
+        "properties": {
+          "class": {
+            "type": "string",
+            "description": "`ProviderError::telemetry_type`: \"request\", \"server\", \"auth\", \"rate_limit\", …"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "said": {
+            "type": "string"
+          },
+          "transient": {
+            "type": "boolean"
+          }
+        }
       },
       "ProviderMetadata": {
         "type": "object",
@@ -6209,7 +6247,8 @@
       "ScheduleRecipeRequest": {
         "type": "object",
         "required": [
-          "id"
+          "id",
+          "working_dir"
         ],
         "properties": {
           "cron_schedule": {
@@ -6218,6 +6257,10 @@
           },
           "id": {
             "type": "string"
+          },
+          "working_dir": {
+            "type": "string",
+            "description": "The folder a new job runs in (Q-282): the caller names it; the server's own cwd is not it."
           }
         }
       },
@@ -6278,6 +6321,11 @@
           },
           "source": {
             "type": "string"
+          },
+          "working_dir": {
+            "type": "string",
+            "description": "The folder the job's session works in: the folder of the window, terminal or chat that\ncreated it (Q-282). goosed is one process for every window (Q-257), so its own cwd is no\nwindow's project. `None` only on a job saved before schedules recorded a folder: such a job\nis refused, loudly, until its folder is chosen ([`Scheduler::set_schedule_working_dir`]).",
+            "nullable": true
           }
         }
       },
