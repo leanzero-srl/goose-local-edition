@@ -156,13 +156,20 @@ export async function acpUnpauseSchedule(scheduleId: string): Promise<void> {
   }
 }
 
+// `workingDir` moves the schedule to that folder (Q-282) — how a schedule saved before schedules
+// recorded a folder gets one. Omitted, the schedule keeps its folder.
 export async function acpUpdateSchedule(
   scheduleId: string,
-  cron: string
+  cron: string,
+  workingDir?: string
 ): Promise<ScheduledJobDto> {
   try {
     const client = await getAcpClient();
-    const response = await client.goose.schedulesUpdate_unstable({ scheduleId, cron });
+    const response = await client.goose.schedulesUpdate_unstable({
+      scheduleId,
+      cron,
+      ...(workingDir !== undefined ? { workingDir } : {}),
+    });
     clearInFlightScheduleReads();
     return response.job;
   } catch (error) {

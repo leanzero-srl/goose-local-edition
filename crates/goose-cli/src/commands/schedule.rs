@@ -4,7 +4,7 @@ use goose::scheduler::{
     SchedulerError,
 };
 use goose::session::SessionManager;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn validate_cron_expression(cron: &str) -> Result<()> {
@@ -70,6 +70,7 @@ pub async fn handle_schedule_add(
     cron: String,
     recipe_source_arg: String, // This is expected to be a file path by the Scheduler
     params: Vec<(String, String)>,
+    working_dir: Option<PathBuf>,
 ) -> Result<()> {
     println!(
         "[CLI Debug] Scheduling job ID: {}, Cron: {}, Recipe Source Path: {}",
@@ -77,6 +78,13 @@ pub async fn handle_schedule_add(
     );
 
     validate_cron_expression(&cron)?;
+
+    // Q-282: the job records the folder it runs in. A terminal goose runs in the user's project, so
+    // this terminal's folder is the one named when --working-dir is not given; it is printed below.
+    let working_dir = match working_dir {
+        Some(dir) => std::path::absolute(dir)?,
+        None => std::env::current_dir().context("this terminal's folder is unreadable")?,
+    };
 
     // The Scheduler's add_scheduled_job will handle copying the recipe from recipe_source_arg
     // to its internal storage and validating the path.
@@ -91,6 +99,7 @@ pub async fn handle_schedule_add(
         process_start_time: None,
         parameters: params,
         recipe_base_dir: None,
+        working_dir: Some(working_dir.to_string_lossy().into_owned()),
     };
 
     let scheduler_storage_path =
@@ -114,8 +123,10 @@ pub async fn handle_schedule_add(
                 scheduled_recipes_dir.join(format!("{}.{}", schedule_id, extension));
 
             println!(
-                "Scheduled job '{}' added. Recipe expected at {:?}",
-                schedule_id, final_recipe_path
+                "Scheduled job '{}' added. Recipe expected at {:?}. It runs in {}",
+                schedule_id,
+                final_recipe_path,
+                working_dir.display()
             );
             Ok(())
         }
@@ -161,17 +172,45 @@ pub async fn handle_schedule_list() -> Result<()> {
                 "⏹️  IDLE"
             };
 
+            let folder = job.working_dir.clone().unwrap_or_else(|| {
+                format!(
+                    "NONE — this job does not run until you give it one: goose schedule set-dir --id {} --working-dir <DIR>",
+                    job.id
+                )
+            });
             println!(
-                "- ID: {}\n  Status: {}\n  Cron: {}\n  Recipe Source (in store): {}\n  Last Run: {}",
+                "- ID: {}\n  Status: {}\n  Cron: {}\n  Folder: {}\n  Recipe Source (in store): {}\n  Last Run: {}",
                 job.id,
                 status,
                 job.cron,
+                folder,
                 job.source, // This source is now the path within scheduled_recipes_dir
                 job.last_run
                     .map_or_else(|| "Never".to_string(), |dt| dt.to_rfc3339())
             );
         }
     }
+    Ok(())
+}
+
+pub async fn handle_schedule_set_dir(schedule_id: String, working_dir: PathBuf) -> Result<()> {
+    let working_dir = std::path::absolute(working_dir)?;
+    let scheduler_storage_path =
+        get_default_scheduler_storage_path().context("Failed to get scheduler storage path")?;
+    let session_manager = Arc::new(SessionManager::instance());
+    let scheduler = Scheduler::new(scheduler_storage_path, session_manager)
+        .await
+        .context("Failed to initialize scheduler")?;
+
+    scheduler
+        .set_schedule_working_dir(&schedule_id, working_dir.clone())
+        .await
+        .map_err(anyhow::Error::new)?;
+    println!(
+        "Scheduled job '{}' now runs in {}",
+        schedule_id,
+        working_dir.display()
+    );
     Ok(())
 }
 

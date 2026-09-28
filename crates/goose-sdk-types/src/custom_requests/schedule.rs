@@ -19,6 +19,10 @@ pub struct ScheduledJobDto {
     pub current_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_start_time: Option<String>,
+    /// The folder the job runs in (Q-282). Absent only on a job saved before schedules recorded a
+    /// folder: it does not run until one is chosen (`schedules/update` with `workingDir`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
@@ -42,6 +46,9 @@ pub struct CreateScheduleRequest {
     pub id: String,
     pub recipe: RecipeDto,
     pub cron: String,
+    /// The folder the job runs in: the creating window's working dir. Required — the one goosed
+    /// serves every window (Q-257), so its own cwd is no window's project (Q-282).
+    pub working_dir: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -65,6 +72,10 @@ pub struct DeleteScheduleRequest {
 pub struct UpdateScheduleRequest {
     pub schedule_id: String,
     pub cron: String,
+    /// A folder to run the job in from now on (Q-282) — how a job saved before schedules recorded
+    /// one gets it. Absent: the job keeps the folder it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]

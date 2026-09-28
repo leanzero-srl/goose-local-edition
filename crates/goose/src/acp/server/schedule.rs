@@ -6,6 +6,7 @@ use goose_sdk_types::custom_requests::{
     RunScheduleNowResponse, RunScheduleNowStatus, ScheduledJobDto, UnpauseScheduleRequest,
     UpdateScheduleRequest, UpdateScheduleResponse,
 };
+use std::path::PathBuf;
 use tokio::fs;
 
 use super::{build_session_info, GooseAcpAgent, ResultExt};
@@ -56,6 +57,9 @@ fn create_schedule_error(error: SchedulerError) -> agent_client_protocol::Error 
             .data(format!("Recipe load error: {message}")),
         SchedulerError::JobIdExists(id) => agent_client_protocol::Error::invalid_params()
             .data(format!("Job ID already exists: {id}")),
+        SchedulerError::InvalidWorkingDir(message) => {
+            agent_client_protocol::Error::invalid_params().data(message)
+        }
         error => agent_client_protocol::Error::internal_error()
             .data(format!("Error creating schedule: {error}")),
     }
@@ -83,6 +87,9 @@ fn update_schedule_error(error: SchedulerError) -> agent_client_protocol::Error 
         }
         SchedulerError::CronParseError(message) => agent_client_protocol::Error::invalid_params()
             .data(format!("Invalid cron expression: {message}")),
+        SchedulerError::InvalidWorkingDir(message) => {
+            agent_client_protocol::Error::invalid_params().data(message)
+        }
         error => agent_client_protocol::Error::internal_error().data(error.to_string()),
     }
 }
@@ -117,7 +124,15 @@ fn scheduled_job_to_dto(job: ScheduledJob) -> ScheduledJobDto {
         paused: job.paused,
         current_session_id: job.current_session_id,
         job_start_time: job.process_start_time.map(|value| value.to_rfc3339()),
+        working_dir: job.working_dir,
     }
+}
+
+/// A schedule's folder from a request: absolute and existing, like a session's cwd (Q-282).
+fn requested_working_dir(dir: &str) -> Result<PathBuf, agent_client_protocol::Error> {
+    let dir = PathBuf::from(dir.trim());
+    super::validate_absolute_cwd(&dir)?;
+    Ok(dir)
 }
 
 impl GooseAcpAgent {
@@ -160,6 +175,7 @@ impl GooseAcpAgent {
     ) -> Result<CreateScheduleResponse, agent_client_protocol::Error> {
         let id = req.id.trim().to_string();
         validate_schedule_id(&id)?;
+        let working_dir = requested_working_dir(&req.working_dir)?;
 
         let recipe = Recipe::try_from(req.recipe).map_err(|e| {
             agent_client_protocol::Error::invalid_params().data(format!("recipe: {e}"))
@@ -198,6 +214,7 @@ impl GooseAcpAgent {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            working_dir: Some(working_dir.to_string_lossy().into_owned()),
         };
 
         self.agent_manager
@@ -256,7 +273,18 @@ impl GooseAcpAgent {
     ) -> Result<UpdateScheduleResponse, agent_client_protocol::Error> {
         let schedule_id = req.schedule_id;
         let cron = req.cron;
+        let working_dir = req
+            .working_dir
+            .as_deref()
+            .map(requested_working_dir)
+            .transpose()?;
         let scheduler = self.agent_manager.scheduler();
+        if let Some(working_dir) = working_dir {
+            scheduler
+                .set_schedule_working_dir(&schedule_id, working_dir)
+                .await
+                .map_err(update_schedule_error)?;
+        }
         scheduler
             .update_schedule(&schedule_id, cron)
             .await

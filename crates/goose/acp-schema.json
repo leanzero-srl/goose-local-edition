@@ -3488,11 +3488,16 @@
         },
         "source": {
           "$ref": "#/$defs/SessionImportSource"
+        },
+        "workingDir": {
+          "type": "string",
+          "description": "The importing window's folder: a session that recorded none (a Claude Code, Codex or pi\ntranscript with no `cwd`) is placed here. Required — the one goosed serves every window\n(Q-257), so its own cwd is no window's project (Q-283)."
         }
       },
       "required": [
         "input",
-        "source"
+        "source",
+        "workingDir"
       ],
       "description": "Import a session from a JSON string or share link.",
       "x-side": "agent",
@@ -4308,10 +4313,15 @@
             "string",
             "null"
           ]
+        },
+        "working_dir": {
+          "type": "string",
+          "description": "The asking window's folder: a new job runs there (Q-282), and a project recipe the id names\nis found there. Required — goosed's own cwd is no window's project (Q-257)."
         }
       },
       "required": [
-        "id"
+        "id",
+        "working_dir"
       ],
       "x-side": "agent",
       "x-method": "_goose/unstable/recipes/schedule"
@@ -4510,6 +4520,13 @@
             "string",
             "null"
           ]
+        },
+        "workingDir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The folder the job runs in (Q-282). Absent only on a job saved before schedules recorded a\nfolder: it does not run until one is chosen (`schedules/update` with `workingDir`)."
         }
       },
       "required": [
@@ -4618,12 +4635,17 @@
         },
         "cron": {
           "type": "string"
+        },
+        "working_dir": {
+          "type": "string",
+          "description": "The folder the job runs in: the creating window's working dir. Required — the one goosed\nserves every window (Q-257), so its own cwd is no window's project (Q-282)."
         }
       },
       "required": [
         "id",
         "recipe",
-        "cron"
+        "cron",
+        "working_dir"
       ],
       "x-side": "agent",
       "x-method": "_goose/unstable/schedules/create"
@@ -4688,6 +4710,13 @@
         },
         "cron": {
           "type": "string"
+        },
+        "workingDir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A folder to run the job in from now on (Q-282) — how a job saved before schedules recorded\none gets it. Absent: the job keeps the folder it has."
         }
       },
       "required": [

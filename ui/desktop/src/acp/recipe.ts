@@ -114,10 +114,19 @@ export async function deleteRecipe(id: string): Promise<void> {
   }
 }
 
-export async function scheduleRecipe(id: string, cronSchedule?: string | null): Promise<void> {
+// `workingDir` is the asking window's folder: a new schedule runs there (Q-282).
+export async function scheduleRecipe(
+  id: string,
+  workingDir: string,
+  cronSchedule?: string | null
+): Promise<void> {
   try {
     const client = await getAcpClient();
-    await client.goose.recipesSchedule_unstable({ id, cron_schedule: cronSchedule });
+    await client.goose.recipesSchedule_unstable({
+      id,
+      cron_schedule: cronSchedule,
+      working_dir: workingDir,
+    });
   } catch (error) {
     throw normalizeAcpError(error, 'Failed to schedule recipe');
   }

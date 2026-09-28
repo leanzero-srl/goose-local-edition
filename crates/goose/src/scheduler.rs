@@ -20,7 +20,7 @@ use crate::conversation::message::Message;
 use crate::conversation::Conversation;
 #[cfg(feature = "telemetry")]
 use crate::posthog;
-use crate::providers::create;
+use crate::providers::create_with_working_dir;
 use crate::recipe::build_recipe::build_recipe_from_template;
 use crate::recipe::Recipe;
 use crate::scheduler_trait::SchedulerTrait;
@@ -52,6 +52,7 @@ pub enum SchedulerError {
     AgentSetupError(String),
     PersistError(String),
     CronParseError(String),
+    InvalidWorkingDir(String),
     SchedulerInternalError(String),
     AnyhowError(anyhow::Error),
 }
@@ -66,6 +67,7 @@ impl std::fmt::Display for SchedulerError {
             SchedulerError::AgentSetupError(e) => write!(f, "Agent setup error: {}", e),
             SchedulerError::PersistError(e) => write!(f, "Failed to persist schedules: {}", e),
             SchedulerError::CronParseError(e) => write!(f, "Invalid cron string: {}", e),
+            SchedulerError::InvalidWorkingDir(e) => write!(f, "Invalid schedule folder: {}", e),
             SchedulerError::SchedulerInternalError(e) => {
                 write!(f, "Scheduler internal error: {}", e)
             }
@@ -123,6 +125,51 @@ pub struct ScheduledJob {
     /// against the source tree rather than the scheduler's internal storage directory.
     #[serde(default)]
     pub recipe_base_dir: Option<String>,
+    /// The folder the job's session works in: the folder of the window, terminal or chat that
+    /// created it (Q-282). goosed is one process for every window (Q-257), so its own cwd is no
+    /// window's project. `None` only on a job saved before schedules recorded a folder: such a job
+    /// is refused, loudly, until its folder is chosen ([`Scheduler::set_schedule_working_dir`]).
+    #[serde(default)]
+    pub working_dir: Option<String>,
+}
+
+/// The folder a job runs in: its recorded folder, which must still be a folder. Never goosed's
+/// cwd — a job with no folder (saved before Q-282) or whose folder is gone is refused with the words
+/// the Scheduler shows.
+fn job_working_dir(job: &ScheduledJob) -> Result<PathBuf> {
+    let Some(dir) = job.working_dir.as_deref() else {
+        return Err(anyhow!(
+            "Schedule '{}' has no folder: it was saved before schedules recorded the folder they run in, so it does not run until you choose its folder in the Scheduler",
+            job.id
+        ));
+    };
+    let dir = PathBuf::from(dir);
+    if !dir.is_dir() {
+        return Err(anyhow!(
+            "Schedule '{}' runs in {}, which is no longer a folder; choose its folder in the Scheduler",
+            job.id,
+            dir.display()
+        ));
+    }
+    Ok(dir)
+}
+
+/// A folder a job may be given: absolute (a relative one would resolve against goosed's cwd, the
+/// thing Q-282 removes) and existing.
+fn validate_job_working_dir(dir: &Path) -> Result<(), SchedulerError> {
+    if !dir.is_absolute() {
+        return Err(SchedulerError::InvalidWorkingDir(format!(
+            "a schedule's folder must be an absolute path, got '{}'",
+            dir.display()
+        )));
+    }
+    if !dir.is_dir() {
+        return Err(SchedulerError::InvalidWorkingDir(format!(
+            "'{}' is not a folder",
+            dir.display()
+        )));
+    }
+    Ok(())
 }
 
 async fn persist_jobs(
@@ -220,21 +267,22 @@ impl Scheduler {
             let task_job_id = job_for_task.id.clone();
             let current_jobs_arc = jobs_arc.clone();
             let local_storage_path = storage_path.clone();
-            let job_to_execute = job_for_task.clone();
             let running_tasks = running_tasks_arc.clone();
 
             Box::pin(async move {
-                let should_execute = {
+                // The job as recorded NOW, not as it was when this cron task was made: a folder
+                // chosen later (set_schedule_working_dir, Q-282) must reach the next run.
+                let job_to_execute = {
                     let jobs_guard = current_jobs_arc.lock().await;
                     jobs_guard
                         .get(&task_job_id)
-                        .map(|(_, j)| !j.paused)
-                        .unwrap_or(false)
+                        .filter(|(_, j)| !j.paused)
+                        .map(|(_, j)| j.clone())
                 };
 
-                if !should_execute {
+                let Some(job_to_execute) = job_to_execute else {
                     return;
-                }
+                };
 
                 let current_time = Utc::now();
                 {
@@ -295,11 +343,22 @@ impl Scheduler {
         .map_err(|e| SchedulerError::CronParseError(e.to_string()))
     }
 
+    /// Adds a NEW job, which must name the folder it runs in (Q-282): only a job loaded from a
+    /// schedule saved before the field existed may lack one.
     pub async fn add_scheduled_job(
         &self,
         original_job_spec: ScheduledJob,
         make_copy: bool,
     ) -> Result<(), SchedulerError> {
+        match original_job_spec.working_dir.as_deref() {
+            Some(dir) => validate_job_working_dir(Path::new(dir))?,
+            None => {
+                return Err(SchedulerError::InvalidWorkingDir(format!(
+                    "schedule '{}' names no folder to run in",
+                    original_job_spec.id
+                )))
+            }
+        }
         {
             let jobs_guard = self.jobs.lock().await;
             if jobs_guard.contains_key(&original_job_spec.id) {
@@ -358,24 +417,31 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Schedules (or reschedules) a recipe to run in `working_dir` — the folder of the window that
+    /// asked (Q-282). An existing job keeps the folder it recorded; one saved before schedules kept
+    /// a folder takes this one, since its owner is setting it up again from here.
     pub async fn schedule_recipe(
         &self,
         recipe_path: PathBuf,
         cron_schedule: Option<String>,
+        working_dir: PathBuf,
     ) -> Result<(), SchedulerError> {
         let recipe_path_str = recipe_path.to_string_lossy().to_string();
 
-        let existing_job_id = {
+        let existing_job = {
             let jobs_guard = self.jobs.lock().await;
             jobs_guard
                 .iter()
                 .find(|(_, (_, job))| job.source == recipe_path_str)
-                .map(|(id, _)| id.clone())
+                .map(|(id, (_, job))| (id.clone(), job.working_dir.is_none()))
         };
 
         match cron_schedule {
             Some(cron) => {
-                if let Some(job_id) = existing_job_id {
+                if let Some((job_id, has_no_folder)) = existing_job {
+                    if has_no_folder {
+                        self.set_schedule_working_dir(&job_id, working_dir).await?;
+                    }
                     self.update_schedule(&job_id, cron).await
                 } else {
                     let job_id = self.generate_unique_job_id(&recipe_path).await;
@@ -390,12 +456,13 @@ impl Scheduler {
                         process_start_time: None,
                         parameters: vec![],
                         recipe_base_dir: None,
+                        working_dir: Some(working_dir.to_string_lossy().into_owned()),
                     };
                     self.add_scheduled_job(job, false).await
                 }
             }
             None => {
-                if let Some(job_id) = existing_job_id {
+                if let Some((job_id, _)) = existing_job {
                     self.remove_scheduled_job(&job_id, false).await
                 } else {
                     Ok(())
@@ -787,6 +854,34 @@ impl Scheduler {
         persist_jobs(&self.storage_path, &self.jobs).await
     }
 
+    /// Records the folder a job runs in — how a job saved before Q-282 (no folder, refused at
+    /// every run) is given one, and how an owner moves a job to another project. The next run reads
+    /// it: the cron task looks the job up when it fires.
+    pub async fn set_schedule_working_dir(
+        &self,
+        sched_id: &str,
+        working_dir: PathBuf,
+    ) -> Result<(), SchedulerError> {
+        validate_job_working_dir(&working_dir)?;
+        {
+            let mut jobs_guard = self.jobs.lock().await;
+            match jobs_guard.get_mut(sched_id) {
+                Some((_, job)) => {
+                    if job.currently_running {
+                        return Err(SchedulerError::AnyhowError(anyhow!(
+                            "Cannot change the folder of running schedule '{}'",
+                            sched_id
+                        )));
+                    }
+                    job.working_dir = Some(working_dir.to_string_lossy().into_owned());
+                }
+                None => return Err(SchedulerError::JobNotFound(sched_id.to_string())),
+            }
+        }
+
+        persist_jobs(&self.storage_path, &self.jobs).await
+    }
+
     pub async fn kill_running_job(&self, sched_id: &str) -> Result<(), SchedulerError> {
         {
             let jobs_guard = self.jobs.lock().await;
@@ -852,6 +947,7 @@ async fn execute_job(
         return Ok(job.id.to_string());
     }
 
+    let working_dir = job_working_dir(&job)?;
     let recipe_path = Path::new(&job.source);
     let recipe_content = fs::read_to_string(recipe_path)?;
     // Use the original recipe directory for path resolution so that relative
@@ -884,7 +980,7 @@ async fn execute_job(
         .config
         .session_manager
         .create_session(
-            std::env::current_dir()?,
+            working_dir.clone(),
             format!("Scheduled job: {}", job.id),
             SessionType::Scheduled,
             agent.config.goose_mode,
@@ -894,14 +990,14 @@ async fn execute_job(
     let mut extensions = resolve_extensions_for_new_session(recipe.extensions.as_deref(), None);
     if recipe.extensions.is_none() {
         extensions.extend(crate::plugins::mcp_servers::enabled_plugin_mcp_servers(
-            std::env::current_dir().ok().as_deref(),
+            Some(&working_dir),
         ));
     }
     for ext in &extensions {
         agent.add_extension(ext.clone(), &session.id).await?;
     }
 
-    let agent_provider = create(&provider_name, extensions).await?;
+    let agent_provider = create_with_working_dir(&provider_name, extensions, working_dir).await?;
     agent
         .update_provider(agent_provider, model_config, &session.id)
         .await?;
@@ -1088,8 +1184,10 @@ impl SchedulerTrait for Scheduler {
         &self,
         recipe_path: PathBuf,
         cron_schedule: Option<String>,
+        working_dir: PathBuf,
     ) -> Result<(), SchedulerError> {
-        self.schedule_recipe(recipe_path, cron_schedule).await
+        self.schedule_recipe(recipe_path, cron_schedule, working_dir)
+            .await
     }
 
     async fn list_scheduled_jobs(&self) -> Vec<ScheduledJob> {
@@ -1130,6 +1228,14 @@ impl SchedulerTrait for Scheduler {
         new_cron: String,
     ) -> Result<(), SchedulerError> {
         self.update_schedule(sched_id, new_cron).await
+    }
+
+    async fn set_schedule_working_dir(
+        &self,
+        sched_id: &str,
+        working_dir: PathBuf,
+    ) -> Result<(), SchedulerError> {
+        self.set_schedule_working_dir(sched_id, working_dir).await
     }
 
     async fn kill_running_job(&self, sched_id: &str) -> Result<(), SchedulerError> {
@@ -1181,6 +1287,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            working_dir: Some(temp_dir.path().to_string_lossy().into_owned()),
         };
 
         scheduler.add_scheduled_job(job, true).await.unwrap();
@@ -1215,6 +1322,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            working_dir: Some(temp_dir.path().to_string_lossy().into_owned()),
         };
 
         scheduler.add_scheduled_job(job, true).await.unwrap();
@@ -1244,6 +1352,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            working_dir: Some(temp_dir.path().to_string_lossy().into_owned()),
         };
 
         scheduler
@@ -1291,6 +1400,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            working_dir: Some(temp_dir.path().to_string_lossy().into_owned()),
         };
 
         scheduler.add_scheduled_job(job, false).await.unwrap();
@@ -1344,6 +1454,7 @@ mod tests {
             process_start_time: Some(started_at),
             parameters: vec![],
             recipe_base_dir: None,
+            working_dir: Some(temp_dir.path().to_string_lossy().into_owned()),
         };
         fs::write(
             &storage_path,
@@ -1408,6 +1519,7 @@ mod tests {
             "process_start_time": null,
             "parameters": [],
             "recipe_base_dir": null,
+            "working_dir": temp_dir.path().to_string_lossy(),
             "loop_config": {
                 "max_iterations": 3,
                 "stop_check": { "type": "Shell", "command": "false" },
@@ -1476,6 +1588,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            working_dir: Some(temp_dir.path().to_string_lossy().into_owned()),
         };
 
         // Schedule the job and let it run — should not panic
@@ -1487,6 +1600,211 @@ mod tests {
         assert!(
             jobs[0].last_run.is_some(),
             "Job should have attempted to run without panicking"
+        );
+    }
+
+    fn create_runnable_recipe(dir: &Path, name: &str) -> PathBuf {
+        let recipe_path = dir.join(format!("{name}.yaml"));
+        fs::write(
+            &recipe_path,
+            "title: folder check\ndescription: runs in its folder\nprompt: test\n",
+        )
+        .unwrap();
+        recipe_path
+    }
+
+    fn legacy_job_without_folder(storage_path: &Path, recipe_path: &Path, id: &str, cron: &str) {
+        let legacy = serde_json::json!([{
+            "id": id,
+            "source": recipe_path.to_string_lossy(),
+            "cron": cron,
+            "last_run": null,
+            "currently_running": false,
+            "paused": false,
+            "current_session_id": null,
+            "process_start_time": null,
+            "parameters": [],
+            "recipe_base_dir": null
+        }]);
+        fs::write(storage_path, serde_json::to_string_pretty(&legacy).unwrap()).unwrap();
+    }
+
+    async fn job_session_dirs(job_id: &str) -> Vec<PathBuf> {
+        SessionManager::instance()
+            .list_sessions()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.schedule_id.as_deref() == Some(job_id))
+            .map(|s| s.working_dir)
+            .collect()
+    }
+
+    // Q-282: goosed is one process for every window, running in $HOME (Q-257); a job's session
+    // used to be created in `std::env::current_dir()`. A job saved before schedules recorded a
+    // folder is refused, naming the Scheduler, and runs nowhere; once its folder is chosen it runs
+    // THERE — never in the process cwd.
+    #[tokio::test]
+    async fn a_job_runs_in_its_recorded_folder_and_one_saved_without_a_folder_is_refused() {
+        let _guard = env_lock::lock_env([
+            ("GOOSE_PROVIDER", Some("openai")),
+            ("GOOSE_MODEL", Some("gpt-4o")),
+            ("OPENAI_API_KEY", Some("fake-openai-no-keyring")),
+            ("OPENAI_CUSTOM_HEADERS", Some("")),
+        ]);
+        let temp_dir = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let project_dir = project.path().canonicalize().unwrap();
+        assert_ne!(
+            std::env::current_dir().unwrap().canonicalize().unwrap(),
+            project_dir
+        );
+        let storage_path = temp_dir.path().join("schedule.json");
+        let job_id = format!("folderless_job_{}", uuid::Uuid::new_v4().simple());
+        let recipe_path = create_runnable_recipe(temp_dir.path(), &job_id);
+        legacy_job_without_folder(&storage_path, &recipe_path, &job_id, "0 0 0 1 1 *");
+
+        let scheduler = Scheduler::new(storage_path.clone(), Arc::new(SessionManager::instance()))
+            .await
+            .unwrap();
+        assert_eq!(scheduler.list_scheduled_jobs().await[0].working_dir, None);
+
+        let refused = scheduler.run_now(&job_id).await.unwrap_err().to_string();
+        assert!(
+            refused.contains("has no folder") && refused.contains("Scheduler"),
+            "the refusal names the missing folder and where to choose it: {refused}"
+        );
+        assert!(
+            job_session_dirs(&job_id).await.is_empty(),
+            "a job with no folder creates no session anywhere"
+        );
+
+        let relative = scheduler
+            .set_schedule_working_dir(&job_id, PathBuf::from("relative/dir"))
+            .await
+            .unwrap_err();
+        assert!(matches!(relative, SchedulerError::InvalidWorkingDir(_)));
+
+        scheduler
+            .set_schedule_working_dir(&job_id, project_dir.clone())
+            .await
+            .unwrap();
+        let persisted: Vec<ScheduledJob> =
+            serde_json::from_str(&fs::read_to_string(&storage_path).unwrap()).unwrap();
+        assert_eq!(
+            persisted[0].working_dir.as_deref(),
+            Some(project_dir.to_string_lossy().as_ref())
+        );
+
+        scheduler.run_now(&job_id).await.unwrap();
+        assert_eq!(job_session_dirs(&job_id).await, vec![project_dir]);
+    }
+
+    // Q-282: the cron task is built once, when the job is added or loaded; it must run the job as
+    // recorded when it FIRES, so a folder chosen after loading reaches the next run.
+    #[tokio::test]
+    async fn a_folder_chosen_after_loading_reaches_the_next_cron_fire() {
+        let _guard = env_lock::lock_env([
+            ("GOOSE_PROVIDER", Some("openai")),
+            ("GOOSE_MODEL", Some("gpt-4o")),
+            ("OPENAI_API_KEY", Some("fake-openai-no-keyring")),
+            ("OPENAI_CUSTOM_HEADERS", Some("")),
+        ]);
+        let temp_dir = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let project_dir = project.path().canonicalize().unwrap();
+        let storage_path = temp_dir.path().join("schedule.json");
+        let job_id = format!("cron_folder_job_{}", uuid::Uuid::new_v4().simple());
+        let recipe_path = create_runnable_recipe(temp_dir.path(), &job_id);
+        legacy_job_without_folder(&storage_path, &recipe_path, &job_id, "* * * * * *");
+
+        let scheduler = Scheduler::new(storage_path, Arc::new(SessionManager::instance()))
+            .await
+            .unwrap();
+        scheduler
+            .set_schedule_working_dir(&job_id, project_dir.clone())
+            .await
+            .unwrap();
+        // A fired run records its session id as soon as the session exists (the schedule id is
+        // stamped only when the run ends), so wait on that event.
+        let mut fired_session = None;
+        for _ in 0..100 {
+            let job = scheduler.list_scheduled_jobs().await.remove(0);
+            if let Some(session_id) = job.current_session_id {
+                fired_session = Some(session_id);
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        let session_id =
+            fired_session.expect("the cron fired with the folder chosen after loading");
+        let session = SessionManager::instance()
+            .get_session(&session_id, false)
+            .await
+            .unwrap();
+        assert_eq!(session.working_dir, project_dir);
+    }
+
+    #[tokio::test]
+    async fn a_new_job_must_name_an_absolute_existing_folder() {
+        let temp_dir = tempdir().unwrap();
+        let storage_path = temp_dir.path().join("schedule.json");
+        let recipe_path = create_test_recipe(temp_dir.path(), "needs_folder");
+        let scheduler = Scheduler::new(
+            storage_path,
+            Arc::new(SessionManager::new(temp_dir.path().to_path_buf())),
+        )
+        .await
+        .unwrap();
+        let job = |working_dir: Option<String>| ScheduledJob {
+            id: "needs_folder".to_string(),
+            source: recipe_path.to_string_lossy().to_string(),
+            cron: "0 0 0 1 1 *".to_string(),
+            last_run: None,
+            currently_running: false,
+            paused: false,
+            current_session_id: None,
+            process_start_time: None,
+            parameters: vec![],
+            recipe_base_dir: None,
+            working_dir,
+        };
+
+        for refused in [
+            None,
+            Some("relative".to_string()),
+            Some(
+                temp_dir
+                    .path()
+                    .join("missing")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ] {
+            let error = scheduler
+                .add_scheduled_job(job(refused.clone()), false)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, SchedulerError::InvalidWorkingDir(_)),
+                "{refused:?} → {error}"
+            );
+        }
+        assert!(scheduler.list_scheduled_jobs().await.is_empty());
+
+        scheduler
+            .schedule_recipe(
+                recipe_path.clone(),
+                Some("0 0 0 1 1 *".to_string()),
+                temp_dir.path().to_path_buf(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            scheduler.list_scheduled_jobs().await[0]
+                .working_dir
+                .as_deref(),
+            Some(temp_dir.path().to_string_lossy().as_ref())
         );
     }
 }

@@ -58,6 +58,7 @@ mod tests {
                 &self,
                 _recipe_path: PathBuf,
                 _cron_schedule: Option<String>,
+                _working_dir: PathBuf,
             ) -> Result<(), SchedulerError> {
                 Ok(())
             }
@@ -102,6 +103,14 @@ mod tests {
                 Ok(())
             }
 
+            async fn set_schedule_working_dir(
+                &self,
+                _sched_id: &str,
+                _working_dir: PathBuf,
+            ) -> Result<(), SchedulerError> {
+                Ok(())
+            }
+
             async fn kill_running_job(&self, _sched_id: &str) -> Result<(), SchedulerError> {
                 Ok(())
             }
@@ -138,6 +147,7 @@ mod tests {
                 &self,
                 _recipe_path: PathBuf,
                 _cron_schedule: Option<String>,
+                _working_dir: PathBuf,
             ) -> Result<(), SchedulerError> {
                 Ok(())
             }
@@ -185,6 +195,14 @@ mod tests {
                 &self,
                 _sched_id: &str,
                 _new_cron: String,
+            ) -> Result<(), SchedulerError> {
+                Ok(())
+            }
+
+            async fn set_schedule_working_dir(
+                &self,
+                _sched_id: &str,
+                _working_dir: PathBuf,
             ) -> Result<(), SchedulerError> {
                 Ok(())
             }
@@ -377,6 +395,7 @@ mod tests {
                         "job_id": "daily-report"
                     }),
                     "test-request".to_string(),
+                    temp_dir.path(),
                 )
                 .await
                 .expect("schedule sessions should succeed");
@@ -391,6 +410,53 @@ mod tests {
             assert!(
                 text.contains("Messages: 37"),
                 "expected stored message_count in sessions output, got: {text}"
+            );
+        }
+
+        // Q-282: a job the model creates from a chat runs in THAT chat's folder — goosed's cwd is
+        // $HOME for every window since Q-257, and a job used to record no folder at all.
+        #[tokio::test]
+        async fn a_job_the_model_creates_records_the_chats_folder() {
+            let temp_dir = TempDir::new().unwrap();
+            let project = TempDir::new().unwrap();
+            let data_dir = temp_dir.path().to_path_buf();
+            let session_manager = Arc::new(SessionManager::new(data_dir.clone()));
+            let permission_manager = Arc::new(PermissionManager::new(data_dir));
+            let mock_scheduler = Arc::new(MockScheduler::new());
+            let config = AgentConfig::new(
+                session_manager,
+                permission_manager,
+                Some(mock_scheduler.clone()),
+                GooseMode::Auto,
+                false,
+                GoosePlatform::GooseCli,
+            );
+            let agent = Agent::with_config(config);
+            let recipe_path = project.path().join("nightly.yaml");
+            std::fs::write(
+                &recipe_path,
+                "title: nightly\ndescription: nightly job\nprompt: run the tests\n",
+            )
+            .unwrap();
+
+            agent
+                .handle_schedule_management(
+                    serde_json::json!({
+                        "action": "create",
+                        "recipe_path": recipe_path.to_string_lossy(),
+                        "cron_expression": "0 0 2 * * *"
+                    }),
+                    "test-request".to_string(),
+                    project.path(),
+                )
+                .await
+                .expect("the model's create succeeds");
+
+            let jobs = mock_scheduler.list_scheduled_jobs().await;
+            assert_eq!(jobs.len(), 1);
+            assert_eq!(
+                jobs[0].working_dir.as_deref(),
+                Some(project.path().to_string_lossy().as_ref())
             );
         }
     }

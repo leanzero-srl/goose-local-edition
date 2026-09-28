@@ -8279,6 +8279,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "त्रुटि: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "इस फ़ोल्डर में चलता है:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "आईडी:"
   },
@@ -8320,6 +8323,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "संदेश: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "कोई नहीं। जब तक आप इसका फ़ोल्डर नहीं चुनते (शेड्यूल संपादित करें), यह शेड्यूल नहीं चलेगा।"
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "कोई शेड्यूल आईडी प्रदान नहीं की गई. शेड्यूल सूची पर लौटें."
@@ -8408,6 +8414,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "रद्द करें"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "फ़ोल्डर चुनें..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "नया शेड्यूल बनाएं"
   },
@@ -8432,6 +8441,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "चयनित फ़ाइल को पढ़ने में विफल."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "इस फ़ोल्डर में चलता है:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "वह फ़ोल्डर चुनें जिसमें यह शेड्यूल चलता है।"
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "अमान्य डीप लिंक। कृपया goose://recipe लिंक का उपयोग करें।"
   },
@@ -8443,6 +8458,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "उदाहरण के लिए, दैनिक-सारांश-कार्य"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "अभी कोई फ़ोल्डर नहीं। जब तक आप एक नहीं चुनते, यह शेड्यूल नहीं चलेगा।"
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "कृपया एक मान्य रेसिपी स्रोत दें।"
@@ -8477,6 +8495,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "फ़ोल्डर चुनें"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "शेड्यूल \"{id}\" हटाएं? रेसिपी रखा जाएगा."
   },
@@ -8491,6 +8512,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "त्रुटि: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "फ़ोल्डर चुनने में त्रुटि"
   },
   "schedulesView.inspect": {
     "defaultMessage": "निरीक्षण करें"
@@ -8516,6 +8540,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "अंतिम रन: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "कोई फ़ोल्डर नहीं"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "यह शेड्यूल तब सहेजा गया था जब शेड्यूल फ़ोल्डर दर्ज नहीं करते थे, इसलिए जब तक आप एक नहीं चुनते, यह नहीं चलेगा।"
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "अभी तक कोई शेड्यूल नहीं है"
   },
@@ -8539,6 +8569,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "चल रहा है"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "{folder} में चलता है"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "शेड्यूल रोका गया"

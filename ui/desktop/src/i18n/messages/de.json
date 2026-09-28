@@ -8279,6 +8279,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "Fehler: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "Läuft im Ordner:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID:"
   },
@@ -8320,6 +8323,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "Nachrichten: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "keinem. Dieser Zeitplan läuft erst, wenn du seinen Ordner wählst (Zeitplan bearbeiten)."
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "Keine Zeitplan-ID angegeben. Kehren Sie zur Zeitplanliste zurück."
@@ -8408,6 +8414,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "Abbrechen"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "Ordner wählen..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "Neuen Zeitplan erstellen"
   },
@@ -8432,6 +8441,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "Die ausgewählte Datei konnte nicht gelesen werden."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "Läuft im Ordner:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "Wähle den Ordner, in dem dieser Zeitplan läuft."
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "Ungültiger Deep-Link. Bitte verwenden Sie einen goose://recipe-Link."
   },
@@ -8443,6 +8458,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "z. B. daily-summary-job"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "Noch kein Ordner. Dieser Zeitplan läuft erst, wenn du einen wählst."
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "Bitte geben Sie eine gültige Rezeptquelle an."
@@ -8477,6 +8495,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "Ordner wählen"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Zeitplan \"{id}\" entfernen? Das Rezept bleibt erhalten."
   },
@@ -8491,6 +8512,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "Fehler: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "Fehler bei der Ordnerwahl"
   },
   "schedulesView.inspect": {
     "defaultMessage": "Untersuchen"
@@ -8516,6 +8540,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "Letzte Ausführung: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "Kein Ordner"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "Dieser Zeitplan wurde gespeichert, bevor Zeitpläne einen Ordner festhielten, daher läuft er erst, wenn du einen wählst."
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "Noch keine Zeitpläne"
   },
@@ -8539,6 +8569,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "Läuft"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "Läuft in {folder}"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "Zeitplan pausiert"

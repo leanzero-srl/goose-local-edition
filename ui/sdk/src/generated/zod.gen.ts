@@ -1461,7 +1461,8 @@ export const zSessionImportSource = z.enum([
  */
 export const zImportSessionRequest_unstable = z.object({
     input: z.string(),
-    source: zSessionImportSource
+    source: zSessionImportSource,
+    workingDir: z.string()
 });
 
 /**
@@ -1797,7 +1798,8 @@ export const zScheduleRecipeRequest_unstable = z.object({
     cron_schedule: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    working_dir: z.string()
 });
 
 export const zSetRecipeSlashCommandRequest_unstable = z.object({
@@ -1870,6 +1872,10 @@ export const zScheduledJobDto = z.object({
     jobStartTime: z.union([
         z.string(),
         z.null()
+    ]).optional(),
+    workingDir: z.union([
+        z.string(),
+        z.null()
     ]).optional()
 });
 
@@ -1920,7 +1926,8 @@ export const zListScheduleSessionsResponse_unstable = z.object({
 export const zCreateScheduleRequest_unstable = z.object({
     id: z.string(),
     recipe: zRecipeDto,
-    cron: z.string()
+    cron: z.string(),
+    working_dir: z.string()
 });
 
 export const zCreateScheduleResponse_unstable = z.object({
@@ -1941,7 +1948,11 @@ export const zUnpauseScheduleRequest_unstable = z.object({
 
 export const zUpdateScheduleRequest_unstable = z.object({
     scheduleId: z.string(),
-    cron: z.string()
+    cron: z.string(),
+    workingDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zUpdateScheduleResponse_unstable = z.object({

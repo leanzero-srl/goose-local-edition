@@ -8279,6 +8279,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "Erreur : {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "S'exécute dans le dossier :"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID :"
   },
@@ -8320,6 +8323,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "Messages : {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "aucun. Cette planification ne s'exécute pas tant que vous n'avez pas choisi son dossier (Modifier la planification)."
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "Aucun ID de planification fourni. Retournez à la liste des planifications."
@@ -8408,6 +8414,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "Annuler"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "Choisir un dossier..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "Créer une nouvelle planification"
   },
@@ -8432,6 +8441,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "Échec de la lecture du fichier sélectionné."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "S'exécute dans le dossier :"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "Choisissez le dossier dans lequel cette planification s'exécute."
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "Lien profond invalide. Veuillez utiliser un lien goose://recipe."
   },
@@ -8443,6 +8458,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "p. ex. daily-summary-job"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "Pas encore de dossier. Cette planification ne s'exécute pas tant que vous n'en avez pas choisi un."
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "Veuillez fournir une source de recette valide."
@@ -8477,6 +8495,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "Choisir un dossier"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Supprimer la planification « {id} » ? La recette sera conservée."
   },
@@ -8491,6 +8512,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "Erreur : {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "Erreur de choix du dossier"
   },
   "schedulesView.inspect": {
     "defaultMessage": "Inspecter"
@@ -8516,6 +8540,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "Dernière exécution : {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "Aucun dossier"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "Cette planification a été enregistrée avant que les planifications n'enregistrent un dossier ; elle ne s'exécute donc pas tant que vous n'en avez pas choisi un."
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "Aucune planification pour le moment"
   },
@@ -8539,6 +8569,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "En cours d'exécution"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "S'exécute dans {folder}"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "Planification mise en pause"

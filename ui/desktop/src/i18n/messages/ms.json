@@ -8279,6 +8279,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "Ralat: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "Berjalan dalam folder:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID:"
   },
@@ -8320,6 +8323,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "Mesej: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "tiada. Jadual ini tidak berjalan sehingga anda memilih foldernya (Edit Jadual)."
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "Tiada ID jadual disediakan. Kembali ke senarai jadual."
@@ -8408,6 +8414,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "Batal"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "Pilih folder..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "Cipta Jadual Baharu"
   },
@@ -8432,6 +8441,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "Gagal membaca fail yang dipilih."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "Berjalan dalam folder:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "Pilih folder tempat jadual ini berjalan."
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "Pautan dalam tidak sah. Sila gunakan pautan goose://recipe."
   },
@@ -8443,6 +8458,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "cth., daily-summary-job"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "Belum ada folder. Jadual ini tidak berjalan sehingga anda memilih satu."
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "Sila sediakan sumber resipi yang sah."
@@ -8477,6 +8495,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "Pilih folder"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Alih keluar jadual \"{id}\"? Resipi akan dikekalkan."
   },
@@ -8491,6 +8512,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "Ralat: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "Ralat Memilih Folder"
   },
   "schedulesView.inspect": {
     "defaultMessage": "Periksa"
@@ -8516,6 +8540,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "Larian terakhir: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "Tiada folder"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "Jadual ini disimpan sebelum jadual merekodkan folder, jadi ia tidak berjalan sehingga anda memilih satu."
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "Tiada jadual lagi"
   },
@@ -8539,6 +8569,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "Berjalan"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "Berjalan dalam {folder}"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "Jadual Dijeda"

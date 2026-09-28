@@ -8279,6 +8279,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "Ошибка: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "Запускается в папке:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID:"
   },
@@ -8320,6 +8323,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "Сообщений: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "нет. Это расписание не запускается, пока вы не выберете для него папку (Изменить расписание)."
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "ID расписания не указан. Вернитесь к списку расписаний."
@@ -8408,6 +8414,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "Отмена"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "Выбрать папку..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "Создать новое расписание"
   },
@@ -8432,6 +8441,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "Не удалось прочитать выбранный файл."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "Запускается в папке:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "Выберите папку, в которой запускается это расписание."
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "Неверный диплинк. Используйте ссылку goose://recipe."
   },
@@ -8443,6 +8458,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "например, daily-summary-job"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "Папка ещё не выбрана. Это расписание не запускается, пока вы её не выберете."
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "Укажите корректный источник рецепта."
@@ -8477,6 +8495,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "Выбрать папку"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Удалить расписание «{id}»? Рецепт будет сохранен."
   },
@@ -8491,6 +8512,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "Ошибка: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "Ошибка выбора папки"
   },
   "schedulesView.inspect": {
     "defaultMessage": "Проверить"
@@ -8516,6 +8540,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "Последний запуск: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "Нет папки"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "Это расписание сохранено до того, как расписания стали записывать папку, поэтому оно не запускается, пока вы её не выберете."
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "Расписаний пока нет"
   },
@@ -8539,6 +8569,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "Выполняется"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "Запускается в {folder}"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "Расписание приостановлено"

@@ -214,11 +214,15 @@ impl GooseAcpAgent {
         &self,
         req: ScheduleRecipeRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let file_path = self.resolve_recipe_path_by_id(&req.id, None).await?;
+        let project_dir = PathBuf::from(req.working_dir.trim());
+        super::validate_absolute_cwd(&project_dir)?;
+        let file_path = self
+            .resolve_recipe_path_by_id(&req.id, Some(&project_dir))
+            .await?;
         if let Err(err) = self
             .agent_manager
             .scheduler()
-            .schedule_recipe(file_path, req.cron_schedule)
+            .schedule_recipe(file_path, req.cron_schedule, project_dir)
             .await
         {
             tracing::error!("Failed to schedule recipe: {}", err);

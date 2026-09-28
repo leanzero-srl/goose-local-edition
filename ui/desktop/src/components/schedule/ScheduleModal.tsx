@@ -6,6 +6,7 @@ import { Input } from '../ui/input';
 import { CronPicker } from './CronPicker';
 import { Recipe, parseDeeplink, parseRecipeFromFile } from '../../recipe';
 import { getStorageDirectory } from '../../recipe/recipe_management';
+import { getInitialWorkingDir } from '../../utils/workingDir';
 import ClockIcon from '../../assets/clock-icon.svg';
 import { defineMessages, useIntl } from '../../i18n';
 
@@ -35,18 +36,33 @@ const i18n = defineMessages({
   invalidFileType: { id: 'scheduleModal.invalidFileType', defaultMessage: 'Invalid file type: Please select a YAML file (.yaml or .yml)' },
   scheduleIdRequired: { id: 'scheduleModal.scheduleIdRequired', defaultMessage: 'Schedule ID is required.' },
   provideValidRecipe: { id: 'scheduleModal.provideValidRecipe', defaultMessage: 'Please provide a valid recipe source.' },
+  folderLabel: { id: 'scheduleModal.folderLabel', defaultMessage: 'Runs in folder:' },
+  chooseFolder: { id: 'scheduleModal.chooseFolder', defaultMessage: 'Choose folder...' },
+  noFolder: {
+    id: 'scheduleModal.noFolder',
+    defaultMessage: 'No folder yet. This schedule does not run until you choose one.',
+  },
+  folderRequired: { id: 'scheduleModal.folderRequired', defaultMessage: 'Choose the folder this schedule runs in.' },
 });
 
+// Q-282: every schedule runs in a folder its owner chose — this window's by default. goose serves
+// every window from one process, so its own folder is nobody's project.
 export interface NewSchedulePayload {
   id: string;
   recipe: Recipe;
   cron: string;
+  working_dir: string;
+}
+
+export interface ScheduleEditPayload {
+  cron: string;
+  workingDir: string;
 }
 
 interface ScheduleModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (payload: NewSchedulePayload | string) => Promise<void>;
+  onSubmit: (payload: NewSchedulePayload | ScheduleEditPayload) => Promise<void>;
   schedule: ScheduledJobDto | null;
   isLoadingExternally: boolean;
   apiErrorExternally: string | null;
@@ -77,6 +93,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
   const [cronExpression, setCronExpression] = useState<string>('0 0 14 * * *');
   const [internalValidationError, setInternalValidationError] = useState<string | null>(null);
   const [isValid, setIsValid] = useState(true);
+  const [workingDir, setWorkingDir] = useState<string>('');
 
   const setScheduleIdFromTitle = (title: string) => {
     const cleanId = title
@@ -112,7 +129,10 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
       if (schedule) {
         setScheduleId(schedule.id);
         setCronExpression(schedule.cron);
+        setWorkingDir(schedule.workingDir ?? '');
+        setInternalValidationError(null);
       } else {
+        setWorkingDir(getInitialWorkingDir());
         setScheduleId('');
         setSourceType('file');
         setRecipeSourcePath('');
@@ -161,12 +181,24 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
     }
   };
 
+  const handleChooseFolder = async () => {
+    const result = await window.electron.directoryChooser(workingDir || undefined);
+    if (result.canceled || result.filePaths.length === 0) return;
+    setWorkingDir(result.filePaths[0]);
+    setInternalValidationError(null);
+  };
+
   const handleLocalSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setInternalValidationError(null);
 
+    if (!workingDir) {
+      setInternalValidationError(intl.formatMessage(i18n.folderRequired));
+      return;
+    }
+
     if (isEditMode) {
-      await onSubmit(cronExpression);
+      await onSubmit({ cron: cronExpression, workingDir });
       return;
     }
 
@@ -184,6 +216,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
       id: scheduleId.trim(),
       recipe: parsedRecipe,
       cron: cronExpression,
+      working_dir: workingDir,
     };
 
     await onSubmit(newSchedulePayload);
@@ -314,6 +347,39 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
               </div>
             </>
           )}
+
+          <div>
+            <label className={modalLabelClassName}>
+              {intl.formatMessage(i18n.folderLabel)} <span className="text-red-500">*</span>
+            </label>
+            <div className="flex items-center gap-2">
+              {workingDir ? (
+                <p
+                  className="flex-1 min-w-0 truncate text-sm font-mono text-text-primary"
+                  title={workingDir}
+                  data-testid="schedule-folder"
+                >
+                  {workingDir}
+                </p>
+              ) : (
+                <p
+                  className="flex-1 min-w-0 text-sm font-medium text-text-danger"
+                  data-testid="schedule-no-folder"
+                >
+                  {intl.formatMessage(i18n.noFolder)}
+                </p>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleChooseFolder}
+                className="shrink-0 rounded-full"
+              >
+                {intl.formatMessage(i18n.chooseFolder)}
+              </Button>
+            </div>
+          </div>
 
           <div>
             <label className={modalLabelClassName}>{intl.formatMessage(i18n.scheduleLabel)}</label>

@@ -8279,6 +8279,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "Erro: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "Executa na pasta:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID:"
   },
@@ -8320,6 +8323,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "Mensagens: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "nenhuma. Este agendamento não executa até você escolher a pasta dele (Editar agendamento)."
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "Nenhum ID de agendamento fornecido. Regresse à lista de agendamentos."
@@ -8408,6 +8414,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "Cancelar"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "Escolher pasta..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "Criar novo agendamento"
   },
@@ -8432,6 +8441,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "Falha ao ler o ficheiro selecionado."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "Executa na pasta:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "Escolha a pasta em que este agendamento executa."
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "Ligação profunda inválida. Use uma ligação goose://recipe."
   },
@@ -8443,6 +8458,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "p. ex., tarefa-resumo-diario"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "Ainda sem pasta. Este agendamento não executa até você escolher uma."
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "Forneça uma origem de receita válida."
@@ -8477,6 +8495,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "Escolher pasta"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Remover o agendamento \"{id}\"? A receita será mantida."
   },
@@ -8491,6 +8512,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "Erro: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "Erro ao escolher a pasta"
   },
   "schedulesView.inspect": {
     "defaultMessage": "Inspecionar"
@@ -8516,6 +8540,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "Última execução: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "Sem pasta"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "Este agendamento foi salvo antes de os agendamentos registrarem uma pasta, então não executa até você escolher uma."
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "Ainda não há agendamentos"
   },
@@ -8539,6 +8569,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "Em execução"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "Executa em {folder}"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "Agendamento em pausa"

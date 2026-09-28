@@ -15,8 +15,19 @@ import { ScrollArea } from '../ui/scroll-area';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { TrashIcon } from '../icons/TrashIcon';
-import { Plus, RefreshCw, Pause, Play, Edit, Square, Eye, CircleDotDashed } from 'lucide-react';
-import { NewSchedulePayload, ScheduleModal } from './ScheduleModal';
+import {
+  Plus,
+  RefreshCw,
+  Pause,
+  Play,
+  Edit,
+  Square,
+  Eye,
+  CircleDotDashed,
+  FolderOpen,
+  FolderX,
+} from 'lucide-react';
+import { NewSchedulePayload, ScheduleEditPayload, ScheduleModal } from './ScheduleModal';
 import ScheduleDetailView from './ScheduleDetailView';
 import { toastError, toastSuccess } from '../../toasts';
 import cronstrue from 'cronstrue';
@@ -60,6 +71,15 @@ const i18n = defineMessages({
   jobInspection: { id: 'schedulesView.jobInspection', defaultMessage: 'Job Inspection' },
   inspectNoInfo: { id: 'schedulesView.inspectNoInfo', defaultMessage: 'No detailed information available for this job' },
   inspectError: { id: 'schedulesView.inspectError', defaultMessage: 'Inspect Job Error' },
+  runsIn: { id: 'schedulesView.runsIn', defaultMessage: 'Runs in {folder}' },
+  noFolder: { id: 'schedulesView.noFolder', defaultMessage: 'No folder' },
+  noFolderMsg: {
+    id: 'schedulesView.noFolderMsg',
+    defaultMessage:
+      'This schedule was saved before schedules recorded a folder, so it does not run until you choose one.',
+  },
+  chooseFolder: { id: 'schedulesView.chooseFolder', defaultMessage: 'Choose folder' },
+  folderError: { id: 'schedulesView.folderError', defaultMessage: 'Choose Folder Error' },
 });
 
 interface SchedulesViewProps {
@@ -75,6 +95,7 @@ const ScheduleCard: React.FC<{
   onKill: (id: string) => void;
   onInspect: (id: string) => void;
   onDelete: (id: string) => void;
+  onChooseFolder: (job: ScheduledJobDto) => void;
   actionInProgress: boolean;
 }> = ({
   job,
@@ -85,6 +106,7 @@ const ScheduleCard: React.FC<{
   onKill,
   onInspect,
   onDelete,
+  onChooseFolder,
   actionInProgress,
 }) => {
   const intl = useIntl();
@@ -120,10 +142,42 @@ const ScheduleCard: React.FC<{
                 {intl.formatMessage(i18n.paused)}
               </span>
             )}
+            {!job.workingDir && (
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-600 text-white"
+                data-testid="schedule-no-folder-badge"
+              >
+                <FolderX className="w-3 h-3 mr-1" />
+                {intl.formatMessage(i18n.noFolder)}
+              </span>
+            )}
           </div>
           <p className="text-text-secondary text-sm mb-2 line-clamp-2" title={readableCron}>
             {readableCron}
           </p>
+          {job.workingDir ? (
+            <p className="text-xs text-text-secondary mb-1 truncate" title={job.workingDir}>
+              {intl.formatMessage(i18n.runsIn, { folder: job.workingDir })}
+            </p>
+          ) : (
+            <div className="flex items-center gap-2 mb-2">
+              <p className="text-sm font-medium text-text-danger">
+                {intl.formatMessage(i18n.noFolderMsg)}
+              </p>
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChooseFolder(job);
+                }}
+                disabled={actionInProgress || job.currentlyRunning}
+                size="sm"
+                className="h-8 shrink-0"
+              >
+                <FolderOpen className="w-4 h-4 mr-1" />
+                {intl.formatMessage(i18n.chooseFolder)}
+              </Button>
+            </div>
+          )}
           <div className="flex items-center text-xs text-text-secondary">
             <span>{intl.formatMessage(i18n.lastRun, { date: formattedLastRun })}</span>
           </div>
@@ -284,12 +338,17 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
     }
   };
 
-  const handleModalSubmit = async (payload: NewSchedulePayload | string) => {
+  const handleModalSubmit = async (payload: NewSchedulePayload | ScheduleEditPayload) => {
     setIsSubmitting(true);
     setSubmitApiError(null);
     try {
       if (editingSchedule) {
-        await acpUpdateSchedule(editingSchedule.id, payload as string);
+        const edit = payload as ScheduleEditPayload;
+        await acpUpdateSchedule(
+          editingSchedule.id,
+          edit.cron,
+          edit.workingDir !== editingSchedule.workingDir ? edit.workingDir : undefined
+        );
         toastSuccess({
           title: intl.formatMessage(i18n.scheduleUpdated),
           msg: intl.formatMessage(i18n.scheduleUpdatedMsg, { id: editingSchedule.id }),
@@ -463,6 +522,33 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
     }
   };
 
+  // Q-282: a schedule saved before schedules recorded a folder is refused at every run until
+  // its owner chooses where it runs.
+  const handleChooseFolder = async (job: ScheduledJobDto) => {
+    const result = await window.electron.directoryChooser(job.workingDir ?? undefined);
+    if (result.canceled || result.filePaths.length === 0) return;
+
+    setActionsInProgress((prev) => new Set(prev).add(job.id));
+    setApiError(null);
+    try {
+      await acpUpdateSchedule(job.id, job.cron, result.filePaths[0]);
+      await fetchSchedules();
+    } catch (error) {
+      const errorMsg = errorMessage(error, `Unknown error choosing the folder of "${job.id}".`);
+      setApiError(errorMsg);
+      toastError({
+        title: intl.formatMessage(i18n.folderError),
+        msg: errorMsg,
+      });
+    } finally {
+      setActionsInProgress((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(job.id);
+        return newSet;
+      });
+    }
+  };
+
   const handleNavigateToDetail = (id: string) => {
     setViewingScheduleId(id);
   };
@@ -555,6 +641,7 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
                         onKill={handleKillRunningJob}
                         onInspect={handleInspectRunningJob}
                         onDelete={handleDeleteSchedule}
+                        onChooseFolder={handleChooseFolder}
                         actionInProgress={actionsInProgress.has(job.id) || isSubmitting}
                       />
                     ))}

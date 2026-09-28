@@ -35,6 +35,8 @@ pub struct CreateScheduleRequest {
     id: String,
     recipe: Recipe,
     cron: String,
+    /// The folder the job runs in (Q-282): the caller names it; the server's own cwd is not it.
+    working_dir: String,
 }
 
 #[derive(Deserialize, Serialize, utoipa::ToSchema)]
@@ -145,6 +147,7 @@ async fn create_schedule(
         process_start_time: None,
         parameters: vec![],
         recipe_base_dir: None,
+        working_dir: Some(req.working_dir),
     };
 
     let scheduler = state.scheduler();
@@ -152,6 +155,9 @@ async fn create_schedule(
         .add_scheduled_job(job.clone(), false)
         .await
         .map_err(|e| match e {
+            goose::scheduler::SchedulerError::InvalidWorkingDir(msg) => {
+                ErrorResponse::bad_request(msg)
+            }
             goose::scheduler::SchedulerError::CronParseError(msg) => {
                 ErrorResponse::bad_request(format!("Invalid cron expression: {}", msg))
             }

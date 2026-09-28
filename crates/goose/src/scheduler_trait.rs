@@ -16,6 +16,7 @@ pub trait SchedulerTrait: Send + Sync {
         &self,
         recipe_path: PathBuf,
         cron_schedule: Option<String>,
+        working_dir: PathBuf,
     ) -> anyhow::Result<(), SchedulerError>;
     async fn list_scheduled_jobs(&self) -> Vec<ScheduledJob>;
     async fn remove_scheduled_job(
@@ -33,6 +34,11 @@ pub trait SchedulerTrait: Send + Sync {
     ) -> Result<Vec<(String, Session)>, SchedulerError>;
     async fn update_schedule(&self, sched_id: &str, new_cron: String)
         -> Result<(), SchedulerError>;
+    async fn set_schedule_working_dir(
+        &self,
+        sched_id: &str,
+        working_dir: PathBuf,
+    ) -> Result<(), SchedulerError>;
     async fn kill_running_job(&self, sched_id: &str) -> Result<(), SchedulerError>;
     async fn get_running_job_info(
         &self,
