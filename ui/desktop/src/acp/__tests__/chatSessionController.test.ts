@@ -110,7 +110,7 @@ function snapshotWithActivePrompt(activePromptAttemptId: string | null): AcpChat
     notifications: [],
     chatState: activePromptAttemptId ? ChatState.Streaming : ChatState.Idle,
     sessionLoadError: undefined,
-  submitError: undefined,
+    submitError: undefined,
     activePromptAttemptId,
     activeRunId: activePromptAttemptId ? 'run-1' : null,
     pendingCancelPromptAttemptId: null,
@@ -235,6 +235,110 @@ describe('acpChatSessionController.submitMessage', () => {
     expect(acpChatSessionActions.startPromptAttempt).not.toHaveBeenCalled();
     expect(acpPromptSession).not.toHaveBeenCalled();
   });
+
+  // Q-228 (L4r): the tick door needs to KNOW it was refused — a silent return dropped a tick.
+  it("answers 'busy' with no side effect where it used to return silently", async () => {
+    vi.mocked(acpChatSessionStore.getSnapshot).mockReturnValue(
+      snapshotWithActivePrompt('attempt-1')
+    );
+    const onFinish = vi.fn();
+
+    const status = await acpChatSessionController.submitMessage(SESSION_ID, userMessage(), {
+      getCurrentSnapshot: () => snapshotWithActivePrompt('attempt-1'),
+      onFinish,
+      preAppend: true,
+      meta: { goose: { loopTick: { loopId: 'lp_0000abcd', n: 1, messageId: 'm' } } },
+    });
+
+    expect(status).toBe('busy');
+    expect(acpChatSessionActions.setMessages).not.toHaveBeenCalled();
+    expect(acpChatSessionActions.startPromptAttempt).not.toHaveBeenCalled();
+    expect(acpPromptSession).not.toHaveBeenCalled();
+    expect(onFinish).not.toHaveBeenCalled();
+  });
+
+  it("answers 'submitted' once the prompt ends, and an existing caller's prompt carries no _meta", async () => {
+    vi.mocked(acpPromptSession).mockResolvedValue({ stopReason: 'end_turn' } as never);
+    const onFinish = vi.fn();
+    const message = userMessage();
+
+    const status = await acpChatSessionController.submitMessage(SESSION_ID, message, {
+      getCurrentSnapshot: () => snapshotWithActivePrompt(null),
+      onFinish,
+    });
+
+    expect(status).toBe('submitted');
+    expect(acpPromptSession).toHaveBeenCalledWith(SESSION_ID, message, undefined);
+    expect(acpChatSessionActions.setMessages).not.toHaveBeenCalled();
+    expect(onFinish).toHaveBeenCalledWith();
+  });
+
+  it('passes meta through to the prompt', async () => {
+    const meta = { goose: { loopTick: { loopId: 'lp_0000abcd', n: 2, messageId: 'mid' } } };
+    const message = userMessage();
+
+    await acpChatSessionController.submitMessage(SESSION_ID, message, {
+      getCurrentSnapshot: () => snapshotWithActivePrompt(null),
+      onFinish: vi.fn(),
+      meta,
+    });
+
+    expect(acpPromptSession).toHaveBeenCalledWith(SESSION_ID, message, meta);
+  });
+
+  it('with preAppend, appends the message once, after the busy check and before the prompt', async () => {
+    const order: string[] = [];
+    vi.mocked(acpChatSessionActions.setMessages).mockImplementation(() => {
+      order.push('append');
+      return snapshotWithActivePrompt(null);
+    });
+    vi.mocked(acpChatSessionActions.startPromptAttempt).mockImplementation(() => {
+      order.push('attempt');
+      return snapshotWithActivePrompt('x');
+    });
+    vi.mocked(acpPromptSession).mockImplementation(async () => {
+      order.push('prompt');
+      return { stopReason: 'end_turn' } as never;
+    });
+    const earlier = { ...userMessage(), id: 'earlier' };
+    const message = userMessage();
+
+    await acpChatSessionController.submitMessage(SESSION_ID, message, {
+      getCurrentSnapshot: () => ({ ...snapshotWithActivePrompt(null), messages: [earlier] }),
+      onFinish: vi.fn(),
+      preAppend: true,
+    });
+
+    expect(order).toEqual(['append', 'attempt', 'prompt']);
+    expect(acpChatSessionActions.setMessages).toHaveBeenCalledTimes(1);
+    expect(acpChatSessionActions.setMessages).toHaveBeenCalledWith(SESSION_ID, [earlier, message]);
+  });
+
+  it('with preAppend, never appends a message whose id is already in the transcript', async () => {
+    const message = userMessage();
+
+    await acpChatSessionController.submitMessage(SESSION_ID, message, {
+      getCurrentSnapshot: () => ({ ...snapshotWithActivePrompt(null), messages: [message] }),
+      onFinish: vi.fn(),
+      preAppend: true,
+    });
+
+    expect(acpChatSessionActions.setMessages).not.toHaveBeenCalled();
+    expect(acpPromptSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed prompt still answers 'submitted' and reaches onFinish with the error", async () => {
+    vi.mocked(acpPromptSession).mockRejectedValue(new Error('session already has active run'));
+    const onFinish = vi.fn();
+
+    const status = await acpChatSessionController.submitMessage(SESSION_ID, userMessage(), {
+      getCurrentSnapshot: () => snapshotWithActivePrompt(null),
+      onFinish,
+    });
+
+    expect(status).toBe('submitted');
+    expect(onFinish).toHaveBeenCalledWith('Submit error: session already has active run');
+  });
 });
 
 describe('acpChatSessionController.updateMessage', () => {
@@ -353,7 +457,10 @@ describe('acpChatSessionController.updateMessage', () => {
     resolvePromptCancellation!();
     await updatePromise;
 
-    expect(acpTruncateSessionConversation).toHaveBeenCalledWith(SESSION_ID, existingMessage.created);
+    expect(acpTruncateSessionConversation).toHaveBeenCalledWith(
+      SESSION_ID,
+      existingMessage.created
+    );
     expect(acpPromptSession).toHaveBeenCalled();
     expect(acpChatSessionActions.clearPromptCancellation).not.toHaveBeenCalledWith(
       SESSION_ID,
