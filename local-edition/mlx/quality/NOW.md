@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 15:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 15:3x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -35,6 +35,12 @@ Updated: 2026-09-28 15:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - Q-340/341/344 ON MAIN 838b93b62 (gate green). Q-358 notes S3–S5 DISPATCHED (was queued behind it).
 - Queued: Q-334 (focus ring colour outside the local edition), Q-335 (~55 faded opacity uses), Q-336/261/281
   (model behaviour, measured on #3q).
+
+## 3.0.71 integration
+- ONE branch /tmp/merge-071 = main + q350/343 + q347 + q367/369 + q359 + q371/372 + q358 search; ONE full gate
+  /tmp/g071.out (scratchpad/gate071.sh, own session) after g350 — per-lane gates dropped (each lane gated in its
+  worktree). Green → ff main → build 3.0.71 → install both Macs at a #3r turn boundary. Q-364 DONE (branch worktree-agent-a9eba4640e56e14fc,
+  2 commits on merge-071) — merge into merge-071 AFTER g071 ends (never mid-gate), then lib+clippy+wincheck; ledger_resolve now base-aware (lost Q-368 twice).
 
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.

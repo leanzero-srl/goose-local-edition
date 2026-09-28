@@ -239,6 +239,20 @@
    try {
      await fs.writeFile(LOCK_FILE_PATH, String(process.pid), { flag: "wx" });
      return true;
+@@ -116,9 +120,11 @@
+ export async function registerDocument(doc) {
+   const registry = await loadRegistry();
+ 
+-  // Check if document already exists
++  // A document is its file: a same-title document at another path is a separate
++  // entry, not a replacement that silently drops the first one (goose Q-388).
++  const filePath = path.normalize(doc.filePath);
+   const existingIndex = registry.documents.findIndex(
+-    d => d.filePath === doc.filePath || (d.title === doc.title && d.category === doc.category)
++    d => path.normalize(d.filePath) === filePath
+   );
+ 
+   if (existingIndex >= 0) {
 --- a/src/auth.js
 +++ b/src/auth.js
 @@ -5,9 +5,9 @@
@@ -293,14 +307,29 @@
    constructor() {
 --- a/src/tools/utils.js
 +++ b/src/tools/utils.js
-@@ -8,6 +8,7 @@
+@@ -8,16 +8,17 @@
    findDocuments
  } from "../utils/registry.js";
  import { log } from "../utils/logger.js";
 +import { dataDir } from "../utils/state-dir.js";
  import { requestContext } from "../utils/request-context.js";
++import { chatFolder, chatFolderUnknownError, noteResolution, refuseTilde } from "../utils/chat-folder.js";
  
  /**
+  * Root directory for all generated files.
+  *
+- * Defaults to the MCP process's current working directory. For a stdio MCP
+- * launched by an agent (e.g. Claude Code), cwd is the workspace/project the
+- * agent was opened from — so files land THERE, on the caller's machine, not on
+- * a remote host. Set the DOC_OUTPUT_DIR env var to pin a fixed location instead
+- * (e.g. an LM Studio config that should always write to ~/Documents/...).
++ * Over stdio: DOC_OUTPUT_DIR when set (a fixed location the operator chose),
++ * else the folder of the chat that made this call (goose sends it per call as
++ * _meta["agent-working-dir"]; see utils/chat-folder.js), else a refusal — the
++ * process cwd is not used (goose Q-388).
+  *
+  * NOTE: this only puts files on the caller's machine when the server runs
+  * locally (stdio). A REMOTE/hosted server writes to the HOST's disk — that is a
 @@ -34,7 +35,7 @@
    const ctx = requestContext.getStore && requestContext.getStore();
    if (ctx && ctx.outputDir && String(ctx.outputDir).trim()) {
@@ -310,123 +339,384 @@
      const sub = path.normalize(String(ctx.outputDir))
        .replace(/^([./\\]|\.\.[/\\]?)+/, "")  // strip leading ./ ../ and slashes
        .replace(/^[/\\]+/, "");
-@@ -326,6 +327,15 @@
-   const resolvedPath = path.isAbsolute(outputPath)
-     ? outputPath
-     : path.resolve(getOutputRoot(), outputPath);
-+
-+  // Over stdio, an explicit path outside the output root is the caller's choice:
-+  // respect it, as enforceDocsFolder does, instead of moving it under <root>/docs
-+  // (goose Q-139). A hosted request keeps being pulled into its sandboxed root.
-+  const hosted = Boolean(requestContext.getStore && requestContext.getStore());
-+  const fromRoot = path.relative(getOutputRoot(), resolvedPath);
-+  if (!hosted && (fromRoot === ".." || fromRoot.startsWith(".." + path.sep) || path.isAbsolute(fromRoot))) {
-+    return { outputPath: resolvedPath, wasCategorized: false };
-+  }
+@@ -43,15 +44,77 @@
+   }
  
-   const categoryInfo = getCategoryPath(category);
-   const docsRoot = path.join(getOutputRoot(), "docs");
+   // 2) Operator/self-host env (trusted — your own machine), unsandboxed.
++  const override = docOutputDir();
++  if (override) return override;
++
++  // A hosted request with no X-Output-Dir keeps the server's launch dir (upstream).
++  if (ctx) return process.cwd();
++
++  // 3) Over stdio: the folder of the chat that made THIS call (goose Q-388). The
++  //    launch dir is never a stand-in: it is the folder the server started in,
++  //    which is not the chat's folder once the chat moves or the server is shared.
++  const folder = chatFolder();
++  if (folder) return folder;
++  throw new Error(
++    "No folder to write the document in: DOC_OUTPUT_DIR is not set and the chat's folder is not known to this tool. Pass an absolute outputPath.",
++  );
++}
++
++function docOutputDir() {
+   const override = process.env.DOC_OUTPUT_DIR;
+-  if (override && override.trim()) {
+-    return path.isAbsolute(override)
+-      ? override
+-      : path.resolve(process.cwd(), override);
++  if (!override || !override.trim()) return undefined;
++  return path.isAbsolute(override) ? override : path.resolve(process.cwd(), override);
++}
++
++/**
++ * Where a create-* tool writes (goose Q-388). One rule for every create tool:
++ *
++ *  - outputPath ABSOLUTE → written exactly there: never categorised into
++ *    docs/<category>/, never pulled into docs/.
++ *  - outputPath RELATIVE → resolved against the chat's folder (goose sends it with
++ *    each call); with no chat folder, against DOC_OUTPUT_DIR when the operator set
++ *    one; with neither, REFUSED — never filed somewhere the caller did not name.
++ *  - outputPath OMITTED → the title-derived default under
++ *    <output root>/docs/<category>/, as before.
++ *  - A hosted (HTTP) request keeps the upstream sandboxed flow unchanged.
++ *
++ * @param {string|undefined} requested - the outputPath the caller passed, if any
++ * @param {string} normalizedPath - validateAndNormalizeInput's outputPath (extension fixed)
++ * @param {string|null} category
++ * @param {boolean} enforceDocs
++ * @returns {{outputPath:string, wasCategorized:boolean, docsEnforced:boolean}}
++ */
++export function resolveOutputTarget(requested, normalizedPath, category, enforceDocs) {
++  const hosted = Boolean(requestContext.getStore && requestContext.getStore());
++  const explicit = typeof requested === "string" && requested.trim() !== "";
++
++  if (explicit && !hosted) {
++    refuseTilde(requested, "outputPath");
++    if (path.isAbsolute(normalizedPath)) {
++      return { outputPath: path.normalize(normalizedPath), wasCategorized: false, docsEnforced: false };
++    }
++    const folder = chatFolder();
++    const base = folder || docOutputDir();
++    if (!base) throw chatFolderUnknownError("outputPath", requested);
++    const resolved = path.resolve(base, normalizedPath);
++    noteResolution({
++      field: "outputPath",
++      requested,
++      resolvedAgainst: folder ? "the chat's folder" : "DOC_OUTPUT_DIR (the chat's folder is not known to this tool)",
++      folder: base,
++      path: resolved,
++    });
++    return { outputPath: resolved, wasCategorized: false, docsEnforced: false };
+   }
+ 
+-  // 3) Default: the launch dir (stdio agents → their workspace).
+-  return process.cwd();
++  let outputPath = path.isAbsolute(normalizedPath)
++    ? normalizedPath
++    : path.resolve(getOutputRoot(), normalizedPath);
++  const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(outputPath, category);
++  outputPath = categorizedPath;
++  const { outputPath: docsPath, wasEnforced: docsEnforced } = enforceDocsFolder(outputPath, enforceDocs);
++  if (docsEnforced) outputPath = docsPath;
++  return { outputPath, wasCategorized, docsEnforced };
+ }
+ 
+ /**
 --- a/src/tools/create-doc.js
 +++ b/src/tools/create-doc.js
-@@ -31,6 +31,7 @@
-   createNumberingConfig,
- } from "./styling.js";
+@@ -33,9 +33,8 @@
  import {
-+  getOutputRoot,
    validateAndNormalizeInput,
    ensureDirectory,
-   enforceDocsFolder,
-@@ -327,7 +328,7 @@
-     const normalized = validateAndNormalizeInput(input, [], "docx");
-     let outputPath = normalized.outputPath;
-     if (!path.isAbsolute(outputPath)) {
--      outputPath = path.resolve(process.cwd(), outputPath);
-+      outputPath = path.resolve(getOutputRoot(), outputPath);
+-  enforceDocsFolder,
+   preventDuplicateFiles,
+-  applyCategoryToPath,
++  resolveOutputTarget,
+   registerDocumentInRegistry,
+   getCategoryPath,
+   classifyDocumentContent,
+@@ -49,7 +48,7 @@
+ import { logInsight, memoryNudge } from "../utils/insights.js";
+ import { buildDownloadUrl } from "../utils/download-registry.js";
+ import { log } from "../utils/logger.js";
+-import { checkForExistingDocument, cleanupExcessVersions, buildGuidanceMessage } from "../services/ai-guidance-system.js";
++import { checkForExistingDocument, buildGuidanceMessage } from "../services/ai-guidance-system.js";
+ import { recordWrite } from "../services/lineage-tracker.js";
+ import { loadBlueprint, listBlueprints } from "../utils/blueprint-store.js";
+ import { validateAgainstBlueprint } from "../services/blueprint-extractor.js";
+@@ -262,45 +261,6 @@
+       }
      }
  
-     // Apply category-based subfolder organization
+-    // Check for existing documents with the same title/category BEFORE creating
+-    // This prevents the model from creating duplicates
+-    if (!parsedInput.dryRun && parsedInput.preventDuplicates !== false) {
+-      const duplicateCheck = await checkForExistingDocument(title, category);
+-
+-      if (duplicateCheck.action === "augment") {
+-        // Document exists - tell the model to use edit-doc instead
+-        const guidance = buildGuidanceMessage(duplicateCheck);
+-        return {
+-          success: false,
+-          duplicate: true,
+-          existingPath: duplicateCheck.existing.filePath,
+-          existingTitle: duplicateCheck.existing.title,
+-          message: `DOCUMENT ALREADY EXISTS: "${duplicateCheck.existing.title}" at ${duplicateCheck.existing.filePath}.\n\n` +
+-            `Use edit-doc with filePath "${duplicateCheck.existing.filePath}" and action "append" to add content to the existing document.\n` +
+-            `If you want to replace its content entirely, use edit-doc with action "replace".\n` +
+-            `To force creating a new file anyway, set preventDuplicates to false.` + guidance,
+-        };
+-      }
+-
+-      if (duplicateCheck.action === "replace") {
+-        // Too many versions - clean up and tell model to use edit-doc
+-        if (duplicateCheck.allVersions) {
+-          await cleanupExcessVersions(duplicateCheck.allVersions, 1);
+-        }
+-        const guidance = buildGuidanceMessage(duplicateCheck);
+-        return {
+-          success: false,
+-          duplicate: true,
+-          tooManyVersions: true,
+-          existingPath: duplicateCheck.existing.filePath,
+-          existingTitle: duplicateCheck.existing.title,
+-          message: `TOO MANY VERSIONS of "${title}" detected. Old versions have been cleaned up.\n\n` +
+-            `Use edit-doc with filePath "${duplicateCheck.existing.filePath}" and action "replace" to write the correct content.\n` +
+-            `DO NOT create another version.` + guidance,
+-        };
+-      }
+-    }
+-
+     // Validate against blueprint if specified
+     if (parsedInput.blueprint) {
+       const blueprint = loadBlueprint(parsedInput.blueprint);
+@@ -325,27 +285,32 @@
+ 
+     // Normalize input with extension handling FIRST (fixes .md → .docx before docs folder check)
+     const normalized = validateAndNormalizeInput(input, [], "docx");
+-    let outputPath = normalized.outputPath;
+-    if (!path.isAbsolute(outputPath)) {
+-      outputPath = path.resolve(process.cwd(), outputPath);
+-    }
+-
+-    // Apply category-based subfolder organization
+-    const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(
+-      outputPath,
++    const target = resolveOutputTarget(
++      parsedInput.outputPath,
++      normalized.outputPath,
+       category,
++      parsedInput.enforceDocsFolder !== false,
+     );
+-    outputPath = categorizedPath;
++    let outputPath = target.outputPath;
++    const { wasCategorized, docsEnforced } = target;
+ 
+-    // Enforce docs/ folder FIRST so duplicate prevention checks the final location
+-    const enforceDocs = parsedInput.enforceDocsFolder !== false;
+-    let { outputPath: docsPath, wasEnforced: docsEnforced } = enforceDocsFolder(
+-      outputPath,
+-      enforceDocs,
+-    );
+-
+-    if (docsEnforced) {
+-      outputPath = docsPath;
++    // A same-title document already AT this path → edit it instead of minting a _1 copy.
++    // Only this path counts: a same-title document elsewhere never blocks a write here (Q-388).
++    if (!parsedInput.dryRun && parsedInput.preventDuplicates !== false) {
++      const duplicateCheck = await checkForExistingDocument(title, category, outputPath);
++      if (duplicateCheck.action !== "create") {
++        const guidance = buildGuidanceMessage(duplicateCheck);
++        return {
++          success: false,
++          duplicate: true,
++          existingPath: duplicateCheck.existing.filePath,
++          existingTitle: duplicateCheck.existing.title,
++          message: `DOCUMENT ALREADY EXISTS: "${duplicateCheck.existing.title}" at ${duplicateCheck.existing.filePath}.\n\n` +
++            `Use edit-doc with filePath "${duplicateCheck.existing.filePath}" and action "append" to add content to the existing document.\n` +
++            `If you want to replace its content entirely, use edit-doc with action "replace".\n` +
++            `To write a new document instead, pass a different outputPath, or set preventDuplicates to false.` + guidance,
++        };
++      }
+     }
+ 
+     // Dry run mode: return a preview without writing to disk
 --- a/src/tools/create-markdown.js
 +++ b/src/tools/create-markdown.js
-@@ -1,6 +1,7 @@
- import fs from "fs/promises";
- import path from "path";
+@@ -3,9 +3,8 @@
  import {
-+  getOutputRoot,
    validateAndNormalizeInput,
    ensureDirectory,
-   enforceDocsFolder,
-@@ -123,7 +124,7 @@
-     const normalized = validateAndNormalizeInput(parsedInput, [], "md");
-     let outputPath = normalized.outputPath;
-     if (!path.isAbsolute(outputPath)) {
--      outputPath = path.resolve(process.cwd(), outputPath);
-+      outputPath = path.resolve(getOutputRoot(), outputPath);
-     }
+-  enforceDocsFolder,
+   preventDuplicateFiles,
+-  applyCategoryToPath,
++  resolveOutputTarget,
+   registerDocumentInRegistry,
+   getCategoryPath,
+   classifyDocumentContent,
+@@ -121,28 +120,14 @@
  
-     // Apply category-based subfolder organization
+     // Normalize input with extension handling FIRST
+     const normalized = validateAndNormalizeInput(parsedInput, [], "md");
+-    let outputPath = normalized.outputPath;
+-    if (!path.isAbsolute(outputPath)) {
+-      outputPath = path.resolve(process.cwd(), outputPath);
+-    }
+-
+-    // Apply category-based subfolder organization
+-    const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(
+-      outputPath,
++    const target = resolveOutputTarget(
++      parsedInput.outputPath,
++      normalized.outputPath,
+       category,
++      parsedInput.enforceDocsFolder !== false,
+     );
+-    outputPath = categorizedPath;
+-
+-    // Enforce docs/ folder FIRST so duplicate prevention checks the final location
+-    const enforceDocs = parsedInput.enforceDocsFolder !== false;
+-    let { outputPath: docsPath, wasEnforced: docsEnforced } = enforceDocsFolder(
+-      outputPath,
+-      enforceDocs,
+-    );
+-
+-    if (docsEnforced) {
+-      outputPath = docsPath;
+-    }
++    let outputPath = target.outputPath;
++    const { wasCategorized, docsEnforced } = target;
+ 
+     // Dry run mode: return a preview without writing to disk
+     // Must be checked BEFORE preventDuplicateFiles which creates placeholder files
 --- a/src/tools/create-excel.js
 +++ b/src/tools/create-excel.js
-@@ -2,6 +2,7 @@
- import fs from "fs";
- import path from "path";
+@@ -4,9 +4,8 @@
  import {
-+  getOutputRoot,
    validateAndNormalizeInput,
    ensureDirectory,
-   enforceDocsFolder,
-@@ -116,7 +117,7 @@
- 
-     let outputPath = normalized.outputPath;
-     if (!path.isAbsolute(outputPath)) {
--      outputPath = path.resolve(process.cwd(), outputPath);
-+      outputPath = path.resolve(getOutputRoot(), outputPath);
+-  enforceDocsFolder,
+   preventDuplicateFiles,
+-  applyCategoryToPath,
++  resolveOutputTarget,
+   registerDocumentInRegistry,
+   getCategoryPath,
+   classifyDocumentContent,
+@@ -114,26 +113,14 @@
+       }
      }
  
-     // Apply category-based subfolder organization
+-    let outputPath = normalized.outputPath;
+-    if (!path.isAbsolute(outputPath)) {
+-      outputPath = path.resolve(process.cwd(), outputPath);
+-    }
+-
+-    // Apply category-based subfolder organization
+-    const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(
+-      outputPath,
++    const target = resolveOutputTarget(
++      input.outputPath,
++      normalized.outputPath,
+       category,
++      input.enforceDocsFolder !== false,
+     );
+-    outputPath = categorizedPath;
+-
+-    // Enforce docs/ folder FIRST so duplicate prevention checks the final location
+-    const enforceDocs = input.enforceDocsFolder !== false;
+-    const { outputPath: docsPath, wasEnforced: docsEnforced } =
+-      enforceDocsFolder(outputPath, enforceDocs);
+-
+-    if (docsEnforced) {
+-      outputPath = docsPath;
+-    }
++    let outputPath = target.outputPath;
++    const { wasCategorized, docsEnforced } = target;
+ 
+     // Strip markdown from all cell values in sheet data using shared utility
+     for (const sheet of normalized.sheets) {
 --- a/src/tools/create-pdf.js
 +++ b/src/tools/create-pdf.js
-@@ -2,6 +2,7 @@
- import path from "path";
- 
+@@ -4,9 +4,8 @@
  import {
-+  getOutputRoot,
    validateAndNormalizeInput,
    ensureDirectory,
-   enforceDocsFolder,
-@@ -176,7 +177,7 @@
+-  enforceDocsFolder,
+   preventDuplicateFiles,
+-  applyCategoryToPath,
++  resolveOutputTarget,
+   registerDocumentInRegistry,
+   getCategoryPath,
+   classifyDocumentContent,
+@@ -175,15 +174,14 @@
+ 
      // Path resolution (mirror create-doc): normalize → category → enforce docs/
      const normalized = validateAndNormalizeInput(parsedInput, [], "pdf");
-     let outputPath = normalized.outputPath;
+-    let outputPath = normalized.outputPath;
 -    if (!path.isAbsolute(outputPath)) outputPath = path.resolve(process.cwd(), outputPath);
-+    if (!path.isAbsolute(outputPath)) outputPath = path.resolve(getOutputRoot(), outputPath);
+-
+-    const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(outputPath, category);
+-    outputPath = categorizedPath;
+-
+-    const enforceDocs = parsedInput.enforceDocsFolder !== false;
+-    const { outputPath: docsPath, wasEnforced: docsEnforced } = enforceDocsFolder(outputPath, enforceDocs);
+-    if (docsEnforced) outputPath = docsPath;
++    const target = resolveOutputTarget(
++      parsedInput.outputPath,
++      normalized.outputPath,
++      category,
++      parsedInput.enforceDocsFolder !== false,
++    );
++    let outputPath = target.outputPath;
++    const { wasCategorized, docsEnforced } = target;
  
-     const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(outputPath, category);
-     outputPath = categorizedPath;
+     // Dry run
+     if (parsedInput.dryRun) {
 --- a/src/tools/create-pptx.js
 +++ b/src/tools/create-pptx.js
-@@ -3,6 +3,7 @@
- import PptxGenJS from "pptxgenjs";
- 
+@@ -5,9 +5,8 @@
  import {
-+  getOutputRoot,
    validateAndNormalizeInput,
    ensureDirectory,
-   enforceDocsFolder,
-@@ -465,7 +466,7 @@
+-  enforceDocsFolder,
+   preventDuplicateFiles,
+-  applyCategoryToPath,
++  resolveOutputTarget,
+   registerDocumentInRegistry,
+   getCategoryPath,
+   classifyDocumentContent,
+@@ -464,15 +463,14 @@
+ 
      // Path resolution (mirror create-pdf): normalize → category → enforce docs/
      const normalized = validateAndNormalizeInput(parsedInput, [], "pptx");
-     let outputPath = normalized.outputPath;
+-    let outputPath = normalized.outputPath;
 -    if (!path.isAbsolute(outputPath)) outputPath = path.resolve(process.cwd(), outputPath);
-+    if (!path.isAbsolute(outputPath)) outputPath = path.resolve(getOutputRoot(), outputPath);
+-
+-    const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(outputPath, category);
+-    outputPath = categorizedPath;
+-
+-    const enforceDocs = parsedInput.enforceDocsFolder !== false;
+-    const { outputPath: docsPath, wasEnforced: docsEnforced } = enforceDocsFolder(outputPath, enforceDocs);
+-    if (docsEnforced) outputPath = docsPath;
++    const target = resolveOutputTarget(
++      parsedInput.outputPath,
++      normalized.outputPath,
++      category,
++      parsedInput.enforceDocsFolder !== false,
++    );
++    let outputPath = target.outputPath;
++    const { wasCategorized, docsEnforced } = target;
  
-     const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(outputPath, category);
-     outputPath = categorizedPath;
+     // Count sections for the preview/response (cheap parse).
+     const { sections } = splitSections(title, markdown, parsedInput.description);
 --- /dev/null
 +++ b/test/test-output-location.js
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,256 @@
 +// goose Q-139: an agent launches this server with cwd = the user's project. The
 +// server's own files (server.log, insights, registry) must never land there, and a
 +// document goes where the caller or DOC_OUTPUT_DIR says — not under <cwd>/docs.
++// Q-388 (below): relative paths resolve in the CHAT's folder, which goose sends per call.
 +import { test, after } from "node:test";
 +import assert from "node:assert/strict";
 +import fs from "node:fs";
@@ -507,3 +797,452 @@
 +  assert.deepEqual(touched, []);
 +  assert.ok(created.some((p) => p.includes(path.join("LeanZero", "leanzero-documents")) && p.endsWith("server.log")), created.join("\n"));
 +});
++
++// goose Q-388: goose sends the chat's folder with every tools/call as
++// _meta["agent-working-dir"]. A relative outputPath resolves THERE (never
++// ~/docs/<category>), an explicit path is never re-categorised, a call with no
++// known folder REFUSES a relative path, and a same-title document elsewhere
++// never blocks a write to a different path.
++const WORKING_DIR = "agent-working-dir";
++
++async function chatServer(env = () => ({})) {
++  const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "docs-chat-folder-")));
++  sandboxes.push(sandbox);
++  const home = path.join(sandbox, "home");
++  const launch = path.join(home, "launch");
++  const chat = path.join(home, "work", "chat");
++  fs.mkdirSync(launch, { recursive: true });
++  fs.mkdirSync(chat, { recursive: true });
++  const transport = new StdioClientTransport({
++    command: process.execPath,
++    args: [entry],
++    cwd: launch,
++    env: {
++      PATH: process.env.PATH ?? "",
++      HOME: home,
++      USERPROFILE: home,
++      MCP_CLIENT_TYPE: "agent",
++      DATA_DIR: path.join(sandbox, "state"),
++      ...env(sandbox),
++    },
++  });
++  const client = new Client({ name: "chat-folder-test", version: "1.0.0" });
++  await client.connect(transport);
++  const call = async (name, args, folder) => {
++    const result = await client.callTool({
++      name,
++      arguments: args,
++      ...(folder === undefined ? {} : { _meta: { [WORKING_DIR]: folder } }),
++    });
++    const text = result.content?.[0]?.text ?? "";
++    let body;
++    try {
++      body = JSON.parse(text);
++    } catch {
++      body = { raw: text };
++    }
++    return { isError: result.isError === true, text, body, message: body.error ?? body.raw ?? text };
++  };
++  return { sandbox, home, launch, chat, call, close: () => client.close() };
++}
++
++const REPORT = {
++  title: "Harbourline Freight — Jira Data Center to Cloud Migration Readiness Assessment",
++  category: "technical",
++  content: "## Executive summary\n\nThe site is supportable until **2029-03-28**.\n\n- 280 users migrate\n- 75 are skipped",
++};
++
++const docsTrees = (home) =>
++  ["docs", "launch"].flatMap((d) => (fs.existsSync(path.join(home, d)) ? tree(path.join(home, d)) : []));
++
++test("Q-388 the #3r call: a relative outputPath lands in the chat's folder, not ~/docs/<category>", async () => {
++  const s = await chatServer();
++  try {
++    const r = await s.call("create-doc", { ...REPORT, outputPath: "report/readiness-assessment.docx" }, s.chat);
++    assert.equal(r.isError, false, r.text);
++    const expected = path.join(s.chat, "report", "readiness-assessment.docx");
++    assert.equal(r.body.filePath, expected);
++    assert.ok(fs.statSync(expected).size > 0, "the docx has content");
++    assert.equal(r.body.wasCategorized, false);
++    assert.deepEqual(r.body.pathResolution, [
++      { field: "outputPath", requested: "report/readiness-assessment.docx", resolvedAgainst: "the chat's folder", folder: s.chat, path: expected },
++    ]);
++    assert.deepEqual(docsTrees(s.home), [], "nothing under ~/docs or the launch dir");
++  } finally {
++    await s.close();
++  }
++});
++
++test("Q-388 a relative outputPath with no chat folder and no DOC_OUTPUT_DIR is refused, loudly, and writes nothing", async () => {
++  const s = await chatServer();
++  try {
++    const before = tree(s.home);
++    for (const meta of [undefined, "work/chat"]) {
++      const r = await s.call("create-doc", { ...REPORT, outputPath: "report/readiness-assessment.docx" }, meta);
++      assert.equal(r.isError, true, r.text);
++      assert.match(r.message, /outputPath "report\/readiness-assessment\.docx" is relative, so it must be absolute here — the chat's folder is not known to this tool/);
++      assert.match(r.message, meta === undefined ? /sent no _meta\["agent-working-dir"\]/ : /"work\/chat" is not an absolute path/);
++    }
++    assert.deepEqual(tree(s.home), before, "no file anywhere under home");
++  } finally {
++    await s.close();
++  }
++});
++
++test("Q-388 an absolute outputPath inside the chat's folder is honoured exactly — never re-categorised into docs/", async () => {
++  const s = await chatServer();
++  try {
++    // The #3r chat's folder was $HOME itself: an absolute path under it used to be pulled into ~/docs/technical.
++    const target = path.join(s.home, "work", "chat", "report", "readiness-assessment.docx");
++    const r = await s.call("create-doc", { ...REPORT, outputPath: target }, s.home);
++    assert.equal(r.isError, false, r.text);
++    assert.equal(r.body.filePath, target);
++    assert.ok(fs.existsSync(target));
++    assert.equal(r.body.pathResolution, undefined, "an absolute path needs no resolution note");
++    assert.deepEqual(docsTrees(s.home), []);
++  } finally {
++    await s.close();
++  }
++});
++
++test("Q-388 a same-title document at another path does not block a write; the same path still gets edit-doc guidance", async () => {
++  const s = await chatServer();
++  try {
++    const first = await s.call("create-doc", { ...REPORT }, s.chat);
++    assert.equal(first.isError, false, first.text);
++    const defaultPath = path.join(s.chat, "docs", "technical", `${REPORT.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80)}.docx`);
++    assert.equal(first.body.filePath, defaultPath, "the default is <chat folder>/docs/<category>/, not the launch dir");
++
++    const elsewhere = await s.call("create-doc", { ...REPORT, outputPath: "report/readiness-assessment.docx" }, s.chat);
++    assert.equal(elsewhere.isError, false, elsewhere.text);
++    assert.equal(elsewhere.body.filePath, path.join(s.chat, "report", "readiness-assessment.docx"));
++    assert.ok(fs.existsSync(defaultPath) && fs.existsSync(elsewhere.body.filePath), "both documents exist");
++
++    const again = await s.call("create-doc", { ...REPORT, outputPath: "report/readiness-assessment.docx" }, s.chat);
++    assert.equal(again.isError, true, again.text);
++    assert.equal(again.body.duplicate, true);
++    assert.equal(again.body.existingPath, path.join(s.chat, "report", "readiness-assessment.docx"));
++    assert.ok(fs.existsSync(defaultPath), "the other same-title document is untouched");
++    assert.ok(!fs.existsSync(path.join(s.chat, "report", "readiness-assessment_1.docx")), "no _1 copy");
++  } finally {
++    await s.close();
++  }
++});
++
++test("Q-388 the same rule holds for create-markdown, create-excel and create-pptx, and read-doc reads relative to the chat", async () => {
++  const s = await chatServer();
++  try {
++    const cases = [
++      ["create-markdown", { title: "Cutover Runbook for Harbourline", content: "## Steps\n\n- Freeze\n- Migrate", outputPath: "out/runbook.md" }, "out/runbook.md"],
++      ["create-excel", { title: "Harbourline User Disposition", sheets: [{ name: "Users", data: [["Decision", "Count"], ["migrate", "280"]] }], outputPath: "out/users.xlsx" }, "out/users.xlsx"],
++      ["create-pptx", { title: "Harbourline Readiness Readout", content: "## Findings\n\n- 280 users migrate\n\n## Next\n\n- EDI lead", outputPath: "out/readout.pptx" }, "out/readout.pptx"],
++    ];
++    for (const [tool, args, rel] of cases) {
++      const r = await s.call(tool, args, s.chat);
++      assert.equal(r.isError, false, `${tool}: ${r.text}`);
++      assert.equal(r.body.filePath, path.join(s.chat, rel), tool);
++      assert.ok(fs.existsSync(path.join(s.chat, rel)), tool);
++    }
++    const read = await s.call("read-doc", { filePath: "out/readout.pptx", mode: "summary" }, s.chat);
++    assert.equal(read.isError, false, read.text);
++    // Q-389: the workbook this server just wrote must read back (SheetJS 0.20 ESM has no readFile fs).
++    const sheet = await s.call("read-doc", { filePath: "out/users.xlsx", mode: "indepth" }, s.chat);
++    assert.equal(sheet.isError, false, sheet.text);
++    assert.match(sheet.text, /migrate\t280/);
++    const unknown = await s.call("read-doc", { filePath: "out/users.xlsx", mode: "summary" });
++    assert.equal(unknown.isError, true);
++    assert.match(unknown.message, /filePath "out\/users\.xlsx" is relative, so it must be absolute here/);
++    assert.deepEqual(docsTrees(s.home), []);
++  } finally {
++    await s.close();
++  }
++});
++
++test("Q-388 a ~ path is refused rather than written into a literal '~' folder", async () => {
++  const s = await chatServer();
++  try {
++    const r = await s.call("create-doc", { ...REPORT, outputPath: "~/Documents/readiness.docx" }, s.chat);
++    assert.equal(r.isError, true, r.text);
++    assert.match(r.message, /starts with ~, which this tool does not expand/);
++    assert.ok(!fs.existsSync(path.join(s.chat, "~")));
++  } finally {
++    await s.close();
++  }
++});
+--- a/src/services/ai-guidance-system.js
++++ b/src/services/ai-guidance-system.js
+@@ -11,6 +11,7 @@
+  */
+ 
+ import fs from "fs/promises";
++import path from "path";
+ import { findDuplicateCandidates, unregisterDocument } from "../utils/registry.js";
+ import { log } from "../utils/logger.js";
+ 
+@@ -21,13 +22,20 @@
+  * This is called INTERNALLY by create-doc before writing, so models
+  * don't need to remember to call a separate tool first.
+  *
++ * Only a registered document AT targetPath counts (goose Q-388): a same-title
++ * document at another path is a different file, and blocking it filed the
++ * caller's report under someone else's folder.
++ *
+  * @param {string} title - Document title
+  * @param {string} [category] - Document category
++ * @param {string} targetPath - Absolute path the caller is about to write
+  * @returns {Promise<Object>} Guidance result
+  */
+-export async function checkForExistingDocument(title, category) {
++export async function checkForExistingDocument(title, category, targetPath) {
+   try {
+-    const candidates = await findDuplicateCandidates(title, category);
++    const target = path.resolve(targetPath);
++    const candidates = (await findDuplicateCandidates(title, category))
++      .filter((candidate) => path.resolve(candidate.filePath) === target);
+ 
+     if (candidates.length === 0) {
+       return { action: "create", existing: null };
+--- a/src/tool-registry.js
++++ b/src/tool-registry.js
+@@ -19,6 +19,7 @@
+ import { editDoc } from "./tools/edit-doc.js";
+ import { editExcel } from "./tools/edit-excel.js";
+ import { listDocuments, mimeTypeFromExtension } from "./tools/utils.js";
++import { resolutionNotes, resolveInChatFolder, runWithChatFolder } from "./utils/chat-folder.js";
+ import { handleDNA } from "./tools/dna-tool.js";
+ import { handleBlueprint } from "./tools/blueprint-tool.js";
+ import { handleDriftMonitor } from "./tools/drift-tool.js";
+@@ -70,6 +71,10 @@
+   "  • Responses carry a `formattingQuality` object. If `isPlainText` is true,",
+   "    re-create the document WITH markdown structure before returning to the user.",
+   "",
++  "Paths:",
++  "  • `outputPath` absolute = written exactly there. Relative = resolved against",
++  "    the chat's working folder (never ~/docs). The response's `filePath` is final.",
++  "",
+   "Workflow:",
+   "  • Always call `read-doc` with mode 'indepth' BEFORE `edit-doc` so you see",
+   "    the existing structure.",
+@@ -206,10 +211,10 @@
+   "stylePreset: 'claude-like' (modern blue-accented professional) is the default for general-purpose docs; 'professional' is the executive serif look; auto-selected from category if omitted.";
+ const P_REGISTRY =
+   "category: subfolder for organization. tags: for registry search and discovery. description: brief note stored in the registry. docType: tone and depth of the documentation.";
+-const P_OUTPUT_PATH = "outputPath: optional; default derived from the title, placed under docs/<category>/.";
++const P_OUTPUT_PATH = "outputPath: optional. An absolute path is written exactly there; a relative path is resolved against the chat's working folder. Omitted: derived from the title, placed under docs/<category>/.";
+ const P_DRY_RUN = "dryRun: true returns a preview without writing the file (default false).";
+ const P_SAFETY_FLAGS =
+-  "enforceDocsFolder: false allows output outside docs/; preventDuplicates: false allows same-title duplicates (both default true, recommended).";
++  "enforceDocsFolder: false keeps the title-derived default out of docs/ (an explicit outputPath is never moved); preventDuplicates: false allows a second same-title document at the same path (both default true, recommended).";
+ const P_STYLE = "style: advanced fine-grained overrides merged on top of stylePreset.";
+ const P_PAGE =
+   "header: {text, alignment?:'left'|'center'|'right', color?:'#hex' e.g. '#666666'}, applied to every page. footer: same shape; {current} and {total} in its text are replaced with page numbers. margins: {top, bottom, left, right} in twips (1440 = 1 inch); defaults top/bottom 720 (1440 if a header/footer is set), left/right 1080.";
+@@ -338,7 +343,7 @@
+         P_OUTPUT_PATH,
+         P_REGISTRY,
+         P_DRY_RUN,
+-        "enforceDocsFolder: false allows output outside docs/; preventDuplicates: false allows same-title duplicates (both default true).",
++        "enforceDocsFolder: false keeps the title-derived default out of docs/ (an explicit outputPath is never moved); preventDuplicates: false allows same-title duplicates (both default true).",
+         P_CLIENT_HINT,
+         P_UPLOAD,
+       ),
+@@ -380,8 +385,8 @@
+         "style: optional overrides on top of stylePreset — font {family, size, color, bold}, columnWidths {<columnIndex>: width in characters}, rowHeights {<rowIndex>: height in points}, headerBold, zebraColor (hex for striped rows).",
+         "title: workbook title (used for filename, registry, and auto-categorization).",
+         P_STYLE_PRESET,
+-        "outputPath: optional; default derived from the title.",
+-        "enforceDocsFolder: false allows output outside docs/; preventDuplicates: false allows same-name duplicates (both default true).",
++        "outputPath: optional. An absolute path is written exactly there; a relative path is resolved against the chat's working folder. Omitted: derived from the title.",
++        "enforceDocsFolder: false keeps the title-derived default out of docs/ (an explicit outputPath is never moved); preventDuplicates: false allows same-name duplicates (both default true).",
+         P_DRY_RUN,
+         P_REGISTRY,
+         P_CLIENT_HINT,
+@@ -538,7 +543,7 @@
+         "title: optional heading to use when replace-slide content has no leading '## '.",
+         P_STYLE_PRESET,
+         P_STYLE,
+-        "outputPath: optional; write the result here instead of overwriting the input file.",
++        "outputPath: optional; write the result here instead of overwriting the input file (a relative path is resolved against the chat's working folder).",
+         P_CLIENT_HINT,
+         P_UPLOAD,
+       ),
+@@ -786,6 +791,9 @@
+ // clients render a saveable/clickable artifact (others still see the URL in the
+ // JSON text). This is how a remote server delivers the generated file.
+ function wrapCreateResult(r, toolName) {
++  // Say where a relative path went, so the caller can see the folder it resolved in (Q-388).
++  const resolutions = resolutionNotes();
++  if (r && resolutions.length > 0) r.pathResolution = resolutions;
+   const content = [{ type: "text", text: JSON.stringify(r, null, 2) }];
+   // Make failures VISIBLE to the learning loop. Successes are logged inside the
+   // create-* handlers themselves (with full detail + memory nudge); here we only
+@@ -817,7 +825,12 @@
+   return { content, isError: !r.success };
+ }
+ 
+-async function dispatchToolCall(request) {
++// Every call runs knowing the folder of the chat that made it (goose Q-388).
++function dispatchToolCall(request) {
++  return runWithChatFolder(request.params?._meta, () => dispatchInChatFolder(request));
++}
++
++async function dispatchInChatFolder(request) {
+   const { name, arguments: params } = request.params;
+ 
+   log("info", "Tool called:", { toolName: name });
+@@ -830,7 +843,7 @@
+         name === "check-drift";
+ 
+       if (!skipValidation) {
+-        const resolved = path.resolve(params.filePath);
++        const resolved = resolveInChatFolder(params.filePath, "filePath");
+         if (!fs.existsSync(resolved)) {
+           logInsight({ server: "doc-processor", tool: name, event: "failure", reason: "file-not-found", client: resolveClientProfile(params).clientName });
+           return { content: [{ type: "text", text: `Error: File not found: ${params.filePath}` }], isError: true };
+--- a/src/tools/edit-pptx.js
++++ b/src/tools/edit-pptx.js
+@@ -9,6 +9,7 @@
+ import { resolveClientProfile } from "../utils/client-profile.js";
+ import { logInsight } from "../utils/insights.js";
+ import { log } from "../utils/logger.js";
++import { resolveInChatFolder } from "../utils/chat-folder.js";
+ 
+ const parser = new PptxParser();
+ 
+@@ -108,7 +109,7 @@
+     const styleConfig = getStyleConfig(stylePreset, params.style || {});
+     const { buffer, slideCount } = await buildPptxBuffer({ title: deckTitle, markdown, styleConfig });
+ 
+-    const outPath = params.outputPath ? path.resolve(params.outputPath) : path.resolve(filePath);
++    const outPath = params.outputPath ? resolveInChatFolder(params.outputPath, "outputPath") : path.resolve(filePath);
+     await fs.writeFile(outPath, buffer);
+ 
+     // Optional upload bridge (same contract as create-*).
+--- /dev/null
++++ b/src/utils/chat-folder.js
+@@ -0,0 +1,70 @@
++/**
++ * The folder the calling chat works in (goose Q-388).
++ *
++ * goose sends it with EVERY tools/call as `_meta["agent-working-dir"]` — the session's
++ * working directory at the moment of the call. The process cwd is only the folder the
++ * server was STARTED in: it goes stale when the chat changes folder, and it is no chat's
++ * folder at all for a server that outlives or is shared across chats. So a relative path
++ * the model names resolves against the per-call folder, and when a call carries none the
++ * tool REFUSES the relative path instead of guessing one (the process cwd, ~/docs).
++ */
++import { AsyncLocalStorage } from "node:async_hooks";
++import path from "node:path";
++import { requestContext } from "./request-context.js";
++
++export const WORKING_DIR_META_KEY = "agent-working-dir";
++
++const store = new AsyncLocalStorage();
++
++export function runWithChatFolder(meta, fn) {
++  const raw = meta && typeof meta === "object" ? meta[WORKING_DIR_META_KEY] : undefined;
++  const folder = typeof raw === "string" && path.isAbsolute(raw) ? path.normalize(raw) : undefined;
++  return store.run({ folder, raw, resolutions: [] }, fn);
++}
++
++export function chatFolder() {
++  return store.getStore()?.folder;
++}
++
++function whyUnknown() {
++  const raw = store.getStore()?.raw;
++  return raw === undefined
++    ? `the client sent no _meta["${WORKING_DIR_META_KEY}"] with this call`
++    : `the client's _meta["${WORKING_DIR_META_KEY}"] ${JSON.stringify(raw)} is not an absolute path`;
++}
++
++export function chatFolderUnknownError(what, p) {
++  return new Error(
++    `${what} "${p}" is relative, so it must be absolute here — the chat's folder is not known to this tool (${whyUnknown()}). Pass the full absolute path.`,
++  );
++}
++
++export function refuseTilde(p, what) {
++  if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
++    throw new Error(`${what} "${p}" starts with ~, which this tool does not expand. Pass the full absolute path.`);
++  }
++}
++
++/** Record how a relative path was resolved, so the tool result can say it. */
++export function noteResolution(note) {
++  store.getStore()?.resolutions.push(note);
++}
++
++export function resolutionNotes() {
++  return store.getStore()?.resolutions ?? [];
++}
++
++/**
++ * A path the caller named for an existing file (or an edit's output): absolute as given,
++ * relative → the chat's folder. A hosted (HTTP) request keeps upstream's resolution.
++ */
++export function resolveInChatFolder(p, what) {
++  if (requestContext.getStore()) return path.resolve(p);
++  refuseTilde(p, what);
++  if (path.isAbsolute(p)) return path.normalize(p);
++  const folder = chatFolder();
++  if (!folder) throw chatFolderUnknownError(what, p);
++  const resolved = path.resolve(folder, p);
++  noteResolution({ field: what, requested: p, resolvedAgainst: "the chat's folder", folder, path: resolved });
++  return resolved;
++}
+--- /dev/null
++++ b/test/support/doc-output-dir.js
+@@ -0,0 +1,11 @@
++// goose Q-388: a create-* call made in-process carries no chat folder, so a test that
++// relies on the title-derived default names its output folder, the way an operator
++// would with DOC_OUTPUT_DIR — the tools never fall back to the launch dir.
++import { after } from "node:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import os from "node:os";
++import path from "node:path";
++
++const dir = mkdtempSync(path.join(os.tmpdir(), "docs-test-output-"));
++process.env.DOC_OUTPUT_DIR = dir;
++after(() => rmSync(dir, { recursive: true, force: true }));
+--- a/test/test-create-doc-tags.js
++++ b/test/test-create-doc-tags.js
+@@ -18,6 +18,7 @@
+ import assert from "node:assert";
+ import fs from "fs/promises";
+ 
++import "./support/doc-output-dir.js";
+ import { createDoc } from "../src/tools/create-doc.js";
+ import { getAvailablePresets } from "../src/tools/styling.js";
+ 
+--- a/test/test-create-pdf.js
++++ b/test/test-create-pdf.js
+@@ -11,6 +11,7 @@
+ import assert from "node:assert";
+ import fs from "fs/promises";
+ 
++import "./support/doc-output-dir.js";
+ import { createPdf } from "../src/tools/create-pdf.js";
+ import { closeBrowser } from "../src/services/pdf-renderer.js";
+ import { PdfParser } from "../src/parsers/pdf-parser.js";
+--- a/test/test-create-pptx.js
++++ b/test/test-create-pptx.js
+@@ -12,6 +12,7 @@
+ import fs from "fs/promises";
+ import JSZip from "jszip";
+ 
++import "./support/doc-output-dir.js";
+ import { createPptx } from "../src/tools/create-pptx.js";
+ import { editPptx } from "../src/tools/edit-pptx.js";
+ import { documentProcessor } from "../src/services/document-processor.js";
+--- a/src/parsers/excel-parser.js
++++ b/src/parsers/excel-parser.js
+@@ -19,7 +19,8 @@
+    */
+   async parse(filePath) {
+     try {
+-      const workbook = xlsx.readFile(filePath, { type: "file" });
++      // SheetJS 0.20 (ESM) has no fs of its own: readFile fails "Cannot access file" (goose Q-389).
++      const workbook = xlsx.read(fs.readFileSync(filePath), { type: "buffer" });
+ 
+       return {
+         success: true,

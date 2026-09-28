@@ -1303,6 +1303,33 @@ mod tests {
         assert_eq!(&mcp_meta.0, expected_meta.as_object().unwrap());
     }
 
+    /// Q-388: the bundled leanzero-documents MCP resolves a relative `outputPath` against the
+    /// chat's folder, which it reads from this exact `_meta` key on each tools/call. Renaming either
+    /// side would silently send documents nowhere the chat can see, so both ends are pinned here.
+    #[test]
+    fn a_tool_call_carries_the_chat_folder_the_bundled_documents_mcp_reads() {
+        let call_request = inject_session_context_into_request(
+            call_tool_request(Extensions::new()),
+            Some("session"),
+            Some("/Users/me/work/chat"),
+            None,
+        );
+        let call_meta = request_extensions(&call_request)
+            .and_then(|extensions| extensions.get::<Meta>())
+            .expect("call request should have meta");
+        assert_eq!(
+            call_meta.0.get(WORKING_DIR_HEADER),
+            Some(&Value::String("/Users/me/work/chat".to_string()))
+        );
+
+        let patch =
+            include_str!("../../../../ui/desktop/scripts/mcp-patches/leanzero-documents.patch");
+        assert!(
+            patch.contains(&format!("WORKING_DIR_META_KEY = \"{WORKING_DIR_HEADER}\"")),
+            "leanzero-documents.patch no longer reads _meta[\"{WORKING_DIR_HEADER}\"]"
+        );
+    }
+
     #[test]
     fn test_tool_call_request_id_injected_only_for_call_tool() {
         let session_id = "test-session-id";
