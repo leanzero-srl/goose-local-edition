@@ -459,6 +459,18 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   984b74763 carries no marker and is refused, named — never reaped; Unmount still reclaims the port from ANY listener
   (`reclaim_port`, unproven — the owner's explicit command). Tests: tests/port_holders.rs (real orphans via a
   process-group `sh` that exits), engine `a_mount_stops_its_own_leftover_engine_and_names_one_it_may_not_stop`.
+- A SWARM BUILD REUSES AN ALREADY-SERVING ENGINE ONLY ON THE SAME PROOF (Q-248, 2026-09-28). Before: goose-cli's
+  `SidecarEngine::ensure_loaded` returned Ok whenever `/v1/models` on `mlx_engine.port` served the pool id — any
+  listener (unmarked stand-in, a dead goose's leftover, an engine marked for another port) was adopted (measured red,
+  4 tests). Now the fast path runs `port_holder::reuse_port(port, engine::engine_marker(port))` → `reuse_verdict` over
+  `ownership_proof`'s verdicts: `Own` (chain top started by this process) → reuse, silent; `Supervised{holder,
+  starter}` (our marker, live starter — the desktop window's engine, which S8's HeldByBuild protects) → reuse, said
+  once per pid as `sidecar-engine-shared{port, model_id, pid, starter, argv}`; `Leftover` (starter gone) → NOT
+  adopted, `sidecar-leftover-not-adopted{port, model_id, holders}`, and the mount proceeds (its start stops it per
+  Q-240); anything else (unmarked, other uid, other marker, mixed, no pid named) → `engine-port-held: …` naming pid,
+  argv, the failed rule and the step — the device leaves the pool through `engine-mount-failed`. TRAP: an in-process
+  stub listener is "this goosed itself" and is refused — reuse tests need a REAL stand-in process
+  (`swarm_engine.rs` tests `fast_path_ownership`). Off unix nothing is ever reused (`engine-port-held`, unreadable).
 - A KILLED CHILD IS "GONE" TO sysinfo BEFORE ITS PARENT CAN SEE IT (Q-245, 2026-09-28). Measured: for 48 of 50
   SIGKILLed children `proc_pidinfo` (so `machine::process_start`/`prove`) answered nothing while `waitid(WNOWAIT)` did
   not yet report the exit. A test that waits for a killed child and then asserts the supervisor's next `try_wait`
