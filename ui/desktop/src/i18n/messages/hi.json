@@ -5328,7 +5328,7 @@
     "defaultMessage": "प्रॉम्प्ट टोकन, {elapsed} से पढ़ रहा है"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s पढ़ना, बीच के आधे रन"
+    "defaultMessage": "tok/s पढ़ना, बीच के आधे प्रॉम्प्ट"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s इस प्रॉम्प्ट को पढ़ते हुए"

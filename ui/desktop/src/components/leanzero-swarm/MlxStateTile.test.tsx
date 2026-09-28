@@ -206,6 +206,9 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(within(t).getByText('tok/s writing, middle half of runs')).toBeInTheDocument();
     expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('144');
     expect(within(t).getByText('tok/s reading, median of 3 prompts')).toBeInTheDocument();
+    // Q-314: the read range is over the same prompts, never "runs" beside "3 prompts".
+    expect(within(t).getByText('tok/s reading, middle half of prompts')).toBeInTheDocument();
+    expect(within(t).queryByText('tok/s reading, middle half of runs')).toBeNull();
   });
 
   it('idle with nothing measured yet: the headline says Idle, no dashes, no flat graph, never the engine aggregate (1,048,576 tok/s after a one-token request)', () => {

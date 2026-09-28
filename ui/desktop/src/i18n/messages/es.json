@@ -5328,7 +5328,7 @@
     "defaultMessage": "tokens del prompt, leyendo desde hace {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s leyendo, mitad central de las ejecuciones"
+    "defaultMessage": "tok/s leyendo, mitad central de los prompts"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s leyendo este prompt"

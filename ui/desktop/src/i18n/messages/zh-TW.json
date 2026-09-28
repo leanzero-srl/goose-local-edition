@@ -5328,7 +5328,7 @@
     "defaultMessage": "個提示詞 token，已讀取 {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 讀取，中間一半的執行"
+    "defaultMessage": "tok/s 讀取，中間一半的提示"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s（讀取此提示詞）"

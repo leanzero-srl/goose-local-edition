@@ -5328,7 +5328,7 @@
     "defaultMessage": "token prompt, dibaca selama {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s membaca, separuh tengah dari run"
+    "defaultMessage": "tok/s membaca, separuh tengah dari prompt"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s membaca prompt ini"

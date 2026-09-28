@@ -5328,7 +5328,7 @@
     "defaultMessage": "jetons de prompt, lecture depuis {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s en lecture, moitié centrale des passes"
+    "defaultMessage": "tok/s en lecture, moitié centrale des prompts"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s en lisant ce prompt"

@@ -5328,7 +5328,7 @@
     "defaultMessage": "프롬프트 토큰, {elapsed}째 읽는 중"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 읽기, 실행의 중간 절반"
+    "defaultMessage": "tok/s 읽기, 프롬프트의 중간 절반"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (이 프롬프트 읽기)"

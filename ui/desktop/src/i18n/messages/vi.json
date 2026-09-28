@@ -5328,7 +5328,7 @@
     "defaultMessage": "token prompt, đang đọc {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s đọc, nửa giữa của các lần chạy"
+    "defaultMessage": "tok/s đọc, nửa giữa của các lời nhắc"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s khi đọc prompt này"

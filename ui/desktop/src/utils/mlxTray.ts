@@ -445,13 +445,18 @@ export function clientLabel(client: MlxClient): string {
   }
 }
 
-function measuredText(verb: string, f: MeasuredFigure): string {
+/**
+ * A measured rate with what it is the median of — the Engine tile's words (MlxStateTile): writing
+ * is measured over runs, reading over the prompts it read, so the same 454 is never "454 runs" in
+ * the tray beside "454 prompts" on the card (Q-314).
+ */
+function measuredText(verb: string, f: MeasuredFigure, unit: 'run' | 'prompt'): string {
   const rate = `${verb} ${formatRate(f.median)} tok/s`;
-  if (f.runs === 1) return `${rate} · 1 run`;
+  if (f.runs === 1) return `${rate} · 1 ${unit}`;
   const half = f.spread
     ? `, middle half ${formatRate(f.spread.low)}–${formatRate(f.spread.high)}`
     : '';
-  return `${rate} · median of ${f.runs} runs${half}`;
+  return `${rate} · median of ${f.runs} ${unit}s${half}`;
 }
 
 /**
@@ -466,8 +471,8 @@ export function measuredLines(read: MlxMeasuredRead): string[] {
   const reading = measuredFigure(read.answer.reading);
   if (!writing && !reading) return ['No measured runs on this way yet'];
   return [
-    writing ? measuredText('Writes', writing) : null,
-    reading ? measuredText('Reads', reading) : null,
+    writing ? measuredText('Writes', writing, 'run') : null,
+    reading ? measuredText('Reads', reading, 'prompt') : null,
   ].filter((line): line is string => line != null);
 }
 
@@ -622,19 +627,56 @@ function distributedLive(
     : null;
 }
 
-/** The title while the distributed engine owns this Mac. */
+/**
+ * Where the split runs, as a split node's name says it (nodeDraft `whereWords`: "both Macs" for
+ * two, "3 Macs"); a report that lists no Mac yet names none.
+ */
+function splitWhere(report: MlxDistributedReport): string {
+  const count = report.nodes.length || report.nodeNames.length;
+  if (count === 0) return 'your Macs';
+  return count === 2 ? 'both Macs' : `${count} Macs`;
+}
+
+/**
+ * What the split is doing now — the ONE word the title and the menu's first line both say, so the
+ * title never reads "Idle" over a menu that says "ready" (Q-314): main's live read of rank 0 when
+ * it has one, else the run's own state.
+ */
+function splitStateWord(
+  d: NonNullable<MlxTrayOptions['distributed']>,
+  live: MlxEngineSnapshot | null
+): string {
+  const { report } = d;
+  if (distributedStale(d)) return 'stale';
+  if (!report.admissionOpen) return 'held';
+  if (live) return mlxTrayTitle(live);
+  if (report.state === 'serving') {
+    return report.inflight != null ? `${report.inflight} in flight` : 'serving';
+  }
+  return report.state;
+}
+
+/**
+ * The title while the distributed engine owns this Mac: the model, where it runs, what it does —
+ * "Qwen3.8-27B-Atlassian-Q8-mlx · both Macs · Idle", the words a split node is named by. A run
+ * whose model is not reported yet says where and what only.
+ */
 export function distributedTrayTitle(
   d: NonNullable<MlxTrayOptions['distributed']>,
   live: MlxEngineSnapshot | null = null
 ): string {
   const { report } = d;
-  if (distributedStale(d)) return 'Split · stale';
-  if (!report.admissionOpen) return 'Split · held';
-  if (live) return `Split · ${mlxTrayTitle(live)}`;
-  if (report.state === 'serving') {
-    return report.inflight != null ? `Split · ${report.inflight} in flight` : 'Split · serving';
-  }
-  return `Split · ${report.state}`;
+  return [
+    report.modelId ? shortModel(report.modelId) : null,
+    splitWhere(report),
+    splitStateWord(d, live),
+  ]
+    .filter((part): part is string => part != null)
+    .join(' · ');
+}
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 function distributedItems(
@@ -647,7 +689,7 @@ function distributedItems(
   const items: MlxTrayItem[] = [
     {
       type: 'info',
-      label: `LeanZero MLX: split across ${plural(report.nodes.length, 'Mac', 'Macs')}, ${report.state}`,
+      label: `LeanZero MLX: split across ${splitWhere(report)}, ${lowerFirst(splitStateWord(d, live))}`,
       ...(stale ? {} : { phase: runPhase(report.state, report.admissionOpen, activity) }),
     },
     { type: 'info', label: distributedModeLine(report) },

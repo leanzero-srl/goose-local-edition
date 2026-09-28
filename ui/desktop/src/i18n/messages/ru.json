@@ -5328,7 +5328,7 @@
     "defaultMessage": "токенов промпта, читается {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "ток/с чтение, средняя половина запусков"
+    "defaultMessage": "ток/с чтение, средняя половина промптов"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s при чтении этого промпта"

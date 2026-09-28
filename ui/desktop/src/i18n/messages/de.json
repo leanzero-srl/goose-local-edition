@@ -5328,7 +5328,7 @@
     "defaultMessage": "Prompt-Tokens, wird seit {elapsed} gelesen"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s lesen, mittlere Hälfte der Läufe"
+    "defaultMessage": "tok/s lesen, mittlere Hälfte der Prompts"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s beim Lesen dieses Prompts"

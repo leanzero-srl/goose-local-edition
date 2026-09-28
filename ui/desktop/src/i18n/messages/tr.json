@@ -5328,7 +5328,7 @@
     "defaultMessage": "istem tokenı, {elapsed} süredir okunuyor"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s okuma, çalıştırmaların orta yarısı"
+    "defaultMessage": "tok/s okuma, istemlerin orta yarısı"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (bu istemi okuma)"

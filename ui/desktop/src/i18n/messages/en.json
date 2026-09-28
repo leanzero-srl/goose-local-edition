@@ -5328,7 +5328,7 @@
     "defaultMessage": "prompt tokens, reading for {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s reading, middle half of runs"
+    "defaultMessage": "tok/s reading, middle half of prompts"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s reading this prompt"
