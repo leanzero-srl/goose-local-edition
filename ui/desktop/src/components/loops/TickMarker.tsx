@@ -72,7 +72,10 @@ export function TickMarker({ message, tick }: { message: Message; tick: LoopTick
         </button>
       </div>
       {yielded && record?.endedAt && (
-        <p data-testid="loop-tick-marker-yielded" className="mt-1 text-center text-xs text-lz-ink-2">
+        <p
+          data-testid="loop-tick-marker-yielded"
+          className="mt-1 text-center text-xs text-lz-ink-2"
+        >
           {intl.formatMessage(w.markerYielded, {
             time: hm(record.endedAt) ?? '',
             chat: yielded.toChat,
@@ -105,7 +108,11 @@ export function TickMarker({ message, tick }: { message: Message; tick: LoopTick
             MOTION
           )}
         >
-          {copied ? <Check aria-hidden className="size-3" /> : <Copy aria-hidden className="size-3" />}
+          {copied ? (
+            <Check aria-hidden className="size-3" />
+          ) : (
+            <Copy aria-hidden className="size-3" />
+          )}
           {intl.formatMessage(copied ? w.markerCopied : w.markerCopyPrompt)}
         </button>
       </div>

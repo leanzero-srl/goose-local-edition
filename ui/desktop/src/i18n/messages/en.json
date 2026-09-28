@@ -2837,6 +2837,459 @@
   "localNetwork.open": {
     "defaultMessage": "Open Privacy & Security"
   },
+  "loops.cadence.asTyped": {
+    "defaultMessage": "every {every}"
+  },
+  "loops.cadence.backToBack": {
+    "defaultMessage": "back to back"
+  },
+  "loops.cadence.hours": {
+    "defaultMessage": "every {n} h"
+  },
+  "loops.cadence.minutes": {
+    "defaultMessage": "every {n} min"
+  },
+  "loops.cadence.seconds": {
+    "defaultMessage": "every {n} s"
+  },
+  "loops.cadence.selfPaced": {
+    "defaultMessage": "goose decides when"
+  },
+  "loops.control.edit": {
+    "defaultMessage": "Edit"
+  },
+  "loops.control.failed": {
+    "defaultMessage": "The request failed: {error}"
+  },
+  "loops.control.goToQuestion": {
+    "defaultMessage": "Go to the question"
+  },
+  "loops.control.pause": {
+    "defaultMessage": "Pause"
+  },
+  "loops.control.refused": {
+    "defaultMessage": "goose refused: {reason}"
+  },
+  "loops.control.resume": {
+    "defaultMessage": "Resume"
+  },
+  "loops.control.resumeOneTick": {
+    "defaultMessage": "Resume — run one tick now"
+  },
+  "loops.control.runNextTick": {
+    "defaultMessage": "Run next tick"
+  },
+  "loops.control.showInChat": {
+    "defaultMessage": "Show in chat"
+  },
+  "loops.control.startDialogAbsent": {
+    "defaultMessage": "The loop dialog is not in this build yet."
+  },
+  "loops.control.startLoop": {
+    "defaultMessage": "Start a loop"
+  },
+  "loops.control.startNewLoop": {
+    "defaultMessage": "Start a new loop"
+  },
+  "loops.control.stopCheck": {
+    "defaultMessage": "Stop check"
+  },
+  "loops.control.stopLoop": {
+    "defaultMessage": "Stop loop"
+  },
+  "loops.control.tickAlreadyRunning": {
+    "defaultMessage": "A tick is already running"
+  },
+  "loops.control.tickNow": {
+    "defaultMessage": "Run a tick now"
+  },
+  "loops.empty.body": {
+    "defaultMessage": "A loop runs a goal again and again here, on a schedule or when goose decides. Start one from the Loop button, with {command}, or with \"Loop this\" on a message."
+  },
+  "loops.empty.title": {
+    "defaultMessage": "No loop in this chat."
+  },
+  "loops.ended.goalMet": {
+    "defaultMessage": "Goal met — `{check}` passed after tick {n}"
+  },
+  "loops.ended.reachedCount": {
+    "defaultMessage": "Reached {k} ticks, as you set"
+  },
+  "loops.ended.reportedDone": {
+    "defaultMessage": "goose reported the goal done after tick {n} — no check was set"
+  },
+  "loops.ended.stoppedByYou": {
+    "defaultMessage": "Stopped by you after tick {n}"
+  },
+  "loops.header.check": {
+    "defaultMessage": "Check: {command}"
+  },
+  "loops.header.noCheck": {
+    "defaultMessage": "No check — the loop ends when goose reports done or you stop it"
+  },
+  "loops.header.open": {
+    "defaultMessage": "Open"
+  },
+  "loops.header.since": {
+    "defaultMessage": "since {time}"
+  },
+  "loops.header.stateFile": {
+    "defaultMessage": "State file: {path}"
+  },
+  "loops.header.stateFileNotWritten": {
+    "defaultMessage": "not written yet"
+  },
+  "loops.header.stateFileUnreadable": {
+    "defaultMessage": "could not be read: {error}"
+  },
+  "loops.header.tick": {
+    "defaultMessage": "tick {n}"
+  },
+  "loops.header.tickOf": {
+    "defaultMessage": "tick {n} of {k}"
+  },
+  "loops.header.tokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "loops.marker.copied": {
+    "defaultMessage": "Copied"
+  },
+  "loops.marker.copyPrompt": {
+    "defaultMessage": "Copy prompt"
+  },
+  "loops.marker.hidePrompt": {
+    "defaultMessage": "Hide prompt"
+  },
+  "loops.marker.showPrompt": {
+    "defaultMessage": "Show prompt"
+  },
+  "loops.marker.title": {
+    "defaultMessage": "Loop tick {n} · {time}"
+  },
+  "loops.marker.titleCadence": {
+    "defaultMessage": "Loop tick {n} · {time} · {cadence}"
+  },
+  "loops.marker.yielded": {
+    "defaultMessage": "Stopped at {time} for your message in \"{chat}\" — the loop continues after your turn."
+  },
+  "loops.message.loopThis": {
+    "defaultMessage": "Loop this"
+  },
+  "loops.message.loopThisTitle": {
+    "defaultMessage": "Run this message again and again as a loop"
+  },
+  "loops.now.answerRunning": {
+    "defaultMessage": "Your answer to tick {n} is running — the next tick starts after it"
+  },
+  "loops.now.asked": {
+    "defaultMessage": "Tick {n} asked you: \"{question}\""
+  },
+  "loops.now.badDelay": {
+    "defaultMessage": "Tick {n} named a delay goose can't read: \"{given}\"."
+  },
+  "loops.now.checking": {
+    "defaultMessage": "Checking `{check}` · {elapsed}"
+  },
+  "loops.now.dueAfterReviewers": {
+    "defaultMessage": "Tick {next} is due — it starts when goose's check of tick {n} ends"
+  },
+  "loops.now.dueAfterStop": {
+    "defaultMessage": "Tick {next} is due — it starts when the answer you stopped here has settled"
+  },
+  "loops.now.dueAfterYourMessage": {
+    "defaultMessage": "Tick {next} is due — it starts after your message here"
+  },
+  "loops.now.dueAfterYourTurn": {
+    "defaultMessage": "Tick {next} is due — it starts when your turn in \"{chat}\" ends"
+  },
+  "loops.now.dueLoadFailed": {
+    "defaultMessage": "Tick {next} is due — this chat could not be opened in the window: {error}"
+  },
+  "loops.now.dueSubmitFailed": {
+    "defaultMessage": "Tick {next} is due — goose refused its message: {error}"
+  },
+  "loops.now.dueWayHeld": {
+    "defaultMessage": "Tick {next} is due — {node} is answering you in \"{chat}\"; the tick loads {target} after"
+  },
+  "loops.now.elsewhere": {
+    "defaultMessage": "This loop runs in another goose window."
+  },
+  "loops.now.nextAt": {
+    "defaultMessage": "Next tick {time} · in {rel}"
+  },
+  "loops.now.noDelay": {
+    "defaultMessage": "Tick {n} didn't say when to come back."
+  },
+  "loops.now.running": {
+    "defaultMessage": "Tick {n} · started {time} · {elapsed}"
+  },
+  "loops.now.runningOn": {
+    "defaultMessage": "Tick {n} · started {time} · {elapsed} · on {node}"
+  },
+  "loops.now.selfPaced": {
+    "defaultMessage": "Next tick {time} — goose chose {interval}: \"{reason}\""
+  },
+  "loops.now.selfPacedNoReason": {
+    "defaultMessage": "Next tick {time} — goose chose {interval} and gave no reason"
+  },
+  "loops.now.startsNow": {
+    "defaultMessage": "Next tick starts now"
+  },
+  "loops.panel.noTicks": {
+    "defaultMessage": "No tick has ended yet."
+  },
+  "loops.panel.now": {
+    "defaultMessage": "Now"
+  },
+  "loops.panel.statusUnreadable": {
+    "defaultMessage": "The loop's status could not be read: {error}"
+  },
+  "loops.panel.ticks": {
+    "defaultMessage": "Ticks"
+  },
+  "loops.panel.unreadable": {
+    "defaultMessage": "The loop record could not be read: {error}"
+  },
+  "loops.paused.blocked": {
+    "defaultMessage": "Blocked — {blockedOn}"
+  },
+  "loops.paused.byYou": {
+    "defaultMessage": "Paused by you after tick {n}."
+  },
+  "loops.paused.byYouBeforeFirst": {
+    "defaultMessage": "Paused by you before the first tick."
+  },
+  "loops.paused.checkCouldNotRun": {
+    "defaultMessage": "The check could not run: {error}"
+  },
+  "loops.paused.closed": {
+    "defaultMessage": "{due,plural,one{goose was closed; # tick was due.} other{goose was closed; # ticks were due.}}"
+  },
+  "loops.paused.closedAt": {
+    "defaultMessage": "{due,plural,one{goose was closed at {time}; # tick was due.} other{goose was closed at {time}; # ticks were due.}}"
+  },
+  "loops.paused.finishingElsewhere": {
+    "defaultMessage": "Paused — tick {n} is finishing in the other window"
+  },
+  "loops.paused.noReportTwice": {
+    "defaultMessage": "Ticks {prev} and {n} ended without a loop report"
+  },
+  "loops.paused.sameFailureTwice": {
+    "defaultMessage": "Ticks {prev} and {n} failed the same way: {error}"
+  },
+  "loops.paused.stalled": {
+    "defaultMessage": "Stalled — tick {n} named the same next step as tick {prev} and made no write or edit outside the state file"
+  },
+  "loops.paused.youStoppedTick": {
+    "defaultMessage": "You stopped tick {n}."
+  },
+  "loops.pill.afterReviewers": {
+    "defaultMessage": "Next tick after goose's check of tick {n}"
+  },
+  "loops.pill.afterWayHeld": {
+    "defaultMessage": "Next tick after {node} finishes answering you"
+  },
+  "loops.pill.afterYourTurn": {
+    "defaultMessage": "Next tick after your turn"
+  },
+  "loops.pill.checking": {
+    "defaultMessage": "Checking · {elapsed}"
+  },
+  "loops.pill.couldNotStart": {
+    "defaultMessage": "Next tick could not start"
+  },
+  "loops.pill.elsewhere": {
+    "defaultMessage": "Looping in another window"
+  },
+  "loops.pill.ended": {
+    "defaultMessage": "Loop ended"
+  },
+  "loops.pill.needsYou": {
+    "defaultMessage": "Loop needs you"
+  },
+  "loops.pill.next": {
+    "defaultMessage": "Next tick {time}"
+  },
+  "loops.pill.open": {
+    "defaultMessage": "Show this chat's loop — {label}"
+  },
+  "loops.pill.paused": {
+    "defaultMessage": "Loop paused"
+  },
+  "loops.pill.running": {
+    "defaultMessage": "Tick {n} running · {elapsed}"
+  },
+  "loops.pill.startsNow": {
+    "defaultMessage": "Next tick starts now"
+  },
+  "loops.pill.unreadable": {
+    "defaultMessage": "Loop unreadable"
+  },
+  "loops.pill.waitingYou": {
+    "defaultMessage": "Loop waiting for you"
+  },
+  "loops.rail.closeLoop": {
+    "defaultMessage": "Close the loop panel"
+  },
+  "loops.rail.tabChanges": {
+    "defaultMessage": "Changes {count}"
+  },
+  "loops.rail.tabLoop": {
+    "defaultMessage": "Loop"
+  },
+  "loops.rail.tabsLabel": {
+    "defaultMessage": "Loop and changes"
+  },
+  "loops.status.checking": {
+    "defaultMessage": "Checking"
+  },
+  "loops.status.elsewhere": {
+    "defaultMessage": "In another window"
+  },
+  "loops.status.ended": {
+    "defaultMessage": "Ended"
+  },
+  "loops.status.needsYou": {
+    "defaultMessage": "Needs you"
+  },
+  "loops.status.paused": {
+    "defaultMessage": "Paused"
+  },
+  "loops.status.running": {
+    "defaultMessage": "Running"
+  },
+  "loops.status.waiting": {
+    "defaultMessage": "Waiting"
+  },
+  "loops.status.waitingTurn": {
+    "defaultMessage": "Waiting for your turn"
+  },
+  "loops.status.waitingYou": {
+    "defaultMessage": "Waiting for you"
+  },
+  "loops.stop.beforeFirst": {
+    "defaultMessage": "It ends before its first tick."
+  },
+  "loops.stop.idle": {
+    "defaultMessage": "No tick runs after tick {n}."
+  },
+  "loops.stop.keep": {
+    "defaultMessage": "Keep running"
+  },
+  "loops.stop.running": {
+    "defaultMessage": "Tick {n} stops now and keeps what it did."
+  },
+  "loops.stop.title": {
+    "defaultMessage": "Stop the loop?"
+  },
+  "loops.tick.answered": {
+    "defaultMessage": "You answered: \"{answer}\""
+  },
+  "loops.tick.asked": {
+    "defaultMessage": "Asked you: \"{question}\""
+  },
+  "loops.tick.checkCouldNotRun": {
+    "defaultMessage": "Check {command} could not run: {error}"
+  },
+  "loops.tick.checkExited": {
+    "defaultMessage": "Check {command} exited {code}"
+  },
+  "loops.tick.checkExitedTail": {
+    "defaultMessage": "Check {command} exited {code} — \"{line}\""
+  },
+  "loops.tick.checkNoExit": {
+    "defaultMessage": "Check {command} ended without an exit code"
+  },
+  "loops.tick.checkPassed": {
+    "defaultMessage": "Check {command} passed"
+  },
+  "loops.tick.checkRunning": {
+    "defaultMessage": "Checking {command}…"
+  },
+  "loops.tick.chip.asked": {
+    "defaultMessage": "Asked you"
+  },
+  "loops.tick.chip.blocked": {
+    "defaultMessage": "Blocked"
+  },
+  "loops.tick.chip.done": {
+    "defaultMessage": "Done"
+  },
+  "loops.tick.chip.failed": {
+    "defaultMessage": "Failed"
+  },
+  "loops.tick.chip.goalMet": {
+    "defaultMessage": "Goal met"
+  },
+  "loops.tick.chip.noReport": {
+    "defaultMessage": "No report"
+  },
+  "loops.tick.chip.progress": {
+    "defaultMessage": "Progress"
+  },
+  "loops.tick.chip.stalled": {
+    "defaultMessage": "Stalled"
+  },
+  "loops.tick.chip.stoppedByYou": {
+    "defaultMessage": "Stopped by you"
+  },
+  "loops.tick.chip.yielded": {
+    "defaultMessage": "Yielded"
+  },
+  "loops.tick.collapse": {
+    "defaultMessage": "Hide tick {n}"
+  },
+  "loops.tick.expand": {
+    "defaultMessage": "Show tick {n}"
+  },
+  "loops.tick.failed": {
+    "defaultMessage": "Failed: {error}"
+  },
+  "loops.tick.files": {
+    "defaultMessage": "Written or edited by goose"
+  },
+  "loops.tick.lastWords": {
+    "defaultMessage": "Its last words: \"{line}\""
+  },
+  "loops.tick.next": {
+    "defaultMessage": "Next: {step}"
+  },
+  "loops.tick.noFiles": {
+    "defaultMessage": "goose wrote or edited no file in this tick."
+  },
+  "loops.tick.noReport": {
+    "defaultMessage": "Ended without a loop report"
+  },
+  "loops.tick.on": {
+    "defaultMessage": "on {node}"
+  },
+  "loops.tick.openLog": {
+    "defaultMessage": "Open log"
+  },
+  "loops.tick.quiet": {
+    "defaultMessage": "{time} · no write or edit outside the state file · {nextStep}"
+  },
+  "loops.tick.removed": {
+    "defaultMessage": "This tick's messages were removed by an edit"
+  },
+  "loops.tick.selfPaced": {
+    "defaultMessage": "goose chose {interval}: \"{reason}\""
+  },
+  "loops.tick.selfPacedNoReason": {
+    "defaultMessage": "goose chose {interval} and gave no reason"
+  },
+  "loops.tick.stoppedByYou": {
+    "defaultMessage": "You stopped this tick."
+  },
+  "loops.tick.tokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "loops.tick.when": {
+    "defaultMessage": "{time} · {duration}"
+  },
+  "loops.tick.yielded": {
+    "defaultMessage": "Yielded to your turn in \"{chat}\""
+  },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Cancel failed."
   },

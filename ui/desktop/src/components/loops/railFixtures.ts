@@ -58,7 +58,9 @@ const T0 = Date.parse('2026-09-27T22:01:00Z') / 1000;
 
 /** The transcript: five tick markers, each followed by that tick's work. */
 export const LOOP_MESSAGES: Message[] = [
-  message('user', [{ type: 'text', text: 'Make scripts/generate_users.js produce every problem class' }]),
+  message('user', [
+    { type: 'text', text: 'Make scripts/generate_users.js produce every problem class' },
+  ]),
   said('I will set up a loop for this.'),
   marker(1, T0),
   ...write('t1a', '/w/scripts/generate_users.js', 38, 7),
@@ -113,7 +115,11 @@ export const TICKS: LoopTickRecord[] = [
     endedAt: at(842),
     firstMessageId: markerId(2),
     wrote: [],
-    outcome: { kind: 'failed', errorClass: 'provider', error: 'Provider error: stream ended early' },
+    outcome: {
+      kind: 'failed',
+      errorClass: 'provider',
+      error: 'Provider error: stream ended early',
+    },
   },
   {
     n: 3,

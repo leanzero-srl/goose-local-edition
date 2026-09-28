@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { onLoopsChanged } from '../../acp/acpConnection';
 import { loopsControl, loopsGet } from '../../acp/loops';
 import { errorMessage } from '../../utils/conversionUtils';
 import type {
@@ -28,7 +29,8 @@ export type ControlResult =
 /**
  * `refreshKey` is what the rail already knows changed — the transcript's length and the chat's
  * state (a tick's marker lands, a turn ends) — so the record is re-read on events, never on a
- * timer. The runner's own `loops/changed` notification reaches the rail through L4r's emitter.
+ * timer — and on the runner's own `loops/changed` notification (L4r's `onLoopsChanged`), which
+ * carries the record the owning goosed just wrote.
  */
 export function useSessionLoop(sessionId: string, refreshKey: string) {
   const [state, setState] = useState<SessionLoop>({ kind: 'loading' });
@@ -64,6 +66,21 @@ export function useSessionLoop(sessionId: string, refreshKey: string) {
   useEffect(() => {
     void read();
   }, [read, refreshKey]);
+
+  useEffect(
+    () =>
+      onLoopsChanged((change) => {
+        if (change.sessionId !== sessionId) return;
+        asked.current++;
+        setState({
+          kind: 'loop',
+          loop: change.loop,
+          status: change.loop.status,
+          reason: change.loop.statusReason,
+        });
+      }),
+    [sessionId]
+  );
 
   /** Pause / Resume / Stop loop / Run a tick now / Stop check — goosed answers or refuses by name. */
   const control = useCallback(

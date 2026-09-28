@@ -6,13 +6,7 @@ import type { Message } from '../../types/message';
 import { sessionChanges } from '../changes/fileDiff';
 import { tickSlices } from '../loops/loopView';
 import type { LoopRecord, LoopStatus, LoopStatusReason } from '../loops/model';
-import {
-  LOOP_MESSAGES,
-  NOW_MS,
-  loopRecord,
-  markerId,
-  waitingRecord,
-} from '../loops/railFixtures';
+import { LOOP_MESSAGES, NOW_MS, loopRecord, markerId, waitingRecord } from '../loops/railFixtures';
 import { onStartLoopRequest, type StartLoopRequest } from '../loops/startLoopRequest';
 import type { ControlResult, SessionLoop } from '../loops/useSessionLoop';
 import SessionRail from './SessionRail';
@@ -90,9 +84,26 @@ describe('SessionRail collapsed', () => {
   it('labels each status as §4.7 does, in its own solid fill', () => {
     const cases: [SessionLoop, string, string][] = [
       [asLoop(waitingRecord()), 'Next tick 22:51', 'accent'],
-      [asLoop(loopRecord(), 'waiting_turn', { kind: 'reviewers', n: 4 }), "Next tick after goose's check of tick 4", 'secondary'],
-      [asLoop(loopRecord(), 'waiting_you', { kind: 'no_delay', n: 4 }), 'Loop waiting for you', 'warn'],
-      [asLoop(loopRecord(), 'needs_you', { kind: 'asked', n: 4, itemId: 'ny', question: 'Comma?' }), 'Loop needs you', 'warn'],
+      [
+        asLoop(loopRecord(), 'waiting_turn', { kind: 'reviewers', n: 4 }),
+        "Next tick after goose's check of tick 4",
+        'secondary',
+      ],
+      [
+        asLoop(loopRecord(), 'waiting_you', { kind: 'no_delay', n: 4 }),
+        'Loop waiting for you',
+        'warn',
+      ],
+      [
+        asLoop(loopRecord(), 'needs_you', {
+          kind: 'asked',
+          n: 4,
+          itemId: 'ny',
+          question: 'Comma?',
+        }),
+        'Loop needs you',
+        'warn',
+      ],
       [asLoop(loopRecord(), 'paused', { kind: 'by_you', afterTick: 4 }), 'Loop paused', 'stopped'],
       [asLoop(loopRecord(), 'elsewhere', null), 'Looping in another window', 'secondary'],
       [{ kind: 'unreadable', error: 'bad json' }, 'Loop unreadable', 'err'],
@@ -149,10 +160,10 @@ describe('SessionRail open', () => {
   });
 
   it('works, forgetting only, when localStorage throws', () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    vi.spyOn(window.Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('denied');
     });
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(window.Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('denied');
     });
     renderRail({ loop: asLoop(loopRecord()) });
@@ -210,7 +221,9 @@ describe('the Loop tab', () => {
     const control = vi.fn(runnerAbsent);
     open(asLoop(loopRecord()), control);
     expect(screen.getByRole('button', { name: 'Run a tick now' })).toBeDisabled();
-    fireEvent.click(within(screen.getByTestId('loop-controls')).getByRole('button', { name: 'Stop loop' }));
+    fireEvent.click(
+      within(screen.getByTestId('loop-controls')).getByRole('button', { name: 'Stop loop' })
+    );
     const dialog = screen.getByTestId('loop-stop-dialog');
     expect(dialog).toHaveTextContent('Tick 5 stops now and keeps what it did.');
     expect(control).not.toHaveBeenCalled();
@@ -271,9 +284,7 @@ describe('the tick ledger', () => {
       '2',
       '1',
     ]);
-    expect(screen.getByTestId('loop-now')).toHaveTextContent(
-      'Tick 5 · started 22:41 · 2m'
-    );
+    expect(screen.getByTestId('loop-now')).toHaveTextContent('Tick 5 · started 22:41 · 2m');
   });
 
   it("lists each tick's files through the same sessionChanges over that tick's messages", () => {
@@ -320,14 +331,24 @@ describe('the tick ledger', () => {
       metadata: { userVisible: true, agentVisible: true },
     };
     const messages = [...LOOP_MESSAGES];
-    messages.splice(messages.findIndex((m) => m.id === markerId(3)), 0, answered);
+    messages.splice(
+      messages.findIndex((m) => m.id === markerId(3)),
+      0,
+      answered
+    );
     const edited = messages.filter((m) => m.id !== markerId(4));
     const special = {
       ...record,
       ticks: [
         { ...ticks[0], outcome: { kind: 'no_report' as const }, report: null },
-        { ...ticks[1], outcome: { kind: 'asked' as const, itemId: 'ny', question: 'Comma or semicolon?' } },
-        { ...ticks[2], outcome: { kind: 'yielded' as const, toSession: 's2', toChat: 'Kickoff notes' } },
+        {
+          ...ticks[1],
+          outcome: { kind: 'asked' as const, itemId: 'ny', question: 'Comma or semicolon?' },
+        },
+        {
+          ...ticks[2],
+          outcome: { kind: 'yielded' as const, toSession: 's2', toChat: 'Kickoff notes' },
+        },
         { ...ticks[3], outcome: { kind: 'stopped_by_you' as const }, report: null },
         ticks[4],
       ],
@@ -404,10 +425,15 @@ describe('the NOW block, one case per status and reason of the fixture (§8.4)',
       expect(now.textContent, c.name).toBe(c.expect.text);
       const block = now.parentElement!;
       for (const label of actions[c.status] ?? []) {
-        expect(within(block).getByRole('button', { name: label }), `${c.name}: ${label}`).toBeInTheDocument();
+        expect(
+          within(block).getByRole('button', { name: label }),
+          `${c.name}: ${label}`
+        ).toBeInTheDocument();
       }
       if (c.status === 'paused' && c.reason?.kind === 'closed') {
-        expect(within(block).getByRole('button', { name: 'Resume — run one tick now' })).toBeInTheDocument();
+        expect(
+          within(block).getByRole('button', { name: 'Resume — run one tick now' })
+        ).toBeInTheDocument();
       }
       unmount();
     }
