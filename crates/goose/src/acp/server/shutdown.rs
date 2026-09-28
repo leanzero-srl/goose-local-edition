@@ -16,8 +16,9 @@
 //! goose is leaving, so they see the node go before its engine disappears; then the engines; the
 //! mesh daemon LAST, because the distributed engine's stop reaches its peer rank over the mesh
 //! (Q-242: with the daemon stopped second, every split's teardown said "rank 1 … cannot reach …
-//! over LeanZero Link" — eight goosed logs 2026-09-26..28, SIGTERM and stdin-EOF alike — and the
-//! peer's rank was left to notice on its own). Every step reports what it did in one line, and a
+//! over LeanZero Link" — six of six goosed logs with a split up, 2026-09-27..28, SIGTERM and
+//! stdin-EOF alike — and the peer's rank was left to notice on its own). Every step reports what
+//! it did in one line, and a
 //! step that has nothing to do says so — a silent step would be indistinguishable from a step
 //! that never ran.
 
