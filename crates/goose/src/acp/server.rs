@@ -246,7 +246,7 @@ impl Drop for RunRegistration {
                     if runs.get(&session_id).map(|run| run.run_id.as_str()) == Some(&run_id) {
                         runs.remove(&session_id);
                         agent_manager.unregister_cancel_token(&session_id).await;
-                        warn!(session_id, run_id, "a prompt dropped before it ended (its connection closed); its run is cleared");
+                        warn!(session_id, run_id, "a prompt dropped before it ended (its connection closed, or it panicked); its run is cleared");
                     }
                 });
             }

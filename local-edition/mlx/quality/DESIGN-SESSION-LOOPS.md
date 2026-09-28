@@ -1857,6 +1857,18 @@ tick holds the way; a tick whose node would swap the way the user's reply holds 
    (`server.rs:3359`). So the tick door is per connection, registered at the connection's first dispatch and removed
    when its serving future ends (§5.1). What remains unmeasured is whether a closed connection drops an in-flight
    `on_prompt`; L2b measures that first (§5.1, "A renderer reload mid-tick").
+   **MEASURED (L2b, 2026-09-28, `crates/goose/tests/acp_connection_close_test.rs`): (b), the future is DROPPED.**
+   Over the real router (`create_acp_router`, a real TCP websocket, a model that never finishes): the close makes
+   `agent-client-protocol-http`'s `run_ws` call `Connection::shutdown`, which aborts the connection's task; that task
+   owns the connection future, whose task actor owns every `cx.spawn`ed handler, so `on_prompt` is dropped mid-await.
+   Observed: the prompt's user turn goes 1 → 0 after the close, no end-of-turn outcome is recorded, and a new
+   connection prompts the same chat at once (the busy set is per connection). L2b therefore releases everything a
+   prompt holds through guards that drop with the future: the tick (`TickPrompt` → `errored{connection}`), the user
+   turn and `user_turn_ended` (`UserPrompt`), the busy entry and manager token (`RunRegistration` — the manager can
+   outlive the connection when LeanZero Link holds it), and the door (`LoopDoorClose`, a local of `connect_to`).
+   One deviation from §5.1: the door opens right after `initialize` is answered, and only for a client that declared
+   goose's custom notifications — a client that cannot hear `loops/tickDue` is no door (an offer there reaches no
+   one, and its door would keep the loops attached after the last window that can run them closed).
 10. **Should `loop_report` be required, or inferred from the last message?** **Recommended: required, with the loud
     `no_report` state.** Inferring a verdict from prose is the fallback gate 1 forbids. L9's J1 measures how often
     the local models miss it before any wording change.
