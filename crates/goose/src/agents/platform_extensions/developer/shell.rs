@@ -1712,6 +1712,7 @@ mod tests {
         for _ in 0..150 {
             let status = std::process::Command::new("pgrep")
                 .args(["-f", marker])
+                .stdout(Stdio::null())
                 .status()
                 .expect("pgrep");
             if status.code() == Some(1) {
@@ -1865,5 +1866,125 @@ mod tests {
             "a FIFO is not a privacy block: {text}"
         );
         assert!(none_left(marker).await, "{text}");
+    }
+
+    #[cfg(unix)]
+    const STAND_IN_GOOSED_ENV: &str = "GOOSE_TEST_Q407_STAND_IN_GOOSED";
+    #[cfg(unix)]
+    const STAND_IN_WATCHDOG_ENV: &str = "GOOSE_TEST_Q407_STAND_IN_WATCHDOG";
+    #[cfg(unix)]
+    const Q407_SERVER: &str = "sleep 407011";
+    #[cfg(unix)]
+    const Q407_IN_FLIGHT: &str = "sleep 407012";
+
+    /// This test binary, running only the `#[ignore]`d test `name` with `env` set.
+    #[cfg(unix)]
+    fn this_binary_running(name: &str, env: &str) -> std::process::Command {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                crate::test_env_child::test_name(module_path!(), name).as_str(),
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(env, "1");
+        command
+    }
+
+    /// Q-407: goosed arms the watchdog as goose serve does, starts a server with `&` (its command
+    /// ends, the server stays — Q-406 ends it at the teardown) and a pipeline that runs until
+    /// goosed is killed.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "runs only as the child of a_shell_command_does_not_outlive_a_killed_goosed"]
+    async fn stand_in_goosed() {
+        std::env::var(STAND_IN_GOOSED_ENV).expect("started by the Q-407 test");
+        super::super::shell_watchdog::arm(this_binary_running(
+            "stand_in_watchdog",
+            STAND_IN_WATCHDOG_ENV,
+        ))
+        .expect("arm the watchdog");
+        let server = run_command(
+            &format!("{Q407_SERVER} &"),
+            Some(60),
+            None,
+            None,
+            None,
+            true,
+        )
+        .await
+        .expect("run the server command");
+        assert!(!server.timed_out);
+        run_command(
+            &format!("{Q407_IN_FLIGHT} | cat"),
+            Some(600),
+            None,
+            None,
+            None,
+            true,
+        )
+        .await
+        .expect("run the pipeline");
+        unreachable!("goosed is killed while the pipeline runs");
+    }
+
+    /// Q-407: what `goose shell-watchdog` runs, as the stand-in goosed's watchdog.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "runs only as the stand-in goosed's watchdog"]
+    async fn stand_in_watchdog() {
+        std::env::var(STAND_IN_WATCHDOG_ENV).expect("started by stand_in_goosed");
+        let outcome = super::super::shell_watchdog::run_on_stdin().await;
+        eprintln!("[shell-watchdog] {outcome}");
+    }
+
+    /// Q-407: a goosed that dies WITHOUT its teardown (SIGKILL — the desktop's fallback, or a
+    /// crash) must not leave its shell commands running. Q-406 put them in process groups of their
+    /// own, which the desktop's kill of goosed's group no longer reaches; the watchdog ends them
+    /// when goosed's end of its pipe closes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_shell_command_does_not_outlive_a_killed_goosed() {
+        let _server_cleanup = PkillOnDrop(Q407_SERVER);
+        let _in_flight_cleanup = PkillOnDrop(Q407_IN_FLIGHT);
+        let mut goosed = this_binary_running("stand_in_goosed", STAND_IN_GOOSED_ENV)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the stand-in goosed");
+        let running = |marker: &str| {
+            std::process::Command::new("pgrep")
+                .args(["-f", marker])
+                .stdout(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        let mut started = false;
+        for _ in 0..500 {
+            if running(Q407_SERVER) && running(Q407_IN_FLIGHT) {
+                started = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        if !started {
+            let _ = goosed.kill();
+            let _ = goosed.wait();
+            panic!("the stand-in goosed never started both commands");
+        }
+
+        goosed.kill().expect("SIGKILL the stand-in goosed");
+        goosed.wait().expect("reap it");
+
+        assert!(
+            none_left(Q407_IN_FLIGHT).await,
+            "the in-flight command outlived its killed goosed"
+        );
+        assert!(
+            none_left(Q407_SERVER).await,
+            "the server started with & outlived its killed goosed"
+        );
     }
 }
