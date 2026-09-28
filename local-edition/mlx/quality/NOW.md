@@ -17,10 +17,10 @@ Updated: 2026-09-28 14:0x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 
 ## Agents
 - Q-344 (a card answer must not supersede its sibling; ON the Q-340/341 branch — they land together) ·
-  Q-350 + Q-343 (activity says single/off while the split restores; 2,684 unfinished request logs) ·
   Q-347 (post-compaction cold head).
 - Q-342 MERGED to main 757c3458a (gate green). Q-346 done → scratch /tmp/merge-q346, gate /tmp/g346.out queued
-  behind g344's cargo (one main target). Disk swept 16 → 75 GB (my old scratchpad held 56 GB).
+  behind g344's cargo (one main target). Q-350+343 done → /tmp/merge-q350, UI gate now,
+  cargo /tmp/g350.out behind g346. Disk swept 16 → 75 GB (my old scratchpad held 56 GB).
 - #3r turn 2 (13:40): the 27B invented `websearch`/`fetch` 13× before the real web tool → Q-367 + Q-368
   (facts paragraph restated 4×) CUTTING (wire read first). Turn 2 ended 761 s, 27 tools, a correct
   sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turn 3 running. Studio-side: forge-tuner got a
