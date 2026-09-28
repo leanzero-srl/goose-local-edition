@@ -18,9 +18,7 @@ Updated: 2026-09-28 14:5x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 ## Agents
 - Q-344 (a card answer must not supersede its sibling; ON the Q-340/341 branch — they land together) ·
  
-- Q-342 MERGED to main 757c3458a (gate green). Q-346 done → scratch /tmp/merge-q346, gate /tmp/g346.out (tracked task; the nohup waiter died) queued
-  behind g344's cargo (one main target). Q-350+343 done → /tmp/merge-q350, UI gate now,
-  cargo /tmp/g350.out behind g346. Q-347 (stable head kept
+- Q-342 MERGED to main 757c3458a (gate green). Q-346 ON MAIN d710d7059 (gate green). Q-350+343 /tmp/merge-q350: UI green (vitest 4169), cargo running. Q-347 (stable head kept
   entry; wire tag → BOTH Macs need 3.0.71) → /tmp/merge-q347, gate /tmp/g347.out after g350. All gates run from
   scratchpad/gates.sh + gate347.sh in their own session (five background gates were killed, cause unproven). Disk swept 16 → 75 GB (my old scratchpad held 56 GB).
 - Q-367 (tool-not-found error leads with the closest real tools) + Q-369 (load_tools' false message) DONE →
