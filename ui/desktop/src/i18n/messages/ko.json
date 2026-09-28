@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "이 카드 숨기기 — 사이드바 하단이나 설정 › 앱에서 다시 표시"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "떠 있는 창 숨기기 또는 끄기"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "지금은 숨기기"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "다음에 엔진이 작동할 때 다시 나타납니다"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "여기서 끌 수 있습니다"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "확인"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "전환 중"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "떠 있는 창 끄기"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "설정 › 앱에서 다시 켤 수 있습니다"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "떠 있는 창을 껐습니다"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "설정 › 앱에서 다시 켤 수 있습니다."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "제목 없는 세션"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "끔"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "다른 앱 위에 떠 있는 작은 창으로, 끌어다 놓은 모서리에 머뭅니다. 포커스를 가져가지 않습니다. 닫기 버튼으로 엔진이 다시 작동할 때까지 숨기거나 끌 수 있습니다."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "사이드바에"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "이번 세션 동안 떠 있는 창 닫기"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "여기서 닫으면 다시 불러올 때까지 숨겨집니다"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "이번 세션 동안 떠 있는 창을 숨겼습니다"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "설정 › 앱에서 다시 불러올 수 있으며, 거기서 끌 수도 있습니다."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "메뉴 막대의 goose 아이콘이나 설정 › 앱에서 다시 불러올 수 있으며, 설정에서 끌 수도 있습니다."
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "다른 앱 위에 떠 있는 작은 창으로, 끌어다 놓은 모서리에 자리합니다. 포커스를 가져가지 않으며, 여기서 무언가를 열 때만 goose를 앞으로 가져옵니다. 닫기 버튼을 누르면 이번 세션이 끝날 때까지 숨겨집니다."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "닫혀 있습니다 — 다시 불러올 때까지 숨겨집니다."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "다시 표시"
   }
 }

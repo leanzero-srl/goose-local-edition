@@ -16,7 +16,7 @@ import { RADIUS, SURFACE, cx } from '../lz/tokens';
 import { UserInput } from '../../types/message';
 import SessionActivityIndicator from '../sessionActivity/SessionActivityIndicator';
 import { useReportGlanceSessions } from '../engineGlance/glanceStore';
-import { useGlanceTurnedOffNotice } from '../engineGlance/useGlanceTurnedOffNotice';
+import { useGlanceDismissedNotice } from '../engineGlance/useGlanceDismissedNotice';
 import { LoopDriver } from '../loops/LoopDriver';
 import { NotesDriver } from '../notes/NotesDriver';
 import { useHeaderObstacle } from './headerChrome';
@@ -66,8 +66,8 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
   const [dragging, setDragging] = useState(false);
   // The desktop glance says what this window's sessions are doing (running / needs you).
   useReportGlanceSessions();
-  // Turned off from the desktop window itself: this window says so, with the way back (Q-224).
-  useGlanceTurnedOffNotice();
+  // The desktop window closed from its X: this window says so once, with the ways back (Q-426).
+  useGlanceDismissedNotice();
   // The toggle + "N needs you" float over the chat's top band: its title keeps clear (Q-315).
   const [leftChrome, setLeftChrome] = useState<HTMLDivElement | null>(null);
   useHeaderObstacle(leftChrome, 'left');

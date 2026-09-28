@@ -2057,8 +2057,20 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.close": {
+    "defaultMessage": "Close the floating window for this session"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Shrink to a pill"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "Floating window hidden for this session"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Bring it back from Settings › App, where you can also turn it off."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Bring it back from the goose icon in the menu bar or Settings › App, where you can also turn it off."
   },
   "engineGlance.expand": {
     "defaultMessage": "Show the whole card"
@@ -2075,17 +2087,8 @@
   "engineGlance.hide": {
     "defaultMessage": "Hide this card — bring it back from the foot of the sidebar or Settings › App"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "Hide or turn off the floating window"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "Hide for now"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "Back the next time the engine works"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "You can turn this off from here"
+  "engineGlance.hintClose": {
+    "defaultMessage": "Close it here until you bring it back"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Got it"
@@ -2222,18 +2225,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Swapping"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "Turn off the floating window"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Turn it back on in Settings › App"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "Floating window turned off"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Turn it back on in Settings › App."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "Untitled session"
   },
@@ -2264,14 +2255,20 @@
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Off"
   },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "A small window over your other apps, in a corner you drag it to. It never takes focus. Its close button hides it until the engine works again, or turns it off."
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "A small window over your other apps, in a corner you drag it to. It never takes focus, and brings goose forward only when you open something from it. Its close button hides it for the rest of this session."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "You closed it — hidden until you bring it back."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "In the sidebar"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "At the foot of the sidebar, under your sessions. Hide it from the card itself; it comes back from the row it leaves in its place, or from here."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Show it again"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Engine at a glance"

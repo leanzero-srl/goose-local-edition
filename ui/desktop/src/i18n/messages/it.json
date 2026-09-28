@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "Nascondi questa scheda — riportala dal fondo della barra laterale o da Impostazioni › App"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "Nascondi o disattiva la finestra mobile"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "Nascondi per ora"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "Torna la prossima volta che il motore lavora"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "Puoi disattivarla da qui"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Capito"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Cambio in corso"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "Disattiva la finestra mobile"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Riattivala da Impostazioni › App"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "Finestra mobile disattivata"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Riattivala da Impostazioni › App."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "Sessione senza titolo"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Spento"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Una piccola finestra sopra le altre app, nell’angolo dove la trascini. Non prende mai il focus. Il suo pulsante di chiusura la nasconde finché il motore non lavora di nuovo, o la disattiva."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Nella barra laterale"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Chiudi la finestra mobile per questa sessione"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "Chiudila qui finché non la riporti"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "Finestra mobile nascosta per questa sessione"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Riportala da Impostazioni › App, dove puoi anche disattivarla."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Riportala dall’icona di goose nella barra dei menu o da Impostazioni › App, dove puoi anche disattivarla."
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "Una piccola finestra sopra le altre app, nell’angolo in cui la trascini. Non prende mai il focus e porta goose in primo piano solo quando apri qualcosa da lì. Il pulsante di chiusura la nasconde per il resto di questa sessione."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "L’hai chiusa: nascosta finché non la riporti."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Mostrala di nuovo"
   }
 }

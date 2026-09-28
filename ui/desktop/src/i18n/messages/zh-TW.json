@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "隱藏此卡片 — 可在側邊欄底部或 設定 › 應用程式 中恢復"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "隱藏或關閉懸浮視窗"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "暫時隱藏"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "下次引擎工作時再出現"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "你可以在這裡關閉它"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "知道了"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "正在切換"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "關閉懸浮視窗"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "可在 設定 › 應用程式 中重新開啟"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "懸浮視窗已關閉"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "可在 設定 › 應用程式 中重新開啟。"
-  },
   "engineGlance.untitled": {
     "defaultMessage": "未命名工作階段"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "關閉"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "一個浮在其他 App 上方的小視窗，停在你拖到的角落。它從不搶走焦點。它的關閉按鈕可以將其隱藏到引擎再次工作，或將其關閉。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "在側邊欄中"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "在本次工作階段中關閉懸浮視窗"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "在這裡關閉，直到你把它叫回來"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "懸浮視窗已在本次工作階段中隱藏"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "可在 設定 › 應用程式 中重新顯示，也可以在那裡將它關閉。"
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "可透過選單列中的 goose 圖示或 設定 › 應用程式 重新顯示，也可以在設定中將它關閉。"
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "一個浮在其他應用程式之上的小視窗，停在你拖到的角落。它從不搶走焦點，只有當你從中開啟內容時才會把 goose 帶到前景。按下關閉按鈕後，它會在本次工作階段剩餘時間內隱藏。"
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "你已將它關閉——在你叫回之前保持隱藏。"
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "重新顯示"
   }
 }

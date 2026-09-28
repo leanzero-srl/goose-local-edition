@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "Bu kartı gizle — kenar çubuğunun altından veya Ayarlar › Uygulama bölümünden geri getir"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "Yüzen pencereyi gizle veya kapat"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "Şimdilik gizle"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "Motor bir dahaki çalıştığında geri gelir"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "Bunu buradan kapatabilirsiniz"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Anladım"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Değiştiriliyor"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "Yüzen pencereyi kapat"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Ayarlar › Uygulama bölümünden yeniden açın"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "Yüzen pencere kapatıldı"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Ayarlar › Uygulama bölümünden yeniden açabilirsiniz."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "Adsız oturum"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Kapalı"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede duran küçük bir pencere. Odağı asla almaz. Kapatma düğmesi onu motor yeniden çalışana kadar gizler ya da kapatır."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Kenar çubuğunda"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Yüzen pencereyi bu oturum boyunca kapat"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "Buradan kapatın, geri getirene kadar kapalı kalır"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "Yüzen pencere bu oturum boyunca gizlendi"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Ayarlar › Uygulama bölümünden geri getirin; orada kapatabilirsiniz de."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Menü çubuğundaki goose simgesinden ya da Ayarlar › Uygulama bölümünden geri getirin; orada kapatabilirsiniz de."
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede duran küçük bir pencere. Asla odağı almaz ve goose’u yalnızca ondan bir şey açtığınızda öne getirir. Kapatma düğmesi onu bu oturumun geri kalanında gizler."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "Kapattınız — geri getirene kadar gizli."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Yeniden göster"
   }
 }

@@ -6,8 +6,9 @@ import { useGlanceDrag } from './useGlanceDrag';
 /**
  * The desktop mini window's whole page (`#/engine-glance`, engineGlanceWindow.ts): the glance card,
  * sized to its content (main fits the window to what this reports), moved by dragging its body and
- * snapped to a corner by main on release. It never navigates: every click is an action main runs
- * in a goose window.
+ * snapped to a corner by main on release. It never navigates: every click is an action main runs.
+ * Only the opening ones (the Open control, the chat line, the needs-you strip) bring a goose window
+ * forward; the X closes it for the session and raises nothing (Q-426).
  */
 export function EngineGlanceDesktopRoot() {
   const push = useEngineGlance();
@@ -17,7 +18,7 @@ export function EngineGlanceDesktopRoot() {
   const [hint, setHint] = useState<boolean | null>(null);
   if (push != null && hint === null) setHint(!push.prefs.desktopHintSeen);
   const root = useRef<HTMLDivElement>(null);
-  const { dragHandlers, consumeDrag } = useGlanceDrag({
+  const dragHandlers = useGlanceDrag({
     onStart: (screenX, screenY) => glancePipAction({ type: 'drag-start', screenX, screenY }),
     onMove: (screenX, screenY) => glancePipAction({ type: 'drag-move', screenX, screenY }),
     onEnd: () => glancePipAction({ type: 'drag-end' }),
@@ -58,15 +59,11 @@ export function EngineGlanceDesktopRoot() {
         onOpenSession={(sessionId) => glancePipAction({ type: 'open-session', sessionId })}
         onToggleExpanded={() => setExpanded((v) => !v)}
         onCollapsedChange={(collapsed) => glancePipAction({ type: 'collapse', collapsed })}
-        hideChoices={{
-          onHideForNow: () => glancePipAction({ type: 'close' }),
-          onTurnOff: () => glancePipAction({ type: 'turn-off' }),
-        }}
+        onClose={() => glancePipAction({ type: 'close' })}
         corner={push.prefs.desktopPlace?.corner}
-        turnOffHint={hint === true}
+        closeHint={hint === true}
         onDismissHint={() => setHint(false)}
         dragHandlers={dragHandlers}
-        consumeDrag={consumeDrag}
       />
     </div>
   );

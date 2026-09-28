@@ -14,7 +14,6 @@ import {
   gooseOnScreen,
   nearestCorner,
   placeGlance,
-  snoozeAfter,
   workingDisplay,
   type GlanceDisplay,
   type GlancePlacement,
@@ -31,7 +30,13 @@ export type { GlanceDisplay };
  * never over a goose window that can be seen (Q-226).
  *
  * The controller is Electron-free — main hands it a `GlanceWindowPort` (engineGlanceWindow.ts) — so
- * every transition (show inactive, snooze, snap, remember the display) is tested as data.
+ * every transition (show inactive, dismiss, snap, remember the display) is tested as data.
+ *
+ * WHICH CLICKS BRING GOOSE FORWARD (Q-426): only `open-engine` and `open-session` — the card's Open
+ * control, its chat line and its needs-you strip, whose whole purpose is to open goose there — reach
+ * `openEngine`/`openSession`, the two deps that activate the app. Every other action (the body, a
+ * drag, the X, collapse, details, the hint) works inside the floating window and never raises a
+ * goose window; engineGlanceClicks.test.tsx drives each control through this controller to hold it.
  */
 
 /** What the glance's renderer asks main to do. */
@@ -39,16 +44,24 @@ export type GlancePipAction =
   | { type: 'open-engine' }
   | { type: 'open-session'; sessionId: string }
   | { type: 'collapse'; collapsed: boolean }
-  /** "Hide for now": snoozed for this live spell. */
+  /** The X: gone for the rest of this app session, until the person brings it back (Q-426). */
   | { type: 'close' }
-  /** "Turn off the floating window": the setting to Off, as Settings › App writes it (Q-224). */
-  | { type: 'turn-off' }
   | { type: 'drag-start'; screenX: number; screenY: number }
   | { type: 'drag-move'; screenX: number; screenY: number }
   | { type: 'drag-end' }
   | { type: 'size'; width: number; height: number };
 
 export const GLANCE_PIP_ACTION_CHANNEL = 'engine-glance-pip';
+
+/**
+ * The menu-bar way back after a close (Q-426), in the tray's own language (every tray line is
+ * English: main has no catalog). Offered only while it is closed and a floating mode is on.
+ */
+export const SHOW_GLANCE_TRAY_LABEL = 'Show the floating glance';
+
+export function trayOffersGlanceBack(dismissed: boolean, prefs: GlancePrefs): boolean {
+  return dismissed && prefs.desktop !== 'off';
+}
 
 export function isGlancePipAction(value: unknown): value is GlancePipAction {
   if (value == null || typeof value !== 'object') return false;
@@ -57,7 +70,6 @@ export function isGlancePipAction(value: unknown): value is GlancePipAction {
   switch (v.type) {
     case 'open-engine':
     case 'close':
-    case 'turn-off':
     case 'drag-end':
       return true;
     case 'open-session':
@@ -109,14 +121,19 @@ export interface GlanceDesktopDeps {
    */
   coverage: { measure(): void; forget(): void };
   savePrefs(next: GlancePrefs): void;
+  /** Activates goose and opens the Engine tab — the Open control's purpose, and only its. */
   openEngine(): void;
+  /** Activates goose and opens that chat — the chat line's and the needs-you strip's purpose. */
   openSession(sessionId: string): void;
   /**
-   * Tell the goose window in front that the person turned the desktop window off from it (Q-224).
-   * false = no goose window is in front to say it (goose is in the background); asked again the
-   * next time something is re-decided, which is when a goose window comes to the front.
+   * Tell the goose window in front, once a session, that the person closed the desktop window and
+   * where it comes back from (Q-426). false = no goose window is in front to say it (goose is in
+   * the background at that click); asked again the next time something is re-decided, which is
+   * when a goose window comes to the front.
    */
-  tellTurnedOff(): boolean;
+  tellDismissed(): boolean;
+  /** The session dismissal began or ended: main republishes (Settings › App) and redraws the tray. */
+  dismissedChanged(): void;
 }
 
 /** px from the work area's edges — the gap macOS leaves around its own Picture in Picture. */
@@ -124,8 +141,14 @@ export const GLANCE_MARGIN = 16;
 
 export class EngineGlanceDesktop {
   private push: GlancePush | null = null;
-  private snoozed = false;
-  private turnedOffUntold = false;
+  /**
+   * The person closed it in this app session (Q-426). Only `showAgain` ends it — the menu-bar item,
+   * Settings › App's "Show it again", or a new floating mode picked there — never the engine's next
+   * busy spell and never a stored setting.
+   */
+  private dismissed = false;
+  private dismissedUntold = false;
+  private dismissedTold = false;
   private size: { width: number; height: number } | null = null;
   /** Where it is showing: the display and corner it was placed in, kept while it stays up. */
   private place: { displayId: number; corner: GlanceCorner } | null = null;
@@ -158,34 +181,55 @@ export class EngineGlanceDesktop {
   /** The latest glance: pushed to the window, then shown or hidden by the rules. */
   update(push: GlancePush): void {
     this.push = push;
-    this.snoozed = snoozeAfter(this.snoozed, push);
     if (this.deps.port.exists()) this.deps.port.send(ENGINE_GLANCE_CHANNEL, push);
     this.refresh();
+  }
+
+  /** Closed by the person in this app session (Q-426) — what main publishes and the tray offers. */
+  isDismissed(): boolean {
+    return this.dismissed;
+  }
+
+  /**
+   * The person brought it back: it shows again by the ordinary rules (live, and goose out of sight
+   * unless "whenever the engine works"). false = it was not dismissed; nothing changed.
+   */
+  showAgain(): boolean {
+    if (!this.dismissed) return false;
+    this.dismissed = false;
+    // Brought back before any goose window could say it was gone: nothing left to say.
+    this.dismissedUntold = false;
+    this.refresh();
+    return true;
   }
 
   /** Re-decide after a fact the glance does not carry changed (a goose window was covered, or not). */
   refresh(): void {
     if (this.quitting) return;
-    if (this.turnedOffUntold && this.deps.tellTurnedOff()) this.turnedOffUntold = false;
+    if (this.dismissedUntold && this.deps.tellDismissed()) {
+      this.dismissedUntold = false;
+      this.dismissedTold = true;
+    }
     const { port } = this.deps;
     const push = this.push;
     const windows = this.deps.gooseWindows();
-    if (coverageWanted(this.deps.platform, push, this.snoozed, windows))
+    if (coverageWanted(this.deps.platform, push, this.dismissed, windows))
       this.deps.coverage.measure();
     else this.deps.coverage.forget();
     const visible =
       push != null &&
       desktopGlanceVisible(push, {
         gooseOnScreen: gooseOnScreen(this.deps.platform, windows),
-        snoozed: this.snoozed,
+        dismissed: this.dismissed,
       });
     if (!visible) {
       if (port.exists() && port.isVisible()) port.hide();
-      // Turned off: nothing floats and nothing is kept alive for it.
-      if (push?.prefs.desktop === 'off' && port.exists()) port.destroy();
+      // Turned off, or closed for the session: nothing floats and nothing is kept alive for it.
+      const gone = push?.prefs.desktop === 'off' || this.dismissed;
+      if (gone && port.exists()) port.destroy();
       // Live while goose is in sight: the window is made (hidden) now, so it shows the moment goose
       // is covered instead of after a cold renderer loads (measured ~4 s on the packaged build).
-      else if (push != null && push.prefs.desktop !== 'off' && glanceLive(push) && !port.exists()) {
+      else if (!gone && push != null && glanceLive(push) && !port.exists()) {
         port.ensure();
         port.send(ENGINE_GLANCE_CHANNEL, push);
       }
@@ -235,15 +279,15 @@ export class EngineGlanceDesktop {
         if (this.push) this.savePrefs({ ...this.push.prefs, desktopCollapsed: action.collapsed });
         return;
       case 'close':
-        this.snoozed = true;
+        // The X, and only that: hidden and destroyed now, for the rest of this app session. No
+        // goose window is raised — the person was in another app and stays there (Q-426).
+        if (this.dismissed) return;
+        this.dismissed = true;
+        this.drag = null;
+        // Said once a session: a second close in the same session already knows the way back.
+        if (!this.dismissedTold) this.dismissedUntold = true;
         this.refresh();
-        return;
-      case 'turn-off':
-        if (!this.push) return;
-        this.turnedOffUntold = true;
-        // main's save republishes the glance, whose refresh hides and destroys the window.
-        this.savePrefs({ ...this.push.prefs, desktop: 'off' });
-        this.refresh();
+        this.deps.dismissedChanged();
         return;
       case 'size': {
         const first = this.size == null;

@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "隐藏此卡片 — 可在侧边栏底部或 设置 › 应用 中恢复"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "隐藏或关闭悬浮窗口"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "暂时隐藏"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "下次引擎工作时再出现"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "你可以在这里关闭它"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "知道了"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "正在切换"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "关闭悬浮窗口"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "可在 设置 › 应用 中重新开启"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "悬浮窗口已关闭"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "可在 设置 › 应用 中重新开启。"
-  },
   "engineGlance.untitled": {
     "defaultMessage": "未命名会话"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "关闭"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "一个浮在其他应用上方的小窗口，停在你拖到的角落。它从不抢占焦点。它的关闭按钮可以将其隐藏到引擎再次工作，或将其关闭。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "在侧边栏中"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "在本次会话中关闭悬浮窗口"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "在这里关闭，直到你把它调回来"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "悬浮窗口已在本次会话中隐藏"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "可在 设置 › 应用 中重新显示，也可以在那里将它关闭。"
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "可通过菜单栏中的 goose 图标或 设置 › 应用 重新显示，也可以在设置中将它关闭。"
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "一个浮在其他应用之上的小窗口，停在你拖到的角落。它从不抢占焦点，只有当你从中打开内容时才会把 goose 带到前台。点击关闭按钮后，它会在本次会话剩余时间内隐藏。"
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "你已将它关闭——在你调回之前保持隐藏。"
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "重新显示"
   }
 }

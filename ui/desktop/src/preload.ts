@@ -521,8 +521,10 @@ type ElectronAPI = {
   engineGlanceRead: () => Promise<GlancePush | null>;
   /** Hand MAIN this window's session-state store (running / needs you) for the glance. */
   engineGlanceSessions: (report: GlanceSessions) => void;
-  /** The desktop glance asks main to open, snooze, collapse, move or size it. */
+  /** The desktop glance asks main to open, close, collapse, move or size it. */
   engineGlancePip: (action: GlancePipAction) => void;
+  /** Bring the desktop glance back after the person closed it this session (Q-426). */
+  engineGlanceShowDesktop: () => void;
   /** Store the glance prefs; main pushes the new glance to every window. */
   engineGlancePrefsSet: (prefs: GlancePrefs) => Promise<void>;
 };
@@ -610,6 +612,7 @@ const electronAPI: ElectronAPI = {
   engineGlanceSessions: (report: GlanceSessions) =>
     ipcRenderer.send('engine-glance-sessions', report),
   engineGlancePip: (action: GlancePipAction) => ipcRenderer.send('engine-glance-pip', action),
+  engineGlanceShowDesktop: () => ipcRenderer.send('engine-glance-show-desktop'),
   engineGlancePrefsSet: (prefs: GlancePrefs) =>
     ipcRenderer.invoke('engine-glance-prefs-set', prefs),
   writeFile: (filePath: string, content: string) =>

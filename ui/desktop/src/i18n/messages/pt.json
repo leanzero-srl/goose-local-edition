@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "Ocultar este cartão — traga-o de volta pelo rodapé da barra lateral ou em Configurações › Aplicativo"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "Ocultar ou desativar a janela flutuante"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "Ocultar por agora"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "Volta na próxima vez que o motor trabalhar"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "Você pode desativar isto por aqui"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Entendi"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Trocando"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "Desativar a janela flutuante"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Reative em Configurações › Aplicativo"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "Janela flutuante desativada"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Reative-a em Configurações › Aplicativo."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "Sessão sem título"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Desligado"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Uma janela pequena sobre os seus outros apps, no canto para onde a arrastar. Nunca rouba o foco. O botão de fechar oculta-a até o motor voltar a trabalhar, ou desativa-a."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Na barra lateral"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Fechar a janela flutuante nesta sessão"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "Feche aqui até trazê-la de volta"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "Janela flutuante oculta nesta sessão"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Traga-a de volta em Configurações › Aplicativo, onde também é possível desativá-la."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Traga-a de volta pelo ícone do goose na barra de menus ou em Configurações › Aplicativo, onde também é possível desativá-la."
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "Uma pequena janela sobre seus outros apps, no canto para onde você a arrastar. Ela nunca pega o foco e só traz o goose para a frente quando você abre algo nela. O botão de fechar a oculta pelo resto desta sessão."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "Você a fechou — oculta até trazê-la de volta."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Mostrar de novo"
   }
 }

@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "Sembunyikan kad ini — kembalikan dari bahagian bawah bar sisi atau Tetapan › Aplikasi"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "Sembunyikan atau matikan tetingkap terapung"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "Sembunyikan buat masa ini"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "Kembali apabila enjin bekerja semula"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "Anda boleh mematikan ini dari sini"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Faham"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Menukar"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "Matikan tetingkap terapung"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Hidupkan semula dalam Tetapan › Aplikasi"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "Tetingkap terapung dimatikan"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Hidupkan semula dalam Tetapan › Aplikasi."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "Sesi tanpa tajuk"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Mati"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Tetingkap kecil di atas aplikasi lain, di sudut yang anda seret. Ia tidak pernah mengambil fokus. Butang tutupnya menyembunyikannya sehingga enjin bekerja semula, atau mematikannya."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Di bar sisi"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Tutup tetingkap terapung untuk sesi ini"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "Tutup di sini sehingga anda memaparkannya semula"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "Tetingkap terapung disembunyikan untuk sesi ini"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Paparkan semula dari Tetapan › Aplikasi, tempat anda juga boleh mematikannya."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Paparkan semula dari ikon goose di bar menu atau dari Tetapan › Aplikasi, tempat anda juga boleh mematikannya."
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "Tetingkap kecil di atas aplikasi lain anda, di sudut tempat anda menyeretnya. Ia tidak pernah mengambil fokus, dan hanya membawa goose ke hadapan apabila anda membuka sesuatu daripadanya. Butang tutupnya menyembunyikannya untuk baki sesi ini."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "Anda telah menutupnya — tersembunyi sehingga anda memaparkannya semula."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Paparkan semula"
   }
 }

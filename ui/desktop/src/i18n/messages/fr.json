@@ -2075,18 +2075,6 @@
   "engineGlance.hide": {
     "defaultMessage": "Masquer cette carte — la retrouver au pied de la barre latérale ou dans Paramètres › Application"
   },
-  "engineGlance.hideChoices": {
-    "defaultMessage": "Masquer ou désactiver la fenêtre flottante"
-  },
-  "engineGlance.hideForNow": {
-    "defaultMessage": "Masquer pour l’instant"
-  },
-  "engineGlance.hideForNowDetail": {
-    "defaultMessage": "De retour la prochaine fois que le moteur travaille"
-  },
-  "engineGlance.hint": {
-    "defaultMessage": "Vous pouvez désactiver ceci d’ici"
-  },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Compris"
   },
@@ -2222,18 +2210,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Changement"
   },
-  "engineGlance.turnOff": {
-    "defaultMessage": "Désactiver la fenêtre flottante"
-  },
-  "engineGlance.turnOffDetail": {
-    "defaultMessage": "Réactivez-la dans Paramètres › Application"
-  },
-  "engineGlance.turnedOff.title": {
-    "defaultMessage": "Fenêtre flottante désactivée"
-  },
-  "engineGlance.turnedOff.way": {
-    "defaultMessage": "Réactivez-la dans Paramètres › Application."
-  },
   "engineGlance.untitled": {
     "defaultMessage": "Session sans titre"
   },
@@ -2263,9 +2239,6 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Désactivé"
-  },
-  "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Une petite fenêtre au-dessus de vos autres apps, dans le coin où vous la déposez. Elle ne prend jamais le focus. Son bouton de fermeture la masque jusqu’à ce que le moteur travaille de nouveau, ou la désactive."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Dans la barre latérale"
@@ -11206,5 +11179,29 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Fermer la fenêtre flottante pour cette session"
+  },
+  "engineGlance.hintClose": {
+    "defaultMessage": "Fermez-la ici jusqu’à ce que vous la rappeliez"
+  },
+  "engineGlance.dismissed.title": {
+    "defaultMessage": "Fenêtre flottante masquée pour cette session"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Rappelez-la depuis Paramètres › Application, où vous pouvez aussi la désactiver."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Rappelez-la depuis l’icône goose de la barre des menus ou depuis Paramètres › Application, où vous pouvez aussi la désactiver."
+  },
+  "engineGlanceSettings.desktopDescSession": {
+    "defaultMessage": "Une petite fenêtre au-dessus de vos autres apps, dans le coin où vous la faites glisser. Elle ne prend jamais le focus et n’amène goose au premier plan que si vous y ouvrez quelque chose. Son bouton de fermeture la masque pour le reste de cette session."
+  },
+  "engineGlanceSettings.dismissed": {
+    "defaultMessage": "Vous l’avez fermée — masquée jusqu’à ce que vous la rappeliez."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "L’afficher à nouveau"
   }
 }

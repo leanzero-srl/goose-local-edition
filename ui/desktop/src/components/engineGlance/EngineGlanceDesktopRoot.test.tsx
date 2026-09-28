@@ -65,49 +65,29 @@ function actionsSent(): GlancePipAction['type'][] {
   return pip.mock.calls.map(([action]) => action.type).filter((t) => t !== 'size');
 }
 
-describe('EngineGlanceDesktopRoot — Q-224: two ways to hide it, both from the window', () => {
-  it('"Hide for now": the window asks main to snooze it — and writes no setting', () => {
-    mount(withPrefs(writing, { desktopHintSeen: true }));
-    fireEvent.click(screen.getByTestId('engine-glance-close'));
-    fireEvent.click(screen.getByTestId('engine-glance-hide-for-now'));
-    expect(actionsSent()).toEqual(['close']);
-    expect(prefsSet).not.toHaveBeenCalled();
-  });
-
-  it('"Turn off the floating window": the window asks main to turn it off (the setting is main’s one save)', () => {
-    mount(withPrefs(writing, { desktopHintSeen: true }));
-    fireEvent.click(screen.getByTestId('engine-glance-close'));
-    fireEvent.click(screen.getByTestId('engine-glance-turn-off'));
-    expect(actionsSent()).toEqual(['turn-off']);
-    // No second store: the window never writes the prefs itself.
-    expect(prefsSet).not.toHaveBeenCalled();
-  });
-
-  it('the pill offers the same two choices', () => {
-    mount(withPrefs(writing, { desktopHintSeen: true, desktopCollapsed: true }));
-    expect(screen.getByTestId('engine-glance').dataset.collapsed).toBe('true');
-    fireEvent.click(screen.getByTestId('engine-glance-close'));
-    fireEvent.click(screen.getByTestId('engine-glance-turn-off'));
-    expect(actionsSent()).toEqual(['turn-off']);
-  });
+describe('EngineGlanceDesktopRoot — Q-426: the X closes it, from the window, in one click', () => {
+  for (const collapsed of [false, true]) {
+    it(`${collapsed ? 'pill' : 'card'}: the X asks main to close it — and writes no setting`, () => {
+      mount(withPrefs(writing, { desktopHintSeen: true, desktopCollapsed: collapsed }));
+      expect(screen.getByTestId('engine-glance').dataset.collapsed).toBe(String(collapsed));
+      fireEvent.click(screen.getByTestId('engine-glance-close'));
+      expect(actionsSent()).toEqual(['close']);
+      // No second store: the dismissal is main's session state, never a setting.
+      expect(prefsSet).not.toHaveBeenCalled();
+    });
+  }
 
   it('the stack opens away from the remembered corner', () => {
-    mount(
-      withPrefs(writing, {
-        desktopHintSeen: true,
-        desktopPlace: { displayId: 1, corner: 'top-left' },
-      })
-    );
-    fireEvent.click(screen.getByTestId('engine-glance-close'));
+    mount(withPrefs(writing, { desktopPlace: { displayId: 1, corner: 'top-left' } }));
     expect(screen.getByTestId('engine-glance-stack').className).toContain('items-start');
   });
 });
 
-describe('EngineGlanceDesktopRoot — Q-224: the one-time hint', () => {
+describe('EngineGlanceDesktopRoot — Q-224/Q-426: the one-time hint', () => {
   it('never seen: shown; main marking it seen as the window appears does not take it away', () => {
     mount(writing);
     expect(screen.getByTestId('engine-glance-hint').textContent).toContain(
-      'You can turn this off from here'
+      'Close it here until you bring it back'
     );
     pushFromMain(withPrefs(writing, { desktopHintSeen: true }));
     expect(screen.getByTestId('engine-glance-hint')).toBeTruthy();
@@ -128,14 +108,6 @@ describe('EngineGlanceDesktopRoot — Q-224: the one-time hint', () => {
     first.unmount();
     resetEngineGlanceForTests(null);
     mount(withPrefs(writing, { desktopHintSeen: true }));
-    expect(screen.queryByTestId('engine-glance-hint')).toBeNull();
-  });
-
-  it('opening the X counts as found: the hint goes and the choices take its place', () => {
-    mount(writing);
-    fireEvent.click(screen.getByTestId('engine-glance-close'));
-    expect(screen.queryByTestId('engine-glance-hint')).toBeNull();
-    fireEvent.click(screen.getByTestId('engine-glance-close'));
     expect(screen.queryByTestId('engine-glance-hint')).toBeNull();
   });
 });
