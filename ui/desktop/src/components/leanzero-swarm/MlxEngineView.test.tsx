@@ -14,6 +14,7 @@ import MlxEngineView, {
   mountFailureBanners,
 } from './MlxEngineView';
 import { mlxDistributedStart } from '../../acp/mlx-distributed';
+import { publishRestoreLine } from './mlxRestore';
 import type { PlacementPlan } from '../../acp/mlx-placement';
 import { NODES, PLAN_27B, PLAN_FLASH } from './placement.fixtures';
 import { NAV_ITEMS } from '../../hooks/useNavigationItems';
@@ -3572,5 +3573,134 @@ describe('Q-45: a served copy is a SOLID chip, never the idle grey', () => {
       expect(chip.className).not.toContain('bg-lz-phase-idle');
     }
     unmount();
+  });
+});
+
+/**
+ * Q-277, the 3.0.66 Engine tab after a kill -9'd goosed: ONE refusal stacked three times (Restore,
+ * Mount blocked, Mount failed — each the gate's ~400-char arithmetic, from three attempts with three
+ * sets of figures), and the tile beside them read "Fits, 0.2 GB spare" off a later read while the
+ * banners said short 2.0 GB. Now the refusal is the status's last gate, stated once in plain words,
+ * with its figures from the verdict the tile draws; the arithmetic is behind Details, and the
+ * restore it came from lends its Try again.
+ */
+describe('MlxEngineView — one refusal, once, from one fit verdict (Q-277)', () => {
+  const G = 1024 * 1024 * 1024;
+  const GATE_WORDS =
+    'needs 30.6 GB (30.5 GB of weights + 0.1 GB of KV for 2304 tokens) but the budget 28.6 GB = min(available 40.5 GB − the 9.3% margin 11.9 GB, GPU ceiling 107.5 GB) (short 2.0 GB) — Make room did not run (engineLoaded): this Mac runs an MLX engine (pid 21637: /Users/m/.cache/uv/archive-v0/U_t/bin/python … rapid-mlx serve /Users/m); compaction pressures every process on the Mac, so it never runs beside a loaded model';
+  const fitOf = (verdict: 'allow' | 'block', budgetGb: number, message: string) => ({
+    modelId: QWEN,
+    verdict,
+    needBytes: 30.6 * G,
+    weightsBytes: 30.5 * G,
+    kvBytes: 0.1 * G,
+    contextTokens: 2304,
+    budgetBytes: budgetGb * G,
+    availableBytes: (budgetGb + 11.9) * G,
+    totalBytes: 128 * G,
+    ceilingBytes: 107.5 * G,
+    marginBytes: 11.9 * G,
+    marginRatio: 0.093,
+    ...(verdict === 'block'
+      ? { shortBytes: (30.6 - budgetGb) * G }
+      : { spareBytes: (budgetGb - 30.6) * G }),
+    message,
+  });
+  const REFUSED = fitOf('block', 28.6, GATE_WORDS);
+
+  afterEach(() => publishRestoreLine({ phase: 'idle' }));
+
+  function refusedStatus(live: ReturnType<typeof fitOf>) {
+    mockStatus.mockImplementation(async (_nodeId?: string, fitModelId?: string | null) =>
+      statusOf({
+        state: 'stopped',
+        totalMemoryGb: 128,
+        gateVerdict: 'block',
+        gateMessage: GATE_WORDS,
+        gateFit: REFUSED,
+        mountFit: fitModelId === QWEN ? live : undefined,
+      })
+    );
+  }
+
+  it('the refused restore and Run are ONE banner in plain words; the tile and it agree', async () => {
+    const { MlxMountRefusedError } =
+      await vi.importActual<typeof import('../../acp/mlx-engine')>('../../acp/mlx-engine');
+    // The live read fits by 0.2 GB — the tile's "Fits, 0.2 GB spare" of the screenshot.
+    refusedStatus(fitOf('allow', 30.8, 'fits, but only 0.2 GB under the budget'));
+    publishRestoreLine({
+      phase: 'failed',
+      what: { kind: 'single', modelId: QWEN, peerName: null },
+      reason: { code: 'gate', fit: REFUSED },
+    });
+    mockMount.mockRejectedValue(new MlxMountRefusedError({ fit: REFUSED }));
+    const { unmount } = render(<MlxEngineView />);
+    await userEvent.click(await runHere());
+    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(QWEN));
+
+    const refusal = await screen.findByTestId('mlx-mount-refusal');
+    expect(screen.getAllByTestId('mlx-mount-refusal')).toHaveLength(1);
+    expect(refusal).toHaveTextContent(
+      'Did not start' +
+        'Qwen3-30B-A3B-4bit did not fit on this Mac when it was asked to start. Memory has changed and it fits now — start it again.'
+    );
+    for (const gone of ['mlx-restore', 'mlx-mount-blocked', 'mlx-mount-failed']) {
+      expect(screen.queryByTestId(gone)).toBeNull();
+    }
+    const alerts = screen.queryAllByRole('alert').map((a) => a.textContent ?? '');
+    expect(alerts.filter((t) => t.includes('short 2.0 GB'))).toEqual([]);
+    expect(await screen.findByTestId('mlx-mount-cost')).toHaveTextContent('Fits, 0.2 GB');
+    // The restore it came from lends its actions; the arithmetic waits behind Details.
+    expect(within(refusal).getByTestId('mlx-restore-retry')).toBeInTheDocument();
+    expect(screen.queryByTestId('mlx-mount-refusal-detail')).toBeNull();
+    await userEvent.click(within(refusal).getByTestId('mlx-mount-refusal-details'));
+    expect(screen.getByTestId('mlx-mount-refusal-detail')).toHaveTextContent(GATE_WORDS);
+    unmount();
+  });
+
+  it('still refused: the banner states the SAME figures the tile draws', async () => {
+    refusedStatus(fitOf('block', 28.3, 'needs 30.6 GB but the budget 28.3 GB (short 2.3 GB)'));
+    const { unmount } = render(<MlxEngineView />);
+    // Until the tile has its verdict for the picked model the banner states the refusal's own;
+    // from then on, the tile's.
+    const refusal = await screen.findByTestId('mlx-mount-refusal');
+    await waitFor(() =>
+      expect(refusal).toHaveTextContent(
+        'Qwen3-30B-A3B-4bit needs 30.6 GB on this Mac and 28.3 GB is free for it now — 2.3 GB short.'
+      )
+    );
+    expect(refusal).toHaveAttribute('data-tone', 'err');
+    expect(await screen.findByTestId('mlx-mount-cost')).toHaveTextContent(
+      'Needs 2.3 GB more free memory'
+    );
+    // No restore failed here: nothing to try again from this banner.
+    expect(within(refusal).queryByTestId('mlx-restore-retry')).toBeNull();
+    unmount();
+  });
+
+  it('a refusal naming the port the stray banner names is that banner, not a second one', () => {
+    const status = {
+      gateVerdict: undefined,
+      gateMessage: undefined,
+      state: 'stopped' as const,
+      strayListenerPort: 8090,
+    };
+    const held =
+      "port 8090 has an unsupervised listener: pid 21637 (`python rapid-mlx serve`) — not this goose's: it carries no GOOSE_SIDECAR — nothing was signalled; stop it per pid (`kill 21637`), then start again";
+    expect(mountFailureBanners(status, held).mountError).toBeNull();
+    expect(mountFailureBanners({ ...status, strayListenerPort: 9600 }, held).mountError).toBe(held);
+    expect(mountFailureBanners(status, 'model not found').mountError).toBe('model not found');
+  });
+
+  it('a goose without gateFit keeps its words verbatim under Mount blocked', () => {
+    expect(
+      mountFailureBanners({ gateVerdict: 'block', gateMessage: GATE_WORDS }, null).gateBlock
+    ).toBe(GATE_WORDS);
+    expect(
+      mountFailureBanners(
+        { gateVerdict: 'block', gateMessage: GATE_WORDS, gateFit: REFUSED },
+        GATE_WORDS
+      )
+    ).toEqual({ gateBlock: null, mountError: null });
   });
 });

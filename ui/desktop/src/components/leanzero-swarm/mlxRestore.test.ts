@@ -15,6 +15,7 @@ import {
   runRestore,
   toRestoreReport,
   type RestoreDeps,
+  type RestoreLine,
 } from './mlxRestore';
 import { isMlxRestoreReport, restoreTrayLine, servingKey } from '../../utils/mlxRestoreReport';
 import { buildMlxTrayModel, standingRestore } from '../../utils/mlxTray';
@@ -127,19 +128,63 @@ describe('restoreServing — what served before the relaunch comes back the way 
     expect(d.mount).not.toHaveBeenCalled();
   });
 
-  it('the memory gate refuses: the gate’s own words are the failure', async () => {
+  it('the memory gate refuses: the failure is the gate’s verdict, figures and words (Q-277)', async () => {
+    const fit = {
+      modelId: QWEN,
+      verdict: 'block',
+      message: 'model needs 30.6 GB, 12.0 GB free',
+      needBytes: 30.6 * 1024 ** 3,
+      budgetBytes: 28.6 * 1024 ** 3,
+      shortBytes: 2 * 1024 ** 3,
+    };
     const d = deps({
       intent: [{ kind: 'single', modelId: QWEN }],
       mount: async () => {
-        throw new MlxMountRefusedError({
-          fit: { modelId: QWEN, verdict: 'block', message: 'model needs 30.6 GB, 12.0 GB free' },
+        throw new MlxMountRefusedError({ fit });
+      },
+    });
+    const result = await restoreServing(d, vi.fn());
+    expect(result).toMatchObject({
+      phase: 'failed',
+      what: { kind: 'single', modelId: QWEN },
+      reason: { code: 'gate', fit },
+    });
+    // Main's tray line says it plainly; the gate's arithmetic is the Details, not the line.
+    expect(toRestoreReport(result as RestoreLine)?.reason).toBe('not enough memory (2.0 GB short)');
+  });
+
+  it('a port this goose may not stop: the port, plainly — goose’s words (the holder, the step) behind Details', async () => {
+    const held =
+      "port 8090 has an unsupervised listener: pid 21637 (`python rapid-mlx serve`) — not this goose's: it carries no GOOSE_SIDECAR — nothing was signalled; stop it per pid (`kill 21637`), then start again";
+    const d = deps({
+      intent: [{ kind: 'single', modelId: QWEN }],
+      mount: async () => {
+        // The ACP transport's RequestError: `message` is the JSON-RPC class, `data` goose's words.
+        throw Object.assign(new Error('Invalid params'), { code: -32602, data: held });
+      },
+    });
+    const result = await restoreServing(d, vi.fn());
+    expect(result).toMatchObject({
+      phase: 'failed',
+      reason: { code: 'portHeld', port: 8090, text: held },
+    });
+    expect(toRestoreReport(result as RestoreLine)?.reason).toBe(
+      'port 8090 is taken by an engine this goose may not stop'
+    );
+  });
+
+  it('any other refused start says goose’s words, never the JSON-RPC class', async () => {
+    const d = deps({
+      intent: [{ kind: 'single', modelId: QWEN }],
+      mount: async () => {
+        throw Object.assign(new Error('Invalid params'), {
+          code: -32602,
+          data: "model 'x' is incomplete: a .part file remains",
         });
       },
     });
     expect(await restoreServing(d, vi.fn())).toMatchObject({
-      phase: 'failed',
-      what: { kind: 'single', modelId: QWEN },
-      reason: { code: 'said', text: 'model needs 30.6 GB, 12.0 GB free' },
+      reason: { code: 'said', text: "model 'x' is incomplete: a .part file remains" },
     });
   });
 

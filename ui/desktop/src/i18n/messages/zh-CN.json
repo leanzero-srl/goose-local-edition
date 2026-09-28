@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "无响应 · 由另一个窗口拥有"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "详情"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "请求启动时，{model} 在这台 Mac 上放不下。内存已经变化，现在放得下了 — 请再次启动。"
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "隐藏详情"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "未启动"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} 在这台 Mac 上需要 {need} GB，现在可供它使用的空闲为 {free} GB — 还差 {short} GB。"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "取消"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link 未连接（{detail}）"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "内存不足 — 需要 {need} GB，可供它使用的空闲为 {free} GB（还差 {short} GB）"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "内存不足"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "内存不足（还差 {short} GB）"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "另一台 Mac"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "端口 {port} 被一个此 goose 无权停止的引擎占用"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "正在{kind, select, single {在这台 Mac 上} split {在你的多台 Mac 上} other {在 {peer} 上}}恢复 {model}…"

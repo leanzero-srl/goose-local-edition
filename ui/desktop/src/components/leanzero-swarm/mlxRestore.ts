@@ -1,4 +1,8 @@
-import type { MlxEngineStatus } from '../../acp/mlx-engine';
+import {
+  MlxMountRefusedError,
+  type MlxEngineStatus,
+  type MlxMountRefusal,
+} from '../../acp/mlx-engine';
 import type { MlxDistributedStartResponse, MlxDistributedStatus } from '../../acp/mlx-distributed';
 import type {
   MlxRemoteSingleStartResponse,
@@ -10,6 +14,8 @@ import { restoreSuperseded, servingKey, type MlxRestoreReport } from '../../util
 import { linkStateSettling } from '../../hooks/useLinkTrayReporter';
 import { ownsTheMac } from './mlxDistributed';
 import { singleLoad } from './mlxLiveStats';
+import { mlxErrorMessage } from './mlxErrorMessage';
+import { portHeldBy } from './mlxPortHeld';
 
 /**
  * RESTORE ON RELAUNCH: every app update or relaunch stops goosed, and with it what served chat. At
@@ -45,12 +51,17 @@ export interface RestoreDeps {
 
 /**
  * Why a restore did not bring the thing back — the parts the line puts in words. `said.detail`:
- * what stands behind goose's words (pids, command lines), shown only behind Details.
+ * what stands behind goose's words (pids, command lines), shown only behind Details. `gate`: the
+ * memory check refused the mount — the line states its figures plainly, its full arithmetic behind
+ * Details. `portHeld`: a process this goose may not stop holds the engine port — the line names
+ * the port, goose's words (the holder and the step) behind Details (Q-277).
  */
 export type RestoreReason =
   | { code: 'linkDown'; detail: string }
   | { code: 'stoppedEarly' }
-  | { code: 'said'; text: string; detail?: string };
+  | { code: 'said'; text: string; detail?: string }
+  | { code: 'gate'; fit: MlxMountRefusal['fit'] }
+  | { code: 'portHeld'; port: number; text: string };
 
 /**
  * The restore is under way; `waitingOn` names the Mac where the previous split is still shutting
@@ -98,6 +109,20 @@ async function linkConnected(deps: RestoreDeps): Promise<string | null> {
 
 type Outcome = { served: true } | { served: false; reason: RestoreReason };
 const said = (text: string): Outcome => ({ served: false, reason: { code: 'said', text } });
+
+/**
+ * A start that threw, as the line says it: the memory check's refusal by its figures, a held port
+ * by its number, anything else in goose's own words — the ACP error's `data`, never the JSON-RPC
+ * class ("Invalid params") its `message` carries.
+ */
+function failedStart(error: unknown): Outcome {
+  if (error instanceof MlxMountRefusedError) {
+    return { served: false, reason: { code: 'gate', fit: error.refusal.fit } };
+  }
+  const text = mlxErrorMessage(error, 'the start failed');
+  const port = portHeldBy(text);
+  return port != null ? { served: false, reason: { code: 'portHeld', port, text } } : said(text);
+}
 
 async function restoreSingle(deps: RestoreDeps, modelId: string): Promise<Outcome> {
   await deps.mount(modelId);
@@ -269,7 +294,7 @@ export async function restoreServing(
           ? await restoreRemote(deps, intent.peer ?? '', what.modelId)
           : await restoreSplit(deps, intent, what, onRestoring);
   } catch (error) {
-    outcome = said(error instanceof Error ? error.message : String(error));
+    outcome = failedStart(error);
   }
   if (outcome.served) return { phase: 'idle' };
   const now = await deps.readIntent().catch(() => null);
@@ -314,7 +339,18 @@ function reasonText(reason: RestoreReason): string {
       return 'it stopped before it served';
     case 'said':
       return reason.text;
+    case 'gate':
+      return reason.fit.shortBytes != null
+        ? `not enough memory (${gbOf(reason.fit.shortBytes)} GB short)`
+        : 'not enough memory';
+    case 'portHeld':
+      return `port ${reason.port} is taken by an engine this goose may not stop`;
   }
+}
+
+/** A size as goose's refusals write it: GiB, one decimal, labelled GB (fit.rs `gb`). */
+export function gbOf(bytes: number): string {
+  return (bytes / 1024 ** 3).toFixed(1);
 }
 
 export function toRestoreReport(line: RestoreLine): MlxRestoreReport | null {
@@ -438,7 +474,7 @@ export function runRestore(deps: RestoreDeps): Promise<void> {
       publishRestoreLine({
         phase: 'failed',
         what: current.phase === 'restoring' ? current.what : null,
-        reason: { code: 'said', text: error instanceof Error ? error.message : String(error) },
+        reason: { code: 'said', text: mlxErrorMessage(error, 'the restore failed') },
       })
     )
     .finally(() => {

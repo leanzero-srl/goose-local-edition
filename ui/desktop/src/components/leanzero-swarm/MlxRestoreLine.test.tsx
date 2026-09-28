@@ -151,3 +151,87 @@ describe('the restore line on the Engine tab', () => {
     );
   });
 });
+
+/**
+ * Q-277: the refusals a restore on this Mac meets are said plainly on the line — the memory check
+ * by its figures, a held port by its number — with goose's full words behind Details; and a memory
+ * refusal the Engine tab's refusal banner already states is not a second banner there.
+ */
+describe('the restore line says a refused start plainly (Q-277)', () => {
+  const G = 1024 ** 3;
+  const GATE = {
+    modelId: QWEN,
+    verdict: 'block',
+    needBytes: 30.6 * G,
+    budgetBytes: 28.6 * G,
+    shortBytes: 2 * G,
+    message:
+      'needs 30.6 GB (…) but the budget 28.6 GB = min(available 40.5 GB − the 9.3% margin 11.9 GB, GPU ceiling 107.5 GB) (short 2.0 GB) — Make room did not run (engineLoaded): this Mac runs an MLX engine (pid 21637 …)',
+  };
+
+  it('the memory check: its figures on the line, its arithmetic behind Details', async () => {
+    const user = userEvent.setup();
+    const { container } = banner();
+    act(() =>
+      publishRestoreLine({
+        phase: 'failed',
+        what: { kind: 'single', modelId: QWEN, peerName: null },
+        reason: { code: 'gate', fit: GATE },
+      })
+    );
+    const line = screen.getByTestId('mlx-restore');
+    expect(line).toHaveTextContent(
+      'Could not restore Qwen3.8-27B-Atlassian-Q8-mlx on this Mac: not enough memory — it needs 30.6 GB and 28.6 GB is free for it (2.0 GB short)'
+    );
+    expect(line).not.toHaveTextContent('21637');
+    await user.click(screen.getByTestId('mlx-restore-details'));
+    expect(screen.getByTestId('mlx-restore-detail')).toHaveTextContent(GATE.message);
+    assertStudioClean(container);
+  });
+
+  it('a held port: the port on the line, the holder and the step behind Details', async () => {
+    const user = userEvent.setup();
+    banner();
+    const held =
+      "port 8090 has an unsupervised listener: pid 73403 (`python rapid-mlx serve`) — not this goose's — nothing was signalled; quit what started it (pid 7001), then start again";
+    act(() =>
+      publishRestoreLine({
+        phase: 'failed',
+        what: { kind: 'single', modelId: QWEN, peerName: null },
+        reason: { code: 'portHeld', port: 8090, text: held },
+      })
+    );
+    const line = screen.getByTestId('mlx-restore');
+    expect(line).toHaveTextContent(
+      'Could not restore Qwen3.8-27B-Atlassian-Q8-mlx on this Mac: port 8090 is taken by an engine this goose may not stop'
+    );
+    expect(line).not.toHaveTextContent('73403');
+    await user.click(screen.getByTestId('mlx-restore-details'));
+    expect(screen.getByTestId('mlx-restore-detail')).toHaveTextContent(held);
+  });
+
+  it('the refusal banner states the same memory refusal: no second banner', () => {
+    render(
+      <IntlTestWrapper>
+        <MlxRestoreBanner refusedModelId={QWEN} />
+      </IntlTestWrapper>
+    );
+    act(() =>
+      publishRestoreLine({
+        phase: 'failed',
+        what: { kind: 'single', modelId: QWEN, peerName: null },
+        reason: { code: 'gate', fit: GATE },
+      })
+    );
+    expect(screen.queryByTestId('mlx-restore')).toBeNull();
+    // Another model's refusal, or a split's, is still this line's to say.
+    act(() =>
+      publishRestoreLine({
+        phase: 'failed',
+        what: { kind: 'split', modelId: QWEN, peerName: null },
+        reason: { code: 'said', text: 'the preflight refused' },
+      })
+    );
+    expect(screen.getByTestId('mlx-restore')).toBeInTheDocument();
+  });
+});

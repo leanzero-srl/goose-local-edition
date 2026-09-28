@@ -36,6 +36,10 @@ import {
  *
  * Mode truth: the engine answering IS running. A refused connection is the engine gone (`off`),
  * unless goose last said it is mounting (the port opens only at the end of a mount) or failed.
+ * The one answer that is NOT goose's engine running: goose said it runs none and that the port is
+ * held by its own leftover from an earlier run (`leftoverBaseUrl`) — that is `off`, named, and the
+ * port is not read (Q-277: a kill -9'd goosed's engine read "single/running" beside a panel
+ * saying no model mounted).
  * A timeout is NOT the engine gone — a busy engine can be slow to answer — so the mode holds and
  * the reason is carried; a body that is not Rapid-MLX's makes the mode `unknown`, never `running`.
  *
@@ -55,10 +59,22 @@ export interface MlxEngineReport {
   modelId?: string;
   servedModelId?: string;
   lastError?: string;
+  /**
+   * While goose runs no engine: the engine port's address when every process on it is this goose's
+   * own leftover from an earlier run, which nothing runs and a start stops first
+   * (`leftoverPortOf`) — what answers there is not goose's engine (Q-277).
+   */
+  leftoverBaseUrl?: string;
 }
 
 const REPORT_STATES = new Set(['stopped', 'mounting', 'running', 'failed']);
-const REPORT_TEXT_FIELDS = ['baseUrl', 'modelId', 'servedModelId', 'lastError'] as const;
+const REPORT_TEXT_FIELDS = [
+  'baseUrl',
+  'modelId',
+  'servedModelId',
+  'lastError',
+  'leftoverBaseUrl',
+] as const;
 
 /** An IPC payload is a report only if every field is what `mlxEngineStatus` sends. */
 export function isMlxEngineReport(value: unknown): value is MlxEngineReport {
@@ -462,6 +478,15 @@ export class MlxEngineMonitor {
         statusDetail: 'goose names no port for the MLX engine yet',
         measured,
         failedError,
+      };
+    }
+    if (report?.state === 'stopped' && report.leftoverBaseUrl === baseUrl) {
+      return {
+        ...INITIAL_SNAPSHOT,
+        mode: 'off',
+        baseUrl,
+        statusDetail: `goose runs no engine: ${baseUrl} is answered by this goose's own engine left from an earlier run, which nothing runs — a start stops it first`,
+        measured,
       };
     }
     const result = await this.deps.readStatus(baseUrl);

@@ -5,6 +5,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import { Button } from '../lz';
 import { ToneBanner } from './studio';
 import {
+  gbOf,
   latestRestoreLine,
   publishRestoreLine,
   retryRestore,
@@ -41,6 +42,23 @@ const i18n = defineMessages({
     defaultMessage: 'LeanZero Link is not connected ({detail})',
   },
   stoppedEarly: { id: 'mlxRestore.stoppedEarly', defaultMessage: 'it stopped before it served' },
+  notEnoughMemory: {
+    id: 'mlxRestore.notEnoughMemory',
+    defaultMessage:
+      'not enough memory — it needs {need} GB and {free} GB is free for it ({short} GB short)',
+  },
+  notEnoughMemoryShort: {
+    id: 'mlxRestore.notEnoughMemoryShort',
+    defaultMessage: 'not enough memory ({short} GB short)',
+  },
+  notEnoughMemoryPlain: {
+    id: 'mlxRestore.notEnoughMemoryPlain',
+    defaultMessage: 'not enough memory',
+  },
+  portTaken: {
+    id: 'mlxRestore.portTaken',
+    defaultMessage: 'port {port} is taken by an engine this goose may not stop',
+  },
   otherMac: { id: 'mlxRestore.otherMac', defaultMessage: 'the other Mac' },
   waitingPrevious: {
     id: 'mlxRestore.waitingPrevious',
@@ -65,6 +83,19 @@ function reasonText(intl: IntlShape, reason: RestoreReason): string {
       return intl.formatMessage(i18n.stoppedEarly);
     case 'said':
       return reason.text;
+    case 'gate': {
+      const { needBytes, budgetBytes, shortBytes } = reason.fit;
+      if (shortBytes == null) return intl.formatMessage(i18n.notEnoughMemoryPlain);
+      return needBytes != null && budgetBytes != null
+        ? intl.formatMessage(i18n.notEnoughMemory, {
+            need: gbOf(needBytes),
+            free: gbOf(budgetBytes),
+            short: gbOf(shortBytes),
+          })
+        : intl.formatMessage(i18n.notEnoughMemoryShort, { short: gbOf(shortBytes) });
+    }
+    case 'portHeld':
+      return intl.formatMessage(i18n.portTaken, { port: reason.port });
   }
 }
 
@@ -90,10 +121,36 @@ export function restoreLineText(intl: IntlShape, line: RestoreLine): string | nu
     : intl.formatMessage(i18n.unreadable, { reason });
 }
 
-/** What stands behind a failed line's words (pids, command lines) — shown only behind Details. */
+/**
+ * What stands behind a failed line's words (pids, command lines, the memory check's arithmetic) —
+ * shown only behind Details.
+ */
 export function restoreLineDetail(line: RestoreLine): string | null {
-  if (line.phase !== 'failed' || line.reason.code !== 'said') return null;
-  return line.reason.detail ?? null;
+  if (line.phase !== 'failed') return null;
+  switch (line.reason.code) {
+    case 'said':
+      return line.reason.detail ?? null;
+    case 'gate':
+      return line.reason.fit.message;
+    case 'portHeld':
+      return line.reason.text;
+    default:
+      return null;
+  }
+}
+
+/**
+ * A restore on this Mac the memory check refused for `modelId` — the refusal the Engine tab's one
+ * refusal banner already states, with this line's Try again and Dismiss (Q-277).
+ */
+export function restoreRefusedByGate(line: RestoreLine, modelId: string | null): boolean {
+  return (
+    modelId != null &&
+    line.phase === 'failed' &&
+    line.reason.code === 'gate' &&
+    line.what?.kind === 'single' &&
+    line.what.modelId === modelId
+  );
 }
 
 /**
@@ -153,13 +210,17 @@ export function RestoreActions({ variant = 'secondary' }: { variant?: 'secondary
   );
 }
 
-/** The Engine tab's banner. */
-export function MlxRestoreBanner() {
+/**
+ * The Engine tab's banner. `refusedModelId`: the model the Engine tab's refusal banner states a
+ * memory refusal for — a restore refused the same way is that refusal, shown there once with this
+ * line's actions, never a second banner beside it (Q-277).
+ */
+export function MlxRestoreBanner({ refusedModelId = null }: { refusedModelId?: string | null }) {
   const intl = useIntl();
   const line = useRestoreLine();
   const { toggle, panel } = useRestoreDetails(line);
   const text = restoreLineText(intl, line);
-  if (text == null) return null;
+  if (text == null || restoreRefusedByGate(line, refusedModelId)) return null;
   return (
     <div className="flex flex-col gap-2">
       <ToneBanner
