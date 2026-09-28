@@ -7,8 +7,11 @@
 //   (new Ready rows in mlx-load-measurements.jsonl) equal reply alternations and never the model-call
 //   count; no swap lands mid-reply; no reply starves; never two engines on one Mac (census); the load
 //   lock and the swap claim name one holder at every sample; a turn stopped while it waits in the
-//   loader's queue leaves no swap behind. New chats pick their node through GOOSE_PROVIDER/GOOSE_MODEL
-//   in config.yaml (what nodes/write's forNewChats writes); the file's original bytes are restored.
+//   loader's queue leaves no swap behind. New chats pick their node the way a user does (Q-262, 3.0.65:
+//   the old GOOSE_MODEL write in config.yaml was dead — the UI writes providers.swarm.model): the Nodes
+//   page's "New chats start on:" picker, set to NAME_A / NAME_B (the nodes' display names) and set back
+//   to what it showed before.
+//   J4=1 NODE_A=<id> NODE_B=<id> NAME_A=<display name> NAME_B=<display name> [ROUNDS=10] node r5.mjs <dir>
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
 import { mainPage } from './mainpage.mjs';
 import { execSync } from 'node:child_process';
@@ -79,13 +82,13 @@ await b.close();
 // ---------------------------------------------------------------------------------------------
 async function j4() {
   const HOME = process.env.HOME;
-  const CONFIG = `${HOME}/.config/goose/config.yaml`;
   const LOADS = `${HOME}/.local/share/goose/mlx-load-measurements.jsonl`;
   const HOLDERS = `${HOME}/.local/state/goose/mlx-holders`;
   const LOCK = `${HOME}/.local/state/goose/mlx-load.lock`;
   const LOGS = `${HOME}/.local/state/goose/logs`;
   const A = process.env.NODE_A, B = process.env.NODE_B, ROUNDS = Number(process.env.ROUNDS || 10);
   if (!A || !B || A === B) throw new Error('J4 needs NODE_A and NODE_B: two nodes whose ways differ');
+  if (!process.env.NAME_A || !process.env.NAME_B) throw new Error('J4 needs NAME_A and NAME_B: the nodes\' display names as the Nodes page lists them');
   const tsv = `${dir}/j4.tsv`;
   writeFileSync(tsv, 'round\tchat\tstart\tend\tsecs\tcalls\tswaps_during\tended\n');
   const events = (line) => appendFileSync(`${dir}/j4-events.log`, `${new Date().toISOString()} ${line}\n`);
@@ -103,22 +106,28 @@ async function j4() {
     appendFileSync(`${dir}/j4-samples.jsonl`, JSON.stringify({ t: new Date().toISOString(), tag, lock, claim, replies }) + '\n');
     if (lock === 'unreadable' || claim === 'unreadable') events(`FINDING ${tag}: a holder record is unreadable (lock ${lock}, claim ${claim})`);
   };
-  const original = readFileSync(CONFIG);
-  const setModel = (id) => {
-    const text = original.toString('utf8').split('\n').filter((l) => !/^GOOSE_(PROVIDER|MODEL):/.test(l));
-    writeFileSync(CONFIG, [...text.filter((l, i) => i < text.length - 1 || l !== ''), 'GOOSE_PROVIDER: swarm', `GOOSE_MODEL: node:${id}`, ''].join('\n'));
+  const forNewChats = async (optionText) => {
+    await p.goto(p.url().split('#')[0] + '#/nodes'); await p.waitForTimeout(3000);
+    const shown = (await p.evaluate(() => document.body.innerText)).split('New chats start on:')[1]?.split('\n').find((l) => l.trim()) ?? '';
+    if (optionText == null) return shown.trim();
+    await p.getByText('New chats start on:', { exact: true }).first().locator('xpath=following::*[self::button or @role="combobox"][1]').click(); await p.waitForTimeout(1200);
+    await p.locator('[role=option]').filter({ hasText: optionText }).first().click(); await p.waitForTimeout(2500);
+    events(`new chats start on: ${await forNewChats(null)}`);
   };
   const chats = {};
+  const before = await forNewChats(null);
   try {
     for (const [name, id] of [['A', A], ['B', B]]) {
-      setModel(id);
+      await forNewChats(process.env['NAME_' + name]);
       await p.goto(p.url().split('#')[0] + '#/'); await p.waitForTimeout(2500);
-      await p.getByRole('button', { name: /^New session in / }).click(); await p.waitForTimeout(4000);
+      await p.getByRole('button', { name: /^New session in / }).click();
+      // The chat's URL is its own only once resumeSessionId is in it (3.0.65: taken too early).
+      while (!p.url().includes('resumeSessionId')) await p.waitForTimeout(500);
       chats[name] = p.url();
       events(`chat ${name} on node:${id} at ${chats[name]}`);
     }
   } finally {
-    writeFileSync(CONFIG, original);
+    if (before) await forNewChats(before);
   }
   const work = `${dir}/work`; execSync(`mkdir -p ${work}/a ${work}/b`);
   const prompt = (who, round) => `Work only inside ${work}/${who}. Step by step, one tool call each: list the directory, create notes_${round}.txt with three lines about round ${round}, read it back, append a fourth line, count its lines with wc -l, and tell me the count.`;
@@ -129,7 +138,10 @@ async function j4() {
     await p.waitForTimeout(3000);
   };
   const running = async (who) => { if (p.url() !== chats[who]) { await p.goto(chats[who]); await p.waitForTimeout(2000); } return p.evaluate(() => !!document.querySelector('button[aria-label="Stop"]')); };
-  const waitDone = async (who) => { const t0 = Date.now(); while (await running(who)) { sample(`wait-${who}`); await p.waitForTimeout(2000); } return (Date.now() - t0) / 1000; };
+  // The provider log rotates through 10 files: counted once per round it capped at 10 (Q-262), so every
+  // sample adds the files rewritten since the last one.
+  let callsRound = 0;
+  const waitDone = async (who) => { const t0 = Date.now(); while (await running(who)) { sample(`wait-${who}`); callsRound += calls(); await p.waitForTimeout(2000); } return (Date.now() - t0) / 1000; };
   let replies = 0, alternations = 0, lastChat = null; const ready0 = readyRows().length; let callsTotal = 0;
   for (let round = 0; round < ROUNDS; round++) {
     if (existsSync(`${dir}/STOP`)) { events(`STOPPED before round ${round}`); break; }
@@ -139,12 +151,19 @@ async function j4() {
     const cancelProbe = round === Math.floor(ROUNDS / 2);
     await send('B', round);
     if (cancelProbe) {
+      // B's Stop exists once its turn is registered; wait for it rather than a fixed pause (Q-262: it
+      // never fired at 3 s), and give up only when A's reply ended first — then B never queued.
       const stop = p.locator('button[aria-label="Stop"]').first();
+      while (!(await stop.isVisible().catch(() => false))) {
+        await p.waitForTimeout(500);
+        if (!(await running('A'))) { events(`round ${round}: chat A finished before B's Stop appeared — no queue to cancel`); break; }
+        await p.goto(chats.B); await p.waitForTimeout(500);
+      }
       if (await stop.isVisible().catch(() => false)) { await stop.click(); events(`round ${round}: stopped chat B while it waited`); }
     }
     const aSecs = await waitDone('A');
     const bSecs = cancelProbe ? 0 : await waitDone('B');
-    const got = calls(); callsTotal += got;
+    callsRound += calls(); const got = callsRound; callsRound = 0; callsTotal += got;
     const swaps = readyRows().length - before;
     const turnReplies = cancelProbe ? 1 : 2;
     for (const who of cancelProbe ? ['A'] : ['A', 'B']) { if (lastChat && lastChat !== who) alternations++; lastChat = who; }
