@@ -74,7 +74,9 @@ const FIELD = cx(
   RADIUS.control
 );
 
-const ERROR_TEXT = cx('break-words', TYPE.meta, WEIGHT.semibold, TONE_TEXT.err);
+// The meta SIZE with the err ink: TYPE.meta carries its own ink-3, and in the compiled CSS an ink
+// utility beats text-lz-err (measured: text-lz-err and text-lz-accent lose to every text-lz-ink*).
+const ERROR_TEXT = cx('break-words text-lz-meta', WEIGHT.semibold, TONE_TEXT.err);
 
 export interface StartLoopFacts {
   /** The chat's working dir: where the check runs and the state file lives. */
@@ -401,7 +403,7 @@ function StartLoopBody({
           </p>
           {swap && (
             <p
-              className={cx(TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}
+              className={cx('text-lz-meta', WEIGHT.semibold, TONE_TEXT.warn)}
               data-testid="loop-swap-line"
             >
               {intl.formatMessage(w.swapLine, swap)}

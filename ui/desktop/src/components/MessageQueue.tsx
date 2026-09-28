@@ -116,14 +116,17 @@ interface MessageQueueProps {
   steersTick?: number | null;
 }
 
-/** "Queued · Send now steers tick {n}" — a solid chip, the row's own words for what it waits on. */
+/**
+ * "Queued · Send now steers tick {n}" — a solid chip, the row's own words for what it waits on. It
+ * wraps rather than truncates: cut short in a narrow window it lost the tick's number.
+ */
 function SteersTickChip({ n }: { n: number }) {
   const intl = useIntl();
   return (
     <span
       data-testid="queue-steers-tick"
       className={cx(
-        'inline-flex max-w-full items-center truncate rounded-lz-pill px-2 py-0.5 text-[11px] font-lz-semibold',
+        'inline-block max-w-full break-words rounded-lz-control px-2 py-0.5 text-[11px] font-lz-semibold',
         TONE_FILL.accent
       )}
     >

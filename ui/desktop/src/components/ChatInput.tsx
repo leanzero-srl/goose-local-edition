@@ -860,12 +860,23 @@ export default function ChatInput({
     }
   }, [debouncedAutosize, displayValue, textAreaRef]);
 
-  // Set consistent minimum height when displayValue is empty
+  // What the empty composer says: the running tick's words while a loop tick runs here (§8.1).
+  const placeholder = isRecording
+    ? ''
+    : tickHere !== null
+      ? intl.formatMessage(composerWords.placeholderTickRunning, { n: tickHere })
+      : tickElsewhere !== null
+        ? intl.formatMessage(composerWords.placeholderTickElsewhere, { n: tickElsewhere })
+        : intl.formatMessage(i18n.placeholder);
+
+  // Set consistent minimum height when displayValue is empty — tall enough for the placeholder, so a
+  // tick's two-line placeholder in a narrow window is read whole rather than cut at one line.
   useEffect(() => {
-    if (textAreaRef.current && displayValue === '') {
-      textAreaRef.current.style.height = `${minTextareaHeight}px`;
-    }
-  }, [displayValue, textAreaRef, minTextareaHeight]);
+    const element = textAreaRef.current;
+    if (!element || displayValue !== '') return;
+    element.style.height = `${minTextareaHeight}px`;
+    element.style.height = `${Math.max(minTextareaHeight, Math.min(element.scrollHeight, maxHeight))}px`;
+  }, [displayValue, textAreaRef, minTextareaHeight, maxHeight, placeholder]);
 
   const handleChange = (evt: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = evt.target.value;
@@ -1685,9 +1696,8 @@ export default function ChatInput({
           <Repeat aria-hidden className="mt-0.5 size-4 shrink-0 text-lz-accent" />
           <p
             className={cx(
-              'min-w-0 flex-1 break-words',
-              TYPE.body,
-              loopReply.refused && 'font-lz-semibold text-lz-err'
+              'min-w-0 flex-1 break-words text-lz-body',
+              loopReply.refused ? 'font-lz-semibold text-lz-err' : 'text-lz-ink'
             )}
           >
             {loopReply.text}
@@ -1709,17 +1719,7 @@ export default function ChatInput({
             data-testid="chat-input"
             autoFocus
             id="dynamic-textarea"
-            placeholder={
-              isRecording
-                ? ''
-                : tickHere !== null
-                  ? intl.formatMessage(composerWords.placeholderTickRunning, { n: tickHere })
-                  : tickElsewhere !== null
-                    ? intl.formatMessage(composerWords.placeholderTickElsewhere, {
-                        n: tickElsewhere,
-                      })
-                    : intl.formatMessage(i18n.placeholder)
-            }
+            placeholder={placeholder}
             value={displayValue}
             onChange={handleChange}
             onCompositionStart={handleCompositionStart}
