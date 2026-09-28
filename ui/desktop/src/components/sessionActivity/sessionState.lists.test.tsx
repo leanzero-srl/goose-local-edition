@@ -209,8 +209,10 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
   // Session loops §8.6 (Q-228): a chat whose loop has not ended, between ticks.
   it('the Looping pill: solid fills, its words per loop state, nothing for an ended loop', async () => {
     const next = '2026-09-27T22:40:00Z';
-    const at = new Date(next);
-    const hm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    // The chat's clock, as the transcript beside it writes the same instant ("10:40 PM" in en), not
+    // the rule's 24 h "22:40" (Q-316, + the sidebar loop pill in batch A).
+    const hm = new Date(next).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' });
+    expect(hm).not.toMatch(/^\d{2}:\d{2}$/);
     const cases = [
       { status: 'waiting', nextTickAt: next, text: `Next ${hm}`, tone: 'accent', title: hm },
       { status: 'running', text: 'Looping', tone: 'accent', title: 'running a tick' },
@@ -319,7 +321,7 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
     expect(waiting.getAttribute('data-state')).toBe('looping');
     expect(waiting.getAttribute('aria-busy')).toBeNull();
     expect(within(waiting).getByTestId('session-looping-pill').textContent).toMatch(
-      /^Next \d{2}:\d{2}$/
+      /^Next \d{1,2}:\d{2} [AP]M$/
     );
     expect(within(waiting).queryByTestId('session-failed-pill')).toBeNull();
 
