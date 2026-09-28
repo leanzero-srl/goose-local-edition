@@ -4019,6 +4019,92 @@ print("GOOSE_TEST " + json.dumps({"fixed": fixed, "shipped": shipped, "expected"
         );
     }
 
+    /// Q-338 through the REAL mlx_lm 0.31.3 handler: a prompt whose start the prefix cache restored
+    /// reports its POSITION — the restored prefix included, the contract rank_live.py and the
+    /// pipeline already keep — so the desktop's two-part bar (Q-337) and the prefill rate measure
+    /// the tokens actually read. mlx_lm's progress counts only the tokens it computes (`total` =
+    /// the prompt past the prefix): E2E #3p's turn 7 (113,824 of 114,948 cached) read as
+    /// "1,124 of 114,948" with no prefill rate (rank_live's `prefilled - cached` went negative).
+    /// The stand-in generation hands back a 12-token prompt with 8 restored, then mlx_lm's own
+    /// progress tuple for 2 of the remaining 4. Before the fix the same test read a position of 0
+    /// and then 2 — under the cached 8 — and no rate.
+    #[test]
+    fn a_restored_prefix_is_inside_the_reported_prompt_position() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+steps = [threading.Event() for _ in range(2)]
+proceed = [threading.Event() for _ in range(2)]
+
+def generation_thread():
+    rqueue, request, args = responses.requests.get()
+    rqueue.put(server.GenerationContext(
+        has_tool_calling=False, has_thinking=False, tool_parser=None,
+        sequences={(3,): "<|im_end|>"}, prompt=[0] * 12, prompt_cache_count=8,
+    ))
+    steps[0].set()
+    proceed[0].wait(30)
+    rqueue.put((2, 4))
+    steps[1].set()
+    proceed[1].wait(30)
+    rqueue.put(token("done", "normal"))
+    rqueue.put(token("<|im_end|>", None, (3,), "stop"))
+    rqueue.put(None)
+
+threading.Thread(target=generation_thread, daemon=True).start()
+reply = []
+threading.Thread(
+    target=lambda: reply.append(post("/v1/chat/completions", {
+        "model": served, "messages": [{"role": "user", "content": "go"}]})),
+    daemon=True,
+).start()
+
+def row_when(check):
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/status"
+    for _ in range(3000):
+        with urllib.request.urlopen(url, timeout=30) as answer:
+            rows = json.loads(answer.read())["requests"]
+        if rows and check(rows[0]):
+            return rows[0]
+        time.sleep(0.01)
+    raise AssertionError(f"the status never showed it: {rows}")
+
+assert steps[0].wait(30)
+started = row_when(lambda r: r["prompt_tokens"] == 12)
+proceed[0].set()
+assert steps[1].wait(30)
+reading = row_when(lambda r: r["prefilled_tokens"] != started["prefilled_tokens"])
+proceed[1].set()
+for _ in range(3000):
+    if reply:
+        break
+    time.sleep(0.01)
+print("GOOSE_TEST " + json.dumps({"started": started, "reading": reading, "status": reply[0][0]}))
+"#;
+        let (seen, _) = run_wrapper_checks(&python, checks);
+        let started = &seen["started"];
+        assert_eq!(started["cached_tokens"], 8, "{seen}");
+        assert_eq!(
+            started["prefilled_tokens"], 8,
+            "the read starts after the restored prefix: {seen}"
+        );
+        let reading = &seen["reading"];
+        assert_eq!(reading["phase"], "prefill", "{seen}");
+        assert_eq!(
+            reading["prefilled_tokens"], 10,
+            "the position: 8 restored + 2 of the 4 computed: {seen}"
+        );
+        let read = reading["prefilled_tokens"].as_u64().unwrap()
+            - reading["cached_tokens"].as_u64().unwrap();
+        assert_eq!(read, 2, "{seen}");
+        assert!(
+            reading["prompt_tokens_per_second"].as_f64().unwrap() > 0.0,
+            "a rate over the 2 tokens read: {seen}"
+        );
+        assert_eq!(seen["status"], 200, "{seen}");
+    }
+
     /// Q-233 through the REAL mlx_lm 0.31.3 handler: a NON-streamed answer whose tool call the
     /// parser refuses is a 500 naming the parser and its words (`code` `tool_call_unparsed`, the
     /// call's text as `tool_text`), and the rank's log says so (GOOSE_RANK_TOOL_CALL_UNPARSED
