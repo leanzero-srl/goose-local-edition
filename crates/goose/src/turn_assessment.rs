@@ -282,18 +282,22 @@ fn nearest_memories(store: &MemoryStore, query: &str) -> Vec<String> {
 ///
 /// `kind` says which reviewer asks (Q-185): the fact check and the memory review are different
 /// work to the person watching the session, and every surface names them apart.
+///
+/// `mark` names the chat (the session id the call is tagged with). `Ok(None)`: a newer user turn in
+/// that chat superseded the check (Q-400); nothing is asked, and the turn priority logged it.
 async fn ask_the_judge(
     kind: BackgroundWorkKind,
     provider: &dyn Provider,
     model_config: &ModelConfig,
-    session_id: &str,
+    mark: &crate::turn_priority::ChatMark,
     system: &str,
     user: String,
     envelope: i32,
-) -> Result<(Message, ProviderUsage), ProviderError> {
+) -> Result<Option<(Message, ProviderUsage)>, ProviderError> {
+    let session_id = mark.session();
     let bounded = model_config.clone().with_max_tokens(Some(envelope));
     let messages = [Message::user().with_text(user)];
-    let answer = crate::turn_priority::after_user_turns("end-of-turn reviewer", || {
+    let Some(answer) = crate::turn_priority::after_user_turns("end-of-turn reviewer", mark, || {
         crate::model_config::complete_helper(
             kind,
             provider,
@@ -304,7 +308,11 @@ async fn ask_the_judge(
             &[],
         )
     })
-    .await?;
+    .await
+    else {
+        return Ok(None);
+    };
+    let answer = answer?;
     if answer
         .0
         .as_concat_text()
@@ -316,7 +324,7 @@ async fn ask_the_judge(
             "end-of-turn reviewer: the answer reached its envelope and was cut; nothing is taken from it"
         );
     }
-    Ok(answer)
+    Ok(Some(answer))
 }
 
 /// Every token an engine emits covers at least one byte of text (byte-level BPE; SentencePiece
@@ -353,6 +361,7 @@ pub async fn assess_turn(
     session_manager: Arc<SessionManager>,
     session_id: String,
     config_dir: PathBuf,
+    mark: crate::turn_priority::ChatMark,
 ) {
     if agent.knowledge_blind() {
         return;
@@ -429,14 +438,15 @@ pub async fn assess_turn(
         BackgroundWorkKind::MemoryReview,
         provider.as_ref(),
         &model_config,
-        &session_id,
+        &mark,
         &system,
         user,
         assessment_envelope(),
     )
     .await
     {
-        Ok((message, _usage)) => reply_text(&message),
+        Ok(Some((message, _usage))) => reply_text(&message),
+        Ok(None) => return,
         Err(err) => {
             tracing::warn!(session_id, %err, "assessment: provider error, nothing proposed");
             return;
@@ -971,6 +981,7 @@ pub async fn check_turn_answer(
     agent: Arc<Agent>,
     session_manager: Arc<SessionManager>,
     session_id: String,
+    mark: crate::turn_priority::ChatMark,
 ) -> Option<Message> {
     if agent.knowledge_blind() {
         return None;
@@ -1023,14 +1034,15 @@ pub async fn check_turn_answer(
             BackgroundWorkKind::FactCheck,
             provider.as_ref(),
             &model_config,
-            &session_id,
+            &mark,
             &system,
             user,
             envelope,
         )
         .await
         {
-            Ok((message, _usage)) => reply_text(&message),
+            Ok(Some((message, _usage))) => reply_text(&message),
+            Ok(None) => return None,
             Err(err) => {
                 tracing::warn!(session_id, %err, question = question.name(), "answer check: provider error, question not checked");
                 continue;
@@ -1132,7 +1144,7 @@ mod tests {
                     kind,
                     &SessionEcho,
                     &ModelConfig::new("test-model"),
-                    "20260925_20",
+                    &crate::turn_priority::chat_mark("20260925_20"),
                     "system",
                     "user".to_string(),
                     verdict_envelope("system", "user"),
@@ -1140,6 +1152,7 @@ mod tests {
                 .await
             })
             .await
+            .unwrap()
             .unwrap()
             .unwrap();
             assert_eq!(judged.0.as_concat_text(), echoed);
@@ -1164,12 +1177,13 @@ mod tests {
                 BackgroundWorkKind::FactCheck,
                 engine.provider.as_ref(),
                 &ModelConfig::new(SERVED),
-                "20260926_5",
+                &crate::turn_priority::chat_mark("20260926_5"),
                 &system,
                 user.clone(),
                 envelope,
             )
             .await
+            .unwrap()
             .unwrap();
             assert_eq!(answer.as_concat_text(), "reading project configuration");
             let bodies = engine.bodies().await;
@@ -1184,7 +1198,7 @@ mod tests {
             BackgroundWorkKind::MemoryReview,
             engine.provider.as_ref(),
             &ModelConfig::new(SERVED),
-            "20260926_5",
+            &crate::turn_priority::chat_mark("20260926_5"),
             &assessment_system_prompt(),
             "Turn ended: end_turn".to_string(),
             assessment_envelope(),
