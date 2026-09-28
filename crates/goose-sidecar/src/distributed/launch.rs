@@ -8253,11 +8253,13 @@ print("ok")
             "import argparse, json, os, sys\n\
              class LRUPromptCache:\n\
              \x20   class CacheOrder:\n\
+             \x20       def __init__(self): self._lrus = {'assistant': [], 'user': [], 'system': []}\n\
              \x20       def pop(self): pass\n\
              \x20   def __init__(self, max_size=10, max_bytes=1 << 63):\n\
              \x20       self.max_size, self.max_bytes, self.trims = max_size, max_bytes, []\n\
              \x20       from mlx_lm.models.cache import PromptTrie\n\
              \x20       self._trie = PromptTrie()\n\
+             \x20       self._lru = LRUPromptCache.CacheOrder()\n\
              \x20   def insert_cache(self, model, tokens, prompt_cache, *, cache_type='assistant'): pass\n\
              \x20   def fetch_nearest_cache(self, model, tokens): pass\n\
              \x20   def trim_to(self, *, n_sequences=None, n_bytes=None): self.trims.append(n_bytes)\n\

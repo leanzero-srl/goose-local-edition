@@ -721,6 +721,11 @@ class LookupPromptCache(server.LRUPromptCache):
                 f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache keeps no empty "
                 "PromptTrie at `_trie`; the prompt search was written against mlx_lm 0.31.3"
             )
+        if kept_entries and not isinstance(getattr(getattr(self, "_lru", None), "_lrus", None), dict):
+            raise SystemExit(
+                f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache keeps no "
+                "CacheOrder at `_lru`; the kept entries were written against mlx_lm 0.31.3"
+            )
         self._trie = LinearPromptTrie()
 
     # Q-164: the prompt's last token is always read, so a generation always has a segment.
@@ -794,7 +799,8 @@ def cache_inserting(tokens, prompt_cache):
 def cache_inserted(prompt_cache):
     """A kept entry the insert replaced, or dropped as a trimmable entry's prefix, is no longer
     held (mlx_lm's `insert_cache` drops those without its eviction order)."""
-    forget_dropped(prompt_cache._lru, kept_entries)
+    if kept_entries:
+        forget_dropped(prompt_cache._lru, kept_entries)
 
 
 if "prompt_cache_limit_bytes" in spec:
