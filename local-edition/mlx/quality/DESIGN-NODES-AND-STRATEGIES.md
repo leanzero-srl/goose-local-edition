@@ -186,7 +186,7 @@ MLX nodes get capacity `MAX_CONCURRENT_REQUESTS` (`:194`). The chat context wind
 
 Together with Run it's switch, that is the product's real rule: one MLX way at a time for this Mac's goose, whichever Macs it uses.
 
-**Every desktop window runs its own goosed** (`main.ts:2361`, `:2367`). The router's leases, the serving registry and any in-process queue are **per process**. `mlx_serving.rs`'s header says so: work "that leaves through neither door — a `goose swarm run` child process, another app on the port — is not listed". Cross-process facts today are files: the route record, the distributed owner record (`mlx_distributed_owner.rs`), and the Mac-wide load lock (`goose-sidecar/src/machine.rs`, a `flock` with proof-of-gone that ignores `GOOSE_PATH_ROOT`).
+**One goosed per app instance, shared by every desktop window** (Q-257, 2026-09-28; before it every window ran its own goosed, and a second goosed was refused the LeanZero Link mesh the first held, so window 2 could not load the split). `gooseServeLeaseRegistry.ts` `liveLocal`/`acquireLocal` hands every window the live local goosed and starts one only when none is live; each ACP connection is its own agent inside it, and the loader reaches any live one (`nodes_loader.rs` `LiveAgents`). Several goose PROCESSES on one Mac still exist — a `goose swarm run` child, a CLI `goose serve`, another app build — so the rest of this paragraph holds for them. The router's leases, the serving registry and any in-process queue are **per process**. `mlx_serving.rs`'s header says so: work "that leaves through neither door — a `goose swarm run` child process, another app on the port — is not listed". Cross-process facts today are files: the route record, the distributed owner record (`mlx_distributed_owner.rs`), and the Mac-wide load lock (`goose-sidecar/src/machine.rs`, a `flock` with proof-of-gone that ignores `GOOSE_PATH_ROOT`).
 
 **A lease is one model call, not one reply.** `leased()` (`swarm_router.rs:1001`) registers MLX leases only (`LmStudio | Cloud => None`), with the session id available from `session_context::current_session_id()` (`:1031`). `LeasedStream` (`:1374`) holds the lease "for exactly the life of the stream": one completion. An agent reply in a tool loop is many completions. A reply is scoped per ACP prompt in `acp/server.rs` `on_prompt` (`:2564`); each completion re-scopes the session id in `agents/reply_parts.rs:313`. A delegate runs its own session inside the parent's tool call (`agents/subagent_handler.rs:187`).
 
@@ -551,7 +551,7 @@ The facts it rests on, all in code today (§2.2):
 - **One MLX way serves this Mac's goose at a time, across all Macs**: a remote-single route refuses this Mac's engine (`sidecar_routed_away`), a split is probed in place of the single, there is one route record, and Run it stops every serving way before it starts another (Q-119).
 - The one fit rule judges memory, crediting what a switch frees.
 - Loads on one Mac are serialised by the Mac-wide load lock (`machine.rs`).
-- Each window has its own goosed; a `goose swarm run` child has its own engine manager and can mount the engine itself.
+- Every window of the app shares ONE goosed (Q-257; it was one per window until 2026-09-28). Other goose processes on the Mac remain — a `goose swarm run` child has its own engine manager and can mount the engine itself, and a CLI `goose serve` or another app build is a separate goosed — so the cross-process holders below stay load-bearing; what no longer crosses a process boundary is two windows of one app.
 
 v1 keeps all of these. More than one way at a time (a second route, removing `sidecar_routed_away`, a switch that stops only the Macs it needs, two models on one Mac) is S10, behind a measurement.
 
@@ -1501,7 +1501,7 @@ Each journey restores state afterwards with `split-start.mjs`. They are run by t
 3. **J3 (a swap, across windows).**
    1. Strategy "Quick": Chat is Flash single on this Mac, Build is the 27B split.
    2. A chat that delegates. Observe the loader's Wait line, then Loading, then the swap to the 27B for the delegate and back to Flash for the parent's next completion (two swaps, as strategyFit warned).
-   3. With a second window's chat mid-reply on the running way, a demand in the first window waits until that reply ends (the holders), and never stops the engine under it.
+   3. With a second window's chat mid-reply on the running way, a demand in the first window waits until that reply ends, and never stops the engine under it; the Wait line names the second window's chat. Since Q-257 both windows share ONE goosed, so this proves the IN-PROCESS wait (the loader's own open replies); the CROSS-PROCESS holders files are proven by J6 (a `goose swarm run` child holds the engine), and the cross-process wait by a chat mid-reply on a CLI `goose serve` beside the app.
    4. `mlx-load-measurements.jsonl` gains a row per load, including a Run it start.
    5. The displaced chat shows its notice.
    6. `clean.sh` lists no orphan engine.
