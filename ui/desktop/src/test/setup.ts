@@ -1,7 +1,14 @@
 import '@testing-library/jest-dom';
-import { vi, afterEach, expect } from 'vitest';
+import { vi, afterEach, beforeEach, expect } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { TONE_TEXT, TONES } from '../components/lz/tokens';
+import { startTestClock } from './testClock';
+
+// Q-383: every findBy / waitFor inside a test waits as long as the test itself may run, never on
+// testing-library's 1 s default — loaded full runs failed one such wait per run.
+beforeEach(({ task }) => {
+  startTestClock(task.timeout);
+});
 
 // Mock Electron modules before any imports
 vi.mock('electron', () => ({
