@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} đang đọc lời nhắc {tokens} token của một yêu cầu khác — tin nhắn của bạn chờ đến lượt"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} đang đọc prompt {tokens} token của một yêu cầu khác — {cached} từ bộ nhớ đệm, {fresh} mới — tin nhắn của bạn chờ đến lượt"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} đang đọc prompt {tokens} token của một yêu cầu khác, không có gì trong bộ nhớ đệm — tin nhắn của bạn chờ đến lượt"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Chi tiết"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Ẩn tốc độ và bộ nhớ"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Ẩn lý do prompt này được đọc nhanh, tốc độ và bộ nhớ"
+  },
   "engineGlance.more": {
     "defaultMessage": "Hiện tốc độ và bộ nhớ"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Hiện lý do prompt này được đọc nhanh, tốc độ và bộ nhớ"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, other {# cần bạn}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Phiên không tên"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} từ bộ nhớ đệm, đã đọc {done} trên {fresh} token mới"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} token · không có gì trong bộ nhớ đệm — đọc toàn bộ"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "không có gì trong bộ nhớ đệm — đọc toàn bộ"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "đã đọc {done} trên {fresh} token mới"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "đến giờ {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} token · <c>{cached} từ bộ nhớ đệm</c> · <n>{fresh} mới</n> — đang đọc phần mới"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} từ bộ nhớ đệm</c> · <n>{fresh} mới</n> — đang đọc phần mới"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose giữ phần đầu cuộc trò chuyện này trong bộ nhớ của engine; chỉ phần mới được đọc lại"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Tất cả lời nhắc đã được đặt lại về mặc định"

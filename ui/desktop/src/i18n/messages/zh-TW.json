@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} 正在讀取另一個請求的 {tokens} 詞元提示 — 你的訊息會排隊等候"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} 正在讀取另一個請求的 {tokens} 詞元提示 — 其中 {cached} 來自快取，{fresh} 為新內容 — 你的訊息將排隊等候"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} 正在讀取另一個請求的 {tokens} 詞元提示，快取中沒有內容 — 你的訊息將排隊等候"
+  },
   "composerReadiness.details": {
     "defaultMessage": "詳細資訊"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "隱藏速率與記憶體"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "隱藏此提示讀取快的原因、速率和記憶體"
+  },
   "engineGlance.more": {
     "defaultMessage": "顯示速率與記憶體"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "顯示此提示讀取快的原因、速率和記憶體"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, other {# 個等你處理}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "未命名的工作階段"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} 來自快取，新內容 {fresh} 中已讀 {done}"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} 詞元 · 快取中沒有內容 — 正在全部讀取"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "快取中沒有內容 — 正在全部讀取"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "新內容 {fresh} 中已讀 {done}"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "已用 {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} 詞元 · <c>{cached} 來自快取</c> · <n>{fresh} 為新內容</n> — 正在讀取新部分"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} 來自快取</c> · <n>{fresh} 為新內容</n> — 正在讀取新部分"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose 會把這段對話的開頭保留在引擎記憶體中；只有新部分需要重新讀取"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "所有提示已重設為預設值"

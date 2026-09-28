@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} は別のリクエストの {tokens} トークンのプロンプトを読み込み中です — メッセージは順番を待ちます"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} は別のリクエストの {tokens} トークンのプロンプトを読み込み中です — うち {cached} はキャッシュから、{fresh} が新規 — メッセージは順番を待ちます"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} は別のリクエストの {tokens} トークンのプロンプトを読み込み中です。キャッシュなし — メッセージは順番を待ちます"
+  },
   "composerReadiness.details": {
     "defaultMessage": "詳細"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "レートとメモリを隠す"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "このプロンプトが速く読める理由、レート、メモリを隠す"
+  },
   "engineGlance.more": {
     "defaultMessage": "レートとメモリを表示"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "このプロンプトが速く読める理由、レート、メモリを表示"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, other {# 件があなたを待っています}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "無題のセッション"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} はキャッシュから、新規 {fresh} のうち {done} を読み込み済み"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} トークン · キャッシュなし — すべて読み込み中"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "キャッシュなし — すべて読み込み中"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "新規 {fresh} のうち {done} を読み込み済み"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "ここまで {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} トークン · <c>{cached} はキャッシュから</c> · <n>{fresh} が新規</n> — 新しい部分を読み込み中"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} はキャッシュから</c> · <n>{fresh} が新規</n> — 新しい部分を読み込み中"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose はこの会話の冒頭をエンジンのメモリに保持しています。読み直すのは新しい部分だけです"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "すべてのプロンプトをデフォルトにリセットしました"

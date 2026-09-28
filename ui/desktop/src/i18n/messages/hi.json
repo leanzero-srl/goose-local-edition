@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} किसी दूसरे अनुरोध का {tokens}-टोकन प्रॉम्प्ट पढ़ रहा है — आपका संदेश अपनी बारी का इंतज़ार करेगा"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} किसी दूसरे अनुरोध का {tokens}-टोकन प्रॉम्प्ट पढ़ रहा है — इसमें से {cached} कैश से, {fresh} नए — आपका संदेश अपनी बारी का इंतज़ार करता है"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} किसी दूसरे अनुरोध का {tokens}-टोकन प्रॉम्प्ट पढ़ रहा है, कैश में कुछ नहीं — आपका संदेश अपनी बारी का इंतज़ार करता है"
+  },
   "composerReadiness.details": {
     "defaultMessage": "विवरण"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "दरें और मेमोरी छिपाएँ"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "छिपाएँ: यह प्रॉम्प्ट तेज़ी से क्यों पढ़ा जाता है, दरें और मेमोरी"
+  },
   "engineGlance.more": {
     "defaultMessage": "दरें और मेमोरी दिखाएँ"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "दिखाएँ: यह प्रॉम्प्ट तेज़ी से क्यों पढ़ा जाता है, दरें और मेमोरी"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, one {# को आपकी ज़रूरत है} other {# को आपकी ज़रूरत है}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "बिना शीर्षक सत्र"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} कैश से, {fresh} नए में से {done} पढ़े गए"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} टोकन · कैश में कुछ नहीं — पूरा पढ़ा जा रहा है"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "कैश में कुछ नहीं — पूरा पढ़ा जा रहा है"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "{fresh} नए में से {done} पढ़े गए"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "अब तक {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} टोकन · <c>{cached} कैश से</c> · <n>{fresh} नए</n> — नया हिस्सा पढ़ा जा रहा है"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} कैश से</c> · <n>{fresh} नए</n> — नया हिस्सा पढ़ा जा रहा है"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose इस बातचीत की शुरुआत इंजन की मेमोरी में रखता है; केवल नया हिस्सा दोबारा पढ़ा जाता है"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "सभी संकेत डिफ़ॉल्ट पर रीसेट हो गए"

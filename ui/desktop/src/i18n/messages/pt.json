@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} está lendo o prompt de {tokens} tokens de outra solicitação — sua mensagem aguarda a vez"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where} está a ler o prompt de {tokens} tokens de outro pedido — {cached} da cache, {fresh} novos — a sua mensagem aguarda a vez"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where} está a ler o prompt de {tokens} tokens de outro pedido, nada em cache — a sua mensagem aguarda a vez"
+  },
   "composerReadiness.details": {
     "defaultMessage": "Detalhes"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "Ocultar taxas e memória"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "Ocultar porque este prompt é lido depressa, velocidades e memória"
+  },
   "engineGlance.more": {
     "defaultMessage": "Mostrar taxas e memória"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "Mostrar porque este prompt é lido depressa, velocidades e memória"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, one {# precisa de você} other {# precisam de você}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sessão sem título"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} da cache, {done} de {fresh} novos lidos"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} tokens · nada em cache — a ler tudo"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "nada em cache — a ler tudo"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "{done} de {fresh} novos lidos"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "{elapsed} até agora"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} tokens · <c>{cached} da cache</c> · <n>{fresh} novos</n> — a ler a parte nova"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} da cache</c> · <n>{fresh} novos</n> — a ler a parte nova"
+  },
+  "promptRead.why": {
+    "defaultMessage": "o goose mantém o início desta conversa na memória do motor; só a parte nova é lida de novo"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Todos os prompts repostos para as predefinições"

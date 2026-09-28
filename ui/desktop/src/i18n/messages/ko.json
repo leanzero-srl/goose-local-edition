@@ -842,6 +842,12 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where}에서 다른 요청의 {tokens}토큰 프롬프트를 읽는 중입니다 — 메시지는 차례를 기다립니다"
   },
+  "composerReadiness.busyReadingCached": {
+    "defaultMessage": "{where}이(가) 다른 요청의 {tokens}토큰 프롬프트를 읽는 중입니다 — 그중 {cached}은(는) 캐시에서, {fresh}은(는) 새 토큰 — 메시지는 차례를 기다립니다"
+  },
+  "composerReadiness.busyReadingCold": {
+    "defaultMessage": "{where}이(가) 다른 요청의 {tokens}토큰 프롬프트를 읽는 중입니다. 캐시 없음 — 메시지는 차례를 기다립니다"
+  },
   "composerReadiness.details": {
     "defaultMessage": "세부 정보"
   },
@@ -1736,8 +1742,14 @@
   "engineGlance.less": {
     "defaultMessage": "속도와 메모리 숨기기"
   },
+  "engineGlance.lessWithCache": {
+    "defaultMessage": "이 프롬프트가 빨리 읽히는 이유, 속도, 메모리 숨기기"
+  },
   "engineGlance.more": {
     "defaultMessage": "속도와 메모리 보기"
+  },
+  "engineGlance.moreWithCache": {
+    "defaultMessage": "이 프롬프트가 빨리 읽히는 이유, 속도, 메모리 보기"
   },
   "engineGlance.needsYou": {
     "defaultMessage": "{count, plural, other {#개가 당신을 기다림}}"
@@ -7639,6 +7651,30 @@
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "제목 없는 세션"
+  },
+  "promptRead.barText": {
+    "defaultMessage": "{cached} 캐시에서, 새 토큰 {fresh} 중 {done} 읽음"
+  },
+  "promptRead.cold": {
+    "defaultMessage": "{total} 토큰 · 캐시 없음 — 전부 읽는 중"
+  },
+  "promptRead.coldShort": {
+    "defaultMessage": "캐시 없음 — 전부 읽는 중"
+  },
+  "promptRead.freshOf": {
+    "defaultMessage": "새 토큰 {fresh} 중 {done} 읽음"
+  },
+  "promptRead.soFar": {
+    "defaultMessage": "지금까지 {elapsed}"
+  },
+  "promptRead.split": {
+    "defaultMessage": "{total} 토큰 · <c>{cached} 캐시에서</c> · <n>{fresh} 새 토큰</n> — 새 부분을 읽는 중"
+  },
+  "promptRead.splitShort": {
+    "defaultMessage": "<c>{cached} 캐시에서</c> · <n>{fresh} 새 토큰</n> — 새 부분을 읽는 중"
+  },
+  "promptRead.why": {
+    "defaultMessage": "goose는 이 대화의 앞부분을 엔진 메모리에 보관합니다. 새 부분만 다시 읽습니다"
   },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "모든 프롬프트가 기본값으로 재설정됩니다."
