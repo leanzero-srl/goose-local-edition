@@ -231,7 +231,12 @@ pub fn reuse_verdict(holders: Vec<PortHolder>, port: u16, own_pid: u32) -> Resul
             Reuse::Leftover { holders }
         });
     }
-    let live_starter = |h: &PortHolder| h.verdict.as_ref().err().and_then(|n| n.live_starter);
+    let live_starter = |h: &PortHolder| {
+        h.verdict
+            .as_ref()
+            .err()
+            .and_then(|n| n.live_starter.as_ref().map(|s| s.pid))
+    };
     match live_starter(first) {
         Some(starter) if holders.iter().all(|h| live_starter(h) == Some(starter)) => {
             Ok(Reuse::Supervised {

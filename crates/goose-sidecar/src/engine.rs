@@ -804,12 +804,6 @@ impl std::fmt::Display for UnsupervisedListenerError {
 
 impl std::error::Error for UnsupervisedListenerError {}
 
-/// The marker every engine this manager starts on `port` carries — the one a later goosed's proof
-/// reads, so the mount's refusal and the status's holders judge a listener by the same value.
-fn engine_marker(port: u16) -> String {
-    sidecar_marker(ENGINE_SIDECAR_NAME, &format!("http://127.0.0.1:{port}"))
-}
-
 /// Every LISTEN pid on `port`, judged against `marker`; `Err` says why they could not be read.
 async fn read_port_holders(
     port: u16,
