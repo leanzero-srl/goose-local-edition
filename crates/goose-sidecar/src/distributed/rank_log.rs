@@ -210,7 +210,11 @@ pub struct RankLog {
 impl RankLog {
     /// Opens a new log for `rank` on `node` in `dir`, bounded by the free space measured now.
     pub fn open(dir: &Path, rank: usize, node: &str) -> Result<Self> {
-        Self::open_family(dir, RANK_FAMILY, &format!("{RANK_FAMILY}{rank}-{}", slug(node)))
+        Self::open_family(
+            dir,
+            RANK_FAMILY,
+            &format!("{RANK_FAMILY}{rank}-{}", slug(node)),
+        )
     }
 
     /// [`RankLog::open`] with the directory's budget given.
