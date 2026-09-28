@@ -42,11 +42,13 @@ pub mod model_identity;
 mod model_parsers;
 #[cfg(unix)]
 pub mod placement;
+pub mod port_holder;
 mod subprocess;
 pub mod thinking;
 
 pub use fit::{FitVerdict, Verdict, GIB};
 pub use memory::{dir_size_bytes, disk_space, measure, MemoryReading};
+pub use port_holder::{sidecar_marker, PortHeld, PortHolder, SIDECAR_MARKER_ENV};
 
 use std::collections::{BTreeSet, VecDeque};
 use std::process::Stdio;
@@ -359,6 +361,7 @@ impl Sidecar {
         {
             let mut state = sidecar.state.lock().await;
             sidecar.refuse_if_cancelled()?;
+            sidecar.claim_port().await?;
             let handle = sidecar.spawn_child()?;
             sidecar.await_ready(&mut state, handle).await?;
         }
@@ -494,8 +497,44 @@ impl Sidecar {
         }
         self.refuse_if_cancelled()?;
 
+        self.claim_port().await?;
         let handle = self.spawn_child()?;
         self.await_ready(&mut state, handle).await
+    }
+
+    /// What this sidecar stamps on every process it spawns (see [`port_holder`]).
+    fn marker(&self) -> String {
+        sidecar_marker(&self.config.name, &self.config.base_url)
+    }
+
+    /// Before a spawn: the port is free, or its holders were proven ours and stopped per pid, or
+    /// the start fails naming every holder ([`PortHeld`]) — never spawning a child whose readiness
+    /// probe would read someone else's listener (Q-240: a stand-in's catalog was taken for the
+    /// child's own readiness), and never trying another port.
+    async fn claim_port(&self) -> Result<()> {
+        let Some(port) = self.listen_port() else {
+            return Ok(());
+        };
+        #[cfg(unix)]
+        {
+            let reaped = port_holder::claim_port(port, &self.marker()).await?;
+            if !reaped.is_empty() {
+                tracing::warn!(
+                    sidecar = %self.config.name,
+                    port,
+                    reaped = ?reaped.iter().map(|r| (r.pid, r.signal)).collect::<Vec<_>>(),
+                    "the port was held by this sidecar's own leftover engine; stopped per pid"
+                );
+            }
+        }
+        #[cfg(not(unix))]
+        if port_has_listener(port) {
+            bail!(
+                "port {port} already answers and this platform cannot read who holds it; nothing \
+                 was signalled"
+            );
+        }
+        Ok(())
     }
 
     /// SIGTERM to the child pid, the grace window, then SIGKILL to the child's PROVEN own
@@ -519,6 +558,7 @@ impl Sidecar {
         for (k, v) in &self.config.env {
             cmd.env(k, v);
         }
+        cmd.env(SIDECAR_MARKER_ENV, self.marker());
         subprocess::configure_subprocess(&mut cmd);
         let mut child = cmd.spawn().with_context(|| {
             format!(

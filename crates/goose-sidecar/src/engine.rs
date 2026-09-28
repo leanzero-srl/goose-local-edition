@@ -23,8 +23,8 @@ use crate::machine::{
 };
 use crate::model_identity::{NodeModel, ServedNames};
 use crate::{
-    listening_pids, measure, port_has_listener, MemoryReading, Sidecar, SidecarConfig, StartCancel,
-    StartCancelled, StartupWatch, GIB,
+    listening_pids, measure, port_has_listener, sidecar_marker, MemoryReading, PortHolder, Sidecar,
+    SidecarConfig, StartCancel, StartCancelled, StartupWatch, GIB,
 };
 
 /// Milliseconds a load spent in each phase the engine showed. A phase it never showed is absent.
@@ -750,26 +750,76 @@ pub fn build_serve_command(
     Ok(argv)
 }
 
+/// The sidecar name the single engine runs under — and so half of the marker its processes carry
+/// (`port_holder::sidecar_marker`), which is how a later goosed proves a leftover engine its own.
+pub const ENGINE_SIDECAR_NAME: &str = "mlx-engine";
+
 /// `mount` refuses to start an engine on a port that something this manager does not
 /// supervise already listens on — the mirror of `status().stray_listener_port`. Starting
 /// anyway would probe THAT listener as our readiness and report `Running` for a child that
-/// then dies on the bind. `unmount` reclaims the port; a mount after that proceeds.
+/// then dies on the bind. The refusal names every holder — pid, command line, and why it is not
+/// this goose's (Q-240); a holder PROVEN ours (an engine this sidecar started whose goosed is
+/// gone, `port_holder::ownership_proof`) is no refusal: the start stops it per pid. `unmount`
+/// reclaims the port from whatever listens on it; a mount after that proceeds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnsupervisedListenerError {
     pub port: u16,
+    /// Every LISTEN pid on the port with its verdict, or why they could not be read.
+    pub holders: std::result::Result<Vec<PortHolder>, String>,
 }
 
 impl std::fmt::Display for UnsupervisedListenerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "port {} has an unsupervised listener", self.port)?;
+        match &self.holders {
+            Ok(holders) => write!(
+                f,
+                ": {}",
+                holders
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )?,
+            Err(why) => write!(f, " and who holds it could not be read ({why})")?,
+        }
         write!(
             f,
-            "port {} has an unsupervised listener — unmount/reclaim it first",
-            self.port
+            " — nothing was signalled; stop it, or Unmount, which reclaims the port from whatever \
+             listens on it"
         )
     }
 }
 
 impl std::error::Error for UnsupervisedListenerError {}
+
+/// The refusal a mount owes when something it does not supervise listens on `port`: `None` when
+/// nothing does, or when every holder is proven this sidecar's own leftover (the start stops it).
+async fn unsupervised_listener(port: u16, marker: &str) -> Option<UnsupervisedListenerError> {
+    if !port_has_listener(port) {
+        return None;
+    }
+    #[cfg(unix)]
+    let holders = crate::port_holder::inspect_port(port, marker)
+        .await
+        .map_err(|e| format!("{e:#}"));
+    #[cfg(not(unix))]
+    let holders: std::result::Result<Vec<PortHolder>, String> = {
+        let _ = marker;
+        Err("this platform cannot read a port's listeners".to_string())
+    };
+    if let Ok(holders) = &holders {
+        if !holders.is_empty() && holders.iter().all(|h| h.verdict.is_ok()) {
+            tracing::warn!(
+                port,
+                holders = %holders.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "),
+                "the engine port is held by this sidecar's own leftover engine; the start stops it"
+            );
+            return None;
+        }
+    }
+    Some(UnsupervisedListenerError { port, holders })
+}
 
 /// A start in flight: how an Unmount ends it, and how the Unmount learns that it has let go of
 /// this Mac — its engine process gone and the load lock released.
@@ -1484,16 +1534,16 @@ impl MlxEngineManager {
             }
             _ => None,
         };
-        if supervised.is_none() && port_has_listener(settings.port) {
-            *state = ManagerState::Stopped;
-            return Err(UnsupervisedListenerError {
-                port: settings.port,
+        let base_url = format!("http://127.0.0.1:{}", settings.port);
+        if supervised.is_none() {
+            let marker = sidecar_marker(ENGINE_SIDECAR_NAME, &base_url);
+            if let Some(refused) = unsupervised_listener(settings.port, &marker).await {
+                *state = ManagerState::Stopped;
+                return Err(refused.into());
             }
-            .into());
         }
         drop(state);
 
-        let base_url = format!("http://127.0.0.1:{}", settings.port);
         let expected_model_id = served_model_id(&settings, model_id);
         let state_arc = Arc::clone(&self.state);
         let model_id = model_id.to_string();
@@ -1519,8 +1569,12 @@ impl MlxEngineManager {
                     .await
                     .map(|()| sidecar),
                 None => {
-                    let mut config =
-                        SidecarConfig::new("mlx-engine", argv.clone(), base_url, expected_model_id);
+                    let mut config = SidecarConfig::new(
+                        ENGINE_SIDECAR_NAME,
+                        argv.clone(),
+                        base_url,
+                        expected_model_id,
+                    );
                     config.env = sidecar_spawn_env();
                     config.startup_watch = Some(watch);
                     config.start_cancel = Some(cancel);
@@ -2842,15 +2896,20 @@ mod tests {
                      http.server.BaseHTTPRequestHandler).serve_forever()"
                 ),
             ])
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
-        for _ in 0..50 {
-            if port_has_listener(port) {
-                break;
+        // Until it binds, or until it exits — which fails with its own words (Q-245: a fixed 5 s
+        // decided this under load).
+        while !port_has_listener(port) {
+            if let Some(status) = orphan.try_wait().unwrap() {
+                let mut words = String::new();
+                std::io::Read::read_to_string(&mut orphan.stderr.take().unwrap(), &mut words)
+                    .unwrap();
+                panic!("the orphan exited ({status}) before it bound {port}: {words}");
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(crate::GRACE_TICK).await;
         }
-        assert!(port_has_listener(port), "orphan never came up");
 
         let manager = test_manager();
         manager.set_settings(EngineSettings {
@@ -3049,19 +3108,14 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let pid = status.pid.unwrap();
 
         unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let failed = loop {
-            let status = manager.status().await;
-            if status.state == "failed" {
-                break status;
-            }
-            assert_eq!(status.state, "running");
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the dead engine still reads running"
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        };
+        // The kernel's word that it exited, then ONE poll must read it (Q-245: a 10 s deadline
+        // stood in for "the next poll").
+        wait_exited(pid).await;
+        let failed = manager.status().await;
+        assert_eq!(
+            failed.state, "failed",
+            "the dead engine still reads running"
+        );
         let error = failed.last_error.expect("a named failure");
         assert!(
             error.contains(&format!("(pid {pid}) exited: signal: 9")),
@@ -3239,7 +3293,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         for _ in 0..5 {
             let pid = *pids.last().unwrap();
             unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            wait_exited(pid).await;
             manager.mount("pub/small").await.unwrap();
             let status = settle(&manager).await;
             match status.state.as_str() {
@@ -3470,7 +3524,8 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     }
 
     /// S-H3: a listener this manager never started (a goosed-restart orphan, another
-    /// process's engine) must REFUSE the mount, not be probed as our readiness.
+    /// process's engine) must REFUSE the mount, not be probed as our readiness — and the refusal
+    /// names it (Q-240): here the listener is this very process.
     #[tokio::test]
     async fn mount_refuses_when_an_unsupervised_listener_holds_the_port() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3486,15 +3541,29 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         });
 
         let err = manager.mount("pub/small").await.unwrap_err();
+        let refused = err
+            .downcast_ref::<UnsupervisedListenerError>()
+            .unwrap_or_else(|| panic!("unexpected error: {err:#}"));
+        assert_eq!(refused.port, port);
+        let own = std::process::id();
+        let holders = refused.holders.as_ref().unwrap();
         assert_eq!(
-            err.downcast_ref::<UnsupervisedListenerError>(),
-            Some(&UnsupervisedListenerError { port }),
-            "unexpected error: {err:#}"
+            holders.iter().map(|h| h.pid).collect::<Vec<_>>(),
+            [own],
+            "{err:#}"
         );
-        assert_eq!(
-            err.to_string(),
-            format!("port {port} has an unsupervised listener — unmount/reclaim it first")
+        let text = err.to_string();
+        assert!(
+            text.starts_with(&format!(
+                "port {port} has an unsupervised listener: pid {own} (`"
+            )),
+            "{text}"
         );
+        assert!(
+            text.contains("not this goose's: pid") && text.contains("this goosed itself"),
+            "{text}"
+        );
+        assert!(text.contains("nothing was signalled"), "{text}");
         let status = manager.status().await;
         assert_eq!(
             status.state, "stopped",
@@ -3502,6 +3571,123 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         );
         assert_eq!(status.stray_listener_port, Some(port));
         drop(listener);
+    }
+
+    /// Whether `pid` is a live process — a zombie has exited.
+    fn alive(pid: u32) -> bool {
+        machine::process_start(pid).is_some_and(|(_, zombie)| !zombie)
+    }
+
+    /// Until the kernel says `pid` has finished exiting: `ps` shows it a zombie (waitable — the
+    /// next `try_wait` of its parent sees it) or not at all. SIGKILL cannot be caught, so after
+    /// one this waits only on the kernel, never a clock. Measured 2026-09-28: for 48 of 50
+    /// SIGKILLed children `proc_pidinfo` already answered nothing while `waitid(WNOWAIT)` did not
+    /// report the exit yet, so [`alive`] going false is not yet "the next poll reads it".
+    async fn wait_exited(pid: u32) {
+        loop {
+            let stat = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .unwrap();
+            let stat = String::from_utf8_lossy(&stat.stdout);
+            if stat.trim().is_empty() || stat.contains('Z') {
+                return;
+            }
+            tokio::time::sleep(crate::GRACE_TICK).await;
+        }
+    }
+
+    /// An engine a goosed that died left behind: `sh`, leading a group of its own, backgrounds
+    /// the argv fake and exits, so the engine is re-parented to init carrying the dead leader's
+    /// pgid — the `uv`-SIGKILLed shape measured 2026-09-01. Returns once it listens.
+    fn leftover_engine(port: u16, marker: Option<&str>) -> u32 {
+        use std::io::BufRead;
+        use std::os::unix::process::CommandExt;
+        let mut sh = std::process::Command::new("/bin/sh");
+        sh.args([
+            "-c",
+            r#"python3 -c "$1" serve /leftover --port "$2" --served-model-name pub/small \
+               >/dev/null 2>&1 & echo $!"#,
+            "sh",
+            ARGV_FAKE_ENGINE,
+            &port.to_string(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .process_group(0);
+        if let Some(marker) = marker {
+            sh.env(crate::SIDECAR_MARKER_ENV, marker);
+        }
+        let mut sh = sh.spawn().unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(sh.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        sh.wait().unwrap();
+        let pid: u32 = line.trim().parse().unwrap();
+        while !port_has_listener(port) {
+            assert!(
+                alive(pid),
+                "the leftover engine {pid} ended before it bound {port}"
+            );
+            std::thread::sleep(crate::GRACE_TICK);
+        }
+        pid
+    }
+
+    /// Q-240 through the manager: an engine a dead goosed left on the port carrying this
+    /// sidecar's marker is stopped per pid and the mount runs its own; the same leftover without
+    /// the marker (a goose older than the marker, or anyone else's server) refuses the mount,
+    /// named — pid, command line, why — and keeps serving.
+    #[tokio::test]
+    async fn a_mount_stops_its_own_leftover_engine_and_names_one_it_may_not_stop() {
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager = test_manager();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                ARGV_FAKE_ENGINE.to_string(),
+            ],
+            ..Default::default()
+        });
+
+        let foreign = leftover_engine(port, None);
+        let refused = manager.mount("pub/small").await;
+        let foreign_alive = alive(foreign) && port_has_listener(port);
+        // SAFETY: the test's own stand-in, signalled by its pid alone.
+        unsafe { libc::kill(foreign as libc::pid_t, libc::SIGKILL) };
+        wait_exited(foreign).await;
+        let text = format!(
+            "{:#}",
+            refused.expect_err("a mount over an unmarked listener")
+        );
+        assert!(text.contains(&format!("pid {foreign} (`")), "{text}");
+        assert!(text.contains("serve /leftover --port"), "{text}");
+        assert!(text.contains("carries no GOOSE_SIDECAR"), "{text}");
+        assert!(foreign_alive, "the unmarked leftover was touched: {text}");
+        assert_eq!(manager.status().await.state, "stopped");
+
+        let marker = sidecar_marker(ENGINE_SIDECAR_NAME, &format!("http://127.0.0.1:{port}"));
+        let ours = leftover_engine(port, Some(&marker));
+        let mounted = manager.mount("pub/small").await;
+        let status = settle(&manager).await;
+        let ours_alive = alive(ours);
+        manager.unmount().await;
+        if ours_alive {
+            // SAFETY: as above.
+            unsafe { libc::kill(ours as libc::pid_t, libc::SIGKILL) };
+        }
+        mounted.unwrap();
+        assert_eq!(status.state, "running", "{:?}", status.last_error);
+        assert!(!ours_alive, "the marked leftover {ours} still runs");
+        assert_ne!(status.pid, Some(ours));
     }
 
     /// The gate and the status report read the manager's memory facts, never this Mac's live

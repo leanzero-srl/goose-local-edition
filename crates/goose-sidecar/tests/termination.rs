@@ -54,18 +54,28 @@ fn proof_holds_for_a_live_leader_and_killpg_takes_the_grandchild() {
         "spawned leader must own its group"
     );
     assert_ne!(leader, pgid_before, "the wrapper's group is not the test's");
+    assert_eq!(
+        unsafe { libc::getpgid(grandchild as libc::pid_t) },
+        leader as libc::pid_t,
+        "the grandchild is in the leader's group, so the group kill reaches it"
+    );
 
     assert!(
         sigkill_owned_group(leader),
         "proof held, group must be signalled"
     );
     let _ = wrapper.wait();
-    std::thread::sleep(Duration::from_millis(200));
-    assert!(
-        !alive(grandchild),
-        "grandchild {grandchild} survived the group kill"
-    );
+    // The kernel posted SIGKILL to every member when killpg returned; what is left is the
+    // grandchild's exit completing — its event, never a clock (Q-245: a fixed 200 ms).
+    while still_running(grandchild) {
+        std::thread::sleep(goose_sidecar::GRACE_TICK);
+    }
     assert_eq!(my_pgid(), pgid_before, "the caller's own group was touched");
+}
+
+/// Whether `pid` still runs; a zombie (killed, not yet reaped by init) has exited.
+fn still_running(pid: u32) -> bool {
+    goose_sidecar::machine::process_start(pid).is_some_and(|(_, zombie)| !zombie)
 }
 
 #[test]
@@ -74,7 +84,6 @@ fn proof_declines_an_orphan_whose_leader_died() {
     let leader = wrapper.id();
     unsafe { libc::kill(leader as libc::pid_t, libc::SIGKILL) };
     let _ = wrapper.wait();
-    std::thread::sleep(Duration::from_millis(200));
     assert!(
         alive(grandchild),
         "per-pid SIGKILL of the leader must orphan the grandchild"

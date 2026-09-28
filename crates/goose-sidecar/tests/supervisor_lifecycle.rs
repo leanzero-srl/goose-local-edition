@@ -64,7 +64,7 @@ async fn a_catalog_serving_another_id_is_not_ready() {
         err.contains("serves 'fake', expected 'other'"),
         "err was: {err}"
     );
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // No sleep: the failed start releases the port BEFORE it returns (release_port waits for it).
     assert!(
         std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
         "the failed start must not leave its child listening"
@@ -134,8 +134,26 @@ async fn a_silent_engine_that_never_serves_fails_by_stall() {
     );
 }
 
+/// A zombie has exited: the kernel answers no process info for it (`machine::process_start`).
 fn process_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    goose_sidecar::machine::process_start(pid).is_some_and(|(_, zombie)| !zombie)
+}
+
+/// Until the kernel says `pid` has finished exiting — `ps` shows it a zombie (waitable, so the
+/// supervisor's next `try_wait` sees it) or not at all. After a SIGKILL, which cannot be caught,
+/// that is the only thing left to wait on (Q-245: fixed 200/300 ms sleeps stood in for it).
+async fn wait_exited(pid: u32) {
+    loop {
+        let stat = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let stat = String::from_utf8_lossy(&stat.stdout);
+        if stat.trim().is_empty() || stat.contains('Z') {
+            return;
+        }
+        tokio::time::sleep(goose_sidecar::GRACE_TICK).await;
+    }
 }
 
 #[tokio::test]
@@ -146,8 +164,8 @@ async fn starts_becomes_healthy_and_shuts_down_without_orphans() {
     let pid = sidecar.pid().await.unwrap();
     assert!(process_alive(pid));
 
+    // No sleep: shutdown reaps its child before it returns.
     sidecar.shutdown().await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!process_alive(pid), "engine pid {pid} survived shutdown");
 }
 
@@ -160,7 +178,7 @@ async fn restarts_after_the_engine_is_killed() {
     unsafe {
         libc::kill(first_pid as libc::pid_t, libc::SIGKILL);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    wait_exited(first_pid).await;
 
     sidecar.ensure_running().await.unwrap();
     let second_pid = sidecar.pid().await.unwrap();
@@ -201,7 +219,7 @@ async fn circuit_breaker_opens_after_repeated_deaths() {
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGKILL);
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        wait_exited(pid).await;
         match sidecar.ensure_running().await {
             Ok(()) => continue,
             Err(e) => {

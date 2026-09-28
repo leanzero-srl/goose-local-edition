@@ -445,6 +445,26 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   `dropRoute().settled` (the peer's unmount answered) — the 3.0.44 split start began before the Studio even got
   the unmount. A load the split does NOT own refuses with code `modelLoading`: "<Mac> is loading <model> right
   now…", pid/port/elapsed only in `detail`; the lock record carries `model=` (single engine AND ranks).
+- A HELD ENGINE PORT IS NAMED, AND STOPPED ONLY ON PROOF (Q-240, 984b74763, 2026-09-28). Before: a mount over a
+  held port said "port N has an unsupervised listener — unmount/reclaim it first" (no pid), and the Sidecar start /
+  crash-restart had NO check — a stand-in serving the expected id made `Sidecar::start` return Ok for a child that
+  then died on the bind (measured red). Now every sidecar spawn carries `GOOSE_SIDECAR=<name>@<base_url>` (the
+  engine's name is `engine::ENGINE_SIDECAR_NAME` "mlx-engine"; inherited uv → python, `ps -E -ww -p <pid>` shows it),
+  and `port_holder::claim_port` runs before EVERY spawn: each LISTEN pid is read with its lineage and passes
+  `ownership_proof` only if it is this uid, carries OUR marker, every same-group launcher above it does too, and the
+  chain's top was started by init (its goosed is gone) or by this process — then it is stopped per pid (identity =
+  start time + argv + marker re-read before each signal; SIGTERM, GRACE, SIGKILL). Anything else is `PortHeld` /
+  `UnsupervisedListenerError` naming pid, full argv, the failed rule, the live starter ("quit what started it (pid
+  N)") or `kill <pid>` — nothing signalled, no other port tried. TRAP: an engine started by a goose OLDER than
+  984b74763 carries no marker and is refused, named — never reaped; Unmount still reclaims the port from ANY listener
+  (`reclaim_port`, unproven — the owner's explicit command). Tests: tests/port_holders.rs (real orphans via a
+  process-group `sh` that exits), engine `a_mount_stops_its_own_leftover_engine_and_names_one_it_may_not_stop`.
+- A KILLED CHILD IS "GONE" TO sysinfo BEFORE ITS PARENT CAN SEE IT (Q-245, 2026-09-28). Measured: for 48 of 50
+  SIGKILLed children `proc_pidinfo` (so `machine::process_start`/`prove`) answered nothing while `waitid(WNOWAIT)` did
+  not yet report the exit. A test that waits for a killed child and then asserts the supervisor's next `try_wait`
+  sees it must wait for `ps -o stat= -p <pid>` = Z (or empty), not for sysinfo. Test waits in goose-sidecar end on
+  the event (the bind, the drains' EOF — `drain_rank_output` returns its handles — the state line) or on the
+  process's exit with its words; `launch.rs`'s `wait_for` (600 × 100 ms) is deleted.
 
 ## Available memory on macOS (2026-09-23 — the measure under the mount gate and the page)
 - `memory::measure()` on macOS = `host_statistics64(HOST_VM_INFO64)`: (free_count − speculative_count) +
