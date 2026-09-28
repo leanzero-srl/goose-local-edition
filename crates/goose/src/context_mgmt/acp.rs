@@ -76,6 +76,7 @@ pub async fn preview(
             note: state.note(),
             pins: &state.pins,
             preserved: None,
+            working_dir: Some(&session.working_dir),
         },
         ledger_read,
     )
