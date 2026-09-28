@@ -25,8 +25,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       But "resumable" was never exercised ("state: undefined rows checkpointed") and it was called verified,
       after an assert-then-retract about its own code → Q-451 (model behaviour, parked; forge-tuner c0cf851).
     - Turns 7–8: 340 s, then 105 s. 13/13 node:test pass. The totals and the 4 leads the rule saved are correct.
-    - Turn 9 (prove resumable by interrupting) is running. It read "state: undefined" honestly this time; its
-      first kill came too late (exit 0, all 430 rows saved). Decode is 9.5–11.9 tok/s since the 23:30 flip.
+    - Turn 9 (prove resumable by interrupting) is still running at 00:37. It is honestly debugging why every kill
+      lands after a complete checkpoint ("I have now proved resumability zero times"). No goose defect. Decode is 9.5–11.9 tok/s since the 23:30 flip.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -49,7 +49,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
   - Q-447 (float32 KV; BOTH Macs), Q-449, Q-450;
   - Q-428/430/432 (b/o demo; break pass fixed 4).
   No ledger row lost; Q-444..446 unused.
-- Gate: scratchpad/gate074.sh in its own session → /tmp/g074.out (target ~/goose-targets/g074; pnpm install, tsc,
+- Gate: UI done (vitest 4358, eslint 0, i18n 16/16). tsc was RED on Q-417's test `.at(-1)` (no Array.at in the
+  TS lib) → fixed b068352cf on merge-074, tsc=0. Cargo phases still running. scratchpad/gate074.sh in its own session → /tmp/g074.out (target ~/goose-targets/g074; pnpm install, tsc,
   vitest, eslint, i18n, fmt, lib, agent/compaction/acp_*/needs_you/chat_search/session, sidecar, providers,
   leanzero-link, server, mcp+cli, clippy, development_gates, schema, wincheck).
 - Green → ff main, push → release 3.0.74 (/tmp/rel074.sh) → install BOTH Macs at an #3u turn boundary →
