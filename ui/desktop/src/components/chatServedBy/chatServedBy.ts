@@ -26,7 +26,12 @@ import {
   type MlxLiveRequest,
   type MlxLiveStats,
 } from '../leanzero-swarm/mlxLiveStats';
-import { largestPrompt, readingRequest } from '../leanzero-swarm/engineFigures';
+import {
+  largestPrompt,
+  promptCacheOf,
+  readingRequest,
+  type PromptCache,
+} from '../leanzero-swarm/engineFigures';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { splitStopAt, type SplitStop } from './splitStop';
@@ -110,6 +115,11 @@ export interface ChatBusy {
   requests: number;
   /** The prompt the engine is reading for one of them, when that is what it is doing. */
   readingTokens: number | null;
+  /**
+   * What the prefix cache supplied of that prompt (engineFigures.ts `promptCacheOf`, Q-337): a
+   * mostly-cached read is a short wait. null = no such read, or the engine has not looked it up.
+   */
+  readingCache: PromptCache | null;
 }
 
 /**
@@ -694,7 +704,11 @@ function busyWith(
     activity === 'prefill' && own === 0
       ? readingRequest({ ...stats, requests: answeredRequests(stats.requests) })
       : undefined;
-  return { requests: others, readingTokens: reading?.promptTokens ?? null };
+  return {
+    requests: others,
+    readingTokens: reading?.promptTokens ?? null,
+    readingCache: reading ? promptCacheOf(reading) : null,
+  };
 }
 
 /**

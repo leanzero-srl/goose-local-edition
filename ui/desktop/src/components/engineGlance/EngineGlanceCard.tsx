@@ -45,7 +45,12 @@ import {
   WEIGHT,
   cx,
 } from '../lz';
-import type { EngineFigure } from '../leanzero-swarm/engineFigures';
+import { readBarOf, type EngineFigure } from '../leanzero-swarm/engineFigures';
+import {
+  PromptReadBar,
+  promptCacheWords,
+  promptReadMessages,
+} from '../leanzero-swarm/PromptReadBar';
 import { formatMlxMode, formatRemoteMode } from '../leanzero-swarm/mlxModeLabel';
 import { formatElapsed, formatRate } from '../leanzero-swarm/mlxLiveStats';
 import { leavingFigureText, leavingRowsMessages } from '../leanzero-swarm/leavingRowsText';
@@ -130,6 +135,14 @@ const i18n = defineMessages({
   groupLabel: { id: 'engineGlance.groupLabel', defaultMessage: 'Engine: {stage}' },
   more: { id: 'engineGlance.more', defaultMessage: 'Show rates and memory' },
   less: { id: 'engineGlance.less', defaultMessage: 'Hide rates and memory' },
+  moreWithCache: {
+    id: 'engineGlance.moreWithCache',
+    defaultMessage: 'Show why this prompt reads fast, rates and memory',
+  },
+  lessWithCache: {
+    id: 'engineGlance.lessWithCache',
+    defaultMessage: 'Hide why this prompt reads fast, rates and memory',
+  },
   collapse: { id: 'engineGlance.collapse', defaultMessage: 'Shrink to a pill' },
   expand: { id: 'engineGlance.expand', defaultMessage: 'Show the whole card' },
   hideChoices: {
@@ -409,6 +422,33 @@ function Control({
   );
 }
 
+/** The prompt being read came partly from the prefix cache — its "why so fast" belongs in Details. */
+function cacheSupplied(engine: EngineGlance): boolean {
+  return engine.readCache != null && engine.readCache.cached > 0;
+}
+
+/**
+ * The glance's bar: a prompt read in its two parts (Q-337, PromptReadBar — the cached part and the
+ * new part read so far), any other measured progress (a load) as the one plain bar.
+ */
+function GlanceBar({ engine, label }: { engine: EngineGlance; label: string }) {
+  const progress = engine.progress;
+  if (progress != null && progress !== 'indeterminate' && progress.unit === 'tokens') {
+    const bar = readBarOf(progress, engine.readCache);
+    return bar ? (
+      <PromptReadBar
+        bar={bar}
+        cache={engine.readCache}
+        paint="fill"
+        label={label}
+        height="h-2"
+        testId="engine-glance-progress"
+      />
+    ) : null;
+  }
+  return <Bar progress={progress} label={label} />;
+}
+
 function Details({ engine }: { engine: EngineGlance }) {
   const intl = useIntl();
   const range = (r: { low: number; high: number }) => ({
@@ -423,12 +463,18 @@ function Details({ engine }: { engine: EngineGlance }) {
       : null,
     engine.ranges.reading ? intl.formatMessage(i18n.readRange, range(engine.ranges.reading)) : null,
   ].filter((l): l is string => l != null);
-  if (lines.length === 0 && engine.nodes.length === 0) return null;
+  const cachedRead = cacheSupplied(engine);
+  if (lines.length === 0 && engine.nodes.length === 0 && !cachedRead) return null;
   return (
     <div
       data-testid="engine-glance-details"
       className="flex flex-col gap-2 border-t border-current pt-2"
     >
+      {cachedRead && (
+        <span data-testid="engine-glance-cache-why" className="break-words text-lz-meta">
+          {intl.formatMessage(promptReadMessages.why)}
+        </span>
+      )}
       {lines.map((line) => (
         <span key={line} className={cx('text-lz-meta', TNUM)}>
           {line}
@@ -963,7 +1009,10 @@ function GlanceFace(
       : null,
   ].filter((f): f is string => f != null);
   const hasDetails =
-    engine.ranges.writing != null || engine.ranges.reading != null || engine.nodes.length > 0;
+    engine.ranges.writing != null ||
+    engine.ranges.reading != null ||
+    engine.nodes.length > 0 ||
+    cacheSupplied(engine);
   const progressLabel = intl.formatMessage(
     engine.stage === 'prefill' ? i18n.progressRead : i18n.progressLoad
   );
@@ -1016,7 +1065,15 @@ function GlanceFace(
             {hasDetails && (
               <Control
                 testId="engine-glance-details-toggle"
-                label={intl.formatMessage(expanded ? i18n.less : i18n.more)}
+                label={intl.formatMessage(
+                  cacheSupplied(engine)
+                    ? expanded
+                      ? i18n.lessWithCache
+                      : i18n.moreWithCache
+                    : expanded
+                      ? i18n.less
+                      : i18n.more
+                )}
                 onClick={props.onToggleExpanded}
               >
                 {expanded ? <ChevronUp /> : <ChevronDown />}
@@ -1090,7 +1147,12 @@ function GlanceFace(
             <span className="min-w-0 text-lz-meta leading-tight">{hero.label}</span>
           </div>
         )}
-        {engine.present && <Bar progress={engine.progress} label={progressLabel} />}
+        {engine.present && <GlanceBar engine={engine} label={progressLabel} />}
+        {engine.present && engine.readCache && (
+          <span data-testid="engine-glance-cache" className={cx('break-words text-lz-meta', TNUM)}>
+            {promptCacheWords(intl, engine.readCache, 'fill', true)}
+          </span>
+        )}
         {(second || facts.length > 0) && (
           <div className={cx('flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-lz-meta', TNUM)}>
             {second && (

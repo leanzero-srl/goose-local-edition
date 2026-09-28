@@ -514,6 +514,11 @@
   --color-lz-phase-held-ink: var(--color-lz-phase-held-ink, #ffffff);
   --color-lz-phase-failed: var(--color-lz-phase-failed, #dc2626);
   --color-lz-phase-failed-ink: var(--color-lz-phase-failed-ink, #ffffff);
+  /* The part of a prompt the prefix cache supplied (Q-337, lz/PromptReadBar.tsx): teal beside the
+     reading blue. `-on-fill` is its register on a solid engine-phase fill (the tile, the glance),
+     where the read part is the fill's white ink. Both hold 3:1 on their track in both themes. */
+  --color-lz-cache: var(--color-lz-cache, #0d9488);
+  --color-lz-cache-on-fill: var(--color-lz-cache-on-fill, #5eead4);
 
   /* Node identity ramp + its ink — NODE IDENTITY ONLY, never chrome, never status. */
   --color-lz-node-1: var(--color-node-1, #1d4ed8);
@@ -591,6 +596,8 @@
   --color-lz-phase-held-ink: #ffffff;
   --color-lz-phase-failed: #dc2626;
   --color-lz-phase-failed-ink: #ffffff;
+  --color-lz-cache: #0d9488;
+  --color-lz-cache-on-fill: #5eead4;
 }
 
 /* LeanZero Studio surfaces — dark. */
@@ -627,6 +634,8 @@
   --color-lz-phase-held-ink: #ffffff;
   --color-lz-phase-failed: #dc2626;
   --color-lz-phase-failed-ink: #ffffff;
+  --color-lz-cache: #2dd4bf;
+  --color-lz-cache-on-fill: #5eead4;
 }
 
 /* Host-button hover fills — HOST-WIDE, not .local-edition: ui/button.tsx renders in every edition

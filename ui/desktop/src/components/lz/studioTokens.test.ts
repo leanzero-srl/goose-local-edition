@@ -48,6 +48,9 @@ const SURFACE_TOKENS = [
   '--color-lz-syntax-bool',
   ...ENGINE_PHASES.flatMap((p) => [`--color-lz-phase-${p}`, `--color-lz-phase-${p}-ink`]),
   '--color-lz-phase-unloaded-line',
+  // Q-337: the cached part of a prompt read, on a surface and on a phase fill.
+  '--color-lz-cache',
+  '--color-lz-cache-on-fill',
 ];
 
 const INK_TOKEN = /^--color-lz-ink(-\d)?$/;
@@ -94,7 +97,9 @@ describe('LeanZero Studio surfaces — the token contract in main.css', () => {
         );
       }
       expect(css).toMatch(
-        new RegExp(`@utility text-${step} \\{\\s*--tw-sort: color;\\s*color: var\\(${name}, var\\(--color-text-`)
+        new RegExp(
+          `@utility text-${step} \\{\\s*--tw-sort: color;\\s*color: var\\(${name}, var\\(--color-text-`
+        )
       );
     }
   });

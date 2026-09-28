@@ -49,7 +49,20 @@ import { hostingPhase, nodePhase, remotePhase, runPhase, singlePhase } from './m
 import { distributedStateWord } from './mlxModeLabel';
 import { engineWayOf, measuredRunsOf, type MeasuredRuns } from './measuredRuns';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
-import { engineFigures, type EngineFigure } from './engineFigures';
+import {
+  engineFigures,
+  promptCacheOf,
+  readBarOf,
+  readProgressOf,
+  type EngineFigure,
+} from './engineFigures';
+import {
+  PromptReadBar,
+  filledPercent,
+  freshReadText,
+  promptCacheWords,
+  promptReadMessages,
+} from './PromptReadBar';
 import { swapStopsEngine, type NodeSwap } from '../../utils/nodeSwap';
 import { swappingText } from '../chatServedBy/loaderText';
 import {
@@ -503,36 +516,54 @@ function RequestRow({ request }: { request: MlxLiveRequest }) {
   const waiting = request.status === 'waiting' || request.phase === 'queued';
   if (waiting || request.phase === 'prefill') {
     // The long pre-fill: no token is out yet. The single engine reports no per-request progress,
-    // so there it draws no fraction — the prompt size, what the cache supplied and the engine's
-    // own elapsed seconds are the honest measure of it.
+    // so there it draws no fraction — the prompt size, the split the prefix cache made of it and
+    // the engine's own elapsed seconds are the honest measure of it. A reading row's split and bar
+    // are engineFigures.ts's (Q-337), the figures every read surface draws.
+    const cache = waiting ? null : promptCacheOf(request);
+    const bar = waiting ? null : readBarOf(readProgressOf(request), cache);
     const parts = [
       intl.formatMessage(waiting ? i18n.rowQueued : i18n.rowReading),
       request.promptTokens != null
         ? intl.formatMessage(i18n.rowTokens, { count: compact(intl, request.promptTokens) })
         : null,
-      request.cachedTokens
+      waiting && request.cachedTokens
         ? intl.formatMessage(i18n.rowCached, { count: compact(intl, request.cachedTokens) })
         : null,
     ].filter(Boolean);
-    // The distributed engine reports how far into the prompt it is; the single engine does not.
-    const read =
-      !waiting && request.prefilledTokens != null && request.promptTokens
-        ? request.prefilledTokens / request.promptTokens
-        : null;
     return (
       <li data-testid="mlx-live-request" data-phase={request.phase} className="flex flex-col gap-1">
         <div className={cx('flex items-baseline justify-between gap-3', LINE)}>
           <span className={cx('min-w-0 truncate', WEIGHT.semibold)}>{parts.join(' · ')}</span>
           <span className="shrink-0">
             {[
-              read != null ? `${Math.round(Math.min(1, read) * 100)}%` : null,
+              bar != null ? `${filledPercent(bar)}%` : null,
               request.elapsedS != null ? formatElapsed(request.elapsedS) : null,
             ]
               .filter(Boolean)
               .join(' · ')}
           </span>
         </div>
-        {read != null && <TileBar fraction={read} label={intl.formatMessage(i18n.rowReading)} />}
+        {bar != null && (
+          <PromptReadBar
+            bar={bar}
+            cache={cache}
+            paint="fill"
+            label={intl.formatMessage(i18n.rowReading)}
+            height="h-2.5"
+            testId="mlx-live-request-bar"
+          />
+        )}
+        {cache && (
+          <span data-testid="mlx-live-request-cache" className={cx('break-words', LABEL, TNUM)}>
+            {promptCacheWords(intl, cache, 'fill', true)}
+            {cache.cached > 0 && cache.freshDone != null && ` · ${freshReadText(intl, cache)}`}
+          </span>
+        )}
+        {cache && cache.cached > 0 && (
+          <span data-testid="mlx-live-request-why" className={cx('break-words', LABEL)}>
+            {intl.formatMessage(promptReadMessages.why)}
+          </span>
+        )}
       </li>
     );
   }

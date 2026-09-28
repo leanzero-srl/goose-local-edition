@@ -1,7 +1,16 @@
+import type { ReactNode } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import { formatElapsed, formatRate } from '../leanzero-swarm/mlxLiveStats';
-import { PHASE_DOT, PHASE_FILL, RADIUS, TNUM, TONE_FILL, TYPE, cx } from '../lz';
+import { readBarOf } from '../leanzero-swarm/engineFigures';
+import {
+  PromptReadBar,
+  freshReadText,
+  promptCacheWords,
+  promptReadMessages,
+  soFarText,
+} from '../leanzero-swarm/PromptReadBar';
+import { PHASE_FILL, RADIUS, TNUM, TONE_FILL, TYPE, cx } from '../lz';
 import { useNow } from '../sessionActivity/ActivityPills';
 import { elapsedLabel, useActivityOf } from '../sessionActivity/sessionActivityStore';
 import { useTurnReadOf } from './turnReadStore';
@@ -31,10 +40,11 @@ const PILL = 'inline-flex h-6 items-center gap-1.5 px-2 text-lz-meta font-lz-sem
 /**
  * Under the user's message while the turn has produced nothing yet (Q-301: a 40.5K-token prompt
  * was read for 2 m 48 s with the transcript blank — only the chip and the sidebar card showed
- * work). While its prompt is read, the figures the card leads with for it — tokens read of the
- * total, the rate it is read at now, the time left at that rate — from the composer's one
- * derivation (`promptRead`, published by session); otherwise how long the turn has waited. It goes
- * the moment the model's first words (or thoughts, or a tool call) arrive.
+ * work). While its prompt is read, the figures the card leads with for it — the split the prefix
+ * cache made of it (Q-337: what is already in memory, what is new), how far into the new part, the
+ * rate it is read at now, the time left at that rate over the new tokens only — from the
+ * composer's one derivation (`promptRead`, published by session); otherwise how long the turn has
+ * waited. It goes the moment the model's first words (or thoughts, or a tool call) arrive.
  */
 export function TurnWorkingRow({ sessionId }: { sessionId: string }) {
   const intl = useIntl();
@@ -57,26 +67,34 @@ export function TurnWorkingRow({ sessionId }: { sessionId: string }) {
     );
   }
 
-  const figures = [
-    read.progress
-      ? intl.formatMessage(i18n.readOf, {
-          done: compact(read.progress.done),
-          total: compact(read.progress.total),
-        })
-      : read.tokens != null
-        ? intl.formatMessage(i18n.readSize, {
-            tokens: compact(read.tokens),
-            elapsed: formatElapsed(read.elapsedS),
+  const { cache, progress } = read;
+  // Into the new part when the cache supplied some; otherwise into the whole prompt.
+  const howFar =
+    cache && cache.cached > 0
+      ? freshReadText(intl, cache)
+      : progress
+        ? intl.formatMessage(i18n.readOf, {
+            done: compact(progress.done),
+            total: compact(progress.total),
           })
-        : null,
+        : null;
+  const figures: ReactNode[] = [
+    cache ? promptCacheWords(intl, cache, 'surface', false) : null,
+    howFar,
+    // The single engine reports no position: its read is said by the time it has taken.
+    cache && !progress ? soFarText(intl, read.elapsedS) : null,
+    !cache && !progress && read.tokens != null
+      ? intl.formatMessage(i18n.readSize, {
+          tokens: compact(read.tokens),
+          elapsed: formatElapsed(read.elapsedS),
+        })
+      : null,
     read.tps != null
       ? intl.formatMessage(i18n.rate, { rate: formatRate(read.tps, intl.locale) })
       : null,
     read.leftS != null ? intl.formatMessage(i18n.left, { left: formatElapsed(read.leftS) }) : null,
-  ].filter((part): part is string => part != null);
-  const pct = read.progress
-    ? Math.round(Math.min(1, Math.max(0, read.progress.done / read.progress.total)) * 100)
-    : null;
+  ].filter((part) => part != null);
+  const bar = readBarOf(progress, cache);
 
   return (
     <div
@@ -91,22 +109,29 @@ export function TurnWorkingRow({ sessionId }: { sessionId: string }) {
         </span>
         {figures.length > 0 && (
           <span data-testid="turn-working-figures" className={cx(TYPE.meta, TNUM)}>
-            {figures.join(' · ')}
+            {figures.map((part, i) => (
+              <span key={i}>
+                {i > 0 && ' · '}
+                {part}
+              </span>
+            ))}
           </span>
         )}
       </div>
-      {pct != null && (
-        <div
-          role="progressbar"
-          aria-label={intl.formatMessage(i18n.progress)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={pct}
-          data-testid="turn-working-progress"
-          className={cx('h-2 w-full overflow-hidden border border-lz-border', RADIUS.pill)}
-        >
-          <div className={cx('h-full', PHASE_DOT.reading)} style={{ width: `${pct}%` }} />
-        </div>
+      {bar && (
+        <PromptReadBar
+          bar={bar}
+          cache={cache}
+          paint="surface"
+          label={intl.formatMessage(i18n.progress)}
+          height="h-2.5"
+          testId="turn-working-progress"
+        />
+      )}
+      {cache && cache.cached > 0 && (
+        <span data-testid="turn-working-why" className={TYPE.meta}>
+          {intl.formatMessage(promptReadMessages.why)}
+        </span>
       )}
     </div>
   );

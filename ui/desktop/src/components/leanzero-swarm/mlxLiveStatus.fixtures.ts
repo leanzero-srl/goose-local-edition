@@ -128,7 +128,9 @@ export const GENERATING_STATUS = {
       progress: 0.856,
       tokens_per_second: 19.9,
       ttft_s: 165,
-      cache_hit_type: null,
+      // A running row was looked up when the scheduler took it (scheduler.py sets the type on
+      // every path); its uncached 32,277-token prompt was a miss (Q-337).
+      cache_hit_type: 'miss',
       cached_tokens: 0,
     },
     {
@@ -142,7 +144,7 @@ export const GENERATING_STATUS = {
       progress: 0.0,
       tokens_per_second: null,
       ttft_s: null,
-      cache_hit_type: null,
+      cache_hit_type: 'miss',
       cached_tokens: 0,
     },
   ],

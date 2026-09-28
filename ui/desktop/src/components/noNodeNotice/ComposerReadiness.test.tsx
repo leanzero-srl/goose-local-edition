@@ -885,7 +885,7 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
     const strip = await screen.findByTestId('composer-readiness');
     expect(strip).toHaveAttribute('data-readiness', 'busy');
     expect(strip.textContent).toMatch(
-      /^Work's Mac Studio is reading another request’s [\d.]+k?-token prompt — your message waits its turn/
+      /^Work's Mac Studio is reading another request’s [\d.]+k?-token prompt, nothing cached — your message waits its turn/
     );
     expect(strip.className).toContain('bg-lz-phase-held');
     expect(strip.textContent).not.toContain('ready');

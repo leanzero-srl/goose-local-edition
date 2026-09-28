@@ -317,6 +317,8 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
     expect(served.busyWithOthers).toEqual({
       requests: 1,
       readingTokens: PREFILL_STATUS.requests[0].prompt_tokens,
+      // Q-337: the single engine looked it up (a miss) — nothing cached, all of it is read.
+      readingCache: { total: 32277, cached: 0, fresh: 32277, freshDone: null },
     });
   });
 
@@ -385,7 +387,11 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
     expect(busy([mine, reviewer, hidden])).toBeNull();
     // A sub-agent or a scheduled job is its own session — still someone else's request.
     const scheduled = { ...hidden, key: 'session:j1', sessionId: 'j1', sessionType: 'scheduled' };
-    expect(busy([mine, reviewer, scheduled])).toEqual({ requests: 1, readingTokens: null });
+    expect(busy([mine, reviewer, scheduled])).toEqual({
+      requests: 1,
+      readingTokens: null,
+      readingCache: null,
+    });
   });
 
   it('this chat’s own turn is not "others"; another chat’s and an external client’s are', () => {
@@ -420,7 +426,11 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
       ).busyWithOthers;
     expect(serving([mine])).toBeNull();
     // Only the reading prompt of someone else is named; this engine is writing, so none is.
-    expect(serving([mine, theirs, ext])).toEqual({ requests: 3, readingTokens: null });
+    expect(serving([mine, theirs, ext])).toEqual({
+      requests: 3,
+      readingTokens: null,
+      readingCache: null,
+    });
   });
 
   it('while this chat’s turn runs, an unattributed request may be ours (the omlx provider) — never called someone else’s', () => {
@@ -435,7 +445,7 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
     ).toBeNull();
     expect(
       deriveChatServedBy(inputs({ single: RUNNING, main, turnInFlight: false })).busyWithOthers
-    ).toEqual({ requests: 1, readingTokens: null });
+    ).toEqual({ requests: 1, readingTokens: null, readingCache: null });
   });
 
   it('an idle engine, or a "who" goose could not read, claims nobody', () => {

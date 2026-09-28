@@ -11,8 +11,13 @@ import {
   mlxActivity,
   readingNowTps,
   type LeavingRows,
+  type MlxLiveRequest,
 } from '../components/leanzero-swarm/mlxLiveStats';
-import { readingRequest } from '../components/leanzero-swarm/engineFigures';
+import {
+  promptCacheOf,
+  readProgressOf,
+  readingRequest,
+} from '../components/leanzero-swarm/engineFigures';
 import { measuredFigure, type MeasuredFigure, type MlxMeasuredRead } from './mlxMeasuredRuns';
 import {
   linkWords,
@@ -360,6 +365,27 @@ function leavingLine(leaving: LeavingRows): string {
   return `${plural(leaving.rows, 'stopped request', 'stopped requests')} still leaving the engine${since}`;
 }
 
+/**
+ * The prompt being read, in the tray's words — the split the Engine tile and the glance draw
+ * (engineFigures.ts `promptCacheOf`, Q-337): "Reading a 115k-token prompt for 4s: 114k from cache,
+ * 1.1k new (576 of it read)"; "…: nothing cached, 45k read" when the cache supplied none; the plain
+ * size and position while the engine has not looked the prompt up.
+ */
+function readingLine(reading: MlxLiveRequest, promptTokens: number): string {
+  const cache = promptCacheOf(reading);
+  const progress = readProgressOf(reading);
+  const elapsed = reading.elapsedS != null ? ` for ${formatElapsed(reading.elapsedS)}` : '';
+  const size = `Reading a ${compactTokens(promptTokens)}-token prompt`;
+  const read = progress ? `${compactTokens(progress.done)} read` : null;
+  if (!cache) return `${size}${read ? `, ${read}` : ''}${elapsed}`;
+  if (cache.cached === 0) return `${size}${elapsed}: nothing cached${read ? `, ${read}` : ''}`;
+  const freshRead =
+    cache.freshDone != null
+      ? ` (${compactTokens(Math.min(cache.fresh, cache.freshDone))} of it read)`
+      : '';
+  return `${size}${elapsed}: ${compactTokens(cache.cached)} from cache, ${compactTokens(cache.fresh)} new${freshRead}`;
+}
+
 export function mlxTrayTitle(snapshot: MlxEngineSnapshot): string {
   switch (snapshot.mode) {
     case 'off':
@@ -382,8 +408,14 @@ export function mlxTrayTitle(snapshot: MlxEngineSnapshot): string {
       return rate > 0 ? `${formatRate(rate)} tok/s` : 'Writing';
     }
     case 'prefill': {
+      // What the engine computes: a cached prefix is in memory already (Q-337) — "Reading 115k" for
+      // a turn whose 1.1k new tokens take seconds read as a long wait.
       const r = readingRequest(stats);
-      return r?.promptTokens != null ? `Reading ${compactTokens(r.promptTokens)}` : 'Reading';
+      if (r?.promptTokens == null) return 'Reading';
+      const cache = promptCacheOf(r);
+      return cache && cache.cached > 0
+        ? `Reading ${compactTokens(cache.fresh)} new`
+        : `Reading ${compactTokens(r.promptTokens)}`;
     }
     case 'queued':
       return `Queued ${answeredRequests(stats.requests).length}`;
@@ -519,14 +551,7 @@ function runningItems(snapshot: MlxEngineSnapshot): MlxTrayItem[] {
   if (leaving) items.push({ type: 'info', label: clip(leavingLine(leaving)) });
   const reading = readingRequest(stats);
   if (reading?.promptTokens != null) {
-    const cached = reading.cachedTokens ? `, ${compactTokens(reading.cachedTokens)} cached` : '';
-    const read =
-      reading.prefilledTokens != null ? `, ${compactTokens(reading.prefilledTokens)} read` : '';
-    const elapsed = reading.elapsedS != null ? ` for ${formatElapsed(reading.elapsedS)}` : '';
-    items.push({
-      type: 'info',
-      label: `Reading a ${compactTokens(reading.promptTokens)}-token prompt${cached}${read}${elapsed}`,
-    });
+    items.push({ type: 'info', label: readingLine(reading, reading.promptTokens) });
   }
   if (readingNowTps(stats) > 0) {
     items.push({ type: 'info', label: `Reading at ${formatRate(prefill)} tok/s` });

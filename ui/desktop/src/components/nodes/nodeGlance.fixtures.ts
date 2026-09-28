@@ -331,6 +331,7 @@ export function engineGlance(over: Partial<EngineGlance> = {}): EngineGlance {
     hero: { kind: 'writing', tps: 11.2 },
     second: { kind: 'readingMedian', median: 154, runs: 3 },
     progress: null,
+    readCache: null,
     waiting: 0,
     inflight: null,
     chat: { sessionId: 's1', name: 'Kickoff notes', work: null },
