@@ -435,7 +435,7 @@ describe('MlxEngineMonitor — a split that owns the Mac is read as the split wh
     const h = harness({ status: () => SAMPLE_REFUSED, distributedRun: () => run });
     // goose runs no single engine: its own status said stopped before the restore began.
     h.monitor.reportFromRenderer({ state: 'stopped', baseUrl: BASE });
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1), { timeout: testClock() });
     const s = h.monitor.current();
     expect(`${s.engine}/${s.mode}`).toBe('distributed/mounting');
     expect(s.startPhase).toBe('loading');
@@ -451,7 +451,7 @@ describe('MlxEngineMonitor — a split that owns the Mac is read as the split wh
     run = splitUpAt(RANK0);
     h.readStatus.mockImplementation(async () => answered(DIST_READING_STATUS));
     h.scheduled.shift()?.();
-    await vi.waitFor(() => expect(h.snapshots).toHaveLength(2));
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(2), { timeout: testClock() });
     const up = h.monitor.current();
     expect(`${up.engine}/${up.mode}`).toBe('distributed/running');
     expect(up.startPhase).toBeNull();
