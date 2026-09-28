@@ -19,12 +19,11 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       construction, and it said so itself at 772533. It re-used a restated paragraph (772527 = 772511) and
       rationalised the invented 128. Model behaviour, covered by the Q-448/Q-450 addenda; no goose defect.
     - Turn 5 (projects.csv + every lead in users.csv) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
-- Q-447 (STABILITY/perf), REFINED at 23:40:
-  - It is not "cache hit ⇒ slow". Within ONE launch, decode flipped from 4.1 to 11.5 tok/s at 20:29:56Z, right
-    after a 2-row batch (a helper beside the agent call) returned to 1 row.
-  - Signature: MLX free-buffer cache while busy. Slow runs sit at 0.05–0.09 GB, fast ones at 1.6–3.5 GB (limit 3.54).
-    A live row whose KV is shared with a cache entry is copied per step; this is suspected, not proven.
-  - Sent to the mlx-backend agent (tiny-model repro). #3u is fast again now.
+- Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
+  - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
+    mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
+    of 11 tok/s.
+  - Q-347 and buffer sharing are refuted. The new tag means BOTH Macs need 3.0.74.
 - Owner demo done (nodes: Studio single, both Macs, deepseek-v4.1-flash · OpenRouter; strategy "Studio chat, split
   for heavy work"; screenshots ~/goose-builds/quality/DEMO-2026-09-28-strategy).
 
@@ -32,16 +31,15 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-447 split decode regression — mlx-backend, dispatched 23:3x.
 - Q-449 CI flake (sidecar shutdown group residue) — mlx-backend. Q-450 claim_check (unrun action, unmeasured count) — general.
 - Q-428 (+Q-430/432) the owner's "don't interrupt a node doing its thing" per-role option — agent-a626efc4490c889b7.
 - MERGED into /tmp/merge-074 (branch merge-074, 00:0x; no ledger row lost, gains Q-424/425):
   - Q-417 (servedModel), Q-407 (dead goosed's commands), Q-423 (engine stderr; BOTH Macs), Q-426 (PiP X);
-  - Q-429/431/433..440 (demo fixes, ea2f02977). Medium confidence, live-only: Q-431's banner under share,
+  - Q-447 (float32 KV fix; BOTH Macs); Q-429/431/433..440 (demo fixes, ea2f02977). Medium confidence, live-only: Q-431's banner under share,
     Q-434's delegate card, Q-436's remote load phases.
 
 ## Batch 4 → 3.0.74 (next)
-1. When Q-428, Q-447, Q-449 and Q-450 report, merge them into /tmp/merge-074 via ledger_resolve, with main merged in before the ff.
+1. When Q-428, Q-449 and Q-450 report, merge them into /tmp/merge-074 via ledger_resolve, with main merged in before the ff.
 2. ONE full gate in its own session (scratchpad/gate074.sh, target ~/goose-targets/g074), when #3u is at a turn
    boundary or done. NO cargo on the MacBook while #3u decodes. The Q-447 agent is the one allowed job.
 3. ff main, push, release 3.0.74 (/tmp/rel074.sh), install on BOTH Macs (Q-423, maybe Q-447), split-start smoke.
