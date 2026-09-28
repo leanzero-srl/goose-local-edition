@@ -51,6 +51,9 @@ for r in d.get('requests',[]):
         if span.strip() and t.endswith(span*REPEATS):
             print(repr(span)[:120]); sys.exit()
 " 2>/dev/null)
-  if [ -n "$loop" ]; then echo "RUNAWAY (words): the live tail ends in 8+ copies of $loop — read /v1/status stream.tail"; exit 0; fi
+  # A repeat must SURVIVE the next sample to be a loop: #3r turn 5 (2026-09-28) tripped on a code comment rule
+  # `// ── Helpers ────…` — the stream moved on 30 s later. A loop still ends in the same span one sample on.
+  if [ -n "$loop" ] && [ "$loop" = "${prev_loop:-}" ]; then echo "RUNAWAY (words): the live tail ended in 8+ copies of $loop on two samples in a row — read /v1/status stream.tail"; exit 0; fi
+  prev_loop=$loop
   sleep 30
 done
