@@ -1006,6 +1006,15 @@ pub fn start_phase(stderr_tail: &[String]) -> &'static str {
     "starting"
 }
 
+/// Rapid-MLX's own words when it begins shutting down (v0.14.3-lz.4, stderr, measured on the four
+/// Q-258 engines of 2026-09-28): its signal observability line "rapid-mlx received signal SIGTERM;
+/// thread stacks follow", then uvicorn's "INFO:     Shutting down" — from which its listener is
+/// closed while in-flight requests drain.
+pub fn shutdown_began(line: &str) -> bool {
+    line.contains("rapid-mlx received signal")
+        || line.strip_prefix("INFO:").map(str::trim) == Some("Shutting down")
+}
+
 /// The mount gate refused: the one fit rule's verdict on this Mac, typed so the ACP layer can hand
 /// the desktop a structured refusal (and the split that would work) instead of a string.
 #[derive(Debug, Clone)]
@@ -1156,14 +1165,24 @@ async fn reclaim_port(port: u16) {
 /// policy, stated (the single engine's is the distributed engine's with `restartOnFailure` off:
 /// no silent restart; a Mount restarts it, behind the same crash breaker).
 fn engine_exit_message(exit: &crate::SidecarExit) -> String {
-    let pid = exit
-        .pid
-        .map(|pid| format!(" (pid {pid})"))
-        .unwrap_or_default();
+    let account = match &exit.exit_report {
+        Some(report) => report.clone(),
+        None => {
+            let pid = exit
+                .pid
+                .map(|pid| format!(" (pid {pid})"))
+                .unwrap_or_default();
+            let who = exit
+                .stopped_by
+                .as_deref()
+                .unwrap_or("no goose path stopped it");
+            format!("the engine process{pid} exited: {} — {who}", exit.status)
+        }
+    };
     format!(
-        "the engine process{pid} exited: {} — not restarted automatically; Mount restarts it \
-         (the crash breaker applies). Last log lines:\n{}",
-        exit.status, exit.stderr_tail
+        "{account} — not restarted automatically; Mount restarts it (the crash breaker applies). \
+         Last log lines:\n{}",
+        exit.stderr_tail
     )
 }
 
@@ -1640,6 +1659,7 @@ impl MlxEngineManager {
                     );
                     config.env = sidecar_spawn_env();
                     config.startup_watch = Some(watch);
+                    config.shutdown_line = Some(shutdown_began);
                     config.start_cancel = Some(cancel);
                     Sidecar::start(config).await.map(Box::new)
                 }
@@ -1885,6 +1905,7 @@ impl MlxEngineManager {
                             status.state = "running".to_string();
                             status.base_url = Some(sidecar.base_url().to_string());
                             status.pid = sidecar.pid().await;
+                            status.last_error = sidecar.shutting_down().await;
                             Some((model_id.clone(), argv.clone()))
                         }
                         Err(e) => {
@@ -2123,6 +2144,27 @@ mod tests {
         let manager = MlxEngineManager::new();
         *manager.test_memory.lock().unwrap() = Some(memory);
         manager
+    }
+
+    /// The four Q-258 engines' own lines (goosed's log, 2026-09-28): the shutdown begins at the
+    /// signal line and uvicorn's "Shutting down"; the drain's lines and the exit banner are not it.
+    #[test]
+    fn the_shutdown_is_the_engines_own_words() {
+        for line in [
+            "WARNING:rapid_mlx._signal_observability:rapid-mlx received signal SIGTERM; thread stacks follow (faulthandler)",
+            "INFO:     Shutting down",
+        ] {
+            assert!(shutdown_began(line), "{line}");
+        }
+        for line in [
+            "INFO:     Waiting for connections to close. (CTRL+C to force quit)",
+            "INFO:rapid_mlx.service.helpers:[disconnect_guard] poll #80 disconnected=False elapsed=40.2s",
+            "INFO:     Waiting for application shutdown.",
+            "INFO:     Application shutdown complete.",
+            "INFO:     Finished server process [1893]",
+        ] {
+            assert!(!shutdown_began(line), "{line}");
+        }
     }
 
     /// Rapid-MLX v0.14.3-lz.4's own stderr on a 27B mount (2026-09-24), in order.
