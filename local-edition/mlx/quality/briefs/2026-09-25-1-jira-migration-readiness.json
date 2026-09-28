@@ -6,8 +6,22 @@
     "skill_choice": "atlassian-migration-scripts-skill fits genuinely: its description names identity resolution, Plan/Sync/Audit, seeded-sample audits with CSV spot-check outputs in zero-dependency Node. Expected to load at turns 7 and 21 only; jira-api-skill loading instead is a precision miss (no REST calls are made).",
     "compaction": "Context starts ~50k. Growth comes from web-search results (turns 3, 12, 27), file writes and reads of 6+ scripts and their tests, docx/pdf reads (17, 19, 20), and full-suite runs (14, 23, 26). Expected to pass 100k and compact around turns 18-24; turns 29-30 check the thread survived.",
     "memory": "Saved at turn 2 (ISO dates + British spelling for client-facing; zero-npm Node). Used without restating at 3, 4, 7, 13, 14, 16, 25, 27, 28, 30. Must-not-recall at 15.",
-    "document_processing": "docx write 16, docx read 17, docx edit 18, pdf make+read 19, pdf text extract 20, docx+pdf regenerate 27."
+    "document_processing": "docx write 16, docx read 17, docx edit 18, pdf make+read 19, pdf text extract 20, docx+pdf regenerate 27.",
+    "needs_you": "Q-376: r1.mjs answers every needs-you card goose raises as Dan would, from needsYou below (first entry whose words all appear in the question wins, so specific entries come first) — an option's words click that option or the recommended button that carries them, anything else is typed. The three questions goose really asked in earlier runs (sessions.db 20260928_17, 20260928_19): the chat-folder offer, the inactive-lead decision and the svc-edi/inactivity definition. Answers come only from the kickoff notes: inactive = no login in 24 months, project leads are never skipped whatever else is true."
   },
+  "defaultStance": "Go with what my kickoff notes say: inactive means no login in 24 months, project leads are never dropped, scripts are plain Node with no npm. Tell me what you assumed so I can check it.",
+  "needsYou": [
+    { "match": "this chat's folder", "answer": "Yes" },
+    { "match": "inactive project lead", "answer": "migrate — apply the lead override in every case" },
+    { "match": "svc-edi", "answer": "Inactive means no login in the last 24 months, going by last_login, not the active flag and not 12 months. That's the cutoff Aoife wants. And yes, svc-edi leads EDI so it has to be in users.csv. A project lead is never skipped whatever else is true, so svc-edi stays even though it's a service account." },
+    { "match": "inactive", "answer": "Inactive means no login in the last 24 months, going by last_login. Not 12 months, that's what Aoife asked for. Project leads are never skipped even when they're inactive." },
+    { "match": "lead", "answer": "Project leads are never skipped, whatever else is true. They own stuff. Keep them as migrate and say in the reason that they're a lead." },
+    { "match": "duplicate", "answer": "Merge them and keep the most recently active account." },
+    { "match": "premium", "answer": "Not decided yet, that's Aoife's call. Give her the numbers for both." },
+    { "match": "npm", "answer": "No npm and no package installs. Plain Node with built-ins only." },
+    { "match": "confluence", "answer": "Confluence is out of scope for now. Jira only." },
+    { "match": "frt", "answer": "FRT has about 70k issues, so it goes in its own separate wave." }
+  ],
   "turns": [
     {
       "say": "Hi. I'm starting a Jira Data Center to Cloud migration readiness assessment for a client, Harbourline Freight (logistics, about 380 Jira users). Work in {WORK}. Here are my raw notes from yesterday's kickoff call, typed fast, sorry:\n\nkickoff 24/9 - aoife brennan (their PM), marek (jira admin), me\n- jira DC 9.12.x, one node, postgres. confluence is out of scope for now!!\n- ~15 projects, some dead for years. marek thinks 3-4 can be archived\n- users: AD sync was switched off in 2023 so lots of junk. dupes where ppl have John.Smith@ and john.smith@. some have no email at all (contractors?). svc- accounts for integrations\n- inactive = no login in 24 months, THAT is the cutoff aoife wants, not 12\n- BUT project leads must never be dropped even if inactive, they own stuff\n- decision needed: standard vs premium. aoife wants numbers\n- one huge project FRT (freight ops) ~70k issues, marek worried\n- deliverables: readiness report + pdf for aoife, scripts we can rerun\n- next call fri 2/10\n\nPlease turn this into a clean notes file at notes/kickoff.md with three sections: Decisions, Actions (with owner), Open questions. Keep every fact, drop nothing.",
