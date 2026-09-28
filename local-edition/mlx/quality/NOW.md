@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 04:04 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 04:3x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.65 on both Macs; split up "OK" (after a restart — harness Q-244 fixed). E2E #3n stopped for the install.
@@ -11,13 +11,13 @@ Updated: 2026-09-28 04:04 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - On main after 3.0.65 (→ 3.0.66): Q-232 split tool-arg types, L10 wake broadcast, CI fix (/loop in builtin list).
 
 ## CI
-- 035970561 RED (slash_command test lacked /loop, from L3) → fixed 7ebd44ac7. Later runs in progress; check next tick.
+- GREEN from 7ebd44ac7 on (the /loop test fix).
 
 ## Agents (worktrees)
-- L2b on_prompt door · L4 start dialog + queue · Q-233/234/235 (split named 500, pipeline pin convergence, relay-test
-  wait) · Q-241/242/243 quit path · live tester (no worktree, drives the app).
-- Queued behind the L2b merge: Q-239 (kind header — touches on_prompt). Queued behind a free slot: Q-236, Q-237,
-  Q-238, Q-240.
+- L2b on_prompt door · L4 start dialog + queue · Q-241/242/243 quit path · Q-240/245 sidecar port + test waits ·
+  Q-236/238 tick.py events + Q-231 status in chat · live tester (no worktree, drives the app).
+- Merged: Q-233/234/235 (19d1b0a35; gate bsdv5pl3n before push). Queued behind the L2b merge: Q-239 (on_prompt).
+  Queued behind the quit agent: Q-237 (glance node name, main.ts).
 
 ## Next actions (in order)
 1. Live tester report → file its rows, dispatch fixes → start E2E #3o on 3.0.65 (brief 2026-09-25-1 jira migration).
