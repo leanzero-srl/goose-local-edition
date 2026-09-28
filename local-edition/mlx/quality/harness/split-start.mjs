@@ -49,8 +49,12 @@ for (let k = 0; /^distributed\/(mounting|unknown|reconnecting|starting|loading|w
   await p.waitForTimeout(5000);
   if (/distributed\/running/.test(await status()) && (await servesWanted())) await complete('restored');
 }
-const i = owners.indexOf('Run across both Macs');
-if (i < 0) { console.log('no split Run button', JSON.stringify(owners)); process.exit(2); }
+// --place studio runs the model on the Studio alone (remote single over Link) — used when this Mac cannot hold its
+// rank (2026-09-28: 12 GiB free under other sessions' load; the split's restore refused, loud and correct).
+const place = process.argv.includes('--place') ? process.argv[process.argv.indexOf('--place') + 1] : 'split';
+const wantOwner = place === 'studio' ? 'Run on Work’s Mac Studio' : 'Run across both Macs';
+const i = owners.findIndex((o) => o.replace(/[’']/g, "'") === wantOwner.replace(/[’']/g, "'"));
+if (i < 0) { console.log(`no ${place} Run button`, JSON.stringify(owners)); process.exit(2); }
 const t0 = Date.now();
 await p.locator('button:visible', { hasText: /^Run$/ }).nth(i).click();
 // A switch may ask first (stopping the way it replaces). Record the words, then confirm the switch — a script
@@ -77,6 +81,8 @@ while (true) {
   const warn = lastWarn(); const failed = warn.at > t0 && /preflight|exited|ended|refused|failed|stale/i.test(warn.text);
   // A switch keeps the previous split running until it stops: running alone is not up — it must serve the pick.
   if (/distributed\/running/.test(s) && (await servesWanted())) await complete(secs);
+  // A Studio single is served over the Link relay, not 8091: running is read from goose's own activity.
+  if (place === 'studio' && /\/running/.test(s) && !/^distributed/.test(s)) { console.log(`${secs}s studio single up: ${s}`); process.exit(0); }
   if (failed) { console.log(`${secs}s split FAILED:\n${warn.text}`); process.exit(1); }
   if (Number(secs) % 30 < 5) console.log(`${secs}s ${s}`);
 }

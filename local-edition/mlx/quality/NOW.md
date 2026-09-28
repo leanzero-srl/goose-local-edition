@@ -1,9 +1,14 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 20:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 21:1x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed: 3.0.71 on BOTH Macs 18:0x (DMG kept), split-start smoke OK ('OK'); Q-350 LIVE-PROVEN (activity read
+- Installed: 3.0.72 on BOTH Macs 21:0x (DMG kept). The SPLIT could not start: MacBook 12 GiB free (other sessions'
+  jest/python + swap 79 GB) — goose refused loudly and correctly. 27B runs on the STUDIO SINGLE over Link
+  (split-start --place studio, 27 s). LIVE: answered 20260928_17's inactive-lead card via the recommended button →
+  card cleared, item 'answered', answer message delivered 18:00:09Z; its answer turn = 176k-token cold prefill on
+  the Studio (10+ min). Q-409 seen LIVE (capability in activity.baseUrl); Q-417 filed (remote: modelId null).
+- Was: 3.0.71 on BOTH Macs 18:0x (DMG kept), split-start smoke OK ('OK'); Q-350 LIVE-PROVEN (activity read
   'distributed/mounting … warming' during the restore). E2E #3s STOPPED at turn 3 (memory hold/Q-397 under 40 GB swap — other sessions + my agents'
   cargo; see E2E-RUNS). Next E2E (#3t) on 3.0.72 with NO cargo on the MacBook. Was session 20260928_30 — Q-390 LIVE-PROVEN (workingDirVerified, opened via Projects → New session here).
 - Was: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -81,6 +86,10 @@ Updated: 2026-09-28 20:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   274e12820 (env lock); the failed job re-run. merge-072 takes it when main is merged in before the ff.
 - Spend/usage limit hit 19:1x (resets 21:50): Q-399, Q-400, Q-394b agents RESUMED by SendMessage on the owner's
   "retry please all"; if they die again, re-send after 21:50.
+
+- 3.0.73 = /tmp/merge-073: Q-399/401 + Q-402 + Q-409 merged (5d149699b); Q-400+403 merged (8805a72e8 — rank_wrapper conflict resolved by its
+  author); FULL GATE /tmp/g073.out (scratchpad/gate073.sh, target g073); Q-406 MERGED (13280e94d: own process groups, proof-gated
+  group kill, named TCC cause; #3r trace YES); Q-407 (goosed crash leaves commands running) cutting.
 
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.
