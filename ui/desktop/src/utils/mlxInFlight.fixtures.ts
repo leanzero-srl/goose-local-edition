@@ -71,6 +71,7 @@ export function liveSplitSnapshot(
       swarmRuns: [],
       error: null,
     },
+    startPhase: null,
     failedError: null,
     contact: null,
   };

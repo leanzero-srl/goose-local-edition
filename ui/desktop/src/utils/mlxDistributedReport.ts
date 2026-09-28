@@ -170,7 +170,6 @@ function isHosting(v: unknown): boolean {
   );
 }
 
-/** An IPC payload is a report only if every field is what `toMlxDistributedReport` builds. */
 /**
  * The base URL whose `/v1/status` is the distributed run's live read — only while the run owns this
  * Mac and is up (ready / serving); null otherwise, and main then reads the single engine.
@@ -181,6 +180,38 @@ export function distributedLiveBase(report: MlxDistributedReport | null): string
   return report.baseUrl;
 }
 
+/**
+ * How far a split that owns this Mac has come while it is not up yet — `makingRoom` (macOS
+ * reclaiming memory on a rank), `loading`, `warming`, else `starting` (launched, no rank has said
+ * more); the furthest-behind rank decides, as goose's residency does (Q-271). `recovering` is a run
+ * waiting out a rank's memory death to restart. null = not a starting split (up, stopping, not
+ * owning the Mac, or no report).
+ */
+export type SplitStartPhase = 'makingRoom' | 'loading' | 'warming' | 'starting' | 'recovering';
+
+const FURTHEST_BEHIND_FIRST = ['makingRoom', 'loading', 'warming'] as const;
+
+export function splitStartPhase(report: MlxDistributedReport | null): SplitStartPhase | null {
+  if (!report || report.mode !== 'distributed') return null;
+  if (report.state === 'recovering') return 'recovering';
+  if (report.state !== 'preflight' && report.state !== 'starting') return null;
+  const words = report.nodes.map((n) => n.startWord);
+  return FURTHEST_BEHIND_FIRST.find((phase) => words.includes(phase)) ?? 'starting';
+}
+
+/**
+ * main's engine loop reads a split that owns this Mac in every state, and this Mac's single engine
+ * again once the split lets go: a report on either side of that wakes it. Waking only for an UP run
+ * left a starting split's activity on the single engine's "off" until it was up (Q-350).
+ */
+export function splitReportWakesMonitor(
+  was: MlxDistributedReport | null,
+  next: MlxDistributedReport
+): boolean {
+  return was?.mode === 'distributed' || next.mode === 'distributed';
+}
+
+/** An IPC payload is a report only if every field is what `toMlxDistributedReport` builds. */
 export function isMlxDistributedReport(value: unknown): value is MlxDistributedReport {
   if (value == null || typeof value !== 'object') return false;
   const r = value as Record<string, unknown>;

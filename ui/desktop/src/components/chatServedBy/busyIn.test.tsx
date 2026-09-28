@@ -111,6 +111,7 @@ function main(requests: unknown[], clients: MlxClient[], unattributed = 0): MlxE
     statusDetail: null,
     measured: MEASURED_PENDING,
     serving: { clients, unattributed, swarmRuns: [], error: null },
+    startPhase: null,
     failedError: null,
     contact: null,
   };

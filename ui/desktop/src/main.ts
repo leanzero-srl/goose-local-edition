@@ -156,8 +156,8 @@ import {
   type MlxTrayItem,
 } from './utils/mlxTray';
 import {
-  distributedLiveBase,
   isMlxDistributedReport,
+  splitReportWakesMonitor,
   type MlxDistributedReport,
 } from './utils/mlxDistributedReport';
 import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
@@ -2236,10 +2236,10 @@ const mlxMonitor = new MlxEngineMonitor({
     return answers;
   },
   configBaseUrl: () => mlxEngineConfig().baseUrl,
-  // A stale report claims nothing: the run may have stopped since the renderer last read it.
-  distributedBaseUrl: () =>
+  // The read the Run it row draws; a stale report claims nothing: the run may have stopped since.
+  distributedRun: () =>
     mlxDistributed && Date.now() - mlxDistributed.atMs <= MLX_DISTRIBUTED_STALE_MS
-      ? distributedLiveBase(mlxDistributed.report)
+      ? mlxDistributed.report
       : null,
   // A route serving this Mac's chat from a linked Mac: its engine, through goosed's loopback relay.
   remoteRoute: () => mlxRemote,
@@ -2645,10 +2645,12 @@ ipcMain.on('mlx-remote-report', (_event, report: unknown) => {
 });
 ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
   if (!isMlxDistributedReport(report)) return;
+  const was = mlxDistributed?.report ?? null;
   mlxDistributed = { report, atMs: Date.now() };
   renderMlxTray(mlxMonitor.current());
-  // An up run is read by main's one loop (its rank 0's /v1/status): wake it on each report.
-  if (distributedLiveBase(report)) mlxMonitor.wake();
+  // A run that owns the Mac is main's loop's to read in every state — rank 0 while it is up, its
+  // start phase while it starts (Q-350) — and the single engine once it lets go.
+  if (splitReportWakesMonitor(was, report)) mlxMonitor.wake();
   // While the run owns the Mac a fresh read arrives every poll; if none does, redraw once the
   // held read turns stale so the tray stops presenting it as live.
   if (mlxDistributedStaleTimer) clearTimeout(mlxDistributedStaleTimer);

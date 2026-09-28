@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   distributedLiveBase,
   isMlxDistributedReport,
+  splitReportWakesMonitor,
+  splitStartPhase,
   toMlxDistributedReport,
 } from './mlxDistributedReport';
 import {
@@ -83,5 +85,39 @@ describe('toMlxDistributedReport — what main is told after every status read',
     });
     expect(isMlxDistributedReport(report)).toBe(true);
     expect(toMlxDistributedReport(FLASH_READY).hosting).toBeNull();
+  });
+});
+
+describe('a starting split, as main reads it (Q-350)', () => {
+  const ready = toMlxDistributedReport(FLASH_READY);
+  const stopped = toMlxDistributedReport(STOPPED_WITH_CONFIG);
+  const words = (...startWords: string[]) => ({
+    ...ready,
+    state: 'starting',
+    nodes: startWords.map((startWord, i) => ({ ...ready.nodes[i], startWord })),
+  });
+
+  it('the furthest-behind rank names the phase; recovering is its own; an up or idle run has none', () => {
+    expect(splitStartPhase(words())).toBe('starting');
+    expect(splitStartPhase(words('preflight', 'preflight'))).toBe('starting');
+    expect(splitStartPhase(words('warming', 'loading'))).toBe('loading');
+    expect(splitStartPhase(words('warming', 'ready'))).toBe('warming');
+    expect(splitStartPhase(words('makingRoom', 'loading'))).toBe('makingRoom');
+    expect(splitStartPhase({ ...words('loading'), state: 'preflight' })).toBe('loading');
+    expect(splitStartPhase({ ...ready, state: 'recovering' })).toBe('recovering');
+    expect(splitStartPhase(ready)).toBeNull();
+    expect(splitStartPhase({ ...ready, state: 'stopping' })).toBeNull();
+    expect(splitStartPhase(stopped)).toBeNull();
+    expect(splitStartPhase(toMlxDistributedReport(HOSTING_RANK_1))).toBeNull();
+    expect(splitStartPhase(null)).toBeNull();
+  });
+
+  it("wakes main's loop on every report while the split owns the Mac, and on the one that lets go", () => {
+    expect(splitReportWakesMonitor(null, words('loading'))).toBe(true);
+    expect(splitReportWakesMonitor(stopped, words('loading'))).toBe(true);
+    expect(splitReportWakesMonitor(words('loading'), ready)).toBe(true);
+    expect(splitReportWakesMonitor(ready, stopped)).toBe(true);
+    expect(splitReportWakesMonitor(stopped, stopped)).toBe(false);
+    expect(splitReportWakesMonitor(null, stopped)).toBe(false);
   });
 });
