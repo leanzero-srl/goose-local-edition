@@ -176,11 +176,24 @@ export type LoopTickMetadata = {
   messageId: string;
 };
 
+/**
+ * The provider error a turn ended on, by its class (Q-302, `_meta.goose.providerError` —
+ * goose-provider-types `ProviderErrorNotice`): what the serving engine said, whether resending
+ * can help, and the whole error (endpoint, body) for Details.
+ */
+export type ProviderErrorNotice = {
+  class: string;
+  transient: boolean;
+  said: string;
+  detail: string;
+};
+
 export type MessageMetadata = {
   agentVisible: boolean;
   inference?: InferenceMetadata | null;
   loopTick?: LoopTickMetadata;
   steer?: boolean;
+  providerError?: ProviderErrorNotice;
   userVisible: boolean;
 };
 

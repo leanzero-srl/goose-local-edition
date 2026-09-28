@@ -9,12 +9,22 @@ import { deriveChatServedBy, type ChatServedBy } from '../../../chatServedBy/cha
 import { SPLIT_STOPPED_E2E2 } from '../../../chatServedBy/splitStop.fixtures';
 import type { PeerGone } from '../../../../utils/routeContact';
 import { createIntl } from 'react-intl';
+import {
+  resetSessionActivityForTests,
+  seedSessionActivityForTests,
+} from '../../../sessionActivity/sessionActivityStore';
 
 const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
 
 const createDropdownRef = (): React.RefObject<HTMLDivElement> =>
   ({ current: document.createElement('div') }) as React.RefObject<HTMLDivElement>;
+
+const activityAcp = vi.hoisted(() => ({
+  acpSessionActivity: vi.fn(),
+  acpResolveNeedsYou: vi.fn(),
+}));
+vi.mock('../../../../acp/needsYou', () => activityAcp);
 
 let mockCurrentModel: string | null = 'config-model';
 let mockCurrentProvider: string | null = 'config-provider';
@@ -374,7 +384,7 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
   it('Q-124: the chip says whose work the engine does — never "Reading a prompt" for goose’s helper after the turn', async () => {
     const cases = [
       [{ phase: 'reading', activity: 'prefill', work: 'thisChat' }, 'Reading a prompt'],
-      [{ phase: 'idle', activity: 'prefill', work: 'helper' }, 'goose helper running'],
+      [{ phase: 'idle', activity: 'prefill', work: 'helper' }, 'Busy with goose’s own work'],
       [{ phase: 'held', activity: 'generating', work: 'others' }, 'Serving other work'],
       [{ phase: 'writing', activity: 'generating', work: 'shared' }, 'Shared with other work'],
       [{ phase: 'reading', activity: 'prefill', work: 'unattributed' }, 'Busy, whose work unknown'],
@@ -387,6 +397,55 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
       expect(screen.getAllByTestId('lz-status-dot')[0]).toHaveAttribute('data-phase', over.phase);
       unmount();
     }
+  });
+
+  it('Q-307: goose’s review of THIS chat’s turn is said in the words its row and its chat line say', async () => {
+    activityAcp.acpSessionActivity.mockResolvedValue({ running: [], needsYou: [], failed: [] });
+    seedSessionActivityForTests({
+      background: [
+        {
+          sessionId: 'session-123',
+          sessionName: 'Portugal capital question',
+          workingDir: '/Users/me',
+          kind: 'memoryReview',
+          startedAt: '2026-09-28T10:23:01Z',
+        },
+      ],
+    });
+    // The engine card has already gone Idle: the chip still says what the row says.
+    const { unmount } = renderChip({ ...STUDIO, phase: 'idle', activity: 'idle', work: null });
+    const phase = await screen.findByTestId('model-chip-phase');
+    expect(phase.textContent).toBe('Reviewing for memories');
+    expect(phase).toHaveAttribute('data-background', 'memoryReview');
+    expect(phase.textContent).not.toContain('helper');
+    unmount();
+    resetSessionActivityForTests();
+  });
+
+  it('Q-307: when the engine’s work for the chat changes, the review state is read again at once', async () => {
+    activityAcp.acpSessionActivity.mockResolvedValue({ running: [], needsYou: [], failed: [] });
+    const { rerender } = renderChip({
+      ...STUDIO,
+      phase: 'idle',
+      activity: 'prefill',
+      work: 'helper',
+    });
+    await screen.findByTestId('model-chip-phase');
+    activityAcp.acpSessionActivity.mockClear();
+    rerender(
+      <ModelsBottomBar
+        sessionId="session-123"
+        dropdownRef={createDropdownRef()}
+        setView={vi.fn()}
+        sessionModel="swarm"
+        sessionProvider="swarm"
+        onModelChanged={mockOnModelChanged}
+        sessionLoaded={true}
+        served={{ ...STUDIO, phase: 'idle', activity: 'idle', work: null }}
+      />
+    );
+    await waitFor(() => expect(activityAcp.acpSessionActivity).toHaveBeenCalled());
+    resetSessionActivityForTests();
   });
 
   it('Q-152: the one other chat the engine answers is named, with how long it has been at it', async () => {

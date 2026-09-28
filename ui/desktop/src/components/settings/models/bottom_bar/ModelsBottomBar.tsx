@@ -41,6 +41,12 @@ import { NodesChipMenu } from './NodesChipMenu';
 import { refreshGlanceNodes, useGlanceNodes } from '../../../engineGlance/glanceStore';
 import { useRunChatOn } from '../../../nodes/useRunChatOn';
 import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
+import { backgroundWorkLabel } from '../../../sessionActivity/backgroundWorkText';
+import {
+  refreshSessionActivity,
+  sessionStates,
+  useActivityOf,
+} from '../../../sessionActivity/sessionActivityStore';
 
 const i18n = defineMessages({
   selectModel: {
@@ -134,7 +140,7 @@ const i18n = defineMessages({
   phaseUnknown: { id: 'modelsBottomBar.phase.unknown', defaultMessage: 'State unknown' },
   phaseReconnecting: { id: 'modelsBottomBar.phase.reconnecting', defaultMessage: 'Reconnecting' },
   phaseSplitStopped: { id: 'modelsBottomBar.phase.splitStopped', defaultMessage: 'Split stopped' },
-  workHelper: { id: 'modelsBottomBar.work.helper', defaultMessage: 'goose helper running' },
+  workHelper: { id: 'modelsBottomBar.work.helper', defaultMessage: 'Busy with goose’s own work' },
   workOthers: { id: 'modelsBottomBar.work.others', defaultMessage: 'Serving other work' },
   workShared: { id: 'modelsBottomBar.work.shared', defaultMessage: 'Shared with other work' },
   workUnattributed: {
@@ -325,6 +331,23 @@ export default function ModelsBottomBar({
   const nodesMenu =
     glanceNodes.kind === 'read' && glanceNodes.read.nodes.length > 0 ? glanceNodes : null;
   const splitReason = splitStop ? splitStopReason(intl, splitStop) : null;
+  // goose's own call for THIS chat after its turn — the memory review, the fact check — in the one
+  // state the chat's row and the line under the reply read (Q-307: the chip said "goose helper
+  // running" beside the row's "Reviewing", then "Idle" while the row still said it).
+  const activity = useActivityOf(sessionId ?? '');
+  const background =
+    sessionId && activity.background && sessionStates(activity).includes('background')
+      ? activity.background
+      : null;
+  // That state is polled; the engine's work is read faster. When the engine's work for this chat
+  // changes, the state is read again at once, so the three surfaces turn together.
+  const engineWork = `${served?.work ?? ''}|${served?.activity ?? ''}`;
+  const lastEngineWork = useRef(engineWork);
+  useEffect(() => {
+    if (lastEngineWork.current === engineWork) return;
+    lastEngineWork.current = engineWork;
+    if (sessionId) void refreshSessionActivity();
+  }, [engineWork, sessionId]);
   // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is; the
   // node loader's work is said in its own line, the composer bar's (Q-254).
   const phaseWord = goneWords
@@ -339,20 +362,23 @@ export default function ModelsBottomBar({
             ? intl.formatMessage(i18n.phaseSplitStopped)
             : served?.turnWait
               ? turnWaitText(intl, served.turnWait)
-              : served?.busyIn
-                ? busyInHeadline(intl, served.busyIn)
-                : served?.work && served.work !== 'thisChat'
-                  ? intl.formatMessage(WORK_WORD[served.work])
-                  : served?.phase
-                    ? intl.formatMessage(PHASE_WORD[served.phase])
-                    : intl.formatMessage(i18n.phaseUnknown);
+              : background
+                ? backgroundWorkLabel(intl, background)
+                : served?.busyIn
+                  ? busyInHeadline(intl, served.busyIn)
+                  : served?.work && served.work !== 'thisChat'
+                    ? intl.formatMessage(WORK_WORD[served.work])
+                    : served?.phase
+                      ? intl.formatMessage(PHASE_WORD[served.phase])
+                      : intl.formatMessage(i18n.phaseUnknown);
   // The words that can outgrow the chip: they truncate before the dot and keep a title.
   const longWords =
     goneWords != null ||
     loaderWords != null ||
     displacedWords != null ||
     served?.busyIn != null ||
-    served?.turnWait != null;
+    served?.turnWait != null ||
+    background != null;
 
   return (
     <div className="relative flex items-center" ref={dropdownRef}>
@@ -376,6 +402,7 @@ export default function ModelsBottomBar({
                 <span
                   data-testid="model-chip-phase"
                   data-work={served.work ?? undefined}
+                  data-background={background ?? undefined}
                   data-turn-wait={served.turnWait?.kind}
                   title={longWords ? phaseWord : undefined}
                   className={cx(

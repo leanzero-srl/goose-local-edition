@@ -555,9 +555,11 @@ impl TextAccumulator {
 /// The agent turns a provider failure into an assistant message and ends the turn normally
 /// (`crates/goose/src/agents/agent.rs`, the two `provider_errored` arms) — the desktop shows it as
 /// a chat bubble. An OpenAI client must see an error, not a 200 with `finish_reason: stop` and a
-/// stack trace as content, so those two fixed sign-offs are recognised and re-raised as errors.
-const PROVIDER_ERROR_SIGN_OFFS: [&str; 2] = [
-    "Please retry if you think this is a transient or recoverable error.",
+/// stack trace as content, so those fixed sign-offs are recognised and re-raised as errors (the
+/// generic arm's follows the error's class since Q-302: transient, or permanent).
+const PROVIDER_ERROR_SIGN_OFFS: [&str; 3] = [
+    crate::agents::split_record::TRANSIENT_ERROR_CLOSER,
+    crate::agents::split_record::PERMANENT_ERROR_CLOSER,
     "Please resend your message to try again.",
 ];
 
@@ -964,6 +966,12 @@ mod tests {
         assert!(is_provider_error_message(
             "Rate limited.\n\nPlease resend your message to try again.\n"
         ));
+        assert!(is_provider_error_message(&format!(
+            "Ran into this error: Request failed: Resource not found (404) at \
+             http://127.0.0.1:8091/v1/chat/completions: Only 'text' content type is \
+             supported.\n\n{}",
+            crate::agents::split_record::PERMANENT_ERROR_CLOSER
+        )));
         assert!(!is_provider_error_message("The sky is blue."));
         assert!(!is_provider_error_message(
             "Please retry if you think this is a transient or recoverable error. Anyway, blue."

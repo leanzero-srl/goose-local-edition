@@ -6,7 +6,7 @@
 
 use std::time::{Duration, SystemTime};
 
-use crate::errors::ProviderError;
+use crate::errors::{http_failure_text, ProviderError};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Response, StatusCode};
@@ -248,6 +248,16 @@ pub fn map_http_error_to_provider_error(
                     .and_then(|m| m.as_str())
                     .map(String::from)
             })
+            // An engine that answers `{"error": "<sentence>"}` (Rapid-MLX's 404 for an image
+            // part: "Only 'text' content type is supported.") said that sentence; the JSON
+            // around it is the envelope (Q-302).
+            .or_else(|| {
+                payload
+                    .as_ref()
+                    .and_then(|p| p.get("error"))
+                    .and_then(|e| e.as_str())
+                    .map(String::from)
+            })
             .unwrap_or_else(|| payload.as_ref().map(|p| p.to_string()).unwrap_or_default())
     };
 
@@ -258,9 +268,10 @@ pub fn map_http_error_to_provider_error(
             status,
             extract_message()
         )),
-        StatusCode::NOT_FOUND => ProviderError::RequestFailed(format!(
-            "Resource not found (404) at {url}: {}",
-            extract_message()
+        StatusCode::NOT_FOUND => ProviderError::RequestFailed(http_failure_text(
+            "Resource not found (404)",
+            url,
+            &extract_message(),
         )),
         StatusCode::PAYMENT_REQUIRED => ProviderError::CreditsExhausted {
             details: extract_message(),
@@ -279,15 +290,15 @@ pub fn map_http_error_to_provider_error(
             details: extract_message(),
             retry_delay: None,
         },
-        _ if status.is_server_error() => ProviderError::ServerError(format!(
-            "Server error ({}) at {url}: {}",
-            status,
-            extract_message()
+        _ if status.is_server_error() => ProviderError::ServerError(http_failure_text(
+            &format!("Server error ({status})"),
+            url,
+            &extract_message(),
         )),
-        _ => ProviderError::RequestFailed(format!(
-            "Request failed with status {} at {url}: {}",
-            status,
-            extract_message()
+        _ => ProviderError::RequestFailed(http_failure_text(
+            &format!("Request failed with status {status}"),
+            url,
+            &extract_message(),
         )),
     };
 
@@ -571,5 +582,36 @@ mod tests {
                 "unexpected classification for {case}: {error:?}"
             );
         }
+    }
+
+    /// Q-302, the live critic on 3.0.68: Rapid-MLX refused an image part with a 404 whose body is
+    /// `{"error":"Only 'text' content type is supported."}`. The chat showed the JSON; the
+    /// sentence is what the engine said, and the endpoint stays readable apart from it.
+    #[test]
+    fn an_error_string_body_is_the_engines_own_sentence() {
+        let url = "http://127.0.0.1:8091/v1/chat/completions";
+        let error = map_http_error_to_provider_error(
+            StatusCode::NOT_FOUND,
+            Some(json!({ "error": "Only 'text' content type is supported." })),
+            url,
+        );
+        assert_eq!(
+            error.to_string(),
+            "Request failed: Resource not found (404) at http://127.0.0.1:8091/v1/chat/completions: \
+             Only 'text' content type is supported."
+        );
+        assert_eq!(
+            error.engine_words(),
+            "Only 'text' content type is supported."
+        );
+        assert!(!error.is_transient());
+
+        let busy = map_http_error_to_provider_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some(json!({ "error": { "message": "Server is busy" } })),
+            url,
+        );
+        assert_eq!(busy.engine_words(), "Server is busy");
+        assert!(busy.is_transient());
     }
 }

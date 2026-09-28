@@ -107,7 +107,7 @@ export function backgroundWorkCut(work: InFlightWork): BackgroundWorkKind | null
  */
 export const BACKGROUND_WORK_EN: Readonly<Record<BackgroundWorkKind, string>> = {
   factCheck: 'Checking the reply',
-  memoryReview: 'Reviewing the turn for memories',
+  memoryReview: 'Reviewing for memories',
   title: 'Naming the chat',
   toolLabel: 'Labeling tool calls',
   compaction: 'Compacting the conversation',

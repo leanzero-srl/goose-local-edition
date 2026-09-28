@@ -291,7 +291,7 @@
     "defaultMessage": "正在检查回复"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "正在回顾本轮以记录记忆"
+    "defaultMessage": "正在回顾以记录记忆"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "检查中"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "回顾中"
+    "defaultMessage": "正在回顾以记录记忆"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "检查中"
@@ -5943,7 +5943,7 @@
     "defaultMessage": "此聊天将不再使用 {model}"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "goose 辅助调用运行中"
+    "defaultMessage": "正忙于 goose 自身的工作"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "正在处理其他工作"
@@ -7852,6 +7852,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "提供商连接需要检查"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "详细信息"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {模型的服务器拒绝了此请求} auth {提供商未接受 goose 的凭据} rate_limit {提供商正在限制 goose 的请求频率} server {模型的服务器在回答时出错} network {goose 与模型的连接已断开} context_length {此对话对该模型来说太长} not_implemented {该模型不支持此请求} endpoint_not_found {模型的服务器没有用于此请求的端点} execution {goose 无法发送此请求} other {模型返回了错误}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "在原因修复之前，再次发送同一请求也会以同样方式失败。"
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "重试"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "这可能会自行恢复——稍后再发送一次。"
   },
   "providerGrid.addProvider": {
     "defaultMessage": "添加提供商"
@@ -10429,6 +10444,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "排队中，等正在运行的请求完成 — 内存没有空间加入它们"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "按此速度约剩 {left}"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "已读取的提示词"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "已读取 {done} / {total} 个 token"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} 个提示词 token，已读取 {elapsed}"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "正在读取你的提示词"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "正在等待模型的第一个字"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "正在等待模型的第一个字 · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "更新将在后台自动下载。"

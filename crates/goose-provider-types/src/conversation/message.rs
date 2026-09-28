@@ -693,6 +693,35 @@ pub struct MessageMetadata {
     /// without matching user-visible text. Never sent to providers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub steer: bool,
+    /// The provider error this notice ends a turn on, by its class (Q-302). UI-only: surfaced as
+    /// `_meta.goose.providerError` so a client paints the failure without matching its text.
+    /// Boxed: four strings would grow every `Message` for a field almost none carry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_error: Option<Box<ProviderErrorNotice>>,
+}
+
+/// A provider error as a client shows it: what the serving engine said, whether resending can
+/// help (by the error's class — `ProviderError::is_transient`), and the whole error — endpoint
+/// and body — for a Details view.
+#[derive(ToSchema, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderErrorNotice {
+    /// `ProviderError::telemetry_type`: "request", "server", "auth", "rate_limit", …
+    pub class: String,
+    pub transient: bool,
+    pub said: String,
+    pub detail: String,
+}
+
+impl ProviderErrorNotice {
+    pub fn of(error: &crate::errors::ProviderError) -> Self {
+        ProviderErrorNotice {
+            class: error.telemetry_type().to_string(),
+            transient: error.is_transient(),
+            said: error.engine_words().to_string(),
+            detail: error.to_string(),
+        }
+    }
 }
 
 impl Default for MessageMetadata {
@@ -702,6 +731,7 @@ impl Default for MessageMetadata {
             agent_visible: true,
             inference: None,
             steer: false,
+            provider_error: None,
         }
     }
 }
@@ -1062,6 +1092,11 @@ impl Message {
 
     pub fn with_steer(mut self) -> Self {
         self.metadata.steer = true;
+        self
+    }
+
+    pub fn with_provider_error(mut self, notice: ProviderErrorNotice) -> Self {
+        self.metadata.provider_error = Some(Box::new(notice));
         self
     }
 

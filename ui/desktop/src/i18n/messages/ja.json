@@ -291,7 +291,7 @@
     "defaultMessage": "返信を確認中"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "メモリ用にターンを確認中"
+    "defaultMessage": "メモリ用に確認中"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "確認中"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "レビュー中"
+    "defaultMessage": "メモリ用に確認中"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "確認中"
@@ -5943,7 +5943,7 @@
     "defaultMessage": "このチャットでは {model} から切り替えます"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "goose の補助呼び出しを実行中"
+    "defaultMessage": "goose 自身の処理中"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "他の処理を実行中"
@@ -7852,6 +7852,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "プロバイダー接続の確認が必要です"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "詳細"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {モデルのサーバーがこのリクエストを拒否しました} auth {プロバイダーが goose の認証情報を受け付けませんでした} rate_limit {プロバイダーが goose の問い合わせ頻度を制限しています} server {モデルのサーバーが応答中に失敗しました} network {goose がモデルとの接続を失いました} context_length {この会話はこのモデルには長すぎます} not_implemented {モデルはこのリクエストに対応していません} endpoint_not_found {モデルのサーバーにこのリクエスト用のエンドポイントがありません} execution {goose はこのリクエストを送信できませんでした} other {モデルがエラーを返しました}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "原因が解決するまで、同じリクエストを再送しても同じように失敗します。"
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "再試行"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "一時的なものかもしれません。少ししてからもう一度送信してください。"
   },
   "providerGrid.addProvider": {
     "defaultMessage": "プロバイダーを追加"
@@ -10429,6 +10444,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "実行中のリクエストが終わるまで待機中 — 合流するためのメモリの空きがありません"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "この速度で残り約 {left}"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "これまでに読み込んだプロンプト"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "{total} トークン中 {done} を読み込み済み"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "プロンプト {tokens} トークン、{elapsed} 読み込み中"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "プロンプトを読み込み中"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "モデルの最初の言葉を待っています"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "モデルの最初の言葉を待っています · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "アップデートはバックグラウンドで自動的にダウンロードされます。"

@@ -291,7 +291,7 @@
     "defaultMessage": "正在檢查回覆"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "正在回顧本輪以記錄記憶"
+    "defaultMessage": "正在回顧以記錄記憶"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "檢查中"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "回顧中"
+    "defaultMessage": "正在回顧以記錄記憶"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "檢查中"
@@ -5943,7 +5943,7 @@
     "defaultMessage": "此聊天將不再使用 {model}"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "goose 輔助呼叫執行中"
+    "defaultMessage": "正忙於 goose 自身的工作"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "正在處理其他工作"
@@ -7852,6 +7852,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "供應商連線需要檢查"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "詳細資訊"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {模型的伺服器拒絕了此請求} auth {供應商未接受 goose 的憑證} rate_limit {供應商正在限制 goose 的請求頻率} server {模型的伺服器在回答時出錯} network {goose 與模型的連線已中斷} context_length {此對話對該模型來說太長} not_implemented {該模型不支援此請求} endpoint_not_found {模型的伺服器沒有用於此請求的端點} execution {goose 無法傳送此請求} other {模型傳回了錯誤}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "在原因修正之前，再次傳送同一請求也會以同樣方式失敗。"
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "重試"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "這可能會自行恢復——稍後再傳送一次。"
   },
   "providerGrid.addProvider": {
     "defaultMessage": "新增提供者"
@@ -10429,6 +10444,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "排隊中，等正在執行的請求完成 — 記憶體沒有空間加入它們"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "依此速度約剩 {left}"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "已讀取的提示詞"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "已讀取 {done} / {total} 個 token"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} 個提示詞 token，已讀取 {elapsed}"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "正在讀取你的提示詞"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "正在等待模型的第一個字"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "正在等待模型的第一個字 · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose 會在背景下載更新，並於您下次結束或重新啟動時安裝。"

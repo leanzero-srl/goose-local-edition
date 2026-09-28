@@ -28,9 +28,9 @@ use goose::config::declarative_providers::{
 };
 use goose::conversation::message::{
     ActionRequired, ActionRequiredData, FrontendToolRequest, InferenceMetadata, Message,
-    MessageContent, MessageMetadata, RedactedThinkingContent, SystemNotificationContent,
-    SystemNotificationType, ThinkingContent, TokenState, ToolConfirmationRequest, ToolRequest,
-    ToolResponse,
+    MessageContent, MessageMetadata, ProviderErrorNotice, RedactedThinkingContent,
+    SystemNotificationContent, SystemNotificationType, ThinkingContent, TokenState,
+    ToolConfirmationRequest, ToolRequest, ToolResponse,
 };
 
 use crate::routes::recipe_utils::RecipeManifest;
@@ -512,6 +512,7 @@ derive_utoipa!(IconTheme as IconThemeSchema);
         MessageContent,
         MessageMetadata,
         InferenceMetadata,
+        ProviderErrorNotice,
         TokenState,
         Usage,
         ContentSchema,

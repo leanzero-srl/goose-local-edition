@@ -291,7 +291,7 @@
     "defaultMessage": "Yanıt kontrol ediliyor"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "Anılar için tur gözden geçiriliyor"
+    "defaultMessage": "Anılar için gözden geçiriliyor"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "Kontrol"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "İnceleme"
+    "defaultMessage": "Anılar için gözden geçiriliyor"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "Kontrol"
@@ -5943,7 +5943,7 @@
     "defaultMessage": "Bu sohbet için {model} bırakılır"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "goose yardımcı çağrısı çalışıyor"
+    "defaultMessage": "goose’un kendi işiyle meşgul"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "Başka bir işe hizmet ediyor"
@@ -7852,6 +7852,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "Sağlayıcı bağlantıları dikkat gerektiriyor"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class, select, request {Modelin sunucusu bu isteği reddetti} auth {Sağlayıcı goose’un kimlik bilgilerini kabul etmedi} rate_limit {Sağlayıcı goose’un ne sıklıkla sorabileceğini sınırlıyor} server {Modelin sunucusu yanıt verirken başarısız oldu} network {goose modelle bağlantısını kaybetti} context_length {Sohbet bu model için çok uzun} not_implemented {Model bu isteği desteklemiyor} endpoint_not_found {Modelin sunucusunda bu istek için bir uç nokta yok} execution {goose bu isteği gönderemedi} other {Model bir hata döndürdü}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "Aynı isteği yeniden göndermek, neden düzeltilene kadar aynı şekilde başarısız olur."
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "Bu kendiliğinden geçebilir — biraz sonra yeniden gönderin."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "Sağlayıcı Ekle"
@@ -10429,6 +10444,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "Çalışan istekler bitene kadar sırada — onlara katılmak için bellekte yer yok"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "bu hızla yaklaşık {left} kaldı"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "Şimdiye kadar okunan istem"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "{total} token’dan {done} tanesi okundu"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} istem token’ı, {elapsed} süredir okunuyor"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "İsteminiz okunuyor"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "Modelin ilk sözcükleri bekleniyor"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "Modelin ilk sözcükleri bekleniyor · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Güncelleme arka planda otomatik olarak indirilecektir."

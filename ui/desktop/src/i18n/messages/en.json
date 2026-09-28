@@ -291,7 +291,7 @@
     "defaultMessage": "Checking the reply"
   },
   "backgroundWork.memoryReview": {
-    "defaultMessage": "Reviewing the turn for memories"
+    "defaultMessage": "Reviewing for memories"
   },
   "backgroundWork.named": {
     "defaultMessage": "{work} · {name}"
@@ -315,7 +315,7 @@
     "defaultMessage": "Checking"
   },
   "backgroundWork.short.memoryReview": {
-    "defaultMessage": "Reviewing"
+    "defaultMessage": "Reviewing for memories"
   },
   "backgroundWork.short.permissionCheck": {
     "defaultMessage": "Checking"
@@ -5943,7 +5943,7 @@
     "defaultMessage": "Leaves {model} for this chat"
   },
   "modelsBottomBar.work.helper": {
-    "defaultMessage": "goose helper running"
+    "defaultMessage": "Busy with goose’s own work"
   },
   "modelsBottomBar.work.others": {
     "defaultMessage": "Serving other work"
@@ -7852,6 +7852,21 @@
   },
   "providerConnections.attention": {
     "defaultMessage": "Provider connections need attention"
+  },
+  "providerErrorNotice.details": {
+    "defaultMessage": "Details"
+  },
+  "providerErrorNotice.headline": {
+    "defaultMessage": "{class,select,request{The model’s server refused this request} auth{The provider did not accept goose’s credentials} rate_limit{The provider is limiting how often goose can ask} server{The model’s server failed while answering} network{goose lost the connection to the model} context_length{The conversation is too long for this model} not_implemented{The model does not support this request} endpoint_not_found{The model’s server has no endpoint for this request} execution{goose could not send this request} other{The model returned an error}}"
+  },
+  "providerErrorNotice.permanent": {
+    "defaultMessage": "Sending the same request again will fail the same way until its cause is fixed."
+  },
+  "providerErrorNotice.retry": {
+    "defaultMessage": "Retry"
+  },
+  "providerErrorNotice.transient": {
+    "defaultMessage": "This can pass on its own — send it again in a moment."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "Add Provider"
@@ -10429,6 +10444,30 @@
   },
   "turnWait.room": {
     "defaultMessage": "Queued until the running requests finish — no memory room to join them"
+  },
+  "turnWorking.left": {
+    "defaultMessage": "about {left} left at this rate"
+  },
+  "turnWorking.progress": {
+    "defaultMessage": "Prompt read so far"
+  },
+  "turnWorking.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "turnWorking.readOf": {
+    "defaultMessage": "{done} of {total} tokens read"
+  },
+  "turnWorking.readSize": {
+    "defaultMessage": "{tokens} prompt tokens, reading for {elapsed}"
+  },
+  "turnWorking.reading": {
+    "defaultMessage": "Reading your prompt"
+  },
+  "turnWorking.waiting": {
+    "defaultMessage": "Waiting for the model’s first words"
+  },
+  "turnWorking.waitingFor": {
+    "defaultMessage": "Waiting for the model’s first words · {elapsed}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose will download the update in the background and install it the next time you quit or restart."

@@ -4102,6 +4102,7 @@ export interface SupersededSaid {
 const AGENT_ERROR_CLOSERS = [
   'Please resend your message to try again.',
   'Please retry if you think this is a transient or recoverable error.',
+  'Sending the same request again will fail the same way until its cause is fixed.',
   'resending this conversation is likely to be refused again.',
 ];
 

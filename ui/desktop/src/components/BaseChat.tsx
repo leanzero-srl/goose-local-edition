@@ -38,6 +38,8 @@ import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
 import NeedsYouTray from './sessionActivity/NeedsYouCard';
 import { BackgroundWorkLine } from './sessionActivity/BackgroundWorkLine';
+import { TurnWorkingRow } from './turnWorking/TurnWorkingRow';
+import { turnProducedNothing } from './turnWorking/turnProducedNothing';
 import SessionRail from './session-rail/SessionRail';
 import { useSessionLoop } from './loops/useSessionLoop';
 import { LoopSessionContext } from './loops/startLoopRequest';
@@ -663,6 +665,9 @@ export default function BaseChat({
                   submitElicitationResponse={submitElicitationResponse}
                 />
               </SearchView>
+
+              {/* Q-301: the turn has produced nothing yet — say it works, and how far its prompt is read. */}
+              {turnProducedNothing(chatState, messages) && <TurnWorkingRow sessionId={sessionId} />}
 
               {/* Q-185: goose still working for this chat after the reply (the fact check). */}
               {chatState === ChatState.Idle && <BackgroundWorkLine sessionId={sessionId} />}

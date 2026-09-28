@@ -104,6 +104,67 @@ impl ProviderError {
             .downcast()
             .unwrap_or_else(ProviderError::stream_decode_error)
     }
+
+    /// The classes a resend can outlive — a rate limit, a server fault, a dropped connection —
+    /// the set `RetryConfig::transient_only` retries. Every other class (a 4xx refusal, bad
+    /// credentials, an unsupported request) fails the same way when the same request is resent.
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            ProviderError::RateLimitExceeded { .. }
+                | ProviderError::ServerError(_)
+                | ProviderError::NetworkError(_)
+        )
+    }
+
+    /// The error's own text, without the class prefix `Display` adds.
+    pub fn inner_text(&self) -> &str {
+        match self {
+            ProviderError::Authentication(s)
+            | ProviderError::ContextLengthExceeded(s)
+            | ProviderError::ServerError(s)
+            | ProviderError::NetworkError(s)
+            | ProviderError::RequestFailed(s)
+            | ProviderError::ExecutionError(s)
+            | ProviderError::UsageError(s)
+            | ProviderError::NotImplemented(s)
+            | ProviderError::EndpointNotFound(s) => s,
+            ProviderError::RateLimitExceeded { details, .. }
+            | ProviderError::CreditsExhausted { details, .. }
+            | ProviderError::Refusal { details, .. } => details,
+        }
+    }
+
+    /// What the serving engine itself said: the body's words when the text is an HTTP failure
+    /// goose framed with its endpoint (`http_failure_text`), else the error's own text whole.
+    pub fn engine_words(&self) -> &str {
+        let inner = self.inner_text();
+        split_http_failure_text(inner).map_or(inner, |parts| parts.said)
+    }
+}
+
+/// An HTTP failure as goose frames it: `"<what> at <url>: <what the server said>"`.
+pub fn http_failure_text(what: &str, url: &str, said: &str) -> String {
+    format!("{what}{HTTP_FAILURE_AT}{url}{HTTP_FAILURE_SAID}{said}")
+}
+
+const HTTP_FAILURE_AT: &str = " at ";
+const HTTP_FAILURE_SAID: &str = ": ";
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct HttpFailureParts<'a> {
+    pub what: &'a str,
+    pub url: &'a str,
+    pub said: &'a str,
+}
+
+/// `http_failure_text` read back. A sanitized URL carries no `": "` (its port colon is never
+/// followed by a space), so the first one after `" at "` ends it; `None` for any other text.
+pub fn split_http_failure_text(text: &str) -> Option<HttpFailureParts<'_>> {
+    let (what, rest) = text.split_once(HTTP_FAILURE_AT)?;
+    let (url, said) = rest.split_once(HTTP_FAILURE_SAID)?;
+    url.contains("://")
+        .then_some(HttpFailureParts { what, url, said })
 }
 
 fn is_network_error(err: &reqwest::Error) -> bool {
@@ -203,5 +264,42 @@ impl GoogleErrorCode {
             503 => Some(Self::ServiceUnavailable),
             _ => Some(Self::InternalServerError),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_http_failure_reads_back_into_its_parts() {
+        let text = http_failure_text(
+            "Resource not found (404)",
+            "http://127.0.0.1:8091/v1/chat/completions",
+            "Only 'text' content type is supported: see: docs",
+        );
+        assert_eq!(
+            split_http_failure_text(&text),
+            Some(HttpFailureParts {
+                what: "Resource not found (404)",
+                url: "http://127.0.0.1:8091/v1/chat/completions",
+                said: "Only 'text' content type is supported: see: docs",
+            })
+        );
+    }
+
+    #[test]
+    fn text_goose_did_not_frame_is_its_own_words() {
+        let bad = ProviderError::RequestFailed("Bad request (400): look at this: no".into());
+        assert_eq!(bad.engine_words(), "Bad request (400): look at this: no");
+        let auth = ProviderError::Authentication("key revoked".into());
+        assert_eq!(auth.engine_words(), "key revoked");
+        assert!(!auth.is_transient());
+        let limited = ProviderError::RateLimitExceeded {
+            details: "slow down".into(),
+            retry_delay: None,
+        };
+        assert_eq!(limited.engine_words(), "slow down");
+        assert!(limited.is_transient());
     }
 }

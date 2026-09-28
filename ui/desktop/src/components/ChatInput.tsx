@@ -38,6 +38,8 @@ import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
+import { promptRead } from './leanzero-swarm/engineFigures';
+import { usePublishTurnRead } from './turnWorking/turnReadStore';
 import {
   heldContextLimit,
   nextMeasuredPrompt,
@@ -356,6 +358,11 @@ export default function ChatInput({
   );
   const servedRef = useRef(chatServing.served);
   servedRef.current = chatServing.served;
+  // How far this turn's prompt is read, for the chat's working row (Q-301) — the request the
+  // card leads with, in the card's own figures.
+  const turnRequest = chatServing.served.turnRequest;
+  const turnRead = useMemo(() => (turnRequest ? promptRead(turnRequest) : null), [turnRequest]);
+  usePublishTurnRead(sessionId, turnRead);
 
   // The chat's session loop (Q-228 L4): the ONE read BaseChat makes beside the rail. Absent outside
   // a chat (the Hub's composer), where there is no Loop button.
