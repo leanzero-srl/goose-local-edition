@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 21:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 22:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.72 on BOTH Macs 21:0x (DMG kept). The SPLIT could not start: MacBook 12 GiB free (other sessions'
@@ -97,6 +97,10 @@ Updated: 2026-09-28 21:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   link control Offline) → Q-420 cutting; green runs interleave.
 - BATCH 4 (→ 3.0.74): Q-417 DONE (worktree-agent-ad33799988ff81b4d: one servedModel() for single/split/remote;
   also the split's running modelId was null); Q-407 (goosed crash leaves commands) cutting.
+
+- OWNER DEMO (22:2x): a strategy 'Studio chat, split for heavy work' — chat on the Studio single, delegates on
+  the split — built through the app's UI and exercised 3 cycles (switch stability measured) → DEMO-2026-09-28-strategy.
+  E2E #3t STOPPED at turn 0 for it (engine exclusive); restart #3t after the demo.
 
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.
