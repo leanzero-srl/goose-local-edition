@@ -5,8 +5,8 @@
 //! - SERVING — the control service's routes (bearer / `?token=`, constant time, any `Origin`
 //!   refused; see [`crate::control`]):
 //!   `POST /v1/swarm/inference/v1/chat/completions`, `GET /v1/swarm/inference/v1/models`,
-//!   `GET /v1/swarm/inference/v1/status`. Each is forwarded to the SAME path on this node's own
-//!   engine at [`ChatServing::engine_base_url`] (loopback — the engine never binds anything
+//!   `GET /v1/swarm/inference/v1/status`, `GET /v1/swarm/inference/goose/admission`. Each is
+//!   forwarded to the SAME path on this node's own engine at [`ChatServing::engine_base_url`] (loopback — the engine never binds anything
 //!   else). Request and response bodies are streamed through byte for byte: the engine's status
 //!   code, `content-type` and every SSE byte arrive unchanged, nothing is appended — so a stream
 //!   the engine ends without `finish_reason`/`[DONE]` still ends without them, and the
@@ -20,7 +20,8 @@
 //!
 //! - REQUESTING — [`InferenceRelay`]: a loopback listener in the REQUESTER's process that its
 //!   OpenAI-compatible provider talks to as if it were an engine. It forwards
-//!   `<base>/v1/{chat/completions,models,status}` to the peer's routes above through the mesh
+//!   `<base>/v1/{chat/completions,models,status}` and `<base>/goose/admission` to the peer's
+//!   routes above through the mesh
 //!   proxy ([`crate::peer_dial`]) with the node token. Its base URL carries a random capability
 //!   segment (`http://127.0.0.1:<port>/relay/<64 hex>`): a local process that does not hold the
 //!   URL gets `404`, and an `Origin`-bearing (browser) request gets `403`. The peer is resolved
@@ -44,6 +45,18 @@
 //!   is a `502` with the reason; after it, an SSE body gets one error event
 //!   (`{"error":{"message":…,"type":"linkRelayFailed"}}`, which the OpenAI stream parser
 //!   raises verbatim) and every body is then aborted — never a clean end.
+//!
+//! - A MEMORY HOLD (Q-399) — a split's rank 0 that holds new requests for memory answers `503`
+//!   naming `error.admission: "/goose/admission"`, a path on ITS origin whose `GET` answers the
+//!   moment admission reopens (goose-sidecar rank_admission.py, Q-397). Through the relay that
+//!   origin is the relay's and the engine is mounted under its capability, so the relay
+//!   re-roots that one reference into its own namespace (`/relay/<capability>/goose/admission`)
+//!   — as a reverse proxy rewrites a `Location` — and forwards the `GET` like any engine path.
+//!   The wait is the engine's own: the relay holds no clock and no state; it parks exactly as
+//!   long as the peer's `GET` does (watched in flight like a silent prefill, so a peer that
+//!   leaves ends it with a named `502`), and a requester that hangs up drops the relay's dial,
+//!   which drops the peer's, which drops the engine connection. Nothing else in a body is
+//!   touched: a `503` that names no such path passes through byte for byte.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -108,25 +121,33 @@ pub enum EnginePath {
     ChatCompletions,
     Models,
     Status,
+    /// The engine's memory-hold wait (Q-397/Q-399): answers when admission reopens.
+    Admission,
 }
 
 impl EnginePath {
-    pub const ALL: [EnginePath; 3] = [Self::ChatCompletions, Self::Models, Self::Status];
+    pub const ALL: [EnginePath; 4] = [
+        Self::ChatCompletions,
+        Self::Models,
+        Self::Status,
+        Self::Admission,
+    ];
 
-    /// The engine-relative path (`v1/...`), identical on the engine, under
-    /// [`INFERENCE_ROUTE_PREFIX`], and under a relay's base URL.
+    /// The engine-relative path, identical on the engine, under [`INFERENCE_ROUTE_PREFIX`], and
+    /// under a relay's base URL.
     pub fn path(self) -> &'static str {
         match self {
             Self::ChatCompletions => "v1/chat/completions",
             Self::Models => "v1/models",
             Self::Status => "v1/status",
+            Self::Admission => "goose/admission",
         }
     }
 
     pub fn method(self) -> Method {
         match self {
             Self::ChatCompletions => Method::POST,
-            Self::Models | Self::Status => Method::GET,
+            Self::Models | Self::Status | Self::Admission => Method::GET,
         }
     }
 
@@ -538,17 +559,50 @@ async fn relay(
             words = resolver.left(&peer) => words,
         }
     });
-    tokio::select! {
-        sent = send => match sent {
-            Ok(response) => watched_passthrough(response, lost, ctx.peer.clone()),
-            Err(err) => unreachable_peer(&ctx.peer, &err.to_string()),
-        },
-        evidence = &mut lost => (
+    let lost_in_flight = |evidence: String| {
+        (
             StatusCode::BAD_GATEWAY,
             lost_in_flight_text(&ctx.peer, &evidence),
         )
-            .into_response(),
+            .into_response()
+    };
+    let response = tokio::select! {
+        sent = send => match sent {
+            Ok(response) => response,
+            Err(err) => return unreachable_peer(&ctx.peer, &err.to_string()),
+        },
+        evidence = &mut lost => return lost_in_flight(evidence),
+    };
+    if response.status() != StatusCode::SERVICE_UNAVAILABLE {
+        return watched_passthrough(response, lost, ctx.peer.clone());
     }
+    // A refusal is one small body read whole, so its admission reference can be re-rooted; a
+    // peer lost while it is read ends it like any request in flight.
+    let head = passed_head(&response);
+    let body = tokio::select! {
+        body = response.bytes() => match body {
+            Ok(body) => body,
+            Err(err) => return lost_in_flight(format!("its 503 answer broke off ({err})")),
+        },
+        evidence = &mut lost => return lost_in_flight(evidence),
+    };
+    let relay_admission = format!("/relay/{}/{}", ctx.secret, EnginePath::Admission.path());
+    let body = relay_relative_refusal(&body, &relay_admission)
+        .map(axum::body::Bytes::from)
+        .unwrap_or(body);
+    framed(head, Body::from(body))
+}
+
+/// A `503` body whose `error.admission` names the engine's admission path, with that reference
+/// re-rooted at `relay_admission`; `None` (pass the body through untouched) for anything else.
+fn relay_relative_refusal(body: &[u8], relay_admission: &str) -> Option<Vec<u8>> {
+    let mut refusal: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let admission = refusal.get_mut("error")?.get_mut("admission")?;
+    if admission.as_str()? != format!("/{}", EnginePath::Admission.path()) {
+        return None;
+    }
+    *admission = serde_json::Value::String(relay_admission.to_string());
+    serde_json::to_vec(&refusal).ok()
 }
 
 /// The `502` for a request the relay could not deliver at all.
@@ -786,8 +840,47 @@ async fn look_once(client: &reqwest::Client, url: &str, token: &str) -> Look {
 mod tests {
     use super::*;
 
+    /// Q-399: rank 0's hold refusal (rank_admission.py `Admission.refusal`) through the relay.
+    #[test]
+    fn only_the_engines_admission_reference_is_re_rooted_under_the_relay() {
+        let relay = "/relay/abc/goose/admission";
+        let hold = serde_json::json!({"error": {
+            "message": "goose distributed engine is not admitting new requests: memory is low",
+            "type": "server_busy",
+            "reason": "memory is low",
+            "admission": "/goose/admission",
+            "code": "memory_hold",
+        }});
+        let rewritten: serde_json::Value = serde_json::from_slice(
+            &relay_relative_refusal(&serde_json::to_vec(&hold).unwrap(), relay).expect("re-rooted"),
+        )
+        .unwrap();
+        let mut expected = hold.clone();
+        expected["error"]["admission"] = serde_json::json!(relay);
+        assert_eq!(rewritten, expected, "only the reference moves");
+
+        // NEGATIVE CONTROLS: another path, no admission, not JSON, not an object: untouched.
+        let other =
+            serde_json::json!({"error": {"admission": "/elsewhere", "code": "memory_hold"}});
+        let none = serde_json::json!({"error": {"message": "busy", "type": "server_busy"}});
+        for body in [
+            serde_json::to_vec(&other).unwrap(),
+            serde_json::to_vec(&none).unwrap(),
+            b"Service Unavailable".to_vec(),
+            br#"["/goose/admission"]"#.to_vec(),
+            br#"{"error": "/goose/admission"}"#.to_vec(),
+        ] {
+            assert_eq!(relay_relative_refusal(&body, relay), None, "{body:?}");
+        }
+    }
+
     #[test]
     fn every_engine_path_maps_to_one_control_route_and_method() {
+        assert_eq!(
+            EnginePath::Admission.control_route(),
+            "/v1/swarm/inference/goose/admission"
+        );
+        assert_eq!(EnginePath::Admission.method(), Method::GET);
         assert_eq!(
             EnginePath::ChatCompletions.control_route(),
             "/v1/swarm/inference/v1/chat/completions"

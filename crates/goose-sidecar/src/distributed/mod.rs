@@ -60,7 +60,7 @@ pub use runner_update::{RunnerUpdate, RunnerUpdateRow};
 pub use sampling::SamplingDefaults;
 pub use supervisor::{
     global_manager, DistributedManager, DistributedStatus, EngineEvent, EventKind, NodeState,
-    NodeStatus, RefusalCode, RunState, StartOutcome, StopReport,
+    NodeStatus, RefusalCode, RunState, StartOutcome, StopReport, MEMORY_HOLD_CODE,
 };
 
 pub use crate::fit::{AVAILABLE_MARGIN_RATIO, DERIVED_CONTEXT_MARGIN_RATIO};
