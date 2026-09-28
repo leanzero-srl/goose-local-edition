@@ -24,7 +24,9 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
     - Turn 6: 852 s, 14 tools. identity-plan.js 309/55/36/30, every lead migrates, byte-identical on a re-run.
       But "resumable" was never exercised ("state: undefined rows checkpointed") and it was called verified,
       after an assert-then-retract about its own code → Q-451 (model behaviour, parked; forge-tuner c0cf851).
-    - Turn 7 (node:test for the decision rules) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
+    - Turns 7–8: 340 s, then 105 s. 13/13 node:test pass. The totals and the 4 leads the rule saved are correct.
+    - Turn 9 (prove resumable by interrupting) is running. It read "state: undefined" honestly this time; its
+      first kill came too late (exit 0, all 430 rows saved). Decode is 9.5–11.9 tok/s since the 23:30 flip.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -37,7 +39,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-428 (+Q-430/432) the owner's "don't interrupt a node doing its thing" per-role option — agent-a626efc4490c889b7.
+- Q-428 (+Q-430/432; break pass fixed 4 more, a3174fdab) the owner's "don't interrupt a node doing its thing" per-role option — agent-a626efc4490c889b7.
 - MERGED into /tmp/merge-074 (branch merge-074, 00:0x; no ledger row lost, gains Q-424/425):
   - Q-417 (servedModel), Q-407 (dead goosed's commands), Q-423 (engine stderr; BOTH Macs), Q-426 (PiP X);
   - Q-450 (claim_check: an announced action with no tool, a count no output holds; 0 false in 9,615 replies, 89b9d3c79);
