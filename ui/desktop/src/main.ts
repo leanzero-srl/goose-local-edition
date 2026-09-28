@@ -173,9 +173,11 @@ import {
   isGlancePrefs,
   isGlanceSessions,
   mergeGlanceSessions,
+  servingKeptOf,
   servingReportsOf,
   type GlancePrefs,
   type GlancePush,
+  type GlanceServingReport,
   type GlanceSessions,
 } from './utils/engineGlance';
 import {
@@ -2254,6 +2256,9 @@ const currentGlancePrefs = (): GlancePrefs => {
   return glancePrefs;
 };
 const glanceSessionsByWindow = new Map<number, GlanceSessions>();
+// The node read of the last window that closed (Q-237): the floating window, often the only surface
+// left then, keeps naming the node that serves the same way and model (engineGlance.ts).
+let closedWindowServing: GlanceServingReport | null = null;
 let glanceWebContentsId: number | null = null;
 let lastGlancePush = '';
 const glanceWindowArguments = () => [
@@ -2310,7 +2315,7 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
         : null,
       remote: mlxRemote,
       // The node that serves, as each window's goosed read it (glanceStore.ts) — never guessed here.
-      served: servingReportsOf(glanceSessionsByWindow.values()),
+      served: servingReportsOf(glanceSessionsByWindow.values(), closedWindowServing),
     }),
     sessions:
       glanceSessionsByWindow.size > 0
@@ -2595,6 +2600,10 @@ ipcMain.on('engine-glance-sessions', (event, report: unknown) => {
   const sender = event.sender;
   if (!glanceSessionsByWindow.has(sender.id)) {
     sender.once('destroyed', () => {
+      closedWindowServing = servingKeptOf(
+        glanceSessionsByWindow.get(sender.id),
+        closedWindowServing
+      );
       glanceSessionsByWindow.delete(sender.id);
       publishEngineGlance(mlxMonitor.current());
     });

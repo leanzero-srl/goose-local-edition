@@ -8,6 +8,7 @@ import {
   isGlanceSessions,
   mergeGlanceSessions,
   nodesNavChip,
+  servingKeptOf,
   servingReportsOf,
   type GlanceServingReport,
 } from './engineGlance';
@@ -493,6 +494,43 @@ describe('the node the serving way belongs to (design §7.3, S7)', () => {
         { running: 0, needsYou: [], serving: null },
       ])
     ).toEqual([report]);
+  });
+
+  it('Q-237: with every goose window closed, the float keeps the last window’s node for the same way', () => {
+    const report: GlanceServingReport = { way: splitWay(), nodes: [SPLIT_NODE] };
+    // The one window closes: main keeps its read, and the float still names the node.
+    const kept = servingKeptOf({ running: 0, needsYou: [], serving: report }, null);
+    expect(kept).toEqual(report);
+    expect(split(servingReportsOf([], kept)).servedBy).toEqual({ nodes: [SPLIT_NODE] });
+    // Negative control — the pre-fix main dropped the read with the window: nothing named.
+    expect(split(servingReportsOf([])).servedBy).toBeNull();
+    // A live window's read comes first, before the kept one.
+    const live: GlanceServingReport = { way: splitWay(), nodes: [FOLLOWS] };
+    expect(
+      split(servingReportsOf([{ running: 0, needsYou: [], serving: live }], kept)).servedBy
+    ).toEqual({ nodes: [FOLLOWS] });
+    // The engine switched since the read: the kept report is of another model and says nothing.
+    const other = servingKeptOf(
+      {
+        running: 0,
+        needsYou: [],
+        serving: {
+          way: splitWay({ modelId: 'other/27B', servedModelId: '27b' }),
+          nodes: [SPLIT_NODE],
+        },
+      },
+      null
+    );
+    expect(split(servingReportsOf([], other)).servedBy).toBeNull();
+  });
+
+  it('Q-237: a closing window’s failed or absent read is never kept — the earlier read stands', () => {
+    const report: GlanceServingReport = { way: splitWay(), nodes: [SPLIT_NODE] };
+    expect(servingKeptOf({ running: 0, needsYou: [], serving: { error: 'x' } }, report)).toBe(
+      report
+    );
+    expect(servingKeptOf({ running: 0, needsYou: [] }, report)).toBe(report);
+    expect(servingKeptOf(undefined, null)).toBeNull();
   });
 
   it('a window’s report is accepted only with a well-formed serving read', () => {
