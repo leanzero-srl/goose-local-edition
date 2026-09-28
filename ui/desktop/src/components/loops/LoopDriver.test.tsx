@@ -8,7 +8,7 @@ import { acpLoadSession, sessionInfoToSession } from '../../acp/sessions';
 import { ChatState } from '../../types/chatState';
 import type { Message } from '../../types/message';
 import type { Session } from '../../types/session';
-import { LoopDriver } from './LoopDriver';
+import { LoopDriver, type WakeDeps } from './LoopDriver';
 import { setPendingUserInput } from './pendingUserInput';
 
 /**
@@ -43,6 +43,7 @@ vi.mock('../../acp/sessions', () => ({
 vi.mock('../../acp/loops', () => ({
   loopsTickRefused: vi.fn(async () => ({})),
   loopsReady: vi.fn(async () => ({ reoffered: true })),
+  loopsWake: vi.fn(async () => ({ rearmed: 0 })),
 }));
 vi.mock('../../utils/extensionErrorUtils', () => ({ showExtensionLoadResults: vi.fn() }));
 
@@ -343,5 +344,108 @@ describe('LoopDriver', () => {
     expect(getAcpClient).toHaveBeenCalledTimes(2);
     cleanup();
     expect(closeListeners.size).toBe(0);
+  });
+});
+
+/** Q-228 (L10): main's `system-resumed` becomes one `loops/wake`; the runner decides what is due. */
+function fakeWake(answer: Awaited<ReturnType<WakeDeps['wake']>> = { rearmed: 1 }) {
+  const listeners = new Set<() => void>();
+  const wake: WakeDeps & { resume(): void; listeners: Set<() => void> } = {
+    listeners,
+    onSystemResumed: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    wake: vi.fn(async () => answer),
+    resume: () => {
+      for (const listener of [...listeners]) listener();
+    },
+  };
+  return wake;
+}
+
+describe('LoopDriver on the Mac waking', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('sends loops/wake once per system-resumed', async () => {
+    const wake = fakeWake();
+    render(<LoopDriver wake={wake} />);
+    expect(wake.wake).not.toHaveBeenCalled();
+
+    act(() => wake.resume());
+
+    await waitFor(() => expect(wake.wake).toHaveBeenCalledTimes(1));
+  });
+
+  it('two quick resumes are two calls — the runner decides, the driver keeps no clock', async () => {
+    const wake = fakeWake();
+    render(<LoopDriver wake={wake} />);
+
+    act(() => {
+      wake.resume();
+      wake.resume();
+    });
+
+    await waitFor(() => expect(wake.wake).toHaveBeenCalledTimes(2));
+  });
+
+  it("states goosed's refusal instead of dropping it", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wake = fakeWake({
+      rearmed: 0,
+      refusal: { code: 'runner_absent', reason: 'The loop runner is not in this build' },
+    });
+    render(<LoopDriver wake={wake} />);
+
+    act(() => wake.resume());
+
+    await waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('(runner_absent): The loop runner is not in this build')
+      )
+    );
+    warn.mockRestore();
+  });
+
+  it('a failed call is reported, and the next resume still reaches goosed', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wake = fakeWake();
+    vi.mocked(wake.wake).mockRejectedValueOnce(new Error('socket closed'));
+    render(<LoopDriver wake={wake} />);
+
+    act(() => wake.resume());
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('Could not tell goose that the Mac woke'),
+        expect.any(Error)
+      )
+    );
+
+    act(() => wake.resume());
+    await waitFor(() => expect(wake.wake).toHaveBeenCalledTimes(2));
+    error.mockRestore();
+  });
+
+  it('lets go of the wake on unmount', () => {
+    const wake = fakeWake();
+    render(<LoopDriver wake={wake} />);
+    expect(wake.listeners.size).toBe(1);
+
+    cleanup();
+
+    expect(wake.listeners.size).toBe(0);
+    wake.resume();
+    expect(wake.wake).not.toHaveBeenCalled();
+  });
+
+  it('the live wake subscribes through the preload bridge', () => {
+    render(<LoopDriver />);
+    expect(window.electron.onSystemResumed).toHaveBeenCalledTimes(1);
   });
 });

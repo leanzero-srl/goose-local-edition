@@ -6,7 +6,7 @@ import {
   acpChatSessionStore,
   useAcpChatSessionSnapshot,
 } from '../../acp/chatSessionStore';
-import { loopsReady, loopsTickRefused } from '../../acp/loops';
+import { loopsReady, loopsTickRefused, loopsWake, type LoopsWake } from '../../acp/loops';
 import { getPendingUserInput, usePendingUserInput } from './pendingUserInput';
 import { createTickDoor, refusalCleared, type RefusalWaitsOn, type TickDoorDeps } from './tickDoor';
 
@@ -16,7 +16,8 @@ import { createTickDoor, refusalCleared, type RefusalWaitsOn, type TickDoorDeps 
  * connection and fires it through the same door a typed message uses, or refuses it with the
  * reason and sends `loops/ready` the moment that reason clears — a store or queue event, never a
  * timer. When the connection dies it connects again at once, so goosed sees a live tick door and
- * re-offers what is still open.
+ * re-offers what is still open. When the Mac wakes from sleep (main's `system-resumed`, L10) it
+ * sends `loops/wake` so the runner re-reads the wall clock.
  */
 
 const liveDeps: TickDoorDeps = {
@@ -32,6 +33,36 @@ const liveDeps: TickDoorDeps = {
     await loopsTickRefused(sessionId, loopId, n, reason);
   },
 };
+
+/** The Mac's wake and the call that hands it to goosed. */
+export interface WakeDeps {
+  onSystemResumed(listener: () => void): () => void;
+  wake(): Promise<LoopsWake>;
+}
+
+const liveWake: WakeDeps = {
+  onSystemResumed: (listener) => window.electron.onSystemResumed(listener),
+  wake: loopsWake,
+};
+
+// One `loops/wake` per resume, every time: two quick resumes are two calls and the runner decides.
+// Waking re-reads the wall clock and offers at most one tick per loop that came due — a loop whose
+// wake tick is already offered or running has nothing due — so a second call, or one from another
+// window on the same goosed, re-arms nothing. A debounce here would be a clock guessing for it.
+function forwardWake(wake: WakeDeps): void {
+  wake.wake().then(
+    (result) => {
+      if (result.refusal) {
+        console.warn(
+          `goose did not re-read its loop clocks after the Mac woke (${result.refusal.code}): ${result.refusal.reason}`
+        );
+      }
+    },
+    (error) => {
+      console.error('Could not tell goose that the Mac woke; loop ticks wait for their clock:', error);
+    }
+  );
+}
 
 function connect(why: string): void {
   getAcpClient().catch((error) => {
@@ -62,7 +93,13 @@ function ReadyWatcher({
   return null;
 }
 
-export function LoopDriver({ deps = liveDeps }: { deps?: TickDoorDeps }) {
+export function LoopDriver({
+  deps = liveDeps,
+  wake = liveWake,
+}: {
+  deps?: TickDoorDeps;
+  wake?: WakeDeps;
+}) {
   const door = useMemo(() => createTickDoor(deps), [deps]);
   const [refused, setRefused] = useState<ReadonlyMap<string, Exclude<RefusalWaitsOn, null>>>(
     () => new Map()
@@ -81,6 +118,8 @@ export function LoopDriver({ deps = liveDeps }: { deps?: TickDoorDeps }) {
       }),
     [door]
   );
+
+  useEffect(() => wake.onSystemResumed(() => forwardWake(wake)), [wake]);
 
   useEffect(() => {
     connect('for the loop driver');

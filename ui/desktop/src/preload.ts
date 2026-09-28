@@ -9,6 +9,7 @@ import type { MemoryOrigin } from './utils/memoryProvenance';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
 import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
+import { SYSTEM_RESUMED_CHANNEL } from './systemResumed';
 import type { FleetProbeResult } from './utils/fleetProbe';
 import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
@@ -430,6 +431,9 @@ type ElectronAPI = {
   setThemeSource: (preference: 'system' | 'light' | 'dark') => Promise<{ dark: boolean }>;
   /** nativeTheme 'updated' → the new shouldUseDarkColors; returns the unsubscribe. */
   onNativeThemeUpdated: (callback: (dark: boolean) => void) => () => void;
+  /** The Mac woke from sleep (main's powerMonitor 'resume'; never sent to the floating glance).
+   *  Returns its own unsubscribe. */
+  onSystemResumed: (callback: () => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   /** Q-192: POST a problem report to leanzero.net's contact endpoint from MAIN (the renderer CSP
    *  blocks the site). The recipient is fixed server side; every failure comes back NAMED. */
@@ -726,6 +730,11 @@ const electronAPI: ElectronAPI = {
       callback(payload.dark);
     ipcRenderer.on('native-theme-updated', handler);
     return () => ipcRenderer.removeListener('native-theme-updated', handler);
+  },
+  onSystemResumed: (callback: () => void): (() => void) => {
+    const handler = () => callback();
+    ipcRenderer.on(SYSTEM_RESUMED_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(SYSTEM_RESUMED_CHANNEL, handler);
   },
   openExternal: (url: string): Promise<void> => {
     return ipcRenderer.invoke('open-external', url);
