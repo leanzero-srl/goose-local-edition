@@ -1937,6 +1937,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "em {node} · carregado para esta delegação em {duration}"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Carregando {node} para esta delegação: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "em {node}"
   },
@@ -6239,6 +6242,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Trocar o modelo ou o Mac em que ele roda"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Os nós deste chat"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Falhou"
   },
@@ -6533,6 +6539,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "O modelo salvo do motor MLX serve {served}; este nó quer {wanted}. Escolha o modelo em Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Responder em {next} por agora"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Reenvia sua mensagem para {next} só neste turno. Os nós deste chat continuam como estão, e a próxima mensagem vai de novo para {lead}."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Todas as vagas deste nó estão ocupadas."
   },
@@ -6757,6 +6769,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} está em {node} ({rank}): {primary} não pode rodar: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} está em {node} ({rank}) neste turno, como você pediu. A próxima mensagem vai de novo para {primary}."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Tentar {primary} de novo"

@@ -6690,6 +6690,7 @@ export const zNodeResidency = z.union([
             z.string(),
             z.null()
         ]).optional(),
+        demandedBy: z.array(z.string()).optional(),
         kind: z.literal('loading')
     }),
     z.object({
@@ -6915,7 +6916,8 @@ export const zNodeServedTurnDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional(),
-    atMs: z.number().int().gte(0)
+    atMs: z.number().int().gte(0),
+    askedForThisTurn: z.boolean().optional()
 });
 
 export const zNodesServedLastResponse_unstable = z.object({

@@ -87,7 +87,7 @@ impl Ways for AgentWays {
         let serving = residency::serving_now(&name).await;
         Ok(match residency::residency_of(node, &serving, &[]) {
             NodeResidency::Serving | NodeResidency::AlwaysReady => Residency::Serving,
-            NodeResidency::Loading { phase } => Residency::Loading(phase),
+            NodeResidency::Loading { phase, .. } => Residency::Loading(phase),
             NodeResidency::Unknown { reason } => return Err(unknown(reason)),
             _ => Residency::NotServing,
         })

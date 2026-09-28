@@ -5,12 +5,7 @@ import type { NodesReadResponse_unstable, NodesResidencyResponse_unstable } from
 import { IntlTestWrapper } from '../../../../i18n/test-utils';
 import { NodesChipMenu, type ChatNodesControl } from './NodesChipMenu';
 import { chatNodesNow } from '../../../nodes/chatNodeAvailability';
-import {
-  CONFIG,
-  NODE_CLOUD,
-  NODE_FLASH,
-  NODE_SPLIT,
-} from '../../../nodes/nodeGlance.fixtures';
+import { CONFIG, NODE_CLOUD, NODE_FLASH, NODE_SPLIT } from '../../../nodes/nodeGlance.fixtures';
 import type { NodesConfig } from '../../../nodes/model';
 
 // The chip's menu, always open: its rows are plain elements.
@@ -20,13 +15,44 @@ vi.mock('../../../ui/dropdown-menu', () => ({
   DropdownMenuItem: ({
     children,
     onClick,
+    onSelect,
     ...rest
   }: {
     children: React.ReactNode;
     onClick?: () => void;
+    onSelect?: (e: Event) => void;
     [key: string]: unknown;
   }) => (
-    <div role="menuitem" {...rest} onClick={onClick}>
+    <div
+      role="menuitem"
+      {...rest}
+      onClick={() => {
+        onClick?.();
+        onSelect?.(new Event('select'));
+      }}
+    >
+      {children}
+    </div>
+  ),
+  DropdownMenuCheckboxItem: ({
+    children,
+    checked,
+    onCheckedChange,
+    onSelect: _onSelect,
+    ...rest
+  }: {
+    children: React.ReactNode;
+    checked: boolean;
+    onCheckedChange: (next: boolean) => void;
+    onSelect?: (e: Event) => void;
+    [key: string]: unknown;
+  }) => (
+    <div
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      {...rest}
+      onClick={() => onCheckedChange(!checked)}
+    >
       {children}
     </div>
   ),

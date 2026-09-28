@@ -1684,6 +1684,39 @@ fn a_remote_single_serves_only_its_peers_node() {
     ));
 }
 
+/// Q-382: a node the loader loads names the sessions it loads for — whether the loader's own mark
+/// or the serving way's phase reports the load.
+#[test]
+fn a_loading_node_names_the_sessions_it_loads_for() {
+    let loader = [seam::LoaderActivity::Loading {
+        node: "split".into(),
+        phase: None,
+        demanded_by: vec!["sub-1".into(), "sub-2".into()],
+    }];
+    let expected = |phase: Option<&str>| NodeResidency::Loading {
+        phase: phase.map(str::to_string),
+        demanded_by: vec!["sub-1".into(), "sub-2".into()],
+    };
+    assert_eq!(
+        residency_of(
+            &resolved(split_27b("split")),
+            &ServingFacts::Nothing,
+            &loader
+        ),
+        expected(None)
+    );
+    let mut loading = split_way();
+    loading.load_phase = Some("loading".into());
+    assert_eq!(
+        residency_of(
+            &resolved(split_27b("split")),
+            &ServingFacts::Way(loading),
+            &loader
+        ),
+        expected(Some("loading"))
+    );
+}
+
 #[test]
 fn a_loading_way_and_an_unknown_record_are_named() {
     let mut loading = split_way();
@@ -1695,7 +1728,8 @@ fn a_loading_way_and_an_unknown_record_are_named() {
             &[]
         ),
         NodeResidency::Loading {
-            phase: Some("warming".into())
+            phase: Some("warming".into()),
+            demanded_by: Vec::new(),
         }
     );
     let unknown = ServingFacts::Unknown("the route record is unreadable".into());
@@ -1783,7 +1817,8 @@ fn the_split_is_named_by_the_way_its_owner_published() {
     assert_eq!(
         residency_of(&resolved(split_27b("split")), &starting, &[]),
         NodeResidency::Loading {
-            phase: Some("starting".into())
+            phase: Some("starting".into()),
+            demanded_by: Vec::new(),
         }
     );
 }
@@ -1851,6 +1886,7 @@ async fn the_served_record_is_kept_in_memory_and_in_the_session() {
         tried: Vec::new(),
         loaded_ms: None,
         at_ms: 1,
+        asked_for_this_turn: false,
     };
     served::record(&sessions, &session.id, turn.clone())
         .await

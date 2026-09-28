@@ -1937,6 +1937,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "на {node} · загружен для этого делегата за {duration}"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Загрузка {node} для этого делегата: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "на {node}"
   },
@@ -6239,6 +6242,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Сменить модель или Mac, на котором она работает"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Узлы этого чата"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Сбой"
   },
@@ -6533,6 +6539,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Сохранённая модель движка MLX обслуживает {served}; этому узлу нужна {wanted}. Выберите модель в Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Пока ответить на {next}"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Отправляет ваше сообщение на {next} заново только для этого хода. Узлы этого чата остаются как есть, а следующее сообщение снова уйдёт на {lead}."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Все слоты этого узла заняты."
   },
@@ -6757,6 +6769,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} работает на {node} ({rank}): {primary} не может работать: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} работает на {node} ({rank}) в этом ходе, как вы просили. Следующее сообщение снова уйдёт на {primary}."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Повторить {primary}"

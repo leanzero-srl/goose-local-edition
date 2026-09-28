@@ -188,6 +188,8 @@ struct Queued {
     seq: u64,
     node: String,
     node_name: String,
+    /// The session that demanded it (`None` for a card's Start): the load it waits on is FOR it.
+    session: Option<String>,
     /// A loop tick's demand (session loops §5.5).
     tick: bool,
     /// Its stops are about to begin: it runs to its end, whoever asked after it (§6.4 step 12).
@@ -370,18 +372,61 @@ impl Core {
     }
 
     fn set_activity(&self, activity: LoaderActivity) {
+        // A demand waiting while its own node's swap runs is part of that load (Q-382): the node
+        // stays Loading — naming the waiting demand among the sessions it is for — until the swap
+        // ends, instead of reading "waiting" over a load that is happening.
+        if matches!(activity, LoaderActivity::Waiting { .. }) && self.swapping_to(activity.node()) {
+            return;
+        }
         self.activity
             .lock()
             .unwrap()
             .insert(activity.node().to_string(), activity);
     }
 
+    /// A swap to `node` runs now (its demand's stops have begun and it is still queued).
+    fn swapping_to(&self, node: &str) -> bool {
+        self.queue
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|q| q.node == node && q.swapping)
+    }
+
     fn clear_activity(&self, node: &str) {
         self.activity.lock().unwrap().remove(node);
     }
 
+    /// What the loader does per node. A load names the sessions it is FOR: every demand for that
+    /// node still in the queue — the one whose swap runs and the ones waiting on the same load —
+    /// read at the moment it is asked, so a demand that went (its turn ended) is not named.
     pub(crate) fn in_progress(&self) -> Vec<LoaderActivity> {
-        self.activity.lock().unwrap().values().cloned().collect()
+        let activity: Vec<LoaderActivity> =
+            self.activity.lock().unwrap().values().cloned().collect();
+        let queue = self.queue.lock().unwrap();
+        activity
+            .into_iter()
+            .map(|a| match a {
+                LoaderActivity::Loading { node, phase, .. } => {
+                    let mut demanded_by: Vec<String> = Vec::new();
+                    for session in queue
+                        .iter()
+                        .filter(|q| q.node == node)
+                        .filter_map(|q| q.session.clone())
+                    {
+                        if !demanded_by.contains(&session) {
+                            demanded_by.push(session);
+                        }
+                    }
+                    LoaderActivity::Loading {
+                        node,
+                        phase,
+                        demanded_by,
+                    }
+                }
+                other => other,
+            })
+            .collect()
     }
 
     pub(crate) fn displaced(&self) -> Vec<NodeDisplacedDto> {
@@ -467,6 +512,7 @@ impl Core {
             seq,
             node: node.def.id.clone(),
             node_name: node.def.name.clone(),
+            session: session.clone(),
             tick,
             swapping: false,
         });
@@ -969,6 +1015,7 @@ impl Core {
         self.set_activity(LoaderActivity::Loading {
             node: node.def.id.clone(),
             phase: None,
+            demanded_by: Vec::new(),
         });
         let failed = |reason: String, words: String| {
             (

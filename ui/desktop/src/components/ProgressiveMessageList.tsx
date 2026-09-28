@@ -26,7 +26,12 @@ import {
   CreditsExhaustedNotification,
   getCreditsExhaustedNotification,
 } from './context_management/CreditsExhaustedNotification';
-import type { Message, NotificationEvent, SystemNotificationContent } from '../types/message';
+import type {
+  AppendOptions,
+  Message,
+  NotificationEvent,
+  SystemNotificationContent,
+} from '../types/message';
 import LoadingGoose from './LoadingGoose';
 import { ChatType } from '../types/chat';
 import { identifyConsecutiveToolCalls, isInChain } from '../utils/toolCallChaining';
@@ -53,7 +58,7 @@ interface ProgressiveMessageListProps {
   messages: Message[];
   chat: Pick<ChatType, 'sessionId'>;
   toolCallNotifications?: Map<string, NotificationEvent[]>; // Make optional
-  append?: (value: string) => void; // Make optional
+  append?: (value: string, options?: AppendOptions) => void; // Make optional
   isUserMessage: (message: Message) => boolean;
   batchSize?: number;
   batchDelay?: number;

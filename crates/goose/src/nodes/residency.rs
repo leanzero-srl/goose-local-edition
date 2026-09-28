@@ -94,9 +94,17 @@ pub fn residency_of(
         return NodeResidency::AlwaysReady;
     }
     let activity = loader.iter().find(|a| a.node() == node.def.id);
+    // The sessions the loader loads this node for, whichever record reports the phase (Q-382).
+    let demanded_by = match activity {
+        Some(LoaderActivity::Loading { demanded_by, .. }) => demanded_by.clone(),
+        _ => Vec::new(),
+    };
     let from_loader = |a: &LoaderActivity| match a {
-        LoaderActivity::Loading { phase, .. } => NodeResidency::Loading {
+        LoaderActivity::Loading {
+            phase, demanded_by, ..
+        } => NodeResidency::Loading {
             phase: phase.clone(),
+            demanded_by: demanded_by.clone(),
         },
         LoaderActivity::Waiting {
             reason, replies, ..
@@ -120,6 +128,7 @@ pub fn residency_of(
         ServingFacts::Way(way) if names_way(node, way) => match &way.load_phase {
             Some(phase) => NodeResidency::Loading {
                 phase: Some(phase.clone()),
+                demanded_by,
             },
             None => NodeResidency::Serving,
         },

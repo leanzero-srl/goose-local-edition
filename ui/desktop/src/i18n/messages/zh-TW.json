@@ -1937,6 +1937,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "在 {node} 上 · 為此委派在 {duration} 內載入完成"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "正在為此委派載入 {node}：{phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "在 {node} 上"
   },
@@ -6239,6 +6242,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "更換模型或執行它的 Mac"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "此聊天的節點"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "失敗"
   },
@@ -6533,6 +6539,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 引擎儲存的模型提供 {served}；此節點需要 {wanted}。請在 Providers 中選擇模型。"
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "暫時在 {next} 上回答"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "僅在這一輪把你的訊息重新傳送到 {next}。此聊天的節點保持不變，下一則訊息會再次傳往 {lead}。"
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "此節點的所有槽位都已佔用。"
   },
@@ -6757,6 +6769,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} 在 {node}（{rank}）上：{primary} 無法執行：{reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "依你的要求，本輪 {role} 在 {node}（{rank}）上。下一則訊息會再次傳往 {primary}。"
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "重試 {primary}"

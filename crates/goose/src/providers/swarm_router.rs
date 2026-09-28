@@ -1389,6 +1389,7 @@ pub(crate) async fn route_stream(
                     tried: Vec::new(),
                     loaded_ms: None,
                     at_ms: now_ms(),
+                    asked_for_this_turn: false,
                 });
                 return Ok(stream);
             }
@@ -1821,12 +1822,83 @@ pub(crate) struct ChainPlan {
     share_key: String,
     entry: NodeRoleEntry,
     defs: HashMap<String, ResolvedNodeDef>,
+    /// This turn was asked to answer past the chain's 1st (Q-381): the 1st, never probed nor
+    /// loaded this turn, and the words its passed-over entry carries.
+    asked_past: Option<(String, String)>,
+}
+
+/// "Answer on {next} for now" (Q-381): the Chat chain of a chat's own set for the ONE turn whose
+/// prompt asked to answer on `asked` — the lead first (passed over by the ask, so the served record
+/// names it and why), then `asked`, then the rest of the set in its order: down the set from the
+/// node the person picked, as the failover switch would, without changing the set. An ask this
+/// route cannot honour ends the turn naming why — never answered on the lead instead.
+fn asked_entry(
+    strategy: &crate::nodes::NodeStrategy,
+    role: NodeRole,
+    asked: &str,
+    defs: &HashMap<String, ResolvedNodeDef>,
+) -> Result<(NodeRoleEntry, (String, String)), String> {
+    let name = |id: &str| {
+        defs.get(id)
+            .map_or_else(|| id.to_string(), |d| d.def.name.clone())
+    };
+    let refused = |why: &str| {
+        format!(
+            "this turn was asked to answer on \"{}\" for now, {why}; nothing was routed",
+            name(asked)
+        )
+    };
+    if role != NodeRole::Chat {
+        return Err(refused(&format!(
+            "but this call is the {} role's, not the chat's answer",
+            crate::nodes::role_str(role)
+        )));
+    }
+    let Some((set, _)) = crate::nodes::chat_set_of(strategy) else {
+        return Err(refused("but the chat no longer runs on its own nodes"));
+    };
+    let Some((lead, rest)) = set.split_first() else {
+        return Err(refused("but this chat's nodes are empty"));
+    };
+    if !rest.iter().any(|n| n == asked) {
+        return Err(refused(
+            "which is not one of this chat's nodes after the one that answers",
+        ));
+    }
+    let link = |node: &String| NodeChainEntry {
+        node: node.clone(),
+        weight: 1,
+    };
+    let chain = std::iter::once(lead)
+        .chain(rest.iter().filter(|n| *n == asked))
+        .chain(rest.iter().filter(|n| *n != asked))
+        .map(link)
+        .collect();
+    let words = format!(
+        "passed over for this turn: you asked to answer on {} for now",
+        name(asked)
+    );
+    Ok((
+        NodeRoleEntry {
+            chain,
+            when: NodeWhen::Failover,
+            if_not_loaded: NodeIfNotLoaded::Load,
+        },
+        (lead.clone(), words),
+    ))
 }
 
 /// The chain `route` names. A `node:` route is a chain of that one node, and a node that cannot
 /// serve ends the turn (the user chose exactly it). A removed node or strategy is named, never
-/// replaced.
-fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan, String> {
+/// replaced — a removed set of `session`'s own as "this chat's nodes", never by the id it carried
+/// only for uniqueness (Q-379). `asked` is the node this turn's prompt asked the chat to answer on
+/// for now (Q-381, `nodes::answer_on`).
+fn chain_plan(
+    route: &RouteModel,
+    read: &NodesReadResponse,
+    session: Option<&str>,
+    asked: Option<&str>,
+) -> Result<ChainPlan, String> {
     let defs: HashMap<String, ResolvedNodeDef> = read
         .nodes
         .iter()
@@ -1837,6 +1909,13 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
             let def = defs.get(id).ok_or_else(|| {
                 format!("the node '{id}' was removed. Pick another node from the chip.")
             })?;
+            if let Some(asked) = asked {
+                let name = defs.get(asked).map_or(asked, |d| d.def.name.as_str());
+                return Err(format!(
+                    "this turn was asked to answer on \"{name}\" for now, but the chat runs on \"{}\" alone now; nothing was routed",
+                    def.def.name
+                ));
+            }
             Ok(ChainPlan {
                 label: format!("\"{}\"", def.def.name),
                 role: None,
@@ -1851,6 +1930,7 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
                     if_not_loaded: NodeIfNotLoaded::Load,
                 },
                 defs,
+                asked_past: None,
             })
         }
         RouteModel::Strategy { id, role } => {
@@ -1859,8 +1939,12 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
                 .strategies
                 .iter()
                 .find(|s| &s.id == id)
-                .ok_or_else(|| {
-                    format!("the strategy '{id}' was removed. Pick another from the chip.")
+                .ok_or_else(|| match session {
+                    Some(session) if crate::nodes::is_chat_set_id_of(id, session) => {
+                        "this chat's nodes were removed. Pick a node for it from the chip."
+                            .to_string()
+                    }
+                    _ => format!("the strategy '{id}' was removed. Pick another from the chip."),
                 })?;
             let role = role.unwrap_or(NodeRole::Chat);
             let entry = crate::nodes::effective_entry(strategy, role).ok_or_else(|| {
@@ -1880,6 +1964,13 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
                     crate::nodes::role_str(role)
                 ),
             };
+            let (entry, asked_past) = match asked {
+                None => (entry.clone(), None),
+                Some(asked) => {
+                    let (entry, past) = asked_entry(strategy, role, asked, &defs)?;
+                    (entry, Some(past))
+                }
+            };
             Ok(ChainPlan {
                 label,
                 role: Some(role),
@@ -1887,8 +1978,9 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
                     id: id.clone(),
                     role: Some(role),
                 }),
-                entry: entry.clone(),
+                entry,
                 defs,
+                asked_past,
             })
         }
         other => Err(format!(
@@ -1901,7 +1993,9 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
 async fn live_plan(route: &RouteModel) -> Result<ChainPlan, String> {
     let read = crate::nodes::read(Config::global(), this_mac_name().await)
         .map_err(|e| format!("{e:#}; nothing was routed"))?;
-    chain_plan(route, &read)
+    let session = crate::session_context::current_session_id();
+    let asked = session.as_deref().and_then(crate::nodes::answer_on::asked);
+    chain_plan(route, &read, session.as_deref(), asked.as_deref())
 }
 
 /// This Mac's name, read once per process (adoption names this Mac's engine node with it).
@@ -2265,6 +2359,10 @@ fn chain_record(
             .collect(),
         loaded_ms,
         at_ms: now_ms(),
+        asked_for_this_turn: plan
+            .asked_past
+            .as_ref()
+            .is_some_and(|(lead, _)| lead != node),
     }
 }
 
@@ -2288,6 +2386,11 @@ pub(crate) async fn route_chain(
 ) -> Result<MessageStream, ProviderError> {
     let key = Router::conversation_key(turn.system, turn.messages);
     let mut overrides: HashMap<String, EntryFact> = HashMap::new();
+    // The person asked this turn past the lead (Q-381): it is neither probed nor loaded, and the
+    // served record says it was passed over by that ask.
+    if let Some((lead, words)) = &plan.asked_past {
+        overrides.insert(lead.clone(), cant_run(words.clone()));
+    }
     let mut saturated = HashSet::new();
     let mut last_refusal: Option<ProviderError> = None;
     // Node → how long the loader took to answer Ready for this turn.
@@ -4651,6 +4754,7 @@ devices:
             share_key: "strategy:test@chat".to_string(),
             entry,
             defs,
+            asked_past: None,
         }
     }
 
@@ -5389,13 +5493,21 @@ devices:
             chat: None,
         }];
         let read = read_of(config);
-        let chat = chain_plan(&nodes_route("strategy:daily").unwrap().unwrap(), &read).unwrap();
+        let chat = chain_plan(
+            &nodes_route("strategy:daily").unwrap().unwrap(),
+            &read,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(chat.role, Some(NodeRole::Chat));
         assert_eq!(chat.entry.chain[0].node, "a");
         assert_eq!(chat.label, "the strategy \"Daily\" (chat)");
         let build = chain_plan(
             &nodes_route("strategy:daily@build").unwrap().unwrap(),
             &read,
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(build.entry.when, NodeWhen::Share);
@@ -5404,23 +5516,35 @@ devices:
         let testing = chain_plan(
             &nodes_route("strategy:daily@testing").unwrap().unwrap(),
             &read,
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(testing.entry, build.entry);
-        let node = chain_plan(&nodes_route("node:b").unwrap().unwrap(), &read).unwrap();
+        let node = chain_plan(&nodes_route("node:b").unwrap().unwrap(), &read, None, None).unwrap();
         assert_eq!(node.role, None);
         assert_eq!(node.entry.chain.len(), 1);
         assert_eq!(node.label, "\"Node b\"");
-        let gone = chain_plan(&nodes_route("node:ghost").unwrap().unwrap(), &read)
-            .err()
-            .unwrap();
+        let gone = chain_plan(
+            &nodes_route("node:ghost").unwrap().unwrap(),
+            &read,
+            None,
+            None,
+        )
+        .err()
+        .unwrap();
         assert_eq!(
             gone,
             "the node 'ghost' was removed. Pick another node from the chip."
         );
-        let gone = chain_plan(&nodes_route("strategy:ghost").unwrap().unwrap(), &read)
-            .err()
-            .unwrap();
+        let gone = chain_plan(
+            &nodes_route("strategy:ghost").unwrap().unwrap(),
+            &read,
+            None,
+            None,
+        )
+        .err()
+        .unwrap();
         assert!(gone.contains("the strategy 'ghost' was removed"), "{gone}");
     }
 
@@ -5450,6 +5574,8 @@ devices:
                     .unwrap()
                     .unwrap(),
                 &read,
+                None,
+                None,
             )
             .unwrap();
             let same = chain_plan(
@@ -5457,12 +5583,203 @@ devices:
                     .unwrap()
                     .unwrap(),
                 &read,
+                None,
+                None,
             )
             .unwrap();
             assert_eq!(own.label, format!("this chat's nodes ({suffix})"));
             assert_eq!(same.label, format!("the strategy \"Named\" ({suffix})"));
             assert_eq!(own.entry, same.entry, "the label is the only difference");
             assert_eq!(own.role, same.role);
+        }
+    }
+
+    fn chat_set_read(answer_on_next: bool) -> NodesReadResponse {
+        let mut config = crate::nodes::empty_config();
+        config.defs = vec![cloud_def("a"), cloud_def("b"), cloud_def("c")];
+        let nodes = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        config.strategies = vec![
+            crate::nodes::NodeStrategy {
+                id: "chat-7".to_string(),
+                name: "This chat's nodes (7)".to_string(),
+                note: None,
+                roles: crate::nodes::chat_set_roles(&nodes, answer_on_next),
+                chat: Some("7".to_string()),
+            },
+            crate::nodes::NodeStrategy {
+                id: "named".to_string(),
+                name: "Named".to_string(),
+                note: None,
+                roles: crate::nodes::chat_set_roles(&nodes, answer_on_next),
+                chat: None,
+            },
+        ];
+        read_of(config)
+    }
+
+    /// Q-381: with the failover switch off, a chat on its own nodes whose lead can't run ends the
+    /// turn naming this chat's nodes; the ONE turn asked to "Answer on b for now" runs on b —
+    /// the lead neither probed nor loaded, the record saying so — and the next turn, asking
+    /// nothing, is the lead's again.
+    #[tokio::test]
+    async fn an_asked_turn_answers_on_the_next_node_once_and_the_lead_is_back_after() {
+        let read = chat_set_read(false);
+        let route = nodes_route("strategy:chat-7").unwrap().unwrap();
+        let members = || {
+            FakeMembers(members(vec![
+                ("a", Err(EntryFact::NotLoaded)),
+                ("b", Ok(member("b"))),
+                ("c", Ok(member("c"))),
+            ]))
+        };
+        let probe = FakeProbe::all_idle(&[node("b", 1, 1), node("c", 1, 1)]);
+
+        // The lead can't load, and the switch is off: the turn ends naming this chat's nodes.
+        let plain = chain_plan(&route, &read, Some("7"), None).unwrap();
+        assert_eq!(plain.entry.chain.len(), 1);
+        let seam = RecordingSeam::answering(vec![NodeEnsureServing::Refused {
+            code: NodeLoadRefusalCode::LoadFailed,
+            reason: "not connected".to_string(),
+        }]);
+        let refused = chain_turn(
+            &Router::new(),
+            &plain,
+            &members(),
+            &probe,
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            refused.contains("this chat's nodes (chat): no node can serve this turn — a: "),
+            "{refused}"
+        );
+
+        // The asked turn: b answers, the lead passed over by the ask.
+        let asked = chain_plan(&route, &read, Some("7"), Some("b")).unwrap();
+        let chain: Vec<&str> = asked.entry.chain.iter().map(|l| l.node.as_str()).collect();
+        assert_eq!(chain, ["a", "b", "c"]);
+        let seam = RecordingSeam::default();
+        drop(
+            chain_turn(
+                &Router::new(),
+                &asked,
+                &members(),
+                &probe,
+                &AllAnswer,
+                &seam,
+                "x",
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(
+            seam.demands.lock().unwrap().is_empty(),
+            "the lead is never loaded on an asked turn"
+        );
+        let record = seam.last();
+        assert_eq!(record.node, "b");
+        assert_eq!(record.rank, 2);
+        assert!(record.asked_for_this_turn);
+        let words = "passed over for this turn: you asked to answer on Node b for now";
+        assert_eq!(record.reason.as_deref(), Some(words));
+        assert_eq!(
+            record.tried,
+            vec![NodeTriedDto {
+                node: "a".to_string(),
+                reason: words.to_string()
+            }]
+        );
+
+        // Asking for c runs c first, then the rest of the set down from the lead.
+        let on_c = chain_plan(&route, &read, Some("7"), Some("c")).unwrap();
+        let chain: Vec<&str> = on_c.entry.chain.iter().map(|l| l.node.as_str()).collect();
+        assert_eq!(chain, ["a", "c", "b"]);
+
+        // The next turn asks nothing: the set is unchanged and the lead is the chain again.
+        let next = chain_plan(&route, &read, Some("7"), None).unwrap();
+        assert_eq!(next.entry, plain.entry);
+        assert!(next.asked_past.is_none());
+    }
+
+    /// Q-381: an ask this route cannot honour ends the turn naming why — never answered on the
+    /// lead in its place.
+    #[test]
+    fn an_ask_the_route_cannot_honour_is_refused_by_name() {
+        let read = chat_set_read(false);
+        let refused = |route: &str, asked: &str| {
+            chain_plan(
+                &nodes_route(route).unwrap().unwrap(),
+                &read,
+                Some("7"),
+                Some(asked),
+            )
+            .err()
+            .unwrap()
+        };
+        for (route, asked, why) in [
+            (
+                "strategy:chat-7",
+                "a",
+                "which is not one of this chat's nodes after the one that answers",
+            ),
+            (
+                "strategy:chat-7",
+                "ghost",
+                "which is not one of this chat's nodes after the one that answers",
+            ),
+            (
+                "strategy:named",
+                "b",
+                "but the chat no longer runs on its own nodes",
+            ),
+            ("node:a", "b", "but the chat runs on \"Node a\" alone now"),
+            (
+                "strategy:chat-7@build",
+                "b",
+                "but this call is the build role's, not the chat's answer",
+            ),
+        ] {
+            let said = refused(route, asked);
+            assert!(said.contains(why), "{route} asked {asked}: {said}");
+            assert!(said.ends_with("nothing was routed"), "{said}");
+        }
+    }
+
+    /// Q-379: a chat whose own set was removed is told so about "this chat's nodes" — never by
+    /// the set's internal id; any other removed strategy keeps its own words.
+    #[test]
+    fn a_chats_removed_node_set_is_named_as_this_chats_nodes() {
+        let mut config = crate::nodes::empty_config();
+        config.defs = vec![cloud_def("a")];
+        let read = read_of(config);
+        let refusal = |route: &str, session: Option<&str>| {
+            chain_plan(&nodes_route(route).unwrap().unwrap(), &read, session, None)
+                .err()
+                .unwrap()
+        };
+        for route in ["strategy:chat-20260928_4", "strategy:chat-20260928_4-2"] {
+            let said = refusal(route, Some("20260928_4"));
+            assert_eq!(
+                said,
+                "this chat's nodes were removed. Pick a node for it from the chip."
+            );
+            assert!(!said.contains("chat-20260928"), "{said}");
+        }
+        // Another chat's set, a named strategy whose id starts the same way, and a call outside
+        // any session are not this chat's nodes.
+        for (route, session) in [
+            ("strategy:chat-20260928_40", Some("20260928_4")),
+            ("strategy:chat-20260928_4-x", Some("20260928_4")),
+            ("strategy:chat-helpers", Some("20260928_4")),
+            ("strategy:chat-20260928_4", None),
+        ] {
+            let said = refusal(route, session);
+            assert!(said.starts_with("the strategy '"), "{route}: {said}");
         }
     }
 

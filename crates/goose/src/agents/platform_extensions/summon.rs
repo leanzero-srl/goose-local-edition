@@ -1,6 +1,8 @@
 use crate::agents::extension::PlatformExtensionContext;
 use crate::agents::mcp_client::{Error, McpClientTrait};
-use crate::agents::subagent_handler::{run_subagent_task, OnMessageCallback, SubagentRunParams};
+use crate::agents::subagent_handler::{
+    create_started_notification, run_subagent_task, OnMessageCallback, SubagentRunParams,
+};
 use crate::agents::subagent_task_config::{TaskConfig, DEFAULT_SUBAGENT_MAX_TURNS};
 use crate::agents::tool_execution::ToolCallContext;
 use crate::agents::AgentConfig;
@@ -1281,6 +1283,17 @@ impl SummonClient {
         );
 
         let subagent_session_id = subagent_session.id.clone();
+        // Q-382: the card learns its delegate's session before the first model call, which may
+        // wait on the node loader loading a node FOR this delegate.
+        if notif_tx
+            .send(create_started_notification(&subagent_session_id))
+            .is_err()
+        {
+            warn!(
+                subagent = %subagent_session_id,
+                "the delegate's start was not announced (its notification bridge is gone); its card cannot say a node loads for it"
+            );
+        }
         // The parent is blocked in this call for the delegate's whole run: its demand is the
         // parent's own — and it runs beside the turn's other delegates until it ends.
         let _delegate = crate::nodes::seam::SyncDelegate::begin(&subagent_session_id, session_id);

@@ -622,6 +622,67 @@ async fn a_cancel_after_the_stops_began_completes_the_swap_and_records_it() {
     );
 }
 
+fn loading_for(core: &Core, node: &str) -> Option<Vec<String>> {
+    core.in_progress().into_iter().find_map(|a| match a {
+        LoaderActivity::Loading {
+            node: n,
+            demanded_by,
+            ..
+        } if n == node => Some(demanded_by),
+        _ => None,
+    })
+}
+
+/// Q-382: a load names the sessions it is FOR — the delegate whose demand runs the swap, and a
+/// sibling delegate that demands the same node while it loads (which reads Loading with it, never
+/// "waiting" over a load that is happening) — and names nobody once the node serves.
+#[tokio::test]
+async fn a_load_names_the_delegates_it_is_loading_for() {
+    let fake = Fake::with(
+        &[
+            (
+                "flash",
+                WayRef::local(),
+                "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+            ),
+            ("split", WayRef::split(), "loader-test/loading-for"),
+        ],
+        Some("flash"),
+    );
+    let gate = Arc::new(Notify::new());
+    *fake.start_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let core = Core::new(fake.clone(), None);
+    let _chat = core.holds().open_reply("chat-1");
+    core.holds().note_child("sub-1", "chat-1");
+    core.holds().note_child("sub-2", "chat-1");
+
+    let (c, d) = (Arc::clone(&core), demand(&fake, "split", Some("sub-1")));
+    let first = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the swap started", || fake.log().len() == 2).await;
+    assert_eq!(loading_for(&core, "split"), Some(vec!["sub-1".to_string()]));
+
+    let (c, d) = (Arc::clone(&core), demand(&fake, "split", Some("sub-2")));
+    let second = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the sibling's demand is queued", || {
+        core.queue.lock().unwrap().len() == 2
+    })
+    .await;
+    until("the sibling is named by the load", || {
+        loading_for(&core, "split") == Some(vec!["sub-1".to_string(), "sub-2".to_string()])
+    })
+    .await;
+    assert_eq!(
+        waiting(&core, "split"),
+        None,
+        "never 'waiting' over the load"
+    );
+
+    gate.notify_one();
+    assert_eq!(answer(first).await, NodeEnsureServing::Ready);
+    assert_eq!(answer(second).await, NodeEnsureServing::Ready);
+    assert_eq!(loading_for(&core, "split"), None);
+}
+
 /// §6.4 step 11: a failed load is not restored — the stop set stays stopped — and the turn gets
 /// the load's own words.
 #[tokio::test]

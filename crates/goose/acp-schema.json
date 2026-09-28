@@ -15877,6 +15877,13 @@
                 "null"
               ]
             },
+            "demandedBy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The sessions whose demands the installed loader loads it for (Q-382: a delegate's\ncard says \"Loading {node} for this delegate\"). Empty when no loader demand is behind\nthe load (Run it, a restore, a card's Start)."
+            },
             "kind": {
               "type": "string",
               "const": "loading"
@@ -16516,6 +16523,10 @@
         "atMs": {
           "type": "integer",
           "minimum": 0
+        },
+        "askedForThisTurn": {
+          "type": "boolean",
+          "description": "The person asked this one turn to answer past the chain's 1st (\"Answer on {next} for now\",\nQ-381): the 1st was passed over by that ask, and the next turn goes back to it."
         }
       },
       "required": [

@@ -1937,6 +1937,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "pada {node} · dimuatkan untuk wakilan ini dalam {duration}"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Memuatkan {node} untuk wakilan ini: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "pada {node}"
   },
@@ -6239,6 +6242,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Tukar model atau Mac yang menjalankannya"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Nod sembang ini"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Gagal"
   },
@@ -6533,6 +6539,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Model tersimpan enjin MLX menyajikan {served}; nod ini mahukan {wanted}. Pilih model dalam Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Jawab pada {next} buat masa ini"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Menghantar semula mesej anda ke {next} untuk giliran ini sahaja. Nod sembang ini kekal seperti sedia ada, dan mesej seterusnya pergi ke {lead} semula."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Semua slot pada nod ini sibuk."
   },
@@ -6757,6 +6769,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} berada pada {node} ({rank}): {primary} tidak boleh berjalan: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} berada pada {node} ({rank}) untuk giliran ini, seperti yang anda minta. Mesej seterusnya pergi ke {primary} semula."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Cuba semula {primary}"
