@@ -101,6 +101,118 @@ impl ProcessTable for FakeProcesses {
     }
 }
 
+/// This Mac's replies as the node loader would report them: which way each session's own reply
+/// holds, and the person's replies (each on a way, in words). Every change bumps the version, which
+/// is what the runner's waits resolve on — events, never a clock.
+struct FakeMac {
+    ways: StdMutex<HashMap<String, String>>,
+    persons: StdMutex<Vec<PersonHold>>,
+    target: StdMutex<Option<String>>,
+    unreadable: StdMutex<Option<String>>,
+    version: watch::Sender<u64>,
+}
+
+impl Default for FakeMac {
+    fn default() -> Self {
+        Self {
+            ways: StdMutex::default(),
+            persons: StdMutex::default(),
+            target: StdMutex::default(),
+            unreadable: StdMutex::default(),
+            version: watch::channel(0).0,
+        }
+    }
+}
+
+impl FakeMac {
+    fn bump(&self) {
+        self.version.send_modify(|v| *v += 1);
+    }
+
+    /// `session`'s reply leases `way`.
+    fn lease(&self, session: &str, way: &str) {
+        self.ways
+            .lock()
+            .unwrap()
+            .insert(session.to_string(), way.to_string());
+        self.bump();
+    }
+
+    /// A person's reply of `session` holds `way`.
+    fn person(&self, session: &str, way: &str) {
+        self.persons.lock().unwrap().push(PersonHold {
+            session: session.to_string(),
+            way: way.to_string(),
+            ends: crate::nodes::seam::HoldEnds::Here,
+        });
+        self.bump();
+    }
+
+    fn reply_ends(&self, session: &str) {
+        self.persons
+            .lock()
+            .unwrap()
+            .retain(|p| p.session != session);
+        self.bump();
+    }
+
+    fn unreadable(&self) -> Result<(), String> {
+        match &*self.unreadable.lock().unwrap() {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+}
+
+#[async_trait]
+impl MacWide for FakeMac {
+    fn persons_on_way_of(&self, session: &str) -> Result<crate::nodes::seam::WayShare, String> {
+        let Some(way) = self.ways.lock().unwrap().get(session).cloned() else {
+            return Ok(Default::default());
+        };
+        self.unreadable()?;
+        let persons = self
+            .persons
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.way == way)
+            .cloned()
+            .collect();
+        Ok(crate::nodes::seam::WayShare {
+            way: Some(way),
+            persons,
+        })
+    }
+
+    fn persons_on_any_way(&self) -> Result<Vec<PersonHold>, String> {
+        self.unreadable()?;
+        Ok(self.persons.lock().unwrap().clone())
+    }
+
+    fn version(&self) -> u64 {
+        *self.version.borrow()
+    }
+
+    fn changed(&self, since: u64, _elsewhere: bool) -> BoxFuture<'static, ()> {
+        let mut version = self.version.subscribe();
+        Box::pin(async move {
+            let _ = version.wait_for(|v| *v > since).await;
+        })
+    }
+
+    fn person_ended(&self, _person: &PersonHold, since: u64) -> BoxFuture<'static, ()> {
+        self.changed(since, true)
+    }
+
+    async fn mlx_target(&self, _session_id: &str) -> Result<Option<String>, String> {
+        Ok(self.target.lock().unwrap().clone())
+    }
+}
+
+const THIS_MAC: &str = "this Mac's engine";
+const THE_SPLIT: &str = "the split across your Macs";
+
 struct Bed {
     dir: tempfile::TempDir,
     sessions: Arc<SessionManager>,
@@ -111,6 +223,7 @@ struct Bed {
     guard: Option<DoorGuard>,
     runner: Runner,
     turns: &'static TurnPriority,
+    mac: Arc<FakeMac>,
 }
 
 async fn bed_with(processes: FakeProcesses) -> Bed {
@@ -137,12 +250,14 @@ async fn bed_with(processes: FakeProcesses) -> Bed {
     let other = create("Kickoff notes").await;
     let clock = FakeClock::new();
     let turns: &'static TurnPriority = Box::leak(Box::new(TurnPriority::new()));
+    let mac = Arc::new(FakeMac::default());
     let runner = Runner::new(RunnerDeps {
         sessions: sessions.clone(),
         clock: clock.clone(),
         processes: Arc::new(processes),
         me: ME,
         turns,
+        mac: mac.clone(),
         logs_dir: dir.path().join("logs"),
         check_path: CheckPath::Inherited,
     });
@@ -158,6 +273,7 @@ async fn bed_with(processes: FakeProcesses) -> Bed {
         guard,
         runner,
         turns,
+        mac,
     }
 }
 
@@ -232,6 +348,29 @@ impl Bed {
 
     async fn due(&self, count: usize) -> LoopsTickDueNotification {
         due_on(&self.door, count).await
+    }
+
+    /// Accept and start `due`, keeping the run's cancel token and cause cell.
+    async fn begin_watched(
+        &self,
+        due: &LoopsTickDueNotification,
+    ) -> (TickRun, CancellationToken, Arc<OnceLock<CancelCause>>) {
+        let reservation = self
+            .runner
+            .accept_offer(&self.session, &meta(due))
+            .await
+            .expect("the open offer is accepted");
+        let cancel = CancellationToken::new();
+        let cause = Arc::new(OnceLock::new());
+        let run = reservation
+            .started(TickTicket {
+                cancel: cancel.clone(),
+                cause: cause.clone(),
+                context_window_tokens: 262_144,
+            })
+            .await
+            .unwrap();
+        (run, cancel, cause)
     }
 
     async fn begin(&self, due: &LoopsTickDueNotification) -> (TickRun, CancellationToken) {
@@ -496,21 +635,38 @@ async fn no_offer_while_a_user_turn_runs_and_the_tick_follows_that_turn() {
     );
 }
 
+/// v1b (§5.3, L2c): a running tick yields only to a PERSON's reply on its OWN way. A user turn on
+/// a cloud node (its reply leases no way), a person's reply on another way, and a person's reply
+/// on the engine before the tick has leased it leave the tick running; the lease that puts the
+/// tick on that person's way yields it — the cause names that reply's chat and the way — and the
+/// next tick waits until that reply ends, then says what happened.
 #[tokio::test]
-async fn a_user_turn_mid_tick_yields_it_and_the_next_tick_follows_that_turn() {
+async fn only_a_persons_reply_on_the_ticks_own_way_yields_it() {
     let bed = bed().await;
     bed.start(edit(every("10m"), None)).await;
     let due = bed.due(1).await;
-    let (run, cancel) = bed.begin(&due).await;
-    let turn = bed.turns.user_turn_in(&bed.other);
-    for _ in 0..1000 {
-        if cancel.is_cancelled() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    assert!(cancel.is_cancelled(), "the user's turn cancels the tick");
-    // on_prompt reports the cancel; the runner reads the cause from its own cell.
+    let (run, cancel, cause) = bed.begin_watched(&due).await;
+
+    let turn = bed.turns.user_turn_in("cloud-chat");
+    bed.mac.person("split-chat", THE_SPLIT);
+    bed.mac.person(&bed.other, THIS_MAC);
+    settle().await;
+    assert!(
+        !cancel.is_cancelled(),
+        "a cloud turn, the split, and the engine before the tick's own lease yield nothing: {:?}",
+        cause.get()
+    );
+    bed.mac.lease(&bed.session, THIS_MAC);
+    cancel.cancelled().await;
+    assert_eq!(
+        cause.get(),
+        Some(&CancelCause::Yield {
+            to_session: bed.other.clone(),
+            to_chat: "Kickoff notes".into(),
+            way: Some(THIS_MAC.into()),
+        })
+    );
+    drop(turn);
     drop(run.ended(TickEnd::Cancelled { cause: None }));
     let rec = bed
         .until("tick 1 recorded", |r| r.ticks[0].outcome.is_some())
@@ -520,14 +676,26 @@ async fn a_user_turn_mid_tick_yields_it_and_the_next_tick_follows_that_turn() {
         Some(LoopTickOutcome::Yielded {
             to_session: bed.other.clone(),
             to_chat: "Kickoff notes".into(),
-            way: None
+            way: Some(THIS_MAC.into()),
         }),
         "a yield is recorded yielded, never as the user's stop"
     );
-    assert_eq!(rec.status, LoopStatus::WaitingTurn);
+    bed.until("held for the person's reply", |r| {
+        r.status == LoopStatus::WaitingTurn
+            && r.status_reason
+                == Some(LoopStatusReason::UserTurn {
+                    session_id: bed.other.clone(),
+                    chat: "Kickoff notes".into(),
+                })
+    })
+    .await;
     settle().await;
-    assert_eq!(bed.door.dues().len(), 1);
-    drop(turn);
+    assert_eq!(
+        bed.door.dues().len(),
+        1,
+        "no tick while the reply it yielded to still holds the way"
+    );
+    bed.mac.reply_ends(&bed.other);
     let second = bed.due(2).await;
     assert!(
         second.prompt.contains("Tick 1 was stopped at")
@@ -542,6 +710,110 @@ async fn a_user_turn_mid_tick_yields_it_and_the_next_tick_follows_that_turn() {
         bed.record().await.ticks[1].origin,
         LoopTickOrigin::AfterYourTurn
     );
+}
+
+/// (b), §5.3 v1b: a chat whose route names an MLX node is not offered a due tick while a person's
+/// reply — in any goose window — holds this Mac's engine. It waits `WayHeld`, naming the way, the
+/// person's chat and the node the tick loads, and is offered once that reply ends.
+#[tokio::test]
+async fn a_due_tick_waits_way_held_while_a_persons_reply_holds_the_engine() {
+    let bed = bed().await;
+    *bed.mac.target.lock().unwrap() = Some("Qwen 27B".into());
+    bed.mac.person(&bed.other, THIS_MAC);
+    bed.start(edit(every("10m"), None)).await;
+    let rec = bed
+        .until("held for the person's reply", |r| {
+            r.status == LoopStatus::WaitingTurn
+        })
+        .await;
+    assert_eq!(
+        rec.status_reason,
+        Some(LoopStatusReason::WayHeld {
+            node: THIS_MAC.into(),
+            chat: "Kickoff notes".into(),
+            target: "Qwen 27B".into(),
+        })
+    );
+    assert!(rec.offer.is_none());
+    settle().await;
+    assert!(bed.door.dues().is_empty(), "no offer while the way is held");
+    bed.mac.reply_ends(&bed.other);
+    let due = bed.due(1).await;
+    assert_eq!(bed.door.dues().len(), 1);
+    assert_eq!(
+        bed.record().await.next_tick.unwrap().reason,
+        LoopNextReason::AfterYourTurn
+    );
+    let (_run, _) = bed.begin(&due).await;
+    assert_eq!(
+        bed.record().await.ticks[0].origin,
+        LoopTickOrigin::AfterYourTurn
+    );
+}
+
+/// A chat whose route names no MLX node (cloud, endpoint, a strategy, Auto) is not held before
+/// the offer: a person's reply on the engine is no reason to keep a tick that may never touch it.
+#[tokio::test]
+async fn a_chat_that_names_no_mlx_node_is_not_held_for_a_persons_reply() {
+    let bed = bed().await;
+    bed.mac.person(&bed.other, THIS_MAC);
+    bed.start(edit(every("10m"), None)).await;
+    let due = bed.due(1).await;
+    assert_eq!(due.n, 1);
+    assert_eq!(
+        bed.record().await.next_tick.unwrap().reason,
+        LoopNextReason::First
+    );
+}
+
+/// The check runs again as the tick starts: a person's reply that took the engine between the
+/// offer and the window's submit yields the tick before `started` returns (it never reaches the
+/// model), naming the way, and the next tick waits until that reply ends.
+#[tokio::test]
+async fn a_persons_reply_that_took_the_engine_after_the_offer_yields_the_tick_at_its_start() {
+    let bed = bed().await;
+    *bed.mac.target.lock().unwrap() = Some("Qwen 27B".into());
+    bed.start(edit(every("10m"), None)).await;
+    let due = bed.due(1).await;
+    bed.mac.person(&bed.other, THIS_MAC);
+    let (run, cancel, cause) = bed.begin_watched(&due).await;
+    assert!(cancel.is_cancelled(), "yielded before `started` returned");
+    assert_eq!(
+        cause.get(),
+        Some(&CancelCause::Yield {
+            to_session: bed.other.clone(),
+            to_chat: "Kickoff notes".into(),
+            way: Some(THIS_MAC.into()),
+        })
+    );
+    drop(run.ended(TickEnd::Cancelled {
+        cause: cause.get().cloned(),
+    }));
+    bed.until("held for the person's reply", |r| {
+        r.ticks[0].outcome.is_some() && r.status == LoopStatus::WaitingTurn
+    })
+    .await;
+    settle().await;
+    assert_eq!(bed.door.dues().len(), 1);
+    bed.mac.reply_ends(&bed.other);
+    let second = bed.due(2).await;
+    assert!(
+        second.prompt.contains("Tick 1 was stopped at"),
+        "{}",
+        second.prompt
+    );
+}
+
+/// Holder records that cannot be read hold nothing on a guess: the tick is offered (the loader
+/// refuses any load on the same records by name), and the error is logged.
+#[tokio::test]
+async fn unreadable_holder_records_do_not_hold_a_tick() {
+    let bed = bed().await;
+    *bed.mac.target.lock().unwrap() = Some("Qwen 27B".into());
+    *bed.mac.unreadable.lock().unwrap() = Some("a torn record".into());
+    bed.mac.person(&bed.other, THIS_MAC);
+    bed.start(edit(every("10m"), None)).await;
+    assert_eq!(bed.due(1).await.n, 1);
 }
 
 /// L2c: a user turn that began between the offer and the tick's start yields the tick at its start
@@ -1043,12 +1315,14 @@ async fn claim_child() {
     let (data, session, dir) = (parts[0], parts[1], std::path::Path::new(parts[2]));
     let processes: Arc<dyn ProcessTable> = Arc::new(SystemProcesses);
     let me = owner::this_process(processes.as_ref()).unwrap();
+    let sessions = Arc::new(SessionManager::new(PathBuf::from(data)));
     let runner = Runner::new(RunnerDeps {
-        sessions: Arc::new(SessionManager::new(PathBuf::from(data))),
+        sessions: sessions.clone(),
         clock: Arc::new(SystemClock),
         processes,
         me,
         turns: Box::leak(Box::new(TurnPriority::new())),
+        mac: Arc::new(mac_wide::Holders::installed(sessions)),
         logs_dir: dir.join("logs"),
         check_path: CheckPath::Inherited,
     });

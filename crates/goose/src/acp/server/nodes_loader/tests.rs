@@ -1384,3 +1384,300 @@ sys.stdin.readline()
         other.wait().await.unwrap();
     }
 }
+
+/// A stand-in goose WINDOW: another process publishing this Mac's holder record and taking the
+/// same reply flocks a goosed does. Each line on its stdin is the whole list of replies it holds
+/// now; a reply that leaves the list is withdrawn from the record first, then its lock released.
+/// It answers `OK` once the record says so.
+const STAND_IN_WINDOW: &str = r#"
+import fcntl, json, os, sys
+d = sys.argv[1]
+pid = os.getpid()
+stem = '%d-0' % pid
+me = open(os.path.join(d, stem + '.lock'), 'a+'); fcntl.flock(me, fcntl.LOCK_EX)
+locks = {}
+def publish(replies):
+    record = {'pid': pid, 'startedAt': 0, 'since': 0, 'kind': 'goosed', 'replies': replies}
+    open(os.path.join(d, stem + '.json.tmp'), 'w').write(json.dumps(record))
+    os.rename(os.path.join(d, stem + '.json.tmp'), os.path.join(d, stem + '.json'))
+for line in sys.stdin:
+    replies = json.loads(line)
+    wanted = {r['reply'] for r in replies}
+    for r in replies:
+        if r['reply'] not in locks:
+            f = open(os.path.join(d, '%s-r%d.lock' % (stem, r['reply'])), 'a+')
+            fcntl.flock(f, fcntl.LOCK_EX)
+            locks[r['reply']] = f
+    publish(replies)
+    for n in [n for n in locks if n not in wanted]:
+        os.remove(os.path.join(d, '%s-r%d.lock' % (stem, n)))
+        fcntl.flock(locks.pop(n), fcntl.LOCK_UN)
+    print('OK', flush=True)
+"#;
+
+struct StandInWindow {
+    child: tokio::process::Child,
+    stdin: tokio::process::ChildStdin,
+    out: tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
+}
+
+impl StandInWindow {
+    fn open(dir: &std::path::Path) -> Self {
+        let mut child = tokio::process::Command::new("/usr/bin/python3")
+            .args(["-c", STAND_IN_WINDOW, dir.to_str().unwrap()])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        use tokio::io::AsyncBufReadExt;
+        let out = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        let stdin = child.stdin.take().unwrap();
+        StandInWindow { child, stdin, out }
+    }
+
+    /// Hold exactly `replies`: `(reply, session, kind, way)`.
+    async fn holds(&mut self, replies: &[(u64, &str, &str, serde_json::Value)]) {
+        use tokio::io::AsyncWriteExt;
+        let list: Vec<serde_json::Value> = replies
+            .iter()
+            .map(|(reply, session, kind, way)| {
+                serde_json::json!({"reply": reply, "session": session, "rootSession": session, "way": way, "kind": kind})
+            })
+            .collect();
+        let mut line = serde_json::to_string(&list).unwrap();
+        line.push('\n');
+        self.stdin.write_all(line.as_bytes()).await.unwrap();
+        assert_eq!(self.out.next_line().await.unwrap().as_deref(), Some("OK"));
+    }
+
+    async fn close(mut self) {
+        drop(self.stdin);
+        self.child.wait().await.unwrap();
+    }
+}
+
+/// The runner's side of a window in these tests: every offer and every record change, awaited as
+/// events.
+struct Events {
+    dues: tokio::sync::watch::Sender<
+        Vec<goose_sdk_types::custom_notifications::LoopsTickDueNotification>,
+    >,
+    changes: tokio::sync::watch::Sender<Option<goose_sdk_types::custom_requests::LoopRecord>>,
+}
+
+impl crate::session_loops::runner::TickDoor for Events {
+    fn tick_due(&self, due: &goose_sdk_types::custom_notifications::LoopsTickDueNotification) {
+        self.dues.send_modify(|dues| dues.push(due.clone()));
+    }
+
+    fn changed(&self, changed: &goose_sdk_types::custom_notifications::LoopsChangedNotification) {
+        self.changes.send_replace(Some(changed.record.clone()));
+    }
+}
+
+impl Events {
+    async fn due(&self, n: u32) -> goose_sdk_types::custom_notifications::LoopsTickDueNotification {
+        let mut dues = self.dues.subscribe();
+        let dues = dues
+            .wait_for(|dues| dues.iter().any(|d| d.n == n))
+            .await
+            .unwrap();
+        dues.iter().find(|d| d.n == n).unwrap().clone()
+    }
+
+    async fn record(
+        &self,
+        holds: impl Fn(&goose_sdk_types::custom_requests::LoopRecord) -> bool,
+    ) -> goose_sdk_types::custom_requests::LoopRecord {
+        let mut changes = self.changes.subscribe();
+        let rec = changes
+            .wait_for(|rec| rec.as_ref().is_some_and(&holds))
+            .await
+            .unwrap();
+        rec.clone().unwrap()
+    }
+}
+
+/// Session loops L2c across processes, over THIS loader's reply holds and a stand-in goose window
+/// (another process publishing the same holder record and flocks). The running tick holds this
+/// Mac's engine; the other window's TICK on that engine and its PERSON's reply on the split do not
+/// yield it, its person's reply on the engine does — the yield names that chat and the way. The
+/// next tick then waits: first for that reply (the one it yielded to), then — the chat's route
+/// names an MLX node — `WayHeld` while the person's split reply still holds a way of this Mac's
+/// goose; the other window's tick holds nothing. Each wait ends when the kernel releases that
+/// reply's flock, and only then is the tick offered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tick_yields_only_to_another_windows_person_on_its_way_and_waits_for_their_replies() {
+    use crate::session_loops::mac_wide::Holders;
+    use crate::session_loops::owner::{self, SystemProcesses};
+    use crate::session_loops::rules::{CancelCause, TickEnd};
+    use crate::session_loops::runner::{
+        CheckPath, Runner, RunnerDeps, SystemClock, TickMeta, TickTicket,
+    };
+    use crate::session_loops::seam::LoopRunner;
+    use goose_sdk_types::custom_requests::{
+        LoopCadence, LoopEdit, LoopNextReason, LoopStatus, LoopStatusReason, LoopTemplateId,
+        LoopTickOutcome,
+    };
+    use goose_sidecar::holders::ReplyKind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let holders = dir.path().join("holders");
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), Some(holders.clone()));
+    let sessions = Arc::new(crate::session::SessionManager::new(dir.path().join("data")));
+    let chat = sessions
+        .create_session(
+            dir.path().to_path_buf(),
+            "loop chat".into(),
+            crate::session::SessionType::User,
+            crate::config::GooseMode::default(),
+        )
+        .await
+        .unwrap()
+        .id;
+    let runner = Runner::new(RunnerDeps {
+        sessions: sessions.clone(),
+        clock: Arc::new(SystemClock),
+        processes: Arc::new(SystemProcesses),
+        me: owner::this_process(&SystemProcesses).unwrap(),
+        turns: Box::leak(Box::new(crate::turn_priority::TurnPriority::new())),
+        mac: Arc::new(Holders::over(
+            Arc::new(Seam(Arc::clone(&core))),
+            sessions.clone(),
+            "flash node",
+        )),
+        logs_dir: dir.path().join("logs"),
+        check_path: CheckPath::Inherited,
+    });
+    let events = Arc::new(Events {
+        dues: tokio::sync::watch::channel(Vec::new()).0,
+        changes: tokio::sync::watch::channel(None).0,
+    });
+    let _door = runner.register_door(events.clone());
+    let mut window = StandInWindow::open(&holders);
+    let engine = serde_json::json!({"kind": "single", "nodes": ["local"]});
+    let split = serde_json::json!({"kind": "tensor", "nodes": ["local", "link:studio"]});
+    let others_tick = (1, "their-loop-chat", "tick", engine.clone());
+    let split_person = (2, "their-split-chat", "user", split.clone());
+    let engine_person = (3, "their-chat", "user", engine.clone());
+
+    runner
+        .start(
+            &chat,
+            LoopEdit {
+                goal: "Make every test pass".into(),
+                template: LoopTemplateId::Blank,
+                steps: String::new(),
+                cadence: LoopCadence::Every {
+                    every: "10m".into(),
+                },
+                state_file: ".goose/loops/x/NOW.md".into(),
+                check: None,
+                stop_after_ticks: None,
+            },
+        )
+        .await
+        .unwrap();
+    let due = events.due(1).await;
+    let reservation = runner
+        .accept_offer(
+            &chat,
+            &TickMeta {
+                loop_id: due.loop_id.clone(),
+                n: due.n,
+                message_id: due.message_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let tick_reply = core.holds().open_reply_as(&chat, ReplyKind::Tick);
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let cause = Arc::new(std::sync::OnceLock::new());
+    let run = reservation
+        .started(TickTicket {
+            cancel: cancel.clone(),
+            cause: cause.clone(),
+            context_window_tokens: 262_144,
+        })
+        .await
+        .unwrap();
+    lease(&core, &chat, &fake, "flash");
+
+    window
+        .holds(&[others_tick.clone(), split_person.clone()])
+        .await;
+    window
+        .holds(&[
+            others_tick.clone(),
+            split_person.clone(),
+            engine_person.clone(),
+        ])
+        .await;
+    cancel.cancelled().await;
+    assert_eq!(
+        cause.get(),
+        Some(&CancelCause::Yield {
+            to_session: "their-chat".into(),
+            to_chat: "their-chat".into(),
+            way: Some("this Mac's engine".into()),
+        }),
+        "only the other window's PERSON on this tick's way yields it"
+    );
+    drop(tick_reply);
+    drop(run.ended(TickEnd::Cancelled { cause: None }));
+    let rec = events
+        .record(|r| r.ticks[0].outcome.is_some() && r.status == LoopStatus::WaitingTurn)
+        .await;
+    assert_eq!(
+        rec.status_reason,
+        Some(LoopStatusReason::UserTurn {
+            session_id: "their-chat".into(),
+            chat: "their-chat".into(),
+        })
+    );
+    assert!(matches!(
+        rec.ticks[0].outcome,
+        Some(LoopTickOutcome::Yielded { .. })
+    ));
+
+    window
+        .holds(&[others_tick.clone(), split_person.clone()])
+        .await;
+    let rec = events
+        .record(|r| matches!(r.status_reason, Some(LoopStatusReason::WayHeld { .. })))
+        .await;
+    assert_eq!(
+        rec.status_reason,
+        Some(LoopStatusReason::WayHeld {
+            node: "the split across your Macs".into(),
+            chat: "their-split-chat".into(),
+            target: "flash node".into(),
+        })
+    );
+    assert_eq!(
+        events.dues.borrow().len(),
+        1,
+        "no tick while a person holds the engine"
+    );
+
+    window.holds(std::slice::from_ref(&others_tick)).await;
+    let second = events.due(2).await;
+    assert_eq!(
+        events.dues.borrow().len(),
+        2,
+        "another window's tick holds nothing a person would"
+    );
+    let stored = crate::session_loops::record::read(&sessions, &chat)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.next_tick.map(|next| next.reason),
+        Some(LoopNextReason::AfterYourTurn)
+    );
+    assert_eq!(second.loop_id, due.loop_id);
+    window.close().await;
+}

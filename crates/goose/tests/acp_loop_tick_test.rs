@@ -232,10 +232,12 @@ async fn a_forged_or_stale_tick_meta_is_an_ordinary_user_prompt() {
     window.close().await;
 }
 
-/// v1a (§5.3): a person's reply that starts in this goose while a tick runs yields the tick. The
-/// yield is nobody's stop: no "You stopped this answer", no Stopped outcome, the tick `yielded`
-/// to that chat — and the next tick is offered once the person's turn ends.
-async fn a_persons_reply_yields_a_running_tick_and_the_yield_is_nobodys_stop() {
+/// v1b (§5.3, L2c): a person's reply that starts in this goose while a tick runs does NOT yield
+/// the tick unless it holds the tick's OWN way. Here both answer on a model that is no MLX way (the
+/// scripted OpenAI-compatible server), so they share none: the person's reply streams beside the
+/// tick, the tick keeps running with no outcome, and it runs on after the person's turn ends —
+/// ended here by the person's own Stop, recorded as that, never `yielded`.
+async fn a_persons_reply_off_the_ticks_way_does_not_yield_it() {
     let bed = bed(vec![
         Answer::Unfinished("The tick reads the tests"),
         Answer::Unfinished("The person's answer"),
@@ -251,24 +253,32 @@ async fn a_persons_reply_yields_a_running_tick_and_the_yield_is_nobodys_stop() {
     let person = window
         .prompt(&other_chat, "What does the release checklist say?", None)
         .await;
+    window.until_streaming(&other_chat).await;
+    assert_eq!(user_turns_running(), 1);
+    let rec = stored(&loop_chat).await;
+    assert_eq!(rec.status, LoopStatus::Running, "the tick still runs");
+    assert!(rec.ticks[0].outcome.is_none(), "{:?}", rec.ticks[0].outcome);
+
+    window.cancel(&other_chat).await;
+    assert_eq!(stop_reason(&mut window, person).await, "cancelled");
+    let rec = stored(&loop_chat).await;
+    assert_eq!(
+        rec.status,
+        LoopStatus::Running,
+        "the tick outlived the person's turn"
+    );
+
+    window.cancel(&loop_chat).await;
     assert_eq!(stop_reason(&mut window, tick).await, "cancelled");
-    eventually("the yield is recorded", || async {
+    eventually("the tick's end is recorded", || async {
         stored(&loop_chat).await.ticks[0].outcome.is_some()
     })
     .await;
-    let rec = stored(&loop_chat).await;
-    match &rec.ticks[0].outcome {
-        Some(LoopTickOutcome::Yielded { to_session, .. }) => assert_eq!(to_session, &other_chat),
-        other => panic!("the tick yielded, not {other:?}"),
-    }
-    assert!(!stopped_notice(&loop_chat).await, "a yield is not a stop");
-    assert_eq!(outcome_stopped(&loop_chat).await, Some(false));
-
-    window.until_streaming(&other_chat).await;
-    window.cancel(&other_chat).await;
-    assert_eq!(stop_reason(&mut window, person).await, "cancelled");
-    let next = tick_due(&mut window, &loop_chat, 2).await;
-    assert_ne!(next["messageId"], due["messageId"]);
+    assert_eq!(
+        stored(&loop_chat).await.ticks[0].outcome,
+        Some(LoopTickOutcome::StoppedByYou),
+        "never yielded to a reply that shared no way with it"
+    );
     window.close().await;
 }
 
@@ -450,8 +460,8 @@ mod tests {
 
     #[test]
     #[serial]
-    fn a_persons_reply_yields_a_running_tick_and_the_yield_is_nobodys_stop() {
-        run(super::a_persons_reply_yields_a_running_tick_and_the_yield_is_nobodys_stop());
+    fn a_persons_reply_off_the_ticks_way_does_not_yield_it() {
+        run(super::a_persons_reply_off_the_ticks_way_does_not_yield_it());
     }
 
     #[test]

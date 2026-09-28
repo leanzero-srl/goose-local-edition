@@ -17,7 +17,7 @@ use goose_sidecar::holders::{self, HolderEntry, HolderKind, Registration, ReplyH
 use goose_sidecar::placement::store::PlacementKey;
 use tokio::sync::Notify;
 
-use super::switch::Stop;
+use super::switch::{Stop, WayRef};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Reply {
@@ -92,6 +92,9 @@ pub(crate) struct Holds {
     state: StdMutex<State>,
     seq: AtomicU64,
     changed: Arc<Notify>,
+    /// Bumped on every change a reader of the replies could care about, before `changed` wakes
+    /// anyone: a reader that noted it before looking waits for "anything since" with no lost wake.
+    version: AtomicU64,
     /// The Mac-wide holder directory; `None` = this loader publishes nothing and reads no other
     /// process (a unit test of this process alone).
     dir: Option<PathBuf>,
@@ -104,6 +107,7 @@ impl Holds {
             state: StdMutex::new(State::default()),
             seq: AtomicU64::new(1),
             changed,
+            version: AtomicU64::new(0),
             dir,
             registration: StdMutex::new(None),
         })
@@ -199,7 +203,38 @@ impl Holds {
         if published {
             self.publish(|reg| reg.close_reply(id));
         }
+        self.bump();
+    }
+
+    fn bump(&self) {
+        self.version.fetch_add(1, Ordering::SeqCst);
         self.changed.notify_waiters();
+    }
+
+    /// The replies' version now: pass it to [`Holds::changed_since`] after looking.
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::SeqCst)
+    }
+
+    /// Resolves once this process's replies changed after `version` (a reply opened a way, moved,
+    /// waited, resumed or ended). Changes in other processes announce nothing here.
+    pub async fn changed_since(&self, version: u64) {
+        loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.version() > version {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// The way the reply open at `root` holds, once it has leased one.
+    pub fn way_of(&self, root: &str) -> Option<PlacementKey> {
+        let state = self.state.lock().unwrap();
+        let id = state.open.get(root)?;
+        state.replies.get(id).and_then(|r| r.way.clone())
     }
 
     /// The way a lease of `session` used: the reply at its root holds it from now on.
@@ -237,7 +272,7 @@ impl Holds {
         } else {
             self.publish(|reg| reg.set_reply_way(id, way));
         }
-        self.changed.notify_waiters();
+        self.bump();
     }
 
     pub fn note_child(&self, child: &str, parent: &str) {
@@ -276,14 +311,54 @@ impl Holds {
                 self.publish(|reg| reg.resume_reply(id));
             }
         }
-        self.changed.notify_waiters();
+        self.bump();
     }
 
     /// Open replies — in this process and every other goose process on this Mac — that hold a way
     /// in `stops`, except the demand's own root and replies waiting in a loader.
     pub fn blockers(&self, stops: &[Stop], own_root: Option<&str>) -> Result<Vec<Blocker>, String> {
-        let words =
-            |way: &PlacementKey| stops.iter().find(|s| s.held_by(way)).map(|s| s.way.words());
+        self.open_replies(
+            |way| stops.iter().find(|s| s.held_by(way)).map(|s| s.way.words()),
+            own_root,
+        )
+    }
+
+    /// A PERSON's open replies (session loops §5.3, the Mac-wide half) — the same replies
+    /// [`Holds::blockers`] reads, of kind `User` — holding `way`, or any way this Mac's goose
+    /// serves when `way` is `None` (one MLX way serves it at a time, so a person's reply on any of
+    /// them holds the one a tick would use or stop). A tick's reply is never a person's.
+    pub fn persons_on(
+        &self,
+        way: Option<&PlacementKey>,
+        own_root: Option<&str>,
+    ) -> Result<Vec<Blocker>, String> {
+        let wanted = match way {
+            Some(key) => match WayRef::of_key(key) {
+                Some(way) => Some(way),
+                None => return Ok(Vec::new()),
+            },
+            None => None,
+        };
+        let replies = self.open_replies(
+            |held| match &wanted {
+                Some(way) => way.held_by(held).then(|| way.words()),
+                None => WayRef::of_key(held).map(|way| way.words()),
+            },
+            own_root,
+        )?;
+        Ok(replies
+            .into_iter()
+            .filter(|reply| reply.kind() == ReplyKind::User)
+            .collect())
+    }
+
+    /// Open replies whose way `words` names, in words — in this process and every other goose
+    /// process on this Mac — except `own_root`'s and replies waiting in a loader.
+    fn open_replies(
+        &self,
+        words: impl Fn(&PlacementKey) -> Option<String>,
+        own_root: Option<&str>,
+    ) -> Result<Vec<Blocker>, String> {
         let mut out = Vec::new();
         {
             let state = self.state.lock().unwrap();
@@ -293,7 +368,7 @@ impl Holds {
                 if reply.waiting > 0 || Some(reply.root.as_str()) == own_root {
                     continue;
                 }
-                if let Some(way) = reply.way.as_ref().and_then(words) {
+                if let Some(way) = reply.way.as_ref().and_then(&words) {
                     out.push(Blocker::Here {
                         session: reply.session.clone(),
                         way,
@@ -310,7 +385,7 @@ impl Holds {
                 if reply.waiting {
                     continue;
                 }
-                if let Some(way) = reply.way.as_ref().and_then(words) {
+                if let Some(way) = reply.way.as_ref().and_then(&words) {
                     out.push(Blocker::Elsewhere {
                         pid: record.pid,
                         session: reply.session.clone(),
