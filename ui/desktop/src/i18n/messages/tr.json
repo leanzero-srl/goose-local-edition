@@ -8396,6 +8396,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "Hata: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "Çalıştığı klasör:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "Kimlik:"
   },
@@ -8437,6 +8440,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "Mesajlar: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "yok. Klasörünü seçene kadar (Zamanlamayı Düzenle) bu zamanlama çalışmaz."
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "Program kimliği sağlanmadı. Program listesine geri dönün."
@@ -8525,6 +8531,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "İptal"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "Klasör seç..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "Yeni Program Oluştur"
   },
@@ -8549,6 +8558,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "Seçilen dosya okunamadı."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "Çalıştığı klasör:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "Bu zamanlamanın çalışacağı klasörü seçin."
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "Geçersiz derin bağlantı. Lütfen goose://tarif bağlantısını kullanın."
   },
@@ -8560,6 +8575,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "örneğin günlük özet işi"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "Henüz klasör yok. Bir klasör seçene kadar bu zamanlama çalışmaz."
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "Lütfen geçerli bir tarif kaynağı sağlayın."
@@ -8594,6 +8612,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "Klasör seç"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "\"{id}\" programı kaldırılsın mı? Tarif saklanacak."
   },
@@ -8608,6 +8629,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "Hata: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "Klasör Seçme Hatası"
   },
   "schedulesView.inspect": {
     "defaultMessage": "İncele"
@@ -8633,6 +8657,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "Son çalıştırma: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "Klasör yok"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "Bu zamanlama, zamanlamalar klasör kaydetmeden önce kaydedildi; bu yüzden bir klasör seçene kadar çalışmaz."
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "Henüz program yok"
   },
@@ -8656,6 +8686,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "Koşu"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "{folder} içinde çalışır"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "Plan Duraklatıldı"

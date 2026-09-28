@@ -24,6 +24,7 @@ import { SearchView } from '../conversation/SearchView';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import { groupSessionsByDate, sessionActivityAt, type DateGroup } from '../../utils/dateUtils';
 import { errorMessage } from '../../utils/conversionUtils';
+import { getInitialWorkingDir } from '../../utils/workingDir';
 import { Skeleton } from '../ui/skeleton';
 import { toast } from 'react-toastify';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
@@ -572,7 +573,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
             toast.error(intl.formatMessage(i18n.importFailed, { error: result.error }));
             return;
           }
-          await acpImportSession(result.contents, 'json');
+          await acpImportSession(result.contents, 'json', getInitialWorkingDir());
           toast.success(intl.formatMessage(i18n.importSuccess));
           window.dispatchEvent(new CustomEvent(AppEvents.SESSION_CREATED));
           await loadSessions();
@@ -593,7 +594,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
 
       setIsImportingNostr(true);
       try {
-        await acpImportSession(deeplink, 'nostr');
+        await acpImportSession(deeplink, 'nostr', getInitialWorkingDir());
         setNostrImportLink('');
         setShowImportLinkModal(false);
         toast.success(intl.formatMessage(i18n.importSuccess));
@@ -622,7 +623,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
 
         try {
           const json = await file.text();
-          await acpImportSession(json, 'json');
+          await acpImportSession(json, 'json', getInitialWorkingDir());
 
           toast.success(intl.formatMessage(i18n.importSuccess));
           window.dispatchEvent(new CustomEvent(AppEvents.SESSION_CREATED));

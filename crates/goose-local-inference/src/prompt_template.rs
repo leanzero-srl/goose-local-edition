@@ -1,6 +1,7 @@
 use include_dir::{include_dir, Dir};
 use minijinja::{Environment, Error as MiniJinjaError, Value as MJValue};
 use serde::Serialize;
+use std::path::Path;
 
 use crate::paths::Paths;
 
@@ -40,4 +41,62 @@ pub fn render_template<T: Serialize>(name: &str, context: &T) -> Result<String, 
     };
 
     render_string(&template_str, context)
+}
+
+/// The system prompt a small local model that emulates tools is given — shared by the MLX and
+/// llama.cpp backends (two copies until Q-284). `working_dir` is the SESSION's folder: each copy
+/// rendered `env::current_dir()`, goosed's cwd, which since Q-257 is $HOME for every window, so the
+/// model was told to work in a folder its chat was not in.
+pub(crate) fn tiny_model_prompt(working_dir: &Path) -> String {
+    let os = if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "unknown"
+    };
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+    let context = serde_json::json!({
+        "os": os,
+        "working_directory": working_dir.display().to_string(),
+        "shell": shell,
+    });
+
+    render_template("tiny_model_system.md", &context).unwrap_or_else(|e| {
+        tracing::warn!("Failed to load tiny_model_system.md: {:?}", e);
+        "You are Goose, an AI assistant. You can execute shell commands by starting lines with $."
+            .to_string()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Q-284: the model is told the SESSION's folder, not the process cwd (goosed's, $HOME since
+    // Q-257).
+    #[test]
+    fn the_tiny_prompt_names_the_sessions_folder_not_the_process_cwd() {
+        let project = tempfile::tempdir().unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        assert_ne!(cwd, project.path());
+
+        let prompt = tiny_model_prompt(project.path());
+
+        assert!(
+            prompt.contains(&format!(
+                "the working directory is {}",
+                project.path().display()
+            )),
+            "{prompt}"
+        );
+        assert!(
+            !prompt.contains(&format!("the working directory is {}\n", cwd.display())),
+            "{prompt}"
+        );
+    }
 }

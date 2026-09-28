@@ -12,10 +12,11 @@
 //! native [`Session`] JSON, then hand it off to the existing
 //! `SessionManager::import_session` pipeline.
 
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use goose_providers::conversation::token_usage::Usage;
 use serde_json::{json, Map, Value};
+use std::path::Path;
 
 use crate::conversation::Conversation;
 
@@ -27,7 +28,9 @@ pub mod pi;
 /// the goose-native session JSON handed to `SessionManager::import_session`.
 pub(crate) struct ImportedSession<'a> {
     pub session_id: &'a str,
-    pub working_dir: &'a str,
+    /// The folder the transcript recorded (`cwd`); `None` when it recorded none — the importer
+    /// then places the session in the importing window's folder (Q-283), never the process cwd.
+    pub working_dir: Option<&'a str>,
     pub name: &'a str,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -40,7 +43,9 @@ pub(crate) fn build_session_json(session: ImportedSession) -> Value {
     let usage = serde_json::to_value(session.usage).unwrap();
     let mut obj = Map::new();
     obj.insert("id".into(), json!(session.session_id));
-    obj.insert("working_dir".into(), json!(session.working_dir));
+    if let Some(working_dir) = session.working_dir {
+        obj.insert("working_dir".into(), json!(working_dir));
+    }
     obj.insert("name".into(), json!(session.name));
     obj.insert("user_set_name".into(), json!(false));
     obj.insert("session_type".into(), json!("user"));
@@ -144,6 +149,33 @@ pub fn detect_format(content: &str) -> ImportFormat {
     }
 
     ImportFormat::Goose
+}
+
+/// Q-283: a session whose record names no folder (a transcript with no `cwd`, a goose export whose
+/// `working_dir` is absent, null or empty) is placed in `folder` — the importing window's or
+/// terminal's. The converters used to fill the hole with `std::env::current_dir()`, which in the
+/// desktop is goosed's, since Q-257 $HOME for every window.
+pub(crate) fn place_unrecorded_working_dir(session: &mut Value, folder: &Path) -> Result<()> {
+    let obj = session
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("an imported session must be a JSON object"))?;
+    // `workingDir` is the spelling `detect_format` also accepts for a goose export.
+    let recorded = ["working_dir", "workingDir"].iter().find_map(|key| {
+        obj.get(*key)
+            .and_then(Value::as_str)
+            .filter(|dir| !dir.trim().is_empty())
+            .map(str::to_string)
+    });
+    let working_dir = match recorded {
+        Some(dir) => dir,
+        None if folder.is_absolute() => folder.to_string_lossy().into_owned(),
+        None => bail!(
+            "this session recorded no folder, and the folder named for it ('{}') is not an absolute path",
+            folder.display()
+        ),
+    };
+    obj.insert("working_dir".into(), json!(working_dir));
+    Ok(())
 }
 
 /// Convert any supported foreign format to a goose-native session JSON string.

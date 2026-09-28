@@ -109,6 +109,8 @@ pub struct ListRecipeResponse {
 pub struct ScheduleRecipeRequest {
     id: String,
     cron_schedule: Option<String>,
+    /// The folder a new job runs in (Q-282): the caller names it; the server's own cwd is not it.
+    working_dir: String,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -292,7 +294,11 @@ async fn schedule_recipe(
 
     let scheduler = state.scheduler();
     match scheduler
-        .schedule_recipe(file_path, request.cron_schedule)
+        .schedule_recipe(
+            file_path,
+            request.cron_schedule,
+            std::path::PathBuf::from(request.working_dir),
+        )
         .await
     {
         Ok(_) => Ok(StatusCode::OK),

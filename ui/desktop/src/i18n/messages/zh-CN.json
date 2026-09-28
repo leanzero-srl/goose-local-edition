@@ -8396,6 +8396,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "错误：{error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "运行文件夹："
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID："
   },
@@ -8437,6 +8440,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "消息：{count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "无。在你选择它的文件夹（编辑计划）之前，此计划不会运行。"
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "未提供计划 ID。返回计划列表。"
@@ -8525,6 +8531,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "取消"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "选择文件夹..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "创建新计划"
   },
@@ -8549,6 +8558,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "读取所选文件失败。"
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "运行文件夹："
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "请选择此计划运行的文件夹。"
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "深层链接无效。请使用 goose://recipe 链接。"
   },
@@ -8560,6 +8575,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "例如：daily-summary-job"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "尚未选择文件夹。选择之前，此计划不会运行。"
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "请提供有效的配方来源。"
@@ -8594,6 +8612,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "选择文件夹"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "确定要删除计划“{id}”吗？"
   },
@@ -8608,6 +8629,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "错误：{error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "选择文件夹出错"
   },
   "schedulesView.inspect": {
     "defaultMessage": "检查"
@@ -8633,6 +8657,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "上次运行：{date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "无文件夹"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "此计划保存于计划记录文件夹之前，因此在你选择文件夹之前不会运行。"
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "暂无计划"
   },
@@ -8656,6 +8686,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "运行中"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "在 {folder} 中运行"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "计划已暂停"

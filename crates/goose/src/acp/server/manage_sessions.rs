@@ -127,6 +127,8 @@ impl GooseAcpAgent {
         &self,
         req: ImportSessionRequest,
     ) -> Result<ImportSessionResponse, agent_client_protocol::Error> {
+        let window_dir = std::path::PathBuf::from(req.working_dir.trim());
+        validate_absolute_cwd(&window_dir)?;
         let is_nostr = match req.source {
             SessionImportSource::Auto => is_nostr_session_link(&req.input),
             SessionImportSource::Json => false,
@@ -143,7 +145,7 @@ impl GooseAcpAgent {
 
         let session = self
             .session_manager
-            .import_session(&data, session_type)
+            .import_session(&data, session_type, &window_dir)
             .await
             .internal_err()?;
 

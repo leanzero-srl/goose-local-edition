@@ -2648,6 +2648,7 @@ mod tests {
             &self,
             recipe_path: PathBuf,
             _cron_schedule: Option<String>,
+            _working_dir: PathBuf,
         ) -> Result<(), crate::scheduler::SchedulerError> {
             Err(crate::scheduler::SchedulerError::JobNotFound(
                 recipe_path.display().to_string(),
@@ -2694,6 +2695,15 @@ mod tests {
             &self,
             sched_id: &str,
             _new_cron: String,
+        ) -> Result<(), crate::scheduler::SchedulerError> {
+            Err(crate::scheduler::SchedulerError::JobNotFound(
+                sched_id.to_string(),
+            ))
+        }
+        async fn set_schedule_working_dir(
+            &self,
+            sched_id: &str,
+            _working_dir: PathBuf,
         ) -> Result<(), crate::scheduler::SchedulerError> {
             Err(crate::scheduler::SchedulerError::JobNotFound(
                 sched_id.to_string(),

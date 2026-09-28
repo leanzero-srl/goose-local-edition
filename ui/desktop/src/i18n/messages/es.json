@@ -8396,6 +8396,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "Error: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "Se ejecuta en la carpeta:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID:"
   },
@@ -8437,6 +8440,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "Mensajes: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "ninguna. Esta programación no se ejecuta hasta que elijas su carpeta (Editar programación)."
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "No se proporcionó ningún ID de programación. Vuelve a la lista de programaciones."
@@ -8525,6 +8531,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "Cancelar"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "Elegir carpeta..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "Crear nueva programación"
   },
@@ -8549,6 +8558,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "No se pudo leer el archivo seleccionado."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "Se ejecuta en la carpeta:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "Elige la carpeta en la que se ejecuta esta programación."
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "Deep link no válido. Usa un enlace goose://recipe."
   },
@@ -8560,6 +8575,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "p. ej., resumen-diario"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "Aún no hay carpeta. Esta programación no se ejecuta hasta que elijas una."
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "Proporciona un origen de receta válido."
@@ -8594,6 +8612,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "Elegir carpeta"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "¿Quitar la programación \"{id}\"? La receta se conservará."
   },
@@ -8608,6 +8629,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "Error: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "Error al elegir la carpeta"
   },
   "schedulesView.inspect": {
     "defaultMessage": "Inspeccionar"
@@ -8633,6 +8657,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "Última ejecución: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "Sin carpeta"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "Esta programación se guardó antes de que las programaciones registraran una carpeta, así que no se ejecuta hasta que elijas una."
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "Aún no hay programaciones"
   },
@@ -8656,6 +8686,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "En ejecución"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "Se ejecuta en {folder}"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "Programación en pausa"

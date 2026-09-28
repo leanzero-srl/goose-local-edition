@@ -26,7 +26,7 @@ use crate::commands::term::{
 use crate::commands::schedule::{
     handle_schedule_add, handle_schedule_cron_help, handle_schedule_list, handle_schedule_remove,
     handle_schedule_run_now, handle_schedule_services_status, handle_schedule_services_stop,
-    handle_schedule_sessions,
+    handle_schedule_sessions, handle_schedule_set_dir,
 };
 use crate::commands::session::{handle_session_list, handle_session_remove};
 use crate::commands::skills::handle_skills_list;
@@ -638,9 +638,22 @@ enum SchedulerCommand {
             value_parser = parse_key_val,
         )]
         params: Vec<(String, String)>,
+        #[arg(
+            long,
+            value_name = "DIR",
+            help = "Folder the job runs in (default: this terminal's folder)"
+        )]
+        working_dir: Option<PathBuf>,
     },
     #[command(about = "List all scheduled jobs")]
     List {},
+    #[command(about = "Set the folder a scheduled job runs in")]
+    SetDir {
+        #[arg(long = "schedule-id", alias = "id", help = "ID of the scheduled job")]
+        schedule_id: String,
+        #[arg(long, value_name = "DIR", help = "Folder the job runs in from now on")]
+        working_dir: PathBuf,
+    },
     #[command(about = "Remove a scheduled job by ID")]
     Remove {
         #[arg(
@@ -2180,8 +2193,13 @@ async fn handle_schedule_command(command: SchedulerCommand) -> Result<()> {
             cron,
             recipe_source,
             params,
-        } => handle_schedule_add(schedule_id, cron, recipe_source, params).await,
+            working_dir,
+        } => handle_schedule_add(schedule_id, cron, recipe_source, params, working_dir).await,
         SchedulerCommand::List {} => handle_schedule_list().await,
+        SchedulerCommand::SetDir {
+            schedule_id,
+            working_dir,
+        } => handle_schedule_set_dir(schedule_id, working_dir).await,
         SchedulerCommand::Remove { schedule_id } => handle_schedule_remove(schedule_id).await,
         SchedulerCommand::Sessions { schedule_id, limit } => {
             handle_schedule_sessions(schedule_id, limit).await

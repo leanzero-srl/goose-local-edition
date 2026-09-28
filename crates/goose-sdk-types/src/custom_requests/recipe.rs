@@ -386,6 +386,9 @@ pub struct ScheduleRecipeRequest {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cron_schedule: Option<String>,
+    /// The asking window's folder: a new job runs there (Q-282), and a project recipe the id names
+    /// is found there. Required — goosed's own cwd is no window's project (Q-257).
+    pub working_dir: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]

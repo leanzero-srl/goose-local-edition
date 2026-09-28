@@ -8396,6 +8396,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "오류: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "실행 폴더:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID:"
   },
@@ -8437,6 +8440,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "메시지: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "없음. 폴더를 선택하기 전까지(일정 편집) 이 일정은 실행되지 않습니다."
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "제공된 일정 ID가 없습니다. 일정 목록으로 돌아갑니다."
@@ -8525,6 +8531,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "취소"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "폴더 선택..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "새 일정 생성"
   },
@@ -8549,6 +8558,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "선택한 파일을 읽지 못했습니다."
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "실행 폴더:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "이 일정이 실행될 폴더를 선택하세요."
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "딥링크가 잘못되었습니다. goose://recipe 링크를 이용해 주세요."
   },
@@ -8560,6 +8575,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "예: 일일 요약 작업"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "아직 폴더가 없습니다. 폴더를 선택하기 전까지 이 일정은 실행되지 않습니다."
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "유효한 레시피 소스를 입력하세요."
@@ -8594,6 +8612,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "폴더 선택"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "일정 \"{id}\"을(를) 삭제하시겠습니까? 레시피는 유지됩니다."
   },
@@ -8608,6 +8629,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "오류: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "폴더 선택 오류"
   },
   "schedulesView.inspect": {
     "defaultMessage": "검사"
@@ -8633,6 +8657,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "마지막 실행: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "폴더 없음"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "이 일정은 일정이 폴더를 기록하기 전에 저장되었으므로 폴더를 선택하기 전까지 실행되지 않습니다."
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "아직 일정이 없습니다"
   },
@@ -8656,6 +8686,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "실행 중"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "{folder}에서 실행"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "일정이 일시 중지됨"

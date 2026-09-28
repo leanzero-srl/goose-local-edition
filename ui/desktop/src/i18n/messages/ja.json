@@ -8396,6 +8396,9 @@
   "scheduleDetailView.errorPrefix": {
     "defaultMessage": "エラー: {error}"
   },
+  "scheduleDetailView.folder": {
+    "defaultMessage": "実行フォルダー:"
+  },
   "scheduleDetailView.idLabel": {
     "defaultMessage": "ID:"
   },
@@ -8437,6 +8440,9 @@
   },
   "scheduleDetailView.messages": {
     "defaultMessage": "メッセージ: {count}"
+  },
+  "scheduleDetailView.noFolder": {
+    "defaultMessage": "なし。フォルダーを選ぶまで(スケジュールを編集)、このスケジュールは実行されません。"
   },
   "scheduleDetailView.noScheduleId": {
     "defaultMessage": "スケジュールIDが指定されていません。スケジュール一覧に戻ってください。"
@@ -8525,6 +8531,9 @@
   "scheduleModal.cancel": {
     "defaultMessage": "キャンセル"
   },
+  "scheduleModal.chooseFolder": {
+    "defaultMessage": "フォルダーを選択..."
+  },
   "scheduleModal.createNewSchedule": {
     "defaultMessage": "新しいスケジュールを作成"
   },
@@ -8549,6 +8558,12 @@
   "scheduleModal.failedReadFile": {
     "defaultMessage": "選択したファイルを読み取れませんでした。"
   },
+  "scheduleModal.folderLabel": {
+    "defaultMessage": "実行フォルダー:"
+  },
+  "scheduleModal.folderRequired": {
+    "defaultMessage": "このスケジュールを実行するフォルダーを選んでください。"
+  },
   "scheduleModal.invalidDeepLink": {
     "defaultMessage": "無効なディープリンクです。goose://recipe リンクを使用してください。"
   },
@@ -8560,6 +8575,9 @@
   },
   "scheduleModal.namePlaceholder": {
     "defaultMessage": "例: daily-summary-job"
+  },
+  "scheduleModal.noFolder": {
+    "defaultMessage": "フォルダーがまだありません。選ぶまでこのスケジュールは実行されません。"
   },
   "scheduleModal.provideValidRecipe": {
     "defaultMessage": "有効なレシピソースを指定してください。"
@@ -8594,6 +8612,9 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.chooseFolder": {
+    "defaultMessage": "フォルダーを選択"
+  },
   "schedulesView.confirmDelete": {
     "defaultMessage": "スケジュール「{id}」を削除しますか？レシピは保持されます。"
   },
@@ -8608,6 +8629,9 @@
   },
   "schedulesView.errorPrefix": {
     "defaultMessage": "エラー: {error}"
+  },
+  "schedulesView.folderError": {
+    "defaultMessage": "フォルダー選択エラー"
   },
   "schedulesView.inspect": {
     "defaultMessage": "確認"
@@ -8633,6 +8657,12 @@
   "schedulesView.lastRun": {
     "defaultMessage": "前回実行: {date}"
   },
+  "schedulesView.noFolder": {
+    "defaultMessage": "フォルダーなし"
+  },
+  "schedulesView.noFolderMsg": {
+    "defaultMessage": "このスケジュールはフォルダーが記録される前に保存されたため、フォルダーを選ぶまで実行されません。"
+  },
   "schedulesView.noSchedules": {
     "defaultMessage": "スケジュールはまだありません"
   },
@@ -8656,6 +8686,9 @@
   },
   "schedulesView.running": {
     "defaultMessage": "実行中"
+  },
+  "schedulesView.runsIn": {
+    "defaultMessage": "{folder} で実行"
   },
   "schedulesView.schedulePaused": {
     "defaultMessage": "スケジュールを一時停止しました"

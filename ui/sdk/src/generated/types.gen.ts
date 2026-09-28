@@ -1509,6 +1509,12 @@ export type ExportSessionResponse_unstable = {
 export type ImportSessionRequest_unstable = {
     input: string;
     source: SessionImportSource;
+    /**
+     * The importing window's folder: a session that recorded none (a Claude Code, Codex or pi
+     * transcript with no `cwd`) is placed here. Required — the one goosed serves every window
+     * (Q-257), so its own cwd is no window's project (Q-283).
+     */
+    workingDir: string;
 };
 
 export type SessionImportSource = 'auto' | 'json' | 'nostr';
@@ -1715,6 +1721,11 @@ export type DeleteRecipeRequest_unstable = {
 export type ScheduleRecipeRequest_unstable = {
     id: string;
     cron_schedule?: string | null;
+    /**
+     * The asking window's folder: a new job runs there (Q-282), and a project recipe the id names
+     * is found there. Required — goosed's own cwd is no window's project (Q-257).
+     */
+    working_dir: string;
 };
 
 export type SetRecipeSlashCommandRequest_unstable = {
@@ -1779,6 +1790,11 @@ export type ScheduledJobDto = {
     paused: boolean;
     currentSessionId?: string | null;
     jobStartTime?: string | null;
+    /**
+     * The folder the job runs in (Q-282). Absent only on a job saved before schedules recorded a
+     * folder: it does not run until one is chosen (`schedules/update` with `workingDir`).
+     */
+    workingDir?: string | null;
 };
 
 export type ListScheduleSessionsRequest_unstable = {
@@ -1844,6 +1860,11 @@ export type CreateScheduleRequest_unstable = {
     id: string;
     recipe: RecipeDto;
     cron: string;
+    /**
+     * The folder the job runs in: the creating window's working dir. Required — the one goosed
+     * serves every window (Q-257), so its own cwd is no window's project (Q-282).
+     */
+    working_dir: string;
 };
 
 export type CreateScheduleResponse_unstable = {
@@ -1865,6 +1886,11 @@ export type UnpauseScheduleRequest_unstable = {
 export type UpdateScheduleRequest_unstable = {
     scheduleId: string;
     cron: string;
+    /**
+     * A folder to run the job in from now on (Q-282) — how a job saved before schedules recorded
+     * one gets it. Absent: the job keeps the folder it has.
+     */
+    workingDir?: string | null;
 };
 
 export type UpdateScheduleResponse_unstable = {

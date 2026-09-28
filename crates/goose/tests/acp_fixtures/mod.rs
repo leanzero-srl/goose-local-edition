@@ -82,6 +82,7 @@ impl SchedulerTrait for FixtureScheduler {
         &self,
         recipe_path: PathBuf,
         cron_schedule: Option<String>,
+        working_dir: PathBuf,
     ) -> anyhow::Result<(), SchedulerError> {
         let id = recipe_path
             .file_stem()
@@ -102,6 +103,7 @@ impl SchedulerTrait for FixtureScheduler {
                 recipe_base_dir: recipe_path
                     .parent()
                     .map(|parent| parent.to_string_lossy().to_string()),
+                working_dir: Some(working_dir.to_string_lossy().into_owned()),
             },
             false,
         )
@@ -162,6 +164,17 @@ impl SchedulerTrait for FixtureScheduler {
         new_cron: String,
     ) -> Result<(), SchedulerError> {
         self.job_mut(sched_id, |job| job.cron = new_cron).await
+    }
+
+    async fn set_schedule_working_dir(
+        &self,
+        sched_id: &str,
+        working_dir: PathBuf,
+    ) -> Result<(), SchedulerError> {
+        self.job_mut(sched_id, |job| {
+            job.working_dir = Some(working_dir.to_string_lossy().into_owned())
+        })
+        .await
     }
 
     async fn kill_running_job(&self, sched_id: &str) -> Result<(), SchedulerError> {

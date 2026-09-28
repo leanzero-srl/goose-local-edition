@@ -35,7 +35,7 @@ use mlx::{MlxBackend, MLX_BACKEND_ID};
 use rmcp::model::Tool;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -470,15 +470,24 @@ type StreamSender =
 pub struct LocalInferenceProvider {
     runtime: Arc<InferenceRuntime>,
     name: String,
+    working_dir: PathBuf,
 }
 
 impl LocalInferenceProvider {
-    pub async fn from_env() -> Result<Self> {
+    /// `working_dir` is the folder of the session the provider serves — what a small model that
+    /// emulates tools is told it works in (Q-284). The caller names it: goosed's own cwd is no
+    /// session's folder (Q-257).
+    pub async fn from_env(working_dir: PathBuf) -> Result<Self> {
         let runtime = InferenceRuntime::get_or_init()?;
         Ok(Self {
             runtime,
             name: PROVIDER_NAME.to_string(),
+            working_dir,
         })
+    }
+
+    pub fn working_dir(&self) -> &Path {
+        &self.working_dir
     }
 }
 
@@ -601,6 +610,7 @@ impl Provider for LocalInferenceProvider {
         let context_limit = model_context_limit;
         let settings = model_settings;
         let resolved_model = resolved.clone();
+        let working_dir = self.working_dir.clone();
         let system = system.to_string();
         let messages = messages.to_vec();
         let tools = tools.to_vec();
@@ -669,6 +679,7 @@ impl Provider for LocalInferenceProvider {
                 message_id: &message_id,
                 tx: &tx,
                 log: &mut log,
+                working_dir: &working_dir,
             };
 
             let result = backend.generate(loaded.as_mut(), request);
@@ -697,6 +708,19 @@ impl Provider for LocalInferenceProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Q-284: the provider keeps the folder of the session it serves; `stream` hands it to the
+    // backends as `LocalGenerationRequest::working_dir`, which the emulated-tools prompt renders
+    // (prompt_template::tiny_model_prompt) — the process cwd is read nowhere on that path.
+    #[test]
+    fn the_provider_keeps_the_folder_of_the_session_it_serves() {
+        let project = tempfile::tempdir().unwrap();
+        let provider = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(LocalInferenceProvider::from_env(project.path().into()))
+            .unwrap();
+        assert_eq!(provider.working_dir(), project.path());
+    }
 
     #[test]
     fn converts_marker_in_string_content_to_media_marker_part() {

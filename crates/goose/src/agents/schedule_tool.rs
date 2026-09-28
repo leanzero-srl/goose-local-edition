@@ -3,6 +3,7 @@
 //! This module contains all the handlers for the schedule management platform tool,
 //! including job creation, execution, monitoring, and session management.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::mcp_utils::ToolResult;
@@ -15,10 +16,12 @@ use crate::scheduler_trait::SchedulerTrait;
 
 impl Agent {
     /// Handle schedule management tool calls
+    /// `working_dir` is the calling chat's folder: a job the model creates runs there (Q-282).
     pub async fn handle_schedule_management(
         &self,
         arguments: serde_json::Value,
         _request_id: String,
+        working_dir: &Path,
     ) -> ToolResult<Vec<Content>> {
         let scheduler = self.config.scheduler_service.clone().ok_or_else(|| {
             ErrorData::new(
@@ -41,7 +44,10 @@ impl Agent {
 
         match action {
             "list" => self.handle_list_jobs(scheduler).await,
-            "create" => self.handle_create_job(scheduler, arguments).await,
+            "create" => {
+                self.handle_create_job(scheduler, arguments, working_dir)
+                    .await
+            }
             "run_now" => self.handle_run_now(scheduler, arguments).await,
             "pause" => self.handle_pause_job(scheduler, arguments).await,
             "unpause" => self.handle_unpause_job(scheduler, arguments).await,
@@ -80,6 +86,7 @@ impl Agent {
         &self,
         scheduler: Arc<dyn SchedulerTrait>,
         arguments: serde_json::Value,
+        working_dir: &Path,
     ) -> ToolResult<Vec<Content>> {
         let recipe_path = arguments
             .get("recipe_path")
@@ -161,12 +168,17 @@ impl Agent {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            working_dir: Some(working_dir.to_string_lossy().into_owned()),
         };
 
         match scheduler.add_scheduled_job(job, true).await {
             Ok(()) => Ok(vec![Content::text(format!(
-                "Successfully created scheduled job '{}' for recipe '{}' with cron expression '{}' in {} mode",
-                job_id, recipe_path, cron_expression, execution_mode
+                "Successfully created scheduled job '{}' for recipe '{}' with cron expression '{}' in {} mode; it runs in {}",
+                job_id,
+                recipe_path,
+                cron_expression,
+                execution_mode,
+                working_dir.display()
             ))]),
             Err(e) => Err(ErrorData::new(
                 ErrorCode::INTERNAL_ERROR,

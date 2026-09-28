@@ -117,13 +117,9 @@ pub fn convert(content: &str) -> Result<String> {
         .or_else(|| first_user_text.as_deref().map(super::summarize_first_line))
         .unwrap_or_else(|| format!("Imported Claude Code session {}", session_id));
 
-    let working_dir = if cwd.is_empty() {
-        std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| ".".to_string())
-    } else {
-        cwd
-    };
+    // No recorded cwd stays absent: the importer places the session in the importing window's
+    // folder (Q-283), never the process cwd.
+    let working_dir = (!cwd.is_empty()).then_some(cwd);
 
     let created_at = first_ts.unwrap_or_else(Utc::now);
     let updated_at = last_ts.unwrap_or(created_at);
@@ -132,7 +128,7 @@ pub fn convert(content: &str) -> Result<String> {
 
     let session_json = super::build_session_json(super::ImportedSession {
         session_id: &session_id,
-        working_dir: &working_dir,
+        working_dir: working_dir.as_deref(),
         name: &name,
         created_at,
         updated_at,

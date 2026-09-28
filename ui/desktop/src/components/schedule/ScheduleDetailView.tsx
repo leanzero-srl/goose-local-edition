@@ -14,7 +14,7 @@ import {
   acpKillRunningJob,
   acpInspectRunningJob,
 } from '../../acp/schedules';
-import { ScheduleModal, NewSchedulePayload } from './ScheduleModal';
+import { ScheduleModal, NewSchedulePayload, ScheduleEditPayload } from './ScheduleModal';
 import { toastError, toastSuccess } from '../../toasts';
 import { Loader2, Pause, Play, Edit, Square, Eye } from 'lucide-react';
 import cronstrue from 'cronstrue';
@@ -38,6 +38,11 @@ const i18n = defineMessages({
   scheduleLabel: { id: 'scheduleDetailView.scheduleLabel', defaultMessage: 'Schedule:' },
   cronExpression: { id: 'scheduleDetailView.cronExpression', defaultMessage: 'Cron Expression:' },
   recipeSource: { id: 'scheduleDetailView.recipeSource', defaultMessage: 'Recipe Source:' },
+  folder: { id: 'scheduleDetailView.folder', defaultMessage: 'Runs in folder:' },
+  noFolder: {
+    id: 'scheduleDetailView.noFolder',
+    defaultMessage: 'none. This schedule does not run until you choose its folder (Edit Schedule).',
+  },
   lastRun: { id: 'scheduleDetailView.lastRun', defaultMessage: 'Last Run:' },
   currentSession: { id: 'scheduleDetailView.currentSession', defaultMessage: 'Current Session:' },
   processStarted: { id: 'scheduleDetailView.processStarted', defaultMessage: 'Process Started:' },
@@ -249,11 +254,16 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
     }
   };
 
-  const handleModalSubmit = async (payload: NewSchedulePayload | string) => {
+  const handleModalSubmit = async (payload: NewSchedulePayload | ScheduleEditPayload) => {
     if (!scheduleId) return;
     setIsActionLoading(true);
     try {
-      await acpUpdateSchedule(scheduleId, payload as string);
+      const edit = payload as ScheduleEditPayload;
+      await acpUpdateSchedule(
+        scheduleId,
+        edit.cron,
+        edit.workingDir !== scheduleDetails?.workingDir ? edit.workingDir : undefined
+      );
       toastSuccess({ title: intl.formatMessage(i18n.scheduleUpdated), msg: intl.formatMessage(i18n.updatedMsg, { id: scheduleId }) });
       await fetchSchedule(scheduleId);
       setIsModalOpen(false);
@@ -342,6 +352,14 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   </p>
                   <p className="text-sm text-text-primary">
                     <span className="font-semibold">{intl.formatMessage(i18n.recipeSource)}</span> {scheduleDetails.source}
+                  </p>
+                  <p className="text-sm text-text-primary">
+                    <span className="font-semibold">{intl.formatMessage(i18n.folder)}</span>{' '}
+                    {scheduleDetails.workingDir ?? (
+                      <span className="font-medium text-text-danger">
+                        {intl.formatMessage(i18n.noFolder)}
+                      </span>
+                    )}
                   </p>
                   <p className="text-sm text-text-primary">
                     <span className="font-semibold">{intl.formatMessage(i18n.lastRun)}</span>{' '}

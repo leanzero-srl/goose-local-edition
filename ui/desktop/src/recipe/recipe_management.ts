@@ -44,8 +44,9 @@ export const deleteRecipe = async (id: string): Promise<void> => {
   await acpDeleteRecipe(id);
 };
 
+// A new schedule runs in this window's folder (Q-282), where the Recipes view listed the recipe.
 export const scheduleRecipe = async (id: string, cronSchedule?: string | null): Promise<void> => {
-  await acpScheduleRecipe(id, cronSchedule);
+  await acpScheduleRecipe(id, getInitialWorkingDir(), cronSchedule);
 };
 
 export const setRecipeSlashCommand = async (

@@ -13,10 +13,11 @@ mod imp {
     use crate::backend::{BackendLoadedModel, LocalGenerationRequest, LocalInferenceBackend};
     use crate::local_model_registry::{ModelSettings, ToolCallingMode};
     use crate::native_tool_parsing::message_from_native_tool_text;
+    use crate::prompt_template::tiny_model_prompt;
     use crate::provider_utils::filter_extensions_from_system_prompt;
     use crate::tool_emulation::{
-        build_emulator_tool_description, load_tiny_model_prompt, message_for_emulator_action,
-        StreamingEmulatorParser, CODE_EXECUTION_TOOL,
+        build_emulator_tool_description, message_for_emulator_action, StreamingEmulatorParser,
+        CODE_EXECUTION_TOOL,
     };
     use crate::{extract_text_content, ResolvedModelPaths};
     use goose_provider_types::conversation::message::Message;
@@ -99,6 +100,7 @@ mod imp {
                 request.messages,
                 request.tools,
                 tool_mode,
+                request.working_dir,
             )?;
             let prompt_tokens = loaded.model.encode(&prompt, false).map_err(mlx_error)?;
             if prompt_tokens.len() >= request.context_limit && request.context_limit > 0 {
@@ -249,6 +251,7 @@ mod imp {
         messages: &[Message],
         tools: &[rmcp::model::Tool],
         tool_mode: ToolMode,
+        working_dir: &Path,
     ) -> Result<String, ProviderError> {
         match tool_mode {
             ToolMode::Native => {
@@ -267,7 +270,7 @@ mod imp {
             ToolMode::Emulated { code_mode_enabled } => {
                 let system_prompt = format!(
                     "{}{}",
-                    load_tiny_model_prompt(),
+                    tiny_model_prompt(working_dir),
                     build_emulator_tool_description(tools, code_mode_enabled)
                 );
                 if is_gemma4(model) {
@@ -292,7 +295,7 @@ mod imp {
             }
             ToolMode::None => {
                 if is_gemma4(model) {
-                    let conversations = gemma4_messages(model_name, system, messages);
+                    let conversations = gemma4_messages(model_name, system, messages, working_dir);
                     if let Some(prompt) = model
                         .apply_chat_template_json([conversations], None, true)
                         .map_err(mlx_error)?
@@ -348,8 +351,9 @@ mod imp {
         model_name: &str,
         system: &str,
         messages: &[Message],
+        working_dir: &Path,
     ) -> Vec<serde_json::Value> {
-        let system = gemma4_system_prompt(model_name, system);
+        let system = gemma4_system_prompt(model_name, system, working_dir);
         gemma4_messages_with_optional_system(system.as_deref(), messages)
     }
 
@@ -390,9 +394,9 @@ mod imp {
         values
     }
 
-    fn gemma4_system_prompt(model_name: &str, system: &str) -> Option<String> {
+    fn gemma4_system_prompt(model_name: &str, system: &str, working_dir: &Path) -> Option<String> {
         if should_use_tiny_system_prompt(model_name) {
-            return Some(load_tiny_model_prompt());
+            return Some(tiny_model_prompt(working_dir));
         }
 
         let filtered = filter_extensions_from_system_prompt(system);
