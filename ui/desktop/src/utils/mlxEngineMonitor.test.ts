@@ -84,7 +84,13 @@ function harness(opts: {
   distributedRun?: () => MlxDistributedReport | null;
   /** A published route; a bare string is a READY route on that relay. */
   remoteRoute?: () =>
-    | { state: string; baseUrl: string | null; peerName?: string; lastError?: string | null }
+    | {
+        state: string;
+        baseUrl: string | null;
+        peerName?: string;
+        modelId?: string | null;
+        lastError?: string | null;
+      }
     | string
     | null;
   /** Every goose backend's measured-runs answer (one per backend). */
@@ -385,7 +391,9 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
     expect(h.readStatus).toHaveBeenLastCalledWith('http://127.0.0.1:8091');
     expect(s.engine).toBe('distributed');
     expect(s.mode).toBe('running');
-    expect(s.modelId).toBeNull();
+    // Rank 0's pipeline status names no model: the split's own model, goose's word (Q-417).
+    expect(s.modelId).toBe(FLASH_MODEL);
+    expect(s.modelDetail).toBeNull();
     expect(s.stats?.requests[0]).toMatchObject({ prefilledTokens: 2048, promptTps: 152.4 });
     // The single engine's runs are not the split's: goose's runs for the split's way.
     expect(writingOf(s.measured)).toBe(8.19);
@@ -620,6 +628,69 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
     await h.monitor.tick();
     expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'reconnecting' });
     expect(h.readStatus).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MlxEngineMonitor — Q-417: a remote single names the model it serves, as the single engine does', () => {
+  const RELAY = 'http://127.0.0.1:61001/relay/cafe';
+  const STUDIO_MODEL = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
+  /** The Studio's own `/v1/status` on 2026-09-28 (Rapid-MLX's `model`, the id its /v1/models lists). */
+  const STUDIO_GENERATING = { ...GENERATING_STATUS, model: STUDIO_MODEL };
+  const { model: _unnamed, ...NAMES_NO_MODEL } = GENERATING_STATUS;
+
+  it('3.0.72, 18:10Z: the relay read names the Studio’s model — the engine’s own word first', async () => {
+    const h = harness({
+      status: () => answered(STUDIO_GENERATING),
+      remoteRoute: () => ({ state: 'ready', baseUrl: RELAY, peerName: 'Work’s Mac Studio' }),
+    });
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({
+      engine: 'remote',
+      mode: 'running',
+      modelId: STUDIO_MODEL,
+      modelDetail: null,
+      statusDetail: null,
+    });
+    // What leaves the loop (the tray, every window, mlxEngineActivity) carries it too.
+    expect(h.snapshots.at(-1)?.modelId).toBe(STUDIO_MODEL);
+  });
+
+  it('a status that names none reads the route’s model — the single engine’s order, one derivation', async () => {
+    const route = { state: 'ready', baseUrl: RELAY, modelId: STUDIO_MODEL };
+    const h = harness({ status: () => answered(NAMES_NO_MODEL), remoteRoute: () => route });
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ modelId: STUDIO_MODEL, modelDetail: null });
+    // This Mac's own engine, the same body, goose's served id: the same derivation.
+    const single = harness({ status: () => answered(NAMES_NO_MODEL) });
+    single.monitor.reportFromRenderer({ state: 'running', baseUrl: BASE, servedModelId: 'org/m' });
+    await single.monitor.tick();
+    expect(single.monitor.current()).toMatchObject({ engine: 'single', modelId: 'org/m' });
+  });
+
+  it('neither the engine nor the route names a model: null, and why — never a guessed name', async () => {
+    const h = harness({
+      status: () => answered(NAMES_NO_MODEL),
+      remoteRoute: () => ({ state: 'ready', baseUrl: RELAY, modelId: null }),
+    });
+    await h.monitor.tick();
+    const s = h.monitor.current();
+    expect(s).toMatchObject({ engine: 'remote', mode: 'running', modelId: null });
+    expect(s.modelDetail).toBe(
+      "the engine's /v1/status names no model, and goose names none for the route"
+    );
+    // The stats are fresh: the reason is not `statusDetail`, which the tray reads as "Stale".
+    expect(s.statusDetail).toBeNull();
+    expect(s.stats).not.toBeNull();
+  });
+
+  it('a route that has not answered yet carries goose’s word for its model; a lost one keeps it', async () => {
+    let route = { state: 'mounting', baseUrl: RELAY, modelId: STUDIO_MODEL };
+    const h = harness({ status: () => refused, remoteRoute: () => route });
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ mode: 'mounting', modelId: STUDIO_MODEL });
+    route = { ...route, state: 'ready' };
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ mode: 'reconnecting', modelId: STUDIO_MODEL });
   });
 });
 

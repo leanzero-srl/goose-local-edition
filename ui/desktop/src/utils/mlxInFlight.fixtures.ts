@@ -52,6 +52,7 @@ export function liveSplitSnapshot(
     engine,
     mode: 'running',
     modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+    modelDetail: null,
     baseUrl: 'http://127.0.0.1:8091',
     stats: liveStats(requests),
     statusDetail: null,

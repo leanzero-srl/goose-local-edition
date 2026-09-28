@@ -106,6 +106,7 @@ function main(requests: unknown[], clients: MlxClient[], unattributed = 0): MlxE
     engine: 'distributed',
     mode: 'running',
     modelId: HF,
+    modelDetail: null,
     baseUrl: null,
     stats: read.stats,
     statusDetail: null,
