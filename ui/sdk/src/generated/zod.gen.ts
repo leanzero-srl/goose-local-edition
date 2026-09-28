@@ -2766,6 +2766,19 @@ export const zMlxStrayListenerHolderDto = z.object({
 });
 
 /**
+ * The one next step for a stray port's holders (Q-251).
+ */
+export const zMlxStrayListenerStepDto = z.object({
+    kind: z.string(),
+    pid: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    pids: z.array(z.number().int().gte(0)).optional(),
+    text: z.string()
+});
+
+/**
  * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
  */
 export const zMlxChipDto = z.object({
@@ -2962,6 +2975,10 @@ export const zMlxEngineStatusDto = z.object({
     ]).optional(),
     strayListenerHoldersError: z.union([
         z.string(),
+        z.null()
+    ]).optional(),
+    strayListenerStep: z.union([
+        zMlxStrayListenerStepDto,
         z.null()
     ]).optional(),
     availableMemoryGb: z.number(),

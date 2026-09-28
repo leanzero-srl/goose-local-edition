@@ -6771,7 +6771,7 @@
             "integer",
             "null"
           ],
-          "description": "Something already listens on the configured port while the manager supervises\nnothing — an engine orphaned by a previous goosed. Unmount reclaims it.",
+          "description": "Something already listens on the configured port while the manager supervises\nnothing — an engine orphaned by a previous goosed, or anyone else's. Unmount reclaims it\nonly when `strayListenerStep.kind` is \"start\" (every holder is this goose's own leftover);\notherwise it refuses by name and signals nothing (Q-252).",
           "minimum": 0,
           "maximum": 65535
         },
@@ -6790,6 +6790,17 @@
             "string",
             "null"
           ]
+        },
+        "strayListenerStep": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxStrayListenerStepDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The one next step for `strayListenerHolders` — the same derivation a refused Mount, a\nrefused Unmount and the swarm's events word it from (Q-251). Absent exactly when the\nholders are absent or name no process."
         },
         "availableMemoryGb": {
           "type": "number",
@@ -6982,7 +6993,7 @@
             "integer",
             "null"
           ],
-          "description": "When the process that started it is alive (another goose, or a shell): that process —\nthe one to quit.",
+          "description": "When the process that started it is alive and names the step: under \"liveStarter\" the\ngoose (or shell) to quit; under \"noMarker\" the older goose to restart (Q-251).",
           "minimum": 0
         },
         "liveStarterArgv": {
@@ -7001,6 +7012,40 @@
         "ours"
       ],
       "description": "One process listening on the engine port while this goose supervises no engine there (Q-249):\nthe same facts a refused Mount names — pid, command line, and whether it is this goose's."
+    },
+    "MlxStrayListenerStepDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "\"start\" (every holder is this goose's own leftover: Run it, or Unmount, stops it first) |\n\"quitStarter\" (a live process runs this goose-marked engine: quit `pid`) |\n\"restartGoose\" (a goose older than the engine mark runs it: restart `pid`, it mounts its\nengine again marked) | \"otherPort\" (this goose itself listens there) | \"kill\" (nothing\nalive a restart would help runs it: stop `pids`)."
+        },
+        "pid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The starter to quit or restart.",
+          "minimum": 0
+        },
+        "pids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "For \"kill\": the pids to stop."
+        },
+        "text": {
+          "type": "string",
+          "description": "The step in the backend's words, as its refusals say it."
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ],
+      "description": "The one next step for a stray port's holders (Q-251)."
     },
     "MlxChipDto": {
       "type": "object",

@@ -2629,7 +2629,9 @@ export type MlxEngineStatusDto = {
     gateVerdict?: string | null;
     /**
      * Something already listens on the configured port while the manager supervises
-     * nothing — an engine orphaned by a previous goosed. Unmount reclaims it.
+     * nothing — an engine orphaned by a previous goosed, or anyone else's. Unmount reclaims it
+     * only when `strayListenerStep.kind` is "start" (every holder is this goose's own leftover);
+     * otherwise it refuses by name and signals nothing (Q-252).
      */
     strayListenerPort?: number | null;
     /**
@@ -2640,6 +2642,12 @@ export type MlxEngineStatusDto = {
      */
     strayListenerHolders?: Array<MlxStrayListenerHolderDto> | null;
     strayListenerHoldersError?: string | null;
+    /**
+     * The one next step for `strayListenerHolders` — the same derivation a refused Mount, a
+     * refused Unmount and the swarm's events word it from (Q-251). Absent exactly when the
+     * holders are absent or name no process.
+     */
+    strayListenerStep?: MlxStrayListenerStepDto | null;
     /**
      * Memory a mount can take: free pages plus the file cache the OS reclaims on demand
      * (on macOS, Activity Monitor's physical-minus-used). 0 exactly when `memory_error`
@@ -2744,11 +2752,37 @@ export type MlxStrayListenerHolderDto = {
      */
     notOursReason?: string | null;
     /**
-     * When the process that started it is alive (another goose, or a shell): that process —
-     * the one to quit.
+     * When the process that started it is alive and names the step: under "liveStarter" the
+     * goose (or shell) to quit; under "noMarker" the older goose to restart (Q-251).
      */
     liveStarterPid?: number | null;
     liveStarterArgv?: Array<string> | null;
+};
+
+/**
+ * The one next step for a stray port's holders (Q-251).
+ */
+export type MlxStrayListenerStepDto = {
+    /**
+     * "start" (every holder is this goose's own leftover: Run it, or Unmount, stops it first) |
+     * "quitStarter" (a live process runs this goose-marked engine: quit `pid`) |
+     * "restartGoose" (a goose older than the engine mark runs it: restart `pid`, it mounts its
+     * engine again marked) | "otherPort" (this goose itself listens there) | "kill" (nothing
+     * alive a restart would help runs it: stop `pids`).
+     */
+    kind: string;
+    /**
+     * The starter to quit or restart.
+     */
+    pid?: number | null;
+    /**
+     * For "kill": the pids to stop.
+     */
+    pids?: Array<number>;
+    /**
+     * The step in the backend's words, as its refusals say it.
+     */
+    text: string;
 };
 
 /**
