@@ -20,10 +20,12 @@ Updated: 2026-09-28 13:5x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   Q-350 + Q-343 (activity says single/off while the split restores; 2,684 unfinished request logs) ·
   Q-346 (mid-turn prompt rebuild drops project instructions; ON Q-342) · Q-347 (post-compaction cold head).
 - Q-342 merged into scratch /tmp/merge-q342 (+ main), gate → /tmp/g342.out (relaunched 13:26; the first died).
+- #3r turn 2 (13:40): the 27B invented `websearch`/`fetch` 13× before the real web tool → Q-367 + Q-368
+  (facts paragraph restated 4×) CUTTING (wire read first). Run continues.
 - Owner features (designs DESIGN-Q357/358/359-*.md): Q-357 compaction revamp CUTTING (all slices, on merge-q342) ·
   Q-358 search S1+S2 CUTTING; notes S3–S5 QUEUED behind: merge-q344 · Q-359 C0/C1/C2/C4 CUTTING; C3 SCHEDULED
   waits on: relay decode tok/s + 4-delegates-on-2-Macs wall time.
-- Q-340/341+344 merged into scratch /tmp/merge-q344; gate → /tmp/g344.out (UI green so far; cargo after g342).
+- Q-340/341+344 merged into scratch /tmp/merge-q344; gate → /tmp/g344.out (UI green: tsc, vitest 4180, eslint src 0, i18n; cargo after g342).
 - Queued: Q-334 (focus ring colour outside the local edition), Q-335 (~55 faded opacity uses), Q-336/261/281
   (model behaviour, measured on #3q).
 
