@@ -18,7 +18,10 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       Still wrong: the "case-only duplicate emails" are case-only USERNAMES — the emails are lowercased by
       construction, and it said so itself at 772533. It re-used a restated paragraph (772527 = 772511) and
       rationalised the invented 128. Model behaviour, covered by the Q-448/Q-450 addenda; no goose defect.
-    - Turn 5 (projects.csv + every lead in users.csv) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
+    - Turn 5: 348 s. projects.csv saved; all 12 leads added to users.csv, 4 of them inactive; two runs MD5-identical.
+      Model slip: it said dropping inactive users would orphan FRT, but FRT's lead mkowalski is active by its own
+      output. No goose defect.
+    - Turn 6 (identity-resolution PLAN script; loaded atlassian-migration-scripts-skill) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
