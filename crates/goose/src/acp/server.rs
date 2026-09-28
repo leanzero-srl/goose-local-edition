@@ -105,6 +105,7 @@ pub use link_serve::{wire_link_for_serve, ServeDeltaSource, ServeLinkConfig, Ser
 mod list_sessions;
 mod load_session;
 mod local_inference;
+mod loop_door;
 mod manage_sessions;
 #[cfg(unix)]
 mod mlx_distributed;
@@ -218,6 +219,44 @@ struct ActivePromptRun {
     cancel_token: CancellationToken,
 }
 
+/// A prompt's place in the busy set, released however the prompt ends. Measured (Q9,
+/// `tests/acp_connection_close_test.rs`): a closed websocket drops `on_prompt` mid-await, so
+/// `clear_active_run` never runs for it. The busy set is this connection's, but the manager can
+/// outlive the connection (LeanZero Link's idle guard holds the first connection's), so an uncleared
+/// registration removes its own entry and token when dropped — only while they are still this run's.
+struct RunRegistration {
+    runs: Arc<Mutex<HashMap<String, ActivePromptRun>>>,
+    agent_manager: Arc<AgentManager>,
+    session_id: String,
+    run_id: String,
+    cleared: bool,
+}
+
+impl Drop for RunRegistration {
+    fn drop(&mut self) {
+        if self.cleared {
+            return;
+        }
+        let (runs, agent_manager) = (self.runs.clone(), self.agent_manager.clone());
+        let (session_id, run_id) = (self.session_id.clone(), self.run_id.clone());
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    let mut runs = runs.lock().await;
+                    if runs.get(&session_id).map(|run| run.run_id.as_str()) == Some(&run_id) {
+                        runs.remove(&session_id);
+                        agent_manager.unregister_cancel_token(&session_id).await;
+                        warn!(session_id, run_id, "a prompt dropped before it ended (its connection closed); its run is cleared");
+                    }
+                });
+            }
+            Err(error) => {
+                error!(session_id, run_id, %error, "a prompt dropped with no runtime to clear its run; the session reads busy on this connection");
+            }
+        }
+    }
+}
+
 /// A run of consecutive ToolRequest blocks within one assistant message,
 /// tracked by [`GooseAcpSession::chain_membership`]. Used to drive a single
 /// LLM summary for the whole run once every step has a recorded ToolResponse.
@@ -263,6 +302,10 @@ pub struct GooseAcpAgent {
     provider_inventory: ProviderInventoryService,
     additional_source_roots: Vec<SourceRoot>,
     recipe_path_cache: Arc<Mutex<HashMap<String, PathBuf>>>,
+    /// This process's loop runner (session loops, L2a), when it is installed.
+    loops: Option<crate::session_loops::runner::Runner>,
+    /// This connection's tick door (L2b), open from `initialize` until the connection ends.
+    loop_door: loop_door::DoorSlot,
 }
 
 /// Shorten a session/thread id for perf log correlation.
@@ -965,6 +1008,11 @@ impl GooseAcpAgent {
 
     // TODO: goose reads Paths::in_state_dir globally (e.g. RequestLog), ignoring this data_dir.
     pub async fn new(options: GooseAcpAgentOptions) -> Result<Self> {
+        // The loop runner reads and writes the process's store; an agent over another store must
+        // not hand it this agent's chats.
+        let loops = (options.data_dir == Paths::data_dir())
+            .then(crate::session_loops::runner::installed)
+            .flatten();
         let session_manager = Arc::new(SessionManager::new(options.data_dir));
 
         mlx_remote_single::install_route_load();
@@ -1010,7 +1058,17 @@ impl GooseAcpAgent {
             provider_inventory,
             additional_source_roots: options.additional_source_roots,
             recipe_path_cache: Arc::new(Mutex::new(HashMap::new())),
+            loops,
+            loop_door: loop_door::DoorSlot::default(),
         })
+    }
+
+    /// Open this connection's tick door once `initialize` has said what the client hears.
+    fn open_loop_door(&self, cx: &ConnectionTo<Client>) {
+        if let Some(runner) = &self.loops {
+            self.loop_door
+                .open(runner, cx, self.supports_goose_custom_notifications());
+        }
     }
 
     fn config(&self) -> Result<&'static Config, agent_client_protocol::Error> {
@@ -2507,6 +2565,22 @@ impl GooseAcpAgent {
         Ok(())
     }
 
+    fn run_registration(&self, session_id: &str, run_id: &str) -> RunRegistration {
+        RunRegistration {
+            runs: self.active_prompt_runs.clone(),
+            agent_manager: self.agent_manager.clone(),
+            session_id: session_id.to_string(),
+            run_id: run_id.to_string(),
+            cleared: false,
+        }
+    }
+
+    async fn end_run(&self, registration: &mut RunRegistration) {
+        self.clear_active_run(&registration.session_id, &registration.run_id)
+            .await;
+        registration.cleared = true;
+    }
+
     async fn clear_active_run(&self, session_id: &str, run_id: &str) {
         {
             let mut active_prompt_runs = self.active_prompt_runs.lock().await;
@@ -2637,6 +2711,68 @@ impl GooseAcpAgent {
         self.handle_load_session(cx, args).await
     }
 
+    /// A tick only when the prompt's `_meta.goose.loopTick` is this chat's open offer (§5.2); the
+    /// reservation returns the offer to open if the prompt exits before the tick starts.
+    async fn accept_tick_offer(
+        &self,
+        session_id: &str,
+        meta: Option<&Meta>,
+    ) -> Option<(
+        crate::session_loops::runner::TickMeta,
+        crate::session_loops::runner::OfferReservation,
+    )> {
+        let runner = self.loops.as_ref()?;
+        let tick = crate::session_loops::runner::tick_meta(meta?)?;
+        let reservation = runner.accept_offer(session_id, &tick).await?;
+        Some((tick, reservation))
+    }
+
+    /// The loop's `loop_report` tool follows its record before any reply (§5.2 step 3, L3).
+    async fn sync_loop_record(
+        &self,
+        agent: &Arc<Agent>,
+        session_id: &str,
+    ) -> Result<Option<goose_sdk_types::custom_requests::LoopRecord>, String> {
+        let record = crate::session_loops::record::read(&self.session_manager, session_id)
+            .await
+            .map_err(|e| format!("The loop record could not be read: {e}"))?
+            .map_err(|e| format!("The loop record could not be read: {e}"))?;
+        if let Some(record) = &record {
+            crate::session_loops::seam::sync_loop_extension(agent.clone(), session_id, record)
+                .await?;
+        }
+        Ok(record)
+    }
+
+    /// Start the accepted tick (§5.2 steps 3–4): the report tool synced, then the record's tick
+    /// written — the tool reads "a tick is running" from it — with the run's own cancel token and
+    /// cause cell as the runner's only handle.
+    async fn start_tick(
+        &self,
+        agent: &Arc<Agent>,
+        session_id: &str,
+        reservation: crate::session_loops::runner::OfferReservation,
+        cancel: &CancellationToken,
+        cause: &Arc<std::sync::OnceLock<crate::session_loops::rules::CancelCause>>,
+    ) -> Result<loop_door::TickPrompt, String> {
+        if self.sync_loop_record(agent, session_id).await?.is_none() {
+            return Err("the chat has no loop record".to_string());
+        }
+        let context_window_tokens = agent
+            .model_config_for_session(session_id)
+            .await
+            .map_err(|e| format!("the chat's context window could not be read: {e}"))?
+            .context_limit();
+        let run = reservation
+            .started(crate::session_loops::runner::TickTicket {
+                cancel: cancel.clone(),
+                cause: cause.clone(),
+                context_window_tokens,
+            })
+            .await?;
+        Ok(loop_door::TickPrompt::new(run))
+    }
+
     async fn on_prompt(
         &self,
         cx: &ConnectionTo<Client>,
@@ -2646,39 +2782,94 @@ impl GooseAcpAgent {
         let session_id = args.session_id.0.to_string();
         let sid = sid_short(&session_id);
         let t_start = std::time::Instant::now();
-        // The reply, for the node loader (design §6.4 step 8): every model call of this turn —
-        // and of its delegates — holds the way it used until the turn ends, however it ends.
-        #[cfg(unix)]
-        let _reply = nodes_loader::open_reply(&session_id);
-        // Q-132: while this turn runs, the end-of-turn reviewer of any chat waits, and one already
-        // in flight is dropped — on an engine that batches statically it held this turn's request.
-        let user_turn = crate::turn_priority::user_turn();
+        // Session loops (§5.2 step 1): a loop's tick or the user's prompt, decided first.
+        let offer = self
+            .accept_tick_offer(&session_id, args.meta.as_ref())
+            .await;
 
         let run_id = format!("run_{}", Uuid::new_v4());
         let cancel_token = CancellationToken::new();
+        let cause = Arc::new(std::sync::OnceLock::new());
         self.start_active_run(&session_id, run_id.clone(), cancel_token.clone())
             .await?;
+        let mut run = self.run_registration(&session_id, &run_id);
+        // Q-132: while a user's turn runs, the end-of-turn reviewer of any chat waits and one in
+        // flight is dropped; a loop's due tick waits and a running one yields. Taken only once the
+        // chat is known not busy, so a prompt refused as busy never yields the tick it collided
+        // with. A tick takes none: it would yield to itself.
+        let user = offer
+            .is_none()
+            .then(|| loop_door::UserPrompt::begin(self.loops.clone(), &session_id));
+        // The reply, for the node loader (design §6.4 step 8): every model call of this turn —
+        // and of its delegates — holds the way it used until the turn ends, however it ends. Opened
+        // after the busy check: a refused prompt must not take over the running reply's slot.
+        #[cfg(unix)]
+        let _reply = nodes_loader::open_reply(&session_id, loop_door::reply_kind(offer.is_some()));
 
         let agent = match self.get_session_agent(&session_id).await {
             Ok(agent) => agent,
             Err(error) => {
-                self.clear_active_run(&session_id, &run_id).await;
+                self.end_run(&mut run).await;
                 return Err(error);
             }
         };
 
+        let mut tick = None;
+        let mut tick_message_id = None;
+        match offer {
+            Some((meta, reservation)) => {
+                let message_id = reservation.message_id().to_string();
+                match self
+                    .start_tick(&agent, &session_id, reservation, &cancel_token, &cause)
+                    .await
+                {
+                    Ok(started) => {
+                        tick = Some(started);
+                        tick_message_id = Some(message_id);
+                    }
+                    Err(reason) => {
+                        self.end_run(&mut run).await;
+                        return Err(agent_client_protocol::Error::internal_error()
+                            .data(format!("Loop tick {} did not start: {reason}", meta.n)));
+                    }
+                }
+            }
+            None => {
+                if let Err(error) = self.sync_loop_record(&agent, &session_id).await {
+                    warn!(session_id, %error, "loop: the chat's loop tool was not synced before this reply");
+                }
+            }
+        }
+
         if cancel_token.is_cancelled() {
-            self.clear_active_run(&session_id, &run_id).await;
+            self.end_run(&mut run).await;
+            if let Some(tick) = tick.take() {
+                drop(tick.ended(crate::session_loops::rules::TickEnd::Cancelled {
+                    cause: cause.get().cloned(),
+                }));
+            }
             Self::send_active_run_update(cx, &args.session_id, None)?;
             return Ok(PromptResponse::new(StopReason::Cancelled));
         }
 
         if let Err(error) = Self::send_active_run_update(cx, &args.session_id, Some(&run_id)) {
-            self.clear_active_run(&session_id, &run_id).await;
+            self.end_run(&mut run).await;
+            if let Some(tick) = tick.take() {
+                tick.failed(
+                    "connection",
+                    format!("the tick's run could not be announced: {error:?}"),
+                );
+            }
             return Err(error);
         }
 
         let user_message = Self::convert_acp_prompt_to_message(&args.prompt);
+        // A tick's message takes the id the runner minted with the offer (§5.2 step 2): the
+        // window's marker and the stored message are the same message.
+        let user_message = match tick_message_id {
+            Some(id) => user_message.with_id(id),
+            None => user_message,
+        };
 
         let message_text = user_message.as_concat_text();
         if let Some(parsed) = crate::agents::execute_commands::parse_slash_command(&message_text) {
@@ -2700,8 +2891,11 @@ impl GooseAcpAgent {
                                 ))),
                             )),
                         )) {
-                            self.clear_active_run(&session_id, &run_id).await;
+                            self.end_run(&mut run).await;
                             let _ = Self::send_active_run_update(cx, &args.session_id, None);
+                            if let Some(tick) = tick.take() {
+                                tick.failed("connection", format!("{error:?}"));
+                            }
                             return Err(error);
                         }
                     }
@@ -2722,8 +2916,11 @@ impl GooseAcpAgent {
         {
             Ok(stream) => stream,
             Err(error) => {
-                self.clear_active_run(&session_id, &run_id).await;
+                self.end_run(&mut run).await;
                 let _ = Self::send_active_run_update(cx, &args.session_id, None);
+                if let Some(tick) = tick.take() {
+                    tick.failed("reply", format!("Error getting agent reply: {error}"));
+                }
                 return Err(agent_client_protocol::Error::internal_error()
                     .data(format!("Error getting agent reply: {error}")));
             }
@@ -2879,10 +3076,15 @@ impl GooseAcpAgent {
                     if let Some(update) =
                         tool_notifications::tool_notification_update(request_id, notification)
                     {
-                        cx.send_notification(SessionNotification::new(
+                        // Ends the stream like any stream error, so the run is cleared and a
+                        // tick ended — a bare `?` here left both behind.
+                        if let Err(error) = cx.send_notification(SessionNotification::new(
                             args.session_id.clone(),
                             update,
-                        ))?;
+                        )) {
+                            stream_error = Some(error);
+                            break;
+                        }
                     }
                 }
                 Ok(_) => {}
@@ -2902,8 +3104,21 @@ impl GooseAcpAgent {
 
         // Q-169: the dropped stream never reaches the agent's own end-of-turn record, so a stopped
         // turn is recorded here — before the run-end update, so every list reads Stopped — with a
-        // chat line in the conversation where the answer would have been.
-        if was_cancelled {
+        // chat line in the conversation where the answer would have been. A tick YIELDED to a
+        // user's reply (§5.2 step 5) was not stopped by anyone: no notice, no Stopped outcome, and
+        // the previous turn's outcome is cleared the way a new turn clears it.
+        let cancel_cause = cause.get().cloned();
+        let yielded = matches!(
+            cancel_cause,
+            Some(crate::session_loops::rules::CancelCause::Yield { .. })
+        );
+        if was_cancelled && yielded {
+            if let Err(error) =
+                crate::turn_outcome::record(&self.session_manager, &session_id, None).await
+            {
+                warn!(session_id, %error, "the yielded tick's turn outcome was not recorded");
+            }
+        } else if was_cancelled {
             let stopped = meter.stopped().await;
             match crate::turn_outcome::record_stopped(&self.session_manager, &session_id, stopped)
                 .await
@@ -2911,12 +3126,14 @@ impl GooseAcpAgent {
                 Ok(notice) => {
                     for content in &notice.content {
                         if let MessageContent::SystemNotification(notification) = content {
-                            send_status_message_update(
+                            if let Err(error) = send_status_message_update(
                                 cx,
                                 self.supports_goose_custom_notifications(),
                                 &session_id,
                                 notification,
-                            )?;
+                            ) {
+                                warn!(session_id, ?error, "the stopped turn's notice was not sent; it is stored in the chat");
+                            }
                         }
                     }
                 }
@@ -2934,7 +3151,25 @@ impl GooseAcpAgent {
                 extend_chain_membership(&chain_buffer, &mut session.chain_membership);
             }
         }
-        self.clear_active_run(&session_id, &run_id).await;
+        self.end_run(&mut run).await;
+        // §5.2 step 6: the tick ends where the run clears, so the runner reads its report, the
+        // needs-you store and its writes with the chat no longer busy.
+        let review = tick.take().map(|tick| {
+            tick.ended(match &stream_error {
+                Some(error) => crate::session_loops::rules::TickEnd::Errored {
+                    error_class: "stream".to_string(),
+                    error: error
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.as_str())
+                        .map_or_else(|| error.message.clone(), str::to_string),
+                },
+                None if was_cancelled => crate::session_loops::rules::TickEnd::Cancelled {
+                    cause: cancel_cause,
+                },
+                None => crate::session_loops::rules::TickEnd::Completed,
+            })
+        });
         Self::send_active_run_update(cx, &args.session_id, None)?;
         if let Some(error) = stream_error {
             return Err(error);
@@ -2980,14 +3215,15 @@ impl GooseAcpAgent {
         // response is built and only on EndTurn — a cancelled turn is never assessed, and a turn's
         // result never waits on (or fails because of) its judgement. This turn is over before
         // either is spawned, so neither waits on it.
-        drop(user_turn);
+        drop(user);
+        let mut reviewers = Vec::new();
         if !was_cancelled {
-            tokio::spawn(crate::turn_assessment::assess_turn(
+            reviewers.push(tokio::spawn(crate::turn_assessment::assess_turn(
                 agent.clone(),
                 self.session_manager.clone(),
                 session_id.clone(),
                 self.config_dir.clone(),
-            ));
+            )));
             // Q-90: the answer check lands under the reply that is still on screen, and is stored
             // so a reload shows it again.
             let (agent, session_manager, session_id, cx) = (
@@ -2997,7 +3233,7 @@ impl GooseAcpAgent {
                 cx.clone(),
             );
             let custom_notifications = self.supports_goose_custom_notifications();
-            tokio::spawn(async move {
+            reviewers.push(tokio::spawn(async move {
                 let Some(notice) = crate::turn_assessment::check_turn_answer(
                     agent,
                     session_manager,
@@ -3023,7 +3259,12 @@ impl GooseAcpAgent {
                         }
                     }
                 }
-            });
+            }));
+        }
+        // §5.2 step 7: the next tick waits for this tick's reviewers (they share its engine);
+        // the response does not.
+        if let Some(review) = review {
+            review.reviewers(reviewers);
         }
         Ok(response)
     }
@@ -3320,6 +3561,16 @@ pub struct GooseAcpHandler {
     pub agent: Arc<GooseAcpAgent>,
 }
 
+/// Closes the connection's tick door when its serving future ends — returned or DROPPED: a closed
+/// websocket drops that future mid-await (Q9), so the close cannot be code after the await.
+struct LoopDoorClose(Arc<GooseAcpAgent>);
+
+impl Drop for LoopDoorClose {
+    fn drop(&mut self) {
+        self.0.loop_door.close();
+    }
+}
+
 pub fn serve<R, W>(
     agent: Arc<GooseAcpAgent>,
     read: R,
@@ -3332,6 +3583,7 @@ where
     Box::pin(async move {
         #[cfg(unix)]
         nodes_loader::attach_agent(&agent);
+        let _door = LoopDoorClose(Arc::clone(&agent));
         let handler = GooseAcpHandler { agent };
 
         SacpAgent
@@ -3369,6 +3621,7 @@ impl agent_client_protocol::ConnectTo<Client> for GooseAgentConnection {
         let agent = self.server.create_agent().await.internal_err()?;
         #[cfg(unix)]
         nodes_loader::attach_agent(&agent);
+        let _door = LoopDoorClose(Arc::clone(&agent));
         let handler = GooseAcpHandler { agent };
         SacpAgent
             .builder()
@@ -4629,5 +4882,92 @@ print(\"hello, world\")
                     .meta(meta);
             assert_eq!(extract_use_login_shell_path(&request), Some(flag));
         }
+    }
+
+    /// Q9 (b): a prompt whose future is dropped mid-await (its websocket closed) leaves the busy
+    /// set through its registration's drop — the manager can outlive the connection — and only
+    /// while the entry is still that run's: a later run of the same chat is never cleared by it.
+    #[tokio::test]
+    async fn a_dropped_prompts_run_leaves_the_busy_set_and_never_touches_a_later_run() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Arc::new(
+            AgentManager::new(
+                AgentConfig::new(
+                    Arc::new(SessionManager::new(temp.path().to_path_buf())),
+                    PermissionManager::instance(),
+                    None,
+                    GooseMode::Auto,
+                    true,
+                    GoosePlatform::GooseCli,
+                ),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let runs: Arc<Mutex<HashMap<String, ActivePromptRun>>> = Arc::default();
+        let register = |run_id: &str| {
+            let (runs, manager, run_id) = (runs.clone(), manager.clone(), run_id.to_string());
+            async move {
+                let token = CancellationToken::new();
+                manager
+                    .try_register_cancel_token("chat", token.clone())
+                    .await
+                    .unwrap();
+                runs.lock().await.insert(
+                    "chat".to_string(),
+                    ActivePromptRun {
+                        run_id: run_id.clone(),
+                        cancel_token: token,
+                    },
+                );
+                RunRegistration {
+                    runs,
+                    agent_manager: manager,
+                    session_id: "chat".to_string(),
+                    run_id,
+                    cleared: false,
+                }
+            }
+        };
+        let settle = || async {
+            for _ in 0..20 {
+                tokio::task::yield_now().await;
+            }
+        };
+
+        drop(register("run_1").await);
+        let mut cleared = false;
+        for _ in 0..500 {
+            if runs.lock().await.is_empty() && !manager.is_session_busy("chat").await {
+                cleared = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(cleared, "the dropped run left the busy set");
+
+        let mut current = register("run_2").await;
+        drop(RunRegistration {
+            runs: runs.clone(),
+            agent_manager: manager.clone(),
+            session_id: "chat".to_string(),
+            run_id: "run_1".to_string(),
+            cleared: false,
+        });
+        settle().await;
+        assert_eq!(
+            runs.lock().await.get("chat").map(|r| r.run_id.clone()),
+            Some("run_2".to_string())
+        );
+        assert!(manager.is_session_busy("chat").await);
+
+        current.cleared = true;
+        drop(current);
+        settle().await;
+        assert!(
+            manager.is_session_busy("chat").await,
+            "a cleared registration leaves the clearing to clear_active_run"
+        );
     }
 }

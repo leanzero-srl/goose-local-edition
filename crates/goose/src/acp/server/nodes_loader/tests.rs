@@ -1076,3 +1076,37 @@ async fn a_turns_demand_is_never_answered_wait() {
     drop(reply_1);
     assert_eq!(answer(turn).await, NodeEnsureServing::Ready);
 }
+
+/// Session loops §5.5 / §13 item 9: a loop's tick opens its reply as kind `tick`, and its demand
+/// for another way never stops the way a person's open reply is answering on — it waits, and
+/// swaps once that reply ends.
+#[tokio::test]
+async fn a_ticks_demand_waits_for_the_persons_reply_on_the_way_it_would_stop() {
+    use goose_sidecar::holders::ReplyKind;
+
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let person = core.holds().open_reply_as("chat-1", ReplyKind::User);
+    lease(&core, "chat-1", &fake, "flash");
+    let tick = core.holds().open_reply_as("loop-chat", ReplyKind::Tick);
+    assert_eq!(
+        core.holds().reply("loop-chat").unwrap().kind,
+        ReplyKind::Tick
+    );
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("loop-chat"));
+    let tick_demand = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the tick's demand waits", || {
+        waiting(&core, "split").is_some()
+    })
+    .await;
+    assert!(
+        fake.log().is_empty(),
+        "nothing stops under the person's reply: {:?}",
+        fake.log()
+    );
+    drop(person);
+    assert_eq!(answer(tick_demand).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.serving().as_deref(), Some("split"));
+    drop(tick);
+}

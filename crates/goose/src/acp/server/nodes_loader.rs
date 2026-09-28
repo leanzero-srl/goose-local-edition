@@ -898,9 +898,16 @@ fn agent() -> Result<Arc<super::GooseAcpAgent>, Refusal> {
         })
 }
 
-/// The reply guard `on_prompt` holds for the whole turn. `None` before the loader is installed.
-pub(super) fn open_reply(session_id: &str) -> Option<ReplyGuard> {
-    LOADER.get().map(|core| core.holds().open_reply(session_id))
+/// The reply guard `on_prompt` holds for the whole turn, as a person's reply or a loop's tick
+/// (session loops §5.5: a tick's reply never reads as a user's). `None` before the loader is
+/// installed.
+pub(super) fn open_reply(
+    session_id: &str,
+    kind: goose_sidecar::holders::ReplyKind,
+) -> Option<ReplyGuard> {
+    LOADER
+        .get()
+        .map(|core| core.holds().open_reply_as(session_id, kind))
 }
 
 #[cfg(test)]
