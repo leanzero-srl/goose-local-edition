@@ -270,6 +270,7 @@ http = { workspace = true }
 insta = { version = "1", default-features = false }
 dtor = { version = "1.0.5", default-features = false, features = ["proc_macro"] }
 tower = { version = "0.5.2", default-features = false, features = ["util"] }
+tokio-tungstenite = "0.29"
 
 [[example]]
 name = "agent"
