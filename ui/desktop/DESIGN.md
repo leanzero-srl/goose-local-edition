@@ -31,11 +31,16 @@ primitive never renders transparent.
 
 **Accent** — one per view, always with white ink.
 
-| token                                                       | utility                                          | light     | dark      |
-| ----------------------------------------------------------- | ------------------------------------------------ | --------- | --------- |
-| `--color-lz-accent` (= the existing `--color-action-solid`) | `bg-lz-accent` `text-lz-accent` `ring-lz-accent` | `#1d4ed8` | `#1d4ed8` |
-| `--color-lz-accent-hover`                                   | `hover:bg-lz-accent-hover`                       | `#1e40af` | `#2563eb` |
-| `--color-lz-accent-ink`                                     | `text-lz-accent-ink`                             | `#ffffff` | `#ffffff` |
+| token                                                       | utility                               | light     | dark      |
+| ----------------------------------------------------------- | ------------------------------------- | --------- | --------- |
+| `--color-lz-accent` (= the existing `--color-action-solid`) | `bg-lz-accent` `ring-lz-accent`       | `#1d4ed8` | `#1d4ed8` |
+| `--color-lz-accent-text` (read by `--text-color-lz-accent`) | `text-lz-accent` (`TONE_TEXT.accent`) | `#1d4ed8` | `#60a5fa` |
+| `--color-lz-accent-hover`                                   | `hover:bg-lz-accent-hover`            | `#1e40af` | `#2563eb` |
+| `--color-lz-accent-ink`                                     | `text-lz-accent-ink`                  | `#ffffff` | `#ffffff` |
+
+The fill stays `#1d4ed8` in dark because it carries white ink; as TEXT on a dark surface that blue
+measured 2.18:1 (Q-320), so accent text reads its own token — AA (≥ 4.5:1) on bg, surface and
+surface-2 in both themes (studioTokens.test.ts, lz/accentText.contrast.test.tsx).
 
 **Secondary accent** — SPARING. Reserved for the reasoning/thinking channel and at most one
 secondary emphasis per view. Never two accents in one component.

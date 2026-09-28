@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { __unstable__loadDesignSystem as loadDesignSystem } from '@tailwindcss/node';
 import { describe, expect, it } from 'vitest';
 import { resolvedPaint, studioToken } from './resolvedPaint';
-import { tonesThatDoNotPaint } from './tonePaint';
+import { TONE_TEXT_TOKEN, tonesThatDoNotPaint } from './tonePaint';
 import { TONE_TEXT, TONES, TYPE, cx } from './tokens';
 
 /**
@@ -118,7 +118,7 @@ describe('Q-247 — the base ink yields to every other text colour, in the compi
       expect((await resolvedPaint(meta, theme)).text).toBe(studioToken('--color-lz-ink-3', theme));
       for (const [step, typeClasses] of Object.entries(TYPE)) {
         for (const tone of TONES) {
-          const want = studioToken(`--color-lz-${tone}`, theme);
+          const want = studioToken(TONE_TEXT_TOKEN[tone], theme);
           for (const className of [
             cx(typeClasses, TONE_TEXT[tone]),
             cx(TONE_TEXT[tone], typeClasses),
