@@ -12,7 +12,8 @@
 //!
 //! The order is fixed: the developer shell tool's in-flight commands first (Q-406 — each leads a
 //! process group of its own now, so the desktop's signal to goosed's group no longer reaches
-//! them); then the stdio extension children (Q-138 — `std::process::exit` after
+//! them; a goosed that dies without this sequence leaves them to its watchdog, Q-407
+//! `developer::shell_watchdog`); then the stdio extension children (Q-138 — `std::process::exit` after
 //! this sequence runs no destructor, so rmcp's own child cleanup never fired and every bundled
 //! MCP outlived goosed; they are leaves nothing else depends on); then the peers are told this
 //! goose is leaving, so they see the node go before its engine disappears; then the engines; the

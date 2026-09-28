@@ -24,6 +24,8 @@
 //! Ctrl+C — and a `sudo`/`ssh` prompt on /dev/tty — reach the command; a background group would
 //! stop on SIGTTIN instead. `CommandProcesses` is what signals a command's processes on timeout,
 //! cancel and goose serve's teardown, through the same proof the sidecar's group kill requires.
+//! A goose serve that dies WITHOUT its teardown (a crash, a SIGKILL) hands the same groups to its
+//! watchdog, which ends them when goose's end of a pipe closes (Q-407, `shell_watchdog`).
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -103,19 +105,80 @@ pub struct Lingering {
 }
 
 #[cfg(unix)]
+impl Lingering {
+    pub(super) fn new(leader: i32, stamps: Vec<(i32, String)>) -> Self {
+        Self { leader, stamps }
+    }
+
+    pub(super) fn leader(&self) -> i32 {
+        self.leader
+    }
+
+    pub(super) fn stamps(&self) -> &[(i32, String)] {
+        &self.stamps
+    }
+}
+
+#[cfg(unix)]
 fn lingering() -> &'static Mutex<Vec<Lingering>> {
     static LINGERING: OnceLock<Mutex<Vec<Lingering>>> = OnceLock::new();
     LINGERING.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// The process's start time as `ps` prints it; a pid reused by another process starts later.
 #[cfg(unix)]
-fn start_time(pid: i32) -> Option<String> {
+pub(super) fn live_leaders() -> Vec<i32> {
+    live()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .copied()
+        .collect()
+}
+
+#[cfg(unix)]
+pub(super) fn with_lingering(read: impl FnOnce(&[Lingering])) {
+    read(&lingering().lock().unwrap_or_else(|e| e.into_inner()));
+}
+
+/// The process's start time, as an opaque stamp with no whitespace; a pid reused by another
+/// process starts later. Read from the kernel where it can be (Q-407: every own-group command is
+/// stamped as it spawns, and a `ps` per command measured 3.5 ms; the kernel's stamp costs a
+/// syscall and is finer than `ps`'s one-second `lstart`), else from `ps`.
+#[cfg(target_os = "macos")]
+pub(super) fn start_time(pid: i32) -> Option<String> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    (read == size).then(|| format!("{}.{:06}", info.pbi_start_tvsec, info.pbi_start_tvusec))
+}
+
+/// `/proc/<pid>/stat` field 22, the start in clock ticks since boot. The command name (field 2)
+/// may hold spaces and parentheses, so the fields are counted from its closing parenthesis.
+#[cfg(target_os = "linux")]
+pub(super) fn start_time(pid: i32) -> Option<String> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_name = &stat[stat.rfind(')')? + 1..];
+    after_name.split_whitespace().nth(19).map(str::to_string)
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+pub(super) fn start_time(pid: i32) -> Option<String> {
     let out = std::process::Command::new("ps")
         .args(["-o", "lstart=", "-p", &pid.to_string()])
         .output()
         .ok()?;
-    let stamp = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stamp = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_");
     (!stamp.is_empty()).then_some(stamp)
 }
 
@@ -123,7 +186,7 @@ fn start_time(pid: i32) -> Option<String> {
 impl Lingering {
     /// A stamped member still alive, still in the group, and still the same process — proof the
     /// group id has not been handed to anyone else (it cannot be while a member lives).
-    fn still_the_same_group(&self) -> bool {
+    pub(super) fn still_the_same_group(&self) -> bool {
         self.stamps.iter().any(|(pid, stamp)| {
             pgid_of(*pid) == Some(self.leader) && start_time(*pid).as_deref() == Some(stamp)
         })
@@ -161,6 +224,12 @@ fn pgrep(args: &[&str]) -> std::io::Result<Vec<i32>> {
     }
 }
 
+/// Every process whose group id is `group` right now.
+#[cfg(unix)]
+pub(super) fn group_members(group: i32) -> std::io::Result<Vec<i32>> {
+    pgrep(&["-g", &group.to_string()])
+}
+
 #[cfg(unix)]
 fn pgid_of(pid: i32) -> Option<i32> {
     let pgid = unsafe { libc::getpgid(pid) };
@@ -192,6 +261,7 @@ impl CommandProcesses {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(leader);
+            super::shell_watchdog::note_live(leader);
         }
         Self {
             leader,
@@ -210,10 +280,13 @@ impl CommandProcesses {
     /// here on, and goose serve's teardown no longer counts it as live.
     pub fn finished(&mut self) {
         self.armed = false;
-        live()
+        let was_live = live()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&self.leader);
+        if was_live {
+            super::shell_watchdog::note_gone(self.leader);
+        }
     }
 
     /// The command ended on its own (or was terminated and something survived): like `finished`,
@@ -234,12 +307,24 @@ impl CommandProcesses {
         if stamps.is_empty() {
             return;
         }
-        let mut lingering = lingering().lock().unwrap_or_else(|e| e.into_inner());
-        lingering.retain(|l| l.leader != self.leader && group_alive(l.leader));
-        lingering.push(Lingering {
+        let recorded = Lingering {
             leader: self.leader,
             stamps,
-        });
+        };
+        super::shell_watchdog::note_ended(&recorded);
+        let emptied: Vec<i32> = {
+            let mut lingering = lingering().lock().unwrap_or_else(|e| e.into_inner());
+            let (kept, emptied): (Vec<Lingering>, Vec<Lingering>) = lingering
+                .drain(..)
+                .filter(|l| l.leader != self.leader)
+                .partition(|l| group_alive(l.leader));
+            *lingering = kept;
+            lingering.push(recorded);
+            emptied.iter().map(|l| l.leader).collect()
+        };
+        for leader in emptied {
+            super::shell_watchdog::note_gone(leader);
+        }
     }
 
     /// An own group this process did not just spawn (the teardown's view): never armed, never
@@ -366,7 +451,18 @@ pub async fn terminate_live_commands() -> String {
             .unwrap_or_else(|e| e.into_inner())
             .drain(..)
             .collect();
-        terminate_command_groups(leaders, ended).await
+        // The watchdog keeps its records until this step has signalled them: a goose killed in
+        // the middle of it (the desktop's SIGKILL fallback) leaves the rest to the watchdog.
+        let handled: Vec<i32> = leaders
+            .iter()
+            .copied()
+            .chain(ended.iter().map(|l| l.leader))
+            .collect();
+        let outcome = terminate_command_groups(leaders, ended).await;
+        for leader in handled {
+            super::shell_watchdog::note_gone(leader);
+        }
+        outcome
     }
     #[cfg(not(unix))]
     {
@@ -401,7 +497,7 @@ pub(crate) async fn terminate_ended_for_test(ended: Lingering) -> String {
 /// In-flight groups by their live leader (the proof-gated killpg), ended groups only after their
 /// stamps prove the group is still the one recorded (then per pid — their leader is gone).
 #[cfg(unix)]
-async fn terminate_command_groups(leaders: Vec<i32>, ended: Vec<Lingering>) -> String {
+pub(super) async fn terminate_command_groups(leaders: Vec<i32>, ended: Vec<Lingering>) -> String {
     let (still_ours, gone): (Vec<Lingering>, Vec<Lingering>) =
         ended.into_iter().partition(|l| l.still_the_same_group());
     if leaders.is_empty() && still_ours.is_empty() {

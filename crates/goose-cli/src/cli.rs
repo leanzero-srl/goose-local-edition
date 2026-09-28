@@ -1271,6 +1271,10 @@ enum Command {
         #[arg(help = "Path to the bundled-extensions.json file")]
         file: PathBuf,
     },
+
+    /// goose serve's own watchdog (Q-407): ends its shell commands if it dies without its teardown.
+    #[command(name = "shell-watchdog", hide = true)]
+    ShellWatchdog,
 }
 
 #[cfg(feature = "local-inference")]
@@ -1441,6 +1445,7 @@ fn get_command_name(command: &Option<Command>) -> &'static str {
         Some(Command::Completion { .. }) => "completion",
         Some(Command::Review { .. }) => "review",
         Some(Command::ValidateExtensions { .. }) => "validate-extensions",
+        Some(Command::ShellWatchdog) => "shell-watchdog",
         None => "default_session",
     }
 }
@@ -1476,6 +1481,24 @@ struct ServeCommandArgs {
     exit_when_stdin_closes: bool,
 }
 
+#[cfg(unix)]
+fn arm_shell_watchdog() {
+    use goose::agents::platform_extensions::developer::shell_watchdog;
+    let armed = std::env::current_exe().and_then(|exe| {
+        let mut command = std::process::Command::new(exe);
+        command.arg(shell_watchdog::SUBCOMMAND);
+        shell_watchdog::arm(command)
+    });
+    match armed {
+        Ok(pid) => tracing::info!(pid, "shell-command watchdog armed"),
+        Err(error) => tracing::warn!(
+            event = "shell_watchdog_unarmed",
+            %error,
+            "no shell-command watchdog: a crash of this goose would leave its running shell commands behind"
+        ),
+    }
+}
+
 async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
     use axum::http::HeaderValue;
     use goose::acp::server_factory::{AcpServer, AcpServerFactoryConfig};
@@ -1506,6 +1529,11 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
     // keeps the mesh daemon (Q-223).
     exit_signals.parent_gone =
         exit_when_stdin_closes.then(|| crate::parent_watch::watch_for_eof(std::io::stdin()));
+    // Shell commands lead process groups of their own (Q-406), which a signal to this goosed's
+    // group never reaches: the teardown stops them, and a goosed that dies without it hands them
+    // to this watchdog (Q-407). Armed before anything long-lived is spawned (see `arm`).
+    #[cfg(unix)]
+    arm_shell_watchdog();
     // A goosed that crashed (or an older build) can leave its bundled MCPs orphaned; stop, per
     // pid, the ones that provably run goose's own bundled-MCP entries (Q-138).
     goose::agents::stdio_children::spawn_startup_reaper();
@@ -2449,10 +2477,26 @@ async fn handle_default_session() -> Result<()> {
     session.interactive(None).await
 }
 
+async fn run_shell_watchdog() -> Result<()> {
+    let outcome =
+        goose::agents::platform_extensions::developer::shell_watchdog::run_on_stdin().await;
+    tracing::info!(%outcome, "shell-command watchdog: goose serve is gone");
+    // goosed's stderr may be a pipe whose reader is gone with the app; `eprintln!` would panic on
+    // that write.
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr(), "[shell-watchdog] {outcome}");
+    Ok(())
+}
+
 pub async fn cli() -> anyhow::Result<()> {
     register_builtin_extensions(goose::builtin_extension::builtin_extensions());
 
     let cli = Cli::parse();
+
+    // goose serve's own helper, not a use of goose: no project entry, no command counter.
+    if matches!(cli.command, Some(Command::ShellWatchdog)) {
+        return run_shell_watchdog().await;
+    }
 
     if let Err(e) = crate::project_tracker::update_project_tracker(None, None) {
         warn!("Warning: Failed to update project tracker: {}", e);
@@ -2636,6 +2680,7 @@ pub async fn cli() -> anyhow::Result<()> {
                 }
             }
         }
+        Some(Command::ShellWatchdog) => run_shell_watchdog().await,
         None => handle_default_session().await,
     }
 }
@@ -2643,6 +2688,15 @@ pub async fn cli() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// goose serve spawns its watchdog by `shell_watchdog::SUBCOMMAND`; a rename on either side
+    /// would leave every goosed without one.
+    #[test]
+    fn the_shell_watchdog_subcommand_is_the_one_serve_spawns() {
+        use goose::agents::platform_extensions::developer::shell_watchdog::SUBCOMMAND;
+        let cli = Cli::try_parse_from(["goose", SUBCOMMAND]).expect("parse failed");
+        assert!(matches!(cli.command, Some(Command::ShellWatchdog)));
+    }
 
     #[test]
     fn completion_command_accepts_nushell_alias() {

@@ -3,6 +3,7 @@ pub mod file_diff;
 pub mod image;
 pub mod process_groups;
 pub mod shell;
+pub mod shell_watchdog;
 mod stall;
 pub mod tree;
 

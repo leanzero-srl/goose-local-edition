@@ -144,6 +144,14 @@ the fallback is logged. The group it kills is one the sidecar itself created —
 (the `uvx`-launched engine) inherit it. A group kill without that proof on the same pid — an operator
 command, a reaper script, a new engine site — is still wrong on sight.
 
+The same proof, one more caller set (Q-406/Q-407, 2026-09-28): `developer/process_groups.rs`
+`signal_owned_group(leader, sig)` calls `goose_sidecar::owns_process_group` on the exact pid before its
+`killpg`, and falls back per pid when it fails. Its callers are the shell tool's timeout and cancel,
+goose serve's teardown step "shell commands", and `goose shell-watchdog` (Q-407), which ends goosed's
+shell commands after goosed died — a process that did not create the group, so it signals an in-flight
+group only after the leader's kernel start time still equals the stamp goosed recorded at spawn, and
+an ended group only per pid while a stamped member is still that process and still in the group.
+
 Recorded in NOW.md, memory `kill-pids-never-killpg`, campaign skill §7. Any `killpg` / `kill -- -PGID`
 in an operator command is wrong on sight.
 
