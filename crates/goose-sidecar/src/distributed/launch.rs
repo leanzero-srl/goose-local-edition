@@ -900,13 +900,14 @@ fn record(live: &StdMutex<RankLive>, log: &SharedLog, stream: &str, line: &str) 
 
 /// Drains one of a rank's streams to EOF: every line into the durable log, then the live view.
 /// Bytes that are not UTF-8 are read lossily rather than ending the drain — a reader that stopped
-/// would leave the rank blocked on a full pipe at 0% CPU, the very state a hang shows.
+/// would leave the rank blocked on a full pipe at 0% CPU, the very state a hang shows. The handle
+/// ends at EOF, once every line is in the log and the live view.
 fn read_lines<R: AsyncRead + Unpin + Send + 'static>(
     reader: R,
     stream: &'static str,
     live: Arc<StdMutex<RankLive>>,
     log: SharedLog,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut reader = BufReader::new(reader);
         let mut buf = Vec::new();
@@ -930,18 +931,31 @@ fn read_lines<R: AsyncRead + Unpin + Send + 'static>(
                 }
             }
         }
-    });
+    })
 }
 
-/// Attaches the drains, and the durable log, to a spawned rank's two streams.
-fn drain_rank_output(child: &mut Child, rank: usize, node: &str, live: &Arc<StdMutex<RankLive>>) {
+/// Attaches the drains, and the durable log, to a spawned rank's two streams. The handles end when
+/// both streams have reached EOF — what a reader of the whole output waits on.
+fn drain_rank_output(
+    child: &mut Child,
+    rank: usize,
+    node: &str,
+    live: &Arc<StdMutex<RankLive>>,
+) -> Vec<tokio::task::JoinHandle<()>> {
     let log = open_rank_log(rank, node, live);
+    let mut drains = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        read_lines(stdout, "out", Arc::clone(live), Arc::clone(&log));
+        drains.push(read_lines(
+            stdout,
+            "out",
+            Arc::clone(live),
+            Arc::clone(&log),
+        ));
     }
     if let Some(stderr) = child.stderr.take() {
-        read_lines(stderr, "err", Arc::clone(live), log);
+        drains.push(read_lines(stderr, "err", Arc::clone(live), log));
     }
+    drains
 }
 
 pub fn spawn_rank(node: &NodeConfig, spec: &RankSpec) -> Result<RankProcess> {
@@ -7534,14 +7548,12 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
-    async fn wait_for<T>(what: &str, mut probe: impl FnMut() -> Option<T>) -> T {
-        for _ in 0..600 {
-            if let Some(found) = probe() {
-                return found;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    /// Until both drains reach EOF: every line the rank printed is in the log and the live view.
+    /// Awaited after the rank exited — its streams close with it (Q-245: this was 600 × 100 ms).
+    async fn drained(drains: Vec<tokio::task::JoinHandle<()>>) {
+        for drain in drains {
+            drain.await.expect("a drain task ended by panic");
         }
-        panic!("never saw {what}");
     }
 
     /// The drain never stops before EOF: a line that is not UTF-8 is read lossily. The old
@@ -7560,13 +7572,11 @@ print("ok")
             .spawn()
             .unwrap();
         let live = Arc::new(StdMutex::new(RankLive::default()));
-        drain_rank_output(&mut child, 1, "studio", &live);
+        let drains = drain_rank_output(&mut child, 1, "studio", &live);
         assert!(child.wait().await.unwrap().success());
-        wait_for("four lines", || {
-            (live.lock().unwrap().lines == 4).then_some(())
-        })
-        .await;
+        drained(drains).await;
         let live = live.lock().unwrap();
+        assert_eq!(live.lines, 4, "{}", live.tail_text());
         assert_eq!(live.state.as_ref().unwrap()["steps"], 7);
         let tail = live.tail_text();
         assert!(
@@ -7666,22 +7676,27 @@ threading.Event().wait()
             .spawn()
             .unwrap();
         let live = Arc::new(StdMutex::new(RankLive::default()));
-        drain_rank_output(&mut child, 1, "Work’s Mac Studio", &live);
-        let parked = wait_for("the worker parked at the doorbell", || {
-            let live = live.lock().unwrap();
-            live.state
-                .clone()
-                .filter(|state| state["at"] == "doorbell")
-                .or_else(|| {
-                    assert!(
-                        !live.tail_text().contains("Traceback"),
-                        "{}",
-                        live.tail_text()
-                    );
-                    None
-                })
-        })
-        .await;
+        let mut drains = drain_rank_output(&mut child, 1, "Work’s Mac Studio", &live);
+        // Until the worker parks at the doorbell, or until it fails — a Traceback in its output or
+        // its end, either failing with its tail.
+        let parked = loop {
+            let (state, tail) = {
+                let live = live.lock().unwrap();
+                (live.state.clone(), live.tail_text())
+            };
+            if let Some(state) = state.filter(|state| state["at"] == "doorbell") {
+                break state;
+            }
+            assert!(!tail.contains("Traceback"), "{tail}");
+            if let Some(status) = child.try_wait().unwrap() {
+                drained(std::mem::take(&mut drains)).await;
+                panic!(
+                    "the worker ended ({status}) before it parked:\n{}",
+                    live.lock().unwrap().tail_text()
+                );
+            }
+            tokio::time::sleep(crate::distributed::supervisor::READY_TICK).await;
+        };
         assert_eq!(parked["rank"], 1);
         assert_eq!(
             parked["steps"], 3,
@@ -7705,12 +7720,10 @@ threading.Event().wait()
             Some(libc::SIGTERM),
             "the rank still dies of the signal"
         );
+        drained(drains).await;
         let path = live.lock().unwrap().log.clone().unwrap();
-        let log = wait_for("the SIGTERM stack dump in the durable log", || {
-            let log = std::fs::read_to_string(&path).unwrap();
-            log.contains("in _next_request").then_some(log)
-        })
-        .await;
+        let log = std::fs::read_to_string(&path).unwrap();
+        assert!(log.contains("in _next_request"), "{log}");
         assert!(
             log.contains(" err Thread 0x") || log.contains(" err Current thread 0x"),
             "{log}"
