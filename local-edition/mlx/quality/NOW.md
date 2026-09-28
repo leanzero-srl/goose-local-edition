@@ -36,7 +36,10 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       again ("Zero occurrences of 'Mihai' is not what I asked for"), then it corrected itself. Context is
       173k/262k, so compaction is near: watch that Q-357 keeps the work folder. Turns 18–19: PDF made (3 pages); its own cross-check
       caught a made-up number in the report (3,728 vs 4,328) and fixed both files. Turn 20 (AUDIT): 1625 s, 24 tools, self-inflicted rewrites. Turn 21: the audit caught 6 of 7 planted defects
-      (its reply said "Four of the six"). Turn 22 (audit tests + runner) is running at 200k/262k.
+      (its reply said "Four of the six"). Turns 22–25: README written and followed from clean; 37/37 pass.
+      Q-455 FOUND: goose's `<compaction>~Nk tokens remaining` makes the model cut work ("Compaction is at about
+      1k, so I'll leave the table as it stands"). It is VA-107's twin for chats; agent dispatched.
+      At 02:26 the conversation reached 209,739/262,144 (80%) and COMPACTION is running — Q-357's live path.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -49,7 +52,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- none running.
+- Q-455 (chat compaction countdown → measured facts; prompt wording).
 
 ## 3.0.74 = main edd009c6b — DMG BUILT 01:5x (notarized; ~/goose-builds/dmg + the Studio's ~/Downloads)
 - Install on BOTH Macs AFTER #3u ends (10 turns left at 02:00, incl. the turn-28 recall check). Installing
@@ -86,6 +89,6 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-455. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-456. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
