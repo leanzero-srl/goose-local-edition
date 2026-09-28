@@ -146,6 +146,17 @@ impl Holds {
         self.open_reply_as(session, ReplyKind::User)
     }
 
+    /// A background delegate's reply, beside `parent`'s turn: the loop tick's work when that
+    /// turn's reply is a tick (session loops §5.5), a person's otherwise.
+    pub fn open_reply_beside(self: &Arc<Self>, session: &str, parent: &str) -> ReplyGuard {
+        let kind = if self.is_tick(&self.root_of(parent)) {
+            ReplyKind::Tick
+        } else {
+            ReplyKind::User
+        };
+        self.open_reply_as(session, kind)
+    }
+
     /// A reply of `kind`: `on_prompt` opens a loop's tick as `Tick`, every other turn as `User`.
     pub fn open_reply_as(self: &Arc<Self>, session: &str, kind: ReplyKind) -> ReplyGuard {
         let id = self.next_seq();

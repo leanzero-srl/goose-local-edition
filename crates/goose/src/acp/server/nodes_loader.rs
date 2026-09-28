@@ -909,8 +909,8 @@ impl NodeLoader for Seam {
         self.0.holds.note_child(child_session, parent_session);
     }
 
-    fn open_reply(&self, session: &str) -> seam::Hold {
-        Box::new(self.0.holds.open_reply(session))
+    fn open_reply(&self, session: &str, parent: &str) -> seam::Hold {
+        Box::new(self.0.holds.open_reply_beside(session, parent))
     }
 
     fn pause_reply(&self, session: &str) -> seam::Hold {

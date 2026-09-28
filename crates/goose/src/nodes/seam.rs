@@ -76,8 +76,9 @@ pub trait NodeLoader: Send + Sync {
     fn note_child(&self, child_session: &str, parent_session: &str);
     /// A reply of `session` for as long as the hold lives — a BACKGROUND delegate's, which runs
     /// beside its parent's turn and can outlive it: its demand is its own (it waits for the
-    /// parent's reply like any other's), and it keeps its way after the parent's reply ends.
-    fn open_reply(&self, session: &str) -> Hold;
+    /// parent's reply like any other's), and it keeps its way after the parent's reply ends. It is
+    /// the work of `parent`'s reply, so it is a loop tick's when that reply is one.
+    fn open_reply(&self, session: &str, parent: &str) -> Hold;
     /// `session`'s reply has no model call in flight while the hold lives (its turn waits on a
     /// background delegate in `load`): it holds nothing, so the delegate it waits for may switch.
     fn pause_reply(&self, session: &str) -> Hold;
@@ -128,9 +129,12 @@ pub fn note_child(child_session: &str, parent_session: &str) {
     }
 }
 
-/// A background delegate's own reply; `None` with no loader (nothing batches).
-pub fn open_reply(session: &str) -> Option<Hold> {
-    LOADER.get().map(|loader| loader.open_reply(session))
+/// A background delegate's own reply, of its parent's kind; `None` with no loader (nothing
+/// batches).
+pub fn open_reply(session: &str, parent: &str) -> Option<Hold> {
+    LOADER
+        .get()
+        .map(|loader| loader.open_reply(session, parent))
 }
 
 /// `session`'s reply holds nothing while the hold lives; `None` with no loader.

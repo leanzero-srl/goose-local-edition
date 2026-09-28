@@ -1833,7 +1833,7 @@ impl SummonClient {
         // for the parent's reply like any other's — it never stops the way the parent streams on.
         // The parent waiting on it in `load` holds nothing meanwhile (`pause_reply` there), so the
         // two never wait on each other.
-        let reply = crate::nodes::seam::open_reply(&task_id);
+        let reply = crate::nodes::seam::open_reply(&task_id, session_id);
 
         let turns = Arc::new(AtomicU32::new(0));
         let last_activity = Arc::new(AtomicU64::new(current_epoch_millis()));

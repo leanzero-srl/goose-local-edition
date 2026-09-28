@@ -1115,6 +1115,28 @@ async fn a_ticks_demand_waits_for_the_persons_reply_on_the_way_it_would_stop() {
     drop(tick);
 }
 
+/// Session loops §5.5 (L2c): a background delegate's reply is its parent's work — a loop tick's
+/// when the parent's reply is a tick — so it never reads as a person's reply, nor takes a person's
+/// place in the queue.
+#[tokio::test]
+async fn a_background_delegate_of_a_tick_is_the_ticks_work() {
+    use goose_sidecar::holders::ReplyKind;
+
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let _tick = core.holds().open_reply_as("loop-chat", ReplyKind::Tick);
+    let _person = core.holds().open_reply_as("chat-1", ReplyKind::User);
+    let _of_tick = core.holds().open_reply_beside("bg-of-tick", "loop-chat");
+    let _of_person = core.holds().open_reply_beside("bg-of-person", "chat-1");
+    let _of_nothing = core
+        .holds()
+        .open_reply_beside("bg-of-nothing", "closed-chat");
+    let kind = |s: &str| core.holds().reply(s).unwrap().kind;
+    assert_eq!(kind("bg-of-tick"), ReplyKind::Tick);
+    assert_eq!(kind("bg-of-person"), ReplyKind::User);
+    assert_eq!(kind("bg-of-nothing"), ReplyKind::User);
+}
+
 /// Session loops §5.5 (L2c): a tick's demand that waits on a PERSON's reply says whose, in the
 /// design's words; one that waits on another loop's tick is an ordinary wait.
 #[tokio::test]
