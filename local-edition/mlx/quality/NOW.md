@@ -97,7 +97,11 @@ Updated: 2026-09-28 22:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   link control Offline) → Q-420 cutting; green runs interleave.
 - BATCH 4 (→ 3.0.74): Q-417 DONE (worktree-agent-ad33799988ff81b4d: one servedModel() for single/split/remote;
   also the split's running modelId was null); Q-407 DONE (worktree-agent-a324bae2eb0f9de65 bb7c29e18: a pipe-watchdog
-  ends a dead goosed's command groups, start-time proven). Q-420 + Q-423 resumed.
+  ends a dead goosed's command groups, start-time proven). Q-423 DONE (worktree-agent-a5f81fabce30067fc: the engine's
+  stderr kept in a durable log; a failed stream's notice names what the engine logged; cause = Studio GPU at 99.6% on a
+  191k-token answer; BOTH Macs need it). Q-420 (+Q-421 product race) DONE → /tmp/merge-q420, short gate /tmp/g420.out,
+  lands on main first (CI red). Q-424 (context-memory admission) SCHEDULED waits on: a Studio measurement ladder
+  (32k/64k/128k/176k peak Metal) when the engine is free; Q-425 (fork names memory errors) QUEUED behind: fork access.
 
 - OWNER DEMO (22:2x): a strategy 'Studio chat, split for heavy work' — chat on the Studio single, delegates on
   the split — built through the app's UI and exercised 3 cycles (switch stability measured) → DEMO-2026-09-28-strategy.
