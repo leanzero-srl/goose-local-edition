@@ -91,3 +91,40 @@ describe('fetchMlxLiveStatus — every failure is named', () => {
     expect(!slow.ok && slow.error).toBe('timeout');
   });
 });
+
+describe('fetchMlxLiveStatus — Q-409: a relay base’s capability never leaves the read', () => {
+  const CAPABILITY = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+  const RELAY = `http://127.0.0.1:61001/relay/${CAPABILITY}`;
+
+  it('fetches through the real relay path, and says it back redacted', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ status: 'idle' }));
+    const r = await fetchMlxLiveStatus(RELAY, fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledWith(`${RELAY}/v1/status`, expect.anything());
+    expect(r).toEqual({
+      ok: true,
+      url: 'http://127.0.0.1:61001/relay/…/v1/status',
+      body: { status: 'idle' },
+    });
+  });
+
+  it('a refused relay base is named without its capability', async () => {
+    const r = await fetchMlxLiveStatus(`http://10.0.0.2:61001/relay/${CAPABILITY}`, vi.fn());
+    expect(r).toEqual({
+      ok: false,
+      url: 'http://10.0.0.2:61001/relay/…',
+      error: 'bad-base-url',
+      detail: 'engine base URL is not a loopback host: http://10.0.0.2:61001/relay/…',
+    });
+  });
+
+  it('a body the JSON parser refuses is quoted at the fault — the capability in it is not', async () => {
+    const r = await fetchMlxLiveStatus(
+      RELAY,
+      async () =>
+        new Response(`{"detail": "no such relay", "path": /relay/${CAPABILITY}/v1/status}`)
+    );
+    expect(!r.ok && r.error).toBe('bad-json');
+    expect(!r.ok && r.detail).toContain('/relay/…');
+    expect(JSON.stringify(r)).not.toContain(CAPABILITY.slice(0, 3));
+  });
+});

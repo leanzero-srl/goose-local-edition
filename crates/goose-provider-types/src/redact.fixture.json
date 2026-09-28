@@ -1,0 +1,140 @@
+{
+  "about": "THE relay-capability shape rule, input -> output. Read by goose-provider-types redact.rs (Rust) AND by ui/desktop/src/utils/redactRelay.test.ts (TypeScript), so the two ports cannot diverge (Q-409): a case added here binds both.",
+  "cases": [
+    {
+      "name": "a relay base URL, as goosed hands it to the desktop",
+      "input": "http://127.0.0.1:61001/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "output": "http://127.0.0.1:61001/relay/…"
+    },
+    {
+      "name": "a path under the relay",
+      "input": "http://127.0.0.1:61001/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/v1/chat/completions",
+      "output": "http://127.0.0.1:61001/relay/…/v1/chat/completions"
+    },
+    {
+      "name": "the status read's URL",
+      "input": "http://127.0.0.1:61001/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/v1/status",
+      "output": "http://127.0.0.1:61001/relay/…/v1/status"
+    },
+    {
+      "name": "a bare relay path",
+      "input": "/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/goose/admission",
+      "output": "/relay/…/goose/admission"
+    },
+    {
+      "name": "a query ends the segment and is kept: the shape rule strips nothing else",
+      "input": "http://127.0.0.1:1/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08?key=abc",
+      "output": "http://127.0.0.1:1/relay/…?key=abc"
+    },
+    {
+      "name": "a fragment ends the segment",
+      "input": "/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08#frag",
+      "output": "/relay/…#frag"
+    },
+    {
+      "name": "any segment is the capability, whatever it looks like",
+      "input": "/relay/not-hex_at-all/goose/admission",
+      "output": "/relay/…/goose/admission"
+    },
+    {
+      "name": "a quote's closing paren after a bare base is over-redacted, never a secret under-redacted",
+      "input": "error sending request for url (http://127.0.0.1:2/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08)",
+      "output": "error sending request for url (http://127.0.0.1:2/relay/…"
+    },
+    {
+      "name": "a JSON body quoting the path: the double quote ends the segment",
+      "input": "{\"admission\":\"/relay/not-hex_at-all/goose/admission\"}",
+      "output": "{\"admission\":\"/relay/…/goose/admission\"}"
+    },
+    {
+      "name": "every occurrence in one text",
+      "input": "a /relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/v1 and b /relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "output": "a /relay/…/v1 and b /relay/…"
+    },
+    {
+      "name": "a relay path nested in a relay path",
+      "input": "/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/v1",
+      "output": "/relay/…/relay/…/v1"
+    },
+    {
+      "name": "ASCII whitespace ends the segment",
+      "input": "at /relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 then",
+      "output": "at /relay/… then"
+    },
+    {
+      "name": "a newline ends the segment",
+      "input": "/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\nnext line",
+      "output": "/relay/…\nnext line"
+    },
+    {
+      "name": "U+0085 NEXT LINE is Unicode White_Space: it ends the segment (a JS \\s does not match it)",
+      "input": "/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\u0085rest",
+      "output": "/relay/…\u0085rest"
+    },
+    {
+      "name": "U+FEFF is NOT Unicode White_Space: it is part of the segment (a JS \\s would match it)",
+      "input": "/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\ufeffrest",
+      "output": "/relay/…"
+    },
+    {
+      "name": "U+00A0 NO-BREAK SPACE ends the segment",
+      "input": "/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\u00a0rest",
+      "output": "/relay/…\u00a0rest"
+    },
+    {
+      "name": "the characters a serialized path always percent-encodes end the segment",
+      "input": "/relay/a<b /relay/c>d /relay/e`f /relay/g{h /relay/i}j /relay/k\\l",
+      "output": "/relay/…<b /relay/…>d /relay/…`f /relay/…{h /relay/…}j /relay/…\\l"
+    },
+    {
+      "name": "a non-ASCII capability, astral characters included, is redacted whole",
+      "input": "/relay/ключ🔑x/v1",
+      "output": "/relay/…/v1"
+    },
+    {
+      "name": "an already-redacted text is unchanged (idempotent)",
+      "input": "http://127.0.0.1:61001/relay/…/v1/status",
+      "output": "http://127.0.0.1:61001/relay/…/v1/status"
+    },
+    {
+      "name": "an empty segment has nothing to hide",
+      "input": "https://api.example.com/v1/relay/",
+      "output": "https://api.example.com/v1/relay/"
+    },
+    {
+      "name": "an empty segment, then a path",
+      "input": "/relay//v1/models",
+      "output": "/relay//v1/models"
+    },
+    {
+      "name": "a path that only starts like the prefix is not a relay",
+      "input": "https://api.example.com/relayed/v1/models",
+      "output": "https://api.example.com/relayed/v1/models"
+    },
+    {
+      "name": "a trailing /relay with no slash is not a relay",
+      "input": "https://api.example.com/v1/relay",
+      "output": "https://api.example.com/v1/relay"
+    },
+    {
+      "name": "the prefix is case-sensitive",
+      "input": "/Relay/abc/v1",
+      "output": "/Relay/abc/v1"
+    },
+    {
+      "name": "a text with no relay is unchanged",
+      "input": "unreachable: connect ECONNREFUSED 127.0.0.1:61001",
+      "output": "unreachable: connect ECONNREFUSED 127.0.0.1:61001"
+    },
+    {
+      "name": "the engine monitor's bad-base-url detail",
+      "input": "bad-base-url: engine base URL is not a loopback host: http://10.0.0.2:61001/relay/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "output": "bad-base-url: engine base URL is not a loopback host: http://10.0.0.2:61001/relay/…"
+    },
+    {
+      "name": "an empty text",
+      "input": "",
+      "output": ""
+    }
+  ]
+}

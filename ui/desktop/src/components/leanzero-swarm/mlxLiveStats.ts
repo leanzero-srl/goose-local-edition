@@ -1,6 +1,7 @@
 import type { MlxLiveStatusResult } from '../../utils/mlxLiveStatus';
 import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
 import type { MlxServing } from '../../utils/mlxServing';
+import { redactRelayCapability } from '../../utils/redactRelay';
 
 /**
  * The state tile's live instrument, as pure functions over MEASURED inputs: Rapid-MLX's own
@@ -534,13 +535,20 @@ export async function readMlxLiveStatus(baseUrl: string): Promise<MlxLiveRead> {
     }
   ).electron?.mlxLiveStatus;
   if (!bridge) return { ok: false, detail: 'this build has no live-status bridge' };
+  // `baseUrl` may be goosed's relay to a linked Mac, whose path is its capability: every failure's
+  // words pass goose's relay rule before the tile shows them (Q-409).
   let result: MlxLiveStatusResult;
   try {
     result = await bridge(baseUrl);
   } catch (err) {
-    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      detail: redactRelayCapability(err instanceof Error ? err.message : String(err)),
+    };
   }
-  if (!result.ok) return { ok: false, detail: `${result.error}: ${result.detail}` };
+  if (!result.ok) {
+    return { ok: false, detail: redactRelayCapability(`${result.error}: ${result.detail}`) };
+  }
   return parseMlxLiveStatus(result.body);
 }
 

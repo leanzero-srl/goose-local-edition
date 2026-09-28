@@ -115,6 +115,38 @@ mod tests {
         );
     }
 
+    /// `redact.fixture.json` is the rule's contract with the desktop's TypeScript port
+    /// (ui/desktop/src/utils/redactRelay.test.ts runs the same cases): a case added there binds both.
+    #[test]
+    fn the_shared_fixture_holds_for_the_rust_rule() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            input: String,
+            output: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            cases: Vec<Case>,
+        }
+        let fixture: Fixture = serde_json::from_str(include_str!("redact.fixture.json")).unwrap();
+        assert!(fixture.cases.len() >= 20, "the fixture lost its cases");
+        for case in &fixture.cases {
+            assert_eq!(
+                redact_relay_capability(&case.input),
+                case.output,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                redact_relay_capability(&case.output),
+                case.output,
+                "idempotent: {}",
+                case.name
+            );
+        }
+    }
+
     /// NEGATIVE CONTROLS: a URL with no `/relay/<segment>` is exactly what sanitizing always gave.
     #[test]
     fn a_url_that_is_not_a_relay_is_unchanged() {
