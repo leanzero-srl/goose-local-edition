@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Responder"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "O goose está trabalhando — você poderá responder quando este turno terminar."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "O goose está trabalhando — uma resposta dada agora espera e é enviada quando este turno terminar."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Cancelar"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Fechar este aviso"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "Na fila · responde quando este turno terminar"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Na fila"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Enviando sua resposta…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Precisa de você · # pergunta} other {Precisa de você · # perguntas}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} na fila"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Sua resposta: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Não enviada — esta pergunta foi fechada antes que sua resposta na fila pudesse ir."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Não enviada — não foi possível salvar sua resposta na fila: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Dispensar"

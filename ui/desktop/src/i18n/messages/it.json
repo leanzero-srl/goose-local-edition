@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Rispondi"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose sta lavorando — potrai rispondere quando questo turno finisce."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose sta lavorando — una risposta data ora resta in attesa e parte quando questo turno finisce."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Annulla"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Chiudi questo avviso"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "In coda · risponde quando questo turno finisce"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "In coda"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Invio della tua risposta…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Ha bisogno di te · # domanda} other {Ha bisogno di te · # domande}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} in coda"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "La tua risposta: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Non inviata — questa domanda è stata chiusa prima che la tua risposta in coda potesse partire."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Non inviata — non è stato possibile salvare la tua risposta in coda: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Ignora"

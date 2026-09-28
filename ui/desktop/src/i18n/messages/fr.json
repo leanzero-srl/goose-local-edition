@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Répondre"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose travaille — vous pourrez répondre à la fin de ce tour."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose travaille — une réponse donnée maintenant attend et part à la fin de ce tour."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Annuler"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Fermer cet avis"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "En file d’attente · répond à la fin de ce tour"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "En attente"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Envoi de votre réponse…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {A besoin de vous · # question} other {A besoin de vous · # questions}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} en attente"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Votre réponse : {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Non envoyée — cette question a été fermée avant que votre réponse en attente puisse partir."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Non envoyée — votre réponse en attente n’a pas pu être enregistrée : {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Ignorer"
