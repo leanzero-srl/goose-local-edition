@@ -652,7 +652,7 @@ describe('MlxEngineMonitor — Q-417: a remote single names the model it serves,
       statusDetail: null,
     });
     // What leaves the loop (the tray, every window, mlxEngineActivity) carries it too.
-    expect(h.snapshots.at(-1)?.modelId).toBe(STUDIO_MODEL);
+    expect(h.snapshots[h.snapshots.length - 1]?.modelId).toBe(STUDIO_MODEL);
   });
 
   it('a status that names none reads the route’s model — the single engine’s order, one derivation', async () => {
