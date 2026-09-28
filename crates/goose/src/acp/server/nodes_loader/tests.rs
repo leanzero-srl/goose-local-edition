@@ -1384,3 +1384,73 @@ sys.stdin.readline()
         other.wait().await.unwrap();
     }
 }
+
+/// Q-257: one goosed serves every desktop window, one agent per ACP connection. The loader used to
+/// keep only the LATEST agent: close the newer window and every load was refused "no goose window
+/// is connected" while the older window was still connected. It now reaches any live connection.
+mod live_agents {
+    use super::*;
+    use crate::acp::server::{AcpProviderFactory, GooseAcpAgent, GooseAcpAgentOptions};
+    use crate::agents::GoosePlatform;
+    use crate::session::SessionManager;
+
+    async fn window_agent(dir: &std::path::Path) -> Arc<GooseAcpAgent> {
+        let provider_factory: AcpProviderFactory = Arc::new(|_name, _extensions, _dir| {
+            Box::pin(async { Err(anyhow::anyhow!("no provider in this test")) })
+        });
+        let scheduler = crate::scheduler::Scheduler::new(
+            dir.join("schedule.json"),
+            Arc::new(SessionManager::new(dir.to_path_buf())),
+        )
+        .await
+        .unwrap();
+        Arc::new(
+            GooseAcpAgent::new(GooseAcpAgentOptions {
+                provider_factory,
+                builtins: Vec::new(),
+                data_dir: dir.to_path_buf(),
+                config_dir: dir.to_path_buf(),
+                disable_session_naming: true,
+                goose_platform: GoosePlatform::GooseDesktop,
+                additional_source_roots: Vec::new(),
+                scheduler,
+            })
+            .await
+            .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn closing_the_newer_window_leaves_the_older_one_to_start_a_way() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let agents = LiveAgents::new();
+        let window_1 = window_agent(dir.path()).await;
+        let window_2 = window_agent(dir.path()).await;
+        agents.attach(&window_1);
+        agents.attach(&window_2);
+        assert!(Arc::ptr_eq(&agents.live().unwrap(), &window_2));
+
+        drop(window_2);
+        let reached = agents
+            .live()
+            .expect("window 1 is still connected, so the loader must reach it");
+        assert!(Arc::ptr_eq(&reached, &window_1));
+
+        drop(reached);
+        drop(window_1);
+        assert!(agents.live().is_none());
+    }
+
+    #[test]
+    fn a_closed_connection_is_forgotten_on_the_next_attach() {
+        let agents = LiveAgents::new();
+        for n in 0..3 {
+            let gone = Arc::new(n);
+            agents.attach(&gone);
+        }
+        let kept = Arc::new(9);
+        agents.attach(&kept);
+        assert_eq!(agents.agents.lock().unwrap().len(), 1);
+        assert_eq!(*agents.live().unwrap(), 9);
+    }
+}

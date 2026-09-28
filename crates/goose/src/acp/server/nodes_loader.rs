@@ -932,7 +932,35 @@ impl NodeLoader for Seam {
 }
 
 static LOADER: OnceLock<Arc<Core>> = OnceLock::new();
-static AGENT: StdMutex<Option<Weak<super::GooseAcpAgent>>> = StdMutex::new(None);
+static AGENTS: LiveAgents<super::GooseAcpAgent> = LiveAgents::new();
+
+/// Every ACP connection's agent this process serves, held weakly. One goosed serves every desktop
+/// window (Q-257), one agent per connection: the loader must reach ANY window still connected — the
+/// newest live one — not only the latest to connect, which is gone once that window closes.
+pub(super) struct LiveAgents<T> {
+    agents: StdMutex<Vec<Weak<T>>>,
+}
+
+impl<T> LiveAgents<T> {
+    pub(super) const fn new() -> Self {
+        Self {
+            agents: StdMutex::new(Vec::new()),
+        }
+    }
+
+    pub(super) fn attach(&self, agent: &Arc<T>) {
+        let mut agents = self.agents.lock().unwrap();
+        agents.retain(|weak| weak.strong_count() > 0);
+        agents.push(Arc::downgrade(agent));
+    }
+
+    /// The newest agent whose connection is still served, if any.
+    pub(super) fn live(&self) -> Option<Arc<T>> {
+        let mut agents = self.agents.lock().unwrap();
+        agents.retain(|weak| weak.strong_count() > 0);
+        agents.iter().rev().find_map(Weak::upgrade)
+    }
+}
 
 /// Install this process's loader (once; the ACP server calls it as it starts), and have this Mac's
 /// engine report its loads to the load store.
@@ -960,23 +988,18 @@ pub(super) fn install() {
     }
 }
 
-/// The agent whose ACP handlers the loader calls (the latest one this process serves).
+/// An agent whose ACP handlers the loader may call: every connection this process serves.
 pub(super) fn attach_agent(agent: &Arc<super::GooseAcpAgent>) {
-    *AGENT.lock().unwrap() = Some(Arc::downgrade(agent));
+    AGENTS.attach(agent);
 }
 
 fn agent() -> Result<Arc<super::GooseAcpAgent>, Refusal> {
-    AGENT
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(Weak::upgrade)
-        .ok_or_else(|| {
-            Refusal::new(
-                NodeLoadRefusalCode::Unknown,
-                "no goose window is connected to this goose process, so it cannot start a way",
-            )
-        })
+    AGENTS.live().ok_or_else(|| {
+        Refusal::new(
+            NodeLoadRefusalCode::Unknown,
+            "no goose window is connected to this goose process, so it cannot start a way",
+        )
+    })
 }
 
 /// The reply guard `on_prompt` holds for the whole turn, as a person's reply or a loop's tick
