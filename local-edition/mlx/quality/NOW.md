@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 15:0x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 15:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -24,7 +24,9 @@ Updated: 2026-09-28 15:0x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - Q-367 (tool-not-found error leads with the closest real tools) + Q-369 (load_tools' false message) DONE →
   /tmp/merge-q367, gate /tmp/g367.out after g347. Q-368 = model behaviour (no goose cause; 4 restatements, turn 2). Turn 2 ended 761 s, 27 tools, a correct
   sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turns 3–4 done (1106 s / 176 s);
-  turn 3's `write` lost every `=>` (SyntaxError, two rewrites) → Q-371 CUTTING. Turn 5 running. Studio-side: forge-tuner got a
+  turn 3's lost `=>` = the MODEL's sampling (token-CRC proof, Q-371); found Q-372
+  (a value holding </parameter> was cut) → /tmp/merge-q371, gate /tmp/g371.out after g359; Q-385 SCHEDULED
+  (model blames the tool; sampling measure waits on the split free). Turn 5 running. Studio-side: forge-tuner got a
   goose tool-call training proposal (docs/GOOSE-TOOLCALL-ROUND.md, 6631628) — owner picks public vs private data.
 - Owner features (designs DESIGN-Q357/358/359-*.md): Q-357 compaction revamp CUTTING (all slices, on merge-q342) ·
   Q-358 search S1+S2 CUTTING; notes S3–S5 QUEUED behind: merge-q344 · Q-359 C0/C1/C2/C4 DONE → /tmp/merge-q359, gate /tmp/g359.out after g367;
