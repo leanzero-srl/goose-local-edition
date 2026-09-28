@@ -695,8 +695,9 @@ pub struct MessageMetadata {
     pub steer: bool,
     /// The provider error this notice ends a turn on, by its class (Q-302). UI-only: surfaced as
     /// `_meta.goose.providerError` so a client paints the failure without matching its text.
+    /// Boxed: four strings would grow every `Message` for a field almost none carry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_error: Option<ProviderErrorNotice>,
+    pub provider_error: Option<Box<ProviderErrorNotice>>,
 }
 
 /// A provider error as a client shows it: what the serving engine said, whether resending can
@@ -1095,7 +1096,7 @@ impl Message {
     }
 
     pub fn with_provider_error(mut self, notice: ProviderErrorNotice) -> Self {
-        self.metadata.provider_error = Some(notice);
+        self.metadata.provider_error = Some(Box::new(notice));
         self
     }
 

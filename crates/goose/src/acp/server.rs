@@ -3165,7 +3165,7 @@ impl GooseAcpAgent {
                                 message.created,
                                 &message.role,
                                 message.metadata.steer,
-                                message.metadata.provider_error.as_ref(),
+                                message.metadata.provider_error.as_deref(),
                                 &agent,
                                 session,
                                 cx,

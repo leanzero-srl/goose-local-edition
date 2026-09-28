@@ -137,12 +137,12 @@ async fn a_permanent_refusal_ends_the_turn_as_a_classed_notice_with_no_retry_adv
         .expect("the failure is saved");
     assert_eq!(
         last.metadata.provider_error,
-        Some(ProviderErrorNotice {
+        Some(Box::new(ProviderErrorNotice {
             class: "request".to_string(),
             transient: false,
             said: SAID.to_string(),
             detail: format!("Request failed: Resource not found (404) at {URL}: {SAID}"),
-        })
+        }))
     );
     let text = last.as_concat_text();
     assert!(text.ends_with(PERMANENT_ERROR_CLOSER), "{text}");
