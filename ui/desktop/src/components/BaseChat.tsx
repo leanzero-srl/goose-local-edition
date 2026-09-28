@@ -42,6 +42,7 @@ import SessionRail from './session-rail/SessionRail';
 import { useSessionLoop } from './loops/useSessionLoop';
 import { LoopSessionContext } from './loops/startLoopRequest';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
+import { useHeaderObstacle } from './Layout/headerChrome';
 import {
   Button,
   FOCUS,
@@ -91,6 +92,9 @@ const i18n = defineMessages({
  * height (`h-lz-row-dense`), not a 20px chip inside an anchor that hugged it. Solid surface on the
  * strong outline, the monogram on the accent fill; hover is the solid surface-2 step.
  */
+/** px between where the conversation starts and the rail's pills (`top-2`; 4.5rem under pt-16). */
+const RAIL_TOP_GAP = 8;
+
 const BRAND_PILL = cx(
   'no-drag inline-flex h-lz-row-dense items-center gap-2 pl-1.5 pr-3 text-lz-body text-lz-ink',
   WEIGHT.medium,
@@ -247,6 +251,13 @@ export default function BaseChat({
   const isNavCollapsed = !navContext?.isNavExpanded;
   const headerSpacingClassName = isMobile || isNavCollapsed ? 'pt-16' : 'pt-12';
   const headerBarClassName = isMobile || isNavCollapsed ? 'h-16' : 'h-12';
+  // The brand chip floats over the top band's right end: the chat title keeps clear (Q-315).
+  const [brandCorner, setBrandCorner] = useState<HTMLDivElement | null>(null);
+  useHeaderObstacle(brandCorner, 'right');
+  // The rail's pills float over the conversation's top-right corner (Q-315: "4 files +659 −116" sat
+  // on the first bubble): the conversation starts below them. The rail sits RAIL_TOP_GAP below where
+  // the conversation starts (top-2 in the local pane; 4.5rem / 3.5rem under the 4rem / 3rem header).
+  const [railPillsHeight, setRailPillsHeight] = useState(0);
   const { droppedFiles, setDroppedFiles, handleDrop, handleDragOver } = useFileDrop();
   const onStreamFinish = useCallback(() => {}, []);
 
@@ -613,6 +624,13 @@ export default function BaseChat({
           paddingX={6}
           paddingY={0}
         >
+          {railPillsHeight > 0 && (
+            <div
+              aria-hidden
+              data-testid="session-rail-clearance"
+              style={{ height: railPillsHeight + RAIL_TOP_GAP }}
+            />
+          )}
           {recipe?.title && (
             <div className="sticky top-0 z-10 bg-background-primary px-0 -mx-6 mb-6 pt-6">
               <RecipeHeader title={recipe.title} />
@@ -686,6 +704,7 @@ export default function BaseChat({
           loop={sessionLoop.state}
           control={sessionLoop.control}
           workingDir={session?.working_dir}
+          onPillsHeight={setRailPillsHeight}
           className={cx(
             'absolute right-4',
             LAYER.chrome,
@@ -802,6 +821,7 @@ export default function BaseChat({
           />
           {/* Brand — top right, one pill (Q-191); page chrome, so every overlay covers it */}
           <div
+            ref={setBrandCorner}
             data-testid="session-brand-corner"
             className={cx('absolute top-2 right-4 flex flex-row items-center gap-2', LAYER.chrome)}
           >
@@ -809,7 +829,11 @@ export default function BaseChat({
             <EnvironmentBadge className="translate-y-px" />
           </div>
 
-          <SessionActionsHeader session={session} onSessionChange={updateSession} />
+          <SessionActionsHeader
+            session={session}
+            active={isActiveSession}
+            onSessionChange={updateSession}
+          />
 
           {isLocal ? (
             <div className={cx('flex flex-1 min-h-0 flex-col', headerSpacingClassName)}>

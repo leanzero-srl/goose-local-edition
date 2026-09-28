@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useIntl } from '../../i18n';
 import type { Message } from '../../types/message';
@@ -59,6 +59,7 @@ export default function SessionRail({
   loop,
   control,
   workingDir,
+  onPillsHeight,
   className,
 }: {
   sessionId: string;
@@ -66,6 +67,11 @@ export default function SessionRail({
   loop: SessionLoop;
   control: (action: LoopControlAction) => Promise<ControlResult>;
   workingDir?: string;
+  /**
+   * The collapsed pills' height (0 while none show, or the panel is open): the conversation starts
+   * below them, so they never sit on its first message (Q-315).
+   */
+  onPillsHeight: (px: number) => void;
   className?: string;
 }) {
   const intl = useIntl();
@@ -135,6 +141,20 @@ export default function SessionRail({
   const hasChanges = changes.files.length > 0;
   const hasLoop = loop.kind === 'loop' || loop.kind === 'unreadable';
 
+  const [pillsRow, setPillsRow] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    if (!pillsRow) {
+      onPillsHeight(0);
+      return;
+    }
+    const report = () => onPillsHeight(pillsRow.getBoundingClientRect().height);
+    report();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(report);
+    observer.observe(pillsRow);
+    return () => observer.disconnect();
+  }, [pillsRow, onPillsHeight]);
+
   if (!pill && !hasChanges && !(memory.open && hasLoop)) return null;
 
   const open = (tab: RailTab) => {
@@ -166,6 +186,7 @@ export default function SessionRail({
     >
       {!memory.open ? (
         <div
+          ref={setPillsRow}
           data-testid="session-rail-pills"
           className="flex items-start justify-end gap-2 max-[560px]:flex-col max-[560px]:items-end"
         >

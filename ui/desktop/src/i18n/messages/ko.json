@@ -10513,5 +10513,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "간략히 보기"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "실행 중"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

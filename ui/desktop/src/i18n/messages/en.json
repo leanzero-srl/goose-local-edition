@@ -10513,5 +10513,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "Show less"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "Running"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

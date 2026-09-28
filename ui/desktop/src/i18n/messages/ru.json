@@ -10513,5 +10513,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "Показать меньше"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "Идёт"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

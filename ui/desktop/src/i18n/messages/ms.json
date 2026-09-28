@@ -10513,5 +10513,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "Tunjukkan kurang"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "Berjalan"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

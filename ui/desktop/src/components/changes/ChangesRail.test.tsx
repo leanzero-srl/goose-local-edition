@@ -22,6 +22,7 @@ function renderRail(messages: Message[]) {
       messages={messages}
       loop={{ kind: 'none' }}
       control={async () => ({ kind: 'failed', error: 'unused' })}
+      onPillsHeight={() => undefined}
     />,
     { wrapper: IntlTestWrapper }
   );

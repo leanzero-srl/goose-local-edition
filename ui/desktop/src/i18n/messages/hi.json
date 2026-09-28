@@ -10513,5 +10513,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "कम दिखाओ"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "चल रहा है"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

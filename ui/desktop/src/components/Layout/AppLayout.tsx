@@ -18,6 +18,7 @@ import SessionActivityIndicator from '../sessionActivity/SessionActivityIndicato
 import { useReportGlanceSessions } from '../engineGlance/glanceStore';
 import { useGlanceTurnedOffNotice } from '../engineGlance/useGlanceTurnedOffNotice';
 import { LoopDriver } from '../loops/LoopDriver';
+import { useHeaderObstacle } from './headerChrome';
 
 const i18n = defineMessages({
   openNavigation: {
@@ -66,6 +67,9 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
   useReportGlanceSessions();
   // Turned off from the desktop window itself: this window says so, with the way back (Q-224).
   useGlanceTurnedOffNotice();
+  // The toggle + "N needs you" float over the chat's top band: its title keeps clear (Q-315).
+  const [leftChrome, setLeftChrome] = useState<HTMLDivElement | null>(null);
+  useHeaderObstacle(leftChrome, 'left');
 
   // The sidebar's right edge is a drag handle (ChatGPT's sidebar resizes the same way): pointer
   // capture keeps the drag alive off the handle; the width is clamped and remembered by the context.
@@ -106,6 +110,7 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
       {/* Session loops: goosed offers each tick; this window fires it through the chat's own door. */}
       <LoopDriver />
       <div
+        ref={setLeftChrome}
         style={{ zIndex: Z_INDEX.HEADER }}
         className={cn('absolute flex items-center gap-1', headerPadding, headerTop, 'ml-1.5')}
       >

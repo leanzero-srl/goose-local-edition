@@ -10513,5 +10513,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "Daha az göster"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "Çalışıyor"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

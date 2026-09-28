@@ -10513,5 +10513,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "表示を減らす"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "実行中"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

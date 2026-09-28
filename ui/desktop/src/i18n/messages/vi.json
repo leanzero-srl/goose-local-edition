@@ -10513,5 +10513,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "Hiện ít hơn"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "Đang chạy"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

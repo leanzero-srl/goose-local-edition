@@ -43,6 +43,7 @@ function renderRail({
       loop={loop}
       control={control}
       workingDir="/w"
+      onPillsHeight={() => undefined}
       className="absolute right-4 top-2"
     />,
     { wrapper: IntlTestWrapper }
