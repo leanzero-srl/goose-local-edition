@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import raw from '../../../../../crates/goose/src/session_loops/loops.fixture.json';
+import { acpGetSessionListItem, type SessionListItem } from '../../acp/sessions';
+import { AppEvents } from '../../constants/events';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import type { Message } from '../../types/message';
 import { sessionChanges } from '../changes/fileDiff';
@@ -10,6 +12,11 @@ import { LOOP_MESSAGES, NOW_MS, loopRecord, markerId, waitingRecord } from '../l
 import { onStartLoopRequest, type StartLoopRequest } from '../loops/startLoopRequest';
 import type { ControlResult, SessionLoop } from '../loops/useSessionLoop';
 import SessionRail from './SessionRail';
+
+vi.mock('../../acp/sessions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../acp/sessions')>()),
+  acpGetSessionListItem: vi.fn(),
+}));
 
 type Control = (action: string) => Promise<ControlResult>;
 
@@ -49,6 +56,8 @@ const asLoop = (
 ): SessionLoop => ({ kind: 'loop', loop: record, status, reason });
 
 beforeEach(() => {
+  vi.mocked(acpGetSessionListItem).mockRejectedValue(new Error('no goosed in this test'));
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW_MS);
   vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(0);
@@ -401,6 +410,51 @@ interface SentenceCase {
   utcOffsetMinutes: number;
   expect: { text: string };
 }
+
+describe('a chat a tick yielded to is named as it is called now (Q-279)', () => {
+  it('in the tick row and in the NOW line, following a rename', async () => {
+    vi.mocked(acpGetSessionListItem).mockResolvedValue({
+      id: 's2',
+      name: 'Simple pong reply',
+    } as SessionListItem);
+    const record = waitingRecord();
+    const ticks = record.ticks!;
+    const yielded = {
+      ...record,
+      status: 'waiting_turn' as const,
+      statusReason: { kind: 'user_turn' as const, sessionId: 's2', chat: 'New Chat' },
+      ticks: [
+        ...ticks.slice(0, 4),
+        {
+          ...ticks[4],
+          report: null,
+          outcome: { kind: 'yielded' as const, toSession: 's2', toChat: 'New Chat' },
+        },
+      ],
+    };
+    renderRail({ loop: asLoop(yielded) });
+    fireEvent.click(screen.getByTestId('loop-rail-pill'));
+    const row5 = screen
+      .getAllByTestId('loop-tick-row')
+      .find((r) => r.getAttribute('data-tick') === '5')!;
+    expect(
+      await within(row5).findByText('Yielded to your turn in "Simple pong reply"')
+    ).toBeTruthy();
+    expect(screen.getByTestId('loop-now')).toHaveTextContent(
+      'Tick 6 is due — it starts when your turn in "Simple pong reply" ends'
+    );
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(AppEvents.SESSION_RENAMED, {
+          detail: { sessionId: 's2', newName: 'Pong, renamed' },
+        })
+      );
+    });
+    expect(within(row5).getByText('Yielded to your turn in "Pong, renamed"')).toBeTruthy();
+    expect(screen.getByTestId('loop-now')).toHaveTextContent('your turn in "Pong, renamed" ends');
+    expect(screen.queryByText(/New Chat/)).not.toBeInTheDocument();
+  });
+});
 
 describe('the NOW block, one case per status and reason of the fixture (§8.4)', () => {
   const cases = (raw as unknown as { sentences: SentenceCase[] }).sentences;

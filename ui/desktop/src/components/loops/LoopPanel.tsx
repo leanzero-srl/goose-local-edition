@@ -28,6 +28,7 @@ import {
 } from './model';
 import { requestStartLoop, type StartLoopRequest } from './startLoopRequest';
 import { TickRow } from './TickRow';
+import { useChatName } from './useChatName';
 import type { ControlResult, SessionLoop } from './useSessionLoop';
 
 type Control = (action: LoopControlAction) => Promise<ControlResult>;
@@ -350,7 +351,11 @@ function NowBlock({
   onStartNew: () => void;
 }) {
   const intl = useIntl();
-  const sentence = statusSentence(loop, status, reason, nowMs, viewerOffsetMinutes(nowMs));
+  const turn = reason?.kind === 'user_turn' ? reason : null;
+  // Q-279: a yield records the chat's name at that moment; the NOW line names it as it is now.
+  const turnChat = useChatName(turn?.sessionId ?? '', turn?.chat ?? '');
+  const shown = turn ? { ...turn, chat: turnChat } : reason;
+  const sentence = statusSentence(loop, status, shown, nowMs, viewerOffsetMinutes(nowMs));
   let text: string;
   if (!sentence.ok) {
     text = intl.formatMessage(w.statusUnreadable, { error: sentence.error });
