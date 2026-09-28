@@ -198,6 +198,38 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   mlx_lm's `TimeBudget()` hangs forever in `jaccl::TCPSocket::accept` (mx.distributed.init under the
   spec's JACCL env) — build it with `__new__` at its signature's defaults; the stand-in mlx_lm module
   in launch.rs's rank-program tests must grow every seam the wrapper's guard list checks.
+- TURN-START CACHE MISSES HAVE THREE GOOSE-SIDE CAUSES (Q-294, 2026-09-28, E2E #3o on 3.0.66). HOW TO MEASURE
+  ONE: (1) the rank0 log prints `Prompt Cache: N sequences, X GB` + per type right before EVERY fetch, and
+  `Prompt processing progress: a/b` where b = the tokens left to read (b = prompt → a full miss); (2) copy
+  `~/.local/state/goose/logs/llm_request.[0-9].jsonl` on every mtime change (only the last 10 calls survive)
+  and diff consecutive MAIN calls message by message (first differing index/char); (3) sessions.db
+  (`?mode=ro`) rows whose text starts "[goose's record of an earlier tool call" + their `timestamp` say
+  when a condensation was written; an entry of N tokens on the 27B split holds N × 32,768 + 76,972,032 B
+  (RANK_ADMISSION `kept_prefix` 3,642,163,200 for `held_tokens` 108,801 — exact), so the per-type GB
+  figures say which prefixes are still there.
+  CAUSE A — tool-pair condensation (context_mgmt `maybe_summarize_tool_pairs`): once visible tool calls
+  exceed cutoff+10 (cutoff 31 at 262k × 0.8) EVERY reply condenses the 10 oldest pairs into the session
+  DB; the NEXT turn reloads them as records appended to an early user message → the prompt diverges at
+  message ~2–5 (turn 6: msg 5 len 2,114 → 6,476) → turn 5 read 0/109,655, turn 6 40,244/102,210 (the
+  system segment only), turn 7 0/108,801, each ~15 min cold, to save 4–12k tokens. Fix: a chat agent
+  keeps its pairs while the provider reports cache reads (`prompt_cache_read`; swarm workers unchanged).
+  CAUSE B — end-of-turn helpers (fact checks 1,452–23,686 tok, labels) batch together at turn end; mlx_lm
+  types EVERY chat request's context segment "user", so a helper's took Q-182's newest-"user"
+  protection, and `admits` left room only for a prefix as wide as the helper batch: turn 7's eight rows
+  trimmed the cache below the agent's 3.96 GB prefix; turn 5's five left turn 4's unusable END entry
+  (assistant 3.80 GB) and no prefix — A and B both hit turn 5, so each fix alone still misses there.
+  Fix: tag `mlxLmServerConversationPrefix`, spec
+  `keep_conversation_prefix` — the kept entry is the key a transient-tail request's boundary cut
+  (`rank_boundary.py ConversationPrefix`, matched by length+hash at insert, held by identity), and rank
+  0's `admits` leaves room for its bytes (RANK_ADMISSION `conversation_prefix`). Replay test
+  `end_of_turn_helpers_leave_the_conversation_prefix_cached_through_real_mlx_lm` (each half alone
+  still reads 0). CAUSE C — a reloaded tool ERROR renders differently from the turn that produced it:
+  `tool_result_serde` stored `ErrorData` as its Display ("-32002: Tool 'read_file' not found…") and read
+  it back as INTERNAL_ERROR with that whole text as message, so every later turn sent "-32603: -32002:
+  …" (turn 3: 0/76,117 with the 74,913-token prefix still cached; turn 2 held the run's only
+  status:"error" result). Fix: `stored_error` parses the code back. GENERAL RULE: anything goose sends
+  that is rebuilt from the session DB at a turn start must render byte-identical to what the turn sent
+  from memory — check a new field's serde round-trip against the formatter's output.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud

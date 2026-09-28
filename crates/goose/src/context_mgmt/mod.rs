@@ -9,7 +9,7 @@ use crate::providers::base::Provider;
 use crate::providers::base::{stream_from_single_message, MessageStream};
 use crate::{config::Config, token_counter::create_token_counter};
 use anyhow::Result;
-use goose_providers::conversation::token_usage::ProviderUsage;
+use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
 use indoc::indoc;
@@ -825,8 +825,22 @@ pub fn record_tool_call(conversation: &Conversation, tool_id: &str) -> Result<Me
     Ok(message.with_generated_id())
 }
 
+/// Q-294: the prompt tokens the provider's last call read from its own cache, when it read any. A
+/// condensed pair replaces messages near the START of the conversation, so the next request stops
+/// agreeing with the cached prompt at the first condensed pair and re-reads everything after it.
+/// E2E #3o (the 27B split, 262k window): from turn 4 on every reply condensed ten pairs, and the
+/// next turn's first call read 0 of 109,655 / 40,244 of 102,210 / 0 of 108,801 tokens from cache —
+/// about 15 minutes of prefill each — to save 4k–12k tokens of a window auto-compaction already
+/// guards. A provider that reports no cache reads keeps the condensation as before.
+pub fn prompt_cache_read(last_call: &Usage) -> Option<i32> {
+    last_call.cache_read_input_tokens.filter(|read| *read > 0)
+}
+
 /// `faithful_records`: chat agents get `record_tool_call` (facts only, no model call); the swarm's
 /// workers keep the model-written summary their golden benchmark was measured with.
+/// `cached_prompt`: `prompt_cache_read` of the latest call — when the provider serves the prompt
+/// from its cache, the pairs stay as they are (Q-294).
+#[allow(clippy::too_many_arguments)]
 pub fn maybe_summarize_tool_pairs(
     provider: Arc<dyn Provider>,
     model_config: ModelConfig,
@@ -835,6 +849,7 @@ pub fn maybe_summarize_tool_pairs(
     cutoff: usize,
     protect_last_n: usize,
     faithful_records: bool,
+    cached_prompt: Option<i32>,
 ) -> Option<JoinHandle<Vec<(Message, String)>>> {
     if !tool_pair_summarization_enabled() || provider.manages_own_context() {
         return None;
@@ -842,6 +857,17 @@ pub fn maybe_summarize_tool_pairs(
 
     let tool_ids = tool_ids_to_summarize(&conversation, cutoff, protect_last_n);
     if tool_ids.is_empty() {
+        return None;
+    }
+
+    if let Some(read) = cached_prompt {
+        info!(
+            session_id = %session_id,
+            cached_prompt_tokens = read,
+            pairs = tool_ids.len(),
+            "tool pairs kept whole: the provider serves this conversation's prompt from its cache, \
+             and condensing its oldest pairs would make the next turn re-read everything after them"
+        );
         return None;
     }
 
@@ -1346,6 +1372,7 @@ mod tests {
             5,
             0,
             true,
+            None,
         )
         .unwrap()
         .await
@@ -1356,6 +1383,57 @@ mod tests {
             assert!(text.starts_with(TOOL_RECORD_HEADER), "{text}");
             assert!(!text.contains("E2E"), "{text}");
         }
+    }
+
+    /// Q-294, E2E #3o's own calls: the last call of turn 4 read 112,257 of 113,451 prompt tokens
+    /// from the split's cache, and turn 4's condensation made turn 5's first call read 0 of
+    /// 109,655. The same conversation past the cutoff keeps its pairs while the provider serves
+    /// the prompt from cache, and is condensed as before when it reports no cache reads.
+    #[tokio::test]
+    async fn a_prompt_served_from_cache_keeps_its_tool_pairs() {
+        let turn4_last =
+            Usage::new(Some(113_451), Some(167), None).with_cache_tokens(Some(112_257), None);
+        assert_eq!(prompt_cache_read(&turn4_last), Some(112_257));
+        assert_eq!(
+            prompt_cache_read(&Usage::new(Some(41_020), None, None)),
+            None
+        );
+        assert_eq!(
+            prompt_cache_read(
+                &Usage::new(Some(41_020), None, None).with_cache_tokens(Some(0), None)
+            ),
+            None,
+            "a provider that read nothing from cache has no prefix to keep"
+        );
+
+        let mock = MockProvider::new(Message::assistant().with_text("unused"), 1000);
+        let model_config = mock.config.clone();
+        let provider: Arc<dyn Provider> = Arc::new(mock);
+        let mut messages = vec![Message::user().with_text("hello")];
+        for i in 0..16 {
+            messages.extend(create_tool_pair(
+                &format!("call{i}"),
+                &format!("resp{i}"),
+                "read_file",
+                "content",
+            ));
+        }
+        let conversation = Conversation::new_unvalidated(messages);
+        let condense = |cached| {
+            maybe_summarize_tool_pairs(
+                provider.clone(),
+                model_config.clone(),
+                "s".to_string(),
+                conversation.clone(),
+                5,
+                0,
+                true,
+                cached,
+            )
+        };
+        assert!(condense(prompt_cache_read(&turn4_last)).is_none());
+        let condensed = condense(None).unwrap().await.unwrap();
+        assert_eq!(condensed.len(), TOOLCALL_SUMMARIZATION_BATCH_SIZE);
     }
 
     #[test]

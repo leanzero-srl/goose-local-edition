@@ -138,3 +138,88 @@ def keep_newest_prefix(cache_order):
         return pop_keeping_newest_prefix(self, upstream_pop)
 
     cache_order.pop = pop
+
+
+# Q-294 (E2E #3o, 3.0.66): "the newest user entry" is not always the conversation's. mlx_lm types
+# the context segment of EVERY request that ends on a user message "user" — goose's end-of-turn
+# helpers (fact checks, labels) included — so a helper whose prompt read past its own context
+# segment became the newest "user" entry and took the prefix's protection. Turn 7 (06:08:30Z):
+# eight helper rows (1,248–23,686 tokens) shared a batch; at 06:08:32 the cache still held the
+# agent's stable prefix (user 2 sequences, 3.96 GB); at the agent's next fetch (06:09:24) it held
+# four helper segments (user 4 sequences, 0.47 GB) and no prefix — 108,801 tokens read cold. The
+# conversation prefix is now named by what cut it: the stable boundary of a request that names its
+# transient tail (only goose's agent requests do), recorded when `_tokenize` cuts it and matched
+# when the cache inserts that key.
+
+
+def prefix_key(tokens):
+    return len(tokens), hash(tuple(tokens))
+
+
+class ConversationPrefix:
+    """The stable prefix the latest conversation request left in the cache: the key list the cache
+    holds (compared by identity) and its bytes. Every rank tracks it over the same requests and
+    inserts, so every rank protects the same entry."""
+
+    def __init__(self):
+        self.cut_keys = {}
+        self.tokens = None
+        self.nbytes = 0
+
+    def cut(self, prefix):
+        """`_tokenize` cut a conversation request's stable prefix at `prefix` (its tokens)."""
+        length, digest = prefix_key(prefix)
+        self.cut_keys[length] = digest
+
+    def inserted(self, tokens, nbytes):
+        """The cache is inserting `tokens`: a cut stable prefix becomes the conversation's."""
+        if len(tokens) not in self.cut_keys:
+            return
+        length, digest = prefix_key(tokens)
+        if self.cut_keys[length] == digest:
+            del self.cut_keys[length]
+            self.tokens = tokens
+            self.nbytes = nbytes
+
+    def forget(self):
+        self.tokens = None
+        self.nbytes = 0
+
+    def evicted(self, tokens):
+        if tokens is self.tokens:
+            self.forget()
+
+
+def pop_keeping_conversation_prefix(order, upstream_pop, prefix):
+    """mlx_lm's eviction (`upstream_pop(order)`) with the conversation's stable prefix
+    (`prefix.tokens`) held back while any other entry remains; still evicted when it is the last
+    entry and the bound still needs room. It is held back in place, so the LRU order stands."""
+    if prefix.tokens is not None and len(order) > 1:
+        for lru in order._lrus.values():
+            at = next((i for i, (_, tokens) in enumerate(lru) if tokens is prefix.tokens), None)
+            if at is None:
+                continue
+            kept = lru[at]
+            del lru[at]
+            before = len(lru)
+            try:
+                return upstream_pop(order)
+            finally:
+                if len(lru) < before:
+                    at = max(0, at - 1)
+                lru.insert(at, kept)
+        # The cache replaced or dropped that key another way: it holds no conversation prefix.
+        prefix.forget()
+    popped = upstream_pop(order)
+    prefix.evicted(popped[1])
+    return popped
+
+
+def keep_conversation_prefix(cache_order, prefix):
+    """Install `pop_keeping_conversation_prefix` on mlx_lm's `LRUPromptCache.CacheOrder`."""
+    upstream_pop = cache_order.pop
+
+    def pop(self):
+        return pop_keeping_conversation_prefix(self, upstream_pop, prefix)
+
+    cache_order.pop = pop
