@@ -15017,6 +15017,21 @@
         "loaderInstalled": {
           "type": "boolean",
           "description": "Whether this goose process has a node loader installed. Without one, a not-loaded node\nis started from Run it."
+        },
+        "displaced": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeDisplacedDto"
+          },
+          "description": "Nodes this process's loader stopped for another node, until each serves again.",
+          "default": []
+        },
+        "loadsError": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why no node carries a measured load: the load store could not be read."
         }
       },
       "required": [
@@ -15034,6 +15049,17 @@
         },
         "residency": {
           "$ref": "#/$defs/NodeResidency"
+        },
+        "load": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeLoadMedianDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The measured loads of the node's own way and model (the load store's Ready median);\nabsent = not measured yet, or a node with no one way — never an estimate."
         }
       },
       "required": [
@@ -15081,6 +15107,16 @@
             "reason": {
               "type": "string"
             },
+            "replies": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NodeRepliesWaitDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "kind": {
               "type": "string",
               "const": "waiting"
@@ -15090,7 +15126,7 @@
             "kind",
             "reason"
           ],
-          "description": "The installed loader queued a demand for it; `reason` is the loader's words."
+          "description": "The installed loader queued a demand for it; `reason` is the loader's words. `replies` is\nset when what it waits on is replies on a way the switch would stop (design §8.7\n`nodes.turnWaiting`)."
         },
         {
           "type": "object",
@@ -15117,6 +15153,16 @@
             "reason": {
               "type": "string"
             },
+            "facts": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NodeRefusalFactsDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "kind": {
               "type": "string",
               "const": "refusedLastTime"
@@ -15126,7 +15172,7 @@
             "kind",
             "reason"
           ],
-          "description": "The installed loader refused its last demand; `reason` is its words."
+          "description": "The installed loader refused its last demand; `reason` is its words, `facts` what the\nrefusal names (design §8.7 `nodes.refused*` / `nodes.loadFailed`) when it is one of those."
         },
         {
           "type": "object",
@@ -15160,6 +15206,139 @@
         }
       ],
       "description": "One node's residency."
+    },
+    "NodeRepliesWaitDto": {
+      "type": "object",
+      "properties": {
+        "way": {
+          "type": "string",
+          "description": "The way in the loader's words (\"this Mac's engine\")."
+        },
+        "wayNodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The nodes that name that way (ids), so a surface names it as the Nodes page does.",
+          "default": []
+        },
+        "count": {
+          "type": "integer",
+          "description": "The replies open on it that the switch waits for.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "way",
+        "count"
+      ],
+      "description": "Replies on a way the switch would stop, which the loader waits for before it stops it."
+    },
+    "NodeRefusalFactsDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "keptNode": {
+              "type": "string",
+              "description": "The kept node's id, and its name."
+            },
+            "kept": {
+              "type": "string"
+            },
+            "mac": {
+              "type": "string",
+              "description": "Where it is loaded, in the loader's words (\"this Mac\")."
+            },
+            "kind": {
+              "type": "string",
+              "const": "keptLoaded"
+            }
+          },
+          "required": [
+            "kind",
+            "keptNode",
+            "kept",
+            "mac"
+          ],
+          "description": "A way the switch would stop belongs to a node kept loaded."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "way": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "heldByBuild"
+            }
+          },
+          "required": [
+            "kind",
+            "way"
+          ],
+          "description": "A swarm build holds the engine; `way` is the way it holds, in the loader's words."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mac": {
+              "type": "string"
+            },
+            "verdict": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "fit"
+            }
+          },
+          "required": [
+            "kind",
+            "mac",
+            "verdict"
+          ],
+          "description": "The fit rule refused it on `mac`; `verdict` is the fit's own message."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "words": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "loadFailed"
+            }
+          },
+          "required": [
+            "kind",
+            "words"
+          ],
+          "description": "The switch ran and the node's way failed to start; `words` are the engine's."
+        }
+      ],
+      "description": "What a refusal names, for the refusals the composer words (design §8.7)."
+    },
+    "NodeLoadMedianDto": {
+      "type": "object",
+      "properties": {
+        "medianMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "description": "How many Ready loads it is the median of.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "medianMs",
+        "count"
+      ],
+      "description": "The median of a node's measured Ready loads."
     },
     "NodesServingWayDto": {
       "type": "object",
@@ -15232,6 +15411,50 @@
         }
       ],
       "description": "How the way serving this Mac's goose runs, as the engine records know it."
+    },
+    "NodeDisplacedDto": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "description": "The node that was stopped."
+        },
+        "forNode": {
+          "type": "string",
+          "description": "The node it was stopped for."
+        },
+        "bySession": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The chat whose turn asked for `forNode` (its root session); absent = a Start on its card."
+        },
+        "byChat": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "That chat's name as the person sees it; absent without `bySession`, or when unreadable."
+        },
+        "failed": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set once `forNode` failed to load: the engine's words."
+        },
+        "atMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "node",
+        "forNode",
+        "atMs"
+      ],
+      "description": "A node whose way the loader stopped to load another (design §8.7 `nodes.displacedNotice`),\nkept until that node serves again."
     },
     "NodesLoadHistoryRequest_unstable": {
       "type": "object",

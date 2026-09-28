@@ -577,15 +577,26 @@ pub enum NodeResidency {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         phase: Option<String>,
     },
-    /// The installed loader queued a demand for it; `reason` is the loader's words.
-    Waiting { reason: String },
+    /// The installed loader queued a demand for it; `reason` is the loader's words. `replies` is
+    /// set when what it waits on is replies on a way the switch would stop (design §8.7
+    /// `nodes.turnWaiting`).
+    Waiting {
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replies: Option<NodeRepliesWaitDto>,
+    },
     /// Not running. `otherWay` names the way that serves instead, when one does.
     NotRunning {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         other_way: Option<String>,
     },
-    /// The installed loader refused its last demand; `reason` is its words.
-    RefusedLastTime { reason: String },
+    /// The installed loader refused its last demand; `reason` is its words, `facts` what the
+    /// refusal names (design §8.7 `nodes.refused*` / `nodes.loadFailed`) when it is one of those.
+    RefusedLastTime {
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        facts: Option<NodeRefusalFactsDto>,
+    },
     /// Cloud and endpoint nodes are always loaded.
     AlwaysReady,
     /// Which way serves is unknown (an unreadable record); never guessed.
@@ -597,6 +608,77 @@ pub enum NodeResidency {
 pub struct NodeResidencyDto {
     pub node: String,
     pub residency: NodeResidency,
+    /// The measured loads of the node's own way and model (the load store's Ready median);
+    /// absent = not measured yet, or a node with no one way — never an estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load: Option<NodeLoadMedianDto>,
+}
+
+/// Replies on a way the switch would stop, which the loader waits for before it stops it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeRepliesWaitDto {
+    /// The way in the loader's words ("this Mac's engine").
+    pub way: String,
+    /// The nodes that name that way (ids), so a surface names it as the Nodes page does.
+    #[serde(default)]
+    pub way_nodes: Vec<String>,
+    /// The replies open on it that the switch waits for.
+    pub count: u32,
+}
+
+/// What a refusal names, for the refusals the composer words (design §8.7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum NodeRefusalFactsDto {
+    /// A way the switch would stop belongs to a node kept loaded.
+    KeptLoaded {
+        /// The kept node's id, and its name.
+        kept_node: String,
+        kept: String,
+        /// Where it is loaded, in the loader's words ("this Mac").
+        mac: String,
+    },
+    /// A swarm build holds the engine; `way` is the way it holds, in the loader's words.
+    HeldByBuild { way: String },
+    /// The fit rule refused it on `mac`; `verdict` is the fit's own message.
+    Fit { mac: String, verdict: String },
+    /// The switch ran and the node's way failed to start; `words` are the engine's.
+    LoadFailed { words: String },
+}
+
+/// The median of a node's measured Ready loads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeLoadMedianDto {
+    pub median_ms: u64,
+    /// How many Ready loads it is the median of.
+    pub count: u32,
+}
+
+/// A node whose way the loader stopped to load another (design §8.7 `nodes.displacedNotice`),
+/// kept until that node serves again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeDisplacedDto {
+    /// The node that was stopped.
+    pub node: String,
+    /// The node it was stopped for.
+    pub for_node: String,
+    /// The chat whose turn asked for `forNode` (its root session); absent = a Start on its card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_session: Option<String>,
+    /// That chat's name as the person sees it; absent without `bySession`, or when unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_chat: Option<String>,
+    /// Set once `forNode` failed to load: the engine's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
+    pub at_ms: u64,
 }
 
 /// Per node: serving / loading / waiting / not running / refused last time — from engine truth
@@ -618,6 +700,12 @@ pub struct NodesResidencyResponse {
     /// Whether this goose process has a node loader installed. Without one, a not-loaded node
     /// is started from Run it.
     pub loader_installed: bool,
+    /// Nodes this process's loader stopped for another node, until each serves again.
+    #[serde(default)]
+    pub displaced: Vec<NodeDisplacedDto>,
+    /// Why no node carries a measured load: the load store could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loads_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -8,8 +8,8 @@ use goose_sdk_types::custom_requests::{
     MlxEngineDistributedDiscoverRequest, MlxEngineDistributedStartRequest,
     MlxEngineDistributedStopRequest, MlxEngineMountRequest, MlxEnginePlacementPlanRequest,
     MlxEngineRemoteSingleStartRequest, MlxEngineRemoteSingleStopRequest, MlxEngineUnmountRequest,
-    MlxFitStatusDto, MlxPlacementActionDto, NodeLoadRefusalCode, NodeResidency, NodesServingKind,
-    NodesServingWayDto,
+    MlxFitStatusDto, MlxPlacementActionDto, NodeLoadRefusalCode, NodeRefusalFactsDto,
+    NodeResidency, NodesServingKind, NodesServingWayDto,
 };
 use goose_sidecar::distributed::supervisor::RunState;
 
@@ -17,7 +17,7 @@ use super::split_config::{self, SplitPlan};
 use super::switch::{
     DistributedFacts, RemoteFacts, Serving, SingleFacts, Stop, SwitchPlan, WayKind, WayRef,
 };
-use super::{agent, Prepared, Refusal, Residency, Start, Ways, LOOK_AGAIN};
+use super::{agent, NamedNode, Prepared, Refusal, Residency, Start, Ways, LOOK_AGAIN};
 use crate::config::Config;
 use crate::nodes::residency;
 use crate::nodes::{NodeDef, NodeDefKind, ResolvedNodeDef};
@@ -158,7 +158,7 @@ impl Ways for AgentWays {
         })
     }
 
-    async fn kept_loaded(&self, stop: &Stop) -> Result<Option<String>, Refusal> {
+    async fn kept_loaded(&self, stop: &Stop) -> Result<Option<NamedNode>, Refusal> {
         let way = as_serving_way(stop);
         Ok(nodes()
             .await?
@@ -166,7 +166,23 @@ impl Ways for AgentWays {
             .find(|n| {
                 n.def.kind == NodeDefKind::Mlx && n.def.keep_loaded && residency::names_way(n, &way)
             })
-            .map(|n| format!("{} is kept loaded on {}", n.def.name, stop.way.words())))
+            .map(|n| NamedNode {
+                id: n.def.id,
+                name: n.def.name,
+            }))
+    }
+
+    async fn named_by(&self, stop: &Stop) -> Result<Vec<NamedNode>, Refusal> {
+        let way = as_serving_way(stop);
+        Ok(nodes()
+            .await?
+            .into_iter()
+            .filter(|n| n.def.kind == NodeDefKind::Mlx && residency::names_way(n, &way))
+            .map(|n| NamedNode {
+                id: n.def.id,
+                name: n.def.name,
+            })
+            .collect())
     }
 
     async fn prepare(
@@ -237,7 +253,11 @@ impl Ways for AgentWays {
                 return Err(Refusal::new(
                     NodeLoadRefusalCode::Fit,
                     format!("Can't load {name}: {}", candidate.fit.detail),
-                ))
+                )
+                .with_facts(NodeRefusalFactsDto::Fit {
+                    mac: target.mac_words(),
+                    verdict: candidate.fit.detail.clone(),
+                }))
             }
             MlxFitStatusDto::Unknown => {
                 return Err(Refusal::new(

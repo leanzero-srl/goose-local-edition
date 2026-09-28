@@ -469,31 +469,10 @@ async fn owner_dto(record: OwnerRecord) -> Option<MlxDistributedOwnerDto> {
             detail: Some(format!("{}: {error}", path.display())),
             ..Default::default()
         }),
-        OwnerRecord::Other(engine) => {
-            let url = format!("{}/v1/models", engine.base_url);
-            let answer = match reqwest::Client::new().get(&url).send().await {
-                Ok(resp) => match resp.text().await {
-                    Ok(body) => goose_sidecar::engine::parse_model_info(&body)
-                        .map(|(served, _, _)| served)
-                        .map_err(|e| format!("GET {url}: {e:#}")),
-                    Err(e) => Err(format!("GET {url} body unreadable ({e})")),
-                },
-                Err(e) => Err(format!("GET {url} failed ({e})")),
-            };
-            Some(match answer {
-                Ok(Some(served)) if served == engine.served_model_id => {
-                    with(engine, "answering", None)
-                }
-                Ok(served) => {
-                    let detail = format!(
-                        "{url} lists {:?}, not the published '{}'",
-                        served, engine.served_model_id
-                    );
-                    with(engine, "notAnswering", Some(detail))
-                }
-                Err(e) => with(engine, "notAnswering", Some(e)),
-            })
-        }
+        OwnerRecord::Other(engine) => Some(match owner_record::answering(&engine).await {
+            Ok(()) => with(engine, "answering", None),
+            Err(detail) => with(engine, "notAnswering", Some(detail)),
+        }),
     }
 }
 

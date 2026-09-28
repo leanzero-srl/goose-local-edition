@@ -9,7 +9,8 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use goose_sdk_types::custom_requests::{
-    MlxPlacementKeyDto, NodeEnsureServing, NodeLoadRefusalCode,
+    MlxPlacementKeyDto, NodeDisplacedDto, NodeEnsureServing, NodeLoadRefusalCode,
+    NodeRefusalFactsDto, NodeRepliesWaitDto,
 };
 
 use super::{NodeDef, NodeRole};
@@ -75,9 +76,21 @@ pub struct WayShare {
 /// What the loader is doing for one node right now (read by `nodes/residency`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoaderActivity {
-    Loading { node: String, phase: Option<String> },
-    Waiting { node: String, reason: String },
-    RefusedLastTime { node: String, reason: String },
+    Loading {
+        node: String,
+        phase: Option<String>,
+    },
+    /// `replies`: the wait is for replies on a way the switch would stop.
+    Waiting {
+        node: String,
+        reason: String,
+        replies: Option<NodeRepliesWaitDto>,
+    },
+    RefusedLastTime {
+        node: String,
+        reason: String,
+        facts: Option<NodeRefusalFactsDto>,
+    },
 }
 
 impl LoaderActivity {
@@ -115,6 +128,10 @@ pub trait NodeLoader: Send + Sync {
     /// `queued_switch_ahead`) — woken by the queue changing, never by a clock.
     async fn wait_behind_queued_switches(&self, session: &str, node: &str);
     fn in_progress(&self) -> Vec<LoaderActivity>;
+    /// The nodes this loader stopped for another node, each until it serves again.
+    fn displaced(&self) -> Vec<NodeDisplacedDto>;
+    /// `node` serves again: its displaced notice is over.
+    fn forget_displaced(&self, node: &str);
     /// The way `session`'s own reply holds, and the person's replies — in this process and every
     /// other goose process on this Mac, none waiting in a loader — on that same way. `Err` when a
     /// holder record cannot be read: whose replies use the way is then unknown.
@@ -197,6 +214,17 @@ pub async fn wait_behind_queued_switches(session: &str, node: &str) {
 
 pub fn in_progress() -> Vec<LoaderActivity> {
     LOADER.get().map(|l| l.in_progress()).unwrap_or_default()
+}
+
+/// With no loader installed nothing was ever stopped by one: empty means empty.
+pub fn displaced() -> Vec<NodeDisplacedDto> {
+    LOADER.get().map(|l| l.displaced()).unwrap_or_default()
+}
+
+pub fn forget_displaced(node: &str) {
+    if let Some(loader) = LOADER.get() {
+        loader.forget_displaced(node);
+    }
 }
 
 /// The installed loader, or the named absence: with no loader nothing records which replies hold

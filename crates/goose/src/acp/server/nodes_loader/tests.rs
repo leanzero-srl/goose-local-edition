@@ -26,7 +26,7 @@ struct Fake {
     nodes: HashMap<String, NodeSpec>,
     serving: StdMutex<Option<String>>,
     log: StdMutex<Vec<String>>,
-    kept: StdMutex<Option<String>>,
+    kept: StdMutex<Option<NamedNode>>,
     refuse_prepare: StdMutex<Option<Refusal>>,
     fail_start: StdMutex<Option<String>>,
     /// A start that waits here until the test releases it.
@@ -149,8 +149,22 @@ impl Ways for Fake {
         })
     }
 
-    async fn kept_loaded(&self, _stop: &Stop) -> Result<Option<String>, Refusal> {
+    async fn kept_loaded(&self, _stop: &Stop) -> Result<Option<NamedNode>, Refusal> {
         Ok(self.kept.lock().unwrap().clone())
+    }
+
+    async fn named_by(&self, stop: &Stop) -> Result<Vec<NamedNode>, Refusal> {
+        let mut named: Vec<NamedNode> = self
+            .nodes
+            .iter()
+            .filter(|(_, spec)| spec.way == stop.way && spec.model == stop.model_id)
+            .map(|(id, _)| NamedNode {
+                id: id.clone(),
+                name: format!("{id} node"),
+            })
+            .collect();
+        named.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(named)
     }
 
     async fn prepare(
@@ -245,7 +259,25 @@ async fn answer(task: tokio::task::JoinHandle<NodeEnsureServing>) -> NodeEnsureS
 
 fn waiting(core: &Core, node: &str) -> Option<String> {
     core.in_progress().into_iter().find_map(|a| match a {
-        LoaderActivity::Waiting { node: n, reason } if n == node => Some(reason),
+        LoaderActivity::Waiting {
+            node: n, reason, ..
+        } if n == node => Some(reason),
+        _ => None,
+    })
+}
+
+fn replies_of(core: &Core, node: &str) -> Option<NodeRepliesWaitDto> {
+    core.in_progress().into_iter().find_map(|a| match a {
+        LoaderActivity::Waiting {
+            node: n, replies, ..
+        } if n == node => replies,
+        _ => None,
+    })
+}
+
+fn refused_facts(core: &Core, node: &str) -> Option<NodeRefusalFactsDto> {
+    core.in_progress().into_iter().find_map(|a| match a {
+        LoaderActivity::RefusedLastTime { node: n, facts, .. } if n == node => facts,
         _ => None,
     })
 }
@@ -308,6 +340,16 @@ async fn two_chats_in_tool_loops_swap_once_per_reply_never_per_call() {
             .contains("is answering 1 reply"),
         "{:?}",
         waiting(&core, "split")
+    );
+    // Q-272: the wait names the way (by the nodes that name it) and the replies ahead — what
+    // §8.7's `nodes.turnWaiting` says.
+    assert_eq!(
+        replies_of(&core, "split"),
+        Some(NodeRepliesWaitDto {
+            way: "this Mac's engine".into(),
+            way_nodes: vec!["flash".into()],
+            count: 1,
+        })
     );
     // Chat 1's second and third calls of the same reply: served on Flash, no swap.
     for _ in 0..2 {
@@ -534,6 +576,24 @@ async fn a_failed_load_is_not_restored_and_the_turn_gets_its_words() {
         }
         other => panic!("{other:?}"),
     }
+    // Q-272: the node reads refused with the engine's own words, and the chat whose way was
+    // stopped (Flash) is told the swap failed (§8.7 `nodes.displacedFailed`).
+    assert_eq!(
+        refused_facts(&core, "split"),
+        Some(NodeRefusalFactsDto::LoadFailed {
+            words: "short 1.6 GB on Work's Mac Studio".into()
+        })
+    );
+    let displaced = core.displaced();
+    assert_eq!(displaced.len(), 1, "{displaced:?}");
+    assert_eq!(displaced[0].node, "flash");
+    assert_eq!(displaced[0].for_node, "split");
+    assert_eq!(displaced[0].by_session.as_deref(), Some("chat-2"));
+    assert_eq!(displaced[0].by_chat.as_deref(), Some("Chat chat-2"));
+    assert_eq!(
+        displaced[0].failed.as_deref(),
+        Some("short 1.6 GB on Work's Mac Studio")
+    );
     assert_eq!(
         fake.log(),
         vec![
@@ -552,12 +612,24 @@ async fn a_failed_load_is_not_restored_and_the_turn_gets_its_words() {
 #[tokio::test]
 async fn a_kept_loaded_way_and_a_step_refuse_before_anything_stops() {
     let fake = flash_and_split();
-    *fake.kept.lock().unwrap() = Some("flash node is kept loaded on this Mac's engine".into());
+    *fake.kept.lock().unwrap() = Some(NamedNode {
+        id: "flash".into(),
+        name: "flash node".into(),
+    });
     let core = Core::new(fake.clone(), None);
     let got = core.ensure_serving(demand(&fake, "split", Some("s"))).await;
     assert!(
-        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::KeptLoaded, reason } if reason.contains("kept loaded")),
+        matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::KeptLoaded, reason } if reason == "Can't load split node: flash node is kept loaded on this Mac"),
         "{got:?}"
+    );
+    // Q-272: the refusal carries what §8.7's `nodes.refusedKept` names.
+    assert_eq!(
+        refused_facts(&core, "split"),
+        Some(NodeRefusalFactsDto::KeptLoaded {
+            kept_node: "flash".into(),
+            kept: "flash node".into(),
+            mac: "this Mac".into(),
+        })
     );
     *fake.kept.lock().unwrap() = None;
     *fake.refuse_prepare.lock().unwrap() = Some(Refusal::new(
@@ -1680,4 +1752,56 @@ async fn a_tick_yields_only_to_another_windows_person_on_its_way_and_waits_for_t
     );
     assert_eq!(second.loop_id, due.loop_id);
     window.close().await;
+}
+
+/// Q-272 (§8.7 `nodes.displacedNotice`): a swap names, for the chat it displaced, the node it
+/// stopped, the node it stopped it for and the chat that asked; loading the stopped node back ends
+/// the notice.
+#[tokio::test]
+async fn a_swap_records_what_it_displaced_until_that_node_serves_again() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let reply = core.holds().open_reply("kickoff");
+    assert_eq!(
+        core.ensure_serving(demand(&fake, "split", Some("kickoff")))
+            .await,
+        NodeEnsureServing::Ready
+    );
+    let displaced = core.displaced();
+    assert_eq!(displaced.len(), 1, "{displaced:?}");
+    let entry = &displaced[0];
+    assert_eq!(
+        (entry.node.as_str(), entry.for_node.as_str()),
+        ("flash", "split")
+    );
+    assert_eq!(entry.by_session.as_deref(), Some("kickoff"));
+    assert_eq!(entry.by_chat.as_deref(), Some("Chat kickoff"));
+    assert_eq!(entry.failed, None);
+
+    // The asking reply ends; a Start on a card (no chat) brings Flash back.
+    drop(reply);
+    assert_eq!(
+        core.ensure_serving(demand(&fake, "flash", None)).await,
+        NodeEnsureServing::Wait {
+            reason: "loading flash node for this chat".into()
+        }
+    );
+    until("flash serves again", || {
+        fake.serving().as_deref() == Some("flash")
+    })
+    .await;
+    until("the split's notice is recorded", || {
+        core.displaced().iter().any(|d| d.node == "split")
+    })
+    .await;
+    let displaced = core.displaced();
+    assert!(
+        displaced.iter().all(|d| d.node != "flash"),
+        "flash serves again: its notice is over — {displaced:?}"
+    );
+    let split = displaced.iter().find(|d| d.node == "split").unwrap();
+    assert_eq!(
+        (split.by_session.clone(), split.by_chat.clone()),
+        (None, None)
+    );
 }

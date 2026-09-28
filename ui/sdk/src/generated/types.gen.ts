@@ -6191,11 +6191,24 @@ export type NodesResidencyResponse_unstable = {
      * is started from Run it.
      */
     loaderInstalled: boolean;
+    /**
+     * Nodes this process's loader stopped for another node, until each serves again.
+     */
+    displaced?: Array<NodeDisplacedDto>;
+    /**
+     * Why no node carries a measured load: the load store could not be read.
+     */
+    loadsError?: string | null;
 };
 
 export type NodeResidencyDto = {
     node: string;
     residency: NodeResidency;
+    /**
+     * The measured loads of the node's own way and model (the load store's Ready median);
+     * absent = not measured yet, or a node with no one way — never an estimate.
+     */
+    load?: NodeLoadMedianDto | null;
 };
 
 /**
@@ -6208,18 +6221,75 @@ export type NodeResidency = {
     kind: 'loading';
 } | {
     reason: string;
+    replies?: NodeRepliesWaitDto | null;
     kind: 'waiting';
 } | {
     otherWay?: string | null;
     kind: 'notRunning';
 } | {
     reason: string;
+    facts?: NodeRefusalFactsDto | null;
     kind: 'refusedLastTime';
 } | {
     kind: 'alwaysReady';
 } | {
     reason: string;
     kind: 'unknown';
+};
+
+/**
+ * Replies on a way the switch would stop, which the loader waits for before it stops it.
+ */
+export type NodeRepliesWaitDto = {
+    /**
+     * The way in the loader's words ("this Mac's engine").
+     */
+    way: string;
+    /**
+     * The nodes that name that way (ids), so a surface names it as the Nodes page does.
+     */
+    wayNodes?: Array<string>;
+    /**
+     * The replies open on it that the switch waits for.
+     */
+    count: number;
+};
+
+/**
+ * What a refusal names, for the refusals the composer words (design §8.7).
+ */
+export type NodeRefusalFactsDto = {
+    /**
+     * The kept node's id, and its name.
+     */
+    keptNode: string;
+    kept: string;
+    /**
+     * Where it is loaded, in the loader's words ("this Mac").
+     */
+    mac: string;
+    kind: 'keptLoaded';
+} | {
+    way: string;
+    kind: 'heldByBuild';
+} | {
+    mac: string;
+    verdict: string;
+    kind: 'fit';
+} | {
+    words: string;
+    kind: 'loadFailed';
+};
+
+/**
+ * The median of a node's measured Ready loads.
+ */
+export type NodeLoadMedianDto = {
+    medianMs: number;
+    /**
+     * How many Ready loads it is the median of.
+     */
+    count: number;
 };
 
 /**
@@ -6259,6 +6329,34 @@ export type NodesServingWayDto = {
  * How the way serving this Mac's goose runs, as the engine records know it.
  */
 export type NodesServingKind = 'single' | 'remoteSingle' | 'split';
+
+/**
+ * A node whose way the loader stopped to load another (design §8.7 `nodes.displacedNotice`),
+ * kept until that node serves again.
+ */
+export type NodeDisplacedDto = {
+    /**
+     * The node that was stopped.
+     */
+    node: string;
+    /**
+     * The node it was stopped for.
+     */
+    forNode: string;
+    /**
+     * The chat whose turn asked for `forNode` (its root session); absent = a Start on its card.
+     */
+    bySession?: string | null;
+    /**
+     * That chat's name as the person sees it; absent without `bySession`, or when unreadable.
+     */
+    byChat?: string | null;
+    /**
+     * Set once `forNode` failed to load: the engine's words.
+     */
+    failed?: string | null;
+    atMs: number;
+};
 
 /**
  * The measured loads of a node's model, way and Macs (a node that follows this Mac's engine has

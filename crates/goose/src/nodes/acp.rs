@@ -158,7 +158,17 @@ pub async fn residency(_req: NodesResidencyRequest) -> Result<NodesResidencyResp
     let mac_name = mac.unwrap_or_else(|_| "This Mac".to_string());
     let serving = residency::serving_now(&mac_name).await;
     let loader = seam::in_progress();
-    let nodes = residency::residencies(&current.nodes, &serving, &loader);
+    let mut nodes = residency::residencies(&current.nodes, &serving, &loader);
+    let loads_error = with_load_medians(&current.nodes, &mut nodes);
+    // A displaced node that serves again (any hand brought it back) has no notice left.
+    let back: Vec<&str> = nodes
+        .iter()
+        .filter(|n| matches!(n.residency, NodeResidency::Serving))
+        .map(|n| n.node.as_str())
+        .collect();
+    for node in &back {
+        seam::forget_displaced(node);
+    }
     let (serving, serving_error) = match serving {
         ServingFacts::Nothing => (None, None),
         ServingFacts::Way(way) => (Some(way), None),
@@ -169,7 +179,53 @@ pub async fn residency(_req: NodesResidencyRequest) -> Result<NodesResidencyResp
         serving,
         serving_error,
         loader_installed: seam::loader_installed(),
+        displaced: seam::displaced(),
+        loads_error,
     })
+}
+
+/// Each pinned MLX node's measured load (the load store's Ready median for its own way and
+/// model). `Some(words)` = the store could not be read, so no node carries a measurement.
+#[cfg(unix)]
+fn with_load_medians(
+    resolved: &[ResolvedNodeDef],
+    nodes: &mut [goose_sdk_types::custom_requests::NodeResidencyDto],
+) -> Option<String> {
+    use goose_sdk_types::custom_requests::NodeLoadMedianDto;
+    use goose_sidecar::placement::loads::{median_for, LoadStore, LOADS_FILE};
+
+    let store = LoadStore::new(crate::config::paths::Paths::in_data_dir(LOADS_FILE));
+    let read = match store.read() {
+        Ok(read) => read,
+        Err(e) => return Some(format!("{e:#}")),
+    };
+    for dto in nodes.iter_mut() {
+        let Some(node) = resolved.iter().find(|n| n.def.id == dto.node) else {
+            continue;
+        };
+        if node_key(node).is_none() {
+            continue;
+        }
+        let groups = load_groups(node, &read.records, |model, key| {
+            median_for(&read.records, model, key)
+        });
+        dto.load = match groups.as_slice() {
+            [group] => group.median_total_ms.map(|median_ms| NodeLoadMedianDto {
+                median_ms,
+                count: group.count,
+            }),
+            _ => None,
+        };
+    }
+    None
+}
+
+#[cfg(not(unix))]
+fn with_load_medians(
+    _resolved: &[ResolvedNodeDef],
+    _nodes: &mut [goose_sdk_types::custom_requests::NodeResidencyDto],
+) -> Option<String> {
+    Some("the MLX load store requires macOS".to_string())
 }
 
 /// The node's way as a placement key (`None` for a node that follows this Mac's engine).

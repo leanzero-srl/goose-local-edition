@@ -1319,9 +1319,15 @@ fn a_loading_way_and_an_unknown_record_are_named() {
             reason: "the route record is unreadable".into()
         }
     );
+    let replies = goose_sdk_types::custom_requests::NodeRepliesWaitDto {
+        way: "the split across your Macs".into(),
+        way_nodes: vec!["split".into()],
+        count: 1,
+    };
     let waiting = [seam::LoaderActivity::Waiting {
         node: "flash".into(),
         reason: "27B is answering 1".into(),
+        replies: Some(replies.clone()),
     }];
     assert_eq!(
         residency_of(
@@ -1330,7 +1336,8 @@ fn a_loading_way_and_an_unknown_record_are_named() {
             &waiting
         ),
         NodeResidency::Waiting {
-            reason: "27B is answering 1".into()
+            reason: "27B is answering 1".into(),
+            replies: Some(replies),
         }
     );
 }
@@ -1353,7 +1360,7 @@ fn the_split_is_named_by_the_way_its_owner_published() {
         nodes: vec![THIS_MAC.into(), "link:studio".into()],
         link: Some("jaccl".into()),
     };
-    let serving = residency::split_serving(&engine, Ok(Some(published)));
+    let serving = residency::split_serving(&engine, Ok(Some(published.clone())), None);
     let ServingFacts::Way(way) = &serving else {
         panic!("{serving:?}")
     };
@@ -1373,7 +1380,7 @@ fn the_split_is_named_by_the_way_its_owner_published() {
         NodeResidency::NotRunning { .. }
     ));
     // A record from a goose before the way names no Macs: matched on model and link, as before.
-    let older = residency::split_serving(&engine, Ok(None));
+    let older = residency::split_serving(&engine, Ok(None), None);
     assert_eq!(older, ServingFacts::Way(split_way()));
     assert_eq!(
         residency_of(&resolved(elsewhere), &older, &[]),
@@ -1381,9 +1388,59 @@ fn the_split_is_named_by_the_way_its_owner_published() {
     );
     // A way that cannot be read makes what serves unknown — never guessed.
     assert!(matches!(
-        residency::split_serving(&engine, Err("EOF".into())),
+        residency::split_serving(&engine, Err("EOF".into()), None),
         ServingFacts::Unknown(reason) if reason.contains("EOF")
     ));
+    // Q-271: the owner publishes its record the moment the start is accepted — a split that has
+    // not answered yet is LOADING in its phase, never serving, so the loader's line holds.
+    let starting = residency::split_serving(&engine, Ok(Some(published)), Some("starting".into()));
+    assert_eq!(
+        residency_of(&resolved(split_27b("split")), &starting, &[]),
+        NodeResidency::Loading {
+            phase: Some("starting".into())
+        }
+    );
+}
+
+/// Q-271: the split's own supervisor decides its readiness — the furthest-behind rank's phase
+/// while it starts, serving only once it is ready; a run that ended serves nothing.
+#[cfg(unix)]
+#[test]
+fn a_starting_split_is_never_serving() {
+    use goose_sidecar::distributed::supervisor::RunState;
+    use residency::{split_readiness_of, SplitReadiness};
+    let loading = |p: &str| SplitReadiness::Loading(p.to_string());
+    assert_eq!(
+        split_readiness_of(RunState::Starting, &[None, None]),
+        loading("starting")
+    );
+    assert_eq!(
+        split_readiness_of(RunState::Starting, &[Some("warming"), Some("loading")]),
+        loading("loading")
+    );
+    assert_eq!(
+        split_readiness_of(RunState::Starting, &[Some("warming"), Some("ready")]),
+        loading("warming")
+    );
+    assert_eq!(
+        split_readiness_of(RunState::Preflight, &[]),
+        loading("starting")
+    );
+    assert_eq!(
+        split_readiness_of(RunState::Recovering, &[]),
+        loading("recovering")
+    );
+    assert_eq!(
+        split_readiness_of(RunState::Ready, &[None]),
+        SplitReadiness::Serving
+    );
+    assert_eq!(
+        split_readiness_of(RunState::Serving, &[None]),
+        SplitReadiness::Serving
+    );
+    for over in [RunState::Failed, RunState::Stopping, RunState::Stopped] {
+        assert_eq!(split_readiness_of(over, &[]), SplitReadiness::Over);
+    }
 }
 
 #[tokio::test]
