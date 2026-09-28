@@ -179,8 +179,10 @@ pub struct StartupWatch {
     /// Names the phase a stderr tail shows; with it, each phase's first sighting is marked.
     phase_of: Option<fn(&[String]) -> &'static str>,
     /// Each phase the start showed, with the instant it was first seen — a load's phase times
-    /// (design §6.4 step 10). Marked at the startup loop's own looks, so a phase's start is known
-    /// to within one look: a measurement for display, never a decision.
+    /// (design §6.4 step 10): the empty tail's phase at the spawn, every other one by the child's
+    /// stderr reader at the line that showed it. Q-275: marked only at the startup loop's 400 ms
+    /// looks, a phase superseded between two looks was never marked — CI read a restart's Loading
+    /// as absent. A measurement for display, never a decision.
     phase_marks: StdMutex<Vec<(&'static str, Instant)>>,
 }
 
@@ -208,18 +210,23 @@ impl StartupWatch {
         self.phase_marks.lock().unwrap().clone()
     }
 
+    /// Marks the phase `tail` shows, now, unless it was already seen.
+    fn mark_phase(&self, tail: &[String]) {
+        let Some(phase_of) = self.phase_of else {
+            return;
+        };
+        let phase = phase_of(tail);
+        let mut marks = self.phase_marks.lock().unwrap();
+        if !marks.iter().any(|(seen_phase, _)| *seen_phase == phase) {
+            marks.push((phase, Instant::now()));
+        }
+    }
+
     fn publish(&self, mark: &ProgressMark, handle: &ChildHandle) {
         let seen = StartupSeen {
             resident_bytes: mark.tree.iter().map(|(_, _, memory)| *memory).max(),
             stderr_tail: handle.stderr_tail.lock().unwrap().iter().cloned().collect(),
         };
-        if let Some(phase_of) = self.phase_of {
-            let phase = phase_of(&seen.stderr_tail);
-            let mut marks = self.phase_marks.lock().unwrap();
-            if !marks.iter().any(|(seen_phase, _)| *seen_phase == phase) {
-                marks.push((phase, Instant::now()));
-            }
-        }
         *self.seen.lock().unwrap() = seen;
     }
 }
@@ -683,6 +690,12 @@ impl Sidecar {
                 self.config.name, self.config.command[0]
             )
         })?;
+        // Before the reader exists, so the spawn's phase is always the first mark; from here on
+        // the reader marks each phase at its line — a phase is never lost between two looks.
+        let watch = self.current_watch();
+        if let Some(watch) = &watch {
+            watch.mark_phase(&[]);
+        }
 
         let pid = child.id();
         let stderr_tail = Arc::new(StdMutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
@@ -705,6 +718,9 @@ impl Sidecar {
                         tail.pop_front();
                     }
                     tail.push_back(line);
+                    if let Some(watch) = &watch {
+                        watch.mark_phase(tail.make_contiguous());
+                    }
                 };
                 // Bytes, decoded lossily: `lines()` ends at the first non-UTF-8 byte, and every
                 // line after it — the traceback that explains a failed load — would be dropped.
