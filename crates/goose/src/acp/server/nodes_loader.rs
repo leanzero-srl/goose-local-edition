@@ -20,7 +20,9 @@
 //!  7. a reply open on a way in the stop set — in any goose process on this Mac, other than the
 //!     demand's own root and replies waiting in a loader — or requests on this Mac's engine no
 //!     reply explains → Wait, in ONE FIFO; woken by a reply ending (in-process: the reply guard's
-//!     drop; another process: the kernel releasing that reply's flock), never by a clock;
+//!     drop; another process: the kernel releasing that reply's flock), never by a clock. A loop
+//!     tick's demand (session loops §5.5) says whose reply it waits for when it is a person's,
+//!     and holds no place in the FIFO ahead of a person's demand until its stops have begun;
 //!  8. batching is per REPLY (the guard `on_prompt` takes): a reply keeps its way for every model
 //!     call; a SYNCHRONOUS delegate's demand is its parent reply's own (the parent is blocked in
 //!     the tool call); a BACKGROUND delegate runs beside its parent's turn, so it opens a reply of
@@ -140,6 +142,8 @@ pub(crate) trait Ways: Send + Sync {
     /// Requests on this Mac's engine that no reply accounts for (another client on the port).
     /// `Err` when a running engine did not report them: unknown, never read as none.
     async fn unexplained_requests(&self) -> Result<Option<u32>, String>;
+    /// The chat a session is, by the name the person sees.
+    async fn chat_name(&self, session_id: &str) -> Result<String, String>;
 }
 
 /// Why a waiting demand looks again.
@@ -163,6 +167,29 @@ struct Queued {
     seq: u64,
     node: String,
     node_name: String,
+    /// A loop tick's demand (session loops §5.5).
+    tick: bool,
+    /// Its stops are about to begin: it runs to its end, whoever asked after it (§6.4 step 12).
+    swapping: bool,
+}
+
+impl Queued {
+    /// Whether this demand switches before the demand numbered `seq`. First come, first served
+    /// — except that a loop tick's demand never keeps a person's waiting (session loops §5.5): a
+    /// person's demand goes before every tick demand whose swap has not begun, older or not.
+    fn goes_before(&self, seq: u64, asker_is_tick: bool) -> bool {
+        if self.seq == seq {
+            return false;
+        }
+        if self.swapping {
+            return true;
+        }
+        match (self.tick, asker_is_tick) {
+            (false, true) => true,
+            (true, false) => false,
+            _ => self.seq < seq,
+        }
+    }
 }
 
 pub(crate) struct Core {
@@ -382,11 +409,14 @@ impl Core {
         };
         let root = demand.session_id().map(|s| self.holds.root_of(s));
         let reply_opened = root.as_deref().and_then(|r| self.holds.reply_opened(r));
+        let tick = root.as_deref().is_some_and(|r| self.holds.is_tick(r));
         let seq = self.holds.next_seq();
         self.queue.lock().unwrap().push_back(Queued {
             seq,
             node: node.def.id.clone(),
             node_name: node.def.name.clone(),
+            tick,
+            swapping: false,
         });
         let ticket = Ticket {
             core: Arc::clone(self),
@@ -413,6 +443,7 @@ impl Core {
                     seq,
                     root.as_deref(),
                     reply_opened,
+                    tick,
                     looks == 1,
                 )
                 .await;
@@ -448,7 +479,15 @@ impl Core {
             // loader may have switched while this one waited for the claim, and the stop set read
             // before it would miss the way that serves now.
             let (prepared, plan) = match self
-                .look(&node, &target, seq, root.as_deref(), reply_opened, true)
+                .look(
+                    &node,
+                    &target,
+                    seq,
+                    root.as_deref(),
+                    reply_opened,
+                    tick,
+                    true,
+                )
                 .await
             {
                 Look::Ready => return NodeEnsureServing::Ready,
@@ -459,6 +498,9 @@ impl Core {
                 }
                 Look::Go(go) => *go,
             };
+            if let Some(queued) = self.queue.lock().unwrap().iter_mut().find(|q| q.seq == seq) {
+                queued.swapping = true;
+            }
             let loading = format!("loading {} for this chat", node.def.name);
             tell_first(first, &loading);
             let cancelled = Arc::new(AtomicBool::new(false));
@@ -542,6 +584,7 @@ impl Core {
         .map_err(|e| failed(format!("{e:#}")))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn look(
         &self,
         node: &ResolvedNodeDef,
@@ -549,6 +592,7 @@ impl Core {
         seq: u64,
         root: Option<&str>,
         reply_opened: Option<u64>,
+        tick: bool,
         prepare_now: bool,
     ) -> Look {
         let name = &node.def.name;
@@ -556,7 +600,7 @@ impl Core {
         match self.ways.residency(node).await {
             Err(r) => return Look::Refused(r),
             Ok(Residency::Serving) => {
-                let ahead = self.switch_ahead(seq, &node.def.id, reply_opened);
+                let ahead = self.switch_ahead(seq, &node.def.id, reply_opened, tick);
                 return match ahead {
                     Some(other) => Look::Wait {
                         reason: format!(
@@ -592,8 +636,8 @@ impl Core {
             }
             Ok(None) => {}
         }
-        // One way at a time is one queue: only the oldest demand switches.
-        if let Some(ahead) = self.queue_ahead(seq) {
+        // One way at a time is one queue: only the demand at its head switches.
+        if let Some(ahead) = self.queue_ahead(seq, tick) {
             return Look::Wait {
                 reason: format!("waiting for the switch to {ahead} first; then {name}"),
                 wake: Wake::Changed,
@@ -642,6 +686,30 @@ impl Core {
                 return Look::Refused(Refusal::new(NodeLoadRefusalCode::Unknown, reason))
             }
         };
+        // A loop's tick never stops a way under a person's reply (session loops §5.5): it waits,
+        // and says whose reply it waits for.
+        let person = blockers
+            .iter()
+            .find(|b| b.kind() == goose_sidecar::holders::ReplyKind::User);
+        if let (true, Some(person)) = (tick, person) {
+            let chat = match self.ways.chat_name(person.session()).await {
+                Ok(chat) => chat,
+                Err(error) => {
+                    tracing::warn!(session = person.session(), %error, "nodes loader: the chat a tick waits for could not be read; it is named by its id");
+                    person.session().to_string()
+                }
+            };
+            return Look::Wait {
+                reason: format!(
+                    "{} is answering you in {chat}; the loop's tick loads {name} when it finishes",
+                    person.way()
+                ),
+                wake: match person {
+                    Blocker::Here { .. } => Wake::Changed,
+                    Blocker::Elsewhere { lock, .. } => Wake::ReplyEnd(lock.clone()),
+                },
+            };
+        }
         if let Some(blocker) = blockers.first() {
             let count = blockers.iter().filter(|b| b.way() == blocker.way()).count();
             let replies = if count == 1 { "reply" } else { "replies" };
@@ -690,14 +758,27 @@ impl Core {
         Look::Go(Box::new((prepared, plan)))
     }
 
-    /// A queued switch older than the demanding reply, to another node: the reply waits behind it.
-    fn switch_ahead(&self, seq: u64, node: &str, reply_opened: Option<u64>) -> Option<String> {
+    /// A queued switch older than the demanding reply, to another node: the reply waits behind it
+    /// — unless it is a person's reply and the switch a loop tick's whose stops have not begun
+    /// (session loops §5.5: a person never waits behind a tick's swap).
+    fn switch_ahead(
+        &self,
+        seq: u64,
+        node: &str,
+        reply_opened: Option<u64>,
+        asker_is_tick: bool,
+    ) -> Option<String> {
         let opened = reply_opened?;
         self.queue
             .lock()
             .unwrap()
             .iter()
-            .find(|q| q.seq < seq && q.seq < opened && q.node != node)
+            .find(|q| {
+                q.seq < seq
+                    && q.seq < opened
+                    && q.node != node
+                    && (asker_is_tick || !q.tick || q.swapping)
+            })
             .map(|q| q.node_name.clone())
     }
 
@@ -708,7 +789,7 @@ impl Core {
     pub(crate) fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {
         let root = self.holds.root_of(session);
         let opened = self.holds.reply_opened(&root)?;
-        self.switch_ahead(u64::MAX, node, Some(opened))
+        self.switch_ahead(u64::MAX, node, Some(opened), self.holds.is_tick(&root))
     }
 
     /// Wait until no switch is queued ahead of `session`'s reply. The reply holds nothing
@@ -741,12 +822,12 @@ impl Core {
         }
     }
 
-    fn queue_ahead(&self, seq: u64) -> Option<String> {
+    fn queue_ahead(&self, seq: u64, asker_is_tick: bool) -> Option<String> {
         self.queue
             .lock()
             .unwrap()
             .iter()
-            .find(|q| q.seq < seq)
+            .find(|q| q.goes_before(seq, asker_is_tick))
             .map(|q| q.node_name.clone())
     }
 

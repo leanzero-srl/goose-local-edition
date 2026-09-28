@@ -200,6 +200,10 @@ impl Ways for Fake {
     async fn unexplained_requests(&self) -> Result<Option<u32>, String> {
         Ok(None)
     }
+
+    async fn chat_name(&self, session_id: &str) -> Result<String, String> {
+        Ok(format!("Chat {session_id}"))
+    }
 }
 
 fn demand(fake: &Fake, node: &str, session: Option<&str>) -> Demand {
@@ -1109,4 +1113,252 @@ async fn a_ticks_demand_waits_for_the_persons_reply_on_the_way_it_would_stop() {
     assert_eq!(answer(tick_demand).await, NodeEnsureServing::Ready);
     assert_eq!(fake.serving().as_deref(), Some("split"));
     drop(tick);
+}
+
+/// Session loops §5.5 (L2c): a tick's demand that waits on a PERSON's reply says whose, in the
+/// design's words; one that waits on another loop's tick is an ordinary wait.
+#[tokio::test]
+async fn a_tick_waiting_on_a_persons_reply_names_the_chat_it_waits_for() {
+    use goose_sidecar::holders::ReplyKind;
+
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let other_loop = core.holds().open_reply_as("other-loop", ReplyKind::Tick);
+    lease(&core, "other-loop", &fake, "flash");
+    let _tick = core.holds().open_reply_as("loop-chat", ReplyKind::Tick);
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("loop-chat"));
+    let tick_demand = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the tick waits on the other loop's tick", || {
+        waiting(&core, "split").as_deref()
+            == Some("this Mac's engine is answering 1 reply; loading split node when it finishes")
+    })
+    .await;
+
+    let person = core.holds().open_reply_as("chat-1", ReplyKind::User);
+    lease(&core, "chat-1", &fake, "flash");
+    drop(other_loop);
+    until("the tick names the person's chat", || {
+        waiting(&core, "split").as_deref()
+            == Some("this Mac's engine is answering you in Chat chat-1; the loop's tick loads split node when it finishes")
+    })
+    .await;
+    assert!(fake.log().is_empty(), "{:?}", fake.log());
+    drop(person);
+    assert_eq!(answer(tick_demand).await, NodeEnsureServing::Ready);
+}
+
+/// Session loops §5.5 (L2c): a person's demand that arrives while a tick's demand waits goes in
+/// front of it — the person never waits behind a loop tick's swap.
+#[tokio::test]
+async fn a_persons_demand_goes_before_a_ticks_queued_demand() {
+    use goose_sidecar::holders::ReplyKind;
+
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let person_1 = core.holds().open_reply_as("chat-1", ReplyKind::User);
+    lease(&core, "chat-1", &fake, "flash");
+    let tick = core.holds().open_reply_as("loop-chat", ReplyKind::Tick);
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("loop-chat"));
+    let tick_demand = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the tick's demand waits", || {
+        waiting(&core, "split").is_some()
+    })
+    .await;
+
+    let person_2 = core.holds().open_reply_as("chat-2", ReplyKind::User);
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "studio", Some("chat-2"));
+    let person_demand = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the person's demand waits only on the open reply", || {
+        waiting(&core, "studio").as_deref()
+            == Some("this Mac's engine is answering 1 reply; loading studio node when it finishes")
+    })
+    .await;
+    drop(person_1);
+    assert_eq!(answer(person_demand).await, NodeEnsureServing::Ready);
+    assert_eq!(
+        fake.log(),
+        vec![
+            "stop Local rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string(),
+            "start studio".to_string()
+        ],
+        "the person's switch ran first"
+    );
+    // The person's reply now holds the way it was switched to: the tick waits for it.
+    until("the tick waits for the person's new reply", || {
+        waiting(&core, "split").as_deref()
+            == Some("the engine on wh is answering you in Chat chat-2; the loop's tick loads split node when it finishes")
+    })
+    .await;
+    drop(person_2);
+    assert_eq!(answer(tick_demand).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.serving().as_deref(), Some("split"));
+    drop(tick);
+}
+
+/// Session loops §5.5 (L2c): a person's reply that opens after a tick's switch was queued is
+/// served on the running way at once — it does not wait behind the tick's switch.
+#[tokio::test]
+async fn a_persons_reply_never_waits_behind_a_ticks_queued_switch() {
+    use goose_sidecar::holders::ReplyKind;
+
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let person_1 = core.holds().open_reply_as("chat-1", ReplyKind::User);
+    lease(&core, "chat-1", &fake, "flash");
+    let _tick = core.holds().open_reply_as("loop-chat", ReplyKind::Tick);
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("loop-chat"));
+    let tick_demand = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the tick's switch is queued", || {
+        waiting(&core, "split").is_some()
+    })
+    .await;
+
+    let person_3 = core.holds().open_reply_as("chat-3", ReplyKind::User);
+    assert_eq!(core.queued_switch_ahead("chat-3", "flash"), None);
+    assert_eq!(
+        tokio::time::timeout(
+            SETTLE,
+            core.ensure_serving(demand(&fake, "flash", Some("chat-3")))
+        )
+        .await
+        .expect("the person's reply is served at once"),
+        NodeEnsureServing::Ready
+    );
+    // A later TICK reply still honours the queued switch (batching per reply).
+    let _later_tick = core.holds().open_reply_as("later-loop", ReplyKind::Tick);
+    assert_eq!(
+        core.queued_switch_ahead("later-loop", "flash").as_deref(),
+        Some("split node")
+    );
+    drop(person_1);
+    drop(person_3);
+    assert_eq!(answer(tick_demand).await, NodeEnsureServing::Ready);
+}
+
+/// §6.4 step 12 holds for a tick too: once a tick's stops have begun, the swap runs to its end and
+/// a person's demand that arrives meanwhile waits behind it.
+#[tokio::test]
+async fn a_ticks_swap_that_has_begun_runs_to_its_end_before_a_persons_demand() {
+    use goose_sidecar::holders::ReplyKind;
+
+    let fake = flash_and_split();
+    let gate = Arc::new(Notify::new());
+    *fake.start_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let core = Core::new(fake.clone(), None);
+    let tick = core.holds().open_reply_as("loop-chat", ReplyKind::Tick);
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("loop-chat"));
+    let tick_demand = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the tick's swap started", || fake.log().len() == 2).await;
+
+    let _person = core.holds().open_reply_as("chat-2", ReplyKind::User);
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "studio", Some("chat-2"));
+    let person_demand = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the person waits behind the swap under way", || {
+        waiting(&core, "studio").as_deref()
+            == Some("waiting for the switch to split node first; then studio node")
+    })
+    .await;
+    *fake.start_gate.lock().unwrap() = None;
+    gate.notify_one();
+    assert_eq!(answer(tick_demand).await, NodeEnsureServing::Ready);
+    drop(tick);
+    assert_eq!(answer(person_demand).await, NodeEnsureServing::Ready);
+    assert_eq!(
+        fake.log(),
+        vec![
+            "stop Local rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string(),
+            "start split".to_string(),
+            "stop Split Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+            "start studio".to_string(),
+        ]
+    );
+}
+
+/// Q-239, both ends of the holder kind across processes. Publishing: a tick's reply reaches this
+/// Mac's holder record as `kind: tick` (what another goose window's loader reads). Reading: a
+/// reply ANOTHER process published as a person's makes this process's tick wait naming it; one it
+/// published as a tick is an ordinary wait.
+#[tokio::test]
+async fn the_holder_kind_crosses_processes_both_ways() {
+    use goose_sidecar::holders::{self, HolderEntry, HolderKind, ReplyKind};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    let dir = tempfile::tempdir().unwrap();
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), Some(dir.path().to_path_buf()));
+    let tick = core.holds().open_reply_as("loop-chat", ReplyKind::Tick);
+    lease(&core, "loop-chat", &fake, "flash");
+    let published: Vec<_> = holders::read_all(dir.path())
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match e {
+            HolderEntry::Live(record) => Some(record),
+            _ => None,
+        })
+        .collect();
+    let HolderKind::Goosed { replies } = &published[0].kind else {
+        panic!("{published:?}")
+    };
+    assert_eq!(replies[0].session, "loop-chat");
+    assert_eq!(replies[0].kind, ReplyKind::Tick);
+    drop(tick);
+
+    for (kind, expected) in [
+        (
+            "user",
+            "this Mac's engine is answering you in Chat other-window-chat; the loop's tick loads split node when it finishes",
+        ),
+        (
+            "tick",
+            "this Mac's engine is answering 1 reply; loading split node when it finishes",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = flash_and_split();
+        let core = Core::new(fake.clone(), Some(dir.path().to_path_buf()));
+        let script = r#"
+import fcntl, json, os, sys
+d, kind = sys.argv[1], sys.argv[2]
+pid = os.getpid()
+stem = '%d-0' % pid
+me = open(os.path.join(d, stem + '.lock'), 'a+'); fcntl.flock(me, fcntl.LOCK_EX)
+reply = open(os.path.join(d, stem + '-r1.lock'), 'a+'); fcntl.flock(reply, fcntl.LOCK_EX)
+record = {'pid': pid, 'startedAt': 0, 'since': 0, 'kind': 'goosed', 'replies': [
+    {'reply': 1, 'session': 'other-window-chat', 'rootSession': 'other-window-chat',
+     'way': {'kind': 'single', 'nodes': ['local']}, 'kind': kind}]}
+open(os.path.join(d, stem + '.json.tmp'), 'w').write(json.dumps(record))
+os.rename(os.path.join(d, stem + '.json.tmp'), os.path.join(d, stem + '.json'))
+print('HELD', flush=True)
+sys.stdin.readline()
+"#;
+        let mut other = tokio::process::Command::new("/usr/bin/python3")
+            .args(["-c", script, dir.path().to_str().unwrap(), kind])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut out = tokio::io::BufReader::new(other.stdout.take().unwrap()).lines();
+        assert_eq!(out.next_line().await.unwrap().as_deref(), Some("HELD"));
+
+        let _tick = core.holds().open_reply_as("loop-chat", ReplyKind::Tick);
+        let c = Arc::clone(&core);
+        let d = demand(&fake, "split", Some("loop-chat"));
+        let waiter = tokio::spawn(async move { c.ensure_serving(d).await });
+        until(&format!("the tick waits on the other window's {kind} reply"), || {
+            waiting(&core, "split").as_deref() == Some(expected)
+        })
+        .await;
+        assert!(fake.log().is_empty(), "{:?}", fake.log());
+        waiter.abort();
+        let mut stdin = other.stdin.take().unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+        other.wait().await.unwrap();
+    }
 }
