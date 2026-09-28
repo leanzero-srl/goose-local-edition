@@ -167,14 +167,19 @@ fn port_listening(port: u16) -> bool {
     .is_ok()
 }
 
-fn group_members(pgid: u32) -> Vec<String> {
+/// The group's members that have not exited. procps `pgrep` (Linux, where CI runs) lists a
+/// zombie, and an orphaned engine's zombie waits on init's reap — which neither this test nor the
+/// sidecar can perform (Q-449: CI run 36479348068 failed here with the port already free). macOS
+/// `pgrep` omits zombies (measured 2026-09-28), which is why it never reproduced locally.
+fn group_members(pgid: u32) -> Vec<u32> {
     let out = Command::new("pgrep")
         .args(["-g", &pgid.to_string()])
         .output()
         .unwrap();
     String::from_utf8_lossy(&out.stdout)
         .split_whitespace()
-        .map(str::to_string)
+        .map(|pid| pid.parse().unwrap())
+        .filter(|pid| still_running(*pid))
         .collect()
 }
 
@@ -249,5 +254,64 @@ async fn shutdown_releases_the_port_from_residue_of_its_own_group() {
         !port_listening(port),
         "orphaned engine still serves on {port}"
     );
-    assert!(group_members(leader).is_empty());
+    assert!(
+        group_members(leader).is_empty(),
+        "group {leader} still has members: {:?}",
+        group_members(leader)
+    );
+}
+
+/// The Rapid-MLX shape of a SIGTERM (Q-258): the engine closes its listen socket at once and keeps
+/// running to drain. This one drains forever, so only the SIGKILL leg ends it.
+const DRAINING_ENGINE: &str = r#"
+import http.server, signal, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b'{"object":"list","data":[{"id":"fake"}]}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H)
+def drain(*_):
+    server.socket.close()
+    while True:
+        signal.pause()
+signal.signal(signal.SIGTERM, drain)
+server.serve_forever()
+"#;
+
+/// A free port is not a stopped engine: residue that closes its socket on SIGTERM and keeps
+/// running is SIGKILLed after the grace and waited for before `shutdown` returns — otherwise a
+/// remount meets the old engine still resident beside the new one.
+#[tokio::test]
+async fn shutdown_waits_for_residue_that_closes_its_port_and_keeps_running() {
+    let port = free_port();
+    let mut config = SidecarConfig::new(
+        "draining-residue",
+        vec![
+            "python3".to_string(),
+            "-c".to_string(),
+            TERM_DYING_WRAPPER.to_string(),
+            DRAINING_ENGINE.to_string(),
+            port.to_string(),
+        ],
+        format!("http://127.0.0.1:{port}"),
+        "fake",
+    );
+    config.startup_stall_window = Duration::from_secs(20);
+    let sidecar = Sidecar::start(config).await.unwrap();
+    let leader = sidecar.pid().await.unwrap();
+
+    sidecar.shutdown().await;
+
+    assert!(!port_listening(port), "residue still serves on {port}");
+    assert!(
+        group_members(leader).is_empty(),
+        "shutdown returned while group {leader} still runs: {:?}",
+        group_members(leader)
+    );
 }

@@ -1173,9 +1173,10 @@ fn exit_status_unreaped(pid: u32) -> std::io::Result<std::process::ExitStatus> {
 }
 
 /// SIGTERM the child pid, wait the grace window, then SIGKILL its proven own group (or the
-/// pid alone when the proof fails). Returns the pid the termination operated on — the id of
-/// the group its descendants live in — captured BEFORE reaping, since `Child::id` is `None`
-/// once the child is waited.
+/// pid alone when the proof fails) and wait for every member of that group to exit — the
+/// leader's reap alone does not say its descendants are gone. Returns the pid the termination
+/// operated on — the id of the group its descendants live in — captured BEFORE reaping, since
+/// `Child::id` is `None` once the child is waited.
 async fn terminate(child: &mut Child) -> Option<u32> {
     let pid = child.id();
     #[cfg(unix)]
@@ -1190,17 +1191,33 @@ async fn terminate(child: &mut Child) -> Option<u32> {
             tokio::time::sleep(GRACE_TICK).await;
         }
     }
-    sigkill_tree_or_pid(child);
+    let group_killed = sigkill_tree_or_pid(child);
     let _ = child.wait().await;
+    if let (true, Some(group)) = (group_killed, pid) {
+        await_group_exit(group).await;
+    }
     pid
 }
 
+/// After a group SIGKILL: every member has been signalled and none can refuse, so this waits on
+/// their exits themselves, with no bound — as `child.wait()` does for the leader.
+#[cfg(unix)]
+async fn await_group_exit(group: u32) {
+    while group_still_runs(group) {
+        tokio::time::sleep(GRACE_TICK).await;
+    }
+}
+
+#[cfg(not(unix))]
+async fn await_group_exit(_group: u32) {}
+
 /// The SIGKILL leg: the child's own process group when the proof holds, else the pid alone.
-fn sigkill_tree_or_pid(child: &mut Child) {
+/// Returns whether the group was signalled.
+fn sigkill_tree_or_pid(child: &mut Child) -> bool {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
         if sigkill_owned_group(pid) {
-            return;
+            return true;
         }
         tracing::warn!(
             pid,
@@ -1208,6 +1225,7 @@ fn sigkill_tree_or_pid(child: &mut Child) {
         );
     }
     let _ = child.start_kill();
+    false
 }
 
 /// The proof behind every group kill in this crate: `pid` is the LIVE leader of its own
@@ -1246,6 +1264,15 @@ async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
             "listeners outside the engine's process group hold the port; left alone"
         );
     }
+    // Each pid's identity is read before any signal, so a pid reused after the exit is never
+    // signalled or waited on.
+    let residue: Vec<(u32, u64)> = residue
+        .into_iter()
+        .filter_map(|pid| match machine::process_start(pid) {
+            Some((started, false)) => Some((pid, started)),
+            _ => None,
+        })
+        .collect();
     if residue.is_empty() {
         return;
     }
@@ -1255,18 +1282,70 @@ async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
         group,
         "engine residue still listens after the wrapper exited; SIGTERM per-pid"
     );
-    signal_each(&residue, libc::SIGTERM);
-    if wait_port_clear(port).await {
-        return;
+    signal_running(&residue, libc::SIGTERM);
+    // The EXIT is awaited, not the port: an engine closes its socket first and then drains
+    // (Q-258 measured up to 6 minutes), still resident beside whatever mounts next.
+    if !residue_exited_within_grace(&residue).await {
+        tracing::warn!(
+            port,
+            ?residue,
+            "residue still runs after the grace; SIGKILL per-pid"
+        );
+        signal_running(&residue, libc::SIGKILL);
+        while !residue_exited(&residue) {
+            tokio::time::sleep(GRACE_TICK).await;
+        }
     }
-    tracing::warn!(port, ?residue, "grace expired; SIGKILL per-pid");
-    signal_each(&residue, libc::SIGKILL);
     if !wait_port_clear(port).await {
         tracing::warn!(
             port,
-            "port still occupied after reclaiming the engine's residue"
+            "port still occupied after the engine's residue exited; a listener outside it holds it"
         );
     }
+}
+
+#[cfg(unix)]
+fn residue_exited(residue: &[(u32, u64)]) -> bool {
+    residue
+        .iter()
+        .all(|&(pid, started)| machine::prove(pid, started) != machine::Liveness::Alive)
+}
+
+#[cfg(unix)]
+async fn residue_exited_within_grace(residue: &[(u32, u64)]) -> bool {
+    for _ in 0..GRACE_TICKS {
+        if residue_exited(residue) {
+            return true;
+        }
+        tokio::time::sleep(GRACE_TICK).await;
+    }
+    residue_exited(residue)
+}
+
+#[cfg(unix)]
+fn signal_running(residue: &[(u32, u64)], signal: libc::c_int) {
+    for &(pid, started) in residue {
+        if machine::prove(pid, started) == machine::Liveness::Alive {
+            unsafe { libc::kill(pid as libc::pid_t, signal) };
+        }
+    }
+}
+
+/// Whether any member of process `group` has not exited. A zombie has — it holds no memory and
+/// no files — and an orphan's zombie is init's to reap, never the sidecar's.
+#[cfg(unix)]
+fn group_still_runs(group: u32) -> bool {
+    if unsafe { libc::killpg(group as libc::pid_t, 0) } != 0
+        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    {
+        return false;
+    }
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    sys.processes().iter().any(|(pid, process)| {
+        process.status() != sysinfo::ProcessStatus::Zombie
+            && process_group_of(pid.as_u32()) == Some(group)
+    })
 }
 
 #[cfg(not(unix))]
@@ -1283,13 +1362,6 @@ async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
 fn process_group_of(pid: u32) -> Option<u32> {
     let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
     (pgid > 0).then_some(pgid as u32)
-}
-
-#[cfg(unix)]
-fn signal_each(pids: &[u32], signal: libc::c_int) {
-    for pid in pids {
-        unsafe { libc::kill(*pid as libc::pid_t, signal) };
-    }
 }
 
 pub(crate) fn port_has_listener(port: u16) -> bool {
