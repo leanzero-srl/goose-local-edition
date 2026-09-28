@@ -95,6 +95,8 @@ Updated: 2026-09-28 22:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 
 - CI: red 6× 17:15–18:10 on three timing-flaky integration tests (Q-397's hold test ×4, needs-you superseded,
   link control Offline) → Q-420 cutting; green runs interleave.
+- BATCH 4 (→ 3.0.74) also: Q-426 DONE (worktree-agent-a35cf92df2428aff6: X closes the PiP for the session; only
+  'open' controls raise goose; tray 'Show the floating glance' + Settings 'Show it again'); Q-427 queued behind it.
 - BATCH 4 (→ 3.0.74): Q-417 DONE (worktree-agent-ad33799988ff81b4d: one servedModel() for single/split/remote;
   also the split's running modelId was null); Q-407 DONE (worktree-agent-a324bae2eb0f9de65 bb7c29e18: a pipe-watchdog
   ends a dead goosed's command groups, start-time proven). Q-423 DONE (worktree-agent-a5f81fabce30067fc: the engine's
