@@ -2488,6 +2488,12 @@ pub struct MlxEngineStatusDto {
     /// The last memory-gate verdict for `gate_message`: "allow" | "warn" | "block".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_verdict: Option<String>,
+    /// The last memory-gate verdict whole: the model it judged and the rule's figures — what
+    /// `gateMessage`/`gateVerdict` say in words, so a refused mount is drawn from the same verdict
+    /// object the tile draws (`mountFit`) rather than from a sentence (Q-277). Absent before any
+    /// mount, after a mount the port refused before its gate, and from a goose before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_fit: Option<MlxMountFitDto>,
     /// Something already listens on the configured port while the manager supervises
     /// nothing — an engine orphaned by a previous goosed, or anyone else's. Unmount reclaims it
     /// only when `strayListenerStep.kind` is "start" (every holder is this goose's own leftover);
