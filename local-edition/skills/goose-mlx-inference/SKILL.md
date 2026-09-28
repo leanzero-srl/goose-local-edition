@@ -459,6 +459,13 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   984b74763 carries no marker and is refused, named — never reaped; Unmount still reclaims the port from ANY listener
   (`reclaim_port`, unproven — the owner's explicit command). Tests: tests/port_holders.rs (real orphans via a
   process-group `sh` that exits), engine `a_mount_stops_its_own_leftover_engine_and_names_one_it_may_not_stop`.
+  THE PANEL READS THE SAME HOLDERS (Q-249, 2026-09-28): `status()` fills `stray_listener_holders` (pid, argv, ours,
+  `not_ours_rule` = `NotOursRule::as_str` unreadable|initOrSelf|otherUser|otherEngine|noMarker|liveStarter, the
+  reason, live starter pid+argv) through the mount's own `engine_marker(port)` + `read_port_holders` — only while no
+  mount is in flight (lsof per poll of a start would read the start's own child) — or `stray_listener_holders_error`.
+  The desktop's `StrayListenerBanner` says whose and ONE step in Q-240's order (`strayStep`: live starter → quit it,
+  never a kill; goosed itself → another port; all ours → start again in Run it; else `kill <not-ours pids>` + Copy).
+  A new `NotOurs` arm needs a `NotOursRule` AND a catalog phrase, or the panel falls back to the raw reason.
 - A SWARM BUILD REUSES AN ALREADY-SERVING ENGINE ONLY ON THE SAME PROOF (Q-248, 2026-09-28). Before: goose-cli's
   `SidecarEngine::ensure_loaded` returned Ok whenever `/v1/models` on `mlx_engine.port` served the pool id — any
   listener (unmarked stand-in, a dead goose's leftover, an engine marked for another port) was adopted (measured red,

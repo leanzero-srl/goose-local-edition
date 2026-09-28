@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, one {остановленный запрос ещё покидает движок} few {остановленных запроса ещё покидают движок} many {остановленных запросов ещё покидают движок} other {остановленного запроса ещё покидают движок}}{since, select, none {} other { · остановлен {since} назад}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "Отменён вызвавшей стороной"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "Остановлен: {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "Остановлен движком: ответ ходил по кругу"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "Остановлен движком: повторял один и тот же вызов инструмента"
+  },
   "leavingRows.stage": {
     "defaultMessage": "Остановлен · выходит"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "доля"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "Скопировано"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "Копировать"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "Скопировать команду {command}"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "Порт движка слушает само приложение этого goose"
+  },
+  "strayListener.label": {
+    "defaultMessage": "Порт {port} занят"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "Не принадлежит этому goose — его запустил pid {pid} ({command}) и всё ещё держит: другой goose на этом Mac или терминал"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "Не принадлежит этому goose — на нём нет метки движка goose (его запустил более старый goose или другая программа)"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "На порту {port} что-то отвечает, но сейчас там не слушает ни один процесс — возможно, он только что завершился."
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "Не принадлежит этому goose — движок goose, запущенный для другого движка или порта"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "Не принадлежит этому goose — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "Не принадлежит этому goose — работает от имени другого пользователя этого Mac"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "Собственный движок этого goose, оставшийся от прошлого запуска — сейчас его ничто не держит"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "Дальше: остановите его этой командой, затем запустите снова в «Запуск»."
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "Дальше: запустите снова в «Запуск» — запуск сначала остановит этот остаток."
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "Дальше: задайте движку другой порт в его настройках."
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "Дальше: закройте то, что его запустило (pid {pid}), затем запустите снова в «Запуск»."
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "Порт {port} слушает процесс, который этот goose не запускал — Unmount остановит его."
+  },
+  "strayListener.unread": {
+    "defaultMessage": "Не удалось прочитать, кто занимает порт {port} ({error}). Unmount остановит всё, что его слушает."
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "Принадлежность этому goose не доказана — не удалось прочитать, кто его запустил"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "командная строка не читается"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Провайдер {name} настроен"

@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, other {个已停止的请求仍在退出引擎}}{since, select, none {} other { · {since} 前已停止}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "被调用方取消"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "已停止：{reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "被引擎停止：回答在原地打转"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "被引擎停止：反复发出同一个工具调用"
+  },
   "leavingRows.stage": {
     "defaultMessage": "已停止 · 正在退出"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "共享"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "已复制"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "复制"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "复制命令 {command}"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "这个 goose 的应用本身在监听引擎端口"
+  },
+  "strayListener.label": {
+    "defaultMessage": "端口 {port} 已被占用"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "不是这个 goose 的 — pid {pid}（{command}）启动了它并仍在运行它：这台 Mac 上的另一个 goose，或一个终端"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "不是这个 goose 的 — 它没有 goose 引擎标记（由较旧的 goose 或其他程序启动）"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "端口 {port} 上有东西在应答，但现在没有进程在那里监听 — 它可能刚刚退出。"
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "不是这个 goose 的 — 这是为其他引擎或端口启动的 goose 引擎"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "不是这个 goose 的 — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "不是这个 goose 的 — 它以这台 Mac 上的另一个用户身份运行"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "这个 goose 自己的引擎，上次运行遗留下来的 — 现在没有任何东西在运行它"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "下一步：用这条命令停止它，然后在“运行”中重新启动。"
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "下一步：在“运行”中重新启动 — 启动时会先停止这个遗留引擎。"
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "下一步：在引擎设置中给它换一个端口。"
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "下一步：退出启动它的程序（pid {pid}），然后在“运行”中重新启动。"
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "一个不由这个 goose 运行的进程正在监听端口 {port} — Unmount 会停止它。"
+  },
+  "strayListener.unread": {
+    "defaultMessage": "无法读取是谁占用了端口 {port}（{error}）。Unmount 会停止在那里监听的任何进程。"
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "无法证明属于这个 goose — 无法读取是谁启动了它"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "命令行无法读取"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} 提供商已配置"

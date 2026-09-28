@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, one {requête arrêtée qui quitte encore le moteur} other {requêtes arrêtées qui quittent encore le moteur}}{since, select, none {} other { · arrêtée il y a {since}}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "Annulée par son appelant"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "Arrêtée : {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "Arrêtée par le moteur : sa réponse tournait en rond"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "Arrêtée par le moteur : elle répétait le même appel d’outil"
+  },
   "leavingRows.stage": {
     "defaultMessage": "Arrêtée · en sortie"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "partager"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "Copié"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "Copier"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "Copier la commande {command}"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "L’app de ce goose écoute elle-même sur le port du moteur"
+  },
+  "strayListener.label": {
+    "defaultMessage": "Le port {port} est occupé"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "Pas à ce goose — le pid {pid} ({command}) l’a lancé et le fait encore tourner : un autre goose sur ce Mac, ou un terminal"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "Pas à ce goose — il ne porte aucune marque de moteur goose (un goose plus ancien, ou un autre programme, l’a lancé)"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "Quelque chose répond sur le port {port}, mais aucun processus n’y écoute maintenant — il vient peut-être de se terminer."
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "Pas à ce goose — un moteur goose lancé pour un autre moteur ou un autre port"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "Pas à ce goose — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "Pas à ce goose — il tourne sous un autre utilisateur de ce Mac"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "Le propre moteur de ce goose, resté d’une exécution précédente — plus rien ne le fait tourner"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "Ensuite : arrêtez-le avec cette commande, puis relancez dans Exécuter."
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "Ensuite : relancez dans Exécuter — le démarrage arrête d’abord ce reste."
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "Ensuite : donnez un autre port au moteur dans ses réglages."
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "Ensuite : quittez ce qui l’a lancé (pid {pid}), puis relancez dans Exécuter."
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "Un processus que ce goose ne fait pas tourner écoute sur le port {port} — Unmount l’arrête."
+  },
+  "strayListener.unread": {
+    "defaultMessage": "Impossible de lire qui occupe le port {port} ({error}). Unmount arrête ce qui y écoute."
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "Pas prouvé à ce goose — impossible de lire qui l’a lancé"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "ligne de commande illisible"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Le fournisseur {name} est configuré"

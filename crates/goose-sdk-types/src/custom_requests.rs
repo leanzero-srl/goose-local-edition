@@ -2492,6 +2492,14 @@ pub struct MlxEngineStatusDto {
     /// nothing — an engine orphaned by a previous goosed. Unmount reclaims it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stray_listener_port: Option<u16>,
+    /// Who holds `strayListenerPort`, read while no mount is in flight: every process listening
+    /// on it, with whether it is this goose's own leftover engine and why not. Absent when the
+    /// port is not stray, while a mount is in flight (and from a goose before it), or exactly
+    /// when `strayListenerHoldersError` says why they could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stray_listener_holders: Option<Vec<MlxStrayListenerHolderDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stray_listener_holders_error: Option<String>,
     /// Memory a mount can take: free pages plus the file cache the OS reclaims on demand
     /// (on macOS, Activity Monitor's physical-minus-used). 0 exactly when `memory_error`
     /// is set.
@@ -2666,6 +2674,32 @@ pub struct MlxMountFitDto {
     pub spare_bytes: Option<u64>,
     /// The rule's arithmetic in words (a refusal's text, verbatim — the same as `gateMessage`).
     pub message: String,
+}
+
+/// One process listening on the engine port while this goose supervises no engine there (Q-249):
+/// the same facts a refused Mount names — pid, command line, and whether it is this goose's.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxStrayListenerHolderDto {
+    pub pid: u32,
+    /// Its command line; empty when it could not be read.
+    pub argv: Vec<String>,
+    /// Proven an engine this goose's sidecar started on this port whose goose is gone: a Mount
+    /// stops it and starts the engine.
+    pub ours: bool,
+    /// When not ours, the rule it failed: "unreadable" | "initOrSelf" | "otherUser" |
+    /// "otherEngine" | "noMarker" | "liveStarter".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_ours_rule: Option<String>,
+    /// The same finding in full, with its pids and values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_ours_reason: Option<String>,
+    /// When the process that started it is alive (another goose, or a shell): that process —
+    /// the one to quit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_starter_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_starter_argv: Option<Vec<String>>,
 }
 
 /// A mount in flight. `phase`: "makingRoom" (macOS reclaims memory before the gate judges again)

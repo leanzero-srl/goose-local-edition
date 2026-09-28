@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, one {solicitud detenida que aún está saliendo del motor} other {solicitudes detenidas que aún están saliendo del motor}}{since, select, none {} other { · detenida hace {since}}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "Cancelada por quien la pidió"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "Detenida: {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "Detenida por el motor: su respuesta daba vueltas en círculo"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "Detenida por el motor: repitió la misma llamada a herramienta"
+  },
   "leavingRows.stage": {
     "defaultMessage": "Detenida · saliendo"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "compartir"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "Copiado"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "Copiar"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "Copiar el comando {command}"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "La propia app de este goose escucha en el puerto del motor"
+  },
+  "strayListener.label": {
+    "defaultMessage": "El puerto {port} está ocupado"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "No es de este goose — el pid {pid} ({command}) lo inició y aún lo ejecuta: otro goose en este Mac, o una terminal"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "No es de este goose — no lleva la marca de motor de goose (lo inició un goose más antiguo u otro programa)"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "Algo responde en el puerto {port}, pero ahora no escucha ningún proceso — puede que acabe de terminar."
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "No es de este goose — un motor de goose iniciado para otro motor u otro puerto"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "No es de este goose — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "No es de este goose — se ejecuta como otro usuario en este Mac"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "El propio motor de este goose, sobrante de una ejecución anterior — ya nada lo ejecuta"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "Siguiente: detenlo con este comando y vuelve a iniciar en Ejecutar."
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "Siguiente: vuelve a iniciar en Ejecutar — el inicio detiene primero este sobrante."
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "Siguiente: da al motor otro puerto en su configuración."
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "Siguiente: cierra lo que lo inició (pid {pid}) y vuelve a iniciar en Ejecutar."
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "Un proceso que este goose no ejecuta escucha en el puerto {port} — Unmount lo detiene."
+  },
+  "strayListener.unread": {
+    "defaultMessage": "No se pudo leer quién ocupa el puerto {port} ({error}). Unmount detiene lo que escuche en él."
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "No se pudo probar que sea de este goose — no se pudo leer quién lo inició"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "línea de comandos ilegible"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "El proveedor {name} está configurado"
