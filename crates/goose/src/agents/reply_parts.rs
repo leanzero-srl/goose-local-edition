@@ -21,6 +21,7 @@ use crate::providers::toolshim::{
     augment_message_with_selected_tool_interpreter, convert_tool_messages_to_text,
     modify_system_prompt_for_tool_json, sanitize_residual_markers,
 };
+use crate::session::Session;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
@@ -168,12 +169,43 @@ pub(crate) fn provider_call_model_config(model_config: ModelConfig) -> ModelConf
     model_config.with_default_thinking_effort(Config::global().get_goose_thinking_effort())
 }
 
+/// The session's project instructions as its reply's system prompt carries them, after everything
+/// else. A project the session names but whose file cannot be read is logged, never silently absent.
+fn project_instructions(session: &Session) -> Option<String> {
+    let project_id = session.project_id.as_deref()?;
+    let entry = match crate::sources::read_project(project_id) {
+        Ok(entry) => entry,
+        Err(e) => {
+            warn!(
+                "session {} names project {project_id} but its instructions cannot be read: {e:?}",
+                session.id
+            );
+            return None;
+        }
+    };
+    let mut parts = vec![format!("# Project: {}", entry.name)];
+    if !entry.description.is_empty() {
+        parts.push(entry.description);
+    }
+    if !entry.content.is_empty() {
+        parts.push(entry.content);
+    }
+    Some(parts.join("\n\n"))
+}
+
 impl Agent {
+    /// Q-346: the ONE builder of a reply's tools and system prompt — the reply's first call, every
+    /// mid-turn refresh (tools updated, a folder's hints loaded), the compaction that extends the
+    /// chat and the post-compaction count all go through it, so none of them can drop a part (the
+    /// project's instructions were appended only at the reply's start, and every refresh lost them).
+    /// Built from the same inputs it returns the byte-identical prompt, which keeps a local engine's
+    /// prompt cache.
     pub async fn prepare_tools_and_prompt(
         &self,
-        session_id: &str,
-        working_dir: &std::path::Path,
+        session: &Session,
     ) -> Result<(Vec<Tool>, Vec<Tool>, String, ModelConfig)> {
+        let session_id = session.id.as_str();
+        let working_dir = session.working_dir.as_path();
         let mut tools = self.list_tools(session_id, None).await;
 
         #[cfg(feature = "code-mode")]
@@ -274,6 +306,10 @@ impl Agent {
             toolshim_tools = tools.clone();
             // Empty the tools vector for provider completion
             tools = vec![];
+        }
+
+        if let Some(project_instructions) = project_instructions(session) {
+            system_prompt = format!("{system_prompt}\n\n{project_instructions}");
         }
 
         Ok((tools, toolshim_tools, system_prompt, model_config))
@@ -670,12 +706,10 @@ impl Agent {
             .session_manager
             .get_session(session_id, true)
             .await?;
+        let (tools, _, system_prompt, _) = self.prepare_tools_and_prompt(&session).await?;
         let conversation = session
             .conversation
             .ok_or_else(|| anyhow::anyhow!("Session {session_id} has no conversation"))?;
-        let (tools, _, system_prompt, _) = self
-            .prepare_tools_and_prompt(session_id, &session.working_dir)
-            .await?;
         let counter = crate::token_counter::create_token_counter()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create token counter: {e}"))?;
@@ -1041,9 +1075,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (tools, _toolshim_tools, _system_prompt, _model_config) = agent
-            .prepare_tools_and_prompt(&session.id, session.working_dir.as_path())
-            .await?;
+        let (tools, _toolshim_tools, _system_prompt, _model_config) =
+            agent.prepare_tools_and_prompt(&session).await?;
 
         let names: Vec<String> = tools.iter().map(|t| t.name.clone().into_owned()).collect();
         assert!(names.iter().any(|n| n == "frontend__a_tool"));
@@ -1054,6 +1087,120 @@ mod tests {
         sorted.sort();
         assert_eq!(names, sorted);
 
+        Ok(())
+    }
+
+    /// Q-346: the builder every refresh uses keeps the project's instructions, rebuilds the
+    /// byte-identical prompt from unchanged inputs, and when tools change the prompt changes only
+    /// by the refreshed extension.
+    #[tokio::test]
+    async fn a_tools_refresh_changes_the_prompt_only_by_the_refreshed_extension(
+    ) -> anyhow::Result<()> {
+        const PROJECT_RULE: &str = "Q346 PROJECT RULE: cite the ledger row.";
+        const EXTENSION_INSTRUCTIONS: &str = "Q346 EXTENSION: call q346_tool before editing.";
+        let working_dir = tempfile::tempdir()?;
+        let slug = format!("q346-lib-{}", std::process::id());
+        let project = crate::sources::create_source(
+            goose_sdk_types::custom_requests::SourceType::Project,
+            &slug,
+            "",
+            PROJECT_RULE,
+            true,
+            None,
+            std::collections::HashMap::new(),
+        )
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+        let agent = crate::agents::Agent::new();
+        let manager = agent.config.session_manager.clone();
+        let created = manager
+            .create_session(
+                working_dir.path().to_path_buf(),
+                "q346-tools-refresh".to_string(),
+                SessionType::Hidden,
+                GooseMode::default(),
+            )
+            .await?;
+        manager
+            .update(&created.id)
+            .project_id(Some(slug.clone()))
+            .apply()
+            .await?;
+        let session = manager.get_session(&created.id, false).await?;
+        agent
+            .update_provider(
+                std::sync::Arc::new(MockProvider),
+                ModelConfig::new("test-model"),
+                &session.id,
+            )
+            .await?;
+
+        let (tools_before, _, before, _) = agent.prepare_tools_and_prompt(&session).await?;
+        let (tools_again, _, again, _) = agent.prepare_tools_and_prompt(&session).await?;
+        assert_eq!(
+            before, again,
+            "unchanged inputs rebuild the byte-identical prompt"
+        );
+        assert_eq!(tools_before, tools_again);
+        let project_suffix = format!("\n\n# Project: {slug}\n\n{PROJECT_RULE}");
+        assert!(before.ends_with(&project_suffix), "{before}");
+
+        agent
+            .add_extension(
+                crate::agents::extension::ExtensionConfig::Frontend {
+                    name: "q346ext".to_string(),
+                    description: "q346 extension".to_string(),
+                    tools: vec![Tool::new(
+                        "q346ext__q346_tool".to_string(),
+                        "Q346 tool".to_string(),
+                        object!({ "type": "object", "properties": { } }),
+                    )],
+                    instructions: Some(EXTENSION_INSTRUCTIONS.to_string()),
+                    bundled: None,
+                    available_tools: vec![],
+                },
+                &session.id,
+            )
+            .await?;
+        let (tools_after, _, after, _) = agent.prepare_tools_and_prompt(&session).await?;
+        crate::sources::delete_source(
+            goose_sdk_types::custom_requests::SourceType::Project,
+            &project.path,
+        )
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+        assert!(after.ends_with(&project_suffix), "{after}");
+        let added: Vec<_> = tools_after
+            .iter()
+            .filter(|t| !tools_before.contains(t))
+            .map(|t| t.name.to_string())
+            .collect();
+        assert_eq!(added, vec!["q346ext__q346_tool".to_string()]);
+        assert_eq!(tools_after.len(), tools_before.len() + 1);
+
+        let prefix = before
+            .bytes()
+            .zip(after.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let suffix = before[prefix..]
+            .bytes()
+            .rev()
+            .zip(after[prefix..].bytes().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        assert!(
+            suffix >= project_suffix.len(),
+            "the project's instructions sit unchanged after the refreshed part"
+        );
+        let changed = &after[prefix..after.len() - suffix];
+        assert!(
+            changed.contains("## frontend")
+                && after[prefix..after.len() - project_suffix.len()]
+                    .contains(EXTENSION_INSTRUCTIONS),
+            "the refreshed part is the new extension: {changed:?}"
+        );
+        assert!(!changed.contains(PROJECT_RULE));
         Ok(())
     }
 
