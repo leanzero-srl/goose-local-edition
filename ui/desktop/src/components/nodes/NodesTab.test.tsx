@@ -506,3 +506,52 @@ describe('NodesTab', () => {
     expect(screen.queryByTestId('nodes-removed-pool')).toBeNull();
   });
 });
+
+describe('Remove — chats’ own node sets (Q-359)', () => {
+  it('a node in chats’ sets gets its own box, named by the count, and Remove sends it', async () => {
+    const withSets: NodesConfig = {
+      ...CONFIG,
+      strategies: [
+        ...(CONFIG.strategies ?? []),
+        ...['7', '8'].map((chat) => ({
+          id: `chat-${chat}`,
+          name: `This chat’s nodes (${chat})`,
+          chat,
+          roles: {
+            chat: { chain: [{ node: NODE_FLASH.def.id, weight: 1 }], when: 'failover' as const },
+            build: {
+              chain: [
+                { node: NODE_FLASH.def.id, weight: 1 },
+                { node: NODE_CLOUD.def.id, weight: 1 },
+              ],
+              when: 'share' as const,
+            },
+          },
+        })),
+      ],
+    };
+    store.state = readState(readOf([NODE_SPLIT, NODE_FLASH, NODE_POOL, NODE_CLOUD], withSets));
+    mockRemove.mockResolvedValueOnce({ written: true, refusals: [], read: readOf([]) });
+    renderTab();
+    const nodeCard = screen
+      .getAllByTestId('node-card')
+      .find((c) => c.getAttribute('data-node') === NODE_FLASH.def.id)!;
+    // The generated set names never reach the "Used by" list.
+    expect(nodeCard.textContent).not.toContain('This chat’s nodes');
+    await userEvent.click(within(nodeCard).getByTestId('node-more'));
+    await userEvent.click(await screen.findByTestId('node-remove'));
+    const box = await screen.findByTestId('node-remove-from-chat-node-sets');
+    expect(box).toHaveTextContent('Also take it out of 2 chats’ node sets');
+    expect(box).toHaveTextContent('2 chats run on it with other nodes.');
+    expect(screen.queryByTestId('node-remove-from-strategies')).toBeNull();
+    const confirm = screen.getByTestId('node-remove-confirm');
+    expect(confirm).toBeDisabled();
+    await userEvent.click(box);
+    await userEvent.click(confirm);
+    expect(mockRemove).toHaveBeenLastCalledWith(NODE_FLASH.def.id, {
+      alsoFromStrategies: false,
+      alsoFromChatNodeSets: true,
+      andNewChatsAuto: false,
+    });
+  });
+});

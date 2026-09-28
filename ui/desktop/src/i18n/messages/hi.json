@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "छवियों को सहेजने की प्रतीक्षा की जा रही है..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "जोड़ें"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "आप जो पहला नोड जोड़ते हैं, वही इस चैट का जवाब देता है।"
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} इस चैट का जवाब देता है। इसके डेलिगेट आपके जोड़े हर नोड को साझा करते हैं।"
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "सिर्फ़ इस चैट में जुड़ता है; {strategy} जैसी है वैसी ही रहती है। {lead} इस चैट का जवाब देता रहता है।"
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "{node} को इस चैट में जोड़ें"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "इस चैट में एक नोड जोड़ें"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "पहली शुरुआत अभी मापी नहीं गई"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "लोड हो रहा है · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "सेवा दे रहा है"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{लोड नहीं · लगभग {duration} में शुरू होता है · # लोड की माध्यिका} other{लोड नहीं · लगभग {duration} में शुरू होता है · # लोड की माध्यिका}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac}, {node} पर चैट \"{chat}\" का जवाब दे रहा है। इसे जोड़ने पर वह अपने जवाब के बाद रुक जाएगा"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "लोड होने की प्रतीक्षा में · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "आपके पास मौजूद हर नोड पहले से ही इस चैट को चला रहा है।"
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "{lead} के साथ अभी नहीं चल सकता: आपके Mac goose को एक बार में एक ही मॉडल की सेवा देते हैं"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} दोनों Mac पर चलता है, इसलिए किसी दूसरे मॉडल के लिए कोई Mac खाली नहीं है"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "{mac} पर चलता है, जहाँ {lead} इस चैट का जवाब देता है। एक Mac goose के लिए एक बार में एक ही मॉडल चलाता है"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "सहेजा नहीं गया"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "आपके नोड पढ़े नहीं जा सके: {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "आपके नोड पढ़े जा रहे हैं…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "जोड़ा नहीं गया"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "रणनीति के रूप में सहेजें"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "यह चैट इस पर चलता रहता है। यह रणनीतियों के अंतर्गत सूचीबद्ध होती है, जहाँ नई चैट और swarm बिल्ड भी इसका उपयोग कर सकते हैं।"
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "इसे सहेजने के लिए इसे एक नाम दें"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "रणनीति सहेजी नहीं जा सकी"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "नाम"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "इस चैट के नोड को रणनीति के रूप में सहेजें"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "यह Mac"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "यह Mac"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {{peer} पर goose नहीं चल रहा है} other {{peer} ने {time} से जवाब नहीं दिया — हो सकता है उसका goose बंद हो, या वह ऑफ़लाइन हो}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count} विकल्प दिखाएँ"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "{node} पर · इस डेलिगेट के लिए {duration} में लोड हुआ"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "{node} पर"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "{node} पर: {primary} नहीं चल सकता ({reason})"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "यह डेलिगेट जिस नोड पर चला, वह पढ़ा नहीं जा सका: {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "किसी समस्या की रिपोर्ट करें"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "इस चैट के नोड बदले नहीं गए"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "जाँच हो रही है…"
   },
@@ -6734,6 +6839,12 @@
   "nodes.remove": {
     "defaultMessage": "हटाएँ"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{इसे # चैट के नोड सेट से भी हटाएँ} other{इसे # चैट के नोड सेट से भी हटाएँ}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{एक चैट इसे दूसरे नोड के साथ चलाती है। बिना नोड वाली चैट को उसके अगले संदेश में यह बताया जाता है।} other{# चैट इसे दूसरे नोड के साथ चलाती हैं। बिना नोड वाली चैट को उसके अगले संदेश में यह बताया जाता है।}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "इसे {strategies} से भी हटाएँ"
   },
@@ -6899,6 +7010,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "यह Mac"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "इस चैट में एक नोड जोड़ें…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "अगर {lead} नहीं चल सकता, तो अगले नोड पर जवाब दें"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "बंद: जब {lead} नहीं चल सकता, तो बारी खत्म हो जाती है और कारण बताती है।"
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "जवाब देता है"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "इस चैट के नोड"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "चैट → {node}"
   },
@@ -6914,17 +7040,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "नोड"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "कोई नोड नाम से इस चैट का जवाब नहीं देता। आप जो पहला नोड जोड़ते हैं, वही जवाब देता है।"
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "चैट और इसके डेलिगेट {lead} पर चलते हैं।"
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "अन्य मॉडल और प्रदाता…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "क्लाउड मॉडल और आपके एंडपॉइंट"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "रणनीति के रूप में सहेजें…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "डेलिगेट ये नोड साझा करते हैं। चैट {lead} पर जवाब देती है।"
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "लगभग {duration} में शुरू होता है"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "रणनीतियाँ"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "{strategy} पर: चैट {lead} पर जवाब देती है। नोड जोड़ने से इस चैट को अपने खुद के नोड मिलते हैं; {strategy} जैसी है वैसी ही रहती है।"
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "{node} को इस चैट से हटाएँ"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "यह चैट यहाँ चलाएँ"
@@ -9595,6 +9739,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "रद्द करें"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# चैट का अपना नोड सेट है, जो उसके चिप से बना है: यह वहीं चलता है, यहाँ सूचीबद्ध नहीं है} other{# चैट का अपना-अपना नोड सेट है, जो उनके चिप से बना है: ये वहीं चलते हैं, यहाँ सूचीबद्ध नहीं हैं}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}: हमेशा उपलब्ध"

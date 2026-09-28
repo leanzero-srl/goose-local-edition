@@ -536,3 +536,41 @@ describe('the strategy editor', () => {
     expect(roleRow('planning')).toHaveTextContent('Same as Chat');
   });
 });
+
+describe('the Strategies tab — chats’ own node sets (Q-359)', () => {
+  const CHAT_SET: NodeStrategy = {
+    id: 'chat-7',
+    name: 'This chat’s nodes (7)',
+    chat: '7',
+    roles: {
+      chat: { chain: [{ node: NODE_FLASH.def.id, weight: 1 }], when: 'failover' },
+      build: {
+        chain: [
+          { node: NODE_FLASH.def.id, weight: 1 },
+          { node: NODE_CLOUD.def.id, weight: 1 },
+        ],
+        when: 'share',
+      },
+    },
+  };
+
+  it('lists no chat’s set, counts them, and every write keeps them', async () => {
+    store.state = readState(
+      readOf({ ...CONFIG, strategies: [...CONFIG.strategies!, QUICK, LOCAL, CHAT_SET] })
+    );
+    renderTab();
+    expect(screen.getByTestId('strategies-chat-node-sets')).toHaveTextContent(
+      '1 chat has its own node set, made from its chip: it runs there, not listed here'
+    );
+    expect(document.body.textContent).not.toContain('This chat’s nodes (7)');
+    await userEvent.click(within(card('local')).getByTestId('strategy-use-builds'));
+    await waitFor(() => expect(mockWrite).toHaveBeenCalledTimes(1));
+    const written = mockWrite.mock.calls[0][0] as NodesConfig;
+    expect(written.strategies?.map((s) => s.id)).toEqual(['everyday', 'quick', 'local', 'chat-7']);
+  });
+
+  it('no chat has a set: no count line', () => {
+    renderTab();
+    expect(screen.queryByTestId('strategies-chat-node-sets')).toBeNull();
+  });
+});

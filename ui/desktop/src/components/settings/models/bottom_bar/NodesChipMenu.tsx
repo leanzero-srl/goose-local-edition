@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Check, Cpu, Network, Sliders } from 'lucide-react';
+import { Check, Cpu, Network, Plus, Save, Sliders, X } from 'lucide-react';
 import type {
   NodeResidency,
   NodesReadResponse_unstable,
@@ -11,9 +11,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '../../../ui/dropdown-menu';
-import { TYPE, cx } from '../../../lz';
+import { Checkbox, RADIUS, SURFACE, TYPE, WEIGHT, cx } from '../../../lz';
 import { StateChip } from '../../../nodes/NodeChips';
-import { effectiveEntry, nodeNamesById } from '../../../nodes/model';
+import { effectiveEntry, namedStrategies, nodeNamesById } from '../../../nodes/model';
+import { chatNodeIds, type ChatNodesNow } from '../../../nodes/chatNodeAvailability';
 import type { NodeState } from '../../../nodes/nodeGlance';
 import { formatElapsed } from '../../../leanzero-swarm/mlxLiveStats';
 import { measuredLoadOf } from '../../../../utils/nodeSwap';
@@ -33,7 +34,46 @@ const i18n = defineMessages({
     id: 'nodesChipMenu.otherModelsHint',
     defaultMessage: 'Cloud models and your endpoints',
   },
+  chatNodes: { id: 'nodesChipMenu.chatNodes', defaultMessage: 'This chat’s nodes' },
+  answers: { id: 'nodesChipMenu.answers', defaultMessage: 'answers' },
+  takeOut: { id: 'nodesChipMenu.takeOut', defaultMessage: 'Take {node} out of this chat' },
+  setLine: {
+    id: 'nodesChipMenu.setLine',
+    defaultMessage: 'Delegates share these nodes. The chat answers on {lead}.',
+  },
+  oneLine: {
+    id: 'nodesChipMenu.oneLine',
+    defaultMessage: 'The chat and its delegates run on {lead}.',
+  },
+  strategyLine: {
+    id: 'nodesChipMenu.strategyLine',
+    defaultMessage:
+      'On {strategy}: the chat answers on {lead}. Adding a node gives this chat its own nodes; {strategy} stays as it is.',
+  },
+  noneLine: {
+    id: 'nodesChipMenu.noneLine',
+    defaultMessage: 'No node answers this chat by name. The first node you add answers it.',
+  },
+  answerOnNext: {
+    id: 'nodesChipMenu.answerOnNext',
+    defaultMessage: 'If {lead} can’t run, answer on the next node',
+  },
+  answerOnNextWhy: {
+    id: 'nodesChipMenu.answerOnNextWhy',
+    defaultMessage: 'Off: when {lead} can’t run, the turn ends and says why.',
+  },
+  addNode: { id: 'nodesChipMenu.addNode', defaultMessage: 'Add a node to this chat…' },
+  saveAsStrategy: { id: 'nodesChipMenu.saveAsStrategy', defaultMessage: 'Save as a strategy…' },
 });
+
+/** The chip's door to this chat's own nodes (Q-359). */
+export interface ChatNodesControl {
+  now: ChatNodesNow;
+  /** Store the chat's set (`nodes/setChatNodes`): lead first. */
+  onSetNodes: (nodes: string[], answerOnNext: boolean) => void;
+  onAddNode: () => void;
+  onSaveAsStrategy: (strategyId: string) => void;
+}
 
 /**
  * A node's residency as the chip menu's state chip (§8.5: its states come from `nodes/residency`,
@@ -59,6 +99,127 @@ export function residencyChipState(residency: NodeResidency | undefined): NodeSt
   }
 }
 
+/**
+ * "THIS CHAT'S NODES" (Q-359, DESIGN-Q359-CHAT-NODES.md "Control"): the chat's nodes as solid chips —
+ * the one that answers marked, every other with its × — the line that says who answers and who the
+ * delegates share, the failover switch (off by default), and the two doors: add a node, save the set
+ * as a strategy. A chip's state is the menu's own (`nodes/residency`, read when it opened).
+ */
+function ChatNodesSection({
+  control,
+  names,
+  stateOf,
+}: {
+  control: ChatNodesControl;
+  names: Record<string, string>;
+  stateOf: (id: string) => NodeState;
+}) {
+  const intl = useIntl();
+  const { now } = control;
+  const ids = chatNodeIds(now);
+  const nameOf = (id: string) => names[id] ?? id;
+  const lead = ids[0] != null ? nameOf(ids[0]) : null;
+  const line =
+    now.kind === 'strategy' && lead
+      ? intl.formatMessage(i18n.strategyLine, { strategy: now.strategy.name, lead })
+      : lead && ids.length > 1
+        ? intl.formatMessage(i18n.setLine, { lead })
+        : lead
+          ? intl.formatMessage(i18n.oneLine, { lead })
+          : intl.formatMessage(i18n.noneLine);
+  return (
+    <div className="mx-2 mb-1 flex flex-col gap-1.5" data-testid="chat-nodes-section">
+      <p className={cx('mt-1 uppercase tracking-wide', TYPE.meta)}>
+        {intl.formatMessage(i18n.chatNodes)}
+      </p>
+      {ids.length > 0 && (
+        <div className="flex flex-wrap gap-1.5" data-testid="chat-nodes-chips">
+          {ids.map((id, index) => (
+            <span
+              key={id}
+              data-testid={`chat-node-${id}`}
+              data-lead={index === 0 ? 'yes' : undefined}
+              className={cx(
+                'inline-flex max-w-full items-center gap-1.5 py-0.5 pl-2 pr-1',
+                RADIUS.control,
+                SURFACE.outline,
+                'bg-lz-surface'
+              )}
+            >
+              <span className={cx('truncate text-lz-meta text-lz-ink', WEIGHT.semibold)}>
+                {nameOf(id)}
+              </span>
+              <StateChip state={stateOf(id)} />
+              {index === 0 && (
+                <span
+                  className={cx(
+                    'inline-flex h-5 items-center px-1.5 text-lz-meta',
+                    WEIGHT.semibold,
+                    RADIUS.control,
+                    'bg-lz-accent text-lz-accent-ink'
+                  )}
+                  data-testid="chat-node-answers"
+                >
+                  {intl.formatMessage(i18n.answers)}
+                </span>
+              )}
+              {index > 0 && now.kind === 'set' && (
+                <button
+                  type="button"
+                  className={cx(
+                    'flex size-5 items-center justify-center text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink [&_svg]:size-3.5',
+                    RADIUS.control
+                  )}
+                  aria-label={intl.formatMessage(i18n.takeOut, { node: nameOf(id) })}
+                  data-testid={`chat-node-remove-${id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    control.onSetNodes(
+                      ids.filter((other) => other !== id),
+                      now.answerOnNext
+                    );
+                  }}
+                >
+                  <X />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      <p className={cx('break-words', TYPE.meta)} data-testid="chat-nodes-line">
+        {line}
+      </p>
+      {now.kind === 'set' && ids.length > 1 && lead && (
+        <Checkbox
+          checked={now.answerOnNext}
+          onChange={(next) => control.onSetNodes(ids, next)}
+          label={intl.formatMessage(i18n.answerOnNext, { lead })}
+          description={intl.formatMessage(i18n.answerOnNextWhy, { lead })}
+          testId="chat-nodes-answer-on-next"
+        />
+      )}
+      <div className="flex flex-wrap">
+        <DropdownMenuItem data-testid="chat-nodes-add" onClick={control.onAddNode}>
+          <Plus className="h-4 w-4 shrink-0" />
+          <span>{intl.formatMessage(i18n.addNode)}</span>
+        </DropdownMenuItem>
+        {now.kind === 'set' && (
+          <DropdownMenuItem
+            data-testid="chat-nodes-save"
+            onClick={() => control.onSaveAsStrategy(now.strategyId)}
+          >
+            <Save className="h-4 w-4 shrink-0" />
+            <span>{intl.formatMessage(i18n.saveAsStrategy)}</span>
+          </DropdownMenuItem>
+        )}
+      </div>
+      <DropdownMenuSeparator />
+    </div>
+  );
+}
+
 /** The base of a session's route model (`strategy:<id>@<role>` is its strategy's). */
 function routeBase(model: string | null | undefined): string | null {
   if (!model) return null;
@@ -80,6 +241,7 @@ export function NodesChipMenu({
   onManageNodes,
   onEngine,
   onOtherModels,
+  chatNodes = null,
 }: {
   read: NodesReadResponse_unstable;
   residency: NodesResidencyResponse_unstable;
@@ -89,13 +251,16 @@ export function NodesChipMenu({
   onManageNodes: () => void;
   onEngine: () => void;
   onOtherModels: () => void;
+  /** This chat's nodes; null when the menu is not a chat's (no session). */
+  chatNodes?: ChatNodesControl | null;
 }) {
   const intl = useIntl();
   const names = nodeNamesById(read.nodes);
   const stateOf = (id: string) =>
     residencyChipState(residency.nodes.find((r) => r.node === id)?.residency);
   const current = routeBase(currentModel);
-  const strategies = read.config.strategies ?? [];
+  // A chat's own node set is listed by no one: its chat shows it in the section above.
+  const strategies = namedStrategies(read.config);
 
   const row = (
     model: string,
@@ -126,6 +291,9 @@ export function NodesChipMenu({
   return (
     <div data-testid="nodes-chip-menu">
       <DropdownMenuLabel className={TYPE.meta}>{intl.formatMessage(i18n.title)}</DropdownMenuLabel>
+      {chatNodes && (
+        <ChatNodesSection control={chatNodes} names={names} stateOf={stateOf} />
+      )}
       {strategies.length > 0 && (
         <>
           <p className={cx('mx-2 mt-1 uppercase tracking-wide', TYPE.meta)}>

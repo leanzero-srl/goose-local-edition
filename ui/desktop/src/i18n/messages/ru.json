@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Ожидание сохранения изображений..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "Добавить"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "Первый добавленный вами узел отвечает на этот чат."
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} отвечает на этот чат. Его делегаты используют совместно каждый добавленный вами узел."
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "Добавляется только к этому чату; {strategy} остаётся как есть. {lead} по-прежнему отвечает на этот чат."
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "Добавить {node} в этот чат"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "Добавить узел в этот чат"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "Закрыть"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "Первый запуск ещё не измерен"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "Загрузка · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "Обслуживает"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{Не загружен · запускается примерно за {duration} · медиана по # загрузке} few{Не загружен · запускается примерно за {duration} · медиана по # загрузкам} many{Не загружен · запускается примерно за {duration} · медиана по # загрузкам} other{Не загружен · запускается примерно за {duration} · медиана по # загрузкам}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac} сейчас отвечает на чат «{chat}» на {node}. Добавление остановит это после его ответа"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "Ждёт загрузки · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "Каждый узел, который у вас уже есть, уже обслуживает этот чат."
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "Пока не может работать рядом с {lead}: ваши Mac обслуживают goose только одной моделью за раз"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} работает сразу на обоих Mac, поэтому ни один Mac не свободен для другой модели"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "Работает на {mac}, где {lead} отвечает на этот чат. Mac выполняет для goose только одну модель за раз"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "Не сохранено"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "Не удалось прочитать ваши узлы: {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "Читаем ваши узлы…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "Не добавлено"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "Сохранить как стратегию"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "Этот чат продолжает работать на нём. Он указан в разделе «Стратегии», где его также смогут использовать новые чаты и сборки swarm."
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "Дайте ей имя, чтобы сохранить"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "Не удалось сохранить стратегию"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "Имя"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "Сохранить узлы этого чата как стратегию"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "этот Mac"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "Этот Mac"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {goose на {peer} не запущен} other {{peer} не отвечает с {time} — goose, возможно, закрыт, или Mac не в сети}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Показать {count} параметров"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "на {node} · загружен для этого делегата за {duration}"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "на {node}"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "на {node}: {primary} не может работать ({reason})"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "Не удалось прочитать узел, на котором выполнялся этот делегат: {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Сообщить о проблеме"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "Узлы этого чата не изменены"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "Проверка…"
   },
@@ -6734,6 +6839,12 @@
   "nodes.remove": {
     "defaultMessage": "Удалить"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{Также убрать его из набора узлов # чата} few{Также убрать его из наборов узлов # чатов} many{Также убрать его из наборов узлов # чатов} other{Также убрать его из наборов узлов # чата}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{Чат использует его вместе с другими узлами. Чат, оставшийся без узла, узнает об этом в следующем сообщении.} few{# чата используют его вместе с другими узлами. Чат, оставшийся без узла, узнает об этом в следующем сообщении.} many{# чатов используют его вместе с другими узлами. Чат, оставшийся без узла, узнает об этом в следующем сообщении.} other{# чата используют его вместе с другими узлами. Чат, оставшийся без узла, узнает об этом в следующем сообщении.}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "Удалить его и из {strategies}"
   },
@@ -6899,6 +7010,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "Этот Mac"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "Добавить узел в этот чат…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "Если {lead} не может работать, отвечать на следующем узле"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "Выкл: когда {lead} не может работать, ход завершается и сообщает причину."
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "отвечает"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "Узлы этого чата"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "Чат → {node}"
   },
@@ -6914,17 +7040,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "Узлы"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "Ни один узел не отвечает на этот чат по имени. Первый добавленный вами узел будет отвечать."
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "Чат и его делегаты работают на {lead}."
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "Другие модели и провайдеры…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "Облачные модели и ваши эндпоинты"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "Сохранить как стратегию…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "Делегаты используют эти узлы совместно. Чат отвечает на {lead}."
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "запускается примерно за {duration}"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "Стратегии"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "На {strategy}: чат отвечает на {lead}. Добавление узла даёт этому чату собственные узлы; {strategy} остаётся как есть."
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "Убрать {node} из этого чата"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Где запускать этот чат"
@@ -9595,6 +9739,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "Отмена"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# чат имеет собственный набор узлов, созданный из его чипа: он работает там, здесь не указан} few{# чата имеют собственные наборы узлов, созданные из их чипов: они работают там, здесь не указаны} many{# чатов имеют собственные наборы узлов, созданные из их чипов: они работают там, здесь не указаны} other{# чата имеют собственные наборы узлов, созданные из их чипов: они работают там, здесь не указаны}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}: всегда доступен"

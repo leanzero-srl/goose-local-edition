@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Đang chờ lưu hình ảnh..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "Thêm"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "Nút đầu tiên bạn thêm sẽ trả lời cuộc trò chuyện này."
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} trả lời cuộc trò chuyện này. Các lượt ủy quyền của nó dùng chung mọi nút bạn thêm."
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "Chỉ thêm vào cuộc trò chuyện này; {strategy} vẫn giữ nguyên. {lead} vẫn tiếp tục trả lời cuộc trò chuyện này."
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "Thêm {node} vào cuộc trò chuyện này"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "Thêm một nút vào cuộc trò chuyện này"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "Đóng"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "Chưa đo lần khởi động đầu tiên"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "Đang nạp · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "Đang phục vụ"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{Chưa nạp · khởi động trong khoảng {duration} · trung vị của # lượt nạp} other{Chưa nạp · khởi động trong khoảng {duration} · trung vị của # lượt nạp}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac} đang trả lời cuộc trò chuyện \"{chat}\" trên {node}. Thêm nó sẽ dừng việc đó sau khi trả lời xong"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "Đang chờ nạp · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "Mọi nút bạn đang có đều đã chạy cuộc trò chuyện này."
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "Chưa thể chạy cùng {lead}: các Mac của bạn chỉ phục vụ goose với một mô hình mỗi lần"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} chạy trên cả hai Mac, nên không còn Mac nào rảnh cho mô hình khác"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "Chạy trên {mac}, nơi {lead} trả lời cuộc trò chuyện này. Một Mac chỉ chạy một mô hình mỗi lần cho goose"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "Chưa lưu"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "Không đọc được các nút của bạn: {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "Đang đọc các nút của bạn…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "Chưa thêm"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "Lưu thành chiến lược"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "Cuộc trò chuyện này tiếp tục chạy trên đó. Nó được liệt kê trong Chiến lược, nơi các cuộc trò chuyện mới và bản dựng swarm cũng có thể dùng."
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "Đặt tên để lưu nó"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "Không lưu được chiến lược"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "Tên"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "Lưu các nút của cuộc trò chuyện này thành chiến lược"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "Mac này"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "Mac này"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {goose trên {peer} không chạy} other {{peer} chưa phản hồi từ {time} — goose có thể đã đóng, hoặc máy đang ngoại tuyến}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Hiện {count} tùy chọn"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "trên {node} · đã nạp cho lượt ủy quyền này trong {duration}"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "trên {node}"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "trên {node}: {primary} không chạy được ({reason})"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "Không đọc được nút mà lượt ủy quyền này đã chạy trên đó: {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Báo cáo sự cố"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "Các nút của cuộc trò chuyện này chưa được thay đổi"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "Đang kiểm tra…"
   },
@@ -6734,6 +6839,12 @@
   "nodes.remove": {
     "defaultMessage": "Gỡ"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{Cũng gỡ khỏi tập nút của # cuộc trò chuyện} other{Cũng gỡ khỏi tập nút của # cuộc trò chuyện}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{Một cuộc trò chuyện đang chạy trên đó cùng các nút khác. Cuộc trò chuyện còn lại không có nút sẽ được báo ở tin nhắn tiếp theo.} other{# cuộc trò chuyện đang chạy trên đó cùng các nút khác. Cuộc trò chuyện còn lại không có nút sẽ được báo ở tin nhắn tiếp theo.}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "Gỡ nút khỏi {strategies} luôn"
   },
@@ -6899,6 +7010,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "Mac này"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "Thêm một nút vào cuộc trò chuyện này…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "Nếu {lead} không chạy được, trả lời trên nút tiếp theo"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "Tắt: khi {lead} không chạy được, lượt kết thúc và cho biết lý do."
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "trả lời"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "Các nút của cuộc trò chuyện này"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "Trò chuyện → {node}"
   },
@@ -6914,17 +7040,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "Nút"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "Không có nút nào trả lời cuộc trò chuyện này theo tên. Nút đầu tiên bạn thêm sẽ trả lời nó."
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "Cuộc trò chuyện và các lượt ủy quyền của nó chạy trên {lead}."
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "Mô hình và nhà cung cấp khác…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "Mô hình đám mây và endpoint của bạn"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "Lưu thành chiến lược…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "Các lượt ủy quyền dùng chung những nút này. Cuộc trò chuyện trả lời trên {lead}."
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "khởi động trong khoảng {duration}"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "Chiến lược"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "Trên {strategy}: cuộc trò chuyện trả lời trên {lead}. Thêm một nút sẽ cho cuộc trò chuyện này các nút riêng; {strategy} vẫn giữ nguyên."
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "Gỡ {node} khỏi cuộc trò chuyện này"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Chạy cuộc trò chuyện này trên"
@@ -9595,6 +9739,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "Hủy"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# cuộc trò chuyện có tập nút riêng, được tạo từ chip của nó: nó chạy ở đó, không liệt kê ở đây} other{# cuộc trò chuyện có tập nút riêng, được tạo từ chip của chúng: chúng chạy ở đó, không liệt kê ở đây}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}: luôn sẵn sàng"

@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Menunggu gambar disimpan..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "Tambah"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "Node pertama yang Anda tambahkan akan menjawab chat ini."
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} menjawab chat ini. Delegasinya berbagi setiap node yang Anda tambahkan."
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "Hanya ditambahkan ke chat ini; {strategy} tetap seperti semula. {lead} tetap menjawab chat ini."
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "Tambahkan {node} ke chat ini"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "Tambahkan node ke chat ini"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "Tutup"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "Mulai pertama belum diukur"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "Memuat · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "Melayani"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{Tidak dimuat · mulai dalam sekitar {duration} · median dari # pemuatan} other{Tidak dimuat · mulai dalam sekitar {duration} · median dari # pemuatan}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac} sedang menjawab chat \"{chat}\" di {node}. Menambahkannya akan menghentikan itu setelah jawabannya selesai"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "Menunggu untuk dimuat · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "Setiap node yang Anda miliki sudah menjalankan chat ini."
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "Belum bisa berjalan bersama {lead}: Mac Anda melayani goose dengan satu model pada satu waktu"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} berjalan di kedua Mac, jadi tidak ada Mac yang bebas untuk model lain"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "Berjalan di {mac}, tempat {lead} menjawab chat ini. Satu Mac menjalankan satu model pada satu waktu untuk goose"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "Tidak disimpan"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "Node Anda tidak dapat dibaca: {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "Membaca node Anda…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "Tidak ditambahkan"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "Simpan sebagai strategi"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "Chat ini terus berjalan di sana. Ini tercantum di bawah Strategi, tempat chat baru dan build swarm juga bisa memakainya."
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "Beri nama untuk menyimpannya"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "Strategi tidak dapat disimpan"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "Nama"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "Simpan node chat ini sebagai strategi"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "Mac ini"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "Mac ini"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {goose tidak berjalan di {peer}} other {{peer} belum menjawab sejak {time} — goose-nya mungkin tertutup, atau sedang offline}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Tampilkan {count} opsi"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "di {node} · dimuat untuk delegasi ini dalam {duration}"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "di {node}"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "di {node}: {primary} tidak bisa berjalan ({reason})"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "Node tempat delegasi ini berjalan tidak dapat dibaca: {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Laporkan Masalah"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "Node chat ini tidak diubah"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "Memeriksa…"
   },
@@ -6734,6 +6839,12 @@
   "nodes.remove": {
     "defaultMessage": "Hapus"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{Keluarkan juga dari set node # chat} other{Keluarkan juga dari set node # chat}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{Satu chat berjalan di sana bersama node lain. Chat yang kehilangan node akan diberi tahu di pesan berikutnya.} other{# chat berjalan di sana bersama node lain. Chat yang kehilangan node akan diberi tahu di pesan berikutnya.}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "Hapus juga dari {strategies}"
   },
@@ -6899,6 +7010,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "Mac ini"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "Tambahkan node ke chat ini…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "Jika {lead} tidak bisa berjalan, jawab di node berikutnya"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "Nonaktif: saat {lead} tidak bisa berjalan, giliran berakhir dan menyebutkan alasannya."
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "menjawab"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "Node chat ini"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "Chat → {node}"
   },
@@ -6914,17 +7040,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "Node"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "Tidak ada node yang menjawab chat ini secara khusus. Node pertama yang Anda tambahkan akan menjawabnya."
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "Chat ini dan delegasinya berjalan di {lead}."
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "Model dan penyedia lain…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "Model cloud dan endpoint Anda"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "Simpan sebagai strategi…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "Delegasi berbagi node ini. Chat menjawab di {lead}."
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "mulai dalam sekitar {duration}"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "Strategi"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "Pada {strategy}: chat menjawab di {lead}. Menambahkan node memberi chat ini node sendiri; {strategy} tetap seperti semula."
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "Keluarkan {node} dari chat ini"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Jalankan chat ini di"
@@ -9595,6 +9739,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "Batal"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# chat punya set node sendiri, dibuat dari chipnya: ia berjalan di sana, tidak tercantum di sini} other{# chat punya set node sendiri, dibuat dari chipnya: ia berjalan di sana, tidak tercantum di sini}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node}: selalu tersedia"

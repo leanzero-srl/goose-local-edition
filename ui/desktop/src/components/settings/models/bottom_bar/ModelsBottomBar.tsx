@@ -40,6 +40,11 @@ import { servedChipWords } from './servedChip';
 import { NodesChipMenu } from './NodesChipMenu';
 import { refreshGlanceNodes, useGlanceNodes } from '../../../engineGlance/glanceStore';
 import { useRunChatOn } from '../../../nodes/useRunChatOn';
+import { useChatNodes } from '../../../nodes/useChatNodes';
+import { chatNodesNow } from '../../../nodes/chatNodeAvailability';
+import { AddChatNodeDialog } from '../../../nodes/AddChatNodeDialog';
+import { SaveChatNodesDialog } from '../../../nodes/SaveChatNodesDialog';
+import { toastError } from '../../../../toasts';
 import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 import { backgroundWorkLabel } from '../../../sessionActivity/backgroundWorkText';
 import {
@@ -150,6 +155,10 @@ const i18n = defineMessages({
   servedSplitStopped: {
     id: 'modelsBottomBar.servedSplitStopped',
     defaultMessage: 'Stopped on {where} — {reason}',
+  },
+  chatNodesRefused: {
+    id: 'modelsBottomBar.chatNodesRefused',
+    defaultMessage: 'This chat’s nodes were not changed',
   },
 });
 
@@ -328,8 +337,30 @@ export default function ModelsBottomBar({
   // §8.5's menu (Q-274): the nodes and strategies this chat can run on, read when the menu opens.
   const glanceNodes = useGlanceNodes();
   const runOn = useRunChatOn(sessionId, onModelChanged);
+  const setChatNodes = useChatNodes(sessionId, onModelChanged);
   const nodesMenu =
     glanceNodes.kind === 'read' && glanceNodes.read.nodes.length > 0 ? glanceNodes : null;
+  // Q-359: what this chat runs on — its own nodes, one node, a named strategy, or none by name.
+  const chatNow = nodesMenu
+    ? chatNodesNow(nodesMenu.read.config, sessionId, isSwarm ? currentModel : null)
+    : ({ kind: 'none' } as const);
+  const [addingNode, setAddingNode] = useState(false);
+  const [savingSet, setSavingSet] = useState<string | null>(null);
+  const changeChatNodes = async (nodes: string[], answerOnNext: boolean) => {
+    const result = await setChatNodes(nodes, answerOnNext);
+    if (!result.applied) {
+      toastError({
+        title: intl.formatMessage(i18n.chatNodesRefused),
+        msg: result.refusals.join(' · '),
+      });
+    }
+  };
+  // Picking one entry below is "only this": the chat moves first, then its own set goes — a turn
+  // between the two still finds the set it runs on.
+  const pickOnly = async (model: string, label: string) => {
+    const moved = await runOn(model, label);
+    if (moved && chatNow.kind === 'set') await changeChatNodes([], false);
+  };
   const splitReason = splitStop ? splitStopReason(intl, splitStop) : null;
   // goose's own call for THIS chat after its turn — the memory review, the fact check — in the one
   // state the chat's row and the line under the reply read (Q-307: the chip said "goose helper
@@ -516,10 +547,21 @@ export default function ModelsBottomBar({
               read={nodesMenu.read}
               residency={nodesMenu.residency}
               currentModel={isSwarm ? (currentModel ?? null) : null}
-              onPick={(model, label) => void runOn(model, label)}
+              onPick={(model, label) => void pickOnly(model, label)}
               onManageNodes={() => setView('nodes')}
               onEngine={() => setView('mlxEngine')}
               onOtherModels={() => setIsAddModelModalOpen(true)}
+              chatNodes={
+                sessionId
+                  ? {
+                      now: chatNow,
+                      onSetNodes: (nodes, answerOnNext) =>
+                        void changeChatNodes(nodes, answerOnNext),
+                      onAddNode: () => setAddingNode(true),
+                      onSaveAsStrategy: (strategyId) => setSavingSet(strategyId),
+                    }
+                  : null
+              }
             />
           )}
           {!nodesMenu && servedModel != null && (
@@ -578,6 +620,22 @@ export default function ModelsBottomBar({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {addingNode && sessionId && (
+        <AddChatNodeDialog
+          sessionId={sessionId}
+          now={chatNow}
+          setChatNodes={setChatNodes}
+          onClose={() => setAddingNode(false)}
+        />
+      )}
+      {savingSet && nodesMenu && (
+        <SaveChatNodesDialog
+          config={nodesMenu.read.config}
+          strategyId={savingSet}
+          onClose={() => setSavingSet(null)}
+        />
+      )}
 
       {isAddModelModalOpen ? (
         <SwitchModelModal
