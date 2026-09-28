@@ -3,9 +3,11 @@
 #![cfg(unix)]
 
 use std::net::TcpListener;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use goose_sidecar::{Sidecar, SidecarConfig};
+use goose_sidecar::engine::start_phase;
+use goose_sidecar::{Ensured, Sidecar, SidecarConfig, StartCancel, StartupWatch};
 
 const FAKE_ENGINE: &str = r#"
 import http.server, sys
@@ -233,5 +235,75 @@ async fn circuit_breaker_opens_after_repeated_deaths() {
         }
     }
     assert!(opened, "circuit breaker never opened after repeated kills");
+    sidecar.shutdown().await;
+}
+
+/// A stand-in that writes the Loading and Warming lines in ONE `write` before it serves: the
+/// reader takes both from one pipe read, so on this single-threaded runtime no startup look can
+/// run between them — Loading lasts zero looks, deterministically.
+fn engine_with_instant_phases(port: u16) -> SidecarConfig {
+    let mut config = fake_engine_config(port);
+    config.command[2] = format!(
+        "import os\nos.write(2, b'Loading model with BatchedEngine\\nWarming up (compiling Metal shaders)\\n')\n{FAKE_ENGINE}"
+    );
+    config
+}
+
+fn phase_names(watch: &StartupWatch) -> Vec<&'static str> {
+    watch
+        .phase_marks()
+        .iter()
+        .map(|(phase, _)| *phase)
+        .collect()
+}
+
+/// Q-275: a phase is marked at the line that shows it, never only at a startup look. Marked at
+/// the 400 ms looks, a Loading superseded before the next look was lost (Linux CI read a
+/// restart's phases as `loading: None`).
+#[tokio::test]
+async fn a_phase_superseded_before_any_look_is_still_marked() {
+    let port = free_port();
+    let watch = Arc::new(StartupWatch::with_phases(start_phase));
+    let mut config = engine_with_instant_phases(port);
+    config.startup_watch = Some(Arc::clone(&watch));
+    let sidecar = Sidecar::start(config).await.unwrap();
+    assert_eq!(phase_names(&watch), ["starting", "loading", "warming"]);
+    sidecar.shutdown().await;
+}
+
+/// Q-275 on the restart path (Q-256): the restart marks ITS phases on the watch the caller
+/// handed it — every one, the first sighted at the respawn, after the supervisor's backoff — and
+/// the first start's watch is left as it was.
+#[tokio::test]
+async fn a_restart_marks_its_own_phases_from_its_respawn() {
+    let port = free_port();
+    let first = Arc::new(StartupWatch::with_phases(start_phase));
+    let mut config = engine_with_instant_phases(port);
+    config.startup_watch = Some(Arc::clone(&first));
+    let backoff = config.backoff_initial;
+    let sidecar = Sidecar::start(config).await.unwrap();
+    let first_marks = first.phase_marks();
+
+    let pid = sidecar.pid().await.unwrap();
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGKILL);
+    }
+    wait_exited(pid).await;
+    let restart = Arc::new(StartupWatch::with_phases(start_phase));
+    let asked = Instant::now();
+    let ensured = sidecar
+        .ensure_running_unless(
+            &Arc::new(StartCancel::default()),
+            Some(Arc::clone(&restart)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ensured, Ensured::Restarted);
+    assert_eq!(phase_names(&restart), ["starting", "loading", "warming"]);
+    assert!(
+        restart.phase_marks()[0].1 >= asked + backoff,
+        "`starting` is sighted at the respawn, after the backoff"
+    );
+    assert_eq!(first.phase_marks(), first_marks);
     sidecar.shutdown().await;
 }

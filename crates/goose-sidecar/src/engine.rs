@@ -57,17 +57,15 @@ pub struct EngineLoadMeasured {
 pub type LoadObserver = Arc<dyn Fn(EngineLoadMeasured) + Send + Sync>;
 
 /// The phases a start showed (`StartupWatch::phase_marks`), as times: each phase runs from its
-/// first sighting to the next phase's (the last one to `ended`); `starting` runs from `spawned`.
-pub fn phase_times(
-    marks: &[(&'static str, Instant)],
-    spawned: Instant,
-    ended: Instant,
-) -> LoadPhaseTimes {
+/// first sighting to the next phase's (the last one to `ended`). `starting` is sighted at the
+/// engine's spawn, so a restart's terminate and backoff before it are in the total, never in a
+/// phase. A phase first seen after `ended` belongs to no load.
+pub fn phase_times(marks: &[(&'static str, Instant)], ended: Instant) -> LoadPhaseTimes {
+    let marks: Vec<_> = marks.iter().filter(|(_, at)| *at <= ended).collect();
     let mut times = LoadPhaseTimes::default();
     for (index, (phase, at)) in marks.iter().enumerate() {
-        let from = if *phase == "starting" { spawned } else { *at };
         let to = marks.get(index + 1).map_or(ended, |(_, next)| *next);
-        let ms = Some(to.saturating_duration_since(from).as_millis() as u64);
+        let ms = Some(to.saturating_duration_since(*at).as_millis() as u64);
         match *phase {
             "starting" => times.starting = ms,
             "loading" => times.loading = ms,
@@ -1648,7 +1646,6 @@ impl MlxEngineManager {
         let fresh = supervised.is_none();
         tokio::spawn(async move {
             let the_mac = lock;
-            let spawned = Instant::now();
             let started = match supervised {
                 Some(sidecar) => sidecar
                     .ensure_running_unless(&cancel, Some(watch))
@@ -1676,7 +1673,7 @@ impl MlxEngineManager {
                     observer(EngineLoadMeasured {
                         model_id: model_id.clone(),
                         weights_bytes,
-                        phases: phase_times(&watch.phase_marks(), spawned, answered_at),
+                        phases: phase_times(&watch.phase_marks(), answered_at),
                         total_ms: answered_at.saturating_duration_since(began).as_millis() as u64,
                         file_cache_warm: warm.clone(),
                         outcome,
@@ -3346,8 +3343,10 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             assert_eq!(load.outcome, Ok(()));
             assert!(load.total_ms > 0);
             assert!(
-                load.phases.loading.is_some() || load.phases.warming.is_some(),
-                "the phases the start showed are measured: {:?}",
+                load.phases.starting.is_some()
+                    && load.phases.loading.is_some()
+                    && load.phases.warming.is_some(),
+                "every phase the start showed is measured: {:?}",
                 load.phases
             );
         }
@@ -3429,10 +3428,19 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             );
             let load = &seen[1];
             assert_eq!(load.outcome, Ok(()));
+            let phases = &load.phases;
             assert!(
-                load.phases.loading.is_some() && load.phases.warming.is_some(),
-                "the restart's OWN phases, not the first start's: {:?}",
-                load.phases
+                phases.starting.is_some() && phases.loading.is_some() && phases.warming.is_some(),
+                "the restart's OWN phases, not the first start's: {phases:?}"
+            );
+            let in_phases =
+                phases.starting.unwrap() + phases.loading.unwrap() + phases.warming.unwrap();
+            let backoff = SidecarConfig::new("", Vec::new(), "", "").backoff_initial;
+            assert!(
+                load.total_ms >= in_phases + backoff.as_millis() as u64,
+                "the supervisor's backoff before the respawn is in the total, not in `starting`: \
+                 {phases:?} of {} ms",
+                load.total_ms
             );
         }
 
@@ -3464,16 +3472,17 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             ("loading", at(300)),
             ("warming", at(900)),
         ];
-        let times = phase_times(&marks, t0, at(1_000));
+        let times = phase_times(&marks, at(1_000));
         assert_eq!(
             times,
             LoadPhaseTimes {
-                starting: Some(300),
+                starting: Some(200),
                 loading: Some(600),
                 warming: Some(100),
-            }
+            },
+            "starting runs from its own sighting at the spawn, not from before it"
         );
-        let unseen = phase_times(&[("loading", at(50))], t0, at(80));
+        let unseen = phase_times(&[("loading", at(50))], at(80));
         assert_eq!(
             unseen,
             LoadPhaseTimes {
@@ -3481,7 +3490,17 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
                 loading: Some(30),
                 warming: None,
             },
-            "a phase no look saw is absent, never 0"
+            "a phase never sighted is absent, never 0"
+        );
+        let after = phase_times(&marks, at(500));
+        assert_eq!(
+            after,
+            LoadPhaseTimes {
+                starting: Some(200),
+                loading: Some(200),
+                warming: None,
+            },
+            "a phase first seen after the load ended belongs to no load"
         );
     }
 
