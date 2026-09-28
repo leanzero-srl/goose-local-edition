@@ -257,6 +257,33 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   the `Prompt processing progress: a/b` b is the cold part, the `"ended": {"uid": …, "generated": N}`
   state line its end. OPEN after it: the first request after a compaction prefills system+tools cold
   (#3p: 44,053, 150 s — Q-347: mlx_lm snapshots a segment only past the tokens a request read from cache).
+- THE CHAT'S HEAD IS A KEPT ENTRY OF ITS OWN (Q-347, 2026-09-28, fixed 4b16c7ba3, tag
+  `mlxLmServerStableHead`, spec `keep_stable_head` — both Macs need the new goose). WHY: mlx_lm 0.31.3
+  cuts a "system" segment only on a request ending on a user message and snapshots a segment only past
+  what the request read from cache, so the head (system prompt + tools, #3p: 40,361 tokens = 1.40 GB)
+  had ONE entry, the session's first request's, and its type-count eviction takes the oldest "system"
+  entry once helpers' system segments (fact checker, reviewer, labeler — three distinct prompts)
+  outnumber the rest: #3p 10:59:33, five minutes into the chat. After that the head only lived inside
+  non-trimmable conversation entries; a compaction (or a new chat with the same tools) read 0. NOW:
+  every agent request (naming its transient tail) ends a segment at mlx_lm's OWN system-segment end
+  (`head_probe` = leading system messages + an empty user turn; `head_end`; `cut_at_head` — a tool step
+  gains the cut, a user-ending request is unchanged); `KeptEntry` tracks it like the conversation
+  prefix; `pop_keeping` holds both while anything else is left, the head going before the prefix; and
+  `admits` leaves room for the head's measured bytes beside max(batch-wide prefix, conversation prefix).
+  COST: one extra render+tokenize of the system block per agent request; 1–2 of an 8-helper burst wait
+  once the prefix nears 4.74 GB (#3p's 11.83 GB plan). LIMIT: a lone row wider than (limit − prefix −
+  head)/32,768 B (~171k tokens on #3p's plan) still takes the head first. HOW TO MEASURE the head:
+  render the captured request with the model's own tokenizer (`AutoTokenizer.from_pretrained(<model
+  dir>)`, `apply_chat_template(system + [user ""], tools=…, add_generation_prompt=False)` vs the full
+  prompt → first differing token) UNDER THE SWITCH THE ENGINE RENDERED (`enable_thinking=False` for a
+  tool-carrying request on the split, Q-135 — the template's default writes a reasoning line into the
+  system block: 40,399 vs the true 40,361; check the full render equals the engine's prompt_tokens) — run the script from a dir with no `inspect.py` in it (a scratch
+  `inspect.py` shadows the stdlib and transformers dies at import). LIVE: rank log system bytes stay ≥
+  the head's through every burst; RANK_ADMISSION `stable_head`; the first post-compaction request's
+  first progress ≈ prompt − head. Replays: `a_compacted_chat_reads_its_system_prompt_and_tools_from_
+  the_cache_through_real_mlx_lm` (tiny server; control 0) and `a_compacted_chat_reads_its_head_at_e2e_
+  3p_sizes_through_real_mlx_lm` (#3p sizes; control, eviction alone and room alone all 0). TRAP: a
+  Rust `r#"…"#` test program must not contain `"#` (an f-string `f"#3p…"` ended the raw string).
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
