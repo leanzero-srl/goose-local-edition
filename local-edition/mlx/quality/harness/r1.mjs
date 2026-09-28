@@ -1,6 +1,7 @@
 // R1 — a long AGENTIC goose session on whatever engine serves chat (the split, for R1), through the product.
 // usage: node r1.mjs <dir> [--turns N] [--brief <brief.json>]   (a goose-task-author brief; {WORK} → <dir>/work)
-// One new chat; turn after turn of real tool work inside <dir>/work (files, shell, tests), so the context
+// One new chat, opened IN <dir>/work (Projects + → New session here; sessions.db working_dir checked before turn 1,
+// recorded in <dir>/round.json — Q-390); turn after turn of real tool work inside <dir>/work (files, shell, tests), so the context
 // climbs from goose's ~49k-token prompt toward compaction. Per turn one TSV row: start, end, seconds, how the
 // turn ended (done / notice / stall), the chip, the context counter, the notice text if any.
 // A turn with no change on screen for STALL_FACTOR x the running median turn length (never below the first
@@ -17,9 +18,10 @@ import { mainPage } from './mainpage.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { liveCheck } from './livecheck.mjs';
 import { loadGuidance, chooseAnswer, planClick, isAnswerMessage, readDbItems, sessionIdOf, readTray, readChat, answerCard, norm } from './needsyou.mjs';
+import { workDirOf, projectRowTestId, readWorkingDir, checkWorkingDir } from './workdir.mjs';
 const dir = process.argv[2];
 const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
-const work = `${dir}/work`; mkdirSync(work, { recursive: true });
+const work = workDirOf(dir); mkdirSync(work, { recursive: true });
 const STALL_FACTOR = 5; // ratio: of the median turn length measured in this soak
 const HANG_FACTOR = 15; // ratio: same; the soak.py hang rule of Step 1b used 10x a running median
 const AWAY_IDLE_POLLS = 3; // three 2-s polls with nothing served: a gap between calls or the turn end, never mid-stream
@@ -72,7 +74,6 @@ writeFileSync(`${dir}/calls.tsv`, 'turn\tinput\toutput\tcache_read\tended\n');
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
 const p = await mainPage(b);
 await p.goto(p.url().split('#')[0] + '#/'); await p.waitForTimeout(2500);
-await p.getByRole('button', { name: /^New session in / }).click(); await p.waitForTimeout(4000);
 const screen = () => p.evaluate(() => {
   const main = document.querySelector('main') ?? document.body;
   const chipEl = document.querySelector('[data-testid=model-chip-served]')?.closest('button');
@@ -85,6 +86,51 @@ const lengths = []; const median = () => { const s = [...lengths].sort((a, b) =>
 const maxTurns = maxTurnsArg || (brief ? steps.length : 200);
 const iso = () => new Date().toISOString();
 const note = (line) => appendFileSync(`${dir}/events.log`, `${iso()} ${line}\n`);
+
+// Q-390: the chat is opened in <dir>/work the way a person does it — Projects "+" registers the folder, its row's
+// "New session here" starts the chat (workdir.mjs says why, and which step stands in for the native chooser) —
+// and sessions.db must then say that folder, or the run stops before turn 1. <dir>/round.json keeps the proof.
+const OPEN_POLLS = 15; // ratio: 1-s polls for one UI navigation (the sidebar redraw, the new chat's route) — never model work
+const roundFile = `${dir}/round.json`;
+const writeRound = (fields) => { let cur = {}; try { cur = JSON.parse(readFileSync(roundFile, 'utf8')); } catch {} writeFileSync(roundFile, JSON.stringify({ ...cur, ...fields }, null, 2) + '\n'); };
+async function openChatInWork() {
+  const fail = async (why) => {
+    note(`WORKDIR_FAIL ${why}`); writeRound({ work, workingDirVerified: false, workingDirError: why });
+    await p.screenshot({ path: `${dir}/workdir-fail.png` }).catch(() => {});
+    console.error(`r1 STOPPED before turn 1 (Q-390): ${why}`); await b.close(); process.exit(2);
+  };
+  const before = sessionIdOf(p.url());
+  const reg = await p.evaluate(async (dir) => {
+    const was = await window.electron.listProjects();
+    if (was.some((x) => x.path === dir)) return { added: false, listed: true };
+    const projects = await window.electron.addProject(dir);
+    const added = projects.filter((x) => !was.some((w) => w.path === x.path));
+    // What chooseAndAddProject does with the chooser's answer (AppEvents.PROJECTS_CHANGED = 'projects-changed').
+    window.dispatchEvent(new CustomEvent('projects-changed', { detail: { projects, added } }));
+    return { added: added.length > 0, listed: projects.some((x) => x.path === dir) };
+  }, work);
+  if (!reg.listed) await fail(`the project registry refused ${work} (addProject: absolute, an existing directory, not a symlink)`);
+  const fold = p.getByTestId('projects-fold');
+  if (!(await fold.count())) await fail('no Projects section in the sidebar to start the chat from');
+  if ((await fold.getAttribute('aria-expanded')) === 'false') { await fold.click(); note('WORKDIR expanded the folded Projects section'); }
+  const row = p.getByTestId(projectRowTestId(work));
+  if (!(await row.waitFor({ state: 'attached', timeout: OPEN_POLLS * 1000 }).then(() => true, () => false))) await fail(`the sidebar drew no project row for ${work}`);
+  // The row's actions are `invisible group-hover:visible` (Layout/tree.tsx rowActionClass): hover the folder's own
+  // toggle (the row div also holds its sessions, so its centre may sit over a session), then the + shows.
+  await row.locator('button[aria-expanded]').first().hover();
+  await row.locator('button[aria-label^="New session here"]').first().click();
+  let sessionId = '';
+  for (let i = 0; i < OPEN_POLLS && !sessionId; i++) { await p.waitForTimeout(1000); const s = sessionIdOf(p.url()); if (s && s !== before) sessionId = s; }
+  if (!sessionId) await fail(`"New session here" on ${work} opened no chat (view ${p.url().split('#')[1]})`);
+  const stored = readWorkingDir(sessionId); const v = checkWorkingDir(stored, work);
+  writeRound({ work, sessionId, workingDir: stored.ok ? stored.workingDir : null, workingDirVerified: v.ok, workingDirSource: 'sessions.db', openedVia: 'Projects + (registry, the chooser\'s answer) → New session here', projectAddedByR1: reg.added, openedAt: iso() });
+  note(`WORKDIR ${v.ok ? 'OK' : 'WRONG'} session ${sessionId} ${v.says}`);
+  if (!v.ok) await fail(`chat ${sessionId}: ${v.says}`);
+  await p.waitForTimeout(3000);
+  return sessionId;
+}
+writeFileSync(roundFile, JSON.stringify({ dir, work, startedAt: iso() }, null, 2) + '\n'); // a rerun in the same dir starts a fresh proof
+const openedSession = await openChatInWork();
 
 // One turn, from a send already made until the chat stops working: the done / notice / stall / hang rules, the
 // live check and the needs-you look every LIVE_EVERY polls, one turns.tsv row. `label` is the brief turn's
@@ -358,6 +404,8 @@ for (let turn = 0; turn < maxTurns; turn++) {
   const input = p.locator('[data-testid=chat-input]:visible').first();
   await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
   const r = await runTurn(String(turn), n0, Date.now());
+  // Q-390: the turn went into the chat opened (and verified) in <dir>/work, not some other chat.
+  if (turn === 0 && sessionIdOf(chatUrl || p.url()) !== openedSession) { note(`WORKDIR_FAIL turn 0 ran in ${sessionIdOf(chatUrl || p.url()) || chatUrl}, not the chat opened in ${work} (${openedSession})`); writeRound({ workingDirVerified: false, workingDirError: `turn 0 ran in ${sessionIdOf(chatUrl || p.url()) || chatUrl}` }); console.error(`r1 STOPPED after turn 0 (Q-390): the turn did not run in ${openedSession}`); break; }
   if (turn % 5 === 0) await p.screenshot({ path: `${dir}/turn-${turn}.png` });
   // STOP RULE (skill): a turn that ends in a notice ends the round — E2E #3e sent 29 more turns into a stopped
   // split, 5 s each, and recorded them as turns.
@@ -372,4 +420,7 @@ for (let turn = 0; turn < maxTurns; turn++) {
 }
 // A card met but not settled when the run ended (a stop, a hang) still gets its row, saying so.
 for (const r of recs) if (!r.done) { r.cleared = r.cleared || 'unchecked: the run ended first'; r.done = true; nyRow(r); nyLog(r.turn, 'unsettled', r); }
+// Q-390: goose can move a chat's folder itself (its "set as this chat's folder?" card) — the folder at the end is
+// recorded beside the one it started in, so a rubric reads where the chat actually was.
+{ const end = readWorkingDir(openedSession); const v = checkWorkingDir(end, work); writeRound({ workingDirAtEnd: end.ok ? end.workingDir : `unreadable: ${end.error}`, workingDirAtEndIsWork: v.ok }); if (!v.ok) note(`WORKDIR_MOVED at the end: ${v.says}`); }
 await b.close(); process.exit(0);
