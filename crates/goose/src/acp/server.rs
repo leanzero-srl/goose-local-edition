@@ -2249,6 +2249,7 @@ fn engine_hold_observer(
                 status: StatusMessage::Progress {
                     message: words,
                     forming: None,
+                    compaction: None,
                 },
             }),
         };
