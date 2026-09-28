@@ -774,6 +774,10 @@ pub struct ExportSessionResponse {
 pub struct ImportSessionRequest {
     pub input: String,
     pub source: SessionImportSource,
+    /// The importing window's folder: a session that recorded none (a Claude Code, Codex or pi
+    /// transcript with no `cwd`) is placed here. Required — the one goosed serves every window
+    /// (Q-257), so its own cwd is no window's project (Q-283).
+    pub working_dir: String,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

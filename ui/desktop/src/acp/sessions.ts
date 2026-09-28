@@ -311,12 +311,15 @@ export async function acpExportSession(sessionId: string): Promise<string> {
   return response.data;
 }
 
+// `workingDir` is the importing window's folder: a session that recorded none (a Claude Code,
+// Codex or pi transcript with no cwd) lands there, not in goose's own process folder (Q-283).
 export async function acpImportSession(
   input: string,
-  source: SessionImportSource
+  source: SessionImportSource,
+  workingDir: string
 ): Promise<void> {
   const client = await getAcpClient();
-  await client.goose.sessionImport_unstable({ input, source });
+  await client.goose.sessionImport_unstable({ input, source, workingDir });
 }
 
 export async function acpShareSessionNostr(sessionId: string, relays: string[]) {

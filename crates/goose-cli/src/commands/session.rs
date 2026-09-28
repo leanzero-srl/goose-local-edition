@@ -316,9 +316,12 @@ pub async fn handle_session_import(input: String, nostr: bool) -> Result<()> {
     };
     println!("Detected format: {}", label);
 
+    // A terminal goose runs in the user's project: a session that recorded no folder lands in
+    // this terminal's folder (Q-283), named explicitly rather than read inside the importer.
+    let terminal_dir = std::env::current_dir().context("this terminal's folder is unreadable")?;
     let session_manager = SessionManager::instance();
     let session = session_manager
-        .import_session(&json, Some(SessionType::User))
+        .import_session(&json, Some(SessionType::User), &terminal_dir)
         .await?;
 
     println!("Session imported:");

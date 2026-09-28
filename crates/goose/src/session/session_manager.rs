@@ -520,13 +520,17 @@ impl SessionManager {
         self.storage.export_session(id).await
     }
 
+    /// Imports a goose, Claude Code, Codex or pi session. `unrecorded_working_dir` is the folder
+    /// the import lands in when the session recorded none: the importing window's (or terminal's)
+    /// folder — never goosed's cwd, which since Q-257 is $HOME for every window (Q-283).
     pub async fn import_session(
         &self,
         json: &str,
         session_type_override: Option<SessionType>,
+        unrecorded_working_dir: &Path,
     ) -> Result<Session> {
         self.storage
-            .import_session(self, json, session_type_override)
+            .import_session(self, json, session_type_override, unrecorded_working_dir)
             .await
     }
 
@@ -738,11 +742,14 @@ fn session_sort_at(session: &Session) -> DateTime<Utc> {
     session.last_message_at.unwrap_or(session.updated_at)
 }
 
+/// The default record names NO folder (an empty path) — the same "none recorded" a legacy session
+/// file without `working_dir` loads as (legacy.rs). Q-283: it was the process cwd, which since Q-257
+/// is goosed's $HOME for every window, so a record built from it claimed a folder nobody chose.
 impl Default for Session {
     fn default() -> Self {
         Self {
             id: String::new(),
-            working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            working_dir: PathBuf::new(),
             name: String::new(),
             user_set_name: false,
             session_type: SessionType::default(),
@@ -2127,9 +2134,12 @@ impl SessionStorage {
         session_manager: &SessionManager,
         json: &str,
         session_type_override: Option<SessionType>,
+        unrecorded_working_dir: &Path,
     ) -> Result<Session> {
         let normalized = super::import_formats::convert_to_goose_session_json(json)?;
-        let import: Session = serde_json::from_str(&normalized)?;
+        let mut import: serde_json::Value = serde_json::from_str(&normalized)?;
+        super::import_formats::place_unrecorded_working_dir(&mut import, unrecorded_working_dir)?;
+        let import: Session = serde_json::from_value(import)?;
 
         let session = self
             .create_session(
@@ -3840,7 +3850,10 @@ mod tests {
         .unwrap();
 
         let exported = sm.export_session(&original.id).await.unwrap();
-        let imported = sm.import_session(&exported, None).await.unwrap();
+        let imported = sm
+            .import_session(&exported, None, temp_dir.path())
+            .await
+            .unwrap();
 
         assert_ne!(imported.id, original.id);
         assert_eq!(imported.name, DESCRIPTION);
@@ -3941,7 +3954,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let sm = SessionManager::new(temp_dir.path().to_path_buf());
 
-        let imported = sm.import_session(OLD_FORMAT_JSON, None).await.unwrap();
+        let imported = sm
+            .import_session(OLD_FORMAT_JSON, None, temp_dir.path())
+            .await
+            .unwrap();
 
         assert_eq!(imported.name, "Old format session");
         assert!(imported.user_set_name);
@@ -3954,6 +3970,54 @@ mod tests {
             imported.accumulated_usage,
             Usage::new(Some(600), Some(400), Some(1000))
         );
+    }
+
+    // Q-283: a Claude Code / Codex / pi transcript (or a goose export) that recorded no folder was
+    // placed in `std::env::current_dir()` — in the desktop goosed's, since Q-257 $HOME for every
+    // window. It now lands in the folder the importer names (the importing window's), a recorded
+    // folder is kept, and the default session record names no folder at all.
+    #[tokio::test]
+    async fn an_import_that_recorded_no_folder_lands_in_the_named_folder_not_the_process_cwd() {
+        let temp_dir = TempDir::new().unwrap();
+        let window = TempDir::new().unwrap();
+        let window_dir = window.path().to_path_buf();
+        assert_ne!(std::env::current_dir().unwrap(), window_dir);
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+
+        let claude_code_no_cwd = r#"{"type":"user","sessionId":"cc","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"hi"}}"#;
+        let codex_no_cwd = r#"{"timestamp":"2026-05-22T13:37:22.526Z","type":"session_meta","payload":{"id":"cx"}}
+{"timestamp":"2026-05-22T13:37:23.946Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}"#;
+        let pi_no_cwd = r#"{"type":"session","version":3,"id":"pi","timestamp":"2024-12-03T14:00:00.000Z"}
+{"type":"message","id":"a","parentId":null,"timestamp":"2024-12-03T14:00:01.000Z","message":{"role":"user","content":"hi"}}"#;
+        let goose_no_folder = r#"{"id":"g","name":"no folder","working_dir":"","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z","extension_data":{},"message_count":0}"#;
+        for (format, transcript) in [
+            ("claude code", claude_code_no_cwd),
+            ("codex", codex_no_cwd),
+            ("pi", pi_no_cwd),
+            ("goose", goose_no_folder),
+        ] {
+            let imported = sm
+                .import_session(transcript, None, &window_dir)
+                .await
+                .unwrap_or_else(|e| panic!("{format}: {e}"));
+            assert_eq!(imported.working_dir, window_dir, "{format}");
+        }
+
+        let claude_code_with_cwd = r#"{"type":"user","sessionId":"cc2","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","cwd":"/recorded/project","message":{"role":"user","content":"hi"}}"#;
+        let imported = sm
+            .import_session(claude_code_with_cwd, None, &window_dir)
+            .await
+            .unwrap();
+        assert_eq!(imported.working_dir, PathBuf::from("/recorded/project"));
+
+        let refused = sm
+            .import_session(claude_code_no_cwd, None, Path::new("relative"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("recorded no folder"), "{refused}");
+
+        assert_eq!(Session::default().working_dir, PathBuf::new());
     }
 
     #[test_case(GooseMode::Approve)]
