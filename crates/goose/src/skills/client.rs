@@ -356,12 +356,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_skill_not_found_returns_error() {
+        let temp_dir = TempDir::new().unwrap();
         let client = SkillsClient::new(PlatformExtensionContext {
             extension_manager: None,
             session_manager: Arc::new(crate::session::SessionManager::instance()),
             session: None,
             use_login_shell_path: false,
-            working_dir: None,
+            working_dir: Some(temp_dir.path().to_path_buf()),
         })
         .unwrap();
 

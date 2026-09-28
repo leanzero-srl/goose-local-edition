@@ -621,15 +621,18 @@ impl Agent {
             }
         }
         #[cfg(test)]
-        let loaded = self.hook_loader_for_test.map(|load| load(working_dir));
-        #[cfg(not(test))]
-        let loaded = None;
-        let manager = loaded.unwrap_or_else(|| {
-            crate::hooks::HookManager::load(
+        let manager = match self.hook_loader_for_test {
+            Some(load) => load(working_dir),
+            None => crate::hooks::HookManager::load(
                 Some(working_dir),
                 self.config.resolve_use_login_shell_path(),
-            )
-        });
+            ),
+        };
+        #[cfg(not(test))]
+        let manager = crate::hooks::HookManager::load(
+            Some(working_dir),
+            self.config.resolve_use_login_shell_path(),
+        );
         let mut hooks = self.hooks.write().expect("hooks lock");
         if !hooks.pinned {
             *hooks = SessionHooks {
