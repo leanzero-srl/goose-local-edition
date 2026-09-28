@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 14:3x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 14:5x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -38,6 +38,9 @@ Updated: 2026-09-28 14:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.
 2. On 3.0.71: live critic walk (Q-325's visual change, Q-337's bar, needs-you fold/queue), then E2E #3s.
+2a. Owner: the E2E must ANSWER needs-you cards → Q-376 CUTTING (r1.mjs answers via the UI from brief guidance,
+   records delivery/clear/siblings/next words). On 3.0.71, before #3s: answer #3p's 2 open cards (20260928_19) and
+   20260928_17's by hand over CDP as a first live prove.
 2b. Before 3.0.71: one FULL gate on merged main (lanes were gated on different bases).
 3. Live proves still open: Q-254/272 swap words, Q-257 two windows, Q-276 kill -9 → restore, Q-278 J2, J4.
 
