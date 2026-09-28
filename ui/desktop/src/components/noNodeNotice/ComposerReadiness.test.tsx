@@ -544,6 +544,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
         statusDetail: 'timeout: no answer within 1500 ms',
         measured: MEASURED_PENDING,
         serving: null,
+        startPhase: null,
         failedError: null,
         contact: null,
       }),
@@ -573,6 +574,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
         statusDetail: null,
         measured: MEASURED_PENDING,
         serving: { clients: [], unattributed: 0, swarmRuns: [], error: null },
+        startPhase: null,
         failedError: null,
         contact: null,
       }),
@@ -602,6 +604,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
       statusDetail: 'timeout: no answer within 1500 ms',
       measured: MEASURED_PENDING,
       serving: null,
+      startPhase: null,
       failedError: null,
       contact: null,
     };
@@ -694,6 +697,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
       statusDetail: 'unreachable: connect ECONNREFUSED',
       measured: MEASURED_PENDING,
       serving: null,
+      startPhase: null,
       failedError: null,
       contact: {
         lostSinceMs: LOST_AT,
@@ -863,6 +867,7 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
       statusDetail: null,
       measured: MEASURED_PENDING,
       serving,
+      startPhase: null,
       failedError: null,
       contact: null,
     };

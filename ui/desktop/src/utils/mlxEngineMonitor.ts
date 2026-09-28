@@ -14,6 +14,12 @@ import {
 } from './mlxMeasuredRuns';
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
 import { remoteLiveBase } from './mlxRemoteReport';
+import {
+  distributedLiveBase,
+  splitStartPhase,
+  type MlxDistributedReport,
+  type SplitStartPhase,
+} from './mlxDistributedReport';
 import { leaveCause } from './leaveCause';
 import { routePeerGone, type RouteContact } from './routeContact';
 import {
@@ -42,6 +48,12 @@ import {
  * saying no model mounted).
  * A timeout is NOT the engine gone — a busy engine can be slow to answer — so the mode holds and
  * the reason is carried; a body that is not Rapid-MLX's makes the mode `unknown`, never `running`.
+ *
+ * A SPLIT that owns this Mac is read as the split in every state, from the same `distributedStatus`
+ * read the Run it row draws (every renderer read reaches main): rank 0's `/v1/status` while it is
+ * up, its start phase while it starts or recovers (`mounting`, `startPhase`), rank 0 again while it
+ * stops — never this Mac's single engine, which serves nothing while the split holds the Mac (Q-350:
+ * a restoring split read "single/off unreachable" beside a Run it row saying Starting).
  *
  * A ROUTE to a linked Mac is read as that Mac's engine for as long as the route is published, in
  * every state: `reconnecting` while the relay read fails (or the route itself says so) — never a
@@ -107,6 +119,8 @@ export interface MlxEngineSnapshot {
   measured: MlxMeasuredRead;
   /** Null until the engine has been read at least once while running. */
   serving: MlxServing | null;
+  /** While a split that owns this Mac starts or recovers: how far it has come; null otherwise. */
+  startPhase: SplitStartPhase | null;
   failedError: string | null;
   /** A route's contact with its Mac, as this loop measured it (Q-111); null = not a route read. */
   contact: RouteContact | null;
@@ -119,8 +133,11 @@ export interface MlxEngineMonitorDeps {
   readMeasured(): Promise<MeasuredRunsFetch[]>;
   /** `http://127.0.0.1:<mlx_engine.port>` from goose's config, or null when it names none. */
   configBaseUrl(): string | null;
-  /** Rank 0's base while the distributed run owns this Mac and is up (`distributedLiveBase`). */
-  distributedBaseUrl(): string | null;
+  /**
+   * goose's latest `distributedStatus` read as the renderer reported it — the read the Run it row
+   * draws — or null when none is fresh (a stale report claims nothing).
+   */
+  distributedRun(): MlxDistributedReport | null;
   /**
    * The route to a linked Mac's engine while one is published (a remote single serves this Mac's
    * chat): its state and goosed's relay to it; null = no route, chat stays on this Mac.
@@ -147,6 +164,13 @@ export const MLX_ENGINE_SNAPSHOT_CHANNEL = 'mlx-engine-snapshot';
 
 const SNAPSHOT_ENGINES = new Set(['single', 'distributed', 'remote']);
 const SNAPSHOT_MODES = new Set(['unknown', 'off', 'mounting', 'running', 'failed', 'reconnecting']);
+const START_PHASES = new Set<string>([
+  'makingRoom',
+  'loading',
+  'warming',
+  'starting',
+  'recovering',
+] satisfies SplitStartPhase[]);
 
 /** A pushed payload is a snapshot only if its engine and mode are ones main produces. */
 export function isMlxEngineSnapshot(value: unknown): value is MlxEngineSnapshot {
@@ -158,6 +182,8 @@ export function isMlxEngineSnapshot(value: unknown): value is MlxEngineSnapshot 
     typeof v.mode === 'string' &&
     SNAPSHOT_MODES.has(v.mode) &&
     isMlxMeasuredRead(v.measured) &&
+    (v.startPhase === null ||
+      (typeof v.startPhase === 'string' && START_PHASES.has(v.startPhase))) &&
     (v.contact === null || isRouteContact(v.contact))
   );
 }
@@ -186,6 +212,7 @@ export const INITIAL_SNAPSHOT: MlxEngineSnapshot = {
   statusDetail: null,
   measured: MEASURED_PENDING,
   serving: null,
+  startPhase: null,
   failedError: null,
   contact: null,
 };
@@ -356,9 +383,8 @@ export class MlxEngineMonitor {
   }
 
   private async read(): Promise<MlxEngineSnapshot> {
-    const distributedBase = this.deps.distributedBaseUrl();
-    // The split's key names no Mac: this Mac supervises it, and its model is its identity.
-    if (distributedBase) return this.readRouted('distributed', distributedBase, '', null);
+    const run = this.deps.distributedRun();
+    if (run?.mode === 'distributed') return this.readSplit(run);
     const route = this.deps.remoteRoute();
     if (route) {
       const base = remoteLiveBase(route);
@@ -373,6 +399,40 @@ export class MlxEngineMonitor {
     // start to the next route's mount, which would measure hours as a comeback.
     for (const book of this.contacts.values()) endWait(book);
     return { ...(await this.readSingle()), engine: 'single' };
+  }
+
+  /**
+   * The split that owns this Mac. Up: rank 0's `/v1/status` (the split's key names no Mac — this Mac
+   * supervises it, and its model is its identity). Starting or recovering: nothing answers yet, and
+   * the supervisor's phase is what it is doing. Stopping (or a state this build does not know):
+   * rank 0 while it still answers, else named — this Mac's single engine is never read for it.
+   */
+  private async readSplit(run: MlxDistributedReport): Promise<MlxEngineSnapshot> {
+    const up = distributedLiveBase(run);
+    if (up) return this.readRouted('distributed', up, '', null);
+    const phase = splitStartPhase(run);
+    if (phase) {
+      const ranks = run.nodes.map((n) => `${n.name} ${n.startWord}`).join(', ');
+      return {
+        ...INITIAL_SNAPSHOT,
+        engine: 'distributed',
+        mode: 'mounting',
+        modelId: run.modelId,
+        baseUrl: run.baseUrl,
+        startPhase: phase,
+        statusDetail: `the split is ${run.state}${ranks ? ` (${ranks})` : ''} — rank 0 is read once goose says it is ready`,
+        measured: this.heldMeasured('distributed'),
+      };
+    }
+    if (run.baseUrl) return this.readRouted('distributed', run.baseUrl, '', null);
+    return {
+      ...INITIAL_SNAPSHOT,
+      engine: 'distributed',
+      mode: 'unknown',
+      modelId: run.modelId,
+      statusDetail: `the split is ${run.state} and names no rank 0 address to read`,
+      measured: this.heldMeasured('distributed'),
+    };
   }
 
   /** A route with nothing to read yet (mounting there, failed there, or no relay handed over). */
@@ -443,6 +503,7 @@ export class MlxEngineMonitor {
       statusDetail: null,
       measured: await this.measure(`${engine}\n${mac}\n${model}`, engine, stats),
       serving: await this.attribute(stats, engine === 'remote'),
+      startPhase: null,
       failedError: null,
       contact: null,
     };
@@ -542,6 +603,7 @@ export class MlxEngineMonitor {
         stats
       ),
       serving,
+      startPhase: null,
       failedError: null,
       contact: null,
     };

@@ -1741,7 +1741,13 @@ where
         signal = signals.recv() => {
             tracing::info!(signal = signal.name, "goose serve: stop requested; tearing down supervised processes");
             let reports = goose::acp::server::teardown_supervised().await;
-            tracing::info!(steps = reports.len(), exit_code = signal.exit_code(), "goose serve: teardown complete; exiting");
+            // `exit` drops nothing: a request still streaming would stay under its in-flight
+            // log name for good (Q-343).
+            let cut = goose::providers::utils::end_request_logs_at_exit(&format!(
+                "goose exited ({}) with this request in flight",
+                signal.name
+            ));
+            tracing::info!(steps = reports.len(), request_logs_cut = cut, exit_code = signal.exit_code(), "goose serve: teardown complete; exiting");
             std::process::exit(signal.exit_code())
         }
     }

@@ -121,6 +121,7 @@ function snapshot(
     statusDetail: null,
     measured: MEASURED_PENDING,
     serving,
+    startPhase: null,
     failedError: null,
     contact: null,
   };
@@ -555,6 +556,7 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       statusDetail: 'timeout: no answer within 1500 ms',
       measured: MEASURED_PENDING,
       serving: null,
+      startPhase: null,
       failedError: null,
       contact: null,
     };
@@ -590,6 +592,7 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       statusDetail: 'unreachable: connect ECONNREFUSED',
       measured: MEASURED_PENDING,
       serving: null,
+      startPhase: null,
       failedError: null,
       contact: {
         lostSinceMs: LOST_AT,

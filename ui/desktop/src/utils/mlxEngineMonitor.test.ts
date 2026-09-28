@@ -18,8 +18,21 @@ import {
   IDLE_STATUS,
   SPLIT_TURN_BEHIND_LEAVING_3M,
 } from '../components/leanzero-swarm/mlxLiveStatus.fixtures';
+import {
+  FLASH_MODEL,
+  FLASH_READY,
+  STOPPED_WITH_CONFIG,
+} from '../components/leanzero-swarm/mlxDistributed.fixtures';
+import { toMlxDistributedReport, type MlxDistributedReport } from './mlxDistributedReport';
 
 const BASE = 'http://127.0.0.1:8090';
+const RANK0 = 'http://127.0.0.1:8091';
+
+/** goose's `distributedStatus` of an UP split whose rank 0 answers at `baseUrl`, as main is told. */
+const splitUpAt = (baseUrl: string): MlxDistributedReport => ({
+  ...toMlxDistributedReport(FLASH_READY),
+  baseUrl,
+});
 
 /** A goosed's measured-runs answer for one way: `writing` is the median over `runs` runs. */
 function wayAnswer(
@@ -64,7 +77,8 @@ function harness(opts: {
   status: () => MlxLiveStatusResult;
   serving?: () => MlxServingRead;
   configBaseUrl?: string | null;
-  distributedBaseUrl?: () => string | null;
+  /** goose's latest fresh `distributedStatus` report (the Run it row's read); null = none. */
+  distributedRun?: () => MlxDistributedReport | null;
   /** A published route; a bare string is a READY route on that relay. */
   remoteRoute?: () =>
     | { state: string; baseUrl: string | null; peerName?: string; lastError?: string | null }
@@ -84,7 +98,7 @@ function harness(opts: {
     readServing,
     readMeasured,
     configBaseUrl: () => (opts.configBaseUrl === undefined ? BASE : opts.configBaseUrl),
-    distributedBaseUrl: () => opts.distributedBaseUrl?.() ?? null,
+    distributedRun: () => opts.distributedRun?.() ?? null,
     remoteRoute: () => {
       const route = opts.remoteRoute?.() ?? null;
       return typeof route === 'string' ? { state: 'ready', baseUrl: route } : route;
@@ -354,7 +368,7 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
     };
     const h = harness({
       status: () => answered(null),
-      distributedBaseUrl: () => dist,
+      distributedRun: () => (dist ? splitUpAt(dist) : null),
     });
     h.readStatus.mockImplementation(async (url: string) => answered(bodies[url]));
     await h.monitor.tick();
@@ -380,7 +394,7 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
   });
 
   it('an unanswering rank 0 is UNKNOWN with the reason, and never falls back to the single port', async () => {
-    const h = harness({ status: () => refused, distributedBaseUrl: () => 'http://127.0.0.1:8091' });
+    const h = harness({ status: () => refused, distributedRun: () => splitUpAt(RANK0) });
     await h.monitor.tick();
     const s = h.monitor.current();
     expect(s.engine).toBe('distributed');
@@ -388,6 +402,111 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
     expect(s.statusDetail).toBe('unreachable: connect ECONNREFUSED 127.0.0.1:8090');
     expect(h.readStatus).toHaveBeenCalledTimes(1);
     expect(h.readStatus).toHaveBeenCalledWith('http://127.0.0.1:8091');
+  });
+});
+
+describe('MlxEngineMonitor — a split that owns the Mac is read as the split while it starts (Q-350)', () => {
+  // Installed 3.0.70, 10:14:12Z, right after the install's relaunch: the restore's split was
+  // starting — the Run it row read "Starting" with Stop — while this Mac's single port refused and
+  // activity said "single/off unreachable: net::ERR_CONNECTION_REFUSED"; 15 s later
+  // "distributed/running". Main held goose's report of the split the whole time: it read the split
+  // only once it was up, and this Mac's single engine before that.
+  const SAMPLE_REFUSED: MlxLiveStatusResult = {
+    ok: false,
+    url: BASE,
+    error: 'unreachable',
+    detail: 'net::ERR_CONNECTION_REFUSED',
+  };
+  const startingWith = (
+    state: string,
+    nodes: Array<{ state: string; loadPhase?: string }>
+  ): MlxDistributedReport =>
+    toMlxDistributedReport({
+      ...FLASH_READY,
+      state,
+      inflight: 0,
+      nodes: FLASH_READY.nodes.slice(0, nodes.length).map((n, i) => ({ ...n, ...nodes[i] })),
+    });
+  const RESTORING = startingWith('starting', [{ state: 'loading' }, { state: 'preflight' }]);
+
+  it("the exact sample: distributed/mounting at the split's phase, the single port never read, then running", async () => {
+    let run: MlxDistributedReport = RESTORING;
+    const h = harness({ status: () => SAMPLE_REFUSED, distributedRun: () => run });
+    // goose runs no single engine: its own status said stopped before the restore began.
+    h.monitor.reportFromRenderer({ state: 'stopped', baseUrl: BASE });
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    const s = h.monitor.current();
+    expect(`${s.engine}/${s.mode}`).toBe('distributed/mounting');
+    expect(s.startPhase).toBe('loading');
+    expect(s.modelId).toBe(FLASH_MODEL);
+    expect(s.statusDetail).toBe(
+      'the split is starting (MacBook Pro loading, workhorse preflight) — rank 0 is read once goose says it is ready'
+    );
+    expect(h.readStatus).not.toHaveBeenCalled();
+    expect(isMlxEngineSnapshot(s)).toBe(true);
+    // A starting split keeps the loop reading: the next report is followed without a new wake.
+    expect(h.scheduled).toHaveLength(1);
+
+    run = splitUpAt(RANK0);
+    h.readStatus.mockImplementation(async () => answered(DIST_READING_STATUS));
+    h.scheduled.shift()?.();
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(2));
+    const up = h.monitor.current();
+    expect(`${up.engine}/${up.mode}`).toBe('distributed/running');
+    expect(up.startPhase).toBeNull();
+    expect(h.readStatus).toHaveBeenCalledWith(RANK0);
+    expect(h.readStatus).not.toHaveBeenCalledWith(BASE);
+  });
+
+  it('says how far the split has come: the furthest-behind rank, or recovering', async () => {
+    const phaseOf = async (report: MlxDistributedReport) => {
+      const h = harness({ status: () => SAMPLE_REFUSED, distributedRun: () => report });
+      await h.monitor.tick();
+      expect(h.readStatus).not.toHaveBeenCalled();
+      return `${h.monitor.current().mode} ${h.monitor.current().startPhase}`;
+    };
+    expect(await phaseOf(startingWith('preflight', []))).toBe('mounting starting');
+    expect(
+      await phaseOf(
+        startingWith('starting', [{ state: 'loading', loadPhase: 'warming' }, { state: 'loading' }])
+      )
+    ).toBe('mounting loading');
+    expect(
+      await phaseOf(
+        startingWith('starting', [{ state: 'loading', loadPhase: 'warming' }, { state: 'ready' }])
+      )
+    ).toBe('mounting warming');
+    expect(await phaseOf({ ...startingWith('starting', []), state: 'recovering' })).toBe(
+      'mounting recovering'
+    );
+  });
+
+  it("a stopping split is read at its rank 0 while it still answers, never at this Mac's single port", async () => {
+    const h = harness({
+      status: () => answered(DIST_READING_STATUS),
+      distributedRun: () => ({ ...splitUpAt(RANK0), state: 'stopping' }),
+    });
+    await h.monitor.tick();
+    expect(h.readStatus).toHaveBeenCalledTimes(1);
+    expect(h.readStatus).toHaveBeenCalledWith(RANK0);
+    expect(h.monitor.current().engine).toBe('distributed');
+  });
+
+  it('a split that let go of the Mac hands the read back to the single engine', async () => {
+    const h = harness({
+      status: () => answered(IDLE_STATUS),
+      distributedRun: () => toMlxDistributedReport(STOPPED_WITH_CONFIG),
+    });
+    await h.monitor.tick();
+    expect(h.readStatus).toHaveBeenCalledWith(BASE);
+    expect(`${h.monitor.current().engine}/${h.monitor.current().mode}`).toBe('single/running');
+  });
+
+  it('a pushed snapshot with a start phase this build does not produce is refused', async () => {
+    const h = harness({ status: () => SAMPLE_REFUSED, distributedRun: () => RESTORING });
+    await h.monitor.tick();
+    expect(isMlxEngineSnapshot({ ...h.monitor.current(), startPhase: 'booting' })).toBe(false);
+    expect(isMlxEngineSnapshot({ ...h.monitor.current(), startPhase: undefined })).toBe(false);
   });
 });
 
@@ -420,7 +539,7 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
   it('the distributed run owns the Mac first: a stale remote base is never read over it', async () => {
     const h = harness({
       status: () => answered(IDLE_STATUS),
-      distributedBaseUrl: () => 'http://127.0.0.1:8091',
+      distributedRun: () => splitUpAt(RANK0),
       remoteRoute: () => RELAY,
     });
     await h.monitor.tick();
