@@ -1,4 +1,4 @@
-import type { GooseSessionNotification_unstable } from '@aaif/goose-sdk';
+import type { CompactionStatus, GooseSessionNotification_unstable } from '@aaif/goose-sdk';
 import type { RequestPermissionRequest, SessionNotification } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
 import { getThinkingMessage, type Message, type NotificationEvent } from '../../types/message';
@@ -683,7 +683,10 @@ describe('createAcpSessionNotificationAdapter', () => {
   });
 
   describe('compaction (Q-357)', () => {
-    const status = (stage: string, extra: Record<string, unknown> = {}) => ({
+    const status = (
+      stage: CompactionStatus['stage'],
+      extra: Partial<CompactionStatus> = {}
+    ): CompactionStatus => ({
       stage,
       trigger: 'auto',
       tokensBefore: 142_100,
@@ -696,7 +699,7 @@ describe('createAcpSessionNotificationAdapter', () => {
     it('keeps ONE card at the compaction point: reading, writing, then how it ended', () => {
       const adapter = createAcpSessionNotificationAdapter();
       adapter.apply(agentText('The plan is ready.'));
-      const progress = (stage: string, extra?: Record<string, unknown>) =>
+      const progress = (stage: CompactionStatus['stage'], extra?: Partial<CompactionStatus>) =>
         adapter.applyGoose(
           gooseUpdate({
             sessionUpdate: 'status_message',
