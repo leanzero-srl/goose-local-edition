@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, type RenderOptions, screen, fireEvent } from '@testing-library/react';
+import { act, render, type RenderOptions, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AlertBox } from '../AlertBox';
 import { Alert, AlertType } from '../types';
@@ -9,10 +9,15 @@ const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
 
 // Mock the ConfigContext
+const config = vi.hoisted(() => ({ read: vi.fn(), upsert: vi.fn() }));
 vi.mock('../../ConfigContext', () => ({
-  useConfig: () => ({
-    read: vi.fn().mockResolvedValue(0.8),
-  }),
+  useConfig: () => config,
+}));
+
+const acp = vi.hoisted(() => ({ compactionPreview: vi.fn(), compactionSteer: vi.fn() }));
+vi.mock('../../../acp/compaction', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../acp/compaction')>()),
+  ...acp,
 }));
 
 describe('AlertBox', () => {
@@ -20,6 +25,7 @@ describe('AlertBox', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    config.read.mockResolvedValue(0.8);
   });
 
   describe('Basic Rendering', () => {
@@ -278,6 +284,64 @@ describe('AlertBox', () => {
 
       // Should still render threshold settings
       expect(await screen.findByText(/Auto compact at 80%/)).toBeInTheDocument();
+    });
+  });
+
+  describe('Q-357: the context meter menu', () => {
+    const meter: Alert = {
+      type: AlertType.Warning,
+      message: 'Context window',
+      progress: { current: 142_100, total: 178_200 },
+      showCompactButton: true,
+      onCompact: mockOnCompact,
+    };
+
+    it('says the context in one line', () => {
+      renderWithIntl(<AlertBox alert={meter} />);
+      expect(screen.getByTestId('alert-context-line').textContent).toBe(
+        'Context · 142.1K of 178.2K tokens · 80%'
+      );
+    });
+
+    it('a threshold that could not be saved is said inline, never in a native alert', async () => {
+      const nativeAlert = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+      config.upsert.mockRejectedValue(new Error('config.yaml is read-only'));
+      renderWithIntl(<AlertBox alert={meter} />);
+      await screen.findByText(/Auto compact at 80%/);
+      fireEvent.click(screen.getByRole('button', { name: 'Change when goose compacts' }));
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Save' }));
+      expect((await screen.findByTestId('alert-threshold-error')).textContent).toBe(
+        'Couldn’t save: config.yaml is read-only'
+      );
+      expect(nativeAlert).not.toHaveBeenCalled();
+    });
+
+    it('with the chat, carries its note, Compact now and what a compaction keeps', async () => {
+      acp.compactionPreview.mockResolvedValue({
+        kept: [],
+        writtenParts: [],
+        alwaysHere: { ledgerTail: [] },
+        steer: { note: 'keep the 24-month rule', standing: true, pins: [] },
+      });
+      acp.compactionSteer.mockImplementation(async (_: string, steer: unknown) => steer);
+      renderWithIntl(<AlertBox alert={{ ...meter, sessionId: 's1' }} />);
+      const note = (await screen.findByDisplayValue(
+        'keep the 24-month rule'
+      )) as HTMLTextAreaElement;
+      expect(screen.getByTestId('compaction-menu-standing')).toHaveAttribute(
+        'aria-checked',
+        'true'
+      );
+      fireEvent.change(note, { target: { value: 'use the 12-month cutoff' } });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('compaction-menu-compact'));
+      });
+      expect(acp.compactionSteer).toHaveBeenCalledWith(
+        's1',
+        expect.objectContaining({ note: 'use the 12-month cutoff', standing: true })
+      );
+      expect(mockOnCompact).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText('Compact now', { selector: 'span' })).toBeNull();
     });
   });
 });
