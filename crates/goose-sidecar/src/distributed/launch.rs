@@ -15,7 +15,8 @@
 //! any rank sees the request, Q-177) + `rank_sampling.py` (a request's absent sampling fields, resolved as
 //! the single engine resolves them, Q-159) + `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
 //! `rank_state.py` + `rank_prompt_search.py` (the prompt cache's nearest-entry search in linear time, Q-162) +
-//! `rank_boundary.py` + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_xml_guard.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
+//! `rank_boundary.py` + `rank_tool_schema.py` (a tool parameter's type read through a union or a
+//! reference, Q-232) + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_xml_guard.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
 //! what an absent max_tokens generates, the prefill modules what a step and a batch may hold, the
 //! boundary where a chat request's reusable prefix ends, the XML guard what a tool call may be
 //! followed by, Q-161) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
@@ -62,6 +63,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_state.py"),
     include_str!("rank_prompt_search.py"),
     include_str!("rank_boundary.py"),
+    include_str!("rank_tool_schema.py"),
     include_str!("rank_tool_stream.py"),
     include_str!("rank_stream_watch.py"),
     include_str!("rank_xml_guard.py"),
@@ -3418,6 +3420,373 @@ print("ok")
         );
     }
 
+    /// Q-232: rank_tool_schema.py under a plain interpreter — the type each schema shape names.
+    /// A nullable union names its one other type and "string" wins any union holding it; anyOf /
+    /// oneOf / allOf branches and a local `$ref` are read by the same rule; a union of two other
+    /// types, an unresolvable or cyclic reference and a schema naming nothing name NO type, and
+    /// such a property reaches the parser exactly as written. The request's tools are never
+    /// changed.
+    #[test]
+    fn a_tool_parameters_type_is_read_through_its_union_or_reference() {
+        let checks = r##"
+import copy
+
+DEFS = {"Crop": {"type": "object", "properties": {"x": {"type": "integer"}}},
+        "Action": {"type": "string", "enum": ["enable", "disable"]},
+        "Loop": {"$ref": "#/$defs/Loop"},
+        "Wrapped": {"allOf": [{"$ref": "#/definitions/Crop"}]}}
+DEFS_OLD = {"Crop": DEFS["Crop"]}
+cases = [
+    ({"type": "string"}, "string"),
+    ({"type": ["string", "null"]}, "string"),
+    ({"type": ["null", "string"]}, "string"),
+    ({"type": ["integer", "null"]}, "integer"),
+    ({"type": ["boolean", "null"]}, "boolean"),
+    ({"type": ["object", "null"]}, "object"),
+    ({"type": ["array", "null"]}, "array"),
+    ({"type": ["string", "integer"]}, "string"),
+    ({"type": ["integer", "boolean"]}, None),
+    ({"type": ["null"]}, None),
+    ({"type": "null"}, "null"),
+    ({"anyOf": [{"type": "string"}, {"type": "null"}]}, "string"),
+    ({"anyOf": [{"type": "integer"}, {"type": "null"}]}, "integer"),
+    ({"anyOf": [{"type": "string", "format": "uri"}, {"type": "array"}]}, "string"),
+    ({"anyOf": [{"type": "integer"}, {"type": "array"}]}, None),
+    ({"anyOf": [{"type": "integer"}, {}]}, None),
+    ({"anyOf": [{"type": "string"}, {}]}, "string"),
+    ({"oneOf": [{"$ref": "#/$defs/Crop"}, {"type": "null"}]}, "object"),
+    ({"$ref": "#/$defs/Crop", "default": None}, "object"),
+    ({"$ref": "#/$defs/Action"}, "string"),
+    ({"$ref": "#/$defs/Wrapped"}, "object"),
+    ({"$ref": "#/$defs/Loop"}, None),
+    ({"$ref": "#/$defs/Missing"}, None),
+    ({"$ref": "https://example.com/schema.json"}, None),
+    ({}, None),
+    ({"description": "no type"}, None),
+]
+for schema, expected in cases:
+    got = schema_type(schema, DEFS)
+    assert got == expected, (schema, got, expected)
+assert schema_type({"$ref": "#/definitions/Crop"}, DEFS_OLD) == "object"
+
+def upstream(func_name, tools):
+    for tool in tools or []:
+        if tool["function"]["name"] == func_name:
+            return tool["function"]["parameters"].get("properties", {})
+    return {}
+
+TOOLS = [{"type": "function", "function": {"name": "read_image", "parameters": {
+    "type": "object",
+    "properties": {"source": {"type": "string"}, "note": {}, "crop": {"$ref": "#/$defs/Crop", "default": None},
+                   "when": {"type": ["string", "null"], "description": "d"},
+                   "global": {"type": ["boolean", "null"]}, "either": {"type": ["integer", "boolean"]}},
+    "$defs": DEFS}}}]
+before = copy.deepcopy(TOOLS)
+config = typed_arguments_config(upstream)
+assert config.__wrapped__ is upstream
+typed = config("read_image", TOOLS)
+assert TOOLS == before, "the request's tools are never changed"
+assert typed["source"] is TOOLS[0]["function"]["parameters"]["properties"]["source"], "a typed property is the same object"
+assert typed["note"] == {} and typed["either"] == {"type": ["integer", "boolean"]}, "no type named: as written"
+assert typed["crop"] == {"$ref": "#/$defs/Crop", "default": None, "type": "object"}, typed["crop"]
+assert typed["when"] == {"type": "string", "description": "d"}, typed["when"]
+assert typed["global"] == {"type": "boolean"}, typed["global"]
+assert config("undeclared", TOOLS) == {} and config("read_image", None) == {}
+print("ok")
+"##;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_tool_schema.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// Q-232 against the REAL qwen3_coder parser of mlx_lm 0.31.3 (the tensor split's): a word
+    /// under `{"type": ["string", "null"]}` — schemars' `Option<String>` — and the call is lost.
+    /// NEGATIVE CONTROL, the parser as shipped: `10m` raises SyntaxError (literal_eval), `true`
+    /// under ["boolean", "null"] ValueError, `42` becomes the integer 42, `'x'` loses its quotes,
+    /// and read_image's `crop` (a `$ref`, as goose puts it on the wire) arrives as its JSON text.
+    /// With rank_tool_schema.py installed as the wrapper installs it, every one of those is read
+    /// as its type — the call Rapid-MLX's parser (single engine, pipeline fork) reads — while
+    /// every shape the parser already read (plain types, undeclared and untyped parameters, the
+    /// word "null", a string/array union) reads exactly as before; and a streamed nullable string
+    /// streams while it is written and closes byte-identical to the whole-call parse.
+    #[test]
+    fn a_nullable_string_argument_keeps_its_call_on_the_tensor_parser() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r##"
+import copy
+from mlx_lm.tool_parsers import qwen3_coder as q
+
+def schema(name, props, defs=None):
+    parameters = {"type": "object", "properties": props}
+    if defs:
+        parameters["$defs"] = defs
+    return {"type": "function", "function": {"name": name, "parameters": parameters}}
+
+CROP = {"type": "object", "properties": {k: {"type": "integer", "format": "uint32", "minimum": 0}
+        for k in ("x", "y", "width", "height")}, "required": ["x", "y", "width", "height"]}
+TOOLS = [
+    schema("sleep_for", {
+        "duration": {"type": ["string", "null"]}, "reverse": {"type": ["null", "string"]},
+        "plain": {"type": "string"}, "count": {"type": ["integer", "null"]},
+        "ratio": {"type": ["number", "null"]}, "is_global": {"type": ["boolean", "null"]},
+        "env": {"type": ["object", "null"]}, "tags": {"type": ["array", "null"]},
+        "limit": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "url": {"anyOf": [{"type": "string", "format": "uri"}, {"type": "array", "items": {"type": "string"}}]},
+        "timeout": {"type": "integer"}, "force": {"type": "boolean"}, "opts": {"type": "object"},
+        "either": {"type": ["integer", "boolean"]}, "note": {},
+    }),
+    schema("read_image", {"source": {"type": "string"},
+                          "crop": {"description": "Optional crop rectangle in pixels.", "default": None,
+                                   "$ref": "#/$defs/CropParams"}}, {"CropParams": CROP}),
+    schema("manage_extensions", {"action": {"$ref": "#/$defs/Action"}, "extension_name": {"type": "string"}},
+           {"Action": {"type": "string", "enum": ["enable", "disable"]}}),
+]
+
+def call(name, *params):
+    body = "".join(f"<parameter={key}>\n{value}\n</parameter>\n" for key, value in params)
+    return f"\n<function={name}>\n{body}</function>\n"
+
+CROP_TEXT = '{"x": 0, "y": 0, "width": 640, "height": 480}'
+CASES = {
+    "word": (call("sleep_for", ("duration", "10m")), {"duration": "10m"}),
+    "sentence": (call("sleep_for", ("duration", "fix the bug in main.rs")), {"duration": "fix the bug in main.rs"}),
+    "null_first": (call("sleep_for", ("reverse", "10m")), {"reverse": "10m"}),
+    "digits": (call("sleep_for", ("duration", "42")), {"duration": "42"}),
+    "quoted": (call("sleep_for", ("duration", "'quoted'")), {"duration": "'quoted'"}),
+    "null_word": (call("sleep_for", ("duration", "null")), {"duration": None}),
+    "bool": (call("sleep_for", ("is_global", "true")), {"is_global": True}),
+    "int": (call("sleep_for", ("count", "5")), {"count": 5}),
+    "number": (call("sleep_for", ("ratio", "2.5")), {"ratio": 2.5}),
+    "object": (call("sleep_for", ("env", '{"A": true, "B": null}')), {"env": {"A": True, "B": None}}),
+    "array": (call("sleep_for", ("tags", '["a", null]')), {"tags": ["a", None]}),
+    "anyof_int": (call("sleep_for", ("limit", "7")), {"limit": 7}),
+    "crop": (call("read_image", ("source", "/tmp/shot.png"), ("crop", CROP_TEXT)),
+             {"source": "/tmp/shot.png", "crop": {"x": 0, "y": 0, "width": 640, "height": 480}}),
+    # Read exactly as before:
+    "plain": (call("sleep_for", ("plain", "10m")), {"plain": "10m"}),
+    "url_array": (call("sleep_for", ("url", '["https://a.example"]')), {"url": '["https://a.example"]'}),
+    "typed": (call("sleep_for", ("timeout", "30"), ("force", "true"), ("opts", '{"a": 1}')),
+              {"timeout": 30, "force": True, "opts": {"a": 1}}),
+    "either": (call("sleep_for", ("either", "5")), {"either": 5}),
+    "note": (call("sleep_for", ("note", '{"looks": "like json"}')), {"note": '{"looks": "like json"}'}),
+    "undeclared": (call("sleep_for", ("cwd", "/w")), {"cwd": "/w"}),
+    "enum_ref": (call("manage_extensions", ("action", "enable"), ("extension_name", "git")),
+                 {"action": "enable", "extension_name": "git"}),
+}
+
+def parse(text):
+    try:
+        return q.parse_tool_call(text, TOOLS)["arguments"]
+    except Exception as refusal:
+        return f"REFUSED {type(refusal).__name__}"
+
+shipped = {case: parse(text) for case, (text, _) in CASES.items()}
+assert shipped["word"] == "REFUSED SyntaxError", shipped["word"]
+assert shipped["sentence"] == "REFUSED SyntaxError", shipped["sentence"]
+assert shipped["null_first"] == "REFUSED SyntaxError", shipped["null_first"]
+assert shipped["bool"] == "REFUSED ValueError", shipped["bool"]
+assert shipped["object"] == "REFUSED ValueError", shipped["object"]
+assert shipped["digits"] == {"duration": 42}, shipped["digits"]
+assert shipped["quoted"] == {"duration": "quoted"}, shipped["quoted"]
+assert shipped["anyof_int"] == {"limit": "7"}, shipped["anyof_int"]
+assert shipped["crop"]["crop"] == CROP_TEXT, shipped["crop"]
+
+before = copy.deepcopy(TOOLS)
+q._get_arguments_config = typed_arguments_config(q._get_arguments_config)
+fixed = {case: parse(text) for case, (text, _) in CASES.items()}
+for case, (text, expected) in CASES.items():
+    assert fixed[case] == expected, (case, fixed[case], expected)
+for case in ("plain", "url_array", "typed", "either", "note", "undeclared", "enum_ref", "int", "number",
+             "null_word"):
+    assert fixed[case] == shipped[case], (case, "read exactly as before", shipped[case], fixed[case])
+assert TOOLS == before, "the request's tools are never changed"
+
+LONG = "".join(f"step {i}: wait for the deploy, then \"retry\" \\ ünï\n" for i in range(80))
+text = call("sleep_for", ("duration", LONG), ("is_global", "false"))
+expected = json.dumps(q.parse_tool_call(text, TOOLS)["arguments"], ensure_ascii=False)
+stream = ToolCallStream(q._convert_param_value, q._get_arguments_config)
+sent = ""
+before_close = 0
+for i in range(0, len(text), 5):
+    _, fragment = stream.feed(text[i:i + 5], TOOLS)
+    sent += fragment
+    if "</parameter>" not in text[:i + 5]:
+        before_close = len(sent)
+rest, why = stream.close(q.parse_tool_call, TOOLS)
+assert why is None, why
+assert sent + rest == expected, (sent + rest, expected)
+assert before_close > len(LONG) // 2, ("the nullable string streamed while it was written", before_close)
+print("ok")
+"##;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_tool_schema.py"),
+                include_str!("rank_tool_stream.py")
+            ))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "ok",
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Q-232 through the REAL mlx_lm 0.31.3 handler, as the wrapper ships: one call to a tool
+    /// whose parameters are `Option<String>` / `Option<bool>` as schemars writes them
+    /// (["string", "null"], ["boolean", "null"]) and read_image's `$ref` crop, written by the
+    /// stand-in generation, reaches the client — streamed and not — with exactly the arguments the
+    /// model wrote, typed. NEGATIVE CONTROL: the parser's own `_get_arguments_config` put back,
+    /// the same answer loses its call both ways: the stream's arguments never close, and the
+    /// non-streamed request's SyntaxError escapes mlx_lm's ToolCallFormatter (it skips only
+    /// ValueError) and the connection closes with no reply.
+    #[test]
+    fn a_call_with_optional_arguments_reaches_the_client_through_the_wrapper() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r##"
+import http.client
+
+TOOLS = [{"type": "function", "function": {"name": "schedule", "parameters": {
+    "type": "object", "required": ["what"],
+    "properties": {"what": {"type": "string"}, "every": {"type": ["string", "null"], "default": None},
+                   "is_global": {"type": ["boolean", "null"], "default": None},
+                   "crop": {"default": None, "$ref": "#/$defs/Crop"}},
+    "$defs": {"Crop": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}}}}}}]
+CALL = ("\n<function=schedule>\n<parameter=what>\nre-run the census\n</parameter>\n"
+        "<parameter=every>\n10m\n</parameter>\n<parameter=is_global>\nfalse\n</parameter>\n"
+        "<parameter=crop>\n{\"x\": 3, \"y\": 4}\n</parameter>\n</function>\n")
+EXPECTED = {"what": "re-run the census", "every": "10m", "is_global": False, "crop": {"x": 3, "y": 4}}
+
+def generation_thread():
+    while True:
+        rqueue, request, args = responses.requests.get()
+        rqueue.put(server.GenerationContext(
+            has_tool_calling=True, has_thinking=False, tool_parser=qwen3_coder.parse_tool_call,
+            sequences={(1,): "<tool_call>", (2,): "</tool_call>", (3,): "<|im_end|>"},
+            prompt=[0] * 8, prompt_cache_count=0,
+        ))
+        rqueue.put(token("<tool_call>", "tool", (1,)))
+        for i in range(0, len(CALL), 4):
+            rqueue.put(token(CALL[i:i + 4], "tool"))
+        rqueue.put(token("</tool_call>", "normal", (2,)))
+        rqueue.put(token("<|im_end|>", None, (3,), "stop"))
+        rqueue.put(None)
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def body(stream):
+    return {"model": served, "stream": stream, "tools": TOOLS,
+            "messages": [{"role": "user", "content": "re-run the census every ten minutes"}]}
+
+def streamed():
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/chat/completions"
+    request = urllib.request.Request(url, data=json.dumps(body(True)).encode())
+    calls, finish = {}, None
+    with urllib.request.urlopen(request, timeout=60) as reply:
+        for raw in reply:
+            line = raw.decode().strip()
+            if not line.startswith("data: ") or line == "data: [DONE]":
+                continue
+            frame = json.loads(line[len("data: "):])
+            if not frame["choices"]:
+                continue
+            choice = frame["choices"][0]
+            finish = choice["finish_reason"] or finish
+            for delta in choice["delta"].get("tool_calls", []):
+                entry = calls.setdefault(delta["index"], {"names": [], "arguments": ""})
+                if "name" in delta["function"]:
+                    entry["names"].append(delta["function"]["name"])
+                entry["arguments"] += delta["function"].get("arguments", "")
+    return {"calls": [calls[i] for i in sorted(calls)], "finish": finish}
+
+def whole():
+    try:
+        status, text = post("/v1/chat/completions", body(False))
+    except (ConnectionError, http.client.HTTPException) as dropped:
+        return {"dropped": type(dropped).__name__, "calls": []}
+    try:
+        message = json.loads(text)["choices"][0]["message"]
+    except (ValueError, KeyError, IndexError):
+        return {"status": status, "body": text[:400], "calls": []}
+    return {"status": status, "calls": [
+        {"names": [c["function"]["name"]], "arguments": c["function"]["arguments"]}
+        for c in message.get("tool_calls") or []]}
+
+fixed = {"streamed": streamed(), "whole": whole()}
+qwen3_coder._get_arguments_config = qwen3_coder._get_arguments_config.__wrapped__
+shipped = {"streamed": streamed(), "whole": whole()}
+print("GOOSE_TEST " + json.dumps({"fixed": fixed, "shipped": shipped, "expected": EXPECTED}))
+"##;
+        let (seen, _) = run_wrapper_checks(&python, checks);
+        let expected = &seen["expected"];
+        for way in ["streamed", "whole"] {
+            let fixed = &seen["fixed"][way];
+            let calls = fixed["calls"].as_array().unwrap();
+            assert_eq!(calls.len(), 1, "{way}: {fixed}");
+            assert_eq!(calls[0]["names"], serde_json::json!(["schedule"]), "{way}");
+            let arguments: serde_json::Value =
+                serde_json::from_str(calls[0]["arguments"].as_str().unwrap())
+                    .unwrap_or_else(|e| panic!("{way}: the client's call closes: {e}: {fixed}"));
+            assert_eq!(&arguments, expected, "{way}");
+        }
+        assert_eq!(seen["fixed"]["streamed"]["finish"], "tool_calls");
+
+        let shipped = &seen["shipped"];
+        let streamed = shipped["streamed"]["calls"].as_array().unwrap();
+        assert!(
+            streamed
+                .iter()
+                .all(|c| serde_json::from_str::<serde_json::Value>(
+                    c["arguments"].as_str().unwrap()
+                )
+                .is_err()),
+            "negative control: the parser as shipped never closes the streamed call: {shipped}"
+        );
+        assert_eq!(
+            shipped["whole"]["dropped"], "RemoteDisconnected",
+            "negative control: the parser as shipped loses the non-streamed call: {shipped}"
+        );
+    }
+
+    /// Q-232: the tensor program as shipped carries rank_tool_schema.py before the streamer and
+    /// the wrapper, and the wrapper installs it over the parser's `_get_arguments_config` after
+    /// importing the parser and checking mlx_lm has it, before anything parses a call.
+    #[test]
+    fn the_tensor_program_reads_tool_parameter_types_through_unions() {
+        let schema = include_str!("rank_tool_schema.py");
+        let at = |needle: &str| {
+            TENSOR_PROGRAM
+                .find(needle)
+                .unwrap_or_else(|| panic!("the tensor program carries {needle:?}"))
+        };
+        assert!(at(schema) < at(include_str!("rank_tool_stream.py")));
+        let install =
+            "qwen3_coder._get_arguments_config = typed_arguments_config(qwen3_coder._get_arguments_config)";
+        assert_eq!(TENSOR_PROGRAM.matches(install).count(), 1);
+        assert!(at("from mlx_lm.tool_parsers import qwen3_coder  # noqa: E402") < at(install));
+        assert!(at("(qwen3_coder, \"_get_arguments_config\"),") < at(install));
+        assert!(at(install) < at("class StreamedCall:"));
+        assert!(
+            !PIPELINE_PROGRAM.contains(schema),
+            "the pipeline fork's parser reads these itself"
+        );
+    }
+
     /// Q-141 through the REAL mlx_lm 0.31.3 handler: a streamed chat answer whose tool call is
     /// written token by token (the generation is a stand-in feeding mlx_lm's own Response objects
     /// through its own control-token buffer). The generation pauses halfway through the call until
@@ -5925,8 +6294,9 @@ print("GOOSE_TEST " + json.dumps({
         );
     }
 
-    /// The tensor wrapper's own module prelude — its imports and both upstream-attribute checks,
-    /// exactly as shipped — run against the REAL mlx_lm 0.31.3. The stubbed tests never executed
+    /// The tensor wrapper's own module prelude — its imports, both upstream-attribute checks and
+    /// the Q-232 install over qwen3_coder's `_get_arguments_config`, exactly as shipped — run
+    /// against the REAL mlx_lm 0.31.3. The stubbed tests never executed
     /// these lines, so 3.0.44 shipped `import mlx_lm.generate as mlx_generate`, which binds the
     /// re-exported `generate` function, and every split died at startup.
     #[test]
@@ -5943,10 +6313,13 @@ print("GOOSE_TEST " + json.dumps({
                 .find("\nserved = spec[")
                 .expect("the prelude ends where the spec is read");
         let program = format!(
-            "import types\nfrom mlx_lm.models.cache import ArraysCache, BatchKVCache\n\
+            "{}import types\nfrom mlx_lm.models.cache import ArraysCache, BatchKVCache\n\
              spec = {{\"prefill\": {{}}, \"prompt_cache_limit_bytes\": 1}}\n{}\n\
              assert isinstance(mlx_generate, types.ModuleType), mlx_generate\n\
-             assert isinstance(server, types.ModuleType), server\nprint(\"ok\")\n",
+             assert isinstance(server, types.ModuleType), server\n\
+             assert qwen3_coder._get_arguments_config.__wrapped__.__module__ == qwen3_coder.__name__\n\
+             print(\"ok\")\n",
+            include_str!("rank_tool_schema.py"),
             &wrapper[start..end]
         );
         let out = std::process::Command::new(&python)
@@ -6190,6 +6563,7 @@ print("ok")
                     include_str!("rank_prompt_search.py")
                 ),
                 include_str!("rank_boundary.py"),
+                include_str!("rank_tool_schema.py"),
                 include_str!("rank_tool_stream.py"),
                 include_str!("rank_stream_watch.py"),
                 include_str!("rank_xml_guard.py"),
