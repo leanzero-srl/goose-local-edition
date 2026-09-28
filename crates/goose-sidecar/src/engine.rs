@@ -804,7 +804,7 @@ async fn unsupervised_listener(port: u16, marker: &str) -> Option<UnsupervisedLi
         .await
         .map_err(|e| format!("{e:#}"));
     #[cfg(not(unix))]
-    let holders = {
+    let holders: std::result::Result<Vec<PortHolder>, String> = {
         let _ = marker;
         Err("this platform cannot read a port's listeners".to_string())
     };
