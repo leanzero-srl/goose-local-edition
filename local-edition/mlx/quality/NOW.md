@@ -57,7 +57,8 @@ Updated: 2026-09-28 18:5x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   short gate; Q-383 (load-flaky vitest waits) cutting.
   g072 GREEN except the schema check (fixed 90c092c23: SDK regenerated) and the Q-391 race (fixed). BATCH 2b
   MERGED into merge-072 (6ada7bcd0); its full gate QUEUED behind: a cargo slot — #3s runs on the split and
-  Q-394/Q-397 agents hold the MacBook's cargo (≤1 job rule). Was BATCH 2b list: Q-379..382 (worktree-agent-ad123d197e6e9ffd8), Q-388/389
+  Q-394/Q-397 agents hold the MacBook's cargo (≤1 job rule). Q-394(a) DONE (worktree-agent-a54da611728175b1f: compaction keeps the work folder + absolute paths) — joins
+  merge-072 after g072b; Q-394(b) (find ~ sat 300 s in the app) investigating; Q-397 cutting. Was BATCH 2b list: Q-379..382 (worktree-agent-ad123d197e6e9ffd8), Q-388/389
   (worktree-agent-a1d887d0d5490caf6: create-doc path + xlsx read, MCP patch), Q-383, Q-391, Q-392 when done.
   Q-390 (r1 opens the chat in <round>/work) cutting.
 - 429 at 16:5x (limit resets 18:40): resumed by SendMessage — Q-383 (a3e9aab…, WIP untracked testClock.ts +
