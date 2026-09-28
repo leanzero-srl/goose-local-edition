@@ -205,7 +205,8 @@ pub async fn resolve(
 /// The person's chat message arrived while questions were open: every open item of the session is
 /// closed as superseded by it, in one transaction, and returned oldest first (empty = none was
 /// open). Called for the person's own plain message only — never a loop tick, a slash command, or
-/// the card's answer (the card closes its item before it sends).
+/// the card's own answer, which the client marks and [`take_card_answers`] honours (Q-344: closing
+/// its own item first is not enough — the chat's OTHER open questions would still close).
 pub async fn supersede_open(
     session_manager: &SessionManager,
     session_id: &str,
