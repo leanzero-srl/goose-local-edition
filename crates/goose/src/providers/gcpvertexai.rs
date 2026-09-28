@@ -1,4 +1,3 @@
-use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -622,7 +621,9 @@ impl Provider for GcpVertexAIProvider {
                 let _ = log.error(e);
             })?;
 
-        let stream = response.bytes_stream().map_err(io::Error::other);
+        let stream = response
+            .bytes_stream()
+            .map_err(goose_providers::errors::body_read_error);
 
         let context_clone = context.clone();
         Ok(Box::pin(try_stream! {

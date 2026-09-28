@@ -235,7 +235,9 @@ pub(crate) fn stream_openai_compat_timed(
     t0: std::time::Instant,
     model_name: String,
 ) -> Result<MessageStream, ProviderError> {
-    let stream = response.bytes_stream().map_err(std::io::Error::other);
+    let stream = response
+        .bytes_stream()
+        .map_err(crate::errors::body_read_error);
 
     Ok(Box::pin(try_stream! {
         let stream_reader = StreamReader::new(stream);
@@ -278,7 +280,9 @@ pub fn stream_openai_compat(
     response: Response,
     mut log: Option<Box<dyn RequestLogHandle>>,
 ) -> Result<MessageStream, ProviderError> {
-    let stream = response.bytes_stream().map_err(std::io::Error::other);
+    let stream = response
+        .bytes_stream()
+        .map_err(crate::errors::body_read_error);
 
     Ok(Box::pin(try_stream! {
         let stream_reader = StreamReader::new(stream);
@@ -302,7 +306,9 @@ pub fn stream_responses_compat(
     response: Response,
     mut log: Option<Box<dyn RequestLogHandle>>,
 ) -> Result<MessageStream, ProviderError> {
-    let stream = response.bytes_stream().map_err(std::io::Error::other);
+    let stream = response
+        .bytes_stream()
+        .map_err(crate::errors::body_read_error);
 
     Ok(Box::pin(try_stream! {
         let stream_reader = StreamReader::new(stream);

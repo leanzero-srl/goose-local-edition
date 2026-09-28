@@ -16,7 +16,6 @@ use goose_providers::model::ModelConfig;
 use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 use serde_json::Value;
-use std::io;
 use tokio::pin;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{FramedRead, LinesCodec};
@@ -190,7 +189,9 @@ impl Provider for GoogleProvider {
                 let _ = log.error(e);
             })?;
 
-        let stream = response.bytes_stream().map_err(io::Error::other);
+        let stream = response
+            .bytes_stream()
+            .map_err(goose_providers::errors::body_read_error);
 
         Ok(Box::pin(try_stream! {
             let stream_reader = StreamReader::new(stream);

@@ -10,7 +10,6 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io;
 use std::time::Duration as StdDuration;
 use tokio::pin;
 use tokio_util::io::StreamReader;
@@ -412,7 +411,9 @@ impl Provider for KimiCodeProvider {
                 let _ = log.error(e);
             })?;
 
-        let stream = response.bytes_stream().map_err(io::Error::other);
+        let stream = response
+            .bytes_stream()
+            .map_err(goose_providers::errors::body_read_error);
 
         Ok(Box::pin(try_stream! {
             let stream_reader = StreamReader::new(stream);

@@ -9,7 +9,6 @@ use async_trait::async_trait;
 use futures::TryStreamExt;
 use reqwest::StatusCode;
 use serde_json::Value;
-use std::io;
 use tokio::pin;
 use tokio_util::io::StreamReader;
 
@@ -291,7 +290,9 @@ impl Provider for AnthropicProvider {
                 let _ = log.error(e);
             })?;
 
-        let stream = response.bytes_stream().map_err(io::Error::other);
+        let stream = response
+            .bytes_stream()
+            .map_err(crate::errors::body_read_error);
 
         Ok(Box::pin(try_stream! {
             let stream_reader = StreamReader::new(stream);
