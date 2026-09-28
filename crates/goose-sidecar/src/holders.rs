@@ -43,8 +43,9 @@ pub fn holders_dir() -> Result<PathBuf> {
     Ok(state.join(HOLDERS_DIR))
 }
 
-/// Whose reply holds the way: a person's, or a loop's tick (the session-loops runner opens those on
-/// the same guard; nothing does yet). A record written before the field existed is a person's.
+/// Whose reply holds the way: a person's, or a loop's tick (goose's `on_prompt` opens a tick's
+/// reply on the same guard as `Tick`). Another window's loader reads it: a tick never stops a way
+/// under a person's reply. A record written before the field existed is a person's.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ReplyKind {

@@ -45,13 +45,19 @@ struct State {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Blocker {
     /// A reply of this process.
-    Here { session: String, way: String },
-    /// A reply of another goose process on this Mac; its lock wakes a waiter when it ends.
+    Here {
+        session: String,
+        way: String,
+        kind: ReplyKind,
+    },
+    /// A reply of another goose process on this Mac; its lock wakes a waiter when it ends. Its
+    /// kind is the one that process published in its holder record.
     Elsewhere {
         pid: u32,
         session: String,
         way: String,
         lock: PathBuf,
+        kind: ReplyKind,
     },
 }
 
@@ -59,6 +65,18 @@ impl Blocker {
     pub fn way(&self) -> &str {
         match self {
             Blocker::Here { way, .. } | Blocker::Elsewhere { way, .. } => way,
+        }
+    }
+
+    pub fn session(&self) -> &str {
+        match self {
+            Blocker::Here { session, .. } | Blocker::Elsewhere { session, .. } => session,
+        }
+    }
+
+    pub fn kind(&self) -> ReplyKind {
+        match self {
+            Blocker::Here { kind, .. } | Blocker::Elsewhere { kind, .. } => *kind,
         }
     }
 }
@@ -113,11 +131,34 @@ impl Holds {
         state.replies.get(id).map(|r| r.opened)
     }
 
+    /// Whether the reply `root` has open is a loop's tick. A root with no open reply (a card's
+    /// Start, a scheduled job) is no tick: every tick opens its reply in `on_prompt` first.
+    pub fn is_tick(&self, root: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .get(root)
+            .and_then(|id| state.replies.get(id))
+            .is_some_and(|r| r.kind == ReplyKind::Tick)
+    }
+
+    #[cfg(test)]
     pub fn open_reply(self: &Arc<Self>, session: &str) -> ReplyGuard {
         self.open_reply_as(session, ReplyKind::User)
     }
 
-    /// A reply of `kind` (a loop's tick opens its turn here, once the loops runner exists).
+    /// A background delegate's reply, beside `parent`'s turn: the loop tick's work when that
+    /// turn's reply is a tick (session loops §5.5), a person's otherwise.
+    pub fn open_reply_beside(self: &Arc<Self>, session: &str, parent: &str) -> ReplyGuard {
+        let kind = if self.is_tick(&self.root_of(parent)) {
+            ReplyKind::Tick
+        } else {
+            ReplyKind::User
+        };
+        self.open_reply_as(session, kind)
+    }
+
+    /// A reply of `kind`: `on_prompt` opens a loop's tick as `Tick`, every other turn as `User`.
     pub fn open_reply_as(self: &Arc<Self>, session: &str, kind: ReplyKind) -> ReplyGuard {
         let id = self.next_seq();
         {
@@ -256,6 +297,7 @@ impl Holds {
                     out.push(Blocker::Here {
                         session: reply.session.clone(),
                         way,
+                        kind: reply.kind,
                     });
                 }
             }
@@ -281,6 +323,7 @@ impl Holds {
                             record.started_at,
                             reply.reply,
                         ),
+                        kind: reply.kind,
                     });
                 }
             }

@@ -2773,6 +2773,50 @@ impl GooseAcpAgent {
         Ok(loop_door::TickPrompt::new(run))
     }
 
+    /// A cancelled turn (Q-169): the person's stop is recorded with a chat line where the answer
+    /// would have been, and that line is sent to the window. A tick YIELDED to a user's reply
+    /// (§5.2 step 5) was stopped by no one: no notice, no Stopped outcome, and the previous turn's
+    /// outcome cleared the way a new turn clears it.
+    async fn record_cancelled_turn(
+        &self,
+        cx: &ConnectionTo<Client>,
+        session_id: &str,
+        cause: Option<&crate::session_loops::rules::CancelCause>,
+        meter: &crate::turn_outcome::TurnMeter,
+    ) {
+        if let Some(crate::session_loops::rules::CancelCause::Yield { .. }) = cause {
+            if let Err(error) =
+                crate::turn_outcome::record(&self.session_manager, session_id, None).await
+            {
+                warn!(session_id, %error, "the yielded tick's turn outcome was not recorded");
+            }
+            return;
+        }
+        let stopped = meter.stopped().await;
+        match crate::turn_outcome::record_stopped(&self.session_manager, session_id, stopped).await
+        {
+            Ok(notice) => {
+                for content in &notice.content {
+                    if let MessageContent::SystemNotification(notification) = content {
+                        if let Err(error) = send_status_message_update(
+                            cx,
+                            self.supports_goose_custom_notifications(),
+                            session_id,
+                            notification,
+                        ) {
+                            warn!(
+                                session_id,
+                                ?error,
+                                "the stopped turn's notice was not sent; it is stored in the chat"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(error) => warn!(session_id, %error, "the stopped turn was not recorded"),
+        }
+    }
+
     async fn on_prompt(
         &self,
         cx: &ConnectionTo<Client>,
@@ -2842,6 +2886,29 @@ impl GooseAcpAgent {
         }
 
         if cancel_token.is_cancelled() {
+            // A tick cancelled before its reply ran — the person's Stop while it started, or a
+            // yield to a user turn that began between the offer and the start — is settled as a
+            // cancel during the reply is: its marker, already in the window, is stored under the
+            // offer's id (the window and a replay agree), and the cancel is recorded by its cause.
+            if let (Some(_), Some(id)) = (&tick, &tick_message_id) {
+                let marker = Self::convert_acp_prompt_to_message(&args.prompt).with_id(id.clone());
+                match self.session_manager.add_message(&session_id, &marker).await {
+                    Ok(()) => {
+                        self.record_cancelled_turn(
+                            cx,
+                            &session_id,
+                            cause.get(),
+                            &crate::turn_outcome::TurnMeter::start(),
+                        )
+                        .await
+                    }
+                    Err(error) => warn!(
+                        session_id,
+                        %error,
+                        "the cancelled tick's message was not stored; its marker shows only until the chat reloads"
+                    ),
+                }
+            }
             self.end_run(&mut run).await;
             if let Some(tick) = tick.take() {
                 drop(tick.ended(crate::session_loops::rules::TickEnd::Cancelled {
@@ -3103,42 +3170,11 @@ impl GooseAcpAgent {
         drop(stream);
 
         // Q-169: the dropped stream never reaches the agent's own end-of-turn record, so a stopped
-        // turn is recorded here — before the run-end update, so every list reads Stopped — with a
-        // chat line in the conversation where the answer would have been. A tick YIELDED to a
-        // user's reply (§5.2 step 5) was not stopped by anyone: no notice, no Stopped outcome, and
-        // the previous turn's outcome is cleared the way a new turn clears it.
+        // turn is recorded here — before the run-end update, so every list reads Stopped.
         let cancel_cause = cause.get().cloned();
-        let yielded = matches!(
-            cancel_cause,
-            Some(crate::session_loops::rules::CancelCause::Yield { .. })
-        );
-        if was_cancelled && yielded {
-            if let Err(error) =
-                crate::turn_outcome::record(&self.session_manager, &session_id, None).await
-            {
-                warn!(session_id, %error, "the yielded tick's turn outcome was not recorded");
-            }
-        } else if was_cancelled {
-            let stopped = meter.stopped().await;
-            match crate::turn_outcome::record_stopped(&self.session_manager, &session_id, stopped)
-                .await
-            {
-                Ok(notice) => {
-                    for content in &notice.content {
-                        if let MessageContent::SystemNotification(notification) = content {
-                            if let Err(error) = send_status_message_update(
-                                cx,
-                                self.supports_goose_custom_notifications(),
-                                &session_id,
-                                notification,
-                            ) {
-                                warn!(session_id, ?error, "the stopped turn's notice was not sent; it is stored in the chat");
-                            }
-                        }
-                    }
-                }
-                Err(error) => warn!(session_id, %error, "the stopped turn was not recorded"),
-            }
+        if was_cancelled {
+            self.record_cancelled_turn(cx, &session_id, cancel_cause.as_ref(), &meter)
+                .await;
         }
 
         {

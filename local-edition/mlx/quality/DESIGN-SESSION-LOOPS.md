@@ -1695,6 +1695,25 @@ to its end; two loops in two processes do not wait on each other's ticks as user
 
 **Must not break:** every S5 test (a user's demand behaves exactly as before), J3/J4 of DESIGN-NODES.
 
+**As cut (2026-09-28, `db0cd9616`, `b29a38f91`).** Landed:
+- `nodes_loader.rs` / `holds.rs`: a person's demand goes before every tick demand whose swap has not begun
+  (`Queued.goes_before`), and a person's reply opened after a tick's queued switch is not held behind it
+  (`switch_ahead`); a tick swap under way still runs to its end first. A tick demand blocked by a person's reply
+  waits with §5.5's sentence verbatim, "{way} is answering you in {chat}; the loop's tick loads {target} when it
+  finishes" — `{way}` in the loader's own way words ("this Mac's engine"), `{chat}` the session's name. The reply's
+  kind is read in-process from `Holds` and cross-process from the holder record (Q-239: the kind was already
+  published since L2b; nothing read it).
+- Two early exits of L2b's door that orphaned the window's pre-appended marker: a person's Stop while the tick
+  starts, and a yield at the start (a user turn that began between offer and accept). `tick_started` now applies
+  that yield itself before it returns (it raced `on_prompt` through a spawned watcher and could reach the model),
+  and `on_prompt`'s early cancel stores the marker under the offer's id and settles the cancel through the same
+  `record_cancelled_turn` the during-the-reply cancel uses (the notice for a stop; none for a yield).
+
+NOT cut in this pass: `mac_wide.rs` — the v1b yield trigger (a `kind: user` holder on the tick's own way, in any
+process) and the cross-process "no user reply open" wait before an offer, which is what would set the runner's
+`WayHeld` status (the contract, the sentence and its i18n exist; nothing sets it yet). v1a's in-process "any user
+turn yields" rule still stands.
+
 ### L10: The wake broadcast
 
 **Confidence: HIGH.** Four lines of main/preload and one subscription.

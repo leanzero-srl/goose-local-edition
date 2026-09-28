@@ -389,6 +389,16 @@ impl Ways for AgentWays {
             (_, None) => Ok(None),
         }
     }
+
+    async fn chat_name(&self, session_id: &str) -> Result<String, String> {
+        let agent = agent().map_err(|r| r.reason)?;
+        agent
+            .session_manager
+            .get_session(session_id, false)
+            .await
+            .map(|session| session.name)
+            .map_err(|e| format!("{e:#}"))
+    }
 }
 
 /// Run it's `startSplitFor`: discover the candidate's Macs for this model, build the config from
