@@ -13,6 +13,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use goose::custom_requests::{NodesServingKind, NodesServingWayDto};
 #[cfg(unix)]
 use goose::nodes::{NodeDefKind, ResolvedNodeDef};
+#[cfg(unix)]
+use goose_sidecar::engine::engine_marker;
 use goose_sidecar::engine::{EngineSettings, MlxEngineManager};
 #[cfg(unix)]
 use goose_sidecar::holders::{self, HolderEntry, HolderKind, Registration};
@@ -20,6 +22,8 @@ use goose_sidecar::holders::{self, HolderEntry, HolderKind, Registration};
 use goose_sidecar::machine::{LoadLock, LoadLockAttempt};
 #[cfg(unix)]
 use goose_sidecar::placement::store::PlacementKey;
+#[cfg(unix)]
+use goose_sidecar::port_holder::{self, Reuse};
 use goose_swarm::{DeviceCfg, DispatchRequest, EventSink};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -1125,6 +1129,10 @@ pub struct SidecarEngine {
     /// Dropped with the engine it withdraws; a crash frees it through its flock.
     #[cfg(unix)]
     holder: Mutex<Option<Registration>>,
+    /// The engine pids another live goose supervises that this run already said it shares
+    /// (`reuse_served`) — the pre-warm reaches one device twice and a re-warm again.
+    #[cfg(unix)]
+    shared_said: Mutex<HashSet<u32>>,
 }
 
 /// Why this build must not mount on this Mac's engine because a goose window holds it: the first
@@ -1292,6 +1300,7 @@ impl SidecarEngine {
             holders_dir,
             nodes,
             holder: Mutex::new(None),
+            shared_said: Mutex::new(HashSet::new()),
         }
     }
 
@@ -1478,6 +1487,99 @@ impl SidecarEngine {
         }
     }
 
+    /// Whether the engine already serving `model_id` on this Mac's port may be reused instead of
+    /// mounting — goose-sidecar's `port_holder::reuse_port`, Q-240's ownership proof read for
+    /// reuse (Q-248). `Ok(true)`: this process's own engine, or one a live goose supervises for
+    /// this port (said once per pid: `sidecar-engine-shared{port, model_id, pid, starter, argv}`).
+    /// `Ok(false)`: a goose sidecar's engine whose goose is gone — nobody supervises it, so it is
+    /// not adopted (`sidecar-leftover-not-adopted{port, model_id, holders}`) and the mount's start
+    /// stops it. `Err`: `engine-port-held`, naming each holder's pid, command line, the rule it
+    /// failed and the one next step; nothing is signalled and nothing mounted over it.
+    #[cfg(unix)]
+    fn reuse_served(&self, model_id: &str) -> Result<bool> {
+        let port = self.manager.settings().port;
+        let refuse = |why: String| {
+            eprintln!("{}", style(&why).yellow().bold());
+            anyhow!(why)
+        };
+        let reuse = match block_on_engine(port_holder::reuse_port(port, &engine_marker(port))) {
+            Ok(Ok(reuse)) => reuse,
+            Ok(Err(e)) => {
+                return Err(refuse(format!(
+                "engine-port-held: '{model_id}' is served on this Mac's engine port, but not by \
+                     this goose's engine nor by one a live goose supervises — not adopted, and \
+                     nothing is mounted over it: {e:#}"
+            )))
+            }
+            Err(e) => {
+                return Err(refuse(format!(
+                    "engine-call-unavailable: who serves '{model_id}' on port {port} could not be \
+                     read — {e}"
+                )))
+            }
+        };
+        match reuse {
+            Reuse::Own => Ok(true),
+            Reuse::Supervised { holder, starter } => {
+                if self.shared_said.lock().unwrap().insert(holder.pid) {
+                    eprintln!(
+                        "  · sidecar-engine-shared: '{model_id}' is served on port {port} by pid \
+                         {} (`{}`), a goose engine for this port that pid {starter}, which \
+                         started it, supervises — this build uses it and mounts none of its own",
+                        holder.pid,
+                        holder.argv.join(" ")
+                    );
+                    self.absences.lock().unwrap().push(serde_json::json!({
+                        "event": "sidecar-engine-shared",
+                        "port": port,
+                        "model_id": model_id,
+                        "pid": holder.pid,
+                        "starter": starter,
+                        "argv": holder.argv.join(" "),
+                    }));
+                }
+                Ok(true)
+            }
+            Reuse::Leftover { holders } => {
+                let named = holders
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "sidecar-leftover-not-adopted: '{model_id}' is served on port {port} by an \
+                         engine whose goose is gone ({named}) — nobody supervises it, so this build \
+                         mounts its own and the start stops the leftover"
+                    ))
+                    .yellow()
+                    .bold()
+                );
+                self.absences.lock().unwrap().push(serde_json::json!({
+                    "event": "sidecar-leftover-not-adopted",
+                    "port": port,
+                    "model_id": model_id,
+                    "holders": named,
+                }));
+                Ok(false)
+            }
+        }
+    }
+
+    /// Off unix no port's holders can be read (goose-sidecar's `port_holder` reads are unix), so
+    /// what serves `model_id` is never proven a goose engine and is never adopted.
+    #[cfg(not(unix))]
+    fn reuse_served(&self, model_id: &str) -> Result<bool> {
+        let why = format!(
+            "engine-port-held: '{model_id}' is served at {}, and this platform cannot read who \
+             holds a port — not adopted",
+            self.base_url
+        );
+        eprintln!("{}", style(&why).yellow().bold());
+        bail!(why)
+    }
+
     /// The named absence for a catalog probe that could not answer, said ONCE per engine object:
     /// the yellow stderr line and a `sidecar-probe-failed{host, error}` event for run.jsonl (drained
     /// through `take_probe_absences` at the pool build and at every fan). `catalog_probe` does NOT
@@ -1554,9 +1656,11 @@ impl SwarmEngine for SidecarEngine {
         )
     }
     fn ensure_loaded(&self, model_id: &str, _instances: u32) -> Result<()> {
-        // Fast path: the live catalog already serves it — possibly mounted by ANOTHER process's
-        // manager (the desktop window); mounting again would fight over the port.
-        if self.loaded_instance_count(model_id) > 0 {
+        // Fast path: the live catalog already serves it. Reused only when WHO serves it is proven
+        // (Q-248, `reuse_served`): this process's own engine, or one a live goose supervises for
+        // this very port — the desktop window's, which a mount would fight over the port. A
+        // leftover nobody supervises goes on to the mount, whose start stops it (Q-240).
+        if self.loaded_instance_count(model_id) > 0 && self.reuse_served(model_id)? {
             return Ok(());
         }
         // `instances` is accepted-and-ignored: the supervisor owns one process serving one model.
@@ -2788,29 +2892,6 @@ mod tests {
         let blank = classify_v1_models_output(url, &curl_output(0, "  \n", ""))
             .expect_err("no body is not an answer");
         assert!(format!("{blank:#}").contains("empty body"));
-    }
-
-    /// ensure_loaded's fast path: already-served means NO mount attempt (the engine may belong
-    /// to another process's manager — mounting again would fight over the port) and settings
-    /// untouched.
-    #[test]
-    fn sidecar_ensure_loaded_fast_paths_when_already_served() {
-        let port = serve_stub(GOLDEN_V1_MODELS);
-        let eng = sidecar_on(port);
-        eng.ensure_loaded("workhorse-qwen3-coder-30b-mlx", 1)
-            .expect("already served is Ok");
-        let status = tokio::runtime::Runtime::new()
-            .expect("test runtime")
-            .block_on(eng.manager.status());
-        assert_eq!(
-            status.state, "stopped",
-            "already served -> no mount attempted"
-        );
-        assert_eq!(
-            eng.manager.settings().served_model_name,
-            None,
-            "fast path leaves settings untouched"
-        );
     }
 
     /// The loud-refusal case: mlx_engine.model_id unset and the model not served — ensure_loaded
@@ -4272,5 +4353,252 @@ mod tests {
             Ok(()),
             "nothing served"
         );
+    }
+
+    /// Q-248: the fast path reuses what already serves the requested id only when the port's
+    /// holder is PROVEN a goose sidecar's engine for this very port — this process's own, or one a
+    /// live goose supervises (the desktop window's). Real processes stand in (goose-sidecar's
+    /// tests/port_holders.rs is the model): an in-process stub would be this process itself.
+    #[cfg(unix)]
+    mod fast_path_ownership {
+        use super::*;
+        use goose_sidecar::engine::ENGINE_SIDECAR_NAME;
+        use goose_sidecar::{sidecar_marker, SIDECAR_MARKER_ENV};
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        const SERVED: &str = "workhorse-qwen3-coder-30b-mlx";
+
+        const FAKE_ENGINE: &str = r#"
+import http.server, sys
+body = sys.argv[2].encode()
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+"#;
+
+        /// The `uv` → python pair: starts the engine, prints its pid, waits on it. `new_group`
+        /// puts the engine in a group of its own, so the launcher is its live starter.
+        const LAUNCHER: &str = r#"
+import subprocess, sys
+engine = subprocess.Popen([sys.executable, "-c"] + sys.argv[2:],
+                          start_new_session=sys.argv[1] == "new_group")
+print(engine.pid, flush=True)
+engine.wait()
+"#;
+
+        fn free_port() -> u16 {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        }
+
+        fn alive(pid: u32) -> bool {
+            goose_sidecar::machine::process_start(pid).is_some_and(|(_, zombie)| !zombie)
+        }
+
+        fn wait_listening(port: u16, binder: u32) {
+            while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+                assert!(alive(binder), "pid {binder} ended before it bound {port}");
+                std::thread::sleep(goose_sidecar::GRACE_TICK);
+            }
+        }
+
+        fn engine_marker(port: u16) -> String {
+            sidecar_marker(ENGINE_SIDECAR_NAME, &format!("http://127.0.0.1:{port}"))
+        }
+
+        /// `sh`, leading a group of its own, backgrounds the launcher and exits: the launcher is
+        /// re-parented to init. `same_group` is a goose that died and left its engine behind;
+        /// `new_group` is an engine whose starter (the launcher) is alive — a goose window's.
+        /// Returns (launcher, engine).
+        fn engine_pair(port: u16, marker: &str, group: &str) -> (u32, u32) {
+            let mut sh = Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    r#"python3 -c "$1" "$2" "$3" "$4" "$5" & echo $!"#,
+                    "sh",
+                    LAUNCHER,
+                    group,
+                    FAKE_ENGINE,
+                    &port.to_string(),
+                    GOLDEN_V1_MODELS,
+                ])
+                .env(SIDECAR_MARKER_ENV, marker)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let mut out = BufReader::new(sh.stdout.take().unwrap());
+            let mut line = String::new();
+            out.read_line(&mut line).unwrap();
+            let launcher: u32 = line.trim().parse().unwrap();
+            line.clear();
+            out.read_line(&mut line).unwrap();
+            let engine: u32 = line.trim().parse().unwrap();
+            sh.wait().unwrap();
+            wait_listening(port, engine);
+            (launcher, engine)
+        }
+
+        fn stop(pids: &[u32]) {
+            for pid in pids {
+                // SAFETY: a process this test started, signalled by its pid alone.
+                unsafe { libc::kill(*pid as libc::pid_t, libc::SIGKILL) };
+            }
+        }
+
+        fn stop_after(pids: &[u32], checks: impl FnOnce()) {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(checks));
+            stop(pids);
+            if let Err(panic) = outcome {
+                std::panic::resume_unwind(panic);
+            }
+        }
+
+        fn state(eng: &SidecarEngine) -> String {
+            tokio::runtime::Runtime::new()
+                .expect("test runtime")
+                .block_on(eng.manager.status())
+                .state
+        }
+
+        /// A listener nobody marked — someone's own server, or an engine from a goose older than
+        /// the marker — serves the pool's id. Before Q-248 the fast path answered Ok and the build
+        /// dispatched to it; now it is named (pid, command line, the rule it failed, the step),
+        /// left serving, and nothing is mounted over it.
+        #[test]
+        fn a_listener_no_goose_started_is_named_never_adopted() {
+            let port = free_port();
+            let mut stand_in = Command::new("python3")
+                .args(["-c", FAKE_ENGINE, &port.to_string(), GOLDEN_V1_MODELS])
+                .spawn()
+                .unwrap();
+            let pid = stand_in.id();
+            wait_listening(port, pid);
+            let eng = sidecar_on(port);
+            let outcome = eng.ensure_loaded(SERVED, 1);
+            let untouched = alive(pid);
+            stop_after(&[pid], || {
+                let err = match outcome {
+                    Ok(()) => panic!("the fast path adopted pid {pid}, which no goose started"),
+                    Err(e) => format!("{e:#}"),
+                };
+                eprintln!("the refusal: {err}");
+                assert!(err.starts_with("engine-port-held: "), "{err}");
+                assert!(err.contains(&format!("port {port}")), "{err}");
+                assert!(err.contains(&format!("pid {pid}")), "{err}");
+                assert!(err.contains("http.server"), "the command line: {err}");
+                assert!(
+                    err.contains(&format!("carries no {SIDECAR_MARKER_ENV}")),
+                    "the rule it failed: {err}"
+                );
+                assert!(err.contains("nothing was signalled"), "{err}");
+                assert!(err.contains(&format!("`kill {pid}`")), "the step: {err}");
+                assert!(untouched, "the stand-in was touched");
+                assert_eq!(state(&eng), "stopped", "nothing mounted over it");
+            });
+            stand_in.wait().unwrap();
+        }
+
+        /// The crash shape: a goose died and left its launcher and engine on the port, marked for
+        /// this very port. Nobody supervises it (no restart, no breaker, its weights and argv
+        /// unknown), so the fast path does not adopt it: it says so by name and goes on to a
+        /// mount, whose start stops the leftover per Q-240. Here the mount stops at the unset model
+        /// dir — the proof that it was reached — and the fast path itself signalled nothing.
+        #[test]
+        fn a_leftover_whose_goose_is_gone_is_not_adopted_and_the_mount_is_reached() {
+            let port = free_port();
+            let (launcher, engine) = engine_pair(port, &engine_marker(port), "same_group");
+            let eng = sidecar_on(port);
+            let outcome = eng.ensure_loaded(SERVED, 1);
+            let events = eng.take_probe_absences();
+            let untouched = alive(engine) && alive(launcher);
+            stop_after(&[launcher, engine], || {
+                let err = match outcome {
+                    Ok(()) => panic!(
+                        "the fast path adopted the leftover pair {launcher}/{engine} nobody \
+                         supervises"
+                    ),
+                    Err(e) => format!("{e:#}"),
+                };
+                assert!(err.contains("engine-config-absent"), "{err}");
+                let said = events
+                    .iter()
+                    .find(|e| e["event"] == "sidecar-leftover-not-adopted")
+                    .unwrap_or_else(|| panic!("{events:?}"));
+                assert_eq!(said["port"], port);
+                assert_eq!(said["model_id"], SERVED);
+                let holders = said["holders"].as_str().unwrap();
+                assert!(holders.contains(&format!("pid {engine}")), "{holders}");
+                assert!(
+                    holders.contains(&format!("pids {engine}, {launcher}")),
+                    "{holders}"
+                );
+                assert!(untouched, "the fast path itself signals nothing");
+            });
+        }
+
+        /// An engine a live goose supervises for this very port — the desktop window's, which the
+        /// build registers as a holder of (S8) — keeps being shared, now by name: a
+        /// `sidecar-engine-shared{port, pid, starter}` fact for run.jsonl, and no mount.
+        #[test]
+        fn an_engine_a_live_goose_supervises_is_shared_by_name() {
+            let port = free_port();
+            let (starter, engine) = engine_pair(port, &engine_marker(port), "new_group");
+            let eng = sidecar_on(port);
+            let outcome = eng.ensure_loaded(SERVED, 1);
+            let events = eng.take_probe_absences();
+            let untouched = alive(engine) && alive(starter);
+            let mounted = state(&eng);
+            stop_after(&[starter, engine], || {
+                outcome.expect("a live goose's engine serving the id is shared");
+                assert_eq!(mounted, "stopped", "shared, never mounted over");
+                assert_eq!(
+                    eng.manager.settings().served_model_name,
+                    None,
+                    "the fast path leaves settings untouched"
+                );
+                let said = events
+                    .iter()
+                    .find(|e| e["event"] == "sidecar-engine-shared")
+                    .unwrap_or_else(|| panic!("the share is never silent: {events:?}"));
+                assert_eq!(said["port"], port);
+                assert_eq!(said["pid"], engine);
+                assert_eq!(said["starter"], starter);
+                assert_eq!(said["model_id"], SERVED);
+                assert!(untouched);
+            });
+        }
+
+        /// A goose sidecar's engine marked for ANOTHER port is not this port's engine.
+        #[test]
+        fn an_engine_marked_for_another_port_is_named_never_adopted() {
+            let port = free_port();
+            let (launcher, engine) = engine_pair(port, &engine_marker(1), "new_group");
+            let eng = sidecar_on(port);
+            let outcome = eng.ensure_loaded(SERVED, 1);
+            let untouched = alive(engine);
+            stop_after(&[launcher, engine], || {
+                let err = match outcome {
+                    Ok(()) => panic!("the fast path adopted an engine marked for port 1"),
+                    Err(e) => format!("{e:#}"),
+                };
+                assert!(err.contains("mlx-engine@http://127.0.0.1:1,"), "{err}");
+                assert!(err.contains(&format!("pid {engine}")), "{err}");
+                assert!(untouched);
+            });
+        }
     }
 }

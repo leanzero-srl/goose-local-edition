@@ -754,6 +754,17 @@ pub fn build_serve_command(
 /// (`port_holder::sidecar_marker`), which is how a later goosed proves a leftover engine its own.
 pub const ENGINE_SIDECAR_NAME: &str = "mlx-engine";
 
+/// The URL the single engine on `port` is started at and serves on.
+pub fn engine_base_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
+/// The marker every process of the single engine on `port` carries — what a mount stamps and what
+/// a reuse of an already-serving engine proves (Q-248), one derivation for both.
+pub fn engine_marker(port: u16) -> String {
+    sidecar_marker(ENGINE_SIDECAR_NAME, &engine_base_url(port))
+}
+
 /// `mount` refuses to start an engine on a port that something this manager does not
 /// supervise already listens on — the mirror of `status().stray_listener_port`. Starting
 /// anyway would probe THAT listener as our readiness and report `Running` for a child that
@@ -1534,10 +1545,11 @@ impl MlxEngineManager {
             }
             _ => None,
         };
-        let base_url = format!("http://127.0.0.1:{}", settings.port);
+        let base_url = engine_base_url(settings.port);
         if supervised.is_none() {
-            let marker = sidecar_marker(ENGINE_SIDECAR_NAME, &base_url);
-            if let Some(refused) = unsupervised_listener(settings.port, &marker).await {
+            if let Some(refused) =
+                unsupervised_listener(settings.port, &engine_marker(settings.port)).await
+            {
                 *state = ManagerState::Stopped;
                 return Err(refused.into());
             }

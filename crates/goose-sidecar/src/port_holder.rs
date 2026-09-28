@@ -105,6 +105,15 @@ pub struct PortHeld {
 impl fmt::Display for PortHeld {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let named: Vec<String> = self.holders.iter().map(ToString::to_string).collect();
+        if named.is_empty() {
+            return write!(
+                f,
+                "port {} answers but lsof names no LISTEN pid on it, so who holds it is unknown — \
+                 nothing was signalled; find it with `lsof -nP -iTCP:{} -sTCP:LISTEN`, stop it, \
+                 then start again",
+                self.port, self.port
+            );
+        }
         if self.survived_the_stop {
             return write!(
                 f,
@@ -140,6 +149,59 @@ impl fmt::Display for PortHeld {
 }
 
 impl std::error::Error for PortHeld {}
+
+/// What a start that finds its engine's id ALREADY served may do instead of starting one (Q-248):
+/// [`ownership_proof`]'s verdicts on the port's holders, read for reuse rather than for a stop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reuse {
+    /// Its launcher chain ends at this process: this process's own engine.
+    Own,
+    /// A goose sidecar's engine for this very name and port that a live process (`starter`)
+    /// supervises — a goose window's. Reused, never stopped.
+    Supervised { holder: PortHolder, starter: u32 },
+    /// Proven a goose sidecar's engine for this port whose starter is gone: nobody supervises it,
+    /// so it is never reused — a start stops it ([`claim_port`]).
+    Leftover { holders: Vec<PortHolder> },
+}
+
+/// The reuse verdict over every LISTEN pid on `port`. No holder named, a holder not proven a goose
+/// sidecar's engine for this name and port, or holders that disagree (two engines on one port) is
+/// [`PortHeld`]: named, never reused, nothing signalled.
+pub fn reuse_verdict(holders: Vec<PortHolder>, port: u16, own_pid: u32) -> Result<Reuse, PortHeld> {
+    let Some(first) = holders.first() else {
+        return Err(PortHeld {
+            port,
+            holders,
+            survived_the_stop: false,
+        });
+    };
+    if holders.iter().all(|h| h.verdict.is_ok()) {
+        let started_here = |h: &PortHolder| {
+            h.verdict
+                .as_ref()
+                .is_ok_and(|chain| chain.last().and_then(|top| top.parent) == Some(own_pid))
+        };
+        return Ok(if holders.iter().all(started_here) {
+            Reuse::Own
+        } else {
+            Reuse::Leftover { holders }
+        });
+    }
+    let live_starter = |h: &PortHolder| h.verdict.as_ref().err().and_then(|n| n.live_starter);
+    match live_starter(first) {
+        Some(starter) if holders.iter().all(|h| live_starter(h) == Some(starter)) => {
+            Ok(Reuse::Supervised {
+                holder: first.clone(),
+                starter,
+            })
+        }
+        _ => Err(PortHeld {
+            port,
+            holders,
+            survived_the_stop: false,
+        }),
+    }
+}
 
 /// The proof, as a pure function over what was read. `lineage` is the listener followed by its
 /// ancestors, read upward until the first one outside the listener's process group (included) or
@@ -325,6 +387,18 @@ mod read {
             .collect())
     }
 
+    /// Who serves on `port` for a start that would REUSE the engine there instead of starting its
+    /// own (Q-248) — [`reuse_verdict`] over [`inspect_port`]. Nothing is signalled on any arm; a
+    /// [`Reuse::Leftover`] is stopped only by a start ([`claim_port`]).
+    pub async fn reuse_port(port: u16, marker: &str) -> Result<Reuse> {
+        let holders = inspect_port(port, marker).await.map_err(|e| {
+            e.context(format!(
+                "port {port} answers and who holds it could not be read; nothing was signalled"
+            ))
+        })?;
+        Ok(reuse_verdict(holders, port, std::process::id())?)
+    }
+
     /// Whether `pid` is still exactly the process that was judged.
     fn still(process: &HolderProcess) -> bool {
         read_process(process.pid).is_some_and(|now| {
@@ -429,7 +503,7 @@ mod read {
 }
 
 #[cfg(unix)]
-pub use read::{claim_port, inspect_port, read_process, Reaped};
+pub use read::{claim_port, inspect_port, read_process, reuse_port, Reaped};
 
 #[cfg(test)]
 mod tests {
@@ -632,5 +706,61 @@ mod tests {
         let text = unmarked.to_string();
         assert!(text.contains("command line unreadable"), "{text}");
         assert!(text.contains("`kill 35319`"), "{text}");
+    }
+
+    fn holder(lineage: &[HolderProcess], own_pid: u32) -> PortHolder {
+        PortHolder {
+            pid: lineage[0].pid,
+            argv: lineage[0].argv.clone(),
+            verdict: ownership_proof(lineage, MARKER, UID, own_pid),
+        }
+    }
+
+    #[test]
+    fn a_reuse_takes_only_this_processs_engine_or_one_a_live_goose_supervises() {
+        let own = reuse_verdict(vec![holder(&[engine(), uv(999)], 999)], 8090, 999).unwrap();
+        assert_eq!(own, Reuse::Own);
+
+        let window = holder(&[engine(), uv(GOOSED), goosed(GOOSED)], 999);
+        let Reuse::Supervised { holder: h, starter } =
+            reuse_verdict(vec![window.clone(), window], 8090, 999).unwrap()
+        else {
+            panic!("a live goose's engine is shared");
+        };
+        assert_eq!((h.pid, starter), (35319, GOOSED));
+
+        let Reuse::Leftover { holders } =
+            reuse_verdict(vec![holder(&[engine(), uv(1)], 999)], 8090, 999).unwrap()
+        else {
+            panic!("an engine whose goose is gone is never reused");
+        };
+        assert_eq!(holders[0].pid, 35319);
+    }
+
+    #[test]
+    fn a_reuse_refuses_by_name_what_is_unproven_or_disagrees() {
+        let unmarked = HolderProcess {
+            marker: None,
+            ..engine()
+        };
+        let held = reuse_verdict(vec![holder(&[unmarked, uv(1)], 999)], 8090, 999).unwrap_err();
+        let text = held.to_string();
+        assert!(text.contains("carries no GOOSE_SIDECAR"), "{text}");
+        assert!(text.contains("`kill 35319`"), "{text}");
+
+        let window = holder(&[engine(), uv(GOOSED), goosed(GOOSED)], 999);
+        let leftover = holder(&[engine(), uv(1)], 999);
+        assert!(
+            reuse_verdict(vec![window, leftover], 8090, 999).is_err(),
+            "two engines on one port are no engine to reuse"
+        );
+
+        let nobody = reuse_verdict(Vec::new(), 8090, 999)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            nobody.contains("lsof names no LISTEN pid") && nobody.contains("nothing was signalled"),
+            "{nobody}"
+        );
     }
 }
