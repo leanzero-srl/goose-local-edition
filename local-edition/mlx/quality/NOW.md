@@ -35,16 +35,13 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - Q-447 split decode regression — mlx-backend, dispatched 23:3x.
 - Q-449 CI flake (sidecar shutdown group residue) — mlx-backend. Q-450 claim_check (unrun action, unmeasured count) — general.
 - Q-428 (+Q-430/432) the owner's "don't interrupt a node doing its thing" per-role option — agent-a626efc4490c889b7.
-- Q-429/431/433..440 demo UI/instrument defects — agent-ad310ae976a00eaad.
-- DONE, waiting for batch 4 (all reported, not yet merged):
-  - Q-417 worktree-agent-ad33799988ff81b4d (servedModel for single/split/remote);
-  - Q-407 worktree-agent-a324bae2eb0f9de65 (a dead goosed's commands ended);
-  - Q-423 worktree-agent-a5f81fabce30067fc (the engine's stderr in a durable log; BOTH Macs);
-  - Q-426 worktree-agent-a35cf92df2428aff6 (the PiP X closes it for the session).
+- MERGED into /tmp/merge-074 (branch merge-074, 00:0x; no ledger row lost, gains Q-424/425):
+  - Q-417 (servedModel), Q-407 (dead goosed's commands), Q-423 (engine stderr; BOTH Macs), Q-426 (PiP X);
+  - Q-429/431/433..440 (demo fixes, ea2f02977). Medium confidence, live-only: Q-431's banner under share,
+    Q-434's delegate card, Q-436's remote load phases.
 
 ## Batch 4 → 3.0.74 (next)
-1. When Q-428, Q-429..440 and Q-447 report: /tmp/merge-074 = main + Q-417 + Q-407 + Q-423 + Q-426 + Q-428 + Q-429..440
-   + Q-447 + Q-449 + Q-450, via ledger_resolve, with main merged in before the ff.
+1. When Q-428, Q-447, Q-449 and Q-450 report, merge them into /tmp/merge-074 via ledger_resolve, with main merged in before the ff.
 2. ONE full gate in its own session (scratchpad/gate074.sh, target ~/goose-targets/g074), when #3u is at a turn
    boundary or done. NO cargo on the MacBook while #3u decodes. The Q-447 agent is the one allowed job.
 3. ff main, push, release 3.0.74 (/tmp/rel074.sh), install on BOTH Macs (Q-423, maybe Q-447), split-start smoke.
