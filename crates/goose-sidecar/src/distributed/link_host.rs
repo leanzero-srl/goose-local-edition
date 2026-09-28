@@ -939,22 +939,23 @@ mod tests {
             other => panic!("{other:?}"),
         }
 
-        let mut joined = None;
-        for _ in 0..100 {
+        // Until the rank joins or ends — its progress decides, never a count of polls (Q-235).
+        let joined = loop {
             let snapshot = rank_poll(RankPollRequest {
                 rank_id: started.rank_id.clone(),
                 known_lines: 0,
             })
             .await
             .unwrap();
-            assert!(snapshot.exit.is_none(), "{snapshot:?}");
+            assert!(
+                snapshot.exit.is_none(),
+                "the rank ended unjoined: {snapshot:?}"
+            );
             if snapshot.group_joined {
-                joined = Some(snapshot);
-                break;
+                break snapshot;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        let joined = joined.expect("the rank joined its group");
+            tokio::time::sleep(crate::distributed::supervisor::READY_TICK).await;
+        };
         assert_eq!(joined.pid, started.pid);
         assert!(joined
             .tail
@@ -1086,26 +1087,52 @@ mod tests {
             .await
             .unwrap();
 
-        for _ in 0..100 {
-            if rank.live.lock().unwrap().group_joined {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Every wait below ends on the relay's own progress — the group's join, the first failed
+        // poll, the first answered one — or on the session's end, never on a clock (Q-235: a fixed
+        // 10 s for the join failed under load, 95 s for a run that takes 18 s alone).
+        while !rank.live.lock().unwrap().group_joined {
+            assert!(
+                rank.child.try_wait().unwrap().is_none(),
+                "the session ended before the rank joined: {}",
+                rank.tail()
+            );
+            tokio::time::sleep(crate::distributed::supervisor::READY_TICK).await;
         }
-        assert!(rank.live.lock().unwrap().group_joined, "{}", rank.tail());
         assert_eq!(rank.pid(), hosting().and_then(|h| h.pid));
 
+        fn seen(
+            rank: &mut RankProcess,
+            events: &mut Vec<ControlEvent>,
+            wanted: fn(&ControlEvent) -> bool,
+        ) -> bool {
+            events.extend(link_control::drain_events(rank));
+            assert!(
+                rank.child.try_wait().unwrap().is_none(),
+                "the session ended mid-outage: {events:?} {}",
+                rank.tail()
+            );
+            events.iter().any(wanted)
+        }
+        let mut events = Vec::new();
         loopback.down.store(true, Ordering::SeqCst);
-        tokio::time::sleep(POLL_INTERVAL * 2).await;
+        while !seen(&mut rank, &mut events, |e| {
+            matches!(e, ControlEvent::Lost(_))
+        }) {
+            tokio::time::sleep(crate::distributed::supervisor::READY_TICK).await;
+        }
         loopback.down.store(false, Ordering::SeqCst);
-        tokio::time::sleep(POLL_INTERVAL * 2).await;
-        let events = link_control::drain_events(&rank);
+        while !seen(&mut rank, &mut events, |e| {
+            matches!(e, ControlEvent::Restored(_))
+        }) {
+            tokio::time::sleep(crate::distributed::supervisor::READY_TICK).await;
+        }
         assert!(
             matches!(events.first(), Some(ControlEvent::Lost(e)) if e.contains("SOCKS reply 1")),
             "{events:?}"
         );
         // Silence is measured from the last answered poll (the peer's lease clock), so it spans
-        // the whole outage — not just the time since the first failed poll.
+        // the whole outage — not just the time since the first failed poll: at least the relay's
+        // two sleeps, last answer → first failure → first answer again.
         assert!(
             matches!(events.last(), Some(ControlEvent::Restored(silent)) if *silent >= POLL_INTERVAL * 3 / 2),
             "{events:?}"
