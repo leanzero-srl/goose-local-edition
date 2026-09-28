@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 14:5x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 15:0x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -27,7 +27,8 @@ Updated: 2026-09-28 14:5x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   turn 3's `write` lost every `=>` (SyntaxError, two rewrites) → Q-371 CUTTING. Turn 5 running. Studio-side: forge-tuner got a
   goose tool-call training proposal (docs/GOOSE-TOOLCALL-ROUND.md, 6631628) — owner picks public vs private data.
 - Owner features (designs DESIGN-Q357/358/359-*.md): Q-357 compaction revamp CUTTING (all slices, on merge-q342) ·
-  Q-358 search S1+S2 CUTTING; notes S3–S5 QUEUED behind: merge-q344 · Q-359 C0/C1/C2/C4 CUTTING; C3 SCHEDULED
+  Q-358 search S1+S2 CUTTING; notes S3–S5 QUEUED behind: merge-q344 · Q-359 C0/C1/C2/C4 DONE → /tmp/merge-q359, gate /tmp/g359.out after g367;
+  follow-ups Q-379..382 CUTTING (on merge-q359); C3 SCHEDULED
   waits on: relay decode tok/s + 4-delegates-on-2-Macs wall time.
 - Q-340/341/344 ON MAIN 838b93b62 (gate green). Q-358 notes S3–S5 DISPATCHED (was queued behind it).
 - Queued: Q-334 (focus ring colour outside the local edition), Q-335 (~55 faded opacity uses), Q-336/261/281
