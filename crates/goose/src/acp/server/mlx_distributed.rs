@@ -589,8 +589,21 @@ fn record_split_load(
     use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
     tokio::spawn(async move {
         let manager = distributed::global_manager();
+        let mut marks = super::nodes_loader::rows::PhaseMarks::default();
         let result = loop {
             let status = manager.status();
+            if status.state == RunState::Starting {
+                let ranks: Vec<Option<&str>> = status
+                    .nodes
+                    .iter()
+                    .map(|n| n.load_phase.map(|p| p.as_str()))
+                    .collect();
+                if let crate::nodes::residency::SplitReadiness::Loading(phase) =
+                    crate::nodes::residency::split_readiness_of(status.state, &ranks)
+                {
+                    marks.sight(&phase, std::time::Instant::now());
+                }
+            }
             match status.state {
                 RunState::Ready | RunState::Serving => break Ok(()),
                 RunState::Failed => {
@@ -607,6 +620,7 @@ fn record_split_load(
                 }
             }
         };
+        let phases = marks.times(std::time::Instant::now());
         let kind = match manager.status().runner {
             Some(distributed::Runner::MlxLmTensor) => PlacementKind::Tensor,
             Some(distributed::Runner::PipelineQwen4) => PlacementKind::Pipeline,
@@ -646,7 +660,7 @@ fn record_split_load(
             },
             macs: config.nodes.iter().map(|n| n.name.clone()).collect(),
             weights_bytes,
-            phases: goose_sidecar::engine::LoadPhaseTimes::default(),
+            phases,
             total_ms: began.elapsed().as_millis() as u64,
             file_cache_warm,
             result,

@@ -783,6 +783,28 @@ pub(super) async fn follow_route_load() -> Option<Result<(), String>> {
     settle_load(current_status, fabric_cadence).await
 }
 
+/// The phase the peer's own engine reports for the mount in flight (its `load.phase`), or None when
+/// it names none or cannot be asked — a look that learns nothing marks nothing.
+#[cfg(unix)]
+async fn peer_load_phase(peer: Option<&str>) -> Option<String> {
+    let manager = super::link::existing_link_manager()?;
+    let answer: MlxEngineStatusResponse = peer_op_answer(
+        manager.as_ref(),
+        peer?,
+        MlxOp::Status,
+        &MlxEngineStatusRequest {
+            node_id: None,
+            fit_model_id: None,
+        },
+    )
+    .await
+    .ok()?;
+    (answer.status.state == "mounting")
+        .then_some(answer.status.load)
+        .flatten()
+        .map(|load| load.phase)
+}
+
 /// The remote single's ready path (design §6.4 step 10): a route whose peer is loading the model
 /// is followed to its end and the load is recorded — Run it's starts and the loader's alike. The
 /// row's weights are this Mac's copy of the model (a peer serves the model this Mac holds); with
@@ -797,9 +819,29 @@ fn record_remote_load(
     model_id: String,
 ) {
     tokio::spawn(async move {
-        let Some(result) = follow_route_load().await else {
+        // The peer's engine names its phase while it mounts; each look asks it (a load only).
+        let marks = Arc::new(StdMutex::new(
+            super::nodes_loader::rows::PhaseMarks::default(),
+        ));
+        let seen = Arc::clone(&marks);
+        let read = move || {
+            let seen = Arc::clone(&seen);
+            async move {
+                let status = current_status().await;
+                if status.state == "mounting" {
+                    if let Some(phase) = peer_load_phase(status.peer.as_deref()).await {
+                        seen.lock()
+                            .unwrap()
+                            .sight(&phase, std::time::Instant::now());
+                    }
+                }
+                status
+            }
+        };
+        let Some(result) = settle_load(read, fabric_cadence).await else {
             return;
         };
+        let phases = marks.lock().unwrap().times(std::time::Instant::now());
         let weights_bytes = match super::mlx_engine::load_engine_settings() {
             Ok(settings) => {
                 let dir = goose_sidecar::engine::expand_tilde(&settings.models_dir);
@@ -821,7 +863,7 @@ fn record_remote_load(
             ),
             macs: vec![peer_name],
             weights_bytes,
-            phases: goose_sidecar::engine::LoadPhaseTimes::default(),
+            phases,
             total_ms: began.elapsed().as_millis() as u64,
             file_cache_warm: false,
             result,

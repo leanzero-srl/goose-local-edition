@@ -16,6 +16,7 @@ use goose_sidecar::placement::loads::{
 use goose_sidecar::placement::store::PlacementKey;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Instant;
 
 /// A load the loader started, waiting for the ready path that ends it.
 pub(crate) struct Expected {
@@ -97,6 +98,32 @@ fn append(record: LoadRecord) {
     let store = store();
     if let Err(e) = store.append(&record) {
         tracing::error!(path = %store.path().display(), error = %format!("{e:#}"), model = %record.model, "a measured load could not be recorded");
+    }
+}
+
+/// The phases a follower SEES a load pass through, one sighting per change (Q-436: the split's and
+/// a peer's rows had `phasesMs: {}` — only this Mac's own engine, whose manager watches its log,
+/// recorded them). A follower looks on its own cadence, so a phase is timed from the look that
+/// first saw it; one it never saw (a runner that goes from loading straight to ready) is absent,
+/// never 0. Words other than the three the store keeps (making room, recovering) mark nothing.
+#[derive(Debug, Default)]
+pub(crate) struct PhaseMarks(Vec<(&'static str, Instant)>);
+
+impl PhaseMarks {
+    pub fn sight(&mut self, phase: &str, at: Instant) {
+        let phase = match phase {
+            "starting" => "starting",
+            "loading" => "loading",
+            "warming" => "warming",
+            _ => return,
+        };
+        if self.0.last().map(|(last, _)| *last) != Some(phase) {
+            self.0.push((phase, at));
+        }
+    }
+
+    pub fn times(&self, ended: Instant) -> LoadPhaseTimes {
+        goose_sidecar::engine::phase_times(&self.0, ended)
     }
 }
 
@@ -184,6 +211,39 @@ mod tests {
             outcome_of("rows/test-a", &key, &Ok(())),
             LoadOutcome::Ready,
             "the expectation is consumed once; a later load is an ordinary one"
+        );
+    }
+
+    #[test]
+    fn a_followed_load_times_each_phase_it_saw() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + std::time::Duration::from_millis(ms);
+        let mut marks = PhaseMarks::default();
+        marks.sight("makingRoom", at(0));
+        marks.sight("starting", at(100));
+        marks.sight("starting", at(2_100));
+        marks.sight("loading", at(4_100));
+        marks.sight("loading", at(6_100));
+        marks.sight("warming", at(9_100));
+        assert_eq!(
+            marks.times(at(10_000)),
+            LoadPhaseTimes {
+                starting: Some(4_000),
+                loading: Some(5_000),
+                warming: Some(900),
+            }
+        );
+        let mut straight = PhaseMarks::default();
+        straight.sight("loading", at(0));
+        straight.sight("recovering", at(500));
+        assert_eq!(
+            straight.times(at(1_000)),
+            LoadPhaseTimes {
+                starting: None,
+                loading: Some(1_000),
+                warming: None,
+            },
+            "a phase it never saw is absent, not 0"
         );
     }
 
