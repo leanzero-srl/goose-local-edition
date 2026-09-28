@@ -6959,6 +6959,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "Jalankan sembang ini pada"
   },
+  "notes.chip": {
+    "defaultMessage": "Nota"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {Satu nota daripada \"{from}\" menunggu dalam sembang ini} other {# nota menunggu dalam sembang ini}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Beberapa sembang sepadan dengan \"{query}\". Yang mana?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Nota kepada sembang lain"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "Biarkan di sana"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "melahu sejak {time}"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "tidak dibuka dalam mana-mana tetingkap"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose sedang bekerja di sana"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "Tiada sembang sepadan dengan \"{query}\". Pilih sembang untuk nota ini."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Bukan sembang ini"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Kembali"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Cari sembang mengikut tajuk atau foldernya"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Membaca sembang anda…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "Tiada sembang sepadan dengan perkataan ini."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Pilih sembang"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "Arahkan sekarang"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "Nota itu"
+  },
+  "notes.failed": {
+    "defaultMessage": "Tidak dapat melakukannya: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Tambah pada mesej saya seterusnya"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "Selepas giliran ini"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose membacanya apabila giliran ini tamat."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "Nota daripada \"{name}\""
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Tolak"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "Berikan kepada goose sekarang"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "Arahkan giliran ini"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Diarahkan ke dalam giliran ini: goose membacanya di antara panggilan alat."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Dihantar dari sembang anda yang lain. goose belum membacanya."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Pergi bersama mesej anda seterusnya."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Sembunyikan nota"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Tunjukkan nota"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "Nota daripada \"{name}\" · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Tutup baris ini"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "Nota dihantar kepada \"{name}\" · ditolak di sana"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "Nota dihantar kepada \"{name}\" · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "Nota dihantar kepada \"{name}\" · dibaca pada gilirannya pada {time}"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "Nota dihantar kepada \"{name}\" · menunggu di sana"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "Nota sembang ini tidak dapat dibaca: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# nota menunggu} other {# nota menunggu}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "daripada \"{from}\""
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Nota yang menunggu anda"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Pelayan mungkin sedang dimulakan atau tidak tersedia buat sementara waktu."
   },

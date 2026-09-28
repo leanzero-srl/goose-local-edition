@@ -2,7 +2,8 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { defineMessages, useIntl } from '../../i18n';
 import { FOCUS, MOTION, RADIUS, SURFACE, SectionHeader, TYPE, WEIGHT, cx } from '../lz';
 import { displaySessionListName } from '../../sessions';
-import { NeedsYouPill, RunningPill } from './ActivityPills';
+import { NeedsYouPill, NotePill, RunningPill } from './ActivityPills';
+import { noteWords } from '../notes/noteWords';
 import { activeSessions, sessionHref, useSessionActivity } from './sessionActivityStore';
 
 const i18n = defineMessages({
@@ -26,8 +27,7 @@ export default function ActiveNowSection({ className }: { className?: string }) 
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const openSessionId =
-    location.pathname === '/pair' ? searchParams.get('resumeSessionId') : null;
+  const openSessionId = location.pathname === '/pair' ? searchParams.get('resumeSessionId') : null;
   const rows = activeSessions(useSessionActivity());
   if (rows.length === 0) return null;
 
@@ -47,7 +47,15 @@ export default function ActiveNowSection({ className }: { className?: string }) 
                 }),
               })
             : '';
-          const detail = [folderOf(row.workingDir), row.needsYou > 0 ? row.headline : started]
+          const notes =
+            row.notesWaiting > 0
+              ? intl.formatMessage(noteWords.waiting, { count: row.notesWaiting })
+              : '';
+          const detail = [
+            folderOf(row.workingDir),
+            row.needsYou > 0 ? row.headline : started,
+            notes,
+          ]
             .filter(Boolean)
             .join(' · ');
           const current = row.sessionId === openSessionId;
@@ -56,7 +64,11 @@ export default function ActiveNowSection({ className }: { className?: string }) 
               key={row.sessionId}
               type="button"
               data-testid={`active-now-row-${row.sessionId}`}
-              data-state={[row.needsYou > 0 && 'needs-you', row.runningSince && 'running']
+              data-state={[
+                row.needsYou > 0 && 'needs-you',
+                row.runningSince && 'running',
+                row.notesWaiting > 0 && 'note',
+              ]
                 .filter(Boolean)
                 .join(' ')}
               aria-busy={row.runningSince ? true : undefined}
@@ -73,9 +85,15 @@ export default function ActiveNowSection({ className }: { className?: string }) 
               )}
             >
               <span className="flex min-w-0 items-center gap-1.5">
-                <span className={cx('min-w-0 flex-1 truncate text-lz-body text-lz-ink', WEIGHT.semibold)}>
+                <span
+                  className={cx(
+                    'min-w-0 flex-1 truncate text-lz-body text-lz-ink',
+                    WEIGHT.semibold
+                  )}
+                >
                   {name}
                 </span>
+                {row.notesWaiting > 0 && <NotePill count={row.notesWaiting} from={row.noteFrom} />}
                 {row.needsYou > 0 && <NeedsYouPill count={row.needsYou} />}
                 {row.runningSince && <RunningPill since={row.runningSince} />}
               </span>

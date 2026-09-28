@@ -6,6 +6,7 @@ import type {
   LoopStatus,
   LoopSummaryDto,
   NeedsYouItemDto,
+  NotesWaitingDto,
   RunningSessionDto,
   StoppedSessionDto,
 } from '@aaif/goose-sdk';
@@ -47,6 +48,8 @@ export interface SessionActivitySnapshot {
    * reads it now; an unreadable loop record comes with its error instead of a status.
    */
   looping: LoopSummaryDto[];
+  /** Chats with notes from the person's other chats waiting there (Q-358). */
+  notesWaiting: NotesWaitingDto[];
   elicitations: AcpElicitationRequest[];
 }
 
@@ -57,6 +60,7 @@ export type {
   LoopStatus,
   LoopSummaryDto,
   NeedsYouItemDto,
+  NotesWaitingDto,
   RunningSessionDto,
   StoppedSessionDto,
 };
@@ -71,6 +75,7 @@ const EMPTY: SessionActivitySnapshot = {
   stopped: [],
   background: [],
   looping: [],
+  notesWaiting: [],
   elicitations: [],
 };
 
@@ -103,6 +108,8 @@ export async function refreshSessionActivity(): Promise<void> {
     const background = activity.background ?? [];
     // An engine older than Q-228 runs no session loops.
     const looping = activity.looping ?? [];
+    // An engine older than Q-358 carries no notes between chats.
+    const notesWaiting = activity.notesWaiting ?? [];
     if (generation !== refreshGeneration) return;
     // The poll re-reads every few seconds; an unchanged answer must not re-render every list.
     if (
@@ -111,11 +118,12 @@ export async function refreshSessionActivity(): Promise<void> {
       JSON.stringify(failed) === JSON.stringify(snapshot.failed) &&
       JSON.stringify(stopped) === JSON.stringify(snapshot.stopped) &&
       JSON.stringify(background) === JSON.stringify(snapshot.background) &&
-      JSON.stringify(looping) === JSON.stringify(snapshot.looping)
+      JSON.stringify(looping) === JSON.stringify(snapshot.looping) &&
+      JSON.stringify(notesWaiting) === JSON.stringify(snapshot.notesWaiting)
     ) {
       return;
     }
-    emit({ ...snapshot, running, needsYou, failed, stopped, background, looping });
+    emit({ ...snapshot, running, needsYou, failed, stopped, background, looping, notesWaiting });
   } catch (error) {
     console.warn('Failed to read session activity:', error);
   }
@@ -215,6 +223,10 @@ export interface SessionActivity {
   loopNextTickAt?: string;
   /** The chat's loop record could not be read: the engine's words, never read as "no loop". */
   loopError?: string;
+  /** Notes from the person's other chats waiting here (Q-358); 0 = none. */
+  notesWaiting: number;
+  /** The chat the oldest waiting note came from. */
+  noteFrom?: string;
 }
 
 export function activityOf(state: SessionActivitySnapshot, sessionId: string): SessionActivity {
@@ -223,6 +235,7 @@ export function activityOf(state: SessionActivitySnapshot, sessionId: string): S
   const stopped = state.stopped.find((row) => row.sessionId === sessionId);
   const background = state.background.find((row) => row.sessionId === sessionId);
   const loop = state.looping.find((row) => row.sessionId === sessionId);
+  const notes = state.notesWaiting.find((row) => row.sessionId === sessionId);
   // `looping` lists no ended loop; an ended one that still arrives is not looping either.
   const loopStatus = loop?.status && loop.status !== 'ended' ? loop.status : undefined;
   const needsYou =
@@ -240,6 +253,8 @@ export function activityOf(state: SessionActivitySnapshot, sessionId: string): S
     loopStatus,
     loopNextTickAt: loopStatus ? (loop?.nextTickAt ?? undefined) : undefined,
     loopError: loop?.error ?? undefined,
+    notesWaiting: notes?.count ?? 0,
+    noteFrom: notes?.fromName,
   };
 }
 
@@ -284,9 +299,11 @@ export function sessionStates(activity: SessionActivity): SessionState[] {
   return states.length > 0 ? states : ['idle'];
 }
 
-/** A session leads its list when it runs or waits on the person. */
-export function isActive(activity: SessionActivity): boolean {
-  return activity.needsYou > 0 || activity.runningSince !== undefined;
+/** A session leads its list when it runs, waits on the person, or holds a note for them (Q-358). */
+export function isActive(
+  activity: Pick<SessionActivity, 'needsYou' | 'runningSince' | 'notesWaiting'>
+): boolean {
+  return activity.needsYou > 0 || activity.runningSince !== undefined || activity.notesWaiting > 0;
 }
 
 /** Selector hooks: a row re-renders only when ITS session's answer changes. */
@@ -329,6 +346,11 @@ export function useActivityOf(sessionId: string): SessionActivity {
     subscribe,
     () => activityOf(snapshot, sessionId).loopError
   );
+  const notesWaiting = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).notesWaiting
+  );
+  const noteFrom = useSyncExternalStore(subscribe, () => activityOf(snapshot, sessionId).noteFrom);
   return {
     runningSince,
     needsYou,
@@ -341,6 +363,8 @@ export function useActivityOf(sessionId: string): SessionActivity {
     loopStatus,
     loopNextTickAt,
     loopError,
+    notesWaiting,
+    noteFrom,
   };
 }
 
@@ -363,6 +387,10 @@ export interface ActiveSession {
   needsYou: number;
   /** The first open question, or a live elicitation's message. */
   headline?: string;
+  /** Notes from the person's other chats waiting here (Q-358). */
+  notesWaiting: number;
+  /** The chat the oldest waiting note came from. */
+  noteFrom?: string;
 }
 
 export function activeSessions(state: SessionActivitySnapshot): ActiveSession[] {
@@ -370,7 +398,7 @@ export function activeSessions(state: SessionActivitySnapshot): ActiveSession[] 
   const row = (sessionId: string, sessionName: string, workingDir: string) => {
     let existing = rows.get(sessionId);
     if (!existing) {
-      existing = { sessionId, sessionName, workingDir, needsYou: 0 };
+      existing = { sessionId, sessionName, workingDir, needsYou: 0, notesWaiting: 0 };
       rows.set(sessionId, existing);
     }
     if (!existing.sessionName && sessionName) existing.sessionName = sessionName;
@@ -390,6 +418,11 @@ export function activeSessions(state: SessionActivitySnapshot): ActiveSession[] 
   for (const running of state.running) {
     row(running.sessionId, running.sessionName, running.workingDir).runningSince =
       running.startedAt;
+  }
+  for (const notes of state.notesWaiting) {
+    const r = row(notes.sessionId, notes.sessionName, notes.workingDir);
+    r.notesWaiting = notes.count;
+    r.noteFrom = notes.fromName;
   }
   return [...rows.values()].sort((a, b) => {
     if (a.needsYou > 0 !== b.needsYou > 0) return a.needsYou > 0 ? -1 : 1;

@@ -3,6 +3,7 @@ import type {
   SessionNotification,
 } from '@agentclientprotocol/sdk';
 import { parseTickId } from '../../components/loops/model';
+import { NOTE_MESSAGE_PREFIX } from '../../components/notes/noteIds';
 import type { ContentBlock, LoopTickMetadata, Message } from '../../types/message';
 import {
   type AcpChatStateChange,
@@ -51,7 +52,7 @@ export function applyContentChunk(
     return messagesChangeWithLocalSteerConfirmation(state, existing, gooseMeta.steer);
   } else {
     const loopTick = role === 'user' ? loopTickOf(messageId) : undefined;
-    state.messages.push({
+    const message: Message = {
       ...(messageId ? { id: messageId } : {}),
       role,
       created: gooseMeta.created ?? Math.floor(Date.now() / 1000),
@@ -62,10 +63,37 @@ export function applyContentChunk(
         ...(gooseMeta.providerError ? { providerError: gooseMeta.providerError } : {}),
         ...(loopTick ? { loopTick } : {}),
       },
-    });
+    };
+    if (goesBeforeThePersonsMessage(state, role, messageId, gooseMeta.steer)) {
+      state.messages.splice(state.messages.length - 1, 0, message);
+    } else {
+      state.messages.push(message);
+    }
   }
 
   return messagesChange(state);
+}
+
+/**
+ * Q-358: a note the person added to their next message is stored by goosed just BEFORE that message,
+ * and reaches the window after the window already showed the message. Placed where it was stored,
+ * the live transcript reads as the reloaded one does. A note steered into a running turn (`steer`)
+ * lands where it drained, at the end.
+ */
+function goesBeforeThePersonsMessage(
+  state: AdapterState,
+  role: Message['role'],
+  messageId: string | undefined,
+  steer: boolean | undefined
+): boolean {
+  const last = state.messages[state.messages.length - 1];
+  return (
+    role === 'user' &&
+    !steer &&
+    Boolean(messageId?.startsWith(NOTE_MESSAGE_PREFIX)) &&
+    last?.role === 'user' &&
+    last.id !== messageId
+  );
 }
 
 /**

@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Hand } from 'lucide-react';
+import { Hand, Mail } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   DropdownMenu,
@@ -11,6 +11,7 @@ import {
 import { FOCUS, MOTION, PHASE_FILL, RADIUS, TNUM, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
 import { displaySessionListName } from '../../sessions';
 import { useNow } from './ActivityPills';
+import { noteWords } from '../notes/noteWords';
 import {
   activeSessions,
   elapsedLabel,
@@ -154,8 +155,10 @@ export default function SessionActivityIndicator() {
   const active = activeSessions(useSessionActivity());
   const waiting = active.filter((s) => s.needsYou > 0);
   const running = active.filter((s) => s.runningSince);
-  if (waiting.length === 0 && running.length === 0) return null;
+  const noted = active.filter((s) => s.notesWaiting > 0);
+  if (waiting.length === 0 && running.length === 0 && noted.length === 0) return null;
   const waitingCount = waiting.reduce((n, s) => n + s.needsYou, 0);
+  const notesCount = noted.reduce((n, s) => n + s.notesWaiting, 0);
 
   return (
     <div data-testid="session-activity-indicator" className="flex items-center gap-1.5">
@@ -184,6 +187,20 @@ export default function SessionActivityIndicator() {
             s.runningSince
               ? intl.formatMessage(i18n.runningFor, { elapsed: elapsedLabel(s.runningSince, now) })
               : ''
+          }
+        />
+      )}
+      {noted.length > 0 && (
+        <ActivityGroup
+          testId="indicator-notes"
+          label={intl.formatMessage(noteWords.waiting, { count: notesCount })}
+          count={notesCount}
+          menuLabel={intl.formatMessage(noteWords.waitingMenu)}
+          fill={TONE_FILL.secondary}
+          icon={<Mail aria-hidden />}
+          sessions={noted}
+          detail={(s) =>
+            s.noteFrom ? intl.formatMessage(noteWords.waitingFrom, { from: s.noteFrom }) : ''
           }
         />
       )}

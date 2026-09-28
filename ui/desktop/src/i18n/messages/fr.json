@@ -6959,6 +6959,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "Exécuter cette discussion sur"
   },
+  "notes.chip": {
+    "defaultMessage": "Note"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {Une note de \"{from}\" attend dans ce chat} other {# notes attendent dans ce chat}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Plusieurs chats correspondent à \"{query}\". Lequel ?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Note pour un autre chat"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "L'y laisser"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "inactif depuis {time}"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "ouvert dans aucune fenêtre"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose y travaille"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "Aucun chat ne correspond à \"{query}\". Choisis le chat destinataire de cette note."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Pas ce chat"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Retour"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Trouver un chat par son titre ou son dossier"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Lecture de tes chats…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "Aucun chat ne correspond à ces mots."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Choisir le chat"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "La glisser maintenant"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "La note"
+  },
+  "notes.failed": {
+    "defaultMessage": "Impossible : {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Ajouter à mon prochain message"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "Après ce tour"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose la lira à la fin de ce tour."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "Note de \"{name}\""
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Ignorer"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "La donner à goose maintenant"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "La glisser dans ce tour"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Glissée dans ce tour : goose la lit entre deux appels d'outils."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Envoyée depuis ton autre chat. goose ne l'a pas encore lue."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Part avec ton prochain message."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Masquer la note"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Afficher la note"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "Note de \"{name}\" · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Fermer cette ligne"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "Note envoyée à \"{name}\" · ignorée là-bas"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "Note envoyée à \"{name}\" · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "Note envoyée à \"{name}\" · lue dans son tour à {time}"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "Note envoyée à \"{name}\" · en attente là-bas"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "Les notes de ce chat n'ont pas pu être lues : {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# note en attente} other {# notes en attente}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "de \"{from}\""
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Notes qui t'attendent"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."
   },

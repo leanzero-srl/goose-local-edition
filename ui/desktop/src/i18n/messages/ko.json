@@ -6959,6 +6959,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "이 채팅을 실행할 곳"
   },
+  "notes.chip": {
+    "defaultMessage": "메모"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {\"{from}\"에서 온 메모가 이 채팅에서 기다리고 있습니다} other {메모 #개가 이 채팅에서 기다리고 있습니다}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "\"{query}\"와 일치하는 채팅이 여러 개입니다. 어느 것인가요?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "다른 채팅에 보내는 메모"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "취소"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "거기에 두기"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "{time}부터 유휴 상태"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "어떤 창에서도 열려 있지 않음"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose가 그곳에서 작업 중입니다"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "\"{query}\"와 일치하는 채팅이 없습니다. 이 메모를 받을 채팅을 고르세요."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "이 채팅이 아님"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "뒤로"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "제목이나 폴더로 채팅 찾기"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "채팅을 읽는 중…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "이 단어와 일치하는 채팅이 없습니다."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "채팅 고르기"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "지금 끼워 넣기"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "메모"
+  },
+  "notes.failed": {
+    "defaultMessage": "할 수 없었습니다: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "다음 메시지에 추가"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "이번 턴이 끝난 뒤"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "이번 턴이 끝나면 goose가 읽습니다."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "\"{name}\"에서 온 메모"
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "닫기"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "지금 goose에게 주기"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "이번 턴에 끼워 넣기"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "이번 턴에 끼워 넣었습니다: goose가 도구 호출 사이에 읽습니다."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "다른 채팅에서 보냈습니다. goose가 아직 읽지 않았습니다."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "다음 메시지와 함께 갑니다."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "메모 숨기기"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "메모 보기"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "\"{name}\"에서 온 메모 · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "이 줄 닫기"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "\"{name}\"에 메모 보냄 · 그곳에서 닫힘"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "\"{name}\"에 메모 보냄 · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "\"{name}\"에 메모 보냄 · {time}에 그 턴에서 읽음"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "\"{name}\"에 메모 보냄 · 그곳에서 대기 중"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "이 채팅의 메모를 읽을 수 없습니다: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {메모 #개 대기 중} other {메모 #개 대기 중}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "\"{from}\"에서"
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "기다리고 있는 메모"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."
   },

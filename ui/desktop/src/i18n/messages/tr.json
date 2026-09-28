@@ -6959,6 +6959,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "Bu sohbeti şurada çalıştır"
   },
+  "notes.chip": {
+    "defaultMessage": "Not"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {\"{from}\" sohbetinden bir not bu sohbette bekliyor} other {# not bu sohbette bekliyor}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Birden çok sohbet \"{query}\" ile eşleşiyor. Hangisi?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Başka bir sohbete not"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "Orada bırak"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "{time} saatinden beri boşta"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "hiçbir pencerede açık değil"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose orada çalışıyor"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "\"{query}\" ile eşleşen sohbet yok. Bu notun gideceği sohbeti seç."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Bu sohbet değil"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Geri"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Başlığına veya klasörüne göre bir sohbet bul"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Sohbetlerin okunuyor…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "Bu kelimelerle eşleşen sohbet yok."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Sohbeti seç"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "Şimdi yönlendir"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "Not"
+  },
+  "notes.failed": {
+    "defaultMessage": "Yapılamadı: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Sonraki mesajıma ekle"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "Bu turdan sonra"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose bu tur bitince okur."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "\"{name}\" sohbetinden not"
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "Şimdi goose'a ver"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "Bu tura yönlendir"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Bu tura yönlendirildi: goose araç çağrıları arasında okur."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Diğer sohbetinden gönderildi. goose henüz okumadı."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Sonraki mesajınla birlikte gider."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Notu gizle"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Notu göster"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "\"{name}\" sohbetinden not · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Bu satırı kapat"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "\"{name}\" sohbetine not gönderildi · orada kapatıldı"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "\"{name}\" sohbetine not gönderildi · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "\"{name}\" sohbetine not gönderildi · {time} saatinde kendi turunda okundu"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "\"{name}\" sohbetine not gönderildi · orada bekliyor"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "Bu sohbetin notları okunamadı: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# not bekliyor} other {# not bekliyor}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "\"{from}\" sohbetinden"
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Seni bekleyen notlar"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."
   },

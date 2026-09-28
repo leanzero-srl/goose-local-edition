@@ -6959,6 +6959,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "Run this chat on"
   },
+  "notes.chip": {
+    "defaultMessage": "Note"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count,plural,one{A note from \"{from}\" is waiting in this chat} other{# notes are waiting in this chat}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Several chats match \"{query}\". Which one?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Note to another chat"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "Leave it there"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "idle since {time}"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "not open in any window"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose is working there"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "No chat matches \"{query}\". Pick the chat this note is for."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Not this chat"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Back"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Find a chat by its title or folder"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Reading your chats…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "No chat matches these words."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Pick the chat"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "Steer it now"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "The note"
+  },
+  "notes.failed": {
+    "defaultMessage": "Could not do that: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Add to my next message"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "After this turn"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose reads it when this turn ends."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "Note from \"{name}\""
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "Give it to goose now"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "Steer this turn"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Steered into this turn: goose reads it between tool calls."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Sent from your other chat. goose has not read it yet."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Goes with your next message."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Hide note"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Show note"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "Note from \"{name}\" · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Close this line"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "Note sent to \"{name}\" · dismissed there"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "Note sent to \"{name}\" · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "Note sent to \"{name}\" · read in its turn at {time}"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "Note sent to \"{name}\" · waiting there"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "This chat's notes could not be read: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count,plural,one{# note waiting} other{# notes waiting}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "from \"{from}\""
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Notes waiting for you"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."
   },

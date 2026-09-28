@@ -6959,6 +6959,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "在此執行這個聊天"
   },
+  "notes.chip": {
+    "defaultMessage": "便條"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {來自「{from}」的一則便條在此聊天中等待} other {# 則便條在此聊天中等待}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "有多個聊天與「{query}」相符。是哪一個？"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "給另一個聊天的便條"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "取消"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "留在那裡"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "自 {time} 起閒置"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "未在任何視窗中開啟"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose 正在那裡工作"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "沒有聊天與「{query}」相符。請選擇這則便條要送往的聊天。"
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "不是這個聊天"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "返回"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "依標題或資料夾尋找聊天"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "正在讀取你的聊天…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "沒有聊天與這些字詞相符。"
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "選擇聊天"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "立即插入"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "便條"
+  },
+  "notes.failed": {
+    "defaultMessage": "無法完成：{error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "附在我的下一則訊息"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "本輪之後"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "本輪結束時 goose 會讀到它。"
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "來自「{name}」的便條"
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "略過"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "現在交給 goose"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "插入本輪"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "已插入本輪：goose 會在兩次工具呼叫之間讀到它。"
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "從你的另一個聊天送出。goose 還沒讀過。"
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "會隨你的下一則訊息一起送出。"
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "隱藏便條"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "顯示便條"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "來自「{name}」的便條 · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "關閉此行"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "便條已送到「{name}」 · 已在那裡略過"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "便條已送到「{name}」 · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "便條已送到「{name}」 · 已於 {time} 在其輪次中讀取"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "便條已送到「{name}」 · 在那裡等待"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "無法讀取此聊天的便條：{error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# 則便條等待中} other {# 則便條等待中}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "來自「{from}」"
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "等你處理的便條"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "伺服器可能正在啟動或暫時無法使用。"
   },

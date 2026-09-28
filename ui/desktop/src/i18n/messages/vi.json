@@ -6959,6 +6959,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "Chạy cuộc trò chuyện này trên"
   },
+  "notes.chip": {
+    "defaultMessage": "Ghi chú"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {Một ghi chú từ \"{from}\" đang chờ trong cuộc trò chuyện này} other {# ghi chú đang chờ trong cuộc trò chuyện này}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Nhiều cuộc trò chuyện khớp với \"{query}\". Cuộc nào?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Ghi chú gửi cuộc trò chuyện khác"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "Để lại ở đó"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "rảnh từ {time}"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "không mở trong cửa sổ nào"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose đang làm việc ở đó"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "Không có cuộc trò chuyện nào khớp với \"{query}\". Hãy chọn cuộc trò chuyện nhận ghi chú này."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Không phải cuộc này"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Quay lại"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Tìm cuộc trò chuyện theo tiêu đề hoặc thư mục"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Đang đọc các cuộc trò chuyện của bạn…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "Không có cuộc trò chuyện nào khớp với những từ này."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Chọn cuộc trò chuyện"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "Chèn ngay"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "Ghi chú"
+  },
+  "notes.failed": {
+    "defaultMessage": "Không thực hiện được: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Thêm vào tin nhắn tiếp theo của tôi"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "Sau lượt này"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose sẽ đọc khi lượt này kết thúc."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "Ghi chú từ \"{name}\""
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Bỏ qua"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "Đưa cho goose ngay"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "Chèn vào lượt này"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Đã chèn vào lượt này: goose đọc nó giữa các lần gọi công cụ."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Gửi từ cuộc trò chuyện khác của bạn. goose chưa đọc."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Sẽ đi cùng tin nhắn tiếp theo của bạn."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Ẩn ghi chú"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Hiện ghi chú"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "Ghi chú từ \"{name}\" · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Đóng dòng này"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "Đã gửi ghi chú tới \"{name}\" · đã bị bỏ qua ở đó"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "Đã gửi ghi chú tới \"{name}\" · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "Đã gửi ghi chú tới \"{name}\" · đã được đọc trong lượt của nó lúc {time}"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "Đã gửi ghi chú tới \"{name}\" · đang chờ ở đó"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "Không đọc được ghi chú của cuộc trò chuyện này: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# ghi chú đang chờ} other {# ghi chú đang chờ}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "từ \"{from}\""
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Ghi chú đang chờ bạn"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."
   },

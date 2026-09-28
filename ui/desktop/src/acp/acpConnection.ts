@@ -4,6 +4,8 @@ import {
   type GooseClientCallbacks,
   type LoopsChangedNotification_unstable,
   type LoopsTickDueNotification_unstable,
+  type NotesChangedNotification_unstable,
+  type NotesDeliverDueNotification_unstable,
 } from '@aaif/goose-sdk';
 import { PROTOCOL_VERSION, type InitializeResponse } from '@agentclientprotocol/sdk';
 import packageJson from '../../package.json';
@@ -36,6 +38,11 @@ const tickDueListeners = new Set<Listener<LoopsTickDueNotification_unstable>>();
 const undeliveredTickDue = new Map<string, LoopsTickDueNotification_unstable>();
 const loopsChangedListeners = new Set<Listener<LoopsChangedNotification_unstable>>();
 const connectionClosedListeners = new Set<Listener<void>>();
+// Notes to another chat (Q-358): goosed offers a due note only to the windows that show its chat,
+// so an offer that arrives before the driver subscribed is not held — goosed offers it again when
+// the chat's turn ends or the window says again that it shows the chat.
+const notesDeliverDueListeners = new Set<Listener<NotesDeliverDueNotification_unstable>>();
+const notesChangedListeners = new Set<Listener<NotesChangedNotification_unstable>>();
 
 function emit<T>(listeners: Set<Listener<T>>, value: T, what: string): void {
   for (const listener of [...listeners]) {
@@ -64,6 +71,34 @@ export function onLoopsChanged(listener: Listener<LoopsChangedNotification_unsta
   return () => {
     loopsChangedListeners.delete(listener);
   };
+}
+
+export function onNotesDeliverDue(
+  listener: Listener<NotesDeliverDueNotification_unstable>
+): () => void {
+  notesDeliverDueListeners.add(listener);
+  return () => {
+    notesDeliverDueListeners.delete(listener);
+  };
+}
+
+export function onNotesChanged(listener: Listener<NotesChangedNotification_unstable>): () => void {
+  notesChangedListeners.add(listener);
+  return () => {
+    notesChangedListeners.delete(listener);
+  };
+}
+
+export async function handleNotesDeliverDue(
+  due: NotesDeliverDueNotification_unstable
+): Promise<void> {
+  emit(notesDeliverDueListeners, due, 'notes/deliverDue');
+}
+
+export async function handleNotesChanged(
+  changed: NotesChangedNotification_unstable
+): Promise<void> {
+  emit(notesChangedListeners, changed, 'notes/changed');
 }
 
 /** The ACP connection ended (its `closed` settled): goosed dropped this window's tick door. */
@@ -102,6 +137,8 @@ function createClientCallbacks(): () => GooseClientCallbacks {
     unstable_sessionUpdate: handleAcpGooseSessionNotification,
     unstable_loopsTickDue: handleLoopsTickDue,
     unstable_loopsChanged: handleLoopsChanged,
+    unstable_notesDeliverDue: handleNotesDeliverDue,
+    unstable_notesChanged: handleNotesChanged,
     extNotification: handleUnknownExtNotification,
   });
 }
