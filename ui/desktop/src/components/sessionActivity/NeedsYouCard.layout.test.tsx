@@ -49,7 +49,8 @@ describe('the needs-you options hold their own text (Q-315)', () => {
       </IntlProvider>
     );
     const options = screen.getAllByTestId('needs-you-option');
-    expect(options).toHaveLength(3);
+    // Q-319 leaves the recommended answer out of the pick list, so the two other sentences remain.
+    expect(options).toHaveLength(2);
     for (const option of options) {
       const classes = option.className.split(/\s+/);
       expect(classes).not.toContain('h-7');
