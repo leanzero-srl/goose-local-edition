@@ -8,6 +8,7 @@ import {
 } from './benchActivity';
 import { spawnBenchmarkWithPower } from './benchPower';
 import { registerKeepAwake } from './keepAwake';
+import { registerSystemResumed } from './systemResumed';
 import { publicScoreDetails } from './benchPublicScore';
 import { benchmarkModelIdProblem } from './benchModelIdentity';
 import { benchmarkProfileDirectory } from './benchProfile';
@@ -41,6 +42,7 @@ import {
   nativeTheme,
   net,
   Notification,
+  powerMonitor,
   powerSaveBlocker,
   session,
   screen,
@@ -2844,6 +2846,14 @@ registerKeepAwake({
     updateSettings((s) => {
       s.enableWakelock = enabled;
     }),
+});
+
+// Q-228 (L10): after the Mac sleeps, each goose window asks its goosed for one tick, never a burst.
+void registerSystemResumed({
+  app,
+  powerMonitor,
+  gooseWindows: () => BrowserWindow.getAllWindows(),
+  glanceWebContentsId: () => glanceWebContentsId,
 });
 
 ipcMain.handle('set-spellcheck', async (_event, enable: boolean) => {

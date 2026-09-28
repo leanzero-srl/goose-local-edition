@@ -93,6 +93,7 @@ Object.defineProperty(window, 'electron', {
     setThemeSource: vi.fn(async (preference: string) => ({ dark: preference === 'dark' })),
     onNativeThemeUpdated: vi.fn(() => () => {}),
     onSwarmDelta: vi.fn(() => () => {}),
+    onSystemResumed: vi.fn(() => () => {}),
     // The fleet probes run in main (utils/fleetProbe.ts); with no LM Studio in a test the honest answer
     // is a NAMED unreachable — the same offline state a real install without a fleet shows.
     fleetProbe: vi.fn(async (endpoint: string) => ({
