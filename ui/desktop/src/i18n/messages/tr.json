@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Yenilenmedi"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Değiştiriliyor"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Yüzen pencereyi kapat"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Çözümlenen model"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Modeli Seçin"
   },
@@ -6443,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Adlandırın"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Devam etmek için bir model seçin"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Kaydetmek için ona bir ad verin"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Devam etmek için bir sağlayıcı seçin"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Devam etmek için onu çalıştırmanın bir yolunu seçin"
+  },
   "nodes.newNext": {
     "defaultMessage": "İleri"
   },
@@ -6578,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "Kaldır"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Kaldır ve yeni sohbetleri Herhangi bir düğüm (Otomatik) üzerinde başlat"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Onu şunlardan da kaldır: {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Bu düğümü bir strateji kullanıyor, bu yüzden tek başına kaldırılamaz.} other{Bu düğümü # strateji kullanıyor, bu yüzden tek başına kaldırılamaz.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Onu kullanan stratejilerden de kaldır"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Kaldırmak için yukarıdaki kutuyu işaretleyin} other{Kaldırmak için yukarıdaki # kutuyu işaretleyin}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "Düğüm, düğümlerinizden kaldırılır. Mac’leriniz, modelleriniz ve sağlayıcılarınız olduğu gibi kalır."
@@ -6587,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Kaldır"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Onu bu stratejilerden de kaldır"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Yine de kaldır: # sohbet bu düğüme ayarlı} other{Yine de kaldır: # sohbet bu düğüme ayarlı}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Sonraki mesajı düğümün kaldırıldığını söyleyecek ve başka birini seçmenizi isteyecek.} other{Sonraki mesajları düğümün kaldırıldığını söyleyecek ve başka birini seçmenizi isteyecek.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Bunun yerine yeni sohbetleri Herhangi bir düğüm (Otomatik) üzerinde başlat"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Yeni sohbetler şu anda bu düğümde başlıyor, bu yüzden tek başına kaldırılamaz."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Sürü havuzunuz cihazını korur; bu düğüm burada bir daha gösterilmez. Havuzun kendisini aşağıda düzenleyin."
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node} kaldırılsın mı?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# sohbet bu düğüme ayarlı. Sonraki mesajı düğümün kaldırıldığını söyleyecek.} other{# sohbet bu düğüme ayarlı. Sonraki mesajları düğümün kaldırıldığını söyleyecek.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Yeniden oku"
@@ -6677,6 +6710,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Düğüm, Mac'lerinizde ya da bulutta iş devredebileceğiniz bir modeldir. Sohbetler bir düğümde ya da stratejide başlar; swarm derlemeleri bir strateji ya da sürü havuzunuzu kullanır."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "{node} düğümüne geçiliyor"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Sürü havuzunuz okunamadı"
   },
@@ -6688,6 +6724,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Düğümler"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Bu sohbet için {node} yükleniyor: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Değişiklik kaydedilemedi"
@@ -9380,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: düğüm {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Kaldırılmadı"
-  },
   "strategies.note": {
     "defaultMessage": "Not (kendi ifadenizle)"
   },
@@ -9416,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "Kaldır"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Kaldır ve yeni sohbetleri Herhangi bir düğüm (Otomatik) üzerinde başlat"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Kaldır ve swarm derlemelerinin sürü havuzunuzu kullanmasına izin ver"
-  },
   "strategies.removeBody": {
     "defaultMessage": "Strateji kaldırılır. Düğümleri olduğu gibi kalır."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Kaldır"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Bunun yerine swarm derlemelerinin sürü havuzunuzu kullanmasına izin ver"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Swarm derlemeleri şu anda bu stratejiyi kullanıyor, bu yüzden tek başına kaldırılamaz."
   },
   "strategies.removeEntry": {
     "defaultMessage": "{node}'ü {role}'den çıkar"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Bunun yerine yeni sohbetleri Herhangi bir düğüm (Otomatik) üzerinde başlat"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Yeni sohbetler şu anda bu stratejiyle başlıyor, bu yüzden tek başına kaldırılamaz."
   },
   "strategies.removeTitle": {
     "defaultMessage": "{name} kaldırılsın mı?"

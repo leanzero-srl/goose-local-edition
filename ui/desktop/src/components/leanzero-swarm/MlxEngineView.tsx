@@ -117,7 +117,8 @@ import { defineMessages, useIntl } from '../../i18n';
 import { mlxEngineServing } from '../chatServedBy/chatServedBy';
 import LeanZeroLinkSection from './LeanZeroLinkSection';
 import { MlxSetupStrip, setupNodeFacts, type SetupFacts, type SetupTarget } from './MlxSetupStrip';
-import { useGlanceNodes } from '../engineGlance/glanceStore';
+import { swapOfGlanceNodes, useGlanceNodes } from '../engineGlance/glanceStore';
+import type { NodeSwap } from '../../utils/nodeSwap';
 import type { MlxTab } from '../../utils/navigationUtils';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { DistributedEngineSection } from './DistributedEngineSection';
@@ -406,6 +407,8 @@ function StateBadge(props: {
   distributed: MlxDistributedStatus | null;
   remote: MlxRemoteSingleStatus | null;
   load: SingleLoad | null;
+  swap: NodeSwap | null;
+  modelId: string | null;
 }) {
   const intl = useIntl();
   const engine = servingEngine(intl, { ...props, unreachable: false });
@@ -815,6 +818,8 @@ interface EngineSectionProps {
   remoteStopError: string | null;
   /** Whose memory the hero shows: the Mac whose engine serves chat. */
   memory: ServingMemory;
+  /** The swap the node loader is making — the tile says the way it stopped as that (Q-254). */
+  swap: NodeSwap | null;
 }
 
 /**
@@ -1084,6 +1089,8 @@ function EngineSection(props: EngineSectionProps) {
           modeLabel={modeLabel}
           distributed={distributed}
           remote={remote}
+          swap={props.swap}
+          modelId={status?.modelId ?? null}
         />
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           <div className="flex min-w-0 flex-col gap-1">
@@ -2429,6 +2436,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
   const [saveRunningPending, setSaveRunningPending] = useState(false);
   const onSaveRunningHandled = useCallback(() => setSaveRunningPending(false), []);
   const glanceNodes = useGlanceNodes();
+  const swap = swapOfGlanceNodes(glanceNodes);
   const { mlxDistributed, leanzeroLink } = useFeatures();
   const requestedTab = routedTab ?? ownTab;
   // My Macs exists only where LeanZero Link does; a link to it elsewhere opens the Engine tab.
@@ -3081,6 +3089,8 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
               distributed={distributed.status}
               remote={remote}
               load={singleLoad(status)}
+              swap={swap}
+              modelId={status.modelId ?? null}
             />
           </span>
         )}
@@ -3125,6 +3135,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
           onStopRemote={onStopRemote}
           remoteStopError={remoteStopError}
           memory={servingMemory}
+          swap={swap}
         />
       )}
       {tab === 'macs' && <LeanZeroLinkSection />}

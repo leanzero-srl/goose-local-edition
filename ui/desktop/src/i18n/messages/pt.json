@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Não atualizado"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Trocando"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Desativar a janela flutuante"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Modelo resolvido"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Selecionar Modelo"
   },
@@ -6443,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Dê um nome"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Escolha um modelo para continuar"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Dê um nome para salvá-lo"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Escolha um provedor para continuar"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Escolha uma forma de executá-lo para continuar"
+  },
   "nodes.newNext": {
     "defaultMessage": "Próximo"
   },
@@ -6578,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "Remover"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Remover e iniciar novos chats em Qualquer nó (Auto)"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Removê-lo também de {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Uma estratégia usa este nó, então ele não pode ser removido sozinho.} other{# estratégias usam este nó, então ele não pode ser removido sozinho.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Removê-lo também das estratégias que o usam"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Marque a caixa acima para removê-lo} other{Marque as # caixas acima para removê-lo}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "O nó é removido dos seus nós. Seus Macs, modelos e provedores ficam como estão."
@@ -6587,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Remover"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Removê-lo também dessas estratégias"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Remover mesmo assim: # chat está definido para este nó} other{Remover mesmo assim: # chats estão definidos para este nó}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{A próxima mensagem dele dirá que o nó foi removido e pedirá que você escolha outro.} other{A próxima mensagem deles dirá que o nó foi removido e pedirá que você escolha outro.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Iniciar novos chats em Qualquer nó (Auto) em vez disso"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Novos chats começam agora neste nó, então ele não pode ser removido sozinho."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Seu pool do enxame mantém o dispositivo; este nó não aparece mais aqui. Edite o próprio pool abaixo."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Remover {node}?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# chat está definido para este nó. A próxima mensagem dele dirá que o nó foi removido.} other{# chats estão definidos para este nó. A próxima mensagem deles dirá que o nó foi removido.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Ler de novo"
@@ -6677,6 +6710,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Um nó é um modelo ao qual você pode entregar trabalho, nos seus Macs ou na nuvem. Chats começam num nó ou numa estratégia; os builds do enxame usam uma estratégia ou seu pool do enxame."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Trocando para {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Não foi possível ler seu pool do enxame"
   },
@@ -6688,6 +6724,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nós"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Carregando {node} para este chat: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Não foi possível salvar a alteração"
@@ -9380,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: nó {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Não removido"
-  },
   "strategies.note": {
     "defaultMessage": "Nota (suas palavras)"
   },
@@ -9416,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "Remover"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Remover e iniciar novos chats em Qualquer nó (Auto)"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Remover, e deixar os builds do enxame usarem seu pool do enxame"
-  },
   "strategies.removeBody": {
     "defaultMessage": "A estratégia é removida. Seus nós permanecem como estão."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Remover"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Deixar os builds do enxame usarem seu pool do enxame em vez disso"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Os builds do enxame usam agora esta estratégia, então ela não pode ser removida sozinha."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Tirar {node} de {role}"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Iniciar novos chats em Qualquer nó (Auto) em vez disso"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Novos chats começam agora nesta estratégia, então ela não pode ser removida sozinha."
   },
   "strategies.removeTitle": {
     "defaultMessage": "Remover {name}?"

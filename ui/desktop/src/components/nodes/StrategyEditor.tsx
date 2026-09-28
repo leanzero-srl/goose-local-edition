@@ -18,6 +18,7 @@ import {
   effectiveEntry,
   effectiveRole,
   inheritsFrom,
+  nodeNamesById,
   type NodeIfNotLoaded,
   type NodeRole,
   type NodeRoleEntry,
@@ -223,7 +224,7 @@ export function StrategyEditor({
 
   const roles = draft.roles ?? {};
   const byId = new Map(nodes.map((n) => [n.def.id, n]));
-  const names = Object.fromEntries(nodes.map((n) => [n.def.id, n.def.name]));
+  const names = nodeNamesById(nodes);
   const fit = strategyFit(draft, nodes, measured);
   const dirty = stored === null || JSON.stringify(stored) !== JSON.stringify(draft);
 

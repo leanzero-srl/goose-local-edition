@@ -305,27 +305,31 @@ export default function ModelsBottomBar({
     onModelChanged({ model, provider });
   };
 
-  const { servedModel, servedWhere, servedRunning, splitStop, goneWords, chipLabel } =
+  const { servedModel, servedWhere, servedRunning, splitStop, goneWords, loaderWords, chipLabel } =
     servedChipWords(intl, served, isModelLoading);
   const splitReason = splitStop ? splitStopReason(intl, splitStop) : null;
-  // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is.
+  // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is; the
+  // node loader's work is said in its own line, the composer bar's (Q-254).
   const phaseWord = goneWords
     ? goneWords
-    : served?.readiness.kind === 'reconnecting'
-      ? intl.formatMessage(i18n.phaseReconnecting)
-      : splitStop
-        ? intl.formatMessage(i18n.phaseSplitStopped)
-        : served?.turnWait
-          ? turnWaitText(intl, served.turnWait)
-          : served?.busyIn
-            ? busyInHeadline(intl, served.busyIn)
-            : served?.work && served.work !== 'thisChat'
-              ? intl.formatMessage(WORK_WORD[served.work])
-              : served?.phase
-                ? intl.formatMessage(PHASE_WORD[served.phase])
-                : intl.formatMessage(i18n.phaseUnknown);
+    : loaderWords
+      ? loaderWords
+      : served?.readiness.kind === 'reconnecting'
+        ? intl.formatMessage(i18n.phaseReconnecting)
+        : splitStop
+          ? intl.formatMessage(i18n.phaseSplitStopped)
+          : served?.turnWait
+            ? turnWaitText(intl, served.turnWait)
+            : served?.busyIn
+              ? busyInHeadline(intl, served.busyIn)
+              : served?.work && served.work !== 'thisChat'
+                ? intl.formatMessage(WORK_WORD[served.work])
+                : served?.phase
+                  ? intl.formatMessage(PHASE_WORD[served.phase])
+                  : intl.formatMessage(i18n.phaseUnknown);
   // The words that can outgrow the chip: they truncate before the dot and keep a title.
-  const longWords = goneWords != null || served?.busyIn != null || served?.turnWait != null;
+  const longWords =
+    goneWords != null || loaderWords != null || served?.busyIn != null || served?.turnWait != null;
 
   return (
     <div className="relative flex items-center" ref={dropdownRef}>
@@ -395,17 +399,19 @@ export default function ModelsBottomBar({
                 {served.phase && <StatusDot phase={served.phase} label={phaseWord} />}
                 {goneWords
                   ? goneWords
-                  : splitReason && servedWhere
-                    ? intl.formatMessage(i18n.servedSplitStopped, {
-                        where: servedWhere,
-                        reason: splitReason,
-                      })
-                    : servedRunning && servedWhere
-                      ? intl.formatMessage(
-                          served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
-                          { phase: phaseWord, where: servedWhere }
-                        )
-                      : intl.formatMessage(i18n.servedNotRunning)}
+                  : loaderWords
+                    ? loaderWords
+                    : splitReason && servedWhere
+                      ? intl.formatMessage(i18n.servedSplitStopped, {
+                          where: servedWhere,
+                          reason: splitReason,
+                        })
+                      : servedRunning && servedWhere
+                        ? intl.formatMessage(
+                            served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
+                            { phase: phaseWord, where: servedWhere }
+                          )
+                        : intl.formatMessage(i18n.servedNotRunning)}
               </p>
               {served.contextWindow != null && (
                 <p data-testid="model-menu-context" className={cx(TYPE.meta, TNUM)}>

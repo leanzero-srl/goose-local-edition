@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "未更新"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "切り替え中"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "フローティングウィンドウをオフにする"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "解決済みモデル"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "モデルを選択"
   },
@@ -6443,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "名前を付ける"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "続けるにはモデルを選択してください"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "保存するには名前を付けてください"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "続けるにはプロバイダーを選択してください"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "続けるには実行方法を選択してください"
+  },
   "nodes.newNext": {
     "defaultMessage": "次へ"
   },
@@ -6578,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "削除"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "削除し、新しいチャットは「任意のノード (自動)」で始める"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "{strategies} からも削除する"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{ストラテジーがこのノードを使っているため、単独では削除できません。} other{# 件のストラテジーがこのノードを使っているため、単独では削除できません。}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "このノードを使うストラテジーからも削除する"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{削除するには上のチェックボックスをオンにしてください} other{削除するには上の # 個のチェックボックスをオンにしてください}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "ノードはノード一覧から削除されます。Mac、モデル、プロバイダーはそのままです。"
@@ -6587,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "削除"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "それらのストラテジーからも削除する"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{それでも削除する: # 件のチャットがこのノードに設定されています} other{それでも削除する: # 件のチャットがこのノードに設定されています}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{次のメッセージでノードが削除されたことが表示され、別のノードを選ぶよう求められます。} other{次のメッセージでノードが削除されたことが表示され、別のノードを選ぶよう求められます。}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "代わりに新しいチャットは「任意のノード (自動)」で始める"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "現在、新しいチャットはこのノードで始まるため、単独では削除できません。"
   },
   "nodes.removePoolBody": {
     "defaultMessage": "スウォームのプールはデバイスを保持します。このノードは今後ここに表示されません。プール自体は下で編集してください。"
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node} を削除しますか？"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# 件のチャットがこのノードに設定されています。次のメッセージで削除されたことが表示されます。} other{# 件のチャットがこのノードに設定されています。次のメッセージで削除されたことが表示されます。}}"
   },
   "nodes.retry": {
     "defaultMessage": "再読み込み"
@@ -6677,6 +6710,9 @@
   "nodes.subtitle": {
     "defaultMessage": "ノードとは、あなたの Mac またはクラウドで作業を任せられるモデルです。チャットはノードかストラテジーで始まり、swarm のビルドはストラテジーかあなたのスウォームのプールを使います。"
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "{node} に切り替え中"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "スウォームのプールを読み取れませんでした"
   },
@@ -6688,6 +6724,9 @@
   },
   "nodes.title": {
     "defaultMessage": "ノード"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "このチャットのために {node} を読み込み中: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "変更を保存できませんでした"
@@ -9380,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: ノード {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "削除されませんでした"
-  },
   "strategies.note": {
     "defaultMessage": "メモ(自分の言葉で)"
   },
@@ -9416,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "削除"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "削除し、新しいチャットは「任意のノード (自動)」で始める"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "削除し、swarm のビルドはあなたのスウォームのプールを使う"
-  },
   "strategies.removeBody": {
     "defaultMessage": "ストラテジーが削除されます。ノードはそのままです。"
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "削除"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "代わりに swarm のビルドはあなたのスウォームのプールを使う"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "現在、swarm のビルドはこのストラテジーを使っているため、単独では削除できません。"
   },
   "strategies.removeEntry": {
     "defaultMessage": "{role} から {node} を外す"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "代わりに新しいチャットは「任意のノード (自動)」で始める"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "現在、新しいチャットはこのストラテジーで始まるため、単独では削除できません。"
   },
   "strategies.removeTitle": {
     "defaultMessage": "{name} を削除しますか？"

@@ -18,6 +18,8 @@ import {
   type Residency,
 } from '../../acp/nodes';
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
+import { MLX_STATUS_POLL_MS } from '../leanzero-swarm/mlxLiveStats';
+import { nodeSwapOf, type NodeSwap } from '../../utils/nodeSwap';
 
 /**
  * main's engine glance in this window — one subscription however many surfaces read it (the docked
@@ -109,7 +111,8 @@ export function glanceSessionsOf(state: Parameters<typeof activeSessions>[0]): G
 /**
  * THE NODES AT A GLANCE — goosed's `nodes/read` + `nodes/residency` (design §4.2), read in this
  * window when its glance changes way, model, stage or served chat (an event: `emit` above) and
- * whenever a surface mounts, never on a clock. The glance's node line (through the sessions report
+ * whenever a surface mounts — on a cadence only while the node loader is at work (`loaderAtWork`,
+ * whose end no glance change announces). The glance's node line (through the sessions report
  * below), the Nodes nav chip's neighbours and My Macs' "Nodes on this Mac" all read THIS, so one
  * window never names two different nodes for one way. `refreshGlanceNodes()` re-reads it after a
  * node is saved, renamed or removed.
@@ -138,6 +141,14 @@ async function readNodes(chatSessionId: string | null): Promise<GlanceNodesState
   } catch (e) {
     return { kind: 'failed', error: mlxErrorMessage(e, String(e)) };
   }
+  // Raw `extMethod` answers are not parsed: one without its node lists is a failed read, said as
+  // that — never read as "no nodes" and "nothing loading".
+  if (!Array.isArray(read?.nodes) || read.config == null || !Array.isArray(residency?.nodes)) {
+    return {
+      kind: 'failed',
+      error: 'goose answered nodes/read or nodes/residency without its list of nodes',
+    };
+  }
   // The chat's own served node only ORDERS the nodes that already name the serving way (it leads
   // when two do); an unreadable record leaves that order as the defs' and changes no answer.
   let servedNode: string | null = null;
@@ -151,14 +162,42 @@ async function readNodes(chatSessionId: string | null): Promise<GlanceNodesState
   return { kind: 'read', read, residency, servedNode };
 }
 
+/**
+ * The loader is at work (a node reads `loading` or `waiting`): its end — the way serving, or the
+ * load refused — changes nothing the glance keys on when the way it stopped stays stopped, so the
+ * read is taken again at the engine's own read interval until the loader's mark goes (Q-254: a
+ * "Swapping to …" that outlived its swap would be the lie it replaced). An observation cadence,
+ * never a decision: what the read says decides.
+ */
+function loaderAtWork(state: GlanceNodesState): boolean {
+  return (
+    state.kind === 'read' &&
+    state.residency.nodes.some(
+      (r) => r.residency.kind === 'loading' || r.residency.kind === 'waiting'
+    )
+  );
+}
+
+let lookAgain: ReturnType<typeof setTimeout> | null = null;
+
 export function refreshGlanceNodes(): void {
   if (nodesListeners.size === 0) return;
+  if (lookAgain != null) {
+    clearTimeout(lookAgain);
+    lookAgain = null;
+  }
   const seq = ++nodesSeq;
   void readNodes(latest?.engine.chat?.sessionId ?? null).then((next) => {
     // A read that a newer one overtook says nothing about now.
     if (seq !== nodesSeq) return;
     nodesState = next;
     nodesListeners.forEach((l) => l());
+    if (loaderAtWork(next) && nodesListeners.size > 0) {
+      lookAgain = setTimeout(() => {
+        lookAgain = null;
+        refreshGlanceNodes();
+      }, MLX_STATUS_POLL_MS);
+    }
   });
 }
 
@@ -175,6 +214,14 @@ function subscribeNodes(listener: () => void): () => void {
 
 export function useGlanceNodes(): GlanceNodesState {
   return useSyncExternalStore(subscribeNodes, () => nodesState);
+}
+
+/** The swap the loader is making (utils/nodeSwap.ts), from this window's nodes read; null = none. */
+export function swapOfGlanceNodes(
+  state: GlanceNodesState,
+  prefer: readonly string[] = []
+): NodeSwap | null {
+  return state.kind === 'read' ? nodeSwapOf(state.read, state.residency, prefer) : null;
 }
 
 /**
@@ -221,12 +268,16 @@ export function servingReportOf(state: GlanceNodesState): GlanceServingReport | 
 /**
  * Hands main this window's running / needs-you whenever they change — the ONE session-state store
  * (sessionActivityStore.ts), so the desktop window says what the sidebar and the top bar say — and
- * the node its goosed says serves (`servingReportOf`), so every surface of the glance can name it.
+ * the node its goosed says serves (`servingReportOf`), so every surface of the glance can name it,
+ * and the swap its goosed's loader is making (`swapOfGlanceNodes`), so no surface of main calls the
+ * way that swap stopped a failure (Q-254).
  */
 export function useReportGlanceSessions(): void {
   const state = useSessionActivity();
-  const serving = servingReportOf(useGlanceNodes());
-  const report: GlanceSessions = { ...glanceSessionsOf(state), serving };
+  const nodes = useGlanceNodes();
+  const serving = servingReportOf(nodes);
+  const swap = swapOfGlanceNodes(nodes);
+  const report: GlanceSessions = { ...glanceSessionsOf(state), serving, swap };
   const key = JSON.stringify(report);
   useEffect(() => {
     bridge()?.engineGlanceSessions?.(JSON.parse(key) as GlanceSessions);
@@ -242,4 +293,6 @@ export function resetEngineGlanceForTests(next: GlancePush | null = null): void 
   nodesState = { kind: 'unread' };
   nodesKey = null;
   nodesSeq += 1;
+  if (lookAgain != null) clearTimeout(lookAgain);
+  lookAgain = null;
 }

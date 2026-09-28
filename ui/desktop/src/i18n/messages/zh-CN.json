@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "未刷新"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "正在切换"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "关闭悬浮窗口"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "解析后的模型"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "选择模型"
   },
@@ -6443,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "命名"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "选择一个模型以继续"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "为它命名以保存"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "选择一个提供方以继续"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "选择一种运行方式以继续"
+  },
   "nodes.newNext": {
     "defaultMessage": "下一步"
   },
@@ -6578,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "移除"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "移除，并在“任意节点（自动）”上开始新聊天"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "同时从 {strategies} 中移除"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{有策略在使用此节点，因此不能单独移除它。} other{有 # 个策略在使用此节点，因此不能单独移除它。}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "同时从使用它的策略中移除"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{勾选上方的复选框即可移除} other{勾选上方的 # 个复选框即可移除}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "该节点会从你的节点中移除。你的 Mac、模型和提供方保持不变。"
@@ -6587,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "移除"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "同时从这些策略中移除"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{仍然移除：有 # 个聊天设为此节点} other{仍然移除：有 # 个聊天设为此节点}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{它的下一条消息会提示该节点已被移除，并请你选择另一个节点。} other{它们的下一条消息会提示该节点已被移除，并请你选择另一个节点。}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "改为在“任意节点（自动）”上开始新聊天"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "新聊天目前从此节点开始，因此不能单独移除它。"
   },
   "nodes.removePoolBody": {
     "defaultMessage": "蜂群节点池保留它的设备；此节点不会再在这里显示。请在下方编辑节点池本身。"
   },
   "nodes.removeTitle": {
     "defaultMessage": "移除 {node}？"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{有 # 个聊天设为此节点。它们的下一条消息会提示该节点已被移除。} other{有 # 个聊天设为此节点。它们的下一条消息会提示该节点已被移除。}}"
   },
   "nodes.retry": {
     "defaultMessage": "重新读取"
@@ -6677,6 +6710,9 @@
   "nodes.subtitle": {
     "defaultMessage": "节点是你可以交付工作的模型，运行在你的 Mac 上或云端。聊天从某个节点或策略开始；swarm 构建使用策略或你的蜂群节点池。"
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "正在切换到 {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "无法读取你的蜂群节点池"
   },
@@ -6688,6 +6724,9 @@
   },
   "nodes.title": {
     "defaultMessage": "节点"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "正在为此聊天加载 {node}：{phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "此更改无法保存"
@@ -9380,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}：第 {rank} 个节点"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "未移除"
-  },
   "strategies.note": {
     "defaultMessage": "备注（你的说明）"
   },
@@ -9416,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "移除"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "移除，并在“任意节点（自动）”上开始新聊天"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "移除，并让 swarm 构建使用你的蜂群节点池"
-  },
   "strategies.removeBody": {
     "defaultMessage": "该策略已被移除。其节点保持不变。"
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "移除"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "改为让 swarm 构建使用你的蜂群节点池"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "swarm 构建目前使用此策略，因此不能单独移除它。"
   },
   "strategies.removeEntry": {
     "defaultMessage": "将 {node} 从 {role} 中移除"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "改为在“任意节点（自动）”上开始新聊天"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "新聊天目前从此策略开始，因此不能单独移除它。"
   },
   "strategies.removeTitle": {
     "defaultMessage": "移除 {name}？"
