@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 19:3x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 20:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.71 on BOTH Macs 18:0x (DMG kept), split-start smoke OK ('OK'); Q-350 LIVE-PROVEN (activity read
@@ -70,7 +70,9 @@ Updated: 2026-09-28 19:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   waitClock.test.ts) and Q-388 (a1d887d…, 3 commits + an uncommitted patch edit, its /tmp/q388/gate.sh still
   running). If either dies again: re-send after 18:40, same ids.
 
-- 3.0.72 = merge-072 49e2269d0: batch 2 + 2b (g072b GREEN but the waitClock guard → fixed 967ef755d) + Q-397 +
+- 3.0.72 = main 104d3d07d (final gate GREEN: vitest 4281, 43 suites, clippy, schema, wincheck). RELEASE
+  BUILDING (~/goose-builds/release-3.0.72.log). Then install both Macs → split-start → E2E #3t with NO cargo.
+  Was merge-072 49e2269d0: batch 2 + 2b (g072b GREEN but the waitClock guard → fixed 967ef755d) + Q-397 +
   Q-394a (acp_ws harness conflict hand-unioned, shared brace fixed, rustfmt ok). FINAL gate /tmp/g072c.out (RELAUNCHED 19:4x after a Q-397×Q-357 seam: the hold status line lacked
   `compaction: None` — fixed; main + Q-405 merged in; app QUIT to free the idle split's ~37 GB — swap was 80 GB)
   (scratchpad/gate072c.sh, own session). Green → ff main → release 3.0.72 → install both → E2E #3t, NO cargo.
