@@ -562,6 +562,8 @@ The chat's last way is `Holds.last_way`. It is kept after the reply ends, and a 
 - the one-turn "Answer on {next}" pick;
 - a card's Start.
 
+Q-432: the helpers around a reply (the fact check, the memory review, the title and the tool labels) never demand a load. They run on the chat's node when it serves, on a later chain entry that needs no load, or on the node this Mac serves now. Otherwise they are skipped with a logged reason (`background_work::never_switches`, `swarm_router::helper_plan`).
+
 A chain whose entries are all exhausted is a **loud refusal** that names every entry and its reason, exactly the router's "no node can serve this turn" contract. It never falls to "any node", because that would be a silent substitution (gate 1). The user-configured chain is the only fallback, and every step down it is announced.
 
 ### 6.4 The load rule: what the MLX engine does physically

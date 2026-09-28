@@ -69,6 +69,28 @@ where
     .await
 }
 
+/// Q-432: the helpers around a reply — the end-of-turn fact check and memory review, the title,
+/// the tool-call labels — never switch this Mac's MLX way. They run on the node serving now, on a
+/// node of the chat's chain that needs no load (a cloud one), or are skipped with a logged reason.
+/// The demo (2026-09-28 19:54:31) measured the cost of the other rule: a 4-second end-of-turn
+/// check took the Mac back from the chat that had just got it — a full switch and a displaced
+/// notice. The calls INSIDE a reply that decide it (compaction, a tool's permission or safety
+/// check, a tool-result digest) are the reply's own work and route as the reply does.
+pub fn never_switches(kind: BackgroundWorkKind) -> bool {
+    matches!(
+        kind,
+        BackgroundWorkKind::FactCheck
+            | BackgroundWorkKind::MemoryReview
+            | BackgroundWorkKind::Title
+            | BackgroundWorkKind::ToolLabel
+    )
+}
+
+/// The helper the current task runs, when it is one that never switches ([`never_switches`]).
+pub fn current_helper() -> Option<BackgroundWorkKind> {
+    current_kind().filter(|kind| never_switches(*kind))
+}
+
 /// The kind of background work the current task runs; `None` = the session's own turn (or no
 /// session at all).
 pub fn current_kind() -> Option<BackgroundWorkKind> {
