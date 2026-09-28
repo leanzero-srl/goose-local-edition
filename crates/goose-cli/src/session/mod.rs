@@ -866,9 +866,20 @@ impl CliSession {
         }
 
         let extensions = self.agent.get_extension_configs().await;
-        let new_provider = goose::providers::create(&current_provider_name, extensions)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create provider: {e}"))?;
+        let working_dir = self
+            .agent
+            .config
+            .session_manager
+            .get_session(&self.session_id, false)
+            .await?
+            .working_dir;
+        let new_provider = goose::providers::create_with_working_dir(
+            &current_provider_name,
+            extensions,
+            working_dir,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create provider: {e}"))?;
 
         self.agent
             .update_provider(new_provider, new_model_config, &self.session_id)
@@ -2231,7 +2242,7 @@ fn handle_agent_error(e: &anyhow::Error, is_stream_json_mode: bool) {
 
 async fn get_reasoner(
 ) -> Result<(Arc<dyn Provider>, goose_providers::model::ModelConfig), anyhow::Error> {
-    use goose::providers::create;
+    use goose::providers::create_with_working_dir;
 
     let config = Config::global();
 
@@ -2269,7 +2280,8 @@ async fn get_reasoner(
         goose::model_config::model_config_from_user_config(&provider, model.as_str())?
             .with_context_limit(planner_context_limit);
     let extensions = goose::config::extensions::get_enabled_extensions_with_config(config);
-    let reasoner = create(&provider, extensions).await?;
+    // A terminal goose works in the folder it was started in.
+    let reasoner = create_with_working_dir(&provider, extensions, std::env::current_dir()?).await?;
 
     Ok((reasoner, model_config))
 }

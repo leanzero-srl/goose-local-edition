@@ -608,14 +608,17 @@ impl SummonClient {
         )
     }
 
-    async fn get_working_dir(&self, session_id: &str) -> PathBuf {
+    /// Q-266: an unreadable session is refused, never answered from goosed's cwd (since Q-257 the
+    /// shared $HOME, no chat's folder).
+    async fn get_working_dir(&self, session_id: &str) -> Result<PathBuf, String> {
         self.context
             .session_manager
             .get_session(session_id, false)
             .await
-            .ok()
             .map(|s| s.working_dir)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+            .map_err(|e| {
+                format!("Failed to read this chat's session, so its folder is unknown: {e}")
+            })
     }
 
     async fn get_sources(&self, session_id: &str, working_dir: &Path) -> Vec<SourceEntry> {
@@ -818,7 +821,7 @@ impl SummonClient {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let working_dir = self.get_working_dir(session_id).await;
+        let working_dir = self.get_working_dir(session_id).await?;
 
         if source_name.is_none() {
             return self
@@ -1536,7 +1539,13 @@ impl SummonClient {
         recipe: &Recipe,
         session: &crate::session::Session,
     ) -> Result<TaskConfig, anyhow::Error> {
-        let (provider, model_config) = self.resolve_provider(params, recipe, session).await?;
+        let effective_working_dir = match &params.working_dir {
+            Some(dir) => resolve_working_dir(&session.working_dir, dir)?,
+            None => session.working_dir.clone(),
+        };
+        let (provider, model_config) = self
+            .resolve_provider(params, recipe, session, &effective_working_dir)
+            .await?;
 
         let mut extensions = EnabledExtensionsState::extensions_or_default(
             Some(&session.extension_data),
@@ -1576,11 +1585,6 @@ impl SummonClient {
                 max_turns
             );
         }
-
-        let effective_working_dir = match &params.working_dir {
-            Some(dir) => resolve_working_dir(&session.working_dir, dir)?,
-            None => session.working_dir.clone(),
-        };
 
         let task_config = TaskConfig::new(
             provider,
@@ -1682,6 +1686,7 @@ impl SummonClient {
         params: &DelegateParams,
         recipe: &Recipe,
         session: &crate::session::Session,
+        working_dir: &Path,
     ) -> Result<
         (
             Arc<dyn crate::providers::base::Provider>,
@@ -1693,7 +1698,14 @@ impl SummonClient {
             .ok_or_else(|| anyhow::anyhow!("No provider configured"))?;
 
         let model_config = self.resolve_model_config(params, recipe, session, &provider_name)?;
-        let provider = providers::create(&provider_name, Vec::new()).await?;
+        // Q-266: the delegate's provider works in the delegate's folder — an ACP or CLI provider
+        // (Claude Code, codex, the swarm) built without one ran in goosed's cwd, $HOME since Q-257.
+        let provider = providers::create_with_working_dir(
+            &provider_name,
+            Vec::new(),
+            working_dir.to_path_buf(),
+        )
+        .await?;
         Ok((provider, model_config))
     }
 

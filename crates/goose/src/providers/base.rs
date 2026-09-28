@@ -23,8 +23,12 @@ pub enum ProviderType {
     Custom,
 }
 
-pub(crate) fn current_working_dir() -> PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+/// The folder a provider built OUTSIDE a session works in (the model inventory, a key test, a
+/// setup probe): the named sessionless folder. Q-266: this was the process cwd — goosed's, since
+/// Q-257 the shared $HOME — and every provider a session builds takes the session's folder through
+/// `from_env_with_working_dir` instead.
+pub(crate) fn sessionless_working_dir() -> Result<PathBuf> {
+    crate::config::paths::Paths::sessionless_dir()
 }
 
 pub trait ProviderDef: ProviderDescriptor + Send + Sync {

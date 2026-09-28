@@ -277,15 +277,15 @@ impl SwarmProvider {
     /// The run's own record answers all of them, and the full stderr is already teed to
     /// `.swarm/engine-stderr.log`, so nothing is lost by not re-pasting a slice of it here.
     fn failure_summary(&self, code: Option<i32>, stderr: &str) -> String {
-        let spawn_dir = self
-            .working_dir
-            .clone()
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_default();
         // The breadcrumb is the only link from the dir we spawned in to where the run actually built —
-        // resolve_app_root redirects out of $HOME into ~/goose-builds/<run-id>.
-        let run_dir = std::fs::read_to_string(spawn_dir.join(".swarm").join("current-run.json"))
-            .ok()
+        // resolve_app_root redirects out of $HOME into ~/goose-builds/<run-id>. Q-266: the spawn
+        // dir is the session's; there is no process-cwd fallback (goosed's cwd is no chat's).
+        let run_dir = self
+            .working_dir
+            .as_ref()
+            .and_then(|spawn_dir| {
+                std::fs::read_to_string(spawn_dir.join(".swarm").join("current-run.json")).ok()
+            })
             .and_then(|s| serde_json::from_str::<Value>(&s).ok())
             .and_then(|v| {
                 let dir = v.get("dir").and_then(Value::as_str)?.to_string();
@@ -855,6 +855,16 @@ impl SwarmProvider {
                 ));
             }
         };
+        // Q-266: a provider built outside any chat (the model inventory) has no folder; a build is
+        // refused rather than spawned in goosed's cwd, since Q-257 the shared $HOME.
+        if self.working_dir.is_none() {
+            return Ok(stream_from_single_message(
+                Message::assistant().with_text(
+                    "This swarm provider was created outside any chat, so it has no folder to build in. Start the build from a chat.",
+                ),
+                ProviderUsage::new(self.name.clone(), Usage::default()),
+            ));
+        }
         let mut cmd = self.build_command(&brief, strategy.as_ref());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());

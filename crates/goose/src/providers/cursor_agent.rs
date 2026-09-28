@@ -8,7 +8,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use super::base::{
-    stream_from_single_message, ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata,
+    sessionless_working_dir, stream_from_single_message, ConfigKey, MessageStream, Provider,
+    ProviderDef, ProviderMetadata,
 };
 use super::utils::filter_extensions_from_system_prompt;
 use crate::config::search_path::SearchPaths;
@@ -30,20 +31,21 @@ pub const CURSOR_AGENT_DOC_URL: &str = "https://docs.cursor.com/en/cli/overview"
 #[derive(Debug, serde::Serialize)]
 pub struct CursorAgentProvider {
     command: PathBuf,
+    /// The session's folder: the CLI runs in it (Q-266 — never goosed's cwd).
+    working_dir: PathBuf,
     #[serde(skip)]
     name: String,
 }
 
 impl CursorAgentProvider {
-    pub async fn from_env(
-        _tls_config: Option<crate::providers::api_client::TlsConfig>,
-    ) -> Result<Self> {
+    pub async fn in_folder(working_dir: PathBuf) -> Result<Self> {
         let config = crate::config::Config::global();
         let command: String = config.get_cursor_agent_command().unwrap_or_default().into();
         let resolved_command = SearchPaths::builder().with_npm().resolve(&command)?;
 
         Ok(Self {
             command: resolved_command,
+            working_dir,
             name: CURSOR_AGENT_PROVIDER_NAME.to_string(),
         })
     }
@@ -201,6 +203,7 @@ impl CursorAgentProvider {
 
         let mut cmd = Command::new(&self.command);
         configure_subprocess(&mut cmd);
+        cmd.current_dir(&self.working_dir);
 
         if let Ok(path) = SearchPaths::builder().with_npm().path() {
             cmd.env("PATH", path);
@@ -302,9 +305,17 @@ impl ProviderDef for CursorAgentProvider {
 
     fn from_env(
         _extensions: Vec<crate::config::ExtensionConfig>,
-        tls_config: Option<crate::providers::api_client::TlsConfig>,
+        _tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
-        Box::pin(Self::from_env(tls_config))
+        Box::pin(async move { Self::in_folder(sessionless_working_dir()?).await })
+    }
+
+    fn from_env_with_working_dir(
+        _extensions: Vec<crate::config::ExtensionConfig>,
+        working_dir: PathBuf,
+        _tls_config: Option<crate::providers::api_client::TlsConfig>,
+    ) -> BoxFuture<'static, Result<Self::Provider>> {
+        Box::pin(Self::in_folder(working_dir))
     }
 }
 

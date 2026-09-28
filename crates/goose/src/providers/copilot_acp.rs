@@ -9,7 +9,7 @@ use crate::acp::{
 use crate::config::search_path::SearchPaths;
 use crate::config::{Config, GooseMode};
 use crate::providers::base::{
-    current_working_dir, ProviderDef, ProviderDescriptor, ProviderMetadata,
+    sessionless_working_dir, ProviderDef, ProviderDescriptor, ProviderMetadata,
 };
 
 pub(crate) const COPILOT_ACP_PROVIDER_NAME: &str = "copilot-acp";
@@ -48,7 +48,10 @@ impl ProviderDef for CopilotAcpProvider {
         extensions: Vec<crate::config::ExtensionConfig>,
         tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<AcpProvider>> {
-        Self::from_env_with_working_dir(extensions, current_working_dir(), tls_config)
+        Box::pin(async move {
+            Self::from_env_with_working_dir(extensions, sessionless_working_dir()?, tls_config)
+                .await
+        })
     }
 
     fn from_env_with_working_dir(

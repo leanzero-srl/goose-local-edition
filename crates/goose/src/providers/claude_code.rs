@@ -18,8 +18,8 @@ use tokio::process::Command;
 use tokio::sync::oneshot;
 
 use super::base::{
-    stream_from_single_message, ConfigKey, MessageStream, PermissionRouting, Provider, ProviderDef,
-    ProviderMetadata,
+    sessionless_working_dir, stream_from_single_message, ConfigKey, MessageStream,
+    PermissionRouting, Provider, ProviderDef, ProviderMetadata,
 };
 use super::utils::filter_extensions_from_system_prompt;
 use crate::config::paths::Paths;
@@ -259,6 +259,8 @@ impl Drop for CliProcess {
 #[derive(Debug, serde::Serialize)]
 pub struct ClaudeCodeProvider {
     command: PathBuf,
+    /// The session's folder: the CLI runs in it (Q-266 — never goosed's cwd).
+    working_dir: PathBuf,
     #[serde(skip)]
     name: String,
     /// Temp file holding MCP config JSON (auto-deleted on drop).
@@ -332,6 +334,7 @@ impl ClaudeCodeProvider {
     fn build_stream_json_command(&self) -> Command {
         let mut cmd = Command::new(&self.command);
         configure_subprocess(&mut cmd);
+        cmd.current_dir(&self.working_dir);
         // Allow goose to run inside a Claude Code session.
         cmd.env_remove("CLAUDECODE");
         cmd.arg("--input-format")
@@ -612,6 +615,17 @@ impl ProviderDef for ClaudeCodeProvider {
 
     fn from_env(
         extensions: Vec<ExtensionConfig>,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
+    ) -> BoxFuture<'static, Result<Self::Provider>> {
+        Box::pin(async move {
+            Self::from_env_with_working_dir(extensions, sessionless_working_dir()?, tls_config)
+                .await
+        })
+    }
+
+    fn from_env_with_working_dir(
+        extensions: Vec<ExtensionConfig>,
+        working_dir: PathBuf,
         _tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
         Box::pin(async move {
@@ -630,6 +644,7 @@ impl ProviderDef for ClaudeCodeProvider {
 
             Ok(Self {
                 command: resolved_command,
+                working_dir,
                 name: CLAUDE_CODE_PROVIDER_NAME.to_string(),
                 mcp_config_file,
                 cli_process: tokio::sync::OnceCell::new(),
@@ -1276,12 +1291,26 @@ mod tests {
     fn make_provider() -> ClaudeCodeProvider {
         ClaudeCodeProvider {
             command: PathBuf::from("claude"),
+            working_dir: std::env::temp_dir(),
             name: "claude-code".to_string(),
             mcp_config_file: None,
             cli_process: tokio::sync::OnceCell::new(),
             pending_confirmations: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             initial_mode: tokio::sync::Mutex::new(None),
         }
+    }
+
+    /// Q-266: since Q-257 goosed runs in $HOME for every window; the Claude Code CLI a chat drives
+    /// runs in the chat's folder.
+    #[test]
+    fn the_cli_runs_in_the_sessions_folder() {
+        let project = tempdir().unwrap();
+        let provider = ClaudeCodeProvider {
+            working_dir: project.path().to_path_buf(),
+            ..make_provider()
+        };
+        let cmd = provider.build_stream_json_command();
+        assert_eq!(cmd.as_std().get_current_dir(), Some(project.path()));
     }
 
     fn make_test_process(canned_stdout: &str) -> (CliProcess, tokio::io::DuplexStream) {

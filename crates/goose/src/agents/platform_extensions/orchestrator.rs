@@ -395,12 +395,18 @@ impl OrchestratorClient {
         let path = if raw_path.is_absolute() {
             raw_path
         } else {
+            // Q-266: a relative folder is the orchestrating chat's; with no chat it is refused,
+            // never resolved against goosed's cwd.
             let base = self
                 .context
                 .session
                 .as_ref()
                 .map(|s| s.working_dir.clone())
-                .unwrap_or_else(|| PathBuf::from("."));
+                .ok_or_else(|| {
+                    format!(
+                        "'{working_dir}' is relative and this orchestrator has no chat folder to resolve it against; give an absolute path"
+                    )
+                })?;
             base.join(&raw_path)
         };
 
@@ -417,7 +423,7 @@ impl OrchestratorClient {
         let session = self
             .context
             .session_manager
-            .create_session(path, name.clone(), SessionType::User, mode)
+            .create_session(path.clone(), name.clone(), SessionType::User, mode)
             .await
             .map_err(|e| format!("Failed to create session: {}", e))?;
 
@@ -430,9 +436,10 @@ impl OrchestratorClient {
         let parent_provider = self.get_provider().await?;
         let extensions = self.parent_extensions();
         let model_config = self.parent_model_config(parent_provider.get_name()).await?;
-        let provider = providers::create(parent_provider.get_name(), extensions)
-            .await
-            .map_err(|e| format!("Failed to create provider for new agent: {}", e))?;
+        let provider =
+            providers::create_with_working_dir(parent_provider.get_name(), extensions, path)
+                .await
+                .map_err(|e| format!("Failed to create provider for new agent: {}", e))?;
         agent
             .update_provider(provider, model_config, &session.id)
             .await
@@ -469,8 +476,19 @@ impl OrchestratorClient {
             if let Ok(parent_provider) = self.get_provider().await {
                 let extensions = self.parent_extensions();
                 let model_config = self.parent_model_config(parent_provider.get_name()).await?;
-                if let Ok(provider) =
-                    providers::create(parent_provider.get_name(), extensions).await
+                let agent_folder = self
+                    .context
+                    .session_manager
+                    .get_session(&session_id, false)
+                    .await
+                    .map_err(|e| format!("Failed to read session '{}': {}", session_id, e))?
+                    .working_dir;
+                if let Ok(provider) = providers::create_with_working_dir(
+                    parent_provider.get_name(),
+                    extensions,
+                    agent_folder,
+                )
+                .await
                 {
                     agent
                         .update_provider(provider, model_config, &session_id)

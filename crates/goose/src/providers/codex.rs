@@ -13,7 +13,9 @@ use tempfile::NamedTempFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata};
+use super::base::{
+    sessionless_working_dir, ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata,
+};
 use super::utils::filter_extensions_from_system_prompt;
 use crate::config::paths::Paths;
 use crate::config::search_path::SearchPaths;
@@ -46,6 +48,8 @@ pub const CODEX_REASONING_LEVELS: &[&str] = &["none", "low", "medium", "high", "
 #[derive(Debug, serde::Serialize)]
 pub struct CodexProvider {
     command: PathBuf,
+    /// The session's folder: `codex exec` runs in it (Q-266 — never goosed's cwd).
+    working_dir: PathBuf,
     #[serde(skip)]
     name: String,
     /// Whether to skip git repo check
@@ -150,6 +154,7 @@ impl CodexProvider {
 
         let mut cmd = Command::new(&self.command);
         configure_subprocess(&mut cmd);
+        cmd.current_dir(&self.working_dir);
 
         // Propagate extended PATH so the codex subprocess can find Node.js
         // and other dependencies (especially when launched from the desktop app
@@ -645,6 +650,17 @@ impl ProviderDef for CodexProvider {
 
     fn from_env(
         extensions: Vec<ExtensionConfig>,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
+    ) -> BoxFuture<'static, Result<Self::Provider>> {
+        Box::pin(async move {
+            Self::from_env_with_working_dir(extensions, sessionless_working_dir()?, tls_config)
+                .await
+        })
+    }
+
+    fn from_env_with_working_dir(
+        extensions: Vec<ExtensionConfig>,
+        working_dir: PathBuf,
         _tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
         Box::pin(async move {
@@ -665,6 +681,7 @@ impl ProviderDef for CodexProvider {
 
             Ok(Self {
                 command: resolved_command,
+                working_dir,
                 name: CODEX_PROVIDER_NAME.to_string(),
                 skip_git_check,
                 mcp_config_overrides: codex_mcp_config_overrides(&resolved),
@@ -932,6 +949,7 @@ mod tests {
     fn test_parse_response_plain_text() {
         let provider = CodexProvider {
             command: PathBuf::from("codex"),
+            working_dir: std::env::temp_dir(),
             name: "codex".to_string(),
             skip_git_check: false,
             mcp_config_overrides: Vec::new(),
@@ -951,6 +969,7 @@ mod tests {
     fn test_parse_response_json_events() {
         let provider = CodexProvider {
             command: PathBuf::from("codex"),
+            working_dir: std::env::temp_dir(),
             name: "codex".to_string(),
             skip_git_check: false,
             mcp_config_overrides: Vec::new(),
@@ -984,6 +1003,7 @@ mod tests {
     fn test_parse_response_empty() {
         let provider = CodexProvider {
             command: PathBuf::from("codex"),
+            working_dir: std::env::temp_dir(),
             name: "codex".to_string(),
             skip_git_check: false,
             mcp_config_overrides: Vec::new(),
@@ -1031,6 +1051,7 @@ mod tests {
     fn test_parse_response_item_completed() {
         let provider = CodexProvider {
             command: PathBuf::from("codex"),
+            working_dir: std::env::temp_dir(),
             name: "codex".to_string(),
             skip_git_check: false,
             mcp_config_overrides: Vec::new(),
@@ -1055,6 +1076,7 @@ mod tests {
     fn test_parse_response_turn_completed_usage() {
         let provider = CodexProvider {
             command: PathBuf::from("codex"),
+            working_dir: std::env::temp_dir(),
             name: "codex".to_string(),
             skip_git_check: false,
             mcp_config_overrides: Vec::new(),
@@ -1127,6 +1149,7 @@ mod tests {
     fn test_parse_response_error_event(lines: &[&str], expected: ProviderError) {
         let provider = CodexProvider {
             command: PathBuf::from("codex"),
+            working_dir: std::env::temp_dir(),
             name: "codex".to_string(),
             skip_git_check: false,
             mcp_config_overrides: Vec::new(),
@@ -1142,6 +1165,7 @@ mod tests {
     fn test_parse_response_skips_reasoning() {
         let provider = CodexProvider {
             command: PathBuf::from("codex"),
+            working_dir: std::env::temp_dir(),
             name: "codex".to_string(),
             skip_git_check: false,
             mcp_config_overrides: Vec::new(),
@@ -1267,6 +1291,7 @@ mod tests {
     fn test_parse_response_multiple_agent_messages() {
         let provider = CodexProvider {
             command: PathBuf::from("codex"),
+            working_dir: std::env::temp_dir(),
             name: "codex".to_string(),
             skip_git_check: false,
             mcp_config_overrides: Vec::new(),
