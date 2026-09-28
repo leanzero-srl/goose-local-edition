@@ -1778,6 +1778,15 @@ impl MlxEngineManager {
         drop(self.judging.write().await);
         if !supervised {
             let port = self.settings().port;
+            // Q-258: two unit tests reached this reclaim on the default port and SIGTERMed the
+            // owner's live engine four times on 2026-09-28, mid-prefill, with no goosed log line.
+            #[cfg(test)]
+            assert_ne!(
+                port,
+                EngineSettings::default().port,
+                "a unit test reached Unmount's reclaim on the default engine port — the owner's \
+                 real engine listens there; configure a free port"
+            );
             if port_has_listener(port) {
                 reclaim_port(port).await;
             }
@@ -3614,6 +3623,13 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(manager.status().await.state, "stopped");
     }
 
+    /// A port nothing on this Mac listens on. A test that can reach [`MlxEngineManager::unmount`]'s
+    /// reclaim must use one: the default (8090) is where the owner's real engine serves (Q-258).
+    fn free_port() -> u16 {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        probe.local_addr().unwrap().port()
+    }
+
     fn complete_small_model(models_dir: &std::path::Path, id: &str) {
         let model_dir = models_dir.join(id);
         std::fs::create_dir_all(&model_dir).unwrap();
@@ -4049,6 +4065,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let manager: &'static MlxEngineManager = Box::leak(Box::new(test_manager()));
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
+            port: free_port(),
             ..Default::default()
         });
         let lock = manager.load_lock_path().unwrap();
@@ -4207,6 +4224,7 @@ while True:
         let manager = test_manager();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
+            port: free_port(),
             ..Default::default()
         });
         let before = manager.unmounts_seen();
