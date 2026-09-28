@@ -14,6 +14,12 @@ import { missingUtilities } from '../lz/compileStudioCss';
 vi.mock('../../acp/acpConnection', () => ({
   getAcpClient: async () => ({ extMethod: vi.fn() }),
 }));
+vi.mock('../../acp/permissions', () => ({ listTools: vi.fn(async () => []) }));
+vi.mock('../../acp/session-extensions', () => ({
+  getSessionExtensions: vi.fn(async () => []),
+  removeSessionExtension: vi.fn(),
+  addSessionExtension: vi.fn(),
+}));
 
 const PERMANENT_CLOSER =
   'Sending the same request again will fail the same way until its cause is fixed.';
@@ -132,6 +138,45 @@ describe('Q-302: a provider error is a notice in the error colour, in plain word
     expect(document.body.textContent).toContain('The folder holds one file, panel.png.');
     expect(screen.getByTestId('provider-error-notice')).toBeTruthy();
     expect(document.body.textContent).not.toContain('Ran into this error');
+  });
+
+  it('the engine’s tool-bounds refusal keeps its own notice, the one that can act on it', () => {
+    const bounds =
+      'Ran into this error: Request failed: Bad request (400): tool schema exceeds grammar-compile bounds (max 256 tools, 65536 bytes, depth 32); reduce the tool schema or set RAPID_MLX_CONSTRAIN_TOOLS=0 to fall back to free-form tool calling..\n\n' +
+      PERMANENT_CLOSER;
+    show(
+      messageOf(
+        chunk(bounds, {
+          ...REFUSED,
+          said: 'Bad request (400): tool schema exceeds grammar-compile bounds',
+        })
+      )
+    );
+    expect(screen.getByTestId('tool-bounds-stated')).toBeTruthy();
+    expect(screen.queryByTestId('provider-error-notice')).toBeNull();
+  });
+
+  it('a cut stream (the network arm, no wrapper) keeps the partial answer above the notice', async () => {
+    const cut: ProviderErrorNotice = {
+      class: 'network',
+      transient: true,
+      said: 'Stream decode error: stream ended before completion',
+      detail: 'Network error: Stream decode error: stream ended before completion',
+    };
+    const append = show(
+      messageOf(
+        chunk(
+          'Lisbon is the capital of' + cut.detail + '\n\nPlease resend your message to try again.',
+          cut
+        )
+      )
+    );
+    expect(document.body.textContent).toContain('Lisbon is the capital of');
+    expect(screen.getByTestId('provider-error-headline').textContent).toBe(
+      'goose lost the connection to the model'
+    );
+    await userEvent.click(screen.getByTestId('provider-error-retry'));
+    expect(append).toHaveBeenCalled();
   });
 
   it('a message with no notice is untouched text', () => {

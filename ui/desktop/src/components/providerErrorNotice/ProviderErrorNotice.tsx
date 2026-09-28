@@ -25,13 +25,16 @@ const i18n = defineMessages({
 
 /**
  * The model's answer and the provider error after it (Q-302): the agent loop appends its error text
- * to whatever the model had written (agents/agent.rs, the generic provider-error arm), and the
- * error's facts ride the message's metadata. The answer is the text before the agent's wrapper —
- * with none, the whole text is the error's.
+ * to whatever the model had written (agents/agent.rs — "Ran into this error: <detail>." in the
+ * generic arm, "<detail>" in the network arm), and the same error rides the message's metadata
+ * as `detail`. The answer is the text before that error, found by the error's own words; text
+ * that does not carry them is kept whole, never cut on a guess.
  */
-export function splitProviderErrorAnswer(text: string): string {
-  const wrap = text.lastIndexOf(AGENT_ERROR_WRAP);
-  return wrap >= 0 ? text.slice(0, wrap) : '';
+export function splitProviderErrorAnswer(text: string, notice: Notice): string {
+  const at = text.lastIndexOf(notice.detail);
+  if (at < 0) return text;
+  const before = text.slice(0, at);
+  return before.endsWith(AGENT_ERROR_WRAP) ? before.slice(0, -AGENT_ERROR_WRAP.length) : before;
 }
 
 /**

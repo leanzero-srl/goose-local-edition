@@ -83,9 +83,10 @@ export default function GooseMessage({
     [linkDrop, noNode, isStreaming, splitRecord, fullText]
   );
   // Any other provider error ends the turn with its facts on the message's metadata (Q-302): the
-  // answer before it renders as written, the error as a notice in the error colour below it.
+  // answer before it renders as written, the error as a notice in the error colour below it. The
+  // engine's tool-bounds refusal is a provider error too, with a notice of its own that can act.
   const providerError =
-    linkDrop || noNode || networkCut || isStreaming
+    linkDrop || noNode || networkCut || isStreaming || parseToolBoundsError(fullText)
       ? null
       : (message.metadata.providerError ?? null);
   const displayText = linkDrop
@@ -95,7 +96,7 @@ export default function GooseMessage({
       : networkCut
         ? networkCut.answer
         : providerError
-          ? splitProviderErrorAnswer(fullText)
+          ? splitProviderErrorAnswer(fullText, providerError)
           : fullText;
   const thinkingContent = getThinkingContent(message);
 

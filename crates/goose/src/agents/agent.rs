@@ -2922,7 +2922,7 @@ impl Agent {
                                     split.as_deref(),
                                     "Please resend your message to try again.",
                                 )
-                            ).user_only();
+                            ).user_only().with_provider_error(ProviderErrorNotice::of(provider_err));
                             messages_to_add.push(message.clone());
                             yield AgentEvent::Message(message);
                             break;
