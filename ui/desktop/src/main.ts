@@ -188,6 +188,7 @@ import {
 } from './engineGlanceDesktop';
 import { createGlanceWindowPort } from './engineGlanceWindow';
 import { gooseWindowFacts, trackOutOfSight } from './engineGlanceGooseWindows';
+import { GlanceCoverage, WINDOW_LIST_JXA } from './engineGlanceCoverage';
 import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
 import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
 import {
@@ -1418,7 +1419,9 @@ const createChat = async (
     gooseServeLease = await gooseServeLeases.acquireLocal(startLocalGooseServe);
     if (!gooseServeLease) return;
     if (quitHold.isQuitting()) {
-      log.info('The app began quitting while a window waited for goose serve; the window is not made');
+      log.info(
+        'The app began quitting while a window waited for goose serve; the window is not made'
+      );
       await gooseServeLeases.releaseUnattached(gooseServeLease);
       return;
     }
@@ -2303,6 +2306,21 @@ let lastGlancePush = '';
 const glanceWindowArguments = () => [
   JSON.stringify({ ...appConfig, GOOSE_LOCALE: getConfiguredGooseLocale() }),
 ];
+// Q-313: the share of each goose window another app leaves uncovered — macOS's occlusion says
+// nothing while a sliver still shows. Read on the glance's own refreshes, never on a clock.
+const glanceCoverage = new GlanceCoverage({
+  ownPid: process.pid,
+  readWindowList: () =>
+    new Promise((resolve, reject) => {
+      execFile(
+        '/usr/bin/osascript',
+        ['-l', 'JavaScript', '-e', WINDOW_LIST_JXA],
+        (error, stdout) => (error ? reject(error) : resolve(stdout))
+      );
+    }),
+  onChanged: () => engineGlanceDesktop.refresh(),
+  warn: (message) => log.warn(message),
+});
 const engineGlanceDesktop = new EngineGlanceDesktop({
   port: createGlanceWindowPort({
     url: () => {
@@ -2320,7 +2338,10 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
   // one). The glance is not a BrowserWindow, so it never counts.
   platform: process.platform,
   gooseWindows: () =>
-    gooseWindowFacts(BrowserWindow.getAllWindows(), BrowserWindow.getFocusedWindow()),
+    gooseWindowFacts(BrowserWindow.getAllWindows(), BrowserWindow.getFocusedWindow(), (id) =>
+      glanceCoverage.visibleShareOf(id)
+    ),
+  coverage: glanceCoverage,
   savePrefs: (next) => saveGlancePrefs(next),
   // The glance is a non-activating panel: its click reaches goose with another app still in front,
   // and a window's focus() alone does not activate the app on macOS (measured on the packaged build:

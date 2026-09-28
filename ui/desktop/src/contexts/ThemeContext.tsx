@@ -14,21 +14,6 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-function getSystemTheme(): ResolvedTheme {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-// The synchronous guess. The renderer's prefers-color-scheme mirrors Chromium's NativeTheme but was
-// measured STALE in a running window (2026-09-02: OS Dark, System chosen, matchMedia false → the app
-// went light). Main's nativeTheme.shouldUseDarkColors is the truth and overrides this guess as soon
-// as `theme-set` answers (applyPreference below).
-function resolveTheme(preference: ThemePreference): ResolvedTheme {
-  if (preference === 'system') {
-    return getSystemTheme();
-  }
-  return preference;
-}
-
 function applyThemeToDocument(theme: ResolvedTheme): void {
   const toRemove = theme === 'dark' ? 'light' : 'dark';
   document.documentElement.classList.add(theme);
@@ -53,10 +38,15 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   // it, push it to main (nativeTheme.themeSource = preference), and under 'system' paint main's
   // answer — nativeTheme.shouldUseDarkColors — over the renderer's guess. A fixed Light/Dark is
   // final on the spot, exactly as before.
+  //
+  // Under 'system' the renderer's prefers-color-scheme is NEVER read: it was measured stale twice
+  // (2026-09-02, and Q-300 on 3.0.68 — OS Dark, System chosen, matchMedia false; clicking System
+  // painted dark, a viewport change painted light again through a matchMedia 'change' listener).
+  // The paint holds until main answers.
   const applyPreference = useCallback((preference: ThemePreference) => {
     preferenceRef.current = preference;
     setUserThemePreferenceState(preference);
-    setResolvedTheme(resolveTheme(preference));
+    if (preference !== 'system') setResolvedTheme(preference);
     void (async () => {
       try {
         const { dark } = await window.electron.setThemeSource(preference);
@@ -88,7 +78,6 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const setUserThemePreference = useCallback(
     async (preference: ThemePreference) => {
       applyPreference(preference);
-      const resolved = resolveTheme(preference);
 
       // Save to settings
       try {
@@ -102,11 +91,12 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         console.warn('[ThemeContext] Failed to save theme settings:', error);
       }
 
-      // Broadcast to other windows via Electron
+      // Broadcast to other windows via Electron. Under 'system' each window asks main itself, so
+      // the payload carries the preference, never a resolved guess.
       window.electron?.broadcastThemeChange({
-        mode: resolved,
+        mode: preference,
         useSystemTheme: preference === 'system',
-        theme: resolved,
+        theme: preference,
       });
     },
     [applyPreference]
@@ -121,21 +111,6 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       setResolvedTheme(dark ? 'dark' : 'light');
     });
   }, []);
-
-  // The renderer's own prefers-color-scheme change, kept beside main's event — when it fires it
-  // carries a fresh value, and it is the only signal in a window whose bridge is gone.
-  useEffect(() => {
-    if (userThemePreference !== 'system') return;
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-
-    const handleChange = () => {
-      setResolvedTheme(getSystemTheme());
-    };
-
-    mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
-  }, [userThemePreference]);
 
   // Listen for theme changes from other windows (via Electron IPC)
   useEffect(() => {

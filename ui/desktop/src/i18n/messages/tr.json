@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, one {tok/s okuma, # istem} other {tok/s okuma, # istemin medyanı}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "Okuma {low}–{high} tok/s, çalıştırmaların orta yarısı"
+    "defaultMessage": "Okuma {low}–{high} tok/s, istemlerin orta yarısı"
   },
   "engineGlance.readRate": {
     "defaultMessage": "bu istemi okurken tok/s"
@@ -10558,5 +10558,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "Daha az göster"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "Çalışıyor"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

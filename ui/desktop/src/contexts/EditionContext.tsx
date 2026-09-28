@@ -98,6 +98,14 @@ export function applyEditionToDocument(edition: Edition): void {
   }
 }
 
+/**
+ * A chat that named the window (Q-318) hands it back to the brand: the edition the provider last
+ * stamped (the cache is written with every change), so the swap above recognises the title again.
+ */
+export function restoreBrandTitle(): void {
+  document.title = BRAND_TITLE[getCachedEdition()];
+}
+
 function cacheEdition(edition: Edition): void {
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, edition);

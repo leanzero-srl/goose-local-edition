@@ -147,6 +147,23 @@ describe('EngineGlanceCard — the Engine tile, small', () => {
     ]);
   });
 
+  it('More open: the reading range counts prompts, as every other read rate does (Q-314)', () => {
+    const push: GlancePush = {
+      ...splitReading,
+      engine: {
+        ...splitReading.engine,
+        ranges: { writing: { low: 10.1, high: 11 }, reading: { low: 88.7, high: 202 } },
+      },
+    };
+    renderCard(push, { expanded: true });
+    const details = screen.getByTestId('engine-glance-details');
+    expect(
+      within(details).getByText('Reading 88.7–202 tok/s, middle half of prompts')
+    ).toBeTruthy();
+    expect(within(details).getByText('Writing 10.1–11.0 tok/s, middle half of runs')).toBeTruthy();
+    expect(details.textContent).not.toContain('Reading 88.7–202 tok/s, middle half of runs');
+  });
+
   it('a click on the card opens the Engine; the chat line opens that chat instead', () => {
     const props = renderCard(splitReading);
     fireEvent.click(screen.getByTestId('engine-glance-open'));

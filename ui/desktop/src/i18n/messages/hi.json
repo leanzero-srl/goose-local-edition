@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, one {tok/s पढ़ना, # प्रॉम्प्ट} other {tok/s पढ़ना, # प्रॉम्प्ट का माध्यिका}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "पढ़ना {low}–{high} tok/s, रन का मध्य आधा"
+    "defaultMessage": "पढ़ना {low}–{high} tok/s, प्रॉम्प्ट का मध्य आधा"
   },
   "engineGlance.readRate": {
     "defaultMessage": "इस प्रॉम्प्ट को पढ़ते हुए tok/s"
@@ -10558,5 +10558,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "कम दिखाओ"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "चल रहा है"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

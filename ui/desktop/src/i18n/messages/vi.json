@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, one {tok/s đọc, # prompt} other {tok/s đọc, trung vị của # prompt}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "Đọc {low}–{high} tok/s, nửa giữa các lần chạy"
+    "defaultMessage": "Đọc {low}–{high} tok/s, nửa giữa các prompt"
   },
   "engineGlance.readRate": {
     "defaultMessage": "tok/s khi đọc prompt này"
@@ -10558,5 +10558,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "Hiện ít hơn"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "Đang chạy"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

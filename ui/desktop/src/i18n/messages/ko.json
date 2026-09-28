@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, other {tok/s 읽기, 프롬프트 #개의 중앙값}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "읽기 {low}–{high} tok/s, 실행의 가운데 절반"
+    "defaultMessage": "읽기 {low}–{high} tok/s, 프롬프트의 가운데 절반"
   },
   "engineGlance.readRate": {
     "defaultMessage": "이 프롬프트를 읽는 tok/s"
@@ -10558,5 +10558,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "간략히 보기"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "실행 중"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

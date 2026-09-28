@@ -14,6 +14,8 @@ import { defineMessages, useIntl } from '../i18n';
 import { acpExportSession, acpForkSession, acpRenameSession } from '../acp/sessions';
 import { getSessionDisplayName } from '../sessions';
 import { listedTitle, useListedName } from './sessionActivity/sessionActivityStore';
+import { useSessionWindowTitle } from './sessionActivity/windowTitle';
+import { useHeaderInsets } from './Layout/headerChrome';
 import CreateEditRecipeModal from './recipes/CreateEditRecipeModal';
 import { createRecipeFromSession } from '../recipe/recipe_management';
 import type { Recipe } from '../recipe';
@@ -133,12 +135,17 @@ const i18n = defineMessages({
 // nav in pass A. Hidden, not deleted: flip to bring the entry (and its modal flow) back.
 const SHOW_MAKE_RECIPE = false;
 
+/** px kept between the title and the chrome beside it — the Studio's 8px rhythm (DESIGN.md). */
+const TITLE_CLEARANCE = 8;
+
 const LONG_STRING_THRESHOLD = 180;
 const STRING_PREVIEW_START = 96;
 const STRING_PREVIEW_END = 56;
 
 interface SessionActionsHeaderProps {
   session?: Session;
+  /** This chat is the one on screen: it names the window (Q-318). */
+  active: boolean;
   onSessionChange: (updater: (session: Session) => Session) => void;
   className?: string;
 }
@@ -334,6 +341,7 @@ function JsonTree({
 
 export default function SessionActionsHeader({
   session,
+  active,
   onSessionChange,
   className,
 }: SessionActionsHeaderProps) {
@@ -355,6 +363,9 @@ export default function SessionActionsHeader({
     () => (session ? listedTitle(getSessionDisplayName(session), listed) : ''),
     [session, listed]
   );
+  useSessionWindowTitle(active, session?.id, title);
+  const [band, setBand] = useState<HTMLDivElement | null>(null);
+  const insets = useHeaderInsets(band);
 
   const handleMakeRecipe = useCallback(async () => {
     if (!session || isMakingRecipe) return;
@@ -485,13 +496,24 @@ export default function SessionActionsHeader({
 
   return (
     <>
+      {/* Q-315: the band spans the chat; each side column is at least as wide as the chrome floating
+          over that side (the toggle + "N needs you" on the left, the brand chip on the right) and
+          otherwise the two are equal — so the title is centred while it fits, shifted when one side
+          crowds it, and truncated when both do. Only the title takes clicks; the rest of the band
+          stays the window's drag region. */}
       <div
+        ref={setBand}
+        data-testid="session-title-band"
         className={cn(
-          'no-drag absolute top-[14px] left-1/2 max-w-[min(36rem,calc(100vw-13rem))] -translate-x-1/2',
+          'pointer-events-none absolute inset-x-0 top-[14px] grid',
           LAYER.chrome,
           className
         )}
+        style={{
+          gridTemplateColumns: `minmax(${insets.left + TITLE_CLEARANCE}px, 1fr) minmax(0, max-content) minmax(${insets.right + TITLE_CLEARANCE}px, 1fr)`,
+        }}
       >
+        <span aria-hidden />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             {/* Pass E: renaming was hard to hit — the whole title is one generous click target
@@ -499,11 +521,11 @@ export default function SessionActionsHeader({
             <button
               type="button"
               data-testid="session-title-trigger"
-              className="flex h-9 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-4 py-2 text-text-primary transition-colors hover:bg-background-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active"
+              className="no-drag pointer-events-auto flex h-9 min-w-0 max-w-[36rem] cursor-pointer items-center gap-1.5 rounded-md px-4 py-2 text-text-primary transition-colors hover:bg-background-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active"
               aria-label={intl.formatMessage(i18n.actionsLabel)}
             >
               <span className={cx('truncate', TYPE.h2)}>{title}</span>
-              <ChevronDown className="size-4 text-text-secondary" />
+              <ChevronDown className="size-4 shrink-0 text-text-secondary" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="center" className="w-56">

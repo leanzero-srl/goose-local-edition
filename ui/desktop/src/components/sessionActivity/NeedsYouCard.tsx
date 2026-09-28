@@ -133,10 +133,13 @@ export function QuestionCard({ item, index, total, busy, onAnswer, onDismiss }: 
                   disabled={locked}
                   onClick={() => answer(option)}
                   className={cx(
-                    'inline-flex h-7 items-center border border-lz-border-strong bg-lz-surface px-2.5 text-[12px] text-lz-ink hover:bg-lz-surface-2',
+                    // Q-315: an option is a sentence; at 460 px it wraps, so the chip grows in
+                    // height with its text (never a fixed h-7 the text spills out of) and takes the
+                    // chip radius, which holds two lines where the 999 pill clipped them.
+                    'inline-flex min-h-7 max-w-full items-center whitespace-normal break-words border border-lz-border-strong bg-lz-surface px-2.5 py-1 text-left text-[12px] text-lz-ink hover:bg-lz-surface-2',
                     'disabled:pointer-events-none disabled:bg-lz-surface-2 disabled:text-lz-ink-3',
                     WEIGHT.medium,
-                    RADIUS.pill,
+                    RADIUS.control,
                     FOCUS,
                     MOTION
                   )}

@@ -8,6 +8,7 @@ import {
 import {
   clearOfGoose,
   cornerBounds,
+  coverageWanted,
   desktopGlanceVisible,
   glanceLive,
   gooseOnScreen,
@@ -101,6 +102,12 @@ export interface GlanceDesktopDeps {
   platform: string;
   /** Every goose window (never the glance): can it be seen, is it focused, where is it. */
   gooseWindows(): GooseWindowFacts[];
+  /**
+   * The window server's list, read for the share of each goose window another app leaves uncovered
+   * (Q-313, engineGlanceCoverage.ts): `measure` while it can decide the glance, `forget` otherwise.
+   * A read that changes a share calls refresh() back.
+   */
+  coverage: { measure(): void; forget(): void };
   savePrefs(next: GlancePrefs): void;
   openEngine(): void;
   openSession(sessionId: string): void;
@@ -163,6 +170,9 @@ export class EngineGlanceDesktop {
     const { port } = this.deps;
     const push = this.push;
     const windows = this.deps.gooseWindows();
+    if (coverageWanted(this.deps.platform, push, this.snoozed, windows))
+      this.deps.coverage.measure();
+    else this.deps.coverage.forget();
     const visible =
       push != null &&
       desktopGlanceVisible(push, {

@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, other {tok/s 読み込み、# プロンプトの中央値}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "読み込み {low}–{high} tok/s、実行の中央半分"
+    "defaultMessage": "読み込み {low}–{high} tok/s、プロンプトの中央半分"
   },
   "engineGlance.readRate": {
     "defaultMessage": "このプロンプトの読み込み tok/s"
@@ -10558,5 +10558,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "表示を減らす"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "実行中"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

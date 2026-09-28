@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GLANCE_COVERED_SHARE,
   cornerBounds,
+  coverageWanted,
   desktopGlanceVisible,
   dockRestorable,
   dockShown,
@@ -11,6 +13,7 @@ import {
   nearestCorner,
   placeGlance,
   snoozeAfter,
+  visibleShare,
   workingDisplay,
   type GlanceDisplay,
   type GooseWindowFacts,
@@ -128,6 +131,7 @@ const gooseWin = (over: Partial<GooseWindowFacts> = {}): GooseWindowFacts => ({
   onScreen: true,
   focused: false,
   bounds: { x: 100, y: 100, width: 940, height: 800 },
+  visibleShare: null,
   ...over,
 });
 
@@ -247,6 +251,109 @@ describe('placeGlance — on the working display, never over goose (Q-226)', () 
     expect(clearOfGoose(r, [gooseWin({ bounds: { x: 100, y: 0, width: 100, height: 100 } })])).toBe(
       true
     );
+  });
+});
+
+// Q-313, measured by the 3.0.68 critic: goose's window on the built-in display, Windows App's
+// 2048×1280 window over it leaving an 8 px column and a 9 px row — an L of 28,744 px² (1.08%).
+const Q313_GOOSE = { x: 0, y: 40, width: 2056, height: 1289 };
+const Q313_WINDOWS_APP = { x: 8, y: 49, width: 2048, height: 1280 };
+
+describe('Q-313 — a goose window covered but for a sliver counts as covered', () => {
+  it('visibleShare: the critic’s L is 1.08% of the window — under the covered share', () => {
+    const share = visibleShare(Q313_GOOSE, [Q313_WINDOWS_APP]);
+    expect(share).toBeCloseTo(28_744 / (2056 * 1289), 10);
+    expect(share).toBeLessThan(GLANCE_COVERED_SHARE);
+  });
+
+  it('visibleShare: overlapping covers are counted once, rects off the window not at all', () => {
+    const t = { x: 0, y: 0, width: 100, height: 100 };
+    expect(visibleShare(t, [])).toBe(1);
+    expect(
+      visibleShare(t, [
+        { x: 0, y: 0, width: 60, height: 100 },
+        { x: 40, y: 0, width: 60, height: 100 },
+      ])
+    ).toBe(0);
+    expect(
+      visibleShare(t, [
+        { x: 0, y: 0, width: 50, height: 100 },
+        { x: 25, y: 0, width: 50, height: 100 },
+      ])
+    ).toBe(0.25);
+    expect(visibleShare(t, [{ x: 200, y: 200, width: 50, height: 50 }])).toBe(1);
+  });
+
+  it('goose behind another app with a sliver left: NOT seen — the desktop window shows', () => {
+    const sliver = gooseWin({
+      bounds: Q313_GOOSE,
+      visibleShare: visibleShare(Q313_GOOSE, [Q313_WINDOWS_APP]),
+    });
+    expect(gooseOnScreen('darwin', [sliver])).toBe(false);
+    expect(
+      desktopGlanceVisible(writing, {
+        gooseOnScreen: gooseOnScreen('darwin', [sliver]),
+        snoozed: false,
+      })
+    ).toBe(true);
+  });
+
+  it('half covered, or not read: seen, as before (Q-226)', () => {
+    expect(gooseOnScreen('darwin', [gooseWin({ visibleShare: 0.5 })])).toBe(true);
+    expect(gooseOnScreen('darwin', [gooseWin({ visibleShare: GLANCE_COVERED_SHARE })])).toBe(true);
+    expect(gooseOnScreen('darwin', [gooseWin({ visibleShare: null })])).toBe(true);
+  });
+
+  it('goose in front: a share read while it was behind never counts', () => {
+    expect(gooseOnScreen('darwin', [gooseWin({ focused: true, visibleShare: 0.01 })])).toBe(true);
+    expect(
+      gooseOnScreen('darwin', [
+        gooseWin({ visibleShare: 0.01 }),
+        gooseWin({ focused: true, onScreen: true }),
+      ])
+    ).toBe(true);
+  });
+
+  it('placement: a window covered but for a sliver never pushes the card off its display', () => {
+    const sliver = gooseWin({ bounds: BUILT_IN.workArea, visibleShare: 0.0108 });
+    const p = placeGlance({
+      displays: DISPLAYS,
+      working: BUILT_IN,
+      remembered: null,
+      defaultCorner: 'bottom-right',
+      windows: [sliver],
+      size: { width: 300, height: 180 },
+      margin: 16,
+    });
+    expect(p).toMatchObject({ displayId: 1, corner: 'bottom-right' });
+    expect(clearOfGoose(p!.bounds, [sliver])).toBe(true);
+  });
+
+  it('coverageWanted: macOS, live, goose behind another app and still reported on screen — nothing else', () => {
+    const behind = [gooseWin()];
+    expect(coverageWanted('darwin', writing, false, behind)).toBe(true);
+    expect(coverageWanted('linux', writing, false, behind)).toBe(false);
+    expect(coverageWanted('darwin', null, false, behind)).toBe(false);
+    expect(coverageWanted('darwin', idle, false, behind)).toBe(false);
+    expect(coverageWanted('darwin', writing, true, behind)).toBe(false);
+    expect(
+      coverageWanted(
+        'darwin',
+        { ...writing, prefs: { ...writing.prefs, desktop: 'off' } },
+        false,
+        behind
+      )
+    ).toBe(false);
+    expect(coverageWanted('darwin', writing, false, [gooseWin({ focused: true })])).toBe(false);
+    expect(coverageWanted('darwin', writing, false, [gooseWin({ onScreen: false })])).toBe(false);
+    expect(
+      coverageWanted(
+        'darwin',
+        { ...writing, prefs: { ...writing.prefs, desktop: 'busy' } },
+        false,
+        behind
+      )
+    ).toBe(true);
   });
 });
 

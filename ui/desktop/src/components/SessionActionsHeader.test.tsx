@@ -42,7 +42,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 const mount = (session: Session) =>
   render(
     <IntlTestWrapper>
-      <SessionActionsHeader session={session} onSessionChange={vi.fn()} />
+      <SessionActionsHeader session={session} active={false} onSessionChange={vi.fn()} />
     </IntlTestWrapper>
   );
 

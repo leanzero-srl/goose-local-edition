@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, one {tok/s en lecture, # prompt} other {tok/s en lecture, médiane de # prompts}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "Lecture {low}–{high} tok/s, moitié centrale des exécutions"
+    "defaultMessage": "Lecture {low}–{high} tok/s, moitié centrale des prompts"
   },
   "engineGlance.readRate": {
     "defaultMessage": "tok/s pour lire ce prompt"
@@ -10558,5 +10558,11 @@
   },
   "userMessage.showLess": {
     "defaultMessage": "Afficher moins"
+  },
+  "windowTitle.running": {
+    "defaultMessage": "En cours"
+  },
+  "windowTitle.withState": {
+    "defaultMessage": "{session} — {state}"
   }
 }

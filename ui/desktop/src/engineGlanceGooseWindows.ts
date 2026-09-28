@@ -13,9 +13,9 @@ import type { GooseWindowFacts, Rect } from './utils/engineGlanceRules';
  *  - covered with ~60 px or more to spare, or another app full screen on its display → 'hide',
  *    `document.visibilityState` hidden; uncovered / full screen left → 'show', visible;
  *  - minimized → 'minimize' + 'hide'; restored → 'restore' + 'show'.
- * A window covered with only a sliver to spare still counts as seen (macOS keeps it visible while
- * any part, rounded corners included, can show); the card then stays away, as it does for a window
- * in plain view.
+ * A window covered with only a sliver to spare is still visible to macOS (it keeps it visible while
+ * any part, rounded corners included, can show) — so its share left uncovered is read from the
+ * window server's list instead (engineGlanceCoverage.ts, Q-313) and carried as `visibleShare`.
  */
 
 /** The BrowserWindow surface this reads — Electron-free, so it is tested as data. */
@@ -25,6 +25,8 @@ export interface GooseWindowLike {
   isVisible(): boolean;
   isMinimized(): boolean;
   getBounds(): Rect;
+  /** "window:<CGWindowID>:0" on macOS — the key into the window server's list. */
+  getMediaSourceId(): string;
 }
 
 const outOfSight = new WeakSet<GooseWindowLike>();
@@ -37,7 +39,8 @@ export function trackOutOfSight(win: GooseWindowLike): void {
 
 export function gooseWindowFacts(
   windows: readonly GooseWindowLike[],
-  focused: GooseWindowLike | null
+  focused: GooseWindowLike | null,
+  visibleShareOf: (mediaSourceId: string) => number | null
 ): GooseWindowFacts[] {
   return windows
     .filter((w) => !w.isDestroyed())
@@ -45,5 +48,6 @@ export function gooseWindowFacts(
       onScreen: w.isVisible() && !w.isMinimized() && !outOfSight.has(w),
       focused: w === focused,
       bounds: w.getBounds(),
+      visibleShare: visibleShareOf(w.getMediaSourceId()),
     }));
 }
