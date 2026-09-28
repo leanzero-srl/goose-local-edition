@@ -1,5 +1,5 @@
 use anyhow::Result;
-use goose::providers::utils::init_goose_request_log;
+use goose::providers::utils::{init_goose_request_log, sweep_request_log_leftovers};
 use tracing_subscriber::util::SubscriberInitExt;
 
 /// Sets up the logging infrastructure for the server.
@@ -15,5 +15,6 @@ pub fn setup_logging(name: Option<&str>) -> Result<()> {
     };
     let subscriber = goose::logging::build_logging_subscriber(&config)?;
     subscriber.try_init()?;
+    sweep_request_log_leftovers();
     Ok(())
 }

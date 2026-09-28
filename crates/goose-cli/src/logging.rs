@@ -1,5 +1,5 @@
 use anyhow::Result;
-use goose::providers::utils::init_goose_request_log;
+use goose::providers::utils::{init_goose_request_log, sweep_request_log_leftovers};
 use std::sync::OnceLock;
 
 // Used to ensure we only set up tracing once
@@ -24,6 +24,7 @@ pub fn setup_logging(name: Option<&str>) -> &'static Result<()> {
         subscriber
             .try_init()
             .map_err(|e| anyhow::anyhow!("Failed to set global subscriber: {}", e))?;
+        sweep_request_log_leftovers();
         Ok(())
     })
 }
