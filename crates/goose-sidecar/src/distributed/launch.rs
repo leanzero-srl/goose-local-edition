@@ -156,8 +156,17 @@ pub enum RankProgram {
     /// entry would reuse a different prefix and run a different number of prefill steps.
     /// `mlxLmServerPrefillYield` (a 3.0.66 requester) still reads, with `keep_conversation_prefix`
     /// off: that requester's ranks keep the newest "user" entry alike.
+    ///
+    /// Tagged `mlxLmServerStableHead` since Q-347: `keep_stable_head` makes every rank end a
+    /// prefill segment where an agent request's system prompt and tools end, and keep that entry
+    /// after the conversation prefix (`rank_boundary.py` `cut_at_head`). A peer that did not cut
+    /// there would run a different number of prefill steps (the collectives no longer pair up),
+    /// and one that evicted it would reuse a different prefix. `mlxLmServerConversationPrefix` (a
+    /// 3.0.69 requester) still reads, with `keep_stable_head` off: that requester's ranks cut and
+    /// keep no head alike.
     #[serde(
-        rename = "mlxLmServerConversationPrefix",
+        rename = "mlxLmServerStableHead",
+        alias = "mlxLmServerConversationPrefix",
         alias = "mlxLmServerPrefillYield",
         alias = "mlxLmServerNewestPrefix",
         alias = "mlxLmServerRowProcessors",
@@ -231,9 +240,17 @@ pub enum RankProgram {
         /// Every rank's prompt cache keeps the stable prefix the latest request naming its
         /// transient tail cut (goose's agent requests) while anything else is left to evict, and
         /// rank 0 admits a request into a live batch only while the batch leaves room for it
-        /// (`rank_boundary.py` `ConversationPrefix`, Q-294). Supersedes `keep_newest_prefix`.
+        /// (`rank_boundary.py` `KeptEntry`, Q-294). Supersedes `keep_newest_prefix`.
         #[serde(default)]
         keep_conversation_prefix: bool,
+        /// Every rank ends a prefill segment where an agent request's stable head ends — its
+        /// system prompt and tools, where mlx_lm's own system segment would end — keeps that entry
+        /// while anything but the conversation prefix is left to evict, and rank 0 admits a
+        /// request into a live batch only while the batch leaves room for it beside the prefix
+        /// (`rank_boundary.py` `cut_at_head`, Q-347): a request whose messages changed — the first
+        /// after a compaction, a new chat with the same tools — reads the head from the cache.
+        #[serde(default)]
+        keep_stable_head: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -443,6 +460,7 @@ pub fn rank_specs(
             keep_newest_prefix: true,
             prefill_step_yields: true,
             keep_conversation_prefix: true,
+            keep_stable_head: true,
             sampling_defaults: Box::default(),
         }
     })
@@ -1102,6 +1120,7 @@ pub(crate) mod tests {
                 keep_newest_prefix: true,
                 prefill_step_yields: true,
                 keep_conversation_prefix: true,
+                keep_stable_head: true,
                 sampling_defaults: _,
             }
         ));
@@ -2916,6 +2935,8 @@ print("GOOSE_TEST " + json.dumps({
     /// ends (a tool message too), a user message that held only the tail goes whole, a tail that
     /// is not that message's exact end is named instead of guessed at, and the boundary becomes a
     /// segment end mlx_lm snapshots — with nothing past it but one segment of volatile text.
+    /// Q-347: the stable head ends where mlx_lm's own system segment would, becomes a segment end
+    /// on a tool step too, and is kept after the conversation prefix.
     #[test]
     fn a_rank_keeps_the_prefix_before_the_transient_tail() {
         let checks = r#"
@@ -2977,7 +2998,16 @@ def oldest_user_first(order):
             return order._lrus[kind].popleft()
 
 
-prefix = ConversationPrefix()
+def upstream_order(order):
+    """mlx_lm 0.31.3's `CacheOrder.pop`: by type counts, assistant, then user, then system."""
+    kinds = ("assistant", "user", "system")
+    for a, b in zip(kinds, kinds[1:]):
+        if order._lrus[a] and len(order._lrus[a]) >= len(order._lrus[b]):
+            return order._lrus[a].popleft()
+    return order._lrus["system"].popleft()
+
+
+prefix = KeptEntry()
 conversation = list(range(60))
 prefix.cut(conversation)
 prefix.inserted(list(range(59)) + [-1], 7)
@@ -2988,18 +3018,65 @@ assert prefix.tokens is key and prefix.nbytes == 42 and not prefix.cut_keys
 order = Order()
 order._lrus["user"].extend([("m", older), ("m", key), ("m", helper)])
 order._lrus["system"].append(("m", [-7] * 5))
-assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix) == ("m", older)
+assert pop_keeping(order, oldest_user_first, (prefix,)) == ("m", older)
 assert [t for _, t in order._lrus["user"]] == [key, helper], "held back in place"
-assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix) == ("m", helper)
-assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix)[1] == [-7] * 5
-assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix) == ("m", key)
+assert pop_keeping(order, oldest_user_first, (prefix,)) == ("m", helper)
+assert pop_keeping(order, oldest_user_first, (prefix,))[1] == [-7] * 5
+assert pop_keeping(order, oldest_user_first, (prefix,)) == ("m", key)
 assert prefix.tokens is None and prefix.nbytes == 0, "the last entry goes when the bound needs it"
 prefix.cut(conversation)
 prefix.inserted(key, 42)
 order._lrus["user"].append(("m", key[:]))
 order._lrus["assistant"].append(("m", [-8] * 3))
-assert pop_keeping_conversation_prefix(order, oldest_user_first, prefix)[1] == key
+assert pop_keeping(order, oldest_user_first, (prefix,))[1] == key
 assert prefix.tokens is None, "a key the cache replaced is no longer held"
+
+# Q-347: the stable head. mlx_lm's probe is the leading system messages + an empty user turn.
+chat = [{"role": "system", "content": "s"}, {"role": "user", "content": "q"}, {"role": "tool", "content": "r"}]
+assert head_probe(chat) == [chat[0], {"role": "user", "content": ""}]
+assert head_probe(chat[1:]) is None, "a conversation opening on no system message has no head"
+assert head_end(prompt, prompt[:40] + [-1] * 5) == 40
+assert head_end(prompt, prompt[:40]) == 0, "mlx_lm cuts no system segment when nothing differs"
+assert head_end(prompt[:40], prompt) == 0
+# A request ending on a user message: mlx_lm already ends its system segment at the head.
+cut, kinds = cut_at_boundary([system, context, think], ["system", "user", "assistant"], 70)
+assert cut_at_head(cut, kinds, 30) == (cut, kinds), "upstream's own cut, unchanged"
+# A tool step (one segment): the head becomes a "system" segment end before the boundary.
+cut, kinds = cut_at_head(*cut_at_boundary([prompt], ["assistant"], 70), 30)
+assert cut == [prompt[:30], prompt[30:70], prompt[70:]], cut
+assert kinds == ["system", "user", "assistant"], kinds
+cut, kinds = cut_at_head([prompt], ["assistant"], 30)
+assert cut == [prompt[:30], prompt[30:]] and kinds == ["system", "assistant"], "no boundary to keep"
+for outside in (0, 100, 130):
+    assert cut_at_head([prompt], ["assistant"], outside) == ([prompt], ["assistant"]), outside
+
+# Both kept: the conversation prefix (most precious), then the head; every other entry goes first,
+# each held back in place; with only the two left the head goes first, then the prefix.
+conversation, head = KeptEntry(), KeptEntry()
+long_key, head_key = list(range(80)), list(range(30))
+conversation.cut(long_key)
+head.cut(head_key)
+conversation.inserted(long_key, 80)
+head.inserted(head_key, 30)
+assert (conversation.tokens, head.tokens) == (long_key, head_key)
+order = Order()
+helper_system, helper_user, end = [-9] * 4, [-9] * 6, list(range(90))
+order._lrus["system"].extend([("m", head_key), ("m", helper_system)])
+order._lrus["user"].extend([("m", long_key), ("m", helper_user)])
+order._lrus["assistant"].append(("m", end))
+kept = (conversation, head)
+evicted = [pop_keeping(order, upstream_order, kept)[1] for _ in range(3)]
+assert evicted == [end, helper_user, helper_system], evicted
+assert [t for _, t in order._lrus["system"]] == [head_key]
+assert [t for _, t in order._lrus["user"]] == [long_key]
+assert pop_keeping(order, upstream_order, kept)[1] is head_key and head.tokens is None
+assert conversation.tokens is long_key, "the prefix outlives the head"
+assert pop_keeping(order, upstream_order, kept)[1] is long_key and conversation.tokens is None
+# A head the cache dropped another way (a trimmable entry's prefixes) is forgotten, not reserved.
+head.cut(head_key)
+head.inserted(head_key, 30)
+forget_dropped(order, kept)
+assert head.tokens is None and head.nbytes == 0
 print("ok")
 "#;
         let out = std::process::Command::new("/usr/bin/python3")
@@ -3159,9 +3236,9 @@ def replay(keep, gated):
     held, and the cache it meets. `keep`: the conversation rule's eviction (else Q-182's);
     `gated`: rank 0's admission leaves room for the conversation prefix."""
     LRUPromptCache.CacheOrder.pop = upstream_pop
-    prefix = ConversationPrefix()
+    prefix = KeptEntry()
     if keep:
-        keep_conversation_prefix(LRUPromptCache.CacheOrder, prefix)
+        keep_entries(LRUPromptCache.CacheOrder, prefix)
     else:
         keep_newest_prefix(LRUPromptCache.CacheOrder)
     cache = LRUPromptCache(max_size=limit // batch_kv_charge(p, 1, 256), max_bytes=limit)
@@ -3209,8 +3286,8 @@ LABEL_SYSTEM, LABEL, LABEL_OUT = 46, 154, 9
 
 def replay_3h(steps):
     LRUPromptCache.CacheOrder.pop = upstream_pop
-    prefix = ConversationPrefix()
-    keep_conversation_prefix(LRUPromptCache.CacheOrder, prefix)
+    prefix = KeptEntry()
+    keep_entries(LRUPromptCache.CacheOrder, prefix)
     cache = LRUPromptCache(max_size=limit // batch_kv_charge(p, 1, 256), max_bytes=limit)
 
     def insert(tokens, layers, cache_type="assistant"):
@@ -3533,6 +3610,518 @@ os._exit(0)
             "the state restored at the boundary continues exactly as a cold read of the prompt"
         );
         assert_eq!(seen["not_a_string"][0], 400, "{}", seen["not_a_string"]);
+    }
+
+    /// Q-347 through the REAL mlx_lm 0.31.3 `LRUPromptCache`, at E2E #3p's measured sizes (the 27B
+    /// over 2 ranks: 32,768 B of KV per token + 76,972,032 B of state, the 11,830,886,400 B plan of
+    /// #3p's RANK_ADMISSION lines). The chat's stable head is 40,399 tokens — the 27B's own template
+    /// over the Q-342 captures renders one head (system prompt + 81 tools) for req6, req8 and the
+    /// post-compaction request — so its entry holds 1,400,766,464 B (#3p 12:35:27: system 1
+    /// sequence, 1.40 GB). The session opens cold at 41,137 tokens (10:54:29), grows by agent steps
+    /// each beside its tool label (Q-182's 46-token system segment), and every turn ends in the
+    /// helper burst of 12:21:19 (the CANCELLED lines' 2,027 … 10,751 … 7,250 tokens, each a fact
+    /// check's 380-token system segment and a context segment ending 384 tokens early) until the
+    /// conversation prefix reaches #3p's 4.74 GB; then the compaction (Q-342's shape: the chat's
+    /// request + the instruction) and the first request of the compacted chat (44,053 tokens). The
+    /// NEGATIVE CONTROL is the 3.0.69 rule (the conversation prefix kept, no head): it reads 0 of
+    /// 44,053, #3p's own number. Holding the head in eviction alone, or leaving it room at
+    /// admission alone, still reads 0; both read the whole head, with no agent step reading less,
+    /// no insert past the plan, and at most two helpers of a burst waiting for the batch to drain.
+    #[test]
+    fn a_compacted_chat_reads_its_head_at_e2e_3p_sizes_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models.cache import LRUPromptCache
+
+p = {"kv_bytes_per_token": 32768, "sequence_state_bytes": 76972032, "batch_transient_ratio": 2.2}
+limit = 11830886400
+
+
+class Layer:
+    def __init__(self, tokens):
+        self.nbytes = batch_kv_charge(p, 1, tokens)
+
+    def is_trimmable(self):
+        return False
+
+
+HEAD, FIRST, AFTER = 40399, 41137, 44053
+TAIL, OUT = 668, 150
+LABEL_SYSTEM, LABEL, LABEL_OUT = 46, 154, 9
+HELPERS = [2027, 1525, 1981, 986, 922, 10751, 6340, 7250]
+HELPER_SYSTEM, HELPER_TAIL, HELPER_OUT = 380, 384, 20
+# 12 turns of 5 steps from 41,137 tokens: the last step sends 142,957, its prefix 142,289 — #3p's
+# conversation prefix at the compaction (4,738,646,016 B = 142,263 tokens).
+TURNS, STEPS, STEP = 12, 5, 1697
+upstream_pop = LRUPromptCache.CacheOrder.pop
+
+
+def replay(keep_head, reserve_head):
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    conversation, head = KeptEntry(), KeptEntry()
+    keep_entries(LRUPromptCache.CacheOrder, *((conversation, head) if keep_head else (conversation,)))
+    cache = LRUPromptCache(max_size=limit // batch_kv_charge(p, 1, LABEL_SYSTEM), max_bytes=limit)
+    tokens = list(range(FIRST + TURNS * STEPS * STEP))
+    serial = [0]
+    over = []
+
+    def fresh(n):
+        serial[0] += 1
+        return [-serial[0] * 1000000 - i for i in range(n)]
+
+    def insert(key, kind, room):
+        layers = [Layer(len(key))]
+        for entry in (conversation, head):
+            entry.inserted(key, sum(layer.nbytes for layer in layers))
+        cache.insert_cache("m", key, layers, cache_type=kind)
+        cache.trim_to(n_bytes=room)
+        forget_dropped(cache._lru, (conversation, head))
+        if cache.nbytes > room:
+            over.append((len(key), cache.nbytes, room))
+
+    def agent(prompt_tokens, ends_on_user):
+        prompt = tokens[:prompt_tokens]
+        found, rest = cache.fetch_nearest_cache("m", prompt)
+        read = prompt_tokens - len(rest) if found is not None else 0
+        room = limit - batch_kv_charge(p, 1, prompt_tokens)
+        cache.trim_to(n_bytes=room)
+        stable = prompt[: prompt_tokens - TAIL]
+        head.cut(prompt[:HEAD])
+        conversation.cut(stable)
+        # mlx_lm cuts the system segment itself on a request ending on a user message; a tool step
+        # ends one there only under the new rule. Either is snapshotted only if read short of it.
+        if read < HEAD and (ends_on_user or keep_head):
+            insert(prompt[:HEAD], "system", room)
+        if read < len(stable):
+            insert(stable[:], "user", room)
+        insert(prompt + fresh(OUT), "assistant", limit - batch_kv_charge(p, 1, prompt_tokens + OUT))
+        return read
+
+    def burst():
+        rows, width, held = 0, 0, []
+        reserve = head.nbytes if reserve_head else 0
+        for size in HELPERS:
+            if not admits(p, limit, rows, width, size, conversation.nbytes, reserve):
+                held.append(size)
+                continue
+            rows, width = rows + 1, max(width, size)
+            room = limit - batch_kv_charge(p, rows, width)
+            cache.trim_to(n_bytes=room)
+            system = fresh(HELPER_SYSTEM)
+            insert(system, "system", room)
+            insert(system + fresh(size - HELPER_TAIL - HELPER_SYSTEM), "user", room)
+        for size in HELPERS:
+            if size not in held:
+                insert(fresh(size + HELPER_OUT), "assistant", limit - batch_kv_charge(p, 1, width))
+        return held
+
+    reads, held = [agent(FIRST, True)], []
+    width = FIRST
+    for _ in range(TURNS):
+        for _ in range(STEPS):
+            width += STEP
+            label = fresh(LABEL_SYSTEM)
+            insert(label, "system", limit - batch_kv_charge(p, 1, LABEL))
+            reads.append(agent(width, False))
+            insert(label + fresh(LABEL - LABEL_SYSTEM + LABEL_OUT), "assistant",
+                   limit - batch_kv_charge(p, 1, width))
+        held.append(burst())
+    compaction = tokens[:width] + fresh(200)
+    found, rest = cache.fetch_nearest_cache("m", compaction)
+    compaction_read = len(compaction) - len(rest) if found is not None else 0
+    insert(compaction[:-4], "user", limit - batch_kv_charge(p, 1, len(compaction)))
+    insert(compaction + fresh(2500), "assistant", limit)
+    after = tokens[:HEAD] + fresh(AFTER - HEAD)
+    found, rest = cache.fetch_nearest_cache("m", after)
+    return {
+        "after": AFTER - len(rest) if found is not None else 0,
+        "compaction": compaction_read,
+        "reads": reads,
+        "held": [len(h) for h in held],
+        "over": over,
+        "head": head.nbytes,
+        "prefix": conversation.nbytes,
+        "width": width,
+    }
+
+
+control = replay(keep_head=False, reserve_head=False)
+fixed = replay(keep_head=True, reserve_head=True)
+assert control["width"] - TAIL == 142289 and control["compaction"] == 142289, control["compaction"]
+assert control["after"] == 0, f"E2E 3p read 0 of 44,053; the replay read {control['after']}"
+assert replay(keep_head=True, reserve_head=False)["after"] == 0, "the eviction alone"
+assert replay(keep_head=False, reserve_head=True)["after"] == 0, "the room alone"
+assert fixed["after"] == HEAD, fixed["after"]
+assert fixed["head"] == HEAD * 32768 + 76972032 == 1400766464, fixed["head"]
+assert fixed["reads"] == control["reads"], "no agent step reads less"
+assert all(read == FIRST + (i - 1) * STEP - TAIL for i, read in enumerate(fixed["reads"]) if i)
+assert fixed["compaction"] == control["compaction"]
+assert not fixed["over"] and not control["over"], (fixed["over"], control["over"])
+assert max(fixed["held"]) <= 2, fixed["held"]
+assert fixed["prefix"] + fixed["head"] <= limit
+LRUPromptCache.CacheOrder.pop = upstream_pop
+print("ok", fixed["held"], control["held"])
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_boundary.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).starts_with("ok"),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    /// The tiny-qwen3_5 server the real-mlx_lm replays drive (see
+    /// `a_tool_step_reads_the_prefix_before_the_turn_context_through_real_mlx_lm`): mlx_lm 0.31.3's
+    /// own HTTP handler, generation loop, BatchGenerator and LRU prompt cache under the wrapper, on
+    /// the CPU, through the Qwen3.8 template with one token per byte; `conversation` renders
+    /// goose's agent requests (a question, then tool steps, each ending on its turn-context block).
+    const TINY_QWEN35_SERVER: &str = r#"
+import argparse
+import http.server
+import tempfile
+import urllib.error
+import urllib.request
+
+# The generation thread is not a daemon: a failed check must end the process, not wait on it.
+sys.excepthook = lambda *failure: (traceback.print_exception(*failure), sys.stderr.flush(), os._exit(1))
+mx.set_default_device(mx.cpu)
+# CPU only: mlx_lm wires the GPU's working set whenever Metal answers (BatchGenerator.__init__).
+mx.metal.is_available = lambda: False
+for name in ("MLX_RANK", "MLX_IBV_DEVICES", "MLX_JACCL_COORDINATOR", "MLX_HOSTFILE"):
+    os.environ.pop(name, None)
+
+from mlx_lm.models import qwen3_5
+from mlx_lm.models.cache import make_prompt_cache
+from mlx_lm.utils import save_config, save_model
+from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+from transformers import PreTrainedTokenizerFast
+
+assert server.ResponseGenerator._tokenize is _tokenize
+assert server.APIHandler.handle_chat_completions is handle_chat_completions
+
+alphabet = sorted(pre_tokenizers.ByteLevel.alphabet())
+core = Tokenizer(models.BPE(vocab={c: i for i, c in enumerate(alphabet)}, merges=[]))
+core.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False)
+core.decoder = decoders.ByteLevel()
+hf = PreTrainedTokenizerFast(tokenizer_object=core, eos_token="<|im_end|>")
+hf.add_special_tokens({"additional_special_tokens": ["<|im_start|>", "<think>", "</think>"]})
+hf.chat_template = QWEN38
+
+model_dir = tempfile.mkdtemp()
+mx.random.seed(142)
+config = {"model_type": "qwen3_5", "text_config": {
+    "model_type": "qwen3_5", "hidden_size": 64, "intermediate_size": 128, "num_hidden_layers": 4,
+    "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 32, "vocab_size": len(hf),
+    "linear_num_value_heads": 2, "linear_num_key_heads": 1, "linear_key_head_dim": 16,
+    "linear_value_head_dim": 16, "linear_conv_kernel_dim": 4, "full_attention_interval": 2,
+    "tie_word_embeddings": False,
+}}
+tiny = qwen3_5.Model(qwen3_5.ModelArgs.from_dict(config))
+mx.eval(tiny.parameters())
+save_model(model_dir, tiny)
+save_config(config, os.path.join(model_dir, "config.json"))
+hf.save_pretrained(model_dir)
+
+class Parsed(Exception):
+    pass
+
+real_parse_args = argparse.ArgumentParser.parse_args
+
+def parse_and_stop(self, args=None, namespace=None):
+    raise Parsed(real_parse_args(self, args, namespace))
+
+argparse.ArgumentParser.parse_args = parse_and_stop
+try:
+    server.main()
+    raise SystemExit("mlx_lm's main() never parsed its argv")
+except Parsed as parsed:
+    cli = parsed.args[0]
+argparse.ArgumentParser.parse_args = real_parse_args
+cli.model = model_dir
+
+provider = server.ModelProvider(cli)
+provider._model_map[served] = model_dir
+cache = server.LRUPromptCache(cli.prompt_cache_size)
+responses = server.ResponseGenerator(provider, cache)
+httpd = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    lambda *args, **kwargs: server.APIHandler(responses, *args, system_fingerprint="test", **kwargs),
+)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+def call(path, body=None):
+    url = f"http://127.0.0.1:{httpd.server_address[1]}{path}"
+    data = None if body is None else json.dumps(body).encode()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=600) as reply:
+            return [reply.status, json.loads(reply.read())]
+    except urllib.error.HTTPError as error:
+        return [error.code, json.loads(error.read())]
+
+TOOLS = [{"type": "function", "function": {"name": "shell", "description": "Run a shell command",
+          "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
+
+def block(minute):
+    # goose's turn-context block (agents/moim.rs compose_moim) as it joins the message it ends.
+    return ("\n<turn-context>\n<current-time>2026-09-26 20:%02d:00</current-time>\n"
+            "<working-directory>/Users/mihaiperdum</working-directory>\n\n<ledger>\n"
+            "This chat keeps its own ledger.\n</ledger>\n</turn-context>" % minute)
+
+def conversation(system, steps):
+    """goose's requests for one question and `steps` tool steps: request k ends on the question
+    (k = 0) or tool result k with minute k's block joined to it; the next request carries the
+    same message without it (inject_moim moves the block to the newest message)."""
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": "Write the users script and run it."}]
+    requests = []
+    for k in range(steps + 1):
+        tail = block(51 + k)
+        sent = json.loads(json.dumps(messages))
+        sent[-1]["content"] += tail
+        requests.append((sent, tail))
+        messages.append({"role": "assistant", "content": f"Step {k}.", "tool_calls": [
+            {"id": f"call-{k}", "type": "function",
+             "function": {"name": "shell", "arguments": json.dumps({"command": f"node step{k}.js"})}}]})
+        messages.append({"role": "tool", "tool_call_id": f"call-{k}", "content": f"step {k} ok\n" * 40})
+    return requests
+
+def render(messages, generation=True, tail=None):
+    messages = json.loads(json.dumps(messages))
+    server.process_message_content(messages)
+    if tail is not None:
+        messages = [*stable_messages(messages, tail), {"role": "assistant", "content": BOUNDARY_PROBE}]
+    kwargs = resolved_template_kwargs({"messages": messages, "tools": TOOLS}, True)
+    return provider.tokenizer.apply_chat_template(messages, tools=TOOLS,
+        add_generation_prompt=generation, tokenize=True, **kwargs)
+
+"#;
+
+    /// Q-347 through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5 (the 27B's hybrid: its
+    /// linear-attention state cannot be trimmed), with the prompt cache bounded to a few entries so
+    /// goose's end-of-turn side calls (fact checks: a system prompt of their own, ending on a user
+    /// message) press on it after every agent step, as E2E #3p's did. Then the chat is compacted —
+    /// the same system prompt and tools, the summary as the first message (#3p 12:32:50: 44,053
+    /// tokens, 0 read, 150 s) — and a new chat opens on the same system prompt and tools. With
+    /// `keep_stable_head` the compacted chat and the new chat each read exactly the stable head
+    /// (mlx_lm's own system-segment end: the system prompt + tools), the head survived every
+    /// side-call burst, the state restored there continues exactly as a cold read, and a tool step
+    /// that reads less than the head (the cache emptied) cuts and re-makes it. The NEGATIVE
+    /// CONTROL — the same wrapper, the same requests, a 3.0.69 spec (no `keep_stable_head`) — reads
+    /// 0 after the compaction: the side calls' system segments took the head's only entry.
+    #[test]
+    fn a_compacted_chat_reads_its_system_prompt_and_tools_from_the_cache_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 6,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
+        };
+        let spec_with = |keep_stable_head: bool| {
+            let mut spec = rank_specs(
+                &config,
+                &ServedNames::only("node-alias"),
+                &[tensor, tensor],
+                141_568,
+                2.0,
+            )
+            .remove(0);
+            if let RankProgram::MlxLmServer {
+                doorbell,
+                keep_stable_head: keep,
+                ..
+            } = &mut spec.program
+            {
+                *doorbell = false;
+                *keep = keep_stable_head;
+            }
+            spec.load_lock = Some(launch_load_lock());
+            spec
+        };
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+def send(messages, tail=None, tools=TOOLS):
+    body = {"model": served, "messages": messages, "max_tokens": 2, "temperature": 0.0}
+    if tools:
+        body["tools"] = tools
+    if tail is not None:
+        body[TRANSIENT_TAIL] = tail
+    status, reply = call("/v1/chat/completions", body)
+    assert status == 200, reply
+    return [reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]]
+
+# goose's helpers as E2E #3p sent them (the Q-342 captures req0-req9): three system prompts of their
+# own — the fact checker, the reviewer, the tool labeler — no tools, no tail named.
+HELPERS = ["You are goose's end-of-turn fact checker. Check each reply against the tool results. " * 2,
+           "You are goose's end-of-turn reviewer. You are shown the FACTS of one turn. " * 2,
+           "Summarize this tool call in a short lowercase phrase (3-8 words). No punctuation. "]
+
+def side_call(k):
+    return send([{"role": "system", "content": HELPERS[k % len(HELPERS)]},
+                 {"role": "user", "content": f"Reply {k}: the script wrote {k} users.\n" * 3}], tools=None)
+
+def kinds():
+    return {kind: [len(tokens) for _, tokens in lru] for kind, lru in cache._lru._lrus.items()}
+
+SYSTEM = "A. " + "You are goose, a general-purpose agent. " * 40
+steps = conversation(SYSTEM, 3)
+agent, side, head_seen = [], [], []
+for messages, tail in steps:
+    agent.append(send(messages, tail))
+    # mlx_lm's own system-segment end (the model, and its tokenizer, load at the first request).
+    system_end = next(i for i, (a, b) in enumerate(zip(
+        render(steps[0][0]), render(steps[0][0][:1] + [{"role": "user", "content": ""}], generation=False))) if a != b)
+    side.extend(side_call(len(side)) for _ in range(3))
+    head_seen.append(any(len(tokens) == system_end for lru in cache._lru._lrus.values() for _, tokens in lru))
+after_bursts = kinds()
+
+def compacted(summary, ask, minute):
+    return [{"role": "system", "content": SYSTEM},
+            {"role": "user", "content": summary},
+            {"role": "assistant", "content": "Your context was compacted. The previous message contains a summary of the conversation so far."},
+            {"role": "user", "content": ask + block(minute)}], block(minute)
+
+after = send(*compacted("<analysis>\nThe users script ran in four steps.\n</analysis>", "Run the plan on the fake data.", 58))
+fresh = send([{"role": "system", "content": SYSTEM}, {"role": "user", "content": "A new question." + block(59)}], block(59))
+
+# The state restored at the head continues exactly as a cold read (a compacted chat not yet sent).
+other, _ = compacted("<analysis>\nAnother summary.\n</analysis>", "And the totals?", 57)
+prompt = render(other)
+restored, rest = cache.fetch_nearest_cache(provider.model_key, prompt)
+warm = provider.model(mx.array([rest]), cache=restored)[0, -1] if restored is not None else None
+cold = provider.model(mx.array([prompt]), cache=make_prompt_cache(provider.model))[0, -1]
+restored_at = len(prompt) - len(rest) if restored is not None else 0
+
+# A tool step that reads less than the head (the cache emptied) cuts and re-makes it.
+cache.trim_to(n_sequences=0)
+emptied = stable_head.tokens if stable_head is not None else "off"
+tool_messages, tool_tail = conversation(SYSTEM, 1)[1]
+assert tool_messages[-1]["role"] == "tool"
+remade = send(tool_messages, tool_tail)
+
+print("GOOSE_TEST " + json.dumps({
+    "system_end": system_end,
+    "agent": agent,
+    "side": side,
+    "head_seen": head_seen,
+    "after_bursts": after_bursts,
+    "after": after,
+    "fresh": fresh,
+    "restored_at": restored_at,
+    "warm_equals_cold": warm is not None and bool(mx.allclose(warm, cold, atol=1e-4).item())
+        and int(mx.argmax(warm).item()) == int(mx.argmax(cold).item()),
+    "head": [len(stable_head.tokens), stable_head.nbytes] if stable_head is not None and stable_head.tokens is not None else None,
+    "emptied": emptied is None,
+    "remade": remade,
+    "remade_head": len(stable_head.tokens) if stable_head is not None and stable_head.tokens is not None else None,
+    "remade_kinds": kinds(),
+}), flush=True)
+os._exit(0)
+"#;
+        let run = |keep_stable_head: bool| {
+            let program = format!(
+                "{}\
+                 class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+                 group = _Group()\n{}QWEN38 = {qwen}\n{TINY_QWEN35_SERVER}{checks}",
+                tensor_modules(),
+                &wrapper[start..end],
+                qwen = serde_json::to_string(QWEN38).unwrap(),
+            );
+            run_against_real_packages(&python, &program, &spec_with(keep_stable_head))
+        };
+        let pair = |seen: &serde_json::Value, key: &str| -> (u64, u64) {
+            serde_json::from_value(seen[key].clone()).unwrap_or_else(|e| panic!("{key}: {e}"))
+        };
+
+        let kept = run(true);
+        let system_end = kept["system_end"].as_u64().unwrap();
+        assert_eq!(
+            kept["head_seen"],
+            serde_json::json!([true, true, true, true]),
+            "the head's entry is in the cache after every agent step and its side calls: {}",
+            kept["after_bursts"]
+        );
+        assert_eq!(
+            pair(&kept, "after").1,
+            system_end,
+            "Q-347: the first request of the compacted chat reads exactly the system prompt + tools \
+             (#3p: 0 of 44,053): {kept}"
+        );
+        assert_eq!(
+            pair(&kept, "fresh").1,
+            system_end,
+            "a new chat with the same system prompt and tools reads it too: {kept}"
+        );
+        assert_eq!(kept["restored_at"].as_u64(), Some(system_end));
+        assert_eq!(
+            kept["warm_equals_cold"], true,
+            "the state restored at the head continues exactly as a cold read of the prompt"
+        );
+        assert_eq!(
+            kept["head"][0].as_u64(),
+            Some(system_end),
+            "the kept head is the system prompt + tools: {}",
+            kept["head"]
+        );
+        assert!(kept["head"][1].as_u64().is_some_and(|bytes| bytes > 0));
+        assert_eq!(kept["emptied"], true, "an emptied cache holds no head");
+        assert_eq!(
+            pair(&kept, "remade").1,
+            0,
+            "the tool step after the cache emptied reads nothing"
+        );
+        assert_eq!(
+            kept["remade_head"].as_u64(),
+            Some(system_end),
+            "and a request ending on tool results cuts the head and re-makes it: {}",
+            kept["remade_kinds"]
+        );
+        let side: Vec<(u64, u64)> = serde_json::from_value(kept["side"].clone()).unwrap();
+        let agent: Vec<(u64, u64)> = serde_json::from_value(kept["agent"].clone()).unwrap();
+
+        let control = run(false);
+        assert_eq!(
+            serde_json::from_value::<Vec<(u64, u64)>>(control["agent"].clone()).unwrap(),
+            agent,
+            "the head changes nothing the agent's own steps read"
+        );
+        assert_eq!(
+            serde_json::from_value::<Vec<(u64, u64)>>(control["side"].clone()).unwrap(),
+            side,
+            "nor what the side calls read"
+        );
+        assert_eq!(
+            pair(&control, "after").1,
+            0,
+            "NEGATIVE CONTROL (a 3.0.69 spec): the side calls took the head's only entry and the \
+             compacted chat reads nothing — #3p's shape: {control}"
+        );
+        assert_eq!(control["head"], serde_json::Value::Null);
     }
 
     /// Q-141: the streamer against the REAL qwen3_coder parser of mlx_lm 0.31.3. For every call
@@ -7100,8 +7689,58 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerConversationPrefix");
+        assert_eq!(json["program"], "mlxLmServerStableHead");
+        assert_eq!(json["keep_stable_head"], true);
         assert_eq!(json["keep_conversation_prefix"], true);
+
+        // A 3.0.69 requester's spec (the conversation-prefix tag, no keep_stable_head) cuts and
+        // keeps no head here: its own ranks cut and keep none either.
+        let mut conversation = json.clone();
+        conversation["program"] = "mlxLmServerConversationPrefix".into();
+        conversation
+            .as_object_mut()
+            .unwrap()
+            .remove("keep_stable_head");
+        let read: RankSpec = serde_json::from_value(conversation).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                keep_stable_head: false,
+                keep_conversation_prefix: true,
+                ..
+            }
+        ));
+
+        // A 3.0.69 peer's goosed (its enum knows the conversation-prefix tag, not this one) refuses
+        // this spec: its ranks would chunk an agent request's prefill at other steps.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum ConversationPrefixProgram {
+            #[serde(
+                rename = "mlxLmServerConversationPrefix",
+                alias = "mlxLmServerPrefillYield",
+                alias = "mlxLmServerNewestPrefix",
+                alias = "mlxLmServerRowProcessors",
+                alias = "mlxLmServerSkeletonGuard",
+                alias = "mlxLmServerTransientTail",
+                alias = "mlxLmServerFormation",
+                alias = "mlxLmServerPrefill",
+                alias = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused =
+            serde_json::from_value::<ConversationPrefixProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
         assert_eq!(json["prefill_step_yields"], true);
         assert_eq!(json["keep_newest_prefix"], true);
         assert_eq!(json["row_processors"], true);

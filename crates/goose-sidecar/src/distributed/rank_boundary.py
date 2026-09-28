@@ -22,7 +22,10 @@
 # from the same shared request with the same tokenizer, so every rank cuts — and chunks — alike.
 #
 # Keeping the entry is half of it; the cache must also not evict it (Q-182, `pop_keeping_newest_
-# prefix` below, installed by the wrapper on a spec that asks for `keep_newest_prefix`).
+# prefix` below, installed by the wrapper on a spec that asks for `keep_newest_prefix`; Q-294's
+# `KeptEntry` since `keep_conversation_prefix`). The chat's stable head — its system prompt and
+# tools — is cut and kept the same way (Q-347, `cut_at_head`, on a spec that asks for
+# `keep_stable_head`), so a request whose messages changed (a compaction) still reads it.
 
 TRANSIENT_TAIL = "rapid_mlx_transient_tail"
 # The tail may end the last TOOL message (Rapid-MLX lz.6): goose then keeps its block joined to the
@@ -156,10 +159,12 @@ def prefix_key(tokens):
     return len(tokens), hash(tuple(tokens))
 
 
-class ConversationPrefix:
-    """The stable prefix the latest conversation request left in the cache: the key list the cache
-    holds (compared by identity) and its bytes. Every rank tracks it over the same requests and
-    inserts, so every rank protects the same entry."""
+class KeptEntry:
+    """A cache entry the rank keeps while anything else is left to evict: the key list the cache
+    holds (compared by identity) and its bytes, named by the key a cut recorded (`cut`) and
+    matched when the cache inserts that key (`inserted`). Every rank tracks it over the same
+    requests and inserts, so every rank keeps the same entry. Two are kept: the conversation's
+    stable prefix (Q-294) and the chat's stable head (Q-347, below)."""
 
     def __init__(self):
         self.cut_keys = {}
@@ -167,12 +172,12 @@ class ConversationPrefix:
         self.nbytes = 0
 
     def cut(self, prefix):
-        """`_tokenize` cut a conversation request's stable prefix at `prefix` (its tokens)."""
+        """`_tokenize` cut a segment at the end of `prefix` (its tokens) for this entry."""
         length, digest = prefix_key(prefix)
         self.cut_keys[length] = digest
 
     def inserted(self, tokens, nbytes):
-        """The cache is inserting `tokens`: a cut stable prefix becomes the conversation's."""
+        """The cache is inserting `tokens`: a key this entry's cut named becomes the entry."""
         if len(tokens) not in self.cut_keys:
             return
         length, digest = prefix_key(tokens)
@@ -185,41 +190,128 @@ class ConversationPrefix:
         self.tokens = None
         self.nbytes = 0
 
-    def evicted(self, tokens):
-        if tokens is self.tokens:
-            self.forget()
+
+def located(order, tokens):
+    """The (lru, item) of mlx_lm's `CacheOrder` whose key IS `tokens`, or None."""
+    for lru in order._lrus.values():
+        for item in lru:
+            if item[1] is tokens:
+                return lru, item
+    return None
 
 
-def pop_keeping_conversation_prefix(order, upstream_pop, prefix):
-    """mlx_lm's eviction (`upstream_pop(order)`) with the conversation's stable prefix
-    (`prefix.tokens`) held back while any other entry remains; still evicted when it is the last
-    entry and the bound still needs room. It is held back in place, so the LRU order stands."""
-    if prefix.tokens is not None and len(order) > 1:
-        for lru in order._lrus.values():
-            at = next((i for i, (_, tokens) in enumerate(lru) if tokens is prefix.tokens), None)
-            if at is None:
-                continue
-            kept = lru[at]
-            del lru[at]
-            before = len(lru)
-            try:
-                return upstream_pop(order)
-            finally:
-                if len(lru) < before:
-                    at = max(0, at - 1)
-                lru.insert(at, kept)
-        # The cache replaced or dropped that key another way: it holds no conversation prefix.
-        prefix.forget()
-    popped = upstream_pop(order)
-    prefix.evicted(popped[1])
-    return popped
+def forget_dropped(order, kept):
+    """Forget each kept entry whose key the cache no longer holds (replaced by an equal key, or
+    dropped as the prefix of a longer trimmable entry — mlx_lm's `insert_cache` pops those
+    without going through the eviction order), so no admission reserves room for it."""
+    for entry in kept:
+        if entry.tokens is not None and located(order, entry.tokens) is None:
+            entry.forget()
 
 
-def keep_conversation_prefix(cache_order, prefix):
-    """Install `pop_keeping_conversation_prefix` on mlx_lm's `LRUPromptCache.CacheOrder`."""
+def without(lru, item):
+    kept = [other for other in lru if other is not item]
+    lru.clear()
+    lru.extend(kept)
+
+
+def pop_keeping(order, upstream_pop, kept):
+    """mlx_lm's eviction (`upstream_pop(order)`, order = LRUPromptCache.CacheOrder) with the
+    `kept` entries — most precious first — held back while any other entry remains, in place, so
+    the LRU order stands. When only kept entries are left and the bound still needs room, the
+    least precious goes first."""
+    forget_dropped(order, kept)
+    held = []
+    for entry in kept:
+        if entry.tokens is None:
+            continue
+        lru, item = located(order, entry.tokens)
+        if all(item is not other for _, _, other in held):
+            held.append((entry, lru, item))
+    if not held:
+        return upstream_pop(order)
+    if len(order) == len(held):
+        _, lru, item = held[-1]
+        without(lru, item)
+        for entry in kept:
+            if entry.tokens is item[1]:
+                entry.forget()
+        return item
+    saved = {kind: list(lru) for kind, lru in order._lrus.items()}
+    for _, lru, item in held:
+        without(lru, item)
+    popped = None
+    try:
+        popped = upstream_pop(order)
+        return popped
+    finally:
+        for kind, items in saved.items():
+            lru = order._lrus[kind]
+            lru.clear()
+            lru.extend(item for item in items if item is not popped)
+
+
+def keep_entries(cache_order, *kept):
+    """Install `pop_keeping` of `kept` on mlx_lm's `LRUPromptCache.CacheOrder`."""
     upstream_pop = cache_order.pop
 
     def pop(self):
-        return pop_keeping_conversation_prefix(self, upstream_pop, prefix)
+        return pop_keeping(self, upstream_pop, kept)
 
     cache_order.pop = pop
+
+
+# Q-347 (E2E #3p, 3.0.69, 27B tensor split): the first chat request after an auto-compaction
+# (12:32:50, 44,053 tokens: the 101,576-char system prompt + 81 tools + the summary) read 0 from
+# the cache and prefilled for 150 s, although every chat request before it carried the same system
+# prompt and tools byte for byte (the Q-342 captures: req6, req8 and the post-compaction request
+# render one 40,399-token head under the 27B's own template). mlx_lm 0.31.3 snapshots a segment
+# only past the tokens a request read from the cache (`_generate` pops the consumed segments), and
+# it cuts a system segment only on a request that ends on a user message — so the head lived in
+# ONE entry, the session's first request's (10:54:29–10:57:41: system 2 sequences, 1.48 GB = the
+# head's 1.40 GB + a helper's 0.08), which mlx_lm's type-count eviction took at 10:59:33 (the
+# oldest "system" entry once helpers' system segments outnumbered the rest: system 0.16 GB). From
+# then on the head only lived inside longer, non-trimmable conversation entries; once compaction
+# replaced the messages nothing matched. The post-compaction request re-made it (12:35:27: system
+# 1 sequence, 1.40 GB) and helpers evicted it again within a minute (12:36:22: 0.08 GB).
+#
+# The stable head is what every request of the chat shares: the leading system messages and the
+# tools, up to where mlx_lm's own probe (the system messages + an empty user turn) stops agreeing
+# with the prompt — mlx_lm's own system-segment end, so a request ending on a user message is cut
+# exactly where upstream cuts it. Every agent request (one naming its transient tail) now ends a
+# segment there, so a request that reads less than the head from the cache leaves the entry, and
+# the cache keeps it after the conversation prefix (`pop_keeping`, least precious last kept).
+
+
+def head_probe(messages):
+    """mlx_lm 0.31.3's probe for the end of a chat prompt's system block (server.py `_tokenize`):
+    the leading system messages and an empty user turn, to render without a generation prompt.
+    None when the conversation opens on no system message."""
+    count = next((i for i, m in enumerate(messages) if m.get("role") != "system"), len(messages))
+    if count == 0:
+        return None
+    return [*messages[:count], {"role": "user", "content": ""}]
+
+
+def head_end(prompt, probe):
+    """Where `prompt` stops agreeing with the rendered `probe` — as mlx_lm computes its system
+    segment's end, 0 (no head) when one is a prefix of the other."""
+    at = common_prefix(prompt, probe)
+    return at if at < min(len(prompt), len(probe)) else 0
+
+
+def cut_at_head(segments, segment_types, head):
+    """mlx_lm's segments with one ending at `head`, typed "system" as mlx_lm types the system
+    segment it cuts itself. Unchanged when a segment already ends there, or when the head is not
+    strictly inside the prompt."""
+    cut, types, start = [], [], 0
+    for segment, kind in zip(segments, segment_types):
+        end = start + len(segment)
+        if start < head < end:
+            cut += [segment[: head - start], segment[head - start :]]
+            types += ["system", kind]
+        else:
+            cut.append(segment)
+            types.append(kind)
+        start = end
+    return cut, types

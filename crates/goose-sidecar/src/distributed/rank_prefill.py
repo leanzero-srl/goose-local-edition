@@ -15,7 +15,7 @@
 #   mlx_lm's batch operations transiently hold of it — inside the plan's KV charge
 #   (`batch_kv_charge`, `admits`); the prompt cache yields to it — but never below one cached
 #   prefix as wide as the batch (`kept_prefix_bytes`, Q-182), nor below the conversation prefix the
-#   cache holds (Q-294).
+#   cache holds (Q-294) and the chat's stable head beside it (Q-347).
 
 
 def prefill_chunk(prefill, rows, width, kv_step):
@@ -42,21 +42,36 @@ def batch_kv_charge(prefill, rows, width):
     return padded if rows <= 1 else int(padded * prefill["batch_transient_ratio"])
 
 
-def admits(prefill, limit_bytes, rows, width, prompt_tokens, conversation_prefix_bytes=0):
+def admits(
+    prefill,
+    limit_bytes,
+    rows,
+    width,
+    prompt_tokens,
+    conversation_prefix_bytes=0,
+    stable_head_bytes=0,
+):
     """Whether a request of `prompt_tokens` may join a live batch of `rows` rows at `width`: an idle
     engine always takes it (the plan holds one row up to the window), a busy one only while the
     batch it would join stays inside `limit_bytes` (the plan's whole KV charge, live + cached)
     with room left for one cached prefix as wide as that batch (`kept_prefix_bytes`) — or, when
     wider, for the conversation's stable prefix the cache holds (`conversation_prefix_bytes`,
-    rank_boundary.py `ConversationPrefix`). Q-294, E2E #3o turn 7: the batch's width is not the
+    rank_boundary.py `KeptEntry`). Q-294, E2E #3o turn 7: the batch's width is not the
     conversation's — goose's end-of-turn helpers (1,248–23,686 tokens) joined each other as eight
     rows padded to 23,686, each leaving room for a 23,686-token prefix; the cache was trimmed below
-    the agent's 3.96 GB stable prefix and its next call read 108,801 tokens cold."""
+    the agent's 3.96 GB stable prefix and its next call read 108,801 tokens cold.
+
+    And room for the chat's stable head beside it (`stable_head_bytes`, Q-347): a separate entry
+    (the hybrid's entries are whole snapshots), its own measured bytes — E2E #3p's 40,399-token
+    system prompt + tools, 1,400,766,464 B, 11.8% of that plan's 11,830,886,400 B limit. Replayed
+    at #3p's sizes (launch.rs), keeping the head in eviction alone still lost it to the end-of-turn
+    bursts once the conversation prefix neared its 4.74 GB; with this room one or two of a burst's
+    eight helpers wait for the batch to drain instead."""
     if rows == 0:
         return True
     widest = max(width, prompt_tokens)
     charge = batch_kv_charge(prefill, rows + 1, widest)
-    kept = max(kept_prefix_bytes(prefill, widest), conversation_prefix_bytes)
+    kept = max(kept_prefix_bytes(prefill, widest), conversation_prefix_bytes) + stable_head_bytes
     return charge + kept <= limit_bytes
 
 

@@ -92,11 +92,16 @@
 #   newest stable prefix last (rank_boundary.py `pop_keeping_newest_prefix`). E2E #3h: a tool-label
 #   helper joined each ~70–95k-token agent call, mlx_lm's type-count eviction kept the previous
 #   call's unreusable end entry and dropped the prefix, and six calls re-read the whole prompt.
-# - the prefix kept is the conversation's (Q-294, rank_boundary.py `ConversationPrefix`, on a spec
+# - the prefix kept is the conversation's (Q-294, rank_boundary.py `KeptEntry`, on a spec
 #   that asks for `keep_conversation_prefix`): the key a request naming its transient tail cut, not
 #   the newest "user" entry, and a batch leaves room for it. E2E #3o turn 7: eight end-of-turn
 #   helper rows took the newest-"user" protection with their own context segments, the cache was
 #   trimmed below the agent's 3.96 GB prefix, and its next call read 108,801 tokens cold.
+# - the chat's stable head — its system prompt and tools — is an entry of its own, kept after the
+#   conversation prefix (Q-347, rank_boundary.py `cut_at_head`, on a spec that asks for
+#   `keep_stable_head`): every agent request ends a segment where mlx_lm's own system segment
+#   would end, and a batch leaves room for it too. E2E #3p: the head's only entry was evicted five
+#   minutes into the chat, and the first request after the compaction re-read 44,053 tokens cold.
 # - a request that names no sampling field samples as on the single engine (Q-159,
 #   rank_sampling.py): mlx_lm filled the absence with its `--temp` 0.0 — greedy; E2E #3d wrote one
 #   answer of 54 identical tool calls over 40 minutes. Rank 0 resolves each field request > goose's
@@ -753,29 +758,43 @@ server.LRUPromptCache = LookupPromptCache
 # evicted — every rank runs its own cache over the same requests and must reuse the same prefix —
 # so only a launch whose every rank runs it asks for it (`keep_newest_prefix`).
 #
-# Q-294 (rank_boundary.py `ConversationPrefix`): the entry kept is the stable prefix a request that
+# Q-294 (rank_boundary.py `KeptEntry`): the entry kept is the stable prefix a request that
 # names its transient tail cut — goose's agent requests — not whichever request inserted the newest
 # "user" entry (an end-of-turn helper's took the protection on E2E #3o), and rank 0 admits a request
 # into a live batch only while the batch leaves room for it (`room_for`). Tracked on every rank over
 # the same requests, it changes what every rank evicts, so it rides its own ask
 # (`keep_conversation_prefix`), which supersedes `keep_newest_prefix`.
-conversation_prefix = ConversationPrefix() if spec.get("keep_conversation_prefix") else None
-if conversation_prefix is not None or spec.get("keep_newest_prefix"):
+#
+# Q-347 (rank_boundary.py `cut_at_head`): the chat's stable head — the system prompt and tools every
+# request of the chat opens with — is cut by every agent request and kept after the conversation
+# prefix, and a batch leaves room for it beside the prefix. It changes where prefill chunks end and
+# what is evicted, so it rides its own ask (`keep_stable_head`).
+conversation_prefix = KeptEntry() if spec.get("keep_conversation_prefix") else None
+stable_head = KeptEntry() if spec.get("keep_stable_head") else None
+kept_entries = tuple(entry for entry in (conversation_prefix, stable_head) if entry is not None)
+if kept_entries or spec.get("keep_newest_prefix"):
     if not hasattr(server.LRUPromptCache.CacheOrder, "pop"):
         raise SystemExit(
             f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache.CacheOrder has no "
             "pop; the kept prefix was written against mlx_lm 0.31.3"
         )
-if conversation_prefix is not None:
-    keep_conversation_prefix(server.LRUPromptCache.CacheOrder, conversation_prefix)
+if kept_entries:
+    keep_entries(server.LRUPromptCache.CacheOrder, *kept_entries)
 elif spec.get("keep_newest_prefix"):
     keep_newest_prefix(server.LRUPromptCache.CacheOrder)
 
 
 def cache_inserting(tokens, prompt_cache):
-    """What the prompt cache is about to hold, as the conversation prefix sees it (Q-294)."""
-    if conversation_prefix is not None:
-        conversation_prefix.inserted(tokens, sum(layer.nbytes for layer in prompt_cache))
+    """What the prompt cache is about to hold, as the kept entries see it (Q-294, Q-347)."""
+    nbytes = sum(layer.nbytes for layer in prompt_cache)
+    for entry in kept_entries:
+        entry.inserted(tokens, nbytes)
+
+
+def cache_inserted(prompt_cache):
+    """A kept entry the insert replaced, or dropped as a trimmable entry's prefix, is no longer
+    held (mlx_lm's `insert_cache` drops those without its eviction order)."""
+    forget_dropped(prompt_cache._lru, kept_entries)
 
 
 if "prompt_cache_limit_bytes" in spec:
@@ -803,6 +822,7 @@ if "prompt_cache_limit_bytes" in spec:
             compact(prompt_cache)
             cache_inserting(tokens, prompt_cache)
             super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)
+            cache_inserted(self)
             if live_bound and live_batch:
                 self.trim_to(n_bytes=prompt_cache_limit - live_batch[0].prompt_cache_nbytes)
 
@@ -815,6 +835,7 @@ else:
             compact(prompt_cache)
             cache_inserting(tokens, prompt_cache)
             super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)
+            cache_inserted(self)
 
     server.LRUPromptCache = CompactPromptCache
 
@@ -860,11 +881,21 @@ def conversation_prefix_bytes():
     return conversation_prefix.nbytes if conversation_prefix is not None else 0
 
 
+def stable_head_bytes():
+    return stable_head.nbytes if stable_head is not None else 0
+
+
 def room_for(prompt_tokens):
     batch = live_batch[0] if live_batch else None
     rows, width = batch_shape(batch) if batch is not None else (0, 0)
     return admits(
-        prefill, prompt_cache_limit, rows, width, prompt_tokens, conversation_prefix_bytes()
+        prefill,
+        prompt_cache_limit,
+        rows,
+        width,
+        prompt_tokens,
+        conversation_prefix_bytes(),
+        stable_head_bytes(),
     )
 
 
@@ -906,6 +937,7 @@ def rank0_request(self, timeout):
             "charge": batch_kv_charge(prefill, rows + 1, max(width, tokens)),
             "kept_prefix": kept_prefix_bytes(prefill, max(width, tokens)),
             "conversation_prefix": conversation_prefix_bytes(),
+            "stable_head": stable_head_bytes(),
             "limit": prompt_cache_limit,
         },
     )
@@ -1224,7 +1256,8 @@ transient_tail_boundary = bool(spec.get("transient_tail_boundary"))
 
 def _tokenize(self, tokenizer, request, args):
     """mlx_lm's tokenization, with a segment ending at the stable boundary of a request that names
-    its transient tail (rank_boundary.py). `settle` counts with the upstream one."""
+    its transient tail (rank_boundary.py), and one ending at the chat's stable head (Q-347).
+    `settle` counts with the upstream one."""
     tail = getattr(request, "transient_tail", None)
     if not tail or request.request_type != "chat" or not tokenizer.has_chat_template:
         return original_tokenize(self, tokenizer, request, args)
@@ -1235,15 +1268,17 @@ def _tokenize(self, tokenizer, request, args):
         self, tokenizer, request, args
     )
     server.process_message_content(messages)
+    template_args = self.model_provider.cli_args.chat_template_args
+    if args.chat_template_kwargs:
+        template_args = {**template_args, **args.chat_template_kwargs}
+    head = cut_stable_head(tokenizer, messages, request.tools, template_args, prompt)
     try:
         stable = stable_messages(messages, tail)
     except TailIgnored as ignored:
         if group.rank() == 0:
             emit("RANK_TRANSIENT_TAIL_IGNORED", {"why": str(ignored), "tail_chars": len(tail)})
+        segments, segment_types = cut_at_head(segments, segment_types, head)
         return prompt, segments, segment_types, initial_state
-    template_args = self.model_provider.cli_args.chat_template_args
-    if args.chat_template_kwargs:
-        template_args = {**template_args, **args.chat_template_kwargs}
     future = tokenizer.apply_chat_template(
         [*stable, {"role": "assistant", "content": BOUNDARY_PROBE}],
         tools=request.tools,
@@ -1255,7 +1290,26 @@ def _tokenize(self, tokenizer, request, args):
     if conversation_prefix is not None and 0 < boundary < len(prompt):
         conversation_prefix.cut(prompt[:boundary])
     segments, segment_types = cut_at_boundary(segments, segment_types, boundary)
+    segments, segment_types = cut_at_head(segments, segment_types, head)
     return prompt, segments, segment_types, initial_state
+
+
+def cut_stable_head(tokenizer, messages, tools, template_args, prompt):
+    """Where the chat's stable head ends in `prompt` — mlx_lm's own system-segment end, rendered
+    from the same messages, tools and template switches — recorded for the cache to keep. 0 on a
+    spec that keeps no head, or for a conversation that opens on no system message."""
+    probe = head_probe(messages) if stable_head is not None else None
+    if probe is None:
+        return 0
+    head = head_end(
+        prompt,
+        tokenizer.apply_chat_template(
+            probe, tools=tools, tokenize=True, add_generation_prompt=False, **template_args
+        ),
+    )
+    if head:
+        stable_head.cut(prompt[:head])
+    return head
 
 
 original_chat_request = server.APIHandler.handle_chat_completions
