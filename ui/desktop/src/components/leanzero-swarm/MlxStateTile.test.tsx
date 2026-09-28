@@ -26,6 +26,8 @@ import {
   GENERATING_STATUS,
   IDLE_STATUS,
   PREFILL_STATUS,
+  SPLIT_ONLY_LEAVING_3M,
+  SPLIT_TURN_BEHIND_LEAVING_3M,
 } from './mlxLiveStatus.fixtures';
 import {
   FLASH_READY,
@@ -560,6 +562,47 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     expect(screen.queryByTestId('mlx-dist-tile-inflight')).toBeNull();
     expect(screen.getAllByTestId('mlx-dist-tile-node')).toHaveLength(2);
     await expectDesigned(container);
+  });
+
+  it('Q-246 #3m: rows leaving are "Stopped · leaving" — never "Reading prompt" beside the queued turn', async () => {
+    const { container } = tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: { ...FLASH_SERVING, inflight: 4, slotsInUse: 4 },
+      live: parseMlxLiveStatus(SPLIT_TURN_BEHIND_LEAVING_3M),
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    // Before: data-activity prefill, "Reading prompt", the 5.5K fact check as the hero.
+    expect(t).toHaveAttribute('data-activity', 'queued');
+    expect(t.className).toContain('bg-lz-phase-held');
+    expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Queued');
+    expect(screen.getByTestId('mlx-live-leaving')).toHaveTextContent('3');
+    expect(
+      within(t).getByText('stopped requests still leaving the engine · stopped 3s ago')
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('mlx-live-prompt')).toBeNull();
+    const rows = screen.getAllByTestId('mlx-live-request');
+    expect(rows).toHaveLength(4);
+    const leaving = rows.filter((r) => r.getAttribute('data-leaving') === 'true');
+    expect(leaving).toHaveLength(3);
+    expect(leaving[2]).toHaveTextContent('Stopped · leaving · 5.5K tokens');
+    expect(leaving[2]).toHaveTextContent('stopped 3s ago');
+    expect(within(leaving[2]).queryByRole('progressbar')).toBeNull();
+    for (const row of leaving) expect(row).not.toHaveTextContent('Reading');
+    // The turn itself stays a queued row.
+    expect(rows[3]).toHaveTextContent('Queued · 88.7K tokens');
+    await expectDesigned(container);
+  });
+
+  it('Q-246: only leaving rows, nothing waiting — the headline itself says "Stopped · leaving"', () => {
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: { ...FLASH_SERVING, inflight: 3, slotsInUse: 3 },
+      live: parseMlxLiveStatus(SPLIT_ONLY_LEAVING_3M),
+    });
+    expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Stopped · leaving');
+    expect(screen.getByTestId('mlx-live-leaving')).toHaveTextContent('3');
   });
 
   it('Q-150: the live split’s answer reads tokens · elapsed · tok/s — never “of 222,148 tokens · 9%”', () => {

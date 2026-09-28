@@ -1,5 +1,6 @@
 import type { BackgroundWorkKind } from '@aaif/goose-sdk';
 import {
+  engineHeadline,
   mlxActivity,
   requestActivity,
   type MlxActivity,
@@ -55,6 +56,11 @@ export const ENGINE_GLANCE_TURNED_OFF_CHANNEL = 'engine-glance-turned-off';
  */
 export type GlanceStage =
   | MlxActivity
+  /**
+   * The engine holds only rows whose answers already ended (Q-231 `leaving`): nobody's work, so not
+   * busy — said as that, never "Reading" (Q-246).
+   */
+  | 'leaving'
   /** Up, not read yet (or the read failed — `detail` says why). */
   | 'running'
   /** Weights going in, a split starting, a route mounting on its Mac. */
@@ -316,7 +322,7 @@ function liveParts(
   const read = activity === 'prefill' ? promptProgress(stats, lead) : null;
   return {
     activity,
-    stage: activity,
+    stage: lead ? activity : engineHeadline(stats),
     hero,
     second,
     progress: read ? { ...read, unit: 'tokens' } : null,

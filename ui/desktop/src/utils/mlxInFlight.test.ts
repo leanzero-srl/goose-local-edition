@@ -31,6 +31,19 @@ describe('inFlightWork — what a stop would cut (Q-148)', () => {
     expect(inFlightWork(null)).toBeNull();
   });
 
+  it('Q-246: a row LEAVING the batch is nobody’s work — a stop cuts only the answered rows', () => {
+    const stopped = {
+      ...LIVE_WRITING,
+      id: 'req-31',
+      leaving: true,
+      stopped: 'cancelled_by_client',
+    };
+    expect(inFlightWork(liveSplitSnapshot([stopped]))).toBeNull();
+    expect(inFlightWork(liveSplitSnapshot([stopped, LIVE_WRITING]))).toMatchObject({
+      requests: 1,
+    });
+  });
+
   it('a door cuts only the engine it stops', () => {
     expect(workCutBy(liveSplitSnapshot(), ['distributed'])).not.toBeNull();
     expect(workCutBy(liveSplitSnapshot(), ['single'])).toBeNull();

@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Облачные провайдеры"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, one {остановленный запрос ещё покидает движок} few {остановленных запроса ещё покидают движок} many {остановленных запросов ещё покидают движок} other {остановленного запроса ещё покидают движок}}{since, select, none {} other { · остановлен {since} назад}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "Остановлен · выходит"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "остановлен {since} назад"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "Подробности"
   },

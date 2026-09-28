@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "क्लाउड प्रदाता"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, one {रोका गया अनुरोध, जो अभी भी इंजन छोड़ रहा है} other {रोके गए अनुरोध, जो अभी भी इंजन छोड़ रहे हैं}}{since, select, none {} other { · {since} पहले रोका गया}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "रोका गया · निकल रहा है"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "{since} पहले रोका गया"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "विवरण"
   },

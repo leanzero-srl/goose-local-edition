@@ -5,8 +5,10 @@ import {
   parseSamplingDefaults,
   advanceMountWatch,
   compactTokens,
+  engineHeadline,
   formatElapsed,
   formatRate,
+  leavingRowsOf,
   liveDecodeTps,
   measuredPrefillTps,
   mlxActivity,
@@ -15,6 +17,7 @@ import {
   parseMlxLiveStatus,
   pushSample,
   readingNowTps,
+  sinceStopOf,
   sparklinePoints,
   type MlxLiveStats,
 } from './mlxLiveStats';
@@ -25,6 +28,7 @@ import {
   GENERATING_STATUS,
   IDLE_STATUS,
   PREFILL_STATUS,
+  SPLIT_ONLY_LEAVING_3M,
   SPLIT_TURN_BEHIND_LEAVING_3M,
 } from './mlxLiveStatus.fixtures';
 
@@ -407,5 +411,58 @@ describe('Q-238: the split’s row facts — who sent it, held for room, stopped
       stoppedAfterS: null,
       leaving: false,
     });
+  });
+});
+
+/**
+ * Q-246: a `leaving` row (Q-231) may still be stepped, but its answer ended — it is nobody's reading
+ * or writing. Before, mlxActivity counted #3m's three dropped fact checks as 'prefill', so the tile,
+ * the tray and the glance said "Reading" beside the queued turn.
+ */
+describe('Q-246: rows leaving the batch are never the engine reading or writing', () => {
+  it('#3m (turn queued behind three leaving rows): queued, not reading — headline queued', () => {
+    const stats = statsOf(SPLIT_TURN_BEHIND_LEAVING_3M);
+    expect(mlxActivity(stats)).toBe('queued');
+    expect(engineHeadline(stats)).toBe('queued');
+    expect(readingNowTps(stats)).toBe(0);
+  });
+
+  it('only leaving rows, nothing waiting: the headline says leaving', () => {
+    const stats = statsOf(SPLIT_ONLY_LEAVING_3M);
+    expect(mlxActivity(stats)).toBe('queued');
+    expect(engineHeadline(stats)).toBe('leaving');
+  });
+
+  it('the one leaving fact: how many, and the longest-held stop by the engine’s own clock', () => {
+    const rows = statsOf(SPLIT_TURN_BEHIND_LEAVING_3M).requests;
+    const fact = leavingRowsOf(rows);
+    expect(fact?.rows).toBe(3);
+    // elapsed 6.9 s − stopped at 3.642 s.
+    expect(fact?.sinceStopS).toBeCloseTo(3.258, 3);
+    expect(sinceStopOf(rows[3])).toBeNull();
+    expect(leavingRowsOf(statsOf(PREFILL_STATUS).requests)).toBeNull();
+  });
+
+  it('a leaving row still writing is no writing rate; an answered row still is', () => {
+    const base = statsOf(SPLIT_TURN_BEHIND_LEAVING_3M);
+    const writing = (leaving: boolean) => ({
+      ...base.requests[0],
+      phase: 'generation',
+      completionTokens: 40,
+      tokensPerSecond: 11,
+      leaving,
+    });
+    const stopped = { ...base, requests: [writing(true)] };
+    expect(mlxActivity(stopped)).toBe('queued');
+    expect(liveDecodeTps(stopped)).toBe(0);
+    const both = { ...base, requests: [writing(true), writing(false)] };
+    expect(mlxActivity(both)).toBe('generating');
+    expect(liveDecodeTps(both)).toBe(11);
+  });
+
+  it('negative control — the single engine reports no leaving rows: unchanged', () => {
+    expect(mlxActivity(statsOf(PREFILL_STATUS))).toBe('prefill');
+    expect(engineHeadline(statsOf(PREFILL_STATUS))).toBe('prefill');
+    expect(engineHeadline(statsOf(IDLE_STATUS))).toBe('idle');
   });
 });

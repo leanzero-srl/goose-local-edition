@@ -168,6 +168,30 @@ export function answeredRequests(requests: readonly MlxLiveRequest[]): MlxLiveRe
   return requests.filter((r) => !r.leaving);
 }
 
+/** How long ago the engine stopped this row, by its own clock; null when it reports no stop time. */
+export function sinceStopOf(request: MlxLiveRequest): number | null {
+  if (request.elapsedS == null || request.stoppedAfterS == null) return null;
+  const since = request.elapsedS - request.stoppedAfterS;
+  return since >= 0 ? since : null;
+}
+
+/**
+ * The rows whose answers already ended but that still hold the engine's batch (Q-231 `leaving`), as
+ * ONE fact every surface says alike (Q-246: the Engine tile, the tray, the glance, the chip and the
+ * composer's strip): how many, and how long ago the one held longest was stopped. null = none.
+ */
+export interface LeavingRows {
+  rows: number;
+  sinceStopS: number | null;
+}
+
+export function leavingRowsOf(requests: readonly MlxLiveRequest[]): LeavingRows | null {
+  const leaving = requests.filter((r) => r.leaving);
+  if (leaving.length === 0) return null;
+  const since = leaving.map(sinceStopOf).filter((s): s is number => s != null);
+  return { rows: leaving.length, sinceStopS: since.length > 0 ? Math.max(...since) : null };
+}
+
 /** A `/v1/status` body → typed stats, or a named reason it is not one. Absent fields stay null. */
 export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
   const root = obj(body);
@@ -226,11 +250,30 @@ export type MlxActivity = 'generating' | 'prefill' | 'queued' | 'idle' | 'not_lo
 
 export function mlxActivity(stats: MlxLiveStats): MlxActivity {
   if (stats.engineStatus === 'not_loaded') return 'not_loaded';
-  const running = stats.requests.filter((r) => r.status !== 'waiting');
+  // A `leaving` row may still be stepped, but its answer ended: it is nobody's reading or writing
+  // (Q-246 — #3m's three dropped fact checks read as "Reading" beside the queued turn). While only
+  // such rows run, the engine holds its batch for them: queued.
+  const running = answeredRequests(stats.requests).filter((r) => r.status !== 'waiting');
   if (running.some((r) => r.phase === 'generation')) return 'generating';
   if (running.some((r) => r.phase === 'prefill')) return 'prefill';
   if (stats.requests.length > 0 || (stats.numWaiting ?? 0) > 0) return 'queued';
   return 'idle';
+}
+
+/**
+ * The engine's work as a headline says it (the tile's word, the tray title, the glance's stage):
+ * its activity, or `leaving` while the only rows it holds are ones whose answers already ended —
+ * nothing anyone is answered by runs or waits. With a request waiting behind them it is `queued`,
+ * and the figure beside it says what holds it (engineFigures.ts).
+ */
+export type EngineHeadline = MlxActivity | 'leaving';
+
+export function engineHeadline(stats: MlxLiveStats): EngineHeadline {
+  const activity = mlxActivity(stats);
+  if (activity !== 'queued') return activity;
+  const nobodyWaits =
+    answeredRequests(stats.requests).length === 0 && (stats.numWaiting ?? 0) === 0;
+  return nobodyWaits && leavingRowsOf(stats.requests) ? 'leaving' : 'queued';
 }
 
 /** One request's phase in the activity words (a waiting or queued request is `queued`). */
@@ -248,7 +291,7 @@ export function requestActivity(request: MlxLiveRequest): MlxActivity {
  */
 export function liveDecodeTps(stats: MlxLiveStats): number {
   if (mlxActivity(stats) !== 'generating') return 0;
-  return stats.requests
+  return answeredRequests(stats.requests)
     .filter((r) => r.phase === 'generation' && r.completionTokens >= 2)
     .reduce((sum, r) => sum + (r.tokensPerSecond ?? 0), 0);
 }
@@ -258,7 +301,7 @@ export function liveDecodeTps(stats: MlxLiveStats): number {
  * reading (`promptTps`). Only the distributed engine reports one; on the single engine this is 0.
  */
 export function readingNowTps(stats: MlxLiveStats): number {
-  return stats.requests
+  return answeredRequests(stats.requests)
     .filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
     .reduce((sum, r) => sum + (r.promptTps ?? 0), 0);
 }

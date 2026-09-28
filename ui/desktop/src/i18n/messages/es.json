@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Proveedores en la nube"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, one {solicitud detenida que aún está saliendo del motor} other {solicitudes detenidas que aún están saliendo del motor}}{since, select, none {} other { · detenida hace {since}}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "Detenida · saliendo"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "detenida hace {since}"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "Detalles"
   },

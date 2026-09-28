@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Penyedia Awan"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, other {permintaan yang dihentikan dan masih keluar dari enjin}}{since, select, none {} other { · dihentikan {since} lalu}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "Dihentikan · sedang keluar"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "dihentikan {since} lalu"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "Butiran"
   },

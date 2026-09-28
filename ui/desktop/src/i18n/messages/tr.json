@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Bulut Sağlayıcıları"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, other {durdurulmuş istek hâlâ motordan çıkıyor}}{since, select, none {} other { · {since} önce durduruldu}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "Durduruldu · çıkıyor"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "{since} önce durduruldu"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "Ayrıntılar"
   },

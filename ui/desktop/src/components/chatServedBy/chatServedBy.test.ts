@@ -952,7 +952,9 @@ describe('deriveChatServedBy — why this chat’s turn is queued (Q-238)', () =
   it('#3m: queued behind 3 stopped rows still leaving — the turn is ours, held, and the reason is named', () => {
     const served = derive(SPLIT_TURN_BEHIND_LEAVING_3M);
     expect(served.turnRequest).toMatchObject({ id: 'req-34', promptTokens: 88660 });
-    expect(served).toMatchObject({ activity: 'prefill', work: 'thisChat', phase: 'held' });
+    // Q-246: the three leaving rows are nobody's reading — the engine's activity is queued, not
+    // 'prefill' (which every engine headline said as "Reading").
+    expect(served).toMatchObject({ activity: 'queued', work: 'thisChat', phase: 'held' });
     expect(served.turnWait).toEqual({ kind: 'leaving', rows: 3, sinceStopS: expect.any(Number) });
     // 6.9 s since they arrived, stopped 3.642 s in: 3.258 s ago, by the engine's own clock.
     expect(served.turnWait?.kind === 'leaving' && served.turnWait.sinceStopS).toBeCloseTo(3.258, 3);

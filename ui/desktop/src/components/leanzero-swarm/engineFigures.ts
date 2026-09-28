@@ -1,6 +1,7 @@
 import type { MeasuredFigure } from '../../utils/mlxMeasuredRuns';
 import {
   answeredRequests,
+  leavingRowsOf,
   liveDecodeTps,
   measuredPrefillTps,
   mlxActivity,
@@ -15,7 +16,9 @@ import {
  * React-free: main imports it to build the glance it pushes to every window.
  *
  * Per activity: writing leads with the live writing rate; reading leads with the prompt's size and
- * how long it has been read; queued leads with how many wait; otherwise the median of goose's
+ * how long it has been read; queued leads with how many wait — or, while rows whose answers already
+ * ended hold the batch (Q-231 `leaving`), with how many of those and how long ago they were stopped
+ * (Q-246); otherwise the median of goose's
  * measured writing runs. The second figure is always the reading rate — this prompt's while one is
  * read, else the median of the measured prompts. A figure nothing measured is null, never a dash.
  */
@@ -24,6 +27,8 @@ export type EngineFigure =
   | { kind: 'writingMedian'; median: number; runs: number }
   | { kind: 'prompt'; tokens: number | null; elapsedS: number }
   | { kind: 'queued'; count: number }
+  /** Rows whose answers ended still hold the batch: how many, stopped how long ago (Q-246). */
+  | { kind: 'leaving'; rows: number; sinceStopS: number | null }
   | { kind: 'reading'; tps: number }
   | { kind: 'readingMedian'; median: number; runs: number };
 
@@ -53,11 +58,14 @@ export function largestPrompt(requests: readonly MlxLiveRequest[]): MlxLiveReque
 /**
  * The request still reading its prompt that a headline names: the LARGEST prompt being read. Q-218:
  * the old rule (the one read longest) named a 174-token side call read for 12 s ("Reading prompt ·
- * 174 prompt tokens") while the chat's own 77k prompt was 1% in. It speaks for the ENGINE, so a
- * `leaving` row the engine is still reading counts: that is what the engine is doing.
+ * 174 prompt tokens") while the chat's own 77k prompt was 1% in. A `leaving` row is never it: its
+ * answer ended, and "Reading 5.5K" for a stopped fact check read as work beside the queued turn
+ * (Q-246); the `leaving` figure says those rows.
  */
 export function readingRequest(stats: MlxLiveStats): MlxLiveRequest | undefined {
-  return largestOf(stats.requests.filter((r) => r.status !== 'waiting' && r.phase === 'prefill'));
+  return largestPrompt(
+    stats.requests.filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
+  );
 }
 
 /**
@@ -95,7 +103,13 @@ export function engineFigures(
     };
   }
   if (activity === 'queued') {
-    return { hero: { kind: 'queued', count: stats.requests.length }, second };
+    const leaving = leavingRowsOf(stats.requests);
+    return {
+      hero: leaving
+        ? { kind: 'leaving', ...leaving }
+        : { kind: 'queued', count: answeredRequests(stats.requests).length },
+      second,
+    };
   }
   return {
     hero: writing ? { kind: 'writingMedian', median: writing.median, runs: writing.runs } : null,

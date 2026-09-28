@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Cloud-Anbieter"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, one {gestoppte Anfrage verlässt noch die Engine} other {gestoppte Anfragen verlassen noch die Engine}}{since, select, none {} other { · vor {since} gestoppt}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "Gestoppt · verlässt die Engine"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "vor {since} gestoppt"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "Details"
   },

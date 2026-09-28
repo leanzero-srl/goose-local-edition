@@ -32,6 +32,8 @@ import {
   GENERATING_STATUS,
   IDLE_STATUS,
   PREFILL_STATUS,
+  SPLIT_ONLY_LEAVING_3M,
+  SPLIT_TURN_BEHIND_LEAVING_3M,
 } from '../components/leanzero-swarm/mlxLiveStatus.fixtures';
 import {
   FLASH_MODEL,
@@ -288,12 +290,12 @@ describe('buildEngineGlance — chat routed to a linked Mac', () => {
 });
 
 describe('buildEngineGlance — which request the card leads with (Q-218)', () => {
-  const split = (body: unknown, rows = [CHAT_ROW, TOOL_LABEL_ROW]) =>
+  const split = (body: unknown, rows = [CHAT_ROW, TOOL_LABEL_ROW], answered = 2) =>
     buildEngineGlance(
       runningSnapshot(body, {
         engine: 'distributed',
         modelId: FLASH_MODEL,
-        serving: attributeServing(rows, 2, [], null),
+        serving: attributeServing(rows, answered, [], null),
       }),
       {
         distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 },
@@ -322,6 +324,24 @@ describe('buildEngineGlance — which request the card leads with (Q-218)', () =
     expect(g.phase).toBe('held');
     expect(g.hero).toMatchObject({ kind: 'queued' });
     expect(g.side).toEqual(['toolLabel']);
+  });
+
+  it('Q-246 #3m: the turn queued behind three stopped rows leads — the figure says what holds it', () => {
+    // goose's list holds only the turn's lease; the three leaving rows are nobody's (Q-238).
+    const g = split(SPLIT_TURN_BEHIND_LEAVING_3M, [CHAT_ROW], 1);
+    expect(g.chat).toMatchObject({ sessionId: CHAT_ROW.sessionId, work: null });
+    expect(g.stage).toBe('queued');
+    expect(g.phase).toBe('held');
+    expect(g.hero).toEqual({ kind: 'leaving', rows: 3, sinceStopS: expect.any(Number) });
+    expect(g.progress).toBeNull();
+  });
+
+  it('Q-246: only stopped rows leaving and no turn — stage leaving, not busy, never "prefill"', () => {
+    const g = split(SPLIT_ONLY_LEAVING_3M, [], 0);
+    // Before: stage prefill, hero {prompt 5,453} — "Reading prompt" on the card and the float.
+    expect(g).toMatchObject({ stage: 'leaving', phase: 'held', busy: false });
+    expect(g.hero).toMatchObject({ kind: 'leaving', rows: 3 });
+    expect(g.otherClients).toBe(0);
   });
 
   it('negative control — no chat turn on the engine, only goose’s call for it: the card speaks for the engine', () => {
