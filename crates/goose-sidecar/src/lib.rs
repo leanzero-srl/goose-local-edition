@@ -355,12 +355,35 @@ pub struct SidecarExit {
     pub exit_report: Option<String>,
 }
 
+/// What [`Sidecar::ensure_running_unless`] did: the engine answered and was kept, or it was
+/// restarted — a load, which the caller measures like a fresh start (Q-256).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ensured {
+    Healthy,
+    Restarted,
+}
+
+/// A supervised restart's LOAD failed — its port claim, spawn or readiness — as opposed to a
+/// refusal before any load began (the circuit breaker, a cancel during the backoff). Carried as
+/// context on the error, so the engine's own words stay underneath.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestartLoadFailed;
+
+impl std::fmt::Display for RestartLoadFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the engine's restart failed to load")
+    }
+}
+
 pub struct Sidecar {
     config: SidecarConfig,
     client: reqwest::Client,
     state: Mutex<State>,
     /// The cancel the start or restart in flight answers to; `None` while none is.
     cancel: StdMutex<Option<Arc<StartCancel>>>,
+    /// Where the restart in flight publishes its start, in place of `config.startup_watch` — the
+    /// mount that asked for it shows and measures ITS load, not the first start's (Q-256).
+    watch: StdMutex<Option<Arc<StartupWatch>>>,
 }
 
 impl Sidecar {
@@ -382,6 +405,7 @@ impl Sidecar {
                 backoff,
             }),
             cancel: StdMutex::new(cancel),
+            watch: StdMutex::new(None),
         };
         {
             let mut state = sidecar.state.lock().await;
@@ -451,16 +475,31 @@ impl Sidecar {
     }
 
     /// [`Self::ensure_running`], ended by `cancel` if it has to restart the engine and the owner
-    /// stops it before the restart serves.
-    pub async fn ensure_running_unless(&self, cancel: &Arc<StartCancel>) -> Result<()> {
+    /// stops it before the restart serves; a restart publishes its start to `watch`. Says whether
+    /// the engine was kept or restarted; a restart whose load failed carries [`RestartLoadFailed`].
+    pub async fn ensure_running_unless(
+        &self,
+        cancel: &Arc<StartCancel>,
+        watch: Option<Arc<StartupWatch>>,
+    ) -> Result<Ensured> {
         *self.cancel.lock().unwrap() = Some(Arc::clone(cancel));
-        let outcome = self.ensure_running().await;
+        *self.watch.lock().unwrap() = watch;
+        let outcome = self.restart_unless_healthy().await;
         *self.cancel.lock().unwrap() = None;
+        *self.watch.lock().unwrap() = None;
         outcome
     }
 
     fn current_cancel(&self) -> Option<Arc<StartCancel>> {
         self.cancel.lock().unwrap().clone()
+    }
+
+    fn current_watch(&self) -> Option<Arc<StartupWatch>> {
+        self.watch
+            .lock()
+            .unwrap()
+            .clone()
+            .or_else(|| self.config.startup_watch.clone())
     }
 
     fn refuse_if_cancelled(&self) -> Result<()> {
@@ -477,6 +516,10 @@ impl Sidecar {
     /// Restart the engine if its process died or it stops answering. Errors once the
     /// circuit breaker trips (too many restarts inside the window), carrying stderr.
     pub async fn ensure_running(&self) -> Result<()> {
+        self.restart_unless_healthy().await.map(|_| ())
+    }
+
+    async fn restart_unless_healthy(&self) -> Result<Ensured> {
         let mut state = self.state.lock().await;
 
         let exit = match state.handle.as_mut() {
@@ -503,7 +546,7 @@ impl Sidecar {
             None => match self.probe().await {
                 Ok(()) => {
                     state.backoff = self.config.backoff_initial;
-                    return Ok(());
+                    return Ok(Ensured::Healthy);
                 }
                 Err(reason) => reason.to_string(),
             },
@@ -562,9 +605,14 @@ impl Sidecar {
         }
         self.refuse_if_cancelled()?;
 
-        self.claim_port().await?;
-        let handle = self.spawn_child()?;
-        self.await_ready(&mut state, handle).await
+        let load = async {
+            self.claim_port().await?;
+            let handle = self.spawn_child()?;
+            self.await_ready(&mut state, handle).await
+        };
+        load.await
+            .map(|()| Ensured::Restarted)
+            .map_err(|e| e.context(RestartLoadFailed))
     }
 
     /// What this sidecar stamps on every process it spawns (see [`port_holder`]).
@@ -714,6 +762,7 @@ impl Sidecar {
     /// the stderr tail. A slow load that is working is never declared failed by a clock.
     async fn await_ready(&self, state: &mut State, mut handle: ChildHandle) -> Result<()> {
         let cancel = self.current_cancel();
+        let watch = self.current_watch();
         let mut sys = System::new();
         let mut last_mark = progress_mark(&mut sys, &handle);
         let mut last_progress = Instant::now();
@@ -737,7 +786,7 @@ impl Sidecar {
                 );
             }
             let mark = progress_mark(&mut sys, &handle);
-            if let Some(watch) = &self.config.startup_watch {
+            if let Some(watch) = &watch {
                 watch.publish(&mark, &handle);
             }
             let not_ready = match self.probe().await {
@@ -1529,6 +1578,7 @@ mod tests {
                 backoff: Duration::ZERO,
             }),
             cancel: StdMutex::new(None),
+            watch: StdMutex::new(None),
         }
     }
 
