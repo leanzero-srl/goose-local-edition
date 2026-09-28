@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 13:47 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 14:0x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -18,8 +18,9 @@ Updated: 2026-09-28 13:47 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 ## Agents
 - Q-344 (a card answer must not supersede its sibling; ON the Q-340/341 branch — they land together) ·
   Q-350 + Q-343 (activity says single/off while the split restores; 2,684 unfinished request logs) ·
-  Q-346 (mid-turn prompt rebuild drops project instructions; ON Q-342) · Q-347 (post-compaction cold head).
-- Q-342 merged into scratch /tmp/merge-q342 (+ main), gate → /tmp/g342.out (relaunched 13:26; the first died).
+  Q-347 (post-compaction cold head).
+- Q-342 MERGED to main 757c3458a (gate green). Q-346 done → scratch /tmp/merge-q346, gate /tmp/g346.out queued
+  behind g344's cargo (one main target). Disk swept 16 → 75 GB (my old scratchpad held 56 GB).
 - #3r turn 2 (13:40): the 27B invented `websearch`/`fetch` 13× before the real web tool → Q-367 + Q-368
   (facts paragraph restated 4×) CUTTING (wire read first). Turn 2 ended 761 s, 27 tools, a correct
   sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turn 3 running. Studio-side: forge-tuner got a
