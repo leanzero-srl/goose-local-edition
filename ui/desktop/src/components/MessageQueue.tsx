@@ -3,6 +3,8 @@ import { X, Clock, Send, GripVertical, Zap, Sparkles, ChevronDown, ChevronUp } f
 import { Button } from './ui/button';
 import { ImageData } from '../types/message';
 import { defineMessages, useIntl } from '../i18n';
+import { TONE_FILL, cx } from './lz';
+import { queueWords } from './loops/startLoopWords';
 
 const i18n = defineMessages({
   paused: {
@@ -106,6 +108,28 @@ interface MessageQueueProps {
   sendingMessageIds?: ReadonlySet<string>;
   className?: string;
   isPaused?: boolean;
+  /**
+   * The turn running now is loop tick n (DESIGN-SESSION-LOOPS §8.1): each row says what Send now
+   * does to it — it steers the tick; left alone, the message is sent after the tick, before the
+   * next one.
+   */
+  steersTick?: number | null;
+}
+
+/** "Queued · Send now steers tick {n}" — a solid chip, the row's own words for what it waits on. */
+function SteersTickChip({ n }: { n: number }) {
+  const intl = useIntl();
+  return (
+    <span
+      data-testid="queue-steers-tick"
+      className={cx(
+        'inline-flex max-w-full items-center truncate rounded-lz-pill px-2 py-0.5 text-[11px] font-lz-semibold',
+        TONE_FILL.accent
+      )}
+    >
+      {intl.formatMessage(queueWords.queuedSteers, { n })}
+    </span>
+  );
 }
 
 export const MessageQueue: React.FC<MessageQueueProps> = ({
@@ -120,6 +144,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
   sendingMessageIds,
   className = '',
   isPaused = false,
+  steersTick = null,
 }) => {
   const intl = useIntl();
   const [isExpanded, setIsExpanded] = useState(true);
@@ -230,6 +255,8 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
               </p>
             </div>
 
+            {steersTick != null && <SteersTickChip n={steersTick} />}
+
             {/* Queue count */}
             {remainingCount > 0 && (
               <div className="flex items-center gap-1 text-xs text-muted-foreground bg-background-secondary border border-border-primary px-2 py-1 rounded-full font-medium">
@@ -251,7 +278,11 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                 }}
                 disabled={nextMessageIsSending}
                 className="h-7 px-2 text-xs text-info hover:text-info/80 hover:bg-info/10"
-                title={intl.formatMessage(i18n.sendNow)}
+                title={
+                  steersTick != null
+                    ? intl.formatMessage(queueWords.sendNowSteers, { n: steersTick })
+                    : intl.formatMessage(i18n.sendNow)
+                }
               >
                 <Send className="w-3 h-3" />
               </Button>
@@ -478,6 +509,11 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                         : message.content}
                     </p>
                   )}
+                  {!isEditing && steersTick != null && (
+                    <div className="mt-1">
+                      <SteersTickChip n={steersTick} />
+                    </div>
+                  )}
                 </div>
 
                 {/* Right side actions */}
@@ -501,7 +537,9 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                       title={
                         isEditing
                           ? intl.formatMessage(i18n.cannotSendWhileEditing)
-                          : intl.formatMessage(i18n.stopAndSend)
+                          : steersTick != null
+                            ? intl.formatMessage(queueWords.sendNowSteers, { n: steersTick })
+                            : intl.formatMessage(i18n.stopAndSend)
                       }
                     >
                       <Send className="w-3 h-3" />

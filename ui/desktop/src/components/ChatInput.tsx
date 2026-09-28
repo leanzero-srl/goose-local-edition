@@ -1,6 +1,6 @@
 import { AppEvents } from '../constants/events';
-import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowUp, Bug, ScrollText } from 'lucide-react';
+import React, { useRef, useState, useEffect, useMemo, useCallback, useContext } from 'react';
+import { ArrowUp, Bug, ScrollText, X } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
 import type { View } from '../utils/navigationUtils';
@@ -49,6 +49,24 @@ import { defineMessages, useIntl } from '../i18n';
 import { Button as StudioButton, Chip, StatusDot, TYPE, cx } from './lz';
 import TurndownService from 'turndown';
 import type { NextChatExtensionDraft } from '../utils/nextChatExtensions';
+import { loopsControl, loopsGet } from '../acp/loops';
+import { errorMessage } from '../utils/conversionUtils';
+import { LoopSessionContext } from './loops/startLoopRequest';
+import { StartLoopDialog } from './loops/StartLoopDialog';
+import { ComposerLoopSlot } from './loops/ComposerLoopSlot';
+import {
+  isSwarmBuildChat,
+  loopReplyLine,
+  tickFinishingElsewhere,
+  tickRunningHere,
+  type LoopReplyLine,
+} from './loops/composerLoop';
+import { isControlCommand, parseLoopCommand } from './loops/model';
+import { loopWords } from './loops/loopWords';
+import { composerWords } from './loops/startLoopWords';
+import { setPendingUserInput } from './loops/pendingUserInput';
+import { sendLoopControlNow } from './loops/tickDoor';
+import { servedChipWords } from './settings/models/bottom_bar/servedChip';
 
 const turndown = new TurndownService({
   headingStyle: 'atx',
@@ -271,6 +289,16 @@ export default function ChatInput({
   );
   const [lastInterruption, setLastInterruption] = useState<string | null>(null);
 
+  // What waits in this chat's queue, for the loop's tick door: a queued message is sent before the
+  // next tick (§5.3). The queue lives only in this composer, so it is empty once it unmounts.
+  useEffect(() => {
+    if (sessionId) setPendingUserInput(sessionId, queuedMessages.length);
+  }, [sessionId, queuedMessages.length]);
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    return () => setPendingUserInput(sessionId, 0);
+  }, [sessionId]);
+
   const setSendNowInFlightMessage = useCallback((messageId: string, isInFlight: boolean) => {
     const nextMessageIds = new Set(sendNowInFlightMessageIdsRef.current);
     if (isInFlight) {
@@ -323,6 +351,32 @@ export default function ChatInput({
   const chatServing = useChatServedBy(effectiveProvider, sessionId, isLoading && !checkingSession);
   const servedRef = useRef(chatServing.served);
   servedRef.current = chatServing.served;
+
+  // The chat's session loop (Q-228 L4): the ONE read BaseChat makes beside the rail. Absent outside
+  // a chat (the Hub's composer), where there is no Loop button.
+  const loopSession = useContext(LoopSessionContext);
+  const loopState = loopSession && loopSession.sessionId === sessionId ? loopSession.state : null;
+  const swarmBuild = isSwarmBuildChat(effectiveProvider, effectiveModel);
+  // The turn in flight here is a loop tick: the placeholder, Stop and the queue say so (§8.1).
+  const tickHere = tickRunningHere(messages, chatState);
+  const [ranHere, setRanHere] = useState<{ sessionId: string | null; n: number } | null>(null);
+  useEffect(() => {
+    if (tickHere !== null) setRanHere({ sessionId, n: tickHere });
+  }, [sessionId, tickHere]);
+  const tickElsewhere = loopState
+    ? tickFinishingElsewhere(
+        loopState,
+        chatState,
+        ranHere?.sessionId === sessionId ? ranHere.n : null
+      )
+    : null;
+  const [loopReply, setLoopReply] = useState<LoopReplyLine | null>(null);
+  useEffect(() => setLoopReply(null), [sessionId]);
+  // What the model chip says serves this chat — the loop dialog's "one turn on …" names the same.
+  const servedLabel =
+    servedChipWords(intl, chatServing.served, Boolean(sessionId && !sessionLoaded)).chipLabel ??
+    effectiveModel ??
+    null;
 
   // Clear override when the underlying data catches up (session props for
   // active chats, config defaults for Hub / no-session contexts).
@@ -1120,9 +1174,41 @@ export default function ChatInput({
     }
   };
 
+  /**
+   * A `/loop` CONTROL typed while a turn runs goes to goosed at once — never into the queue behind
+   * the very tick it means to stop, and before the interruption words (`/loop stop` holds "stop").
+   * The reply line says what goosed answered, in the words `/loop` says between turns (§7.2).
+   */
+  const sendLoopControl = (line: string): boolean => {
+    if (!sessionId || !loopSession) return false;
+    if (pastedImages.length > 0 || allDroppedFiles.length > 0) return false;
+    const command = parseLoopCommand(line);
+    if (!command || !isControlCommand(command)) return false;
+    LocalMessageStorage.addMessage(line);
+    setLoopReply(null);
+    sendLoopControlNow(sessionId, line, { loopsGet, loopsControl }).then(
+      (answer) => {
+        if (!answer) return;
+        setLoopReply(loopReplyLine(intl, command, answer, Date.now()));
+        loopSession.reload();
+      },
+      (error: unknown) =>
+        setLoopReply({
+          text: intl.formatMessage(loopWords.controlFailed, { error: errorMessage(error) }),
+          refused: true,
+        })
+    );
+    return true;
+  };
+
   const handleInterruptionAndQueue = () => {
     if (!isLoading || !hasSubmittableContent) {
       return false;
+    }
+
+    if (sendLoopControl(displayValue.trim())) {
+      clearInputState();
+      return true;
     }
 
     const imageData = convertImagesToImageData();
@@ -1573,6 +1659,7 @@ export default function ChatInput({
       {/* Message Queue Display */}
       {queuedMessages.length > 0 && (
         <MessageQueue
+          steersTick={tickHere}
           queuedMessages={queuedMessages}
           onRemoveMessage={handleRemoveQueuedMessage}
           onClearQueue={handleClearQueue}
@@ -1586,6 +1673,34 @@ export default function ChatInput({
           className="border-b border-lz-border"
         />
       )}
+      {/* What goosed answered a `/loop` control sent during a turn (§7.2). */}
+      {loopReply && (
+        <div
+          role="status"
+          aria-label={intl.formatMessage(composerWords.replyLabel)}
+          data-testid="loop-reply"
+          data-refused={loopReply.refused}
+          className="flex items-start gap-2 border-b border-lz-border px-3 py-2"
+        >
+          <p
+            className={cx(
+              'min-w-0 flex-1 break-words',
+              TYPE.body,
+              loopReply.refused && 'font-lz-semibold text-lz-err'
+            )}
+          >
+            {loopReply.text}
+          </p>
+          <StudioButton
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<X />}
+            aria-label={intl.formatMessage(composerWords.replyDismiss)}
+            onClick={() => setLoopReply(null)}
+          />
+        </div>
+      )}
       {/* Input row with inline action buttons wrapped in form */}
       <form onSubmit={onFormSubmit} className="relative">
         <div className="relative">
@@ -1593,7 +1708,17 @@ export default function ChatInput({
             data-testid="chat-input"
             autoFocus
             id="dynamic-textarea"
-            placeholder={isRecording ? '' : intl.formatMessage(i18n.placeholder)}
+            placeholder={
+              isRecording
+                ? ''
+                : tickHere !== null
+                  ? intl.formatMessage(composerWords.placeholderTickRunning, { n: tickHere })
+                  : tickElsewhere !== null
+                    ? intl.formatMessage(composerWords.placeholderTickElsewhere, {
+                        n: tickElsewhere,
+                      })
+                    : intl.formatMessage(i18n.placeholder)
+            }
             value={displayValue}
             onChange={handleChange}
             onCompositionStart={handleCompositionStart}
@@ -1768,6 +1893,12 @@ export default function ChatInput({
           </Chip>
         </Tooltip>
 
+        {/* Left: the chat's loop — the Loop button, or its status chip (Q-228 L4, the slot Q-227
+            emptied). It hides with the other secondary controls when the bar is narrow. */}
+        {!isBottomBarNarrow && sessionId && loopState && (
+          <ComposerLoopSlot sessionId={sessionId} state={loopState} swarmBuild={swarmBuild} />
+        )}
+
         {/* Left: working directory (leaf folder name only) */}
         {!isBottomBarNarrow && (
           <Chip>
@@ -1912,7 +2043,16 @@ export default function ChatInput({
             size="sm"
             className="w-7"
             onClick={handleStop}
-            aria-label="Stop"
+            aria-label={
+              tickHere !== null
+                ? intl.formatMessage(composerWords.stopTick, { n: tickHere })
+                : 'Stop'
+            }
+            title={
+              tickHere !== null
+                ? intl.formatMessage(composerWords.stopTick, { n: tickHere })
+                : undefined
+            }
             icon={<Stop />}
           />
         ) : (
@@ -1935,6 +2075,18 @@ export default function ChatInput({
               <p data-testid="chat-input-history-hint">{getNavigationShortcutText(intl)}</p>
             </TooltipContent>
           </Tooltip>
+        )}
+        {sessionId && loopSession && loopState && (
+          <StartLoopDialog
+            sessionId={sessionId}
+            workingDir={currentWorkingDir}
+            swarmBuild={swarmBuild}
+            servedLabel={servedLabel}
+            chatProvider={effectiveProvider ?? null}
+            chatModel={effectiveModel ?? null}
+            current={loopState}
+            onChanged={loopSession.reload}
+          />
         )}
         {sessionId && diagnosticsOpen && (
           <ReportProblemDialog

@@ -12,6 +12,8 @@ import { pillView, statusTicks, type PillView } from '../loops/loopView';
 import type { SessionLoop } from '../loops/useSessionLoop';
 import type { ControlResult } from '../loops/useSessionLoop';
 import type { LoopControlAction } from '../loops/model';
+import { markEndedSeen, onOpenLoopRailRequest, useEndedSeen } from '../loops/loopRailRequest';
+import { useNow } from '../loops/useNow';
 
 export type RailTab = 'loop' | 'changes';
 
@@ -21,7 +23,6 @@ interface RailMemory {
 }
 
 const memoryKey = (sessionId: string) => `goose.sessionRail.${sessionId}`;
-const endedSeenKey = (loopId: string) => `goose.sessionRail.endedSeen.${loopId}`;
 
 /** Per-session open state and last tab (a per-viewer convenience: any storage failure is no memory). */
 export function readRailMemory(sessionId: string): RailMemory | null {
@@ -42,34 +43,6 @@ function writeRailMemory(sessionId: string, memory: RailMemory) {
   } catch {
     // The rail still works; it only forgets across remounts.
   }
-}
-
-function readEndedSeen(loopId: string): boolean {
-  try {
-    return window.localStorage.getItem(endedSeenKey(loopId)) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeEndedSeen(loopId: string) {
-  try {
-    window.localStorage.setItem(endedSeenKey(loopId), '1');
-  } catch {
-    // Forgotten across remounts only.
-  }
-}
-
-/** A clock for what the person watches tick by (elapsed, "in 8m"): display only, decides nothing. */
-function useNow(ticking: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    setNow(Date.now());
-    if (!ticking) return undefined;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [ticking]);
-  return now;
 }
 
 /**
@@ -100,7 +73,6 @@ export default function SessionRail({
   const [memory, setMemory] = useState<RailMemory>(
     () => readRailMemory(sessionId) ?? { open: false, tab: 'changes' }
   );
-  const [endedSeen, setEndedSeen] = useState(false);
   const panelId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const loopPillRef = useRef<HTMLButtonElement>(null);
@@ -112,9 +84,7 @@ export default function SessionRail({
   }, [sessionId]);
 
   const loopId = loop.kind === 'loop' ? loop.loop.id : null;
-  useEffect(() => {
-    setEndedSeen(loopId ? readEndedSeen(loopId) : false);
-  }, [loopId]);
+  const endedSeen = useEndedSeen(loopId);
 
   const ticking = loop.kind === 'loop' && statusTicks(loop.status);
   const nowMs = useNow(ticking);
@@ -127,11 +97,22 @@ export default function SessionRail({
   const ended = loop.kind === 'loop' && loop.status === 'ended';
   const onLoopTab = memory.open && memory.tab === 'loop';
   useEffect(() => {
-    if (ended && onLoopTab && loopId && !endedSeen) {
-      writeEndedSeen(loopId);
-      setEndedSeen(true);
-    }
+    if (ended && onLoopTab && loopId && !endedSeen) markEndedSeen(loopId);
   }, [ended, onLoopTab, loopId, endedSeen]);
+
+  // The composer's loop chip opens the rail on Loop (§8.1): one loop surface, two doors into it.
+  useEffect(
+    () =>
+      onOpenLoopRailRequest((requested) => {
+        if (requested !== sessionId) return false;
+        openedFrom.current = 'loop';
+        const next: RailMemory = { open: true, tab: 'loop' };
+        setMemory(next);
+        writeRailMemory(sessionId, next);
+        return true;
+      }),
+    [sessionId]
+  );
 
   const refocus = useRef(false);
   useEffect(() => {

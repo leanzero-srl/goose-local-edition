@@ -34,9 +34,8 @@ import { defineMessages, useIntl } from '../../../../i18n';
 import type { Message } from '../../../../types/message';
 import type { ChatServedBy, ChatWork } from '../../../chatServedBy/chatServedBy';
 import { splitStopReason } from '../../../chatServedBy/splitStopText';
-import { peerGoneOf, peerGoneText } from '../../../chatServedBy/peerGoneText';
 import { busyInHeadline } from '../../../chatServedBy/busyInText';
-import { shortModelName } from '../../../noNodeNotice/mlxMount';
+import { servedChipWords } from './servedChip';
 import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 
 const i18n = defineMessages({
@@ -91,14 +90,6 @@ const i18n = defineMessages({
   close: {
     id: 'modelsBottomBar.close',
     defaultMessage: 'Close',
-  },
-  servedChip: {
-    id: 'modelsBottomBar.servedChip',
-    defaultMessage: '{model} · {where}',
-  },
-  servedChipNotRunning: {
-    id: 'modelsBottomBar.servedChipNotRunning',
-    defaultMessage: '{model} · not running',
   },
   servedWhere: {
     id: 'modelsBottomBar.servedWhere',
@@ -313,22 +304,9 @@ export default function ModelsBottomBar({
     onModelChanged({ model, provider });
   };
 
-  // The MLX engine that serves this chat, as the one derivation names it. `where` is empty only
-  // when nothing is named — the chip then keeps the provider's own label.
-  const servedModel = !isModelLoading && served?.model ? shortModelName(served.model) : null;
-  const servedWhere =
-    served && served.where.length > 0
-      ? intl.formatList(served.where, { type: 'conjunction' })
-      : null;
-  const servedRunning = served != null && served.engine !== 'none';
-  // The split chat was on stopped by itself (Q-81): the chip names the split, never this Mac's
-  // single engine "not running".
-  const splitStop = served?.readiness.kind === 'split-stopped' ? served.readiness.stop : null;
+  const { servedModel, servedWhere, servedRunning, splitStop, goneWords, chipLabel } =
+    servedChipWords(intl, served, isModelLoading);
   const splitReason = splitStop ? splitStopReason(intl, splitStop) : null;
-  // A Mac that is away (its goose quit, or silent well past its comeback) is said in the composer
-  // bar's words, and the chip then names only the model — the Mac is already in the words (Q-111).
-  const away = served ? peerGoneOf(served) : null;
-  const goneWords = away ? peerGoneText(intl, away.mac, away.gone) : null;
   // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is.
   const phaseWord = goneWords
     ? goneWords
@@ -343,14 +321,6 @@ export default function ModelsBottomBar({
             : served?.phase
               ? intl.formatMessage(PHASE_WORD[served.phase])
               : intl.formatMessage(i18n.phaseUnknown);
-  const chipLabel =
-    servedModel == null
-      ? null
-      : goneWords
-        ? servedModel
-        : (servedRunning || splitStop) && servedWhere
-          ? intl.formatMessage(i18n.servedChip, { model: servedModel, where: servedWhere })
-          : intl.formatMessage(i18n.servedChipNotRunning, { model: servedModel });
 
   return (
     <div className="relative flex items-center" ref={dropdownRef}>
