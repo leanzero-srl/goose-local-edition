@@ -42,8 +42,13 @@ describe('the needs-you options hold their own text (Q-315)', () => {
           item={ITEM}
           index={1}
           total={1}
-          busy={false}
+          queues={false}
+          queued={null}
+          sending={false}
+          folded={false}
+          onToggleFold={vi.fn()}
           onAnswer={vi.fn(async () => undefined)}
+          onCancelQueued={vi.fn(() => null)}
           onDismiss={vi.fn(async () => undefined)}
         />
       </IntlProvider>

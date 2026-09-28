@@ -204,6 +204,12 @@ interface ChatInputProps {
   onSteerQueuedMessage?: (input: UserInput) => Promise<boolean>;
   pauseQueueOnStop?: boolean;
   queueProcessingBlocked?: boolean;
+  /**
+   * Something the person queued elsewhere goes first — the answers queued on a needs-you card
+   * (Q-341): while true the queue holds its messages, then resumes as after a turn. Unlike
+   * `queueProcessingBlocked` it never stops the person from typing or queueing.
+   */
+  queueHeld?: boolean;
   commandHistory?: string[];
   initialValue?: string;
   droppedFiles?: DroppedFile[];
@@ -239,6 +245,7 @@ export default function ChatInput({
   onSteerQueuedMessage,
   pauseQueueOnStop = false,
   queueProcessingBlocked = false,
+  queueHeld = false,
   commandHistory = [],
   initialValue = '',
   droppedFiles = [],
@@ -276,7 +283,8 @@ export default function ChatInput({
   const isLoadingRef = useRef(isLoading);
   const queueProcessingBlockedRef = useRef(queueProcessingBlocked);
   const wasLoadingRef = useRef(isLoading);
-  const wasQueueProcessingBlockedRef = useRef(queueProcessingBlocked);
+  const queueWaits = queueProcessingBlocked || queueHeld;
+  const wasQueueWaitsRef = useRef(queueWaits);
   isLoadingRef.current = isLoading;
   queueProcessingBlockedRef.current = queueProcessingBlocked;
 
@@ -462,12 +470,12 @@ export default function ChatInput({
   // Queue processing
   useEffect(() => {
     const becameIdle = wasLoadingRef.current && !isLoading;
-    const becameUnblocked = wasQueueProcessingBlockedRef.current && !queueProcessingBlocked;
+    const becameUnblocked = wasQueueWaitsRef.current && !queueWaits;
     const hasSendNowInFlight = sendNowInFlightMessageIdsRef.current.size > 0;
 
     if (
       (becameIdle || (becameUnblocked && !isLoading)) &&
-      !queueProcessingBlocked &&
+      !queueWaits &&
       !hasSendNowInFlight &&
       queuedMessages.length > 0
     ) {
@@ -479,13 +487,13 @@ export default function ChatInput({
       if (pendingSendAfterStopId && !messageToSend) {
         clearPendingSendAfterStop(pendingSendAfterStopId);
         wasLoadingRef.current = isLoading;
-        wasQueueProcessingBlockedRef.current = queueProcessingBlocked;
+        wasQueueWaitsRef.current = queueWaits;
         return;
       }
 
       if (!messageToSend) {
         wasLoadingRef.current = isLoading;
-        wasQueueProcessingBlockedRef.current = queueProcessingBlocked;
+        wasQueueWaitsRef.current = queueWaits;
         return;
       }
 
@@ -521,10 +529,10 @@ export default function ChatInput({
       }
     }
     wasLoadingRef.current = isLoading;
-    wasQueueProcessingBlockedRef.current = queueProcessingBlocked;
+    wasQueueWaitsRef.current = queueWaits;
   }, [
     isLoading,
-    queueProcessingBlocked,
+    queueWaits,
     queuedMessages,
     handleSubmit,
     lastInterruption,

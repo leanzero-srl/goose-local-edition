@@ -16,6 +16,7 @@ import {
   seedSessionActivityForTests,
 } from './sessionActivityStore';
 import type { AcpElicitationRequest } from '../../acp/elicitationRequests';
+import { resetAnswerQueuesForTests } from './needsYouAnswerQueue';
 
 const ITEM = {
   id: 'ny_1',
@@ -30,7 +31,10 @@ const ITEM = {
   status: 'open' as const,
 };
 
-function renderTray(chatState = ChatState.Idle, submitElicitationResponse?: () => Promise<boolean>) {
+function renderTray(
+  chatState = ChatState.Idle,
+  submitElicitationResponse?: () => Promise<boolean>
+) {
   const sendAnswer = vi.fn();
   render(
     <IntlProvider locale="en" messages={{}}>
@@ -51,7 +55,10 @@ describe('NeedsYouTray — pinned above the composer until answered or dismissed
     acp.acpSessionActivity.mockReset().mockResolvedValue({ running: [], needsYou: [], failed: [] });
     seedSessionActivityForTests({ needsYou: [ITEM] });
   });
-  afterEach(() => resetSessionActivityForTests());
+  afterEach(() => {
+    resetSessionActivityForTests();
+    resetAnswerQueuesForTests();
+  });
 
   it('says what is needed and why, offers the recommended answer, the options and a free field', () => {
     renderTray();
@@ -120,11 +127,20 @@ describe('NeedsYouTray — pinned above the composer until answered or dismissed
     expect(input.value).toBe('Use DuckDB');
   });
 
-  it('while goose is working the answers wait, and the card says so', () => {
-    renderTray(ChatState.Streaming);
-    expect((screen.getByTestId('needs-you-recommended') as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId('needs-you-dismiss') as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/goose is working/)).toBeTruthy();
+  it('while goose is working an answer is taken and QUEUED (Q-341): nothing resolves or sends yet, and the card says so', () => {
+    const sendAnswer = renderTray(ChatState.Streaming);
+    const recommended = screen.getByTestId('needs-you-recommended') as HTMLButtonElement;
+    expect(recommended.disabled).toBe(false);
+    expect((screen.getByTestId('needs-you-dismiss') as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId('needs-you-busy').textContent).toBe(
+      'goose is working — an answer you give now waits and is sent when this turn ends.'
+    );
+    fireEvent.click(recommended);
+    expect(acp.acpResolveNeedsYou).not.toHaveBeenCalled();
+    expect(sendAnswer).not.toHaveBeenCalled();
+    expect(screen.getByTestId('needs-you-queued').textContent).toContain(
+      'Queued · answers when this turn ends'
+    );
   });
 
   it('shows nothing for another session, and a live MCP elicitation surfaces pinned too', () => {
@@ -138,7 +154,10 @@ describe('NeedsYouTray — pinned above the composer until answered or dismissed
         requestedSchema: { type: 'object', properties: {} },
       },
     } as unknown as AcpElicitationRequest;
-    seedSessionActivityForTests({ needsYou: [{ ...ITEM, sessionId: 'other' }], elicitations: [elicitation] });
+    seedSessionActivityForTests({
+      needsYou: [{ ...ITEM, sessionId: 'other' }],
+      elicitations: [elicitation],
+    });
     renderTray(ChatState.Idle, vi.fn().mockResolvedValue(true));
     expect(screen.queryByTestId('needs-you-card')).toBeNull();
     const pinned = screen.getByTestId('needs-you-elicitation');
