@@ -1,14 +1,13 @@
-import type {
-  GooseServeExitSignal,
-  GooseServeResult,
-  GooseServeStop,
-  Logger,
-} from './gooseServe';
+import type { GooseServeExitSignal, GooseServeResult, GooseServeStop, Logger } from './gooseServe';
 
 export const GOOSE_SERVE_EXITED_USER_MESSAGE =
   "This window's Goose backend stopped. Close this window and open a new chat to start a new backend. If this keeps happening, restart Goose Desktop.";
 
 export interface GooseServeLease {
+  /** 'local' = the goosed this app spawned — one per app, shared by every window (Q-257). */
+  kind: 'local' | 'external';
+  /** The local goosed's pid; null for an external backend (or a spawn that never got one). */
+  pid: number | null;
   acpUrl: string;
   secretKey: string;
   cleanup: () => Promise<GooseServeStop | void>;
@@ -25,11 +24,19 @@ export class GooseServeLeaseRegistry {
   // waiting (nothing there can), which removes the lease from the map — so the app's quit must
   // still find and wait on it here, or it exits while goosed is mid-teardown (Q-223).
   private stopping = new Set<Promise<GooseServeStop>>();
+  // The app's ONE local goosed (Q-257). Split discovery needs the goosed that holds the LeanZero
+  // Link mesh; a second goosed on this Mac is refused the mesh while the first one's daemon lives,
+  // and never asks again after it is gone — so every window shares this one instead of spawning
+  // its own. A new one is started only once this one is stopping or has exited.
+  private local: GooseServeLease | null = null;
+  private localStart: Promise<GooseServeLease | null> | null = null;
 
   constructor(private readonly logger: Logger) {}
 
   create(result: GooseServeResult, secretKey: string): GooseServeLease {
     const lease: GooseServeLease = {
+      kind: 'local',
+      pid: result.process.pid ?? null,
       acpUrl: result.acpUrl,
       secretKey,
       cleanup: result.cleanup,
@@ -67,6 +74,8 @@ export class GooseServeLeaseRegistry {
       }
     };
 
+    this.local = lease;
+
     result.process.once('exit', (code, signal) => {
       markExited({ code, signal, logUnexpected: true });
     });
@@ -85,6 +94,8 @@ export class GooseServeLeaseRegistry {
     cleanup: () => Promise<void> = async () => undefined
   ): GooseServeLease {
     return {
+      kind: 'external',
+      pid: null,
       acpUrl,
       secretKey,
       cleanup,
@@ -94,6 +105,47 @@ export class GooseServeLeaseRegistry {
       exitCode: null,
       exitSignal: null,
     };
+  }
+
+  /** The app's local goosed while it still serves — neither stopping nor exited — else null. */
+  liveLocal(): GooseServeLease | null {
+    const lease = this.local;
+    return lease && !lease.cleanedUp && !lease.exited ? lease : null;
+  }
+
+  /**
+   * The local goosed a new window attaches to: the live one, else ONE start shared by every window
+   * asking meanwhile. The start first waits for every stop under way: a goosed still tearing down
+   * holds the mesh daemon, and a goosed started beside it is refused the mesh for good (Q-257,
+   * Q-223). `start` resolves null when it failed (it has told the user); the next window tries anew.
+   */
+  acquireLocal(start: () => Promise<GooseServeLease | null>): Promise<GooseServeLease | null> {
+    const live = this.liveLocal();
+    if (live) return Promise.resolve(live);
+    this.localStart ??= (async () => {
+      try {
+        if (this.stopping.size > 0) {
+          this.logger.info(
+            `A window needs a goose serve backend: waiting for ${this.stopping.size} stopping backend(s) to exit first, so the new one can hold the LeanZero Link mesh`
+          );
+          await Promise.all([...this.stopping]);
+        }
+        return await start();
+      } finally {
+        this.localStart = null;
+      }
+    })();
+    return this.localStart;
+  }
+
+  /**
+   * Would releasing this window stop its backend — no other window is attached to its lease. A
+   * window with no lease answers true, so a guard reading this never relaxes on a window it cannot
+   * place.
+   */
+  isLastWindow(windowId: number): boolean {
+    const lease = this.leasesByWindowId.get(windowId);
+    return !lease || [...lease.windowIds].every((id) => id === windowId);
   }
 
   get(windowId: number): GooseServeLease | null {

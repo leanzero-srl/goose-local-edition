@@ -167,9 +167,9 @@ describe('shouldRefuseShortcut — a session-driven run is protected by the same
 
   it('fails OPEN when the session feed is absent (legacy callers pass neither flag)', () => {
     for (const action of actions) {
-      expect(
-        shouldRefuseShortcut({ ...noBench, action, triggeredByAccelerator: true })
-      ).toBe(false);
+      expect(shouldRefuseShortcut({ ...noBench, action, triggeredByAccelerator: true })).toBe(
+        false
+      );
     }
   });
 
@@ -183,7 +183,9 @@ describe('isSwarmRunStampAlive — the cached stamp decays with the poll that wr
   const NOW = 1_800_000_000_000;
 
   it('a fresh heartbeat stamp is alive', () => {
-    expect(isSwarmRunStampAlive({ heartbeat: NOW - 5_000, heartbeatExited: false }, NOW)).toBe(true);
+    expect(isSwarmRunStampAlive({ heartbeat: NOW - 5_000, heartbeatExited: false }, NOW)).toBe(
+      true
+    );
   });
 
   it('a stamp older than the liveness window is dead — the same window as the banner, no new literal', () => {
@@ -194,12 +196,17 @@ describe('isSwarmRunStampAlive — the cached stamp decays with the poll that wr
       )
     ).toBe(false);
     expect(
-      isSwarmRunStampAlive({ heartbeat: NOW - SWARM_HEARTBEAT_STALE_MS, heartbeatExited: false }, NOW)
+      isSwarmRunStampAlive(
+        { heartbeat: NOW - SWARM_HEARTBEAT_STALE_MS, heartbeatExited: false },
+        NOW
+      )
     ).toBe(true);
   });
 
   it('an EXITED stamp is dead at once, however fresh', () => {
-    expect(isSwarmRunStampAlive({ heartbeat: NOW - 1_000, heartbeatExited: true }, NOW)).toBe(false);
+    expect(isSwarmRunStampAlive({ heartbeat: NOW - 1_000, heartbeatExited: true }, NOW)).toBe(
+      false
+    );
   });
 
   it('no stamp, or a run with no heartbeat file, is not a live run', () => {
@@ -217,19 +224,28 @@ describe('isSwarmRunStampAlive — the cached stamp decays with the poll that wr
 describe('the click path agrees with the chord path on which window is protected', () => {
   const noBench = { benchmarkRunning: false, onBenchmarkView: false } as const;
 
+  // Q-257: main feeds the chord `windowHoldsLiveRun && closeStopsBackend` — a window that shares
+  // goosed with another closes without taking the run, by either path.
   it('same inputs: chord refused ⇔ click asked; chord allowed ⇔ click passes', async () => {
     const { decideClose } = await import('../closeGuard');
     for (const windowHoldsLiveRun of [true, false]) {
-      const chordRefused = shouldRefuseShortcut({
-        ...noBench,
-        action: 'close',
-        triggeredByAccelerator: true,
-        sessionRunLive: windowHoldsLiveRun,
-        windowHoldsLiveRun,
-      });
-      const click = decideClose({ confirmed: false, windowHoldsLiveRun, rendererCanAnswer: true });
-      expect(chordRefused).toBe(windowHoldsLiveRun);
-      expect(click).toBe(windowHoldsLiveRun ? 'ask' : 'pass');
+      for (const closeStopsBackend of [true, false]) {
+        const chordRefused = shouldRefuseShortcut({
+          ...noBench,
+          action: 'close',
+          triggeredByAccelerator: true,
+          sessionRunLive: windowHoldsLiveRun,
+          windowHoldsLiveRun: windowHoldsLiveRun && closeStopsBackend,
+        });
+        const click = decideClose({
+          confirmed: false,
+          windowHoldsLiveRun,
+          rendererCanAnswer: true,
+          closeStopsBackend,
+        });
+        expect(chordRefused).toBe(windowHoldsLiveRun && closeStopsBackend);
+        expect(click).toBe(chordRefused ? 'ask' : 'pass');
+      }
     }
   });
 

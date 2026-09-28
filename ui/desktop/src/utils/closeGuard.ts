@@ -15,6 +15,11 @@
 // swarm-run subscription in swarmWatchers and the heartbeat stamp main cached from that renderer's
 // own read-swarm-run poll is fresh by SWARM_HEARTBEAT_STALE_MS (main.ts windowHoldsLiveRun →
 // isSwarmRunStampAlive). One predicate, two consumers; this module adds no liveness rule of its own.
+//
+// ONLY WHEN THE CLOSE STOPS goosed (Q-257). Every window shares the app's one goosed, so closing a
+// window that is not its lease's last leaves goosed — and the run under it — standing; that close is
+// never asked. It asks when this window is the lease's last, or when the app is quitting (the quit
+// stops every goosed whichever window closes first).
 
 /** main → renderer: "your window is being closed on a live run — ask the user". */
 export const CONFIRM_CLOSE_RUN_CHANNEL = 'confirm-close-run';
@@ -35,6 +40,11 @@ export type CloseGuardInput = {
   windowHoldsLiveRun: boolean;
   /** The renderer can still show the dialog and answer: its webContents is neither destroyed nor crashed. */
   rendererCanAnswer: boolean;
+  /**
+   * This close stops the goosed the run lives under: the window is its lease's last
+   * (GooseServeLeaseRegistry.isLastWindow), or the app is quitting (QuitHold.isQuitting).
+   */
+  closeStopsBackend: boolean;
 };
 
 /**
@@ -49,9 +59,11 @@ export function decideClose({
   confirmed,
   windowHoldsLiveRun,
   rendererCanAnswer,
+  closeStopsBackend,
 }: CloseGuardInput): CloseVerdict {
   if (confirmed) return 'pass';
   if (!windowHoldsLiveRun) return 'pass';
+  if (!closeStopsBackend) return 'pass';
   if (!rendererCanAnswer) return 'pass';
   return 'ask';
 }

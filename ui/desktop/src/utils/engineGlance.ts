@@ -698,7 +698,11 @@ export function isGlanceSessions(value: unknown): value is GlanceSessions {
 
 export const NO_SESSIONS: GlanceSessions = { running: 0, needsYou: [] };
 
-/** Every window runs its own goosed: its sessions add up, a question asked twice counts once. */
+/**
+ * Each window reports its own ACP connection's turns (one goosed serves every window since Q-257,
+ * but every connection keeps its own busy set — acp/server/needs_you.rs busy_sessions): its
+ * sessions add up, a question asked twice counts once.
+ */
 export function mergeGlanceSessions(reports: Iterable<GlanceSessions>): GlanceSessions {
   let running = 0;
   const needsYou = new Map<string, GlanceNeedsYou>();

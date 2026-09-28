@@ -98,6 +98,8 @@ export interface StartGooseServeOptions extends FindGooseBinaryOptions {
   env?: Record<string, string | undefined>;
   logger?: Logger;
   diagnosticsDir?: string;
+  /** Where goosed's whole stderr is appended — app-wide, since one goosed serves every window. */
+  stderrLogPath: string;
   readinessFetch?: ReadinessFetch;
   /** The SIGTERM → SIGKILL window; GOOSED_SIGKILL_AFTER_MS unless a test shortens it. */
   sigkillAfterMs?: number;
@@ -443,6 +445,7 @@ export const startGooseServe = async ({
   resourcesPath,
   logger = defaultLogger,
   diagnosticsDir,
+  stderrLogPath,
   readinessFetch = fetch,
   sigkillAfterMs = GOOSED_SIGKILL_AFTER_MS,
 }: StartGooseServeOptions): Promise<GooseServeResult> => {
@@ -598,9 +601,10 @@ export const startGooseServe = async ({
   // crash report — i.e. a tokio task ended, which kills the TASK and not the PROCESS, and prints its panic to
   // stderr. Straight into the void. Three dead runs and not one line to read.
   //
-  // Streamed to a file, never accumulated in memory (the reason the old code refused to keep it). The log
-  // lives beside the run's own events so a dead run's evidence is in the dir the run owns.
-  const stderrLogPath = path.join(workingDir, '.swarm', 'engine-stderr.log');
+  // Streamed to a file, never accumulated in memory (the reason the old code refused to keep it). The
+  // file is app-wide (the caller names it): one goosed serves every window (Q-257), so the first
+  // window's `.swarm/` is not where its words belong. A swarm run's own stderr is still teed into its
+  // run dir's `.swarm/engine-stderr.log` by the swarm provider (providers/swarm.rs).
   let stderrSink: fs.WriteStream | null = null;
   try {
     fs.mkdirSync(path.dirname(stderrLogPath), { recursive: true });

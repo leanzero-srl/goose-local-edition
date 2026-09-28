@@ -95,7 +95,8 @@ export function toLinkTrayReport(state: LinkState | null): LinkTrayReport | null
 const TONES: readonly string[] = ['ok', 'busy', 'off', 'failed'];
 
 /**
- * Every window runs its own goosed, and each reports. The tray shows ONE line: the window whose
+ * Every window reports (since Q-257 all of them read the app's one goosed, so they agree; the pick
+ * still guards a window whose read is older or failed). The tray shows ONE line: the window whose
  * backend holds the mesh speaks for the Mac (connected > connecting > a failure > off), so a
  * second window's "not reconnected here" never overwrites a live connection.
  */

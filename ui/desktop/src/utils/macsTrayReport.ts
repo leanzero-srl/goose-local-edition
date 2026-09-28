@@ -47,7 +47,7 @@ export function isMacsTrayReport(value: unknown): value is MacsTrayReport | null
 }
 
 /**
- * Every window runs its own goosed and each reports; the tray shows the report that names the most
+ * Every window reports (one goosed serves them all since Q-257); the tray shows the report that names the most
  * Macs — a window whose goose is not on the mesh reports none and never hides the one that is.
  */
 export function pickMacsTrayReport(
