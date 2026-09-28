@@ -200,8 +200,8 @@ const i18n = defineMessages({
   },
 });
 
-/** The platform extension whose load mode (`session_id`) returns a past session's first and last
- *  three messages (chatrecall.rs). A session ask turns it on when the profile has it. */
+/** The platform extension whose `read_chat` tool reads a past session's messages (chatrecall.rs,
+ *  Q-358). A session ask turns it on when the profile has it. */
 export const SESSION_RECALL_EXTENSION = 'chatrecall';
 
 /**
@@ -216,7 +216,7 @@ export function askAboutSessionPrompt(
   const name = displaySessionListName(session.name);
   const lastActive = session.lastMessageAt ?? session.updatedAt;
   const read = facts.chatRecall
-    ? `Read it first: the chatrecall tool with session_id "${session.id}" returns its first and last 3 messages.`
+    ? `Read it first: the read_chat tool with chat "${session.id}" returns its newest messages (search_chats finds anything older in it).`
     : `None of its messages are attached here and this profile has no chatrecall extension to load them, so ask me to paste the part that matters.`;
   return [
     `I want to work from my earlier goose session "${name}" (session id ${session.id}, working directory ${session.workingDir}, ${session.messageCount} messages, created ${session.createdAt}, last active ${lastActive}).`,
