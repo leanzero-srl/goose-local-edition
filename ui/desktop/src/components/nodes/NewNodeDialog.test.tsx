@@ -413,15 +413,16 @@ describe('New node · a cloud model or an endpoint', () => {
     await userEvent.click(await screen.findByRole('combobox', { name: 'Model' }));
     await userEvent.click(await screen.findByText('openai/gpt-5'));
     await next();
+    // Q-439: named by the model id as the provider lists it, not its short name.
     expect((screen.getByTestId('new-node-name-input') as HTMLInputElement).value).toBe(
-      'gpt-5 · OpenRouter'
+      'openai/gpt-5 · OpenRouter'
     );
     expect(screen.queryByTestId('new-node-create-start')).toBeNull();
     await userEvent.click(screen.getByTestId('new-node-create'));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     expect(lastDef()).toEqual({
-      id: 'gpt-5-openrouter',
-      name: 'gpt-5 · OpenRouter',
+      id: 'openai-gpt-5-openrouter',
+      name: 'openai/gpt-5 · OpenRouter',
       kind: 'cloud',
       model: 'openai/gpt-5',
       provider: 'openrouter',

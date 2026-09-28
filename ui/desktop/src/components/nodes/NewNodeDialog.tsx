@@ -444,8 +444,11 @@ function NewNodeDialogBody({
     if (kind === 'mlx' && model && placement) {
       return defaultNodeName(intl, model, whereWords(intl, placement, macs.macs), takenNames);
     }
+    // A provider's node is named by the model id as the provider lists it (Q-439: two
+    // providers' "deepseek-v4.1-flash" are different models); the card's model line under the
+    // name carries the short name.
     if (kind !== 'mlx' && providerModel) {
-      return uniqueName(`${modelShortName(providerModel)} · ${providerName}`, takenNames);
+      return uniqueName(`${providerModel.trim()} · ${providerName}`, takenNames);
     }
     return '';
   };
