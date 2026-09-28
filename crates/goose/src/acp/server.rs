@@ -2886,13 +2886,31 @@ impl GooseAcpAgent {
         }
 
         if cancel_token.is_cancelled() {
-            // A tick cancelled before its reply ran — the person's Stop while it started, or a
-            // yield to a user turn that began between the offer and the start — is settled as a
-            // cancel during the reply is: its marker, already in the window, is stored under the
-            // offer's id (the window and a replay agree), and the cancel is recorded by its cause.
-            if let (Some(_), Some(id)) = (&tick, &tick_message_id) {
-                let marker = Self::convert_acp_prompt_to_message(&args.prompt).with_id(id.clone());
-                match self.session_manager.add_message(&session_id, &marker).await {
+            // A turn cancelled before its reply ran is settled as a cancel during the reply is:
+            // the message the window already shows is stored, and the cancel recorded by its
+            // cause. A tick — the person's Stop while it started, or a yield to what began between
+            // the offer and the start — stores its marker under the offer's id (the window and a
+            // replay agree). A person's plain message is stored as `agent.reply` stores one. A
+            // slash command is not: what `agent.reply` stores for it depends on running it (the
+            // command line visible-only with its answer, a recipe's resolved prompt for the model,
+            // nothing when it fails), so a command stopped before it ran leaves nothing.
+            let stopped = match (&tick, &tick_message_id) {
+                (Some(_), Some(id)) => {
+                    Some(Self::convert_acp_prompt_to_message(&args.prompt).with_id(id.clone()))
+                }
+                _ => {
+                    let message = Self::convert_acp_prompt_to_message(&args.prompt);
+                    crate::agents::execute_commands::parse_slash_command(&message.as_concat_text())
+                        .is_none()
+                        .then_some(message)
+                }
+            };
+            if let Some(message) = stopped {
+                match self
+                    .session_manager
+                    .add_message(&session_id, &message)
+                    .await
+                {
                     Ok(()) => {
                         self.record_cancelled_turn(
                             cx,
@@ -2905,7 +2923,7 @@ impl GooseAcpAgent {
                     Err(error) => warn!(
                         session_id,
                         %error,
-                        "the cancelled tick's message was not stored; its marker shows only until the chat reloads"
+                        "the stopped turn's message was not stored; the window shows it only until the chat reloads"
                     ),
                 }
             }
