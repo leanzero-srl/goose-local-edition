@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 21:1x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 21:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.72 on BOTH Macs 21:0x (DMG kept). The SPLIT could not start: MacBook 12 GiB free (other sessions'
@@ -87,7 +87,9 @@ Updated: 2026-09-28 21:1x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - Spend/usage limit hit 19:1x (resets 21:50): Q-399, Q-400, Q-394b agents RESUMED by SendMessage on the owner's
   "retry please all"; if they die again, re-send after 21:50.
 
-- 3.0.73 = /tmp/merge-073: Q-399/401 + Q-402 + Q-409 merged (5d149699b); Q-400+403 merged (8805a72e8 — rank_wrapper conflict resolved by its
+- 3.0.73 = main f51d4f9da (gate GREEN: vitest 4316, 54 suites, clippy, schema, wincheck); RELEASE BUILDING
+  (~/goose-builds/release-3.0.73.log). Memory recovered (the orphaned lz-ppm python is gone; swap 10 GB, disk
+  123 GB) → install 3.0.73 on both, split-start, E2E #3t on the SPLIT. Was /tmp/merge-073: Q-399/401 + Q-402 + Q-409 merged (5d149699b); Q-400+403 merged (8805a72e8 — rank_wrapper conflict resolved by its
   author); FULL GATE /tmp/g073.out (scratchpad/gate073.sh, target g073); Q-406 MERGED (13280e94d: own process groups, proof-gated
   group kill, named TCC cause; #3r trace YES); Q-407 (goosed crash leaves commands running) cutting.
 
