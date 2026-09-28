@@ -33,8 +33,8 @@ export function requestOpenLoopRail(sessionId: string): boolean {
 
 const endedSeenKey = (loopId: string) => `goose.sessionRail.endedSeen.${loopId}`;
 const seenListeners = new Set<() => void>();
-// What this window has marked seen, so a storage that refuses writes still hides the chip and the
-// pill together for the rest of the session.
+// What this window marked seen while the storage refused the write, so the chip and the pill still
+// hide together for the rest of the session.
 const sessionSeen = new Set<string>();
 
 export function readEndedSeen(loopId: string): boolean {
@@ -49,9 +49,9 @@ export function markEndedSeen(loopId: string): void {
   try {
     window.localStorage.setItem(endedSeenKey(loopId), '1');
   } catch {
-    // Forgotten across remounts only; this session still hides it below.
+    // Forgotten across restarts only: this window still hides it.
+    sessionSeen.add(loopId);
   }
-  sessionSeen.add(loopId);
   for (const listener of [...seenListeners]) listener();
 }
 
