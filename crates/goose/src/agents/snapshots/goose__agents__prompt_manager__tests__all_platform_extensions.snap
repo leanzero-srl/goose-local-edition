@@ -104,6 +104,8 @@ Use write and edit to efficiently make changes. Test and verify as appropriate.
 
 When running Python scripts or commands, always use `python3` instead of `python`.
 
+On macOS, find files by name with `mdfind -onlyin <dir> -name <name>` instead of walking $HOME with find: a privacy-protected folder there can block the walk until the command times out.
+
 ## ledger
 
 ### Instructions

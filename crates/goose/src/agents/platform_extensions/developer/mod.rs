@@ -3,6 +3,7 @@ pub mod file_diff;
 pub mod image;
 pub mod process_groups;
 pub mod shell;
+mod stall;
 pub mod tree;
 
 use crate::agents::extension::PlatformExtensionContext;
@@ -64,6 +65,8 @@ fn developer_instructions() -> &'static str {
             Use write and edit to efficiently make changes. Test and verify as appropriate.
 
             When running Python scripts or commands, always use `python3` instead of `python`.
+
+            On macOS, find files by name with `mdfind -onlyin <dir> -name <name>` instead of walking $HOME with find: a privacy-protected folder there can block the walk until the command times out.
         "}
     }
 }
@@ -194,17 +197,24 @@ impl McpClientTrait for DeveloperClient {
         ctx: &ToolCallContext,
         name: &str,
         arguments: Option<JsonObject>,
-        _cancel_token: CancellationToken,
+        cancel_token: CancellationToken,
     ) -> Result<CallToolResult, Error> {
         let working_dir = ctx.working_dir.as_deref();
         match name {
             "shell" => match Self::parse_args::<ShellParams>(arguments) {
                 // The session id rides along so an own-group spawn is registered under the session
                 // that made it — the attempt-scoped reap (see process_groups) keys on it.
-                Ok(params) => Ok(self
-                    .shell_tool
-                    .shell_in_session(params, working_dir, Some(&ctx.session_id))
-                    .await),
+                // A cancelled call drops the shell future, and dropping it terminates the
+                // command's processes (process_groups::CommandProcesses) instead of leaving them.
+                Ok(params) => tokio::select! {
+                    result = self
+                        .shell_tool
+                        .shell_in_session(params, working_dir, Some(&ctx.session_id)) => Ok(result),
+                    _ = cancel_token.cancelled() => Ok(ShellTool::error_result(
+                        "Shell command cancelled; its processes were terminated.",
+                        None,
+                    )),
+                },
                 Err(error) => Ok(ShellTool::error_result(&format!("Error: {error}"), None)),
             },
             "write" => match Self::parse_args::<FileWriteParams>(arguments) {
