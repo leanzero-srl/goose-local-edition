@@ -59,8 +59,11 @@ Updated: 2026-09-28 19:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   MERGED into merge-072 (6ada7bcd0); its full gate QUEUED behind: a cargo slot — #3s runs on the split and
   Q-394/Q-397 agents hold the MacBook's cargo (≤1 job rule). Q-394(a) DONE (worktree-agent-a54da611728175b1f: compaction keeps the work folder + absolute paths) — joins
   merge-072 after g072b; Q-394(b) (find ~ sat 300 s in the app) investigating; Q-397 DONE (worktree-agent-a55855b8d10a78827: memory_hold code + blocking /goose/admission
-  wait, only the rank-0 Mac needs it) — joins merge-072 after g072b with Q-394a. Q-399 (relay forwards the wait)
-  + Q-400 (queue_depth 55) cutting; Q-398 (pipeline fork's 503 has no code) QUEUED behind: agent cap. Was BATCH 2b list: Q-379..382 (worktree-agent-ad123d197e6e9ffd8), Q-388/389
+  wait, only the rank-0 Mac needs it) — joins merge-072 after g072b with Q-394a. BATCH 3 (→ 3.0.73): Q-399 DONE (worktree-agent-a77c5e29f0ce12c86, + Q-401
+  fixed; both Macs need it), Q-400 DONE (branch q400-router-queue-depth: queue-depth leak + end-of-turn reviewers superseded by
+  their chat's next turn — #3r piled 19); Q-402 DONE (worktree-agent-a731d604ff79a5e18, carries Q-399) ; Q-409 (desktop monitor may show the
+  capability) + Q-403 (split counts dropped requests as in flight) + Q-406 (shell timeout kills
+  only bash; TCC-blocked find — the Q-394b root cause) cutting; Q-398 (pipeline fork's 503 has no code) QUEUED behind: agent cap. Was BATCH 2b list: Q-379..382 (worktree-agent-ad123d197e6e9ffd8), Q-388/389
   (worktree-agent-a1d887d0d5490caf6: create-doc path + xlsx read, MCP patch), Q-383, Q-391, Q-392 when done.
   Q-390 (r1 opens the chat in <round>/work) cutting.
 - 429 at 16:5x (limit resets 18:40): resumed by SendMessage — Q-383 (a3e9aab…, WIP untracked testClock.ts +
@@ -68,7 +71,8 @@ Updated: 2026-09-28 19:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   running). If either dies again: re-send after 18:40, same ids.
 
 - 3.0.72 = merge-072 49e2269d0: batch 2 + 2b (g072b GREEN but the waitClock guard → fixed 967ef755d) + Q-397 +
-  Q-394a (acp_ws harness conflict hand-unioned, shared brace fixed, rustfmt ok). FINAL gate /tmp/g072c.out
+  Q-394a (acp_ws harness conflict hand-unioned, shared brace fixed, rustfmt ok). FINAL gate /tmp/g072c.out (RELAUNCHED 19:4x after a Q-397×Q-357 seam: the hold status line lacked
+  `compaction: None` — fixed; main + Q-405 merged in; app QUIT to free the idle split's ~37 GB — swap was 80 GB)
   (scratchpad/gate072c.sh, own session). Green → ff main → release 3.0.72 → install both → E2E #3t, NO cargo.
 - CI red once on e3b810895: Q-346's lib test raced sources.rs tests swapping GOOSE_PATH_ROOT → Q-405 fixed on main
   274e12820 (env lock); the failed job re-run. merge-072 takes it when main is merged in before the ff.
