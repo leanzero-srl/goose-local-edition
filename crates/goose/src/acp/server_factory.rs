@@ -30,6 +30,7 @@ pub struct AcpServer {
 
 impl AcpServer {
     pub fn new(config: AcpServerFactoryConfig) -> Self {
+        crate::session_loops::agent_sync::install();
         Self {
             config,
             scheduler: OnceCell::new(),
