@@ -143,6 +143,8 @@ pub struct ChatCompaction {
     pub ledger: LedgerRead,
     /// The kept block's share of the window, in chars; `None` when the window is unknown.
     pub kept_budget_chars: Option<usize>,
+    /// The session's folder, which the kept block resolves relative paths against (Q-394).
+    pub working_dir: std::path::PathBuf,
     pub progress: Option<CompactionObserver>,
 }
 
@@ -436,6 +438,7 @@ async fn compact_core(
                 note: chat.note.as_deref(),
                 pins: &chat.pins,
                 preserved: preserved_text.as_deref(),
+                working_dir: Some(&chat.working_dir),
             },
             chat.ledger.clone(),
         )
@@ -1936,6 +1939,7 @@ mod tests {
             goal: None,
             ledger: LedgerRead::Entries(Vec::new()),
             kept_budget_chars: None,
+            working_dir: std::path::PathBuf::from("/Users/someone"),
             progress: None,
         }
     }
@@ -2298,6 +2302,7 @@ mod tests {
                 note: inputs.note.as_deref(),
                 pins: &[],
                 preserved: None,
+                working_dir: Some(&inputs.working_dir),
             },
             LedgerRead::Entries(vec!["2026-09-28 12:20 [fact] 10 pass / 0 fail".to_string()]),
         );
@@ -2328,6 +2333,10 @@ mod tests {
             "{instruction}"
         );
         assert!(!instruction.contains("earlier summary"));
+        assert!(
+            instruction.contains("Name every file by its absolute path"),
+            "Q-394: a relative file name loses the folder the work is in: {instruction}"
+        );
 
         let auto = chat_instruction(&chat_inputs(None, false), &kept, conversation.messages());
         assert_eq!(

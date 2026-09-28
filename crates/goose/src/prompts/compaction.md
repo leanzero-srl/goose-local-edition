@@ -28,7 +28,9 @@ Follow it. Your first line says how you read it:
 {% endif %}
 {% endif %}
 
-Write only these sections, in this order, taken from the conversation above — the exact file names, commands, numbers and values as they appear there:
+Name every file by its absolute path: a path the conversation used relative to the folder a command worked in (`cd <folder> && …`) is that folder joined with the path.
+
+Write only these sections, in this order, taken from the conversation above — the exact commands, numbers and values as they appear there:
 {% for part in chat.parts %}
 ## {{ part.heading }}
 {{ part.ask }}

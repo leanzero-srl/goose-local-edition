@@ -462,6 +462,7 @@ impl Agent {
             goal: self.get_goal().await,
             ledger,
             kept_budget_chars: context_mgmt::kept_budget_chars(limit),
+            working_dir: session.working_dir.clone(),
             progress: None,
         };
         Ok((state, chat, request))

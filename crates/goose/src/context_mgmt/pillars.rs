@@ -14,6 +14,7 @@ use crate::agents::execute_commands::parse_slash_command;
 use crate::agents::platform_extensions::developer::file_diff::{written_files, WrittenFile};
 use crate::conversation::message::{audience_includes, Message, MessageContent};
 use rmcp::model::Role;
+use std::path::{Component, Path, PathBuf};
 
 pub const KEPT_OPEN: &str = "<kept-by-goose>";
 pub const KEPT_CLOSE: &str = "</kept-by-goose>";
@@ -58,6 +59,19 @@ pub struct Failed {
     pub output: String,
 }
 
+/// A folder the conversation's tool calls worked in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkFolder {
+    pub path: String,
+    /// Calls that ran here: a shell command that opened with `cd` to it, or a call whose `cwd`
+    /// argument named it.
+    pub calls: usize,
+    /// Files the `write`/`edit` calls changed under it.
+    pub files: usize,
+    /// The newest call that worked here, by its place among the conversation's calls.
+    newest: usize,
+}
+
 /// The chat's ledger as the compaction read it. An unreadable ledger is said, never taken as empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LedgerRead {
@@ -70,7 +84,13 @@ pub enum LedgerRead {
 pub struct Pillars {
     /// P1 — every message the person wrote, oldest first.
     pub asked: Vec<Asked>,
-    /// P2 — every file the chat's `write`/`edit` calls changed.
+    /// P2 — the folders the work happened in, newest first (Q-394: after #3r's compaction the
+    /// model knew `scripts/build_report.js` but not the folder its commands had cd'ed into, and
+    /// searched the home folder for it).
+    pub work: Vec<WorkFolder>,
+    /// The chat's own folder, said beside the work folders when the work happened elsewhere.
+    pub chat_folder: Option<String>,
+    /// P2 — every file the chat's `write`/`edit` calls changed, by its absolute path.
     pub files: Vec<WrittenFile>,
     /// P3 — the failed tool calls kept, oldest first; `failed_left_out` older ones did not fit.
     pub failed: Vec<Failed>,
@@ -90,6 +110,8 @@ pub struct KeptSources<'a> {
     pub pins: &'a [String],
     /// The message the compaction appends after the summary word for word; not kept twice.
     pub preserved: Option<&'a str>,
+    /// The session's folder: what the chat's tools resolve a relative path against.
+    pub working_dir: Option<&'a Path>,
 }
 
 impl Pillars {
@@ -100,9 +122,12 @@ impl Pillars {
                 asked.pop();
             }
         }
+        let files = absolute_files(written_files(messages), sources.working_dir);
         Self {
             asked,
-            files: written_files(messages),
+            work: work_folders(messages, sources.working_dir, &files),
+            chat_folder: sources.working_dir.map(|dir| dir.display().to_string()),
+            files,
             failed: failed_of(messages),
             failed_left_out: 0,
             note: sources
@@ -187,21 +212,21 @@ impl Pillars {
                     }
                 }
             }
-            Pillar::Files if !self.files.is_empty() => {
-                let under = common_dir(self.files.iter().map(|f| f.path.as_str()));
-                match under {
-                    Some(dir) => out.push_str(&format!(
-                        "\n## Files written ({}, under {dir})\n",
-                        self.files.len()
-                    )),
-                    None => out.push_str(&format!("\n## Files written ({})\n", self.files.len())),
+            Pillar::Files if !self.files.is_empty() || !self.work.is_empty() => {
+                if !self.work.is_empty() {
+                    out.push_str("\n## Where the work is (newest first)\n");
+                    if let Some(sentence) = self.elsewhere() {
+                        out.push_str(&format!("{sentence}\n"));
+                    }
+                    for folder in &self.work {
+                        out.push_str(&format!("- {}\n", folder_line(folder)));
+                    }
                 }
-                for file in &self.files {
-                    let shown = under
-                        .and_then(|dir| file.path.strip_prefix(dir))
-                        .map(|rest| rest.trim_start_matches(['/', '\\']))
-                        .unwrap_or(&file.path);
-                    out.push_str(&format!("- {}\n", file_line(shown, file)));
+                if !self.files.is_empty() {
+                    out.push_str(&format!("\n## Files written ({})\n", self.files.len()));
+                    for file in &self.files {
+                        out.push_str(&format!("- {}\n", file_line(&file.path, file)));
+                    }
                 }
             }
             Pillar::Failed if !self.failed.is_empty() || self.failed_left_out > 0 => {
@@ -261,7 +286,16 @@ impl Pillars {
     pub fn items(&self, pillar: Pillar) -> Vec<String> {
         match pillar {
             Pillar::Asked => self.asked.iter().map(|a| a.text.clone()).collect(),
-            Pillar::Files => self.files.iter().map(|f| file_line(&f.path, f)).collect(),
+            Pillar::Files => self
+                .elsewhere()
+                .into_iter()
+                .chain(
+                    self.work
+                        .iter()
+                        .map(|folder| format!("Where the work is: {}", folder_line(folder))),
+                )
+                .chain(self.files.iter().map(|f| file_line(&f.path, f)))
+                .collect(),
             Pillar::Failed => self.failed.iter().map(failed_line).collect(),
             Pillar::Notes => self
                 .note
@@ -280,6 +314,14 @@ impl Pillars {
     /// the model knows what it need not repeat.
     pub fn kept_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
+        if !self.work.is_empty() {
+            let folders: Vec<&str> = self.work.iter().map(|f| f.path.as_str()).collect();
+            lines.push(format!(
+                "the {} the work happened in, newest first: {}",
+                counted(folders.len(), "folder", "folders"),
+                folders.join(", ")
+            ));
+        }
         if !self.asked.is_empty() {
             lines.push(format!(
                 "the person's {}, word for word",
@@ -324,6 +366,20 @@ impl Pillars {
         }
         lines
     }
+
+    /// Said when a call worked in a folder other than the chat's own: #3r's chat folder was the
+    /// home folder and every command cd'ed into the project's `work` folder first, so its relative
+    /// paths were that folder's.
+    fn elsewhere(&self) -> Option<String> {
+        let chat = self.chat_folder.as_deref()?;
+        if !self.work.iter().any(|f| f.calls > 0 && f.path != chat) {
+            return None;
+        }
+        Some(format!(
+            "The chat's own folder is {chat}, but commands worked in the folders below: a relative \
+             path a command used is relative to the folder it worked in, not to the chat's."
+        ))
+    }
 }
 
 fn counted(n: usize, one: &str, many: &str) -> String {
@@ -338,24 +394,208 @@ fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-/// The folder every path shares, when there are two paths or more and it is not the root.
-fn common_dir<'a>(mut paths: impl Iterator<Item = &'a str>) -> Option<&'a str> {
-    let first = paths.next()?;
-    let mut shared = first.len();
-    let mut count = 1;
-    for path in paths {
-        count += 1;
-        shared = first
-            .bytes()
-            .zip(path.bytes())
-            .take(shared)
-            .take_while(|(a, b)| a == b)
-            .count();
+fn folder_line(folder: &WorkFolder) -> String {
+    let mut said = Vec::new();
+    if folder.calls > 0 {
+        said.push(format!(
+            "{} ran here",
+            counted(folder.calls, "call", "calls")
+        ));
     }
-    let dir = first.as_bytes()[..shared]
+    if folder.files > 0 {
+        said.push(format!(
+            "{} written under it",
+            counted(folder.files, "file", "files")
+        ));
+    }
+    format!("{} — {}", folder.path, said.join(", "))
+}
+
+/// Absolute to a POSIX shell (`/…`) or to the platform (a drive path on Windows).
+fn is_absolute(path: &str) -> bool {
+    path.starts_with('/') || Path::new(path).is_absolute()
+}
+
+/// A folder as the shell reads it: absolute as written, `~` as the home folder, otherwise joined to
+/// `base`; `.` and `..` resolved. `None` when goose cannot name it: relative with no base, a
+/// variable or command substitution, `cd -`.
+fn resolve_folder(path: &str, base: Option<&Path>) -> Option<PathBuf> {
+    if path.is_empty() || path == "-" || path.contains(['$', '`']) {
+        return None;
+    }
+    let joined = if path == "~" {
+        dirs::home_dir()?
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        dirs::home_dir()?.join(rest)
+    } else if is_absolute(path) {
+        PathBuf::from(path)
+    } else {
+        base?.join(path)
+    };
+    let mut normal = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normal.pop();
+            }
+            other => normal.push(other),
+        }
+    }
+    Some(normal)
+}
+
+/// The quoted shell word `text` opens with, quotes removed, and what follows it.
+fn quoted_word(text: &str) -> Option<(&str, &str)> {
+    let quote = text.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    text.strip_prefix(quote)?.split_once(quote)
+}
+
+/// The folder a shell command works in when it opens with `cd` — `cd A && cd B && …` is B joined
+/// to A. `None` when it opens with no `cd` to a folder goose can name.
+fn cd_folder(command: &str, base: Option<&Path>) -> Option<PathBuf> {
+    let mut rest = command.trim_start();
+    let mut folder: Option<PathBuf> = None;
+    while let Some(after) = rest
+        .strip_prefix("cd")
+        .filter(|after| after.starts_with([' ', '\t']))
+    {
+        let after = after.trim_start();
+        let (target, tail) = quoted_word(after).unwrap_or_else(|| {
+            after
+                .find(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|'))
+                .map_or((after, ""), |end| after.split_at(end))
+        });
+        let tail = tail.trim_start_matches([' ', '\t']);
+        let next = ["&&", "||", ";", "\n"]
+            .iter()
+            .find_map(|separator| tail.strip_prefix(separator));
+        if next.is_none() && !tail.is_empty() {
+            break;
+        }
+        folder = Some(resolve_folder(target, folder.as_deref().or(base))?);
+        rest = next.unwrap_or("").trim_start();
+    }
+    folder
+}
+
+type Arguments = serde_json::Map<String, serde_json::Value>;
+
+/// The folder a call says it runs in: a `cwd`-style argument, and the `cd` its shell command opens
+/// with, taken from there.
+fn call_folder(arguments: Option<&Arguments>, base: Option<&Path>) -> Option<PathBuf> {
+    let arguments = arguments?;
+    let named = ["cwd", "working_dir", "workdir"]
         .iter()
-        .rposition(|b| *b == b'/' || *b == b'\\')?;
-    first.get(..dir).filter(|_| count > 1 && dir > 0)
+        .find_map(|key| arguments.get(*key).and_then(|v| v.as_str()))
+        .and_then(|dir| resolve_folder(dir, base));
+    let cd = arguments
+        .get("command")
+        .and_then(|command| command.as_str())
+        .and_then(|command| cd_folder(command, named.as_deref().or(base)));
+    cd.or(named)
+}
+
+/// The written files, every path absolute: a `write`/`edit` result records the path it wrote,
+/// relative only when the call carried no folder — and then it is the session's folder's.
+fn absolute_files(mut files: Vec<WrittenFile>, working_dir: Option<&Path>) -> Vec<WrittenFile> {
+    for file in &mut files {
+        if !is_absolute(&file.path) {
+            if let Some(path) = resolve_folder(&file.path, working_dir) {
+                file.path = path.display().to_string();
+            }
+        }
+    }
+    files
+}
+
+fn is_under(path: &str, folder: &str) -> bool {
+    path.strip_prefix(folder)
+        .is_some_and(|rest| rest.starts_with(['/', '\\']))
+}
+
+/// The folders the conversation's calls worked in, newest first: each folder a call ran in (`cd`,
+/// `cwd`), and — for a written file under none of them — the file's own folder. A file counts
+/// under the deepest such folder that holds it.
+fn work_folders(
+    messages: &[Message],
+    working_dir: Option<&Path>,
+    files: &[WrittenFile],
+) -> Vec<WorkFolder> {
+    let calls: Vec<(&str, Option<&Arguments>)> = messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|c| match c {
+            MessageContent::ToolRequest(req) => req.tool_call.as_ref().ok(),
+            _ => None,
+        })
+        .map(|call| (call.name.as_ref(), call.arguments.as_ref()))
+        .collect();
+    let mut folders: Vec<WorkFolder> = Vec::new();
+    for (position, (_, arguments)) in calls.iter().enumerate() {
+        let Some(folder) = call_folder(*arguments, working_dir) else {
+            continue;
+        };
+        let path = folder.display().to_string();
+        match folders.iter_mut().find(|f| f.path == path) {
+            Some(known) => {
+                known.calls += 1;
+                known.newest = position;
+            }
+            None => folders.push(WorkFolder {
+                path,
+                calls: 1,
+                files: 0,
+                newest: position,
+            }),
+        }
+    }
+    let written_at = |file: &WrittenFile| {
+        calls.iter().rposition(|(name, arguments)| {
+            matches!(*name, "write" | "edit")
+                && arguments
+                    .and_then(|a| a.get("path"))
+                    .and_then(|p| p.as_str())
+                    .and_then(|p| resolve_folder(p, working_dir))
+                    .is_some_and(|p| p.display().to_string() == file.path)
+        })
+    };
+    for file in files {
+        let holder = folders
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| is_under(&file.path, &f.path))
+            .max_by_key(|(_, f)| f.path.len())
+            .map(|(i, _)| i);
+        let index = match holder {
+            Some(i) => i,
+            None => {
+                let Some(parent) = Path::new(&file.path).parent() else {
+                    continue;
+                };
+                let path = parent.display().to_string();
+                match folders.iter().position(|f| f.path == path) {
+                    Some(i) => i,
+                    None => {
+                        folders.push(WorkFolder {
+                            path,
+                            calls: 0,
+                            files: 0,
+                            newest: 0,
+                        });
+                        folders.len() - 1
+                    }
+                }
+            }
+        };
+        let folder = &mut folders[index];
+        folder.files += 1;
+        if let Some(at) = written_at(file) {
+            folder.newest = folder.newest.max(at);
+        }
+    }
+    folders.sort_by_key(|f| std::cmp::Reverse(f.newest));
+    folders
 }
 
 fn failed_line(failed: &Failed) -> String {
@@ -669,6 +909,7 @@ mod tests {
                 note: Some("keep the lead rule"),
                 pins: &pins,
                 preserved: None,
+                working_dir: None,
             },
             entries(&["2026-09-28 12:20 [fact] 10 pass / 0 fail"]),
         );
@@ -691,6 +932,147 @@ mod tests {
         assert!(block.contains(
             "## Ledger (1 entries, oldest first)\n- 2026-09-28 12:20 [fact] 10 pass / 0 fail\n"
         ));
+    }
+
+    const WORK: &str = "/Users/someone/goose-builds/quality/RU-3r/work";
+
+    fn written(id: &str, path: &str, content: &str) -> [Message; 2] {
+        [
+            call(
+                id,
+                "write",
+                serde_json::json!({"path": path, "content": content}),
+            ),
+            Message::user().with_tool_response(
+                id,
+                Ok(with_file_diff(
+                    text_result("Created"),
+                    path,
+                    Before::None,
+                    &diff_texts(path, None, content),
+                )),
+            ),
+        ]
+    }
+
+    fn ran(id: &str, command: &str) -> [Message; 2] {
+        [
+            call(id, "shell", serde_json::json!({"command": command})),
+            Message::user().with_tool_response(id, Ok(text_result("ok"))),
+        ]
+    }
+
+    /// E2E #3r (Q-394): the chat's folder was the home folder, every command opened with
+    /// `cd <run>/work && …` and named its files relative to it, the writes landed under it. After
+    /// the compaction the model knew `scripts/build_report.js` but not where, and searched the home
+    /// folder three levels deep for a file six levels down. The kept block names the folder, says
+    /// it is not the chat's, and gives every written file whole.
+    #[test]
+    fn a_3r_shaped_chat_keeps_the_folder_the_work_is_in() {
+        let mut messages = vec![Message::user().with_text("build the readiness report")];
+        messages.extend(ran("s1", &format!("cd {WORK} && ls -la")));
+        messages.extend(written(
+            "w1",
+            &format!("{WORK}/scripts/build_report.js"),
+            "const out = 'report/readiness-assessment.docx';\n",
+        ));
+        messages.extend(written(
+            "w2",
+            &format!("{WORK}/lib/identityRules.js"),
+            "module.exports = {};\n",
+        ));
+        messages.extend(ran(
+            "s2",
+            &format!("cd {WORK} && node scripts/build_report.js > report/run.log"),
+        ));
+        messages.extend(ran(
+            "s3",
+            "cd /Users/someone/goose-builds/quality/RU-3r && ls work/",
+        ));
+        messages.extend(ran("s4", "curl -s https://support.atlassian.com/"));
+        messages.extend(ran(
+            "s5",
+            &format!("cd \"{WORK}\" && python3 - <<'PY'\nprint(1 > 0)\nPY"),
+        ));
+        messages.push(Message::user().with_text("make a PDF too: report/readiness-assessment.pdf"));
+
+        let home = Path::new("/Users/someone");
+        let kept = Pillars::build(
+            &messages,
+            &KeptSources {
+                working_dir: Some(home),
+                ..Default::default()
+            },
+            entries(&[]),
+        );
+        let block = kept.render();
+        assert!(
+            block.contains(&format!(
+                "## Where the work is (newest first)\nThe chat's own folder is /Users/someone, but \
+                 commands worked in the folders below: a relative path a command used is relative \
+                 to the folder it worked in, not to the chat's.\n- {WORK} — 3 calls ran here, 2 \
+                 files written under it\n- /Users/someone/goose-builds/quality/RU-3r — 1 call ran \
+                 here\n"
+            )),
+            "{block}"
+        );
+        assert!(
+            block.contains(&format!(
+                "## Files written (2)\n- {WORK}/scripts/build_report.js — created, +1 −0 lines, 1 \
+                 write\n- {WORK}/lib/identityRules.js — created"
+            )),
+            "{block}"
+        );
+        assert!(kept.kept_lines()[0].starts_with(&format!(
+            "the 2 folders the work happened in, newest first: {WORK}, "
+        )));
+        assert_eq!(
+            kept.items(Pillar::Files)[1],
+            format!("Where the work is: {WORK} — 3 calls ran here, 2 files written under it")
+        );
+    }
+
+    /// A folder is said only when goose can name it: `cd` chains resolve, a relative `cd` is the
+    /// session folder's, a `cwd` argument counts; a variable, `cd -` or a `cd` that is not the
+    /// command's first step name nothing. A write recorded with a relative path (a call that
+    /// carried no folder) is the session folder's.
+    #[test]
+    fn the_folders_are_the_ones_the_calls_name() {
+        let base = Some(Path::new("/home/me"));
+        let cd = |command: &str| cd_folder(command, base).map(|p| p.display().to_string());
+        assert_eq!(cd("cd /a && cd b && make").as_deref(), Some("/a/b"));
+        assert_eq!(cd("cd proj; ls").as_deref(), Some("/home/me/proj"));
+        assert_eq!(cd("cd '/x y/z' || exit 1").as_deref(), Some("/x y/z"));
+        assert_eq!(cd("cd /a/b/../c\nls").as_deref(), Some("/a/c"));
+        assert_eq!(cd("cd /a").as_deref(), Some("/a"));
+        assert_eq!(cd("cd $DIR && ls"), None);
+        assert_eq!(cd("cd - && ls"), None);
+        assert_eq!(cd("ls && cd /a"), None);
+        assert_eq!(cd("cdx /a && ls"), None);
+        assert_eq!(cd("cd /a b && ls"), None);
+
+        let args = serde_json::json!({"command": "cd sub && ls", "cwd": "/srv/app"});
+        assert_eq!(
+            call_folder(args.as_object(), base),
+            Some(PathBuf::from("/srv/app/sub"))
+        );
+
+        let mut messages = vec![Message::user().with_text("write it")];
+        messages.extend(written("w1", "notes/plan.md", "x\n"));
+        let kept = Pillars::build(
+            &messages,
+            &KeptSources {
+                working_dir: base,
+                ..Default::default()
+            },
+            entries(&[]),
+        );
+        assert_eq!(kept.files[0].path, "/home/me/notes/plan.md");
+        assert_eq!(kept.work[0].path, "/home/me/notes");
+        assert!(
+            !kept.render().contains("The chat's own folder"),
+            "no command worked outside the chat's folder: its relative paths are the chat's"
+        );
     }
 
     /// The copy of the newest message a compaction appends after its summary is not kept a second
@@ -920,5 +1302,40 @@ mod tests {
             !block.contains("NO USER ROW") && !block.contains("no row"),
             "svc-edi's missing row is not in P1–P5"
         );
+    }
+
+    /// E2E #3r (session 20260928_21, working_dir /Users/mihaiperdum): the compaction that stored
+    /// message 772237 read messages 771786..772236. Replayed from a read-only export of those
+    /// messages: `Q394_SESSION_JSON=/tmp/q394/s21.json`. The block must name the run's `work`
+    /// folder first — the folder the model searched the home folder for after that compaction.
+    #[test]
+    #[ignore = "reads a local export of E2E #3r's session"]
+    fn e2e_3r_the_kept_block_names_the_work_folder() {
+        let messages: Vec<Message> = serde_json::from_str(
+            &std::fs::read_to_string(std::env::var("Q394_SESSION_JSON").unwrap()).unwrap(),
+        )
+        .unwrap();
+        let newest = "Aoife reads everything on her iPad, so make a PDF too: \
+                      report/readiness-assessment.pdf, from the docx, using whatever works on this \
+                      Mac. Then open the PDF and tell me how many pages it has and what's on the \
+                      last page.";
+        let kept = Pillars::build(
+            &messages,
+            &KeptSources {
+                preserved: Some(newest),
+                working_dir: Some(Path::new("/Users/mihaiperdum")),
+                ..Default::default()
+            },
+            LedgerRead::Entries(Vec::new()),
+        )
+        .fit(crate::context_mgmt::kept_budget_chars(Some(178_176)));
+        println!("{}", kept.section(Pillar::Files));
+        println!("kept lines: {:#?}", kept.kept_lines());
+        let work = "/Users/mihaiperdum/goose-builds/quality/RU-2026-09-28-3r-split-tensor/work";
+        assert_eq!(kept.work[0].path, work);
+        let block = kept.render();
+        assert!(block.contains("The chat's own folder is /Users/mihaiperdum, but"));
+        assert!(block.contains(&format!("- {work}/scripts/build_report.js — ")));
+        assert!(kept.kept_lines()[0].contains(work));
     }
 }
