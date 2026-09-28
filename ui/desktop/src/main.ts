@@ -4664,6 +4664,9 @@ const cancelActiveBenchRun = (why: string): { ok: boolean; error?: string } => {
     snapshot = execFileSync('ps', ['-axo', 'pid=,ppid=,args='], {
       encoding: 'utf8',
       timeout: 4000,
+      // Q-290: the default 1 MiB is overflowed (ENOBUFS) by a busy Mac's process table — measured
+      // 2026-09-28 with a build and an engine running — and the Cancel then stopped nothing.
+      maxBuffer: Infinity,
     });
   } catch (error) {
     run.cancelled = false;
