@@ -831,7 +831,7 @@ async fn run_command(
                 #[cfg(unix)]
                 if let Some(processes) = processes.as_mut() {
                     let members = processes.members();
-                    stall_cause = Some(super::stall::diagnose(&members, started.elapsed()).await);
+                    stall_cause = Some(super::stall::diagnose(&members, started).await);
                     processes.sigterm();
                     if tokio::time::timeout(super::process_groups::EXIT_GRACE, child.wait())
                         .await

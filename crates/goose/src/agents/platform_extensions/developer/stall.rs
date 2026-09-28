@@ -11,18 +11,18 @@
 
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::Instant;
 
 /// One sentence for the model: the stuck process, what it was doing and what to do about it, or a
 /// plain statement that the cause could not be determined and why.
-pub(super) async fn diagnose(members: &std::io::Result<Vec<i32>>, lived: Duration) -> String {
+pub(super) async fn diagnose(members: &std::io::Result<Vec<i32>>, started: Instant) -> String {
     #[cfg(target_os = "macos")]
     {
-        diagnose_macos(members, lived).await
+        diagnose_macos(members, started).await
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (members, lived);
+        let _ = (members, started);
         "Why it had not finished could not be determined: reading a process's current system \
          call needs macOS's `sample`, which this platform does not have."
             .to_string()
@@ -30,7 +30,7 @@ pub(super) async fn diagnose(members: &std::io::Result<Vec<i32>>, lived: Duratio
 }
 
 #[cfg(target_os = "macos")]
-async fn diagnose_macos(members: &std::io::Result<Vec<i32>>, lived: Duration) -> String {
+async fn diagnose_macos(members: &std::io::Result<Vec<i32>>, started: Instant) -> String {
     const UNDETERMINED: &str = "Why it had not finished could not be determined";
     let members = match members {
         Ok(m) if m.is_empty() => {
@@ -52,62 +52,105 @@ async fn diagnose_macos(members: &std::io::Result<Vec<i32>>, lived: Duration) ->
 
     let mut blocked = Vec::new();
     let mut elsewhere = Vec::new();
-    let mut unreadable = Vec::new();
+    let mut unsampled = Vec::new();
     for (row, sample) in leaves.iter().zip(samples) {
         match sample {
             Ok(frame) if is_open_call(&frame) => blocked.push(*row),
             Ok(frame) => elsewhere.push(format!("{} in {frame}", row.name)),
-            Err(e) => unreadable.push(format!("{}: {e}", row.name)),
+            Err(e) => unsampled.push((*row, e)),
         }
-    }
-    if blocked.is_empty() {
-        let mut why = Vec::new();
-        if !elsewhere.is_empty() {
-            why.push(format!(
-                "no process in it was blocked opening a file ({})",
-                elsewhere.join(", ")
-            ));
-        }
-        if !unreadable.is_empty() {
-            why.push(format!("sampling failed ({})", unreadable.join("; ")));
-        }
-        return format!("{UNDETERMINED}: {}.", why.join("; "));
     }
 
-    let privacy_log = tcc_requests_since(lived).await;
-    blocked
+    // A pending privacy request naming a pid is direct evidence on its own, so the log is read
+    // for a leaf that could not be sampled as well as for one sampled in open().
+    let privacy_log = if blocked.is_empty() && unsampled.is_empty() {
+        None
+    } else {
+        Some(tcc_requests_since(started).await)
+    };
+    let named_by_privacy = |pid: i32| match &privacy_log {
+        Some(Ok(log)) => tcc_request_naming(log, pid),
+        _ => None,
+    };
+
+    let mut causes: Vec<String> = blocked
         .iter()
         .map(|row| {
-            let dir = match cwd_of(row.pid) {
-                Ok(dir) => dir.display().to_string(),
-                Err(e) => format!("its working directory (unreadable: {e})"),
-            };
             let who = format!("`{}` (pid {})", row.name, row.pid);
+            let dir = dir_of(row.pid);
+            if let Some(app) = named_by_privacy(row.pid) {
+                return privacy_block(&who, &dir, &app);
+            }
             match &privacy_log {
-                Ok(log) => match pending_tcc_request(log, row.pid) {
-                    Some(app) => format!(
-                        "{who} is blocked by macOS privacy protection while opening an entry of \
-                         {dir} — {app} has no access there; narrow the search or prune that folder."
-                    ),
-                    None if log.contains("AUTHREQ_ATTRIBUTION") => format!(
-                        "{who} was blocked in open() on an entry of {dir}, and no macOS privacy \
-                         request names it — whatever it was opening there never answered; narrow \
-                         the command or skip that path."
-                    ),
-                    None => format!(
-                        "{who} was blocked in open() on an entry of {dir}; whether macOS privacy \
-                         protection held it could not be confirmed — the privacy log shows no \
-                         request at all during the command."
-                    ),
-                },
-                Err(e) => format!(
+                Some(Ok(log)) if log.contains("AUTHREQ_ATTRIBUTION") => format!(
+                    "{who} was blocked in open() on an entry of {dir}, and no macOS privacy \
+                     request names it — whatever it was opening there never answered; narrow \
+                     the command or skip that path."
+                ),
+                Some(Err(e)) => format!(
                     "{who} was blocked in open() on an entry of {dir}; whether macOS privacy \
                      protection held it could not be checked ({e})."
                 ),
+                _ => format!(
+                    "{who} was blocked in open() on an entry of {dir}; whether macOS privacy \
+                     protection held it could not be confirmed — the privacy log shows no \
+                     request at all during the command."
+                ),
             }
         })
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect();
+    let mut unreadable = Vec::new();
+    for (row, error) in &unsampled {
+        match named_by_privacy(row.pid) {
+            Some(app) => causes.push(privacy_block(
+                &format!("`{}` (pid {})", row.name, row.pid),
+                &dir_of(row.pid),
+                &app,
+            )),
+            None => unreadable.push(format!("{}: {error}", row.name)),
+        }
+    }
+    if !causes.is_empty() {
+        return causes.join(" ");
+    }
+
+    let mut why = Vec::new();
+    if leaves.is_empty() {
+        why.push("every process in it had already exited".to_string());
+    }
+    if !elsewhere.is_empty() {
+        why.push(format!(
+            "no process in it was blocked opening a file ({})",
+            elsewhere.join(", ")
+        ));
+    }
+    if !unreadable.is_empty() {
+        let privacy = match &privacy_log {
+            Some(Err(e)) => format!("; the privacy log could not be read ({e})"),
+            _ => String::new(),
+        };
+        why.push(format!(
+            "sampling failed ({}){privacy}",
+            unreadable.join("; ")
+        ));
+    }
+    format!("{UNDETERMINED}: {}.", why.join("; "))
+}
+
+#[cfg(target_os = "macos")]
+fn privacy_block(who: &str, dir: &str, app: &str) -> String {
+    format!(
+        "{who} is blocked by macOS privacy protection while opening an entry of {dir} — {app} \
+         has no access there; narrow the search or prune that folder."
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn dir_of(pid: i32) -> String {
+    match cwd_of(pid) {
+        Ok(dir) => dir.display().to_string(),
+        Err(e) => format!("its working directory (unreadable: {e})"),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -224,11 +267,12 @@ fn cwd_of(pid: i32) -> std::io::Result<PathBuf> {
     Ok(PathBuf::from(std::ffi::OsStr::from_bytes(&bytes[..end])))
 }
 
-/// tccd's authorization-request lines over the command's lifetime (a request the command raised
-/// cannot be older than the command).
+/// tccd's authorization-request lines over the command's whole lifetime: `--last` counts back from
+/// the query's own start, so the window is the command's age measured NOW, rounded up (a request
+/// the command raised cannot be older than the command).
 #[cfg(target_os = "macos")]
-async fn tcc_requests_since(lived: Duration) -> Result<String, String> {
-    let window = format!("{}s", lived.as_secs() + 1);
+async fn tcc_requests_since(started: Instant) -> Result<String, String> {
+    let window = format!("{}s", started.elapsed().as_secs() + 1);
     let out = tokio::process::Command::new("log")
         .args([
             "show",
@@ -252,11 +296,17 @@ async fn tcc_requests_since(lived: Duration) -> Result<String, String> {
 }
 
 #[cfg(any(target_os = "macos", test))]
-/// The app a still-unanswered privacy request for `pid` is attributed to: tccd logs
+/// The app a privacy request naming `pid` as the ACCESSING process was attributed to: tccd logs
 /// `AUTHREQ_ATTRIBUTION: msgID=…, attribution={responsible={… responsible_path=<app binary>, …},
-/// accessing={TCCDProcess: identifier=…, pid=<pid>, …}` and, once decided, `AUTHREQ_RESULT:
-/// msgID=…`. The app name is the `.app` bundle in the responsible path, else its identifier.
-pub(super) fn pending_tcc_request(log: &str, pid: i32) -> Option<String> {
+/// accessing={TCCDProcess: identifier=…, pid=<pid>, …}`. The app name is the `.app` bundle in the
+/// responsible path, else its identifier.
+///
+/// Answered or not does not matter, and the incident is why: the one request naming find (msgID
+/// 45720.597, SystemPolicyAllFiles, preflight) was answered — denied — 31 ms later, and what then
+/// held find in open() for the rest of the turn was sandboxd's follow-up
+/// `TCCAccessRequestIndirectWithOptions` for the File Provider domain, which tccd never attributes
+/// to a pid. A request naming the pid, with the pid still in open(), is the privacy machinery at work.
+pub(super) fn tcc_request_naming(log: &str, pid: i32) -> Option<String> {
     let needle = format!("pid={pid},");
     log.lines()
         .filter(|l| l.contains("AUTHREQ_ATTRIBUTION"))
@@ -264,13 +314,6 @@ pub(super) fn pending_tcc_request(log: &str, pid: i32) -> Option<String> {
             let accessing = line.split("accessing={TCCDProcess:").nth(1)?;
             let accessing = accessing.split('}').next()?;
             if !accessing.contains(&needle) {
-                return None;
-            }
-            let msg_id = field(line, "msgID=")?;
-            let answered = log.lines().any(|l| {
-                l.contains("AUTHREQ_RESULT") && field(l, "msgID=") == Some(msg_id.clone())
-            });
-            if answered {
                 return None;
             }
             let responsible = line.split("responsible={TCCDProcess:").nth(1)?;
@@ -300,23 +343,29 @@ mod tests {
     const INCIDENT: &str = "2026-09-28 17:13:25.363 Df tccd[13424:574c0a3] [com.apple.TCC:access] AUTHREQ_ATTRIBUTION: msgID=45720.597, attribution={responsible={TCCDProcess: identifier=net.leanzero.goose-swarm, pid=93148, auid=501, euid=501, responsible_path=/Applications/Goose Swarm.app/Contents/MacOS/Goose Swarm, binary_path=/Applications/Goose Swarm.app/Contents/MacOS/Goose Swarm}, accessing={TCCDProcess: identifier=com.apple.find, pid=75277, auid=501, euid=501, binary_path=/usr/bin/find}, requesting={TCCDProcess: identifier=com.apple.sandboxd, pid=45720, auid=0, euid=0, binary_path=/usr/libexec/sandboxd}, },";
 
     #[test]
-    fn an_unanswered_request_names_the_app_from_its_bundle() {
+    fn a_request_naming_the_pid_names_the_app_from_its_bundle() {
         assert_eq!(
-            pending_tcc_request(INCIDENT, 75277).as_deref(),
+            tcc_request_naming(INCIDENT, 75277).as_deref(),
             Some("Goose Swarm")
         );
         // The responsible app's own pid and the requesting daemon's are not the accessing process.
-        assert_eq!(pending_tcc_request(INCIDENT, 93148), None);
-        assert_eq!(pending_tcc_request(INCIDENT, 45720), None);
-        assert_eq!(pending_tcc_request(INCIDENT, 7527), None);
+        assert_eq!(tcc_request_naming(INCIDENT, 93148), None);
+        assert_eq!(tcc_request_naming(INCIDENT, 45720), None);
+        assert_eq!(tcc_request_naming(INCIDENT, 7527), None);
     }
 
+    /// The incident's own sequence: the request naming find was answered (denied) at .394, and
+    /// find stayed in open() behind sandboxd's indirect File Provider request, which names no pid.
+    /// Dropping answered requests would have told the model "no privacy request names it".
     #[test]
-    fn an_answered_request_is_not_what_holds_the_process() {
+    fn an_answered_request_still_names_the_privacy_block() {
         let log = format!(
-            "{INCIDENT}\n2026-09-28 17:13:26.000 Df tccd[13424:574c0a3] [com.apple.TCC:access] AUTHREQ_RESULT: msgID=45720.597, authValue=0, authReason=5,"
+            "{INCIDENT}\n2026-09-28 17:13:25.394 Df tccd[13424:574c0a3] [com.apple.TCC:access] AUTHREQ_RESULT: msgID=45720.597, authValue=0, authReason=5, authVersion=1, desired_auth=0, error=(null),"
         );
-        assert_eq!(pending_tcc_request(&log, 75277), None);
+        assert_eq!(
+            tcc_request_naming(&log, 75277).as_deref(),
+            Some("Goose Swarm")
+        );
     }
 
     #[test]
