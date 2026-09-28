@@ -47,6 +47,7 @@ use crate::nodes::{
 };
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
+use goose_providers::redact::redact_relay_capability;
 use goose_sdk_types::custom_requests::{
     MlxPlacementKeyDto, MlxPlacementKindDto, NodeEnsureServing, NodeLoadRefusalCode,
     NodeServedTurnDto, NodeTriedDto, NodesServingKind,
@@ -599,20 +600,21 @@ impl LiveProbe {
             let url = format!("{}/{path}", target.base_url);
             let http = self.http.clone();
             async move {
-                let resp = http
-                    .get(url)
-                    .send()
-                    .await
-                    .map_err(|e| format!("this Mac's Link relay did not answer ({e})"))?;
+                let resp = http.get(url).send().await.map_err(|e| {
+                    redact_relay_capability(&format!("this Mac's Link relay did not answer ({e})"))
+                })?;
                 let status = resp.status();
-                let body = resp
-                    .text()
-                    .await
-                    .map_err(|e| format!("{path} body unreadable ({e})"))?;
+                let body = resp.text().await.map_err(|e| {
+                    redact_relay_capability(&format!("{path} body unreadable ({e})"))
+                })?;
                 if status.is_success() {
                     Ok(body)
                 } else {
-                    Err(format!("{path} answered {status}: {}", body.trim()))
+                    // A peer's hold refusal names the relay's re-rooted admission path.
+                    Err(redact_relay_capability(&format!(
+                        "{path} answered {status}: {}",
+                        body.trim()
+                    )))
                 }
             }
         };
@@ -793,8 +795,10 @@ fn mlx_base_url(
 
 #[async_trait]
 impl NodeProbe for LiveProbe {
+    /// Every reason leaves through the relay-capability rule (Q-402): a probe's words quote the
+    /// URL it asked, and a Link relay's URL is its capability.
     async fn probe(&self, node: &Node) -> Result<Servable, String> {
-        match &node.kind {
+        let probed = match &node.kind {
             NodeKind::LmStudio { endpoint } => self.probe_lmstudio(endpoint, &node.model_id).await,
             NodeKind::MlxSidecar => self.probe_mlx(node).await,
             NodeKind::MlxRemote(target) => self.probe_remote(target, &node.model_id).await,
@@ -803,7 +807,8 @@ impl NodeProbe for LiveProbe {
                 .provider_for(node)
                 .await
                 .map(|_| Servable::default()),
-        }
+        };
+        probed.map_err(|reason| redact_relay_capability(&reason))
     }
 }
 
@@ -4318,6 +4323,53 @@ devices:
             !reason.contains("cafe"),
             "the capability never enters a reason: {reason}"
         );
+    }
+
+    /// Q-402: the reasons that DO quote what came back — a relay that does not answer (reqwest
+    /// names the URL it asked) and a peer holding for memory (its refusal names the relay's
+    /// re-rooted admission path) — still never carry the capability.
+    #[tokio::test]
+    async fn a_probe_reason_that_quotes_the_relay_never_carries_its_capability() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let capability = "c0ffee".repeat(10);
+        let probe = LiveProbe {
+            http: reqwest::Client::new(),
+            providers: Arc::new(LiveProviders::new()),
+        };
+
+        let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let gone_at = gone.local_addr().unwrap();
+        drop(gone);
+        let target = RemoteTarget {
+            peer: "studio".to_string(),
+            peer_name: "WorksMacStudio.lan".to_string(),
+            base_url: format!("http://{gone_at}/relay/{capability}"),
+            template_kwargs: None,
+        };
+        let silent = probe.probe_remote(&target, SERVED).await.unwrap_err();
+        assert!(silent.contains("did not answer"), "{silent}");
+        assert!(silent.contains("/relay/…/v1/models"), "{silent}");
+        assert!(!silent.contains(&capability), "{silent}");
+
+        let holding = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(503).set_body_json(serde_json::json!({"error": {
+                    "message": "goose distributed engine is not admitting new requests",
+                    "code": "memory_hold",
+                    "admission": format!("/relay/{capability}/goose/admission"),
+                }})),
+            )
+            .mount(&holding)
+            .await;
+        let held = RemoteTarget {
+            base_url: format!("{}/relay/{capability}", holding.uri()),
+            ..target
+        };
+        let reason = probe.probe_remote(&held, SERVED).await.unwrap_err();
+        assert!(reason.contains("/relay/…/goose/admission"), "{reason}");
+        assert!(!reason.contains(&capability), "{reason}");
     }
 
     /// The remote node's provider is the `omlx` definition aimed at the relay's capability path:

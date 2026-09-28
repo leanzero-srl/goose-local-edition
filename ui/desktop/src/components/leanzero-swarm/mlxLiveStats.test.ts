@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   SPARK_WINDOW,
   answeredRequests,
@@ -16,6 +16,7 @@ import {
   mountFill,
   parseMlxLiveStatus,
   pushSample,
+  readMlxLiveStatus,
   readingNowTps,
   sinceStopOf,
   sparklinePoints,
@@ -466,5 +467,39 @@ describe('Q-246: rows leaving the batch are never the engine reading or writing'
     expect(mlxActivity(statsOf(PREFILL_STATUS))).toBe('prefill');
     expect(engineHeadline(statsOf(PREFILL_STATUS))).toBe('prefill');
     expect(engineHeadline(statsOf(IDLE_STATUS))).toBe('idle');
+  });
+});
+
+describe('readMlxLiveStatus — Q-409: the tile never shows a relay’s capability', () => {
+  const CAPABILITY = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+  const RELAY = `http://127.0.0.1:61001/relay/${CAPABILITY}`;
+  const bridge = window.electron as unknown as Record<string, unknown>;
+  afterEach(() => {
+    delete bridge.mlxLiveStatus;
+  });
+
+  it("a failed read's words, as the tile prints them, are redacted", async () => {
+    bridge.mlxLiveStatus = async () => ({
+      ok: false,
+      url: RELAY,
+      error: 'bad-base-url',
+      detail: `engine base URL is not a loopback host: ${RELAY}`,
+    });
+    expect(await readMlxLiveStatus(RELAY)).toEqual({
+      ok: false,
+      detail:
+        'bad-base-url: engine base URL is not a loopback host: http://127.0.0.1:61001/relay/…',
+    });
+  });
+
+  it('a bridge that throws is redacted too', async () => {
+    bridge.mlxLiveStatus = async () => {
+      throw new Error(`Error invoking remote method 'mlx-live-status': ${RELAY}/v1/status`);
+    };
+    expect(await readMlxLiveStatus(RELAY)).toEqual({
+      ok: false,
+      detail:
+        "Error invoking remote method 'mlx-live-status': http://127.0.0.1:61001/relay/…/v1/status",
+    });
   });
 });

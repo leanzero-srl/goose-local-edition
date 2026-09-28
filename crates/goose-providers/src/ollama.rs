@@ -1,6 +1,6 @@
 use super::api_client::ApiClient;
 use super::base::{ConfigKey, MessageStream, Provider, ProviderMetadata};
-use super::openai_compatible::handle_status;
+use super::openai_compatible::{handle_status, sanitize_url};
 use super::retry::{ProviderRetry, RetryConfig};
 use crate::api_client::{AuthMethod, TlsConfig};
 use crate::base::ProviderDescriptor;
@@ -298,8 +298,13 @@ pub fn from_declarative_config(
         format!("http://{}", config.base_url)
     };
 
-    let mut base_url = Url::parse(&base)
-        .map_err(|e| anyhow::anyhow!("Invalid base URL '{}': {}", config.base_url, e))?;
+    let mut base_url = Url::parse(&base).map_err(|e| {
+        anyhow::anyhow!(
+            "Invalid base URL '{}': {}",
+            sanitize_url(&config.base_url),
+            e
+        )
+    })?;
 
     let is_localhost = matches!(base_url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
 

@@ -1171,11 +1171,15 @@ mod imp {
             let sample = bench::run_workload(&target.base_url, &target.served, workload, &nonce)
                 .await
                 .map_err(|e| {
-                    agent_client_protocol::Error::internal_error().data(format!(
-                        "measuring {} ({}): {e:#}",
-                        req.placement_id,
-                        workload.as_str()
-                    ))
+                    // A linked Mac's single engine is measured through the Link relay, whose URL
+                    // the bench's error quotes — and that URL is the relay's capability (Q-402).
+                    agent_client_protocol::Error::internal_error().data(
+                        goose_providers::redact::redact_relay_capability(&format!(
+                            "measuring {} ({}): {e:#}",
+                            req.placement_id,
+                            workload.as_str()
+                        )),
+                    )
                 })?;
             let record = SpeedRecord {
                 model_id: req.model_id.clone(),

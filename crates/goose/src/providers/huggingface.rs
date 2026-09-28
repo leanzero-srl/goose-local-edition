@@ -300,8 +300,13 @@ fn openai_compatible_endpoint_parts(
     base_url: &str,
     base_path: Option<&str>,
 ) -> Result<EndpointParts> {
-    let url =
-        url::Url::parse(base_url).map_err(|e| anyhow!("Invalid base URL '{}': {}", base_url, e))?;
+    let url = url::Url::parse(base_url).map_err(|e| {
+        anyhow!(
+            "Invalid base URL '{}': {}",
+            super::openai_compatible::sanitize_url(base_url),
+            e
+        )
+    })?;
     let mut host = if let Some(port) = url.port() {
         format!(
             "{}://{}:{}",

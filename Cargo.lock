@@ -6526,6 +6526,8 @@ dependencies = [
  "dirs",
  "futures",
  "gethostname",
+ "goose-provider-types",
+ "goose-providers",
  "goose-sidecar",
  "hmac 0.13.0",
  "libc",
@@ -6542,6 +6544,7 @@ dependencies = [
  "tokio-socks",
  "tokio-tungstenite 0.29.0",
  "tracing",
+ "tracing-subscriber",
  "url",
  "wiremock",
 ]

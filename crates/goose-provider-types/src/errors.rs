@@ -2,13 +2,15 @@ use reqwest::StatusCode;
 use std::time::Duration;
 use thiserror::Error;
 
+use crate::redact::redact_relay_capability;
 use crate::request_log::LogError;
 
 /// The name of the error a stream parser raises when the body ends before its protocol's
 /// completion marker — see [`ProviderError::stream_truncated`].
 pub const STREAM_TRUNCATED: &str = "stream ended before completion";
 
-#[derive(Error, Debug, Clone, PartialEq)]
+/// `Debug` is written out ([`DebugShape`]) so that no dump carries a relay capability (Q-402).
+#[derive(Error, Clone, PartialEq)]
 pub enum ProviderError {
     #[error("Authentication error: {0}")]
     Authentication(String),
@@ -70,9 +72,100 @@ pub enum ProviderError {
     },
 }
 
+/// The derived `Debug` shape, borrowed: [`ProviderError`]'s `Debug` prints exactly this, then
+/// redacts — `EngineHold::admission_url` holds a relay's capability URL (it must, to be waited
+/// on) and any text field may quote one.
+#[derive(Debug)]
+#[allow(
+    dead_code,
+    reason = "every field is read by the derived Debug, which dead-code analysis ignores"
+)]
+enum DebugShape<'a> {
+    Authentication(&'a String),
+    ContextLengthExceeded(&'a String),
+    RateLimitExceeded {
+        details: &'a String,
+        retry_delay: &'a Option<Duration>,
+    },
+    ServerError(&'a String),
+    NetworkError(&'a String),
+    RequestFailed(&'a String),
+    ExecutionError(&'a String),
+    UsageError(&'a String),
+    NotImplemented(&'a String),
+    EndpointNotFound(&'a String),
+    EngineHold {
+        details: &'a String,
+        reason: &'a Option<String>,
+        admission_url: &'a Option<String>,
+    },
+    CreditsExhausted {
+        details: &'a String,
+        top_up_url: &'a Option<String>,
+    },
+    Refusal {
+        details: &'a String,
+        category: &'a Option<String>,
+    },
+}
+
+impl<'a> From<&'a ProviderError> for DebugShape<'a> {
+    fn from(error: &'a ProviderError) -> Self {
+        match error {
+            ProviderError::Authentication(s) => Self::Authentication(s),
+            ProviderError::ContextLengthExceeded(s) => Self::ContextLengthExceeded(s),
+            ProviderError::RateLimitExceeded {
+                details,
+                retry_delay,
+            } => Self::RateLimitExceeded {
+                details,
+                retry_delay,
+            },
+            ProviderError::ServerError(s) => Self::ServerError(s),
+            ProviderError::NetworkError(s) => Self::NetworkError(s),
+            ProviderError::RequestFailed(s) => Self::RequestFailed(s),
+            ProviderError::ExecutionError(s) => Self::ExecutionError(s),
+            ProviderError::UsageError(s) => Self::UsageError(s),
+            ProviderError::NotImplemented(s) => Self::NotImplemented(s),
+            ProviderError::EndpointNotFound(s) => Self::EndpointNotFound(s),
+            ProviderError::EngineHold {
+                details,
+                reason,
+                admission_url,
+            } => Self::EngineHold {
+                details,
+                reason,
+                admission_url,
+            },
+            ProviderError::CreditsExhausted {
+                details,
+                top_up_url,
+            } => Self::CreditsExhausted {
+                details,
+                top_up_url,
+            },
+            ProviderError::Refusal { details, category } => Self::Refusal { details, category },
+        }
+    }
+}
+
+impl std::fmt::Debug for ProviderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let shape = DebugShape::from(self);
+        let raw = if f.alternate() {
+            format!("{shape:#?}")
+        } else {
+            format!("{shape:?}")
+        };
+        f.write_str(&redact_relay_capability(&raw))
+    }
+}
+
 impl ProviderError {
     pub fn stream_decode_error(error: impl std::fmt::Display) -> Self {
-        ProviderError::NetworkError(format!("Stream decode error: {error}"))
+        ProviderError::NetworkError(redact_relay_capability(&format!(
+            "Stream decode error: {error}"
+        )))
     }
 
     /// The server closed a streamed response before its protocol's completion marker (OpenAI
@@ -159,9 +252,12 @@ impl ProviderError {
     }
 }
 
-/// An HTTP failure as goose frames it: `"<what> at <url>: <what the server said>"`.
+/// An HTTP failure as goose frames it: `"<what> at <url>: <what the server said>"`, a relay
+/// capability redacted whoever built `url` (Q-402).
 pub fn http_failure_text(what: &str, url: &str, said: &str) -> String {
-    format!("{what}{HTTP_FAILURE_AT}{url}{HTTP_FAILURE_SAID}{said}")
+    redact_relay_capability(&format!(
+        "{what}{HTTP_FAILURE_AT}{url}{HTTP_FAILURE_SAID}{said}"
+    ))
 }
 
 const HTTP_FAILURE_AT: &str = " at ";
@@ -216,12 +312,13 @@ fn provider_error_from_reqwest(error: &reqwest::Error) -> ProviderError {
     if let Some(status) = error.status() {
         details.push(format!("status: {}", status));
     }
+    // A `reqwest::Error` says the request's whole URL ("… for url (<url>)").
     let msg = if details.is_empty() {
         error.to_string()
     } else {
         format!("{} ({})", error, details.join(", "))
     };
-    ProviderError::RequestFailed(msg)
+    ProviderError::RequestFailed(redact_relay_capability(&msg))
 }
 
 impl From<anyhow::Error> for ProviderError {
@@ -321,6 +418,60 @@ mod tests {
                 url: "http://127.0.0.1:8091/v1/chat/completions",
                 said: "Only 'text' content type is supported: see: docs",
             })
+        );
+    }
+
+    /// Q-402: the hold keeps the relay's real admission URL to wait on, and no dump of it — nor
+    /// a framed failure at a relay — says the capability.
+    #[test]
+    fn no_dump_or_framed_failure_says_a_relays_capability() {
+        let capability = "3f".repeat(32);
+        let relay = format!("http://127.0.0.1:61001/relay/{capability}");
+        let hold = ProviderError::EngineHold {
+            details: http_failure_text(
+                "Server error (503 Service Unavailable)",
+                &format!("{relay}/v1/chat/completions"),
+                "goose distributed engine is not admitting new requests",
+            ),
+            reason: Some("memory is low".into()),
+            admission_url: Some(format!("{relay}/goose/admission")),
+        };
+        for said in [hold.to_string(), format!("{hold:?}"), format!("{hold:#?}")] {
+            assert!(!said.contains(&capability), "{said}");
+        }
+        assert_eq!(
+            format!("{hold:?}"),
+            "EngineHold { details: \"Server error (503 Service Unavailable) at \
+             http://127.0.0.1:61001/relay/…/v1/chat/completions: goose distributed engine is \
+             not admitting new requests\", reason: Some(\"memory is low\"), admission_url: \
+             Some(\"http://127.0.0.1:61001/relay/…/goose/admission\") }"
+        );
+        let ProviderError::EngineHold { admission_url, .. } = &hold else {
+            unreachable!()
+        };
+        assert!(admission_url.as_deref().unwrap().contains(&capability));
+    }
+
+    /// NEGATIVE CONTROL: with no relay in it, the written-out `Debug` is the derived one.
+    #[test]
+    fn debug_is_the_derived_shape() {
+        assert_eq!(
+            format!("{:?}", ProviderError::ServerError("boom".into())),
+            "ServerError(\"boom\")"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                ProviderError::RateLimitExceeded {
+                    details: "slow down".into(),
+                    retry_delay: Some(Duration::from_secs(2)),
+                }
+            ),
+            "RateLimitExceeded { details: \"slow down\", retry_delay: Some(2s) }"
+        );
+        assert_eq!(
+            format!("{:#?}", ProviderError::Authentication("key revoked".into())),
+            "Authentication(\n    \"key revoked\",\n)"
         );
     }
 

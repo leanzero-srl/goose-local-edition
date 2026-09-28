@@ -15,6 +15,7 @@ use crate::formats::openai::{
 use crate::formats::openai_responses::{
     create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
 };
+use crate::http_status::sanitize_url;
 use crate::images::{withheld_images_notice, ImageFormat};
 use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
@@ -105,8 +106,9 @@ pub fn ensure_url_scheme(raw_url: &str) -> String {
 pub fn parse_openai_base_url(raw_url: &str) -> Result<OpenAiBaseUrlParts> {
     let raw_url = ensure_url_scheme(raw_url);
     let raw_url = raw_url.as_str();
-    let parsed = url::Url::parse(raw_url)
-        .map_err(|e| anyhow::anyhow!("Invalid OPENAI_BASE_URL '{}': {}", raw_url, e))?;
+    let parsed = url::Url::parse(raw_url).map_err(|e| {
+        anyhow::anyhow!("Invalid OPENAI_BASE_URL '{}': {}", sanitize_url(raw_url), e)
+    })?;
 
     let authority = parsed[..url::Position::BeforePath].to_string();
     let query_params: Vec<(String, String)> = parsed
@@ -489,7 +491,7 @@ impl OpenAiProvider {
             Ok(json) => json,
             Err(e) => {
                 tracing::warn!(
-                    host = %self.api_client.host(),
+                    host = %sanitize_url(self.api_client.host()),
                     model = %model_name,
                     error = %e,
                     "transient_tail_probe_failed: the turn-context tail rides this request \
@@ -508,7 +510,7 @@ impl OpenAiProvider {
         };
         if !accepted.on_user {
             tracing::info!(
-                host = %self.api_client.host(),
+                host = %sanitize_url(self.api_client.host()),
                 model = %model_name,
                 "the engine does not declare {RAPID_MLX_TRANSIENT_TAIL}; its hybrid cache \
                  snapshots after the per-turn context block"
@@ -567,7 +569,7 @@ impl OpenAiProvider {
                     ..format_options
                 })?;
                 tracing::info!(
-                    host = %self.api_client.host(),
+                    host = %sanitize_url(self.api_client.host()),
                     model = %model_config.model_name,
                     withheld = images.withheld.len(),
                     "images_withheld: the engine declares it reads text only; every image part \
@@ -579,7 +581,7 @@ impl OpenAiProvider {
             Ok(ImageInput::Reads) => Ok((payload, None)),
             Ok(ImageInput::Undeclared) => {
                 tracing::warn!(
-                    host = %self.api_client.host(),
+                    host = %sanitize_url(self.api_client.host()),
                     model = %model_config.model_name,
                     images = images.sent,
                     "image_input_undeclared: the engine's /v1/models names no capabilities, so \
@@ -589,7 +591,7 @@ impl OpenAiProvider {
             }
             Err(e) => {
                 tracing::warn!(
-                    host = %self.api_client.host(),
+                    host = %sanitize_url(self.api_client.host()),
                     model = %model_config.model_name,
                     images = images.sent,
                     error = %e,
@@ -972,7 +974,7 @@ impl Provider for OpenAiProvider {
             Ok(Ok(window)) => Some(window),
             Ok(Err(reason)) => {
                 tracing::warn!(
-                    host = %self.api_client.host(),
+                    host = %sanitize_url(self.api_client.host()),
                     model = %model_config.model_name,
                     default_context_limit = model_config.context_limit(),
                     reason = %reason,
@@ -983,7 +985,7 @@ impl Provider for OpenAiProvider {
             }
             Err(_) => {
                 tracing::warn!(
-                    host = %self.api_client.host(),
+                    host = %sanitize_url(self.api_client.host()),
                     model = %model_config.model_name,
                     default_context_limit = model_config.context_limit(),
                     "context_window_probe_timed_out after {:?}; running on the default",
@@ -1226,8 +1228,13 @@ pub fn from_declarative_config(
     };
 
     let normalized_base_url = ensure_url_scheme(&config.base_url);
-    let url = url::Url::parse(&normalized_base_url)
-        .map_err(|e| anyhow::anyhow!("Invalid base URL '{}': {}", config.base_url, e))?;
+    let url = url::Url::parse(&normalized_base_url).map_err(|e| {
+        anyhow::anyhow!(
+            "Invalid base URL '{}': {}",
+            sanitize_url(&config.base_url),
+            e
+        )
+    })?;
 
     let host = url[..url::Position::BeforePath].to_string();
     let base_path = if let Some(ref explicit_path) = config.base_path {
