@@ -57,6 +57,7 @@ pub mod mlx_remote;
 pub mod mlx_serving;
 pub mod mlx_serving_intent;
 pub mod mlx_speed;
+pub mod mlx_stream_errors;
 pub mod nanogpt;
 pub mod oauth;
 pub mod oauth_device_flow;

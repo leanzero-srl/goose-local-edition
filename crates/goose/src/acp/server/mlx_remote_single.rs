@@ -23,7 +23,7 @@ use leanzero_link::inference::{
     InferenceRelay, PeerCallResolver, ENGINE_UNREACHABLE, RELAY_FAILED,
 };
 use leanzero_link::manager::{AuthState, LinkError, LinkManager};
-use leanzero_link::state::{ChatServing, MlxOp};
+use leanzero_link::state::{ChatServing, MlxOp, StreamErrorExplainer};
 use leanzero_link::wire::{NodeState, NodeStatus};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -73,6 +73,7 @@ fn engine_base_url_from(settings: Result<EngineSettings, ConfigError>) -> Result
 /// THIS Mac's single engine, served to linked devices (the control route's seam).
 pub struct GoosedChatServing;
 
+#[async_trait::async_trait]
 impl ChatServing for GoosedChatServing {
     fn serving_allowed(&self) -> bool {
         chat_serving_allowed()
@@ -80,6 +81,10 @@ impl ChatServing for GoosedChatServing {
 
     fn engine_base_url(&self) -> Result<String, String> {
         engine_base_url_from(Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY))
+    }
+
+    async fn stream_errors(&self) -> Box<dyn StreamErrorExplainer> {
+        Box::new(crate::providers::mlx_stream_errors::EngineStreamErrors::mark().await)
     }
 }
 

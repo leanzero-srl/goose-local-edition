@@ -322,6 +322,7 @@ pub trait DistributedNode: Send + Sync + 'static {
 /// over its single MLX engine; this crate never touches `goose_sidecar` and NEVER mounts: the
 /// proxy forwards to whatever listens at [`Self::engine_base_url`], and nothing listening is the
 /// proxy's loud `502`. Injected beside the [`DistributedNode`]; `None` → the routes answer `501`.
+#[async_trait::async_trait]
 pub trait ChatServing: Send + Sync + 'static {
     /// The node owner's switch ("Let my other Macs use this Mac › Answer chat"), read on EVERY
     /// request so turning it off stops the next request, not the next connect. `false` → `403`.
@@ -330,6 +331,19 @@ pub trait ChatServing: Send + Sync + 'static {
     /// The engine's loopback base URL (`http://127.0.0.1:<port>`, no trailing slash). `Err(why)`
     /// when this node cannot name it (its engine config is unreadable) → `503`, never a guess.
     fn engine_base_url(&self) -> Result<String, String>;
+
+    /// Taken as a chat completion is forwarded to the engine: what explains an error the engine
+    /// sends in that stream (Q-423 — Rapid-MLX sends only "Internal error during streaming" and
+    /// logs the exception on this node, where the requester cannot read it).
+    async fn stream_errors(&self) -> Box<dyn StreamErrorExplainer>;
+}
+
+/// Explains the errors one proxied stream carries, on the node whose engine sent them.
+#[async_trait::async_trait]
+pub trait StreamErrorExplainer: Send + Sync {
+    /// `Some(words)` replaces the SSE error frame's `error.message`; `None` passes it unchanged
+    /// (an error the engine already words itself).
+    async fn explain(&self, message: &str) -> Option<String>;
 }
 
 /// One mesh peer as a polling/subscription target. `mesh_ip: None` (tailscaled

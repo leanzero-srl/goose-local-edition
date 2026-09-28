@@ -753,6 +753,41 @@ pub fn build_serve_command(
 /// (`port_holder::sidecar_marker`), which is how a later goosed proves a leftover engine its own.
 pub const ENGINE_SIDECAR_NAME: &str = "mlx-engine";
 
+/// All a client is told when a Rapid-MLX stream's generator raises: the pinned fork sanitizes the
+/// exception out of the SSE error (helpers.py disconnect_guard, F-131) and logs it on stderr just
+/// before. Q-423: the Studio's single failed a 191,200-token answer after one token, and the turn
+/// said only "Server error: Internal error during streaming".
+pub const ENGINE_STREAM_FAILURE: &str = "Internal error during streaming";
+
+/// The engine's sanitized stream failure, completed with what the engine logged for it — the
+/// exception, or the named absence of one, and where the whole log is.
+pub fn explain_stream_failure(looked: Result<crate::LoggedError, String>) -> String {
+    match looked {
+        Ok(crate::LoggedError {
+            line: Some(line),
+            log,
+        }) => format!(
+            "{ENGINE_STREAM_FAILURE} — the MLX engine logged: {} (its log: {log})",
+            logged_message(&line)
+        ),
+        Ok(crate::LoggedError { line: None, log }) => format!(
+            "{ENGINE_STREAM_FAILURE} — the MLX engine logged no error for this answer (its log: \
+             {log})"
+        ),
+        Err(why) => format!(
+            "{ENGINE_STREAM_FAILURE} — what the MLX engine logged for it cannot be read: {why}"
+        ),
+    }
+}
+
+/// `ERROR:rapid_mlx.service.helpers:[disconnect_guard] generator raised …` → the message after
+/// Python logging's `LEVEL:logger:` prefix.
+fn logged_message(line: &str) -> &str {
+    line.split_once(':')
+        .and_then(|(_, rest)| rest.split_once(':'))
+        .map_or(line, |(_, message)| message)
+}
+
 /// The URL the single engine on `port` is started at and serves on.
 pub fn engine_base_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
@@ -1253,6 +1288,26 @@ fn single_engine_need(_dir: &Path, weights_bytes: u64, _kv_mode: Option<KvCacheM
         Err("model facts are read on macOS only".to_string()),
         0,
     )
+}
+
+/// Where the single engine's stderr is kept on this Mac (`logs/mlx-engine/` under goose's state
+/// dir, beside goosed's own logs). No directory is said loudly: the stderr then lives only in the
+/// sidecar's in-memory tail.
+#[cfg(unix)]
+fn engine_log_dir() -> Option<PathBuf> {
+    crate::distributed::rank_log::engine_log_dir()
+        .inspect_err(|e| {
+            tracing::warn!(
+                "the engine's durable log has no directory ({e:#}); its stderr lives only in the \
+                 in-memory tail"
+            )
+        })
+        .ok()
+}
+
+#[cfg(not(unix))]
+fn engine_log_dir() -> Option<PathBuf> {
+    None
 }
 
 /// A fixed, standard spawn PATH for the engine process. goosed's own PATH is a grab-bag of
@@ -1871,6 +1926,7 @@ impl MlxEngineManager {
                     config.startup_watch = Some(watch);
                     config.shutdown_line = Some(shutdown_began);
                     config.start_cancel = Some(cancel);
+                    config.log_dir = engine_log_dir();
                     Sidecar::start(config)
                         .await
                         .map(|sidecar| (Box::new(sidecar), true))
@@ -2048,6 +2104,29 @@ impl MlxEngineManager {
             }
         }
         Ok(())
+    }
+
+    /// Where the running engine's logged errors stand now — taken as a chat request is sent to it
+    /// (Q-423). `None` while no engine is settled and running.
+    pub async fn engine_error_mark(&self) -> Option<crate::ErrorMark> {
+        match &*self.state.lock().await {
+            ManagerState::Running { sidecar, .. } => sidecar.error_mark(),
+            _ => None,
+        }
+    }
+
+    /// The error the engine logged after `mark`, once its stderr is read up to now; the manager's
+    /// state is not held while the reader catches up.
+    pub async fn engine_error_since(
+        &self,
+        mark: Option<crate::ErrorMark>,
+    ) -> Result<crate::LoggedError, String> {
+        let mark = mark.ok_or("no engine was running here when this answer was asked for")?;
+        let lookup = match &*self.state.lock().await {
+            ManagerState::Running { sidecar, .. } => sidecar.error_lookup(mark)?,
+            _ => return Err("the engine that served this answer is no longer running".to_string()),
+        };
+        lookup.logged().await
     }
 
     pub async fn status(&self) -> EngineStatus {
@@ -2334,6 +2413,39 @@ pub fn global_manager() -> &'static MlxEngineManager {
 
 #[cfg(test)]
 mod tests {
+    /// Q-423: the sanitized words are completed with the exception the engine logged, the named
+    /// absence of one, or why it cannot be read — never left as the bare "Internal error".
+    #[test]
+    fn a_stream_failure_names_what_the_engine_logged() {
+        let log = "/Users/workhorse/.local/state/goose/logs/mlx-engine/mlx-engine-1.log";
+        let said = super::explain_stream_failure(Ok(crate::LoggedError {
+            line: Some(
+                "ERROR:rapid_mlx.service.helpers:[disconnect_guard] generator raised \
+                 RuntimeError: [metal::malloc] Unable to allocate 1 bytes., 1 chunks"
+                    .to_string(),
+            ),
+            log: log.to_string(),
+        }));
+        assert_eq!(
+            said,
+            format!(
+                "Internal error during streaming — the MLX engine logged: [disconnect_guard] \
+                 generator raised RuntimeError: [metal::malloc] Unable to allocate 1 bytes., 1 \
+                 chunks (its log: {log})"
+            )
+        );
+        let none = super::explain_stream_failure(Ok(crate::LoggedError {
+            line: None,
+            log: log.to_string(),
+        }));
+        assert!(none.contains("logged no error for this answer"), "{none}");
+        let unread = super::explain_stream_failure(Err("the engine restarted".to_string()));
+        assert!(
+            unread.ends_with("cannot be read: the engine restarted"),
+            "{unread}"
+        );
+    }
+
     #[test]
     fn a_superseded_default_launcher_follows_the_current_default() {
         let mut settings = super::EngineSettings {

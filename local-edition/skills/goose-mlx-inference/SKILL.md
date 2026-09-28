@@ -777,3 +777,14 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   the MTP injector (create_ssm_mask on a KVCache) — use a tiny llama at max_num_seqs=1 for the pure-attention case.
   Fork regression on CPU: a pytest plugin module doing `mx.set_default_device(mx.cpu)` passed with `-p`, same file
   list on the new branch and the base tag, compare FAILED sets (the base fails the same model-fixture tests on CPU).
+- 2026-09-28 Q-423: "Server error: Internal error during streaming" is the ENGINE's text (Rapid-MLX lz.10
+  rapid_mlx/service/helpers.py:4389, disconnect_guard's generic `except Exception` arm; F-131 sanitizes the SSE and
+  `logger.error(... exc_info=True)` puts the exception on stderr FIRST). The single engine's stderr is now kept in
+  `~/.local/state/goose/logs/mlx-engine/mlx-engine-<ms>.log` (stamped, rank_log's bound) and every ERROR line is a
+  WARN in goosed's log — before this it lived only in a 200-line memory tail (`tracing::debug!`), so look THERE first.
+  The serving node completes the words (Link proxy `ChatServing::stream_errors`, router for the local engine) via a
+  clock-free barrier: FIONREAD on the pipe == 0 and nothing in the reader's hands. Studio /v1/status after the failure
+  read metal peak 83.15 GB vs the 83,494,174,720 B ceiling; a replay of a 191,200-token prompt on the M4 Max read
+  rss 73 GB at 180k and pushed the MacBook to pressure WARN — never replay a 190k prompt on a Mac already using
+  ~58 GB (the coordinator killed it at 0.8 GB free). The fit rule's 64 KiB/token KV is ~2.5x under the engine's
+  measured growth (Q-424).
