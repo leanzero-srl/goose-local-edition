@@ -162,7 +162,7 @@ fn catalogue(deferred: &[Tool]) -> String {
 /// https://www.rust-lang.org" went to curl in the shell and never loaded
 /// `leanzerowebsearch__get-website-sitemap`; "Create a Word document report.docx" loaded the docx
 /// SKILL and wrote the file with python-docx instead of `leanzerodocuments__create-doc`.
-fn first_sentence(description: &str) -> &str {
+pub(crate) fn first_sentence(description: &str) -> &str {
     let line = description.trim().lines().next().unwrap_or_default();
     line.split_inclusive(". ")
         .next()
@@ -188,16 +188,7 @@ fn first_sentence(description: &str) -> &str {
 pub fn find<'a>(deferred: &'a [Tool], names: &[String], query: Option<&str>) -> Vec<&'a Tool> {
     let mut found: Vec<&Tool> = deferred
         .iter()
-        .filter(|tool| {
-            names.iter().any(|name| {
-                let name = name.trim();
-                *tool.name == *name
-                    || tool
-                        .name
-                        .split_once("__")
-                        .is_some_and(|(_, bare)| bare == name)
-            })
-        })
+        .filter(|tool| names.iter().any(|name| names_tool(tool, name)))
         .collect();
     if let Some(query) = query {
         let terms = query_terms(query);
@@ -231,6 +222,54 @@ pub fn find<'a>(deferred: &'a [Tool], names: &[String], query: Option<&str>) -> 
         }
     }
     found
+}
+
+/// Whether `name` — a full name, or the name after the extension prefix — is this tool's.
+fn names_tool(tool: &Tool, name: &str) -> bool {
+    let name = name.trim();
+    *tool.name == *name
+        || tool
+            .name
+            .split_once("__")
+            .is_some_and(|(_, bare)| bare == name)
+}
+
+/// What a `load_tools` call is told about each name it asked for that no deferred tool carries: a
+/// tool the list already declares in full is called directly, and a name no tool carries is said to
+/// be no tool, with the tools closest to it. Empty when every name was a deferred tool.
+///
+/// Why (Q-369, E2E #3p on 3.0.69, session 20260928_19 message 770730): `load_tools(names:
+/// ["web-search"])` — a skill's name — answered "no deferred tool matches names [\"web-search\"];
+/// the names are in your tool list", which is false for a name that is no tool at all; the model
+/// then called `web-search` three times, each "Tool 'web-search' not found".
+pub fn unmatched_names(tools: &[Tool], deferred: &[Tool], names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| !deferred.iter().any(|tool| names_tool(tool, name)))
+        .map(|name| {
+            let name = name.trim();
+            match tools.iter().find(|tool| names_tool(tool, name)) {
+                Some(tool) => format!(
+                    "'{name}' is not deferred: {} is in your tool list with its full description \
+                     and parameters — call it directly.",
+                    tool.name
+                ),
+                None => {
+                    let closest = crate::agents::tool_similarity::closest_tools(tools, name, &[]);
+                    if closest.is_empty() {
+                        format!(
+                            "'{name}' is not a tool, and no tool's name or summary is close to it."
+                        )
+                    } else {
+                        format!(
+                            "'{name}' is not a tool. The closest tools by name and purpose:\n{}",
+                            crate::agents::tool_similarity::describe(&closest)
+                        )
+                    }
+                }
+            }
+        })
+        .collect()
 }
 
 /// The schemas as the model reads them: name, description, parameters.
@@ -451,6 +490,75 @@ mod tests {
         assert!(
             kept <= shipped_before.find("</tools>").unwrap(),
             "the negative control: a list that grows on load breaks the prefix inside the tool block"
+        );
+    }
+
+    #[test]
+    fn load_tools_on_a_name_that_is_no_tool_says_so_and_names_the_closest() {
+        let (tools, deferrable) = real_tools();
+        let (_, deferred) = split(&tools, &deferrable);
+        let asked = vec!["web-search".to_string()];
+        assert!(find(&deferred, &asked, None).is_empty());
+
+        let said = unmatched_names(&tools, &deferred, &asked);
+        assert_eq!(said.len(), 1);
+        assert!(
+            said[0].starts_with("'web-search' is not a tool."),
+            "{}",
+            said[0]
+        );
+        assert!(
+            !said[0].contains("in your tool list"),
+            "the false claim is gone: {}",
+            said[0]
+        );
+        assert!(
+            said[0].contains("leanzerowebsearch__full-web-search"),
+            "{}",
+            said[0]
+        );
+    }
+
+    #[test]
+    fn load_tools_on_a_tool_declared_in_full_says_call_it() {
+        let (tools, deferrable) = real_tools();
+        let (_, deferred) = split(&tools, &deferrable);
+        for asked in ["developer__shell", "shell"] {
+            let said = unmatched_names(&tools, &deferred, &[asked.to_string()]);
+            assert_eq!(said.len(), 1);
+            assert!(
+                said[0].contains("developer__shell is in your tool list with its full description"),
+                "{}",
+                said[0]
+            );
+        }
+        let deferred_name = vec!["leanzerowebsearch__full-web-search".to_string()];
+        assert!(unmatched_names(&tools, &deferred, &deferred_name).is_empty());
+    }
+
+    #[test]
+    fn the_real_web_tools_are_the_closest_to_the_names_3r_invented() {
+        let (tools, _) = real_tools();
+        let closest = |name: &str, args: &[&str]| -> Vec<String> {
+            crate::agents::tool_similarity::closest_tools(&tools, name, args)
+                .iter()
+                .map(|t| t.name.to_string())
+                .collect()
+        };
+        let websearch = closest("websearch", &["queries"]);
+        assert_eq!(
+            websearch.first().map(String::as_str),
+            Some("leanzerowebsearch__full-web-search"),
+            "{websearch:?}"
+        );
+        let fetch = closest("fetch", &["url"]);
+        assert!(
+            fetch.contains(&"leanzerowebsearch__full-web-search".to_string()),
+            "{fetch:?}"
+        );
+        assert!(
+            fetch.iter().all(|n| n.starts_with("leanzerowebsearch__")),
+            "{fetch:?}"
         );
     }
 

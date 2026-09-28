@@ -396,25 +396,34 @@ impl ExtensionManagerClient {
             loaded = ?found.iter().map(|t| t.name.as_ref()).collect::<Vec<_>>(),
             "load_tools"
         );
+        let unmatched =
+            crate::agents::tool_deferral::unmatched_names(&tools, &deferred, &params.names);
         if found.is_empty() {
-            let message = match &params.query {
-                Some(query) => format!(
-                    "no deferred tool's name and summary carry half of the words of {query:?} \
-                     (names asked: {:?}). A query finds a tool by what it DOES — \"search the web\", \
-                     \"read one web page\", \"create a PDF\" — not by the subject you are working on; \
-                     the names and summaries are in your tool list",
-                    params.names
-                ),
-                None => format!(
-                    "no deferred tool matches names {:?}; the names are in your tool list",
-                    params.names
-                ),
-            };
-            return Err(ExtensionManagerToolError::OperationFailed { message });
+            let mut lines = unmatched;
+            if let Some(query) = &params.query {
+                lines.push(format!(
+                    "no deferred tool's name and summary carry half of the words of {query:?}. A \
+                     query finds a tool by what it DOES — \"search the web\", \"read one web page\", \
+                     \"create a PDF\" — not by the subject you are working on; the names and \
+                     summaries are in your tool list"
+                ));
+            }
+            if lines.is_empty() {
+                lines.push(
+                    "pass the `names` of deferred tools, or a `query` saying what you need"
+                        .to_string(),
+                );
+            }
+            return Err(ExtensionManagerToolError::OperationFailed {
+                message: lines.join("\n"),
+            });
         }
-        Ok(vec![Content::text(crate::agents::tool_deferral::render(
-            &found,
-        ))])
+        let mut rendered = crate::agents::tool_deferral::render(&found);
+        if !unmatched.is_empty() {
+            rendered.push_str("\n\n");
+            rendered.push_str(&unmatched.join("\n"));
+        }
+        Ok(vec![Content::text(rendered)])
     }
 
     #[allow(clippy::too_many_lines)]
