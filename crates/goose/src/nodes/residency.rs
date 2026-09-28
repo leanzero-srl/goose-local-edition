@@ -107,10 +107,14 @@ pub fn residency_of(
             demanded_by: demanded_by.clone(),
         },
         LoaderActivity::Waiting {
-            reason, replies, ..
+            reason,
+            replies,
+            serving_other,
+            ..
         } => NodeResidency::Waiting {
             reason: reason.clone(),
             replies: replies.clone(),
+            serving_other: serving_other.clone(),
         },
         LoaderActivity::RefusedLastTime { reason, facts, .. } => NodeResidency::RefusedLastTime {
             reason: reason.clone(),

@@ -419,6 +419,48 @@ impl Ways for AgentWays {
             .map(|session| session.name)
             .map_err(|e| format!("{e:#}"))
     }
+
+    async fn chat_open(&self, session_id: &str) -> bool {
+        for agent in super::AGENTS.all() {
+            if agent.sessions.lock().await.contains_key(session_id) {
+                return true;
+            }
+        }
+        false
+    }
+
+    async fn shared_mac(&self, node: &ResolvedNodeDef) -> Result<String, Refusal> {
+        let name = mac_name().await.unwrap_or_else(|_| "This Mac".to_string());
+        let way = match residency::serving_now(&name).await {
+            residency::ServingFacts::Way(way) => way,
+            residency::ServingFacts::Nothing => return Ok(name),
+            residency::ServingFacts::Unknown(reason) => return Err(unknown(reason)),
+        };
+        Ok(shared_mac_words(node, &way))
+    }
+}
+
+/// The names of the serving way's Macs that `node`'s own way uses too; every Mac of the serving
+/// way when the records name none in common (a split published before its Macs were).
+fn shared_mac_words(node: &ResolvedNodeDef, way: &NodesServingWayDto) -> String {
+    let wanted: &[String] = node
+        .def
+        .placement
+        .as_ref()
+        .and_then(crate::nodes::placement_macs)
+        .map_or(&[], |(macs, _)| macs);
+    let shared: Vec<&str> = way
+        .macs
+        .iter()
+        .zip(&way.mac_names)
+        .filter(|(mac, _)| wanted.contains(mac))
+        .map(|(_, name)| name.as_str())
+        .collect();
+    if shared.is_empty() {
+        way.mac_names.join(" and ")
+    } else {
+        shared.join(" and ")
+    }
 }
 
 /// Run it's `startSplitFor`: discover the candidate's Macs for this model, build the config from

@@ -6755,6 +6755,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} を再試行"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} は {node}（{rank}）で動作中: {mac} は {chats} のために {serving} を提供しています"
+  },
   "nodes.firstStart": {
     "defaultMessage": "初回起動はまだ計測されていません"
   },
@@ -7115,6 +7118,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "空きを作る"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} は読み込まれませんでした: {mac} は {chats} のために {serving} を提供しています。"
+  },
   "nodes.remove": {
     "defaultMessage": "削除"
   },
@@ -7174,6 +7180,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "ノードのセクション"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "別のチャット"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "「{chat}」"
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, other {チャット {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Mac をセットアップ"
@@ -7270,6 +7285,12 @@
   },
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {{way} が # 件の返信を終えるのを待っています。その後 {node} を読み込みます（{duration}）}}"
+  },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {{way} が {chats} の # 件の返信を終えるのを待っています。その後 {node} を読み込みます（{duration}）}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {{mac} が {chats} のために {serving} を提供している間は待機します。そのチャットが閉じられるか別のノードに移ると {node} を読み込みます（{duration}）}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "変更を保存できませんでした"
@@ -10154,6 +10175,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "未ロードの場合"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "その Mac が別のノードを提供しているとき"
+  },
   "strategies.colNodes": {
     "defaultMessage": "ノードの順序"
   },
@@ -10357,6 +10381,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "{node} がロードされていない場合、その間は {next} が作業を引き受け、何もロードされません。"
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "次のノードを使うには 2 つ目のノードを追加してください。"
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "引き継ぐ"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "別のノードの実行中の返信が終わりしだい、このノードを読み込みます。メッセージの合間で休んでいるチャットはノードを失います。"
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "次のノードを使う"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "その Mac が別のチャットに応答している間、または別のチャットのノードをメッセージの合間に保持している間は、次のノードがこのターンを担当します。何も停止しません。"
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "待つ"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "他のチャットがそのノードを使い終えるまで（返信が終わり、各チャットが閉じられるか別のノードに移るまで）ターンは待ち、その後このノードを読み込みます。"
   },
   "strategies.setOwn": {
     "defaultMessage": "独自のノードを設定"

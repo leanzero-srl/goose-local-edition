@@ -15,6 +15,7 @@ import {
 } from '../../utils/mlxEngineMonitor';
 import { defineMessages, useIntl } from '../../i18n';
 import { MLX_STATUS_POLL_MS } from '../leanzero-swarm/mlxLiveStats';
+import { turnAwaitsItsNode } from '../../utils/nodeSwap';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmConfig } from '../settings/swarm/golden';
@@ -24,7 +25,7 @@ import {
   useLatestMlxDistributedStatus,
   useMountLookup,
 } from '../noNodeNotice/mlxMount';
-import { useGlanceNodes } from '../engineGlance/glanceStore';
+import { useGlanceNodes, watchGlanceNodes } from '../engineGlance/glanceStore';
 import { nodesServedLast } from '../../acp/nodes';
 import { deriveChatServedBy, type ChatNodesFacts, type ChatServedBy } from './chatServedBy';
 
@@ -172,6 +173,13 @@ export function useChatServedBy(
   // goosed's nodes read — the loader's marks and the node names (Q-254, Q-255): the glance store's
   // one read per window, re-read on each engine change and while the loader is at work.
   const glanceNodes = useGlanceNodes();
+  // Q-430: a turn in flight whose node does not serve yet may be queued in the loader behind
+  // another chat's reply — keep reading the loader's marks until one of its nodes serves.
+  const awaitsItsNode =
+    turnInFlight &&
+    glanceNodes.kind === 'read' &&
+    turnAwaitsItsNode(glanceNodes.read, glanceNodes.residency, model);
+  useEffect(() => (awaitsItsNode ? watchGlanceNodes() : undefined), [awaitsItsNode]);
   const servedRecord = useServedLast(sessionId, model, turnInFlight);
   const nodes: ChatNodesFacts | null = useMemo(
     () =>

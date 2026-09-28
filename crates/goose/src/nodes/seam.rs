@@ -9,8 +9,8 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use goose_sdk_types::custom_requests::{
-    MlxPlacementKeyDto, NodeDisplacedDto, NodeEnsureServing, NodeLoadRefusalCode,
-    NodeRefusalFactsDto, NodeRepliesWaitDto,
+    MlxPlacementKeyDto, NodeDisplacedDto, NodeEnsureServing, NodeIfServingOther,
+    NodeLoadRefusalCode, NodeRefusalFactsDto, NodeRepliesWaitDto, NodeServingOtherDto,
 };
 
 use super::{NodeDef, NodeRole};
@@ -33,6 +33,9 @@ pub struct Demand {
     pub node: NodeDef,
     pub from: DemandFrom,
     pub role: Option<NodeRole>,
+    /// What the demand does when the node's Mac serves another node for other chats (Q-428):
+    /// the role entry's setting for a turn; `takeOver` for a person's Start on a card.
+    pub if_serving_other: NodeIfServingOther,
 }
 
 impl Demand {
@@ -89,6 +92,8 @@ pub enum LoaderActivity {
         node: String,
         reason: String,
         replies: Option<NodeRepliesWaitDto>,
+        /// The role says `wait` while the Mac serves another node for chats between replies.
+        serving_other: Option<NodeServingOtherDto>,
     },
     RefusedLastTime {
         node: String,
@@ -114,6 +119,8 @@ pub trait NodeLoader: Send + Sync {
     async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing;
     /// The way an MLX lease of `session` used (the reply holds it for its whole life).
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto);
+    /// A lease of `session` on no MLX way (cloud, LM Studio): the chat moved off its last way.
+    fn note_lease_off_mlx(&self, session: &str);
     /// A SYNCHRONOUS delegate session runs inside its parent's reply (the parent is blocked in the
     /// tool call): its demand is the parent's own.
     fn note_child(&self, child_session: &str, parent_session: &str);
@@ -178,6 +185,7 @@ pub async fn ensure_serving(demand: Demand) -> NodeEnsureServing {
         None => NodeEnsureServing::Refused {
             code: NodeLoadRefusalCode::LoaderAbsent,
             reason: loader_absent_reason(&demand.node.name),
+            facts: None,
         },
     }
 }
@@ -185,6 +193,12 @@ pub async fn ensure_serving(demand: Demand) -> NodeEnsureServing {
 pub fn note_lease(session: &str, way: &MlxPlacementKeyDto) {
     if let Some(loader) = LOADER.get() {
         loader.note_lease(session, way);
+    }
+}
+
+pub fn note_lease_off_mlx(session: &str) {
+    if let Some(loader) = LOADER.get() {
+        loader.note_lease_off_mlx(session);
     }
 }
 

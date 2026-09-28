@@ -49,8 +49,9 @@ use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
 use goose_providers::redact::redact_relay_capability;
 use goose_sdk_types::custom_requests::{
-    MlxPlacementKeyDto, MlxPlacementKindDto, NodeEnsureServing, NodeLoadRefusalCode,
-    NodeServedTurnDto, NodeTriedDto, NodesServingKind,
+    BackgroundWorkKind, MlxPlacementKeyDto, MlxPlacementKindDto, NodeEnsureServing,
+    NodeIfServingOther, NodeLoadRefusalCode, NodeServedTurnDto, NodeServingOtherDto, NodeTriedDto,
+    NodesServingKind,
 };
 use goose_sidecar::engine::{served_model_id, EngineSettings, EngineStatus};
 
@@ -1419,15 +1420,18 @@ pub(crate) async fn route_stream(
         };
         match stream_on(lease, providers, kwargs_source, &turn).await? {
             Streamed::Served(stream, node) => {
-                note_served(seam, pool_lease_way(seam, &node), || NodeServedTurnDto {
-                    node: node.id.clone(),
-                    role: None,
-                    rank: 1,
-                    reason: None,
-                    tried: Vec::new(),
-                    loaded_ms: None,
-                    at_ms: now_ms(),
-                    asked_for_this_turn: false,
+                note_served(seam, &node, pool_lease_way(seam, &node), || {
+                    NodeServedTurnDto {
+                        node: node.id.clone(),
+                        role: None,
+                        rank: 1,
+                        reason: None,
+                        tried: Vec::new(),
+                        loaded_ms: None,
+                        at_ms: now_ms(),
+                        asked_for_this_turn: false,
+                        serving_other: None,
+                    }
                 });
                 return Ok(stream);
             }
@@ -1626,7 +1630,11 @@ pub(crate) async fn route_chat(
     records_served: bool,
 ) -> Result<MessageStream, ProviderError> {
     let route = nodes_route(&model_config.model_name).map_err(ProviderError::ExecutionError)?;
-    let seam = LiveNodesSeam { records_served };
+    let helper = crate::background_work::current_helper();
+    // A helper's route is not the chat's turn (Q-432): the chip reads only the turn's record.
+    let seam = LiveNodesSeam {
+        records_served: records_served && helper.is_none(),
+    };
     let turn = Turn {
         model_config,
         system,
@@ -1668,6 +1676,10 @@ pub(crate) async fn route_chat(
     let plan = live_plan(&route)
         .await
         .map_err(|e| ProviderError::ExecutionError(format!("swarm chat: {e}")))?;
+    let plan = match helper {
+        Some(kind) => helper_plan(plan, kind),
+        None => plan,
+    };
     let members = LiveMembers::read(seam.loader_installed()).await;
     route_chain(
         &ROUTER,
@@ -1742,6 +1754,8 @@ pub(crate) trait NodesSeam: Send + Sync {
     async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing;
     fn loader_installed(&self) -> bool;
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto);
+    /// A lease on no MLX way (cloud, LM Studio): the chat moved off its last way (Q-428).
+    fn note_lease_off_mlx(&self, session: &str);
     fn served(&self, session: &str, turn: NodeServedTurnDto);
     /// See `nodes::seam::queued_switch_ahead` (asked before every MLX lease).
     fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String>;
@@ -1764,6 +1778,10 @@ impl NodesSeam for LiveNodesSeam {
 
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto) {
         crate::nodes::seam::note_lease(session, way);
+    }
+
+    fn note_lease_off_mlx(&self, session: &str) {
+        crate::nodes::seam::note_lease_off_mlx(session);
     }
 
     fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {
@@ -1805,14 +1823,20 @@ fn now_ms() -> u64 {
 /// a probe) has no record to keep.
 fn note_served(
     seam: &dyn NodesSeam,
+    node: &Node,
     way: Option<MlxPlacementKeyDto>,
     record: impl FnOnce() -> NodeServedTurnDto,
 ) {
     let Some(session) = crate::session_context::current_session_id() else {
         return;
     };
-    if let Some(way) = way {
-        seam.note_lease(&session, &way);
+    match (way, &node.kind) {
+        (Some(way), _) => seam.note_lease(&session, &way),
+        (None, NodeKind::LmStudio { .. } | NodeKind::Cloud { .. }) => {
+            seam.note_lease_off_mlx(&session)
+        }
+        // An MLX lease whose way is unknown (already logged by `lease_way`): nothing is said.
+        (None, _) => {}
     }
     seam.served(&session, record());
 }
@@ -1905,6 +1929,37 @@ pub(crate) struct ChainPlan {
     /// This turn was asked to answer past the chain's 1st (Q-381): the 1st, never probed nor
     /// loaded this turn, and the words its passed-over entry carries.
     asked_past: Option<(String, String)>,
+    /// The call is a helper that never switches the Mac (Q-432, [`helper_plan`]).
+    helper: Option<BackgroundWorkKind>,
+}
+
+/// A helper's chain (Q-432): the route's own chain, then every other MLX node — each taken only
+/// if it serves NOW, never loaded (`useNext`), walked in order (`failover`, so the chat's shared
+/// round-robin is not moved by a helper). So a helper runs on the chat's node when it serves, on a
+/// later entry that needs no load (a cloud node the person put in the chain), or on whatever node
+/// this Mac serves now; with none of those it is skipped, by name.
+fn helper_plan(mut plan: ChainPlan, kind: BackgroundWorkKind) -> ChainPlan {
+    let mut others: Vec<&String> = plan
+        .defs
+        .iter()
+        .filter(|(id, def)| {
+            def.def.kind == NodeDefKind::Mlx && !plan.entry.chain.iter().any(|l| &l.node == *id)
+        })
+        .map(|(id, _)| id)
+        .collect();
+    others.sort();
+    let extra: Vec<NodeChainEntry> = others
+        .into_iter()
+        .map(|id| NodeChainEntry {
+            node: id.clone(),
+            weight: 1,
+        })
+        .collect();
+    plan.entry.chain.extend(extra);
+    plan.entry.when = NodeWhen::Failover;
+    plan.entry.if_not_loaded = NodeIfNotLoaded::UseNext;
+    plan.helper = Some(kind);
+    plan
 }
 
 /// "Answer on {next} for now" (Q-381): the Chat chain of a chat's own set for the ONE turn whose
@@ -1963,6 +2018,8 @@ fn asked_entry(
             chain,
             when: NodeWhen::Failover,
             if_not_loaded: NodeIfNotLoaded::Load,
+            // The person picked this node for this one turn: it loads as a pick always did.
+            if_serving_other: NodeIfServingOther::TakeOver,
         },
         (lead.clone(), words),
     ))
@@ -2008,9 +2065,14 @@ fn chain_plan(
                     }],
                     when: NodeWhen::Failover,
                     if_not_loaded: NodeIfNotLoaded::Load,
+                    // A `node:` chat is the person's one pick, with no strategy to carry a
+                    // setting: it takes the Mac over as it did before Q-428 (a running reply is
+                    // still never cut).
+                    if_serving_other: NodeIfServingOther::TakeOver,
                 },
                 defs,
                 asked_past: None,
+                helper: None,
             })
         }
         RouteModel::Strategy { id, role } => {
@@ -2061,6 +2123,7 @@ fn chain_plan(
                 entry,
                 defs,
                 asked_past,
+                helper: None,
             })
         }
         other => Err(format!(
@@ -2419,8 +2482,13 @@ fn chain_record(
     node: &str,
     tried: &[Tried],
     loaded_ms: Option<u64>,
+    serving_other: &HashMap<String, NodeServingOtherDto>,
 ) -> NodeServedTurnDto {
     let first = plan.entry.chain.first().map(|l| l.node.as_str());
+    let first_serving_other = first
+        .filter(|first| *first != node)
+        .and_then(|first| serving_other.get(first))
+        .cloned();
     let reason = first
         .filter(|first| *first != node)
         .and_then(|first| tried.iter().find(|t| t.node == first))
@@ -2443,6 +2511,7 @@ fn chain_record(
             .asked_past
             .as_ref()
             .is_some_and(|(lead, _)| lead != node),
+        serving_other: first_serving_other,
     }
 }
 
@@ -2476,6 +2545,8 @@ pub(crate) async fn route_chain(
     let mut held: Option<(String, ProviderError)> = None;
     // Node → how long the loader took to answer Ready for this turn.
     let mut loaded: HashMap<String, u64> = HashMap::new();
+    // Node → the other node its Mac serves, when the role's `useNext` passed it over (Q-428).
+    let mut serving_other: HashMap<String, NodeServingOtherDto> = HashMap::new();
     loop {
         let current = chain_facts(router, plan, members, probe, &overrides, &saturated).await;
         let sticky = router
@@ -2522,6 +2593,7 @@ pub(crate) async fn route_chain(
                             node: plan.defs[&node].def.clone(),
                             from: DemandFrom::Turn(session),
                             role: plan.role,
+                            if_serving_other: plan.entry.if_serving_other,
                         })
                         .await;
                     match answer {
@@ -2532,7 +2604,16 @@ pub(crate) async fn route_chain(
                             );
                             None
                         }
-                        NodeEnsureServing::Refused { code, reason } => {
+                        NodeEnsureServing::Refused {
+                            code,
+                            reason,
+                            facts,
+                        } => {
+                            if let Some(other) =
+                                facts.as_ref().and_then(NodeServingOtherDto::of_facts)
+                            {
+                                serving_other.insert(node.clone(), other);
+                            }
                             Some(EntryFact::LoadFailed {
                                 words: refusal_words(code, &reason),
                             })
@@ -2574,15 +2655,31 @@ pub(crate) async fn route_chain(
                         None => {}
                     }
                 }
+                let entries = tried
+                    .iter()
+                    .map(|t| format!("{}: {}", t.node, passed_words(&t.why)))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                if let Some(kind) = plan.helper {
+                    // Q-432: never a switch for a helper — it is skipped, and the log says why.
+                    tracing::info!(
+                        target: "swarm_router",
+                        route = %plan.label,
+                        helper = ?kind,
+                        entries = %entries,
+                        "a helper call is skipped: no node of its chain serves now without switching this Mac, and a helper never switches it"
+                    );
+                    return Err(last_refusal.unwrap_or_else(|| {
+                        ProviderError::ExecutionError(format!(
+                            "swarm chat: {}: skipped this {kind:?} call — a helper never switches this Mac's model, and no node serves it now without a switch — {entries}",
+                            plan.label
+                        ))
+                    }));
+                }
                 return Err(last_refusal.unwrap_or_else(|| {
                     ProviderError::ExecutionError(format!(
-                        "swarm chat: {}: no node can serve this turn — {}",
-                        plan.label,
-                        tried
-                            .iter()
-                            .map(|t| format!("{}: {}", t.node, passed_words(&t.why)))
-                            .collect::<Vec<_>>()
-                            .join("; ")
+                        "swarm chat: {}: no node can serve this turn — {entries}",
+                        plan.label
                     ))
                 }));
             }
@@ -2604,8 +2701,14 @@ pub(crate) async fn route_chain(
         match stream_on(lease, providers, kwargs_source, &turn).await? {
             Streamed::Served(stream, node) => {
                 let way = way.or_else(|| pool_lease_way(seam, &node));
-                note_served(seam, way, || {
-                    chain_record(plan, &node.id, &tried, loaded.get(&node.id).copied())
+                note_served(seam, &node, way, || {
+                    chain_record(
+                        plan,
+                        &node.id,
+                        &tried,
+                        loaded.get(&node.id).copied(),
+                        &serving_other,
+                    )
                 });
                 return Ok(stream);
             }
@@ -5060,6 +5163,10 @@ devices:
         becomes: StdMutex<Option<(MemberMap, String, Member)>>,
         loader: bool,
         demands: StdMutex<Vec<String>>,
+        /// Each demand's `ifServingOther` (Q-428).
+        settings: StdMutex<Vec<NodeIfServingOther>>,
+        /// Sessions whose lease was on no MLX way (Q-428: the chat moved off its last way).
+        off_mlx: StdMutex<Vec<String>>,
         served: StdMutex<Vec<(String, NodeServedTurnDto)>>,
         notes: StdMutex<Vec<(String, MlxPlacementKeyDto)>>,
         /// What each "is a switch queued ahead?" is answered, in order; none left = nothing is.
@@ -5090,10 +5197,12 @@ devices:
     impl NodesSeam for RecordingSeam {
         async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing {
             self.demands.lock().unwrap().push(demand.node.id.clone());
+            self.settings.lock().unwrap().push(demand.if_serving_other);
             let answer = self.answers.lock().unwrap().pop_front().unwrap_or_else(|| {
                 NodeEnsureServing::Refused {
                     code: NodeLoadRefusalCode::LoaderAbsent,
                     reason: crate::nodes::seam::loader_absent_reason(&demand.node.name),
+                    facts: None,
                 }
             });
             if answer == NodeEnsureServing::Ready {
@@ -5113,6 +5222,10 @@ devices:
                 .lock()
                 .unwrap()
                 .push((session.to_string(), way.clone()));
+        }
+
+        fn note_lease_off_mlx(&self, session: &str) {
+            self.off_mlx.lock().unwrap().push(session.to_string());
         }
 
         fn served(&self, session: &str, turn: NodeServedTurnDto) {
@@ -5186,6 +5299,7 @@ devices:
             entry,
             defs,
             asked_past: None,
+            helper: None,
         }
     }
 
@@ -5204,6 +5318,7 @@ devices:
                 .collect(),
             when,
             if_not_loaded,
+            if_serving_other: NodeIfServingOther::TakeOver,
         }
     }
 
@@ -5443,6 +5558,7 @@ devices:
         let seam = RecordingSeam::answering(vec![NodeEnsureServing::Refused {
             code: NodeLoadRefusalCode::LoadFailed,
             reason: "memory gate BLOCK".to_string(),
+            facts: None,
         }]);
         let stream = chain_turn(
             &Router::new(),
@@ -5473,6 +5589,201 @@ devices:
         );
         assert_eq!(record.loaded_ms, None);
         assert_eq!(seam.served.lock().unwrap()[0].0, SESSION);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Q-428: a role's "If its Mac is serving another node" reaches the loader on every demand,
+    // and a `useNext` pass names the other node on the turn line (the served record).
+    // Q-432: a helper never demands a load.
+    // -----------------------------------------------------------------------------------------
+
+    fn mlx_def(id: &str) -> NodeDef {
+        NodeDef {
+            kind: NodeDefKind::Mlx,
+            placement: Some(NodePlacement::Single {
+                macs: vec![crate::nodes::THIS_MAC.to_string()],
+                link: None,
+            }),
+            provider: None,
+            ..cloud_def(id)
+        }
+    }
+
+    fn studio_serving_split() -> NodeServingOtherDto {
+        NodeServingOtherDto {
+            mac: "Work’s Mac Studio".into(),
+            serving: "27B · both Macs".into(),
+            chats: vec!["Kickoff notes".into()],
+            replies: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn use_next_reaches_the_loader_and_the_turn_line_names_the_node_serving_its_mac() {
+        let mut entry = role(
+            &[("a", 1), ("b", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::Load,
+        );
+        entry.if_serving_other = NodeIfServingOther::UseNext;
+        let plan = chain(entry);
+        let map = members(vec![
+            ("a", Err(EntryFact::NotLoaded)),
+            ("b", Ok(member("b"))),
+        ]);
+        let other = studio_serving_split();
+        let seam = RecordingSeam::answering(vec![NodeEnsureServing::Refused {
+            code: NodeLoadRefusalCode::ServingOther,
+            reason: "Work’s Mac Studio is serving 27B · both Macs for chat \"Kickoff notes\"; Node a is left to it".to_string(),
+            facts: Some(other.as_facts()),
+        }]);
+        let stream = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(map),
+            &FakeProbe::all_idle(&[node("b", 1, 1)]),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        assert_eq!(
+            *seam.settings.lock().unwrap(),
+            vec![NodeIfServingOther::UseNext]
+        );
+        let record = seam.last();
+        assert_eq!((record.node.as_str(), record.rank), ("b", 2));
+        assert_eq!(record.serving_other, Some(other));
+        // The chat's turn went to a node on no MLX way: it moved off its last way.
+        assert_eq!(*seam.off_mlx.lock().unwrap(), vec![SESSION.to_string()]);
+        assert_eq!(
+            record.reason.as_deref(),
+            Some("Work’s Mac Studio is serving 27B · both Macs for chat \"Kickoff notes\"; Node a is left to it")
+        );
+    }
+
+    /// The demo's 19:54:31 (shot 42): chat A's end-of-turn check re-loaded the split right after
+    /// chat B got the Studio. The same chain routed as the TURN demands a load (the contrast arm);
+    /// routed as a helper it never does — it runs on the node serving now.
+    #[tokio::test]
+    async fn a_helper_never_demands_a_load_and_runs_on_the_node_serving_now() {
+        let turn_plan = chain(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load));
+        let seam = RecordingSeam::default();
+        let _ = chain_turn(
+            &Router::new(),
+            &turn_plan,
+            &FakeMembers(members(vec![("a", Err(EntryFact::NotLoaded))])),
+            &FakeProbe(HashMap::new()),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await;
+        assert_eq!(*seam.demands.lock().unwrap(), vec!["a".to_string()]);
+
+        let mut plan = chain(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load));
+        plan.defs.insert(
+            "s".to_string(),
+            crate::nodes::resolve_def(&mlx_def("s"), &Ok(None), false),
+        );
+        let helper = helper_plan(plan, BackgroundWorkKind::FactCheck);
+        let seam = RecordingSeam::default();
+        let stream = chain_turn(
+            &Router::new(),
+            &helper,
+            &FakeMembers(members(vec![
+                ("a", Err(EntryFact::NotLoaded)),
+                ("s", Ok(member("s"))),
+            ])),
+            &FakeProbe::all_idle(&[node("s", 1, 1)]),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        assert!(seam.demands.lock().unwrap().is_empty(), "no switch");
+        assert_eq!(seam.last().node, "s");
+    }
+
+    #[tokio::test]
+    async fn a_helper_takes_a_cloud_node_of_the_chain_or_is_skipped_by_name() {
+        let helper = helper_plan(
+            chain(role(
+                &[("a", 1), ("b", 1)],
+                NodeWhen::Share,
+                NodeIfNotLoaded::Load,
+            )),
+            BackgroundWorkKind::MemoryReview,
+        );
+        let seam = RecordingSeam::default();
+        let stream = chain_turn(
+            &Router::new(),
+            &helper,
+            &FakeMembers(members(vec![
+                ("a", Err(EntryFact::NotLoaded)),
+                ("b", Ok(member("b"))),
+            ])),
+            &FakeProbe::all_idle(&[node("b", 1, 1)]),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        assert!(seam.demands.lock().unwrap().is_empty());
+        assert_eq!(seam.last().node, "b");
+
+        let helper = helper_plan(
+            chain(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load)),
+            BackgroundWorkKind::Title,
+        );
+        let seam = RecordingSeam::default();
+        let err = chain_turn(
+            &Router::new(),
+            &helper,
+            &FakeMembers(members(vec![("a", Err(EntryFact::NotLoaded))])),
+            &FakeProbe(HashMap::new()),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(seam.demands.lock().unwrap().is_empty());
+        assert!(
+            err.contains("skipped this Title call") && err.contains("a: not loaded"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn only_the_helpers_around_a_reply_never_switch() {
+        use crate::background_work::never_switches;
+        for kind in [
+            BackgroundWorkKind::FactCheck,
+            BackgroundWorkKind::MemoryReview,
+            BackgroundWorkKind::Title,
+            BackgroundWorkKind::ToolLabel,
+        ] {
+            assert!(never_switches(kind), "{kind:?}");
+        }
+        for kind in [
+            BackgroundWorkKind::Compaction,
+            BackgroundWorkKind::ToolDigest,
+            BackgroundWorkKind::PermissionCheck,
+            BackgroundWorkKind::SafetyCheck,
+            BackgroundWorkKind::SessionSummary,
+            BackgroundWorkKind::Recipe,
+        ] {
+            assert!(!never_switches(kind), "{kind:?}");
+        }
     }
 
     #[tokio::test]
@@ -6071,6 +6382,7 @@ devices:
         let seam = RecordingSeam::answering(vec![NodeEnsureServing::Refused {
             code: NodeLoadRefusalCode::LoadFailed,
             reason: "not connected".to_string(),
+            facts: None,
         }]);
         let refused = chain_turn(
             &Router::new(),

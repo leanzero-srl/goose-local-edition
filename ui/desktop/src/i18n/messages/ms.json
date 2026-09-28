@@ -6755,6 +6755,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "Cuba semula {primary}"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} berada pada {node} ({rank}): {mac} sedang melayani {serving} untuk {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "Permulaan pertama belum diukur"
   },
@@ -7115,6 +7118,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Kosongkan ruang"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} tidak dimuatkan: {mac} sedang melayani {serving} untuk {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Alih keluar"
   },
@@ -7174,6 +7180,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Bahagian nod"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "sembang lain"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "\"{chat}\""
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, other {sembang {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Sediakan Mac anda"
@@ -7270,6 +7285,12 @@
   },
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {Menunggu {way} menyelesaikan # balasan, kemudian memuatkan {node} ({duration})}}"
+  },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {Menunggu {way} menyelesaikan # balasan dalam {chats}, kemudian memuatkan {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {Menunggu sementara {mac} melayani {serving} untuk {chats}: {node} dimuatkan apabila sembang itu ditutup atau beralih ke nod lain ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Perubahan tidak dapat disimpan"
@@ -10154,6 +10175,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Jika tidak dimuatkan"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Jika Mac-nya sedang melayani nod lain"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Nod mengikut susunan"
   },
@@ -10357,6 +10381,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "Jika {node} tidak dimuatkan, sementara itu {next} mengambil alih kerja dan tiada yang dimuatkan."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Tambah nod kedua untuk menggunakan nod seterusnya."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Ambil alih"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Nod ini dimuatkan sebaik sahaja balasan yang sedang berjalan pada nod lain tamat. Sembang yang berehat di antara mesej kehilangan nodnya."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Guna nod seterusnya"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Selagi Mac-nya menjawab sembang lain, atau menyimpan nod sembang lain di antara mesejnya, nod seterusnya mengambil giliran. Tiada apa yang dihentikan."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Tunggu"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "Giliran menunggu sehingga sembang lain selesai dengan nod mereka — balasan mereka tamat, dan setiap sembang ditutup atau beralih ke nod lain — kemudian nod ini dimuatkan."
   },
   "strategies.setOwn": {
     "defaultMessage": "Tetapkan nod sendiri"

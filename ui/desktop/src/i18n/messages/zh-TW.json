@@ -6755,6 +6755,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "重試 {primary}"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} 在 {node}（{rank}）上執行：{mac} 正在為 {chats} 提供 {serving}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "首次啟動尚未測量"
   },
@@ -7115,6 +7118,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "騰出空間"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "未載入 {node}：{mac} 正在為 {chats} 提供 {serving}。"
+  },
   "nodes.remove": {
     "defaultMessage": "移除"
   },
@@ -7174,6 +7180,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "節點分區"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "另一個對話"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "「{chat}」"
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, other {對話 {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "設定你的 Mac"
@@ -7270,6 +7285,12 @@
   },
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {正在等待 {way} 完成 # 則回覆，然後載入 {node}（{duration}）}}"
+  },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {正在等待 {way} 完成 {chats} 中的 # 則回覆，然後載入 {node}（{duration}）}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {{mac} 正在為 {chats} 提供 {serving}，等待中：該對話關閉或切換到其他節點後載入 {node}（{duration}）}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "變更無法儲存"
@@ -10154,6 +10175,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "若未載入"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "如果其 Mac 正在提供另一個節點"
+  },
   "strategies.colNodes": {
     "defaultMessage": "節點順序"
   },
@@ -10357,6 +10381,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "若 {node} 尚未載入，{next} 會暫時接手這項工作，且不會載入任何東西。"
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "新增第二個節點才能使用下一個。"
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "接管"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "另一個節點正在進行的回覆一結束，就載入此節點。在訊息之間閒置的對話會失去它的節點。"
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "使用下一個節點"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "當其 Mac 正在回覆另一個對話，或在另一個對話的訊息之間保留其節點時，由下一個節點接手這一輪。不會停止任何東西。"
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "等待"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "這一輪會等到其他對話用完它們的節點——回覆結束，且每個對話都已關閉或切換到其他節點——然後再載入此節點。"
   },
   "strategies.setOwn": {
     "defaultMessage": "設定專屬節點"

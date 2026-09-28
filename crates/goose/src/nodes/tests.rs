@@ -132,6 +132,7 @@ fn inheritance_follows_the_fixture() {
                 }],
                 when: NodeWhen::Failover,
                 if_not_loaded: NodeIfNotLoaded::Load,
+                if_serving_other: NodeIfServingOther::TakeOver,
             });
         }
         assert_eq!(
@@ -449,6 +450,7 @@ fn entry(nodes: &[(&str, u32)], when: NodeWhen) -> NodeRoleEntry {
             .collect(),
         when,
         if_not_loaded: NodeIfNotLoaded::Load,
+        if_serving_other: NodeIfServingOther::TakeOver,
     }
 }
 
@@ -1583,6 +1585,7 @@ async fn with_no_loader_installed_a_load_is_refused_by_name() {
         node: split_27b("split"),
         from: seam::DemandFrom::Ui,
         role: None,
+        if_serving_other: NodeIfServingOther::TakeOver,
     })
     .await;
     assert_eq!(
@@ -1591,6 +1594,7 @@ async fn with_no_loader_installed_a_load_is_refused_by_name() {
             code: NodeLoadRefusalCode::LoaderAbsent,
             reason: "loading nodes is not available in this goose process; start 27B · both Macs in Run it"
                 .into(),
+            facts: None,
         }
     );
     assert!(seam::in_progress().is_empty());
@@ -1743,11 +1747,13 @@ fn a_loading_way_and_an_unknown_record_are_named() {
         way: "the split across your Macs".into(),
         way_nodes: vec!["split".into()],
         count: 1,
+        chats: vec!["Kickoff notes".into()],
     };
     let waiting = [seam::LoaderActivity::Waiting {
         node: "flash".into(),
         reason: "27B is answering 1".into(),
         replies: Some(replies.clone()),
+        serving_other: None,
     }];
     assert_eq!(
         residency_of(
@@ -1758,6 +1764,7 @@ fn a_loading_way_and_an_unknown_record_are_named() {
         NodeResidency::Waiting {
             reason: "27B is answering 1".into(),
             replies: Some(replies),
+            serving_other: None,
         }
     );
 }
@@ -1932,6 +1939,7 @@ async fn the_served_record_is_kept_in_memory_and_in_the_session() {
         tried: Vec::new(),
         loaded_ms: None,
         at_ms: 1,
+        serving_other: None,
         asked_for_this_turn: false,
     };
     served::record(&sessions, &session.id, turn.clone())

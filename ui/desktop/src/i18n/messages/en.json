@@ -6779,6 +6779,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "Retry {primary}"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} is on {node} ({rank}): {mac} is serving {serving} for {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "First start not measured yet"
   },
@@ -7139,6 +7142,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Make room"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} was not loaded: {mac} is serving {serving} for {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Remove"
   },
@@ -7198,6 +7204,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Nodes sections"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "another chat"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "\"{chat}\""
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count,plural,one{chat {names}} other{chats {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Set up your Macs"
@@ -7294,6 +7309,12 @@
   },
   "nodes.turnWaiting": {
     "defaultMessage": "{count,plural,one{Waiting for {way} to finish # reply, then loading {node} ({duration})} other{Waiting for {way} to finish # replies, then loading {node} ({duration})}}"
+  },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count,plural,one{Waiting for {way} to finish # reply in {chats}, then loading {node} ({duration})} other{Waiting for {way} to finish # replies in {chats}, then loading {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count,plural,one{Waiting while {mac} serves {serving} for {chats}: {node} loads when that chat is closed or moved to another node ({duration})} other{Waiting while {mac} serves {serving} for {chats}: {node} loads when those chats are closed or moved to another node ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "The change could not be saved"
@@ -10178,6 +10199,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "If not loaded"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "If its Mac is serving another node"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Nodes in order"
   },
@@ -10381,6 +10405,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "If {node} isn’t loaded, {next} takes the work meanwhile and nothing is loaded."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Add a second node to use the next one."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Take it over"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "This one loads as soon as the other node’s running replies end. A chat resting between messages loses its node."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Use the next node"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "While its Mac answers another chat, or keeps another chat’s node between its messages, the next node takes the turn. Nothing is stopped."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Wait"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "The turn waits until the other chats are done with their node — their replies end, and each chat is closed or moves to another node — then this one loads."
   },
   "strategies.setOwn": {
     "defaultMessage": "Set its own nodes"

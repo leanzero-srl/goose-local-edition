@@ -6755,6 +6755,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "Thử lại {primary}"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} đang chạy trên {node} ({rank}): {mac} đang phục vụ {serving} cho {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "Chưa đo lần khởi động đầu tiên"
   },
@@ -7115,6 +7118,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Giải phóng bộ nhớ"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "Không tải {node}: {mac} đang phục vụ {serving} cho {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Gỡ"
   },
@@ -7174,6 +7180,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Các mục nút"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "một cuộc trò chuyện khác"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "\"{chat}\""
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, other {cuộc trò chuyện {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Thiết lập các Mac của bạn"
@@ -7270,6 +7285,12 @@
   },
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {Đang chờ {way} hoàn tất # phản hồi, rồi tải {node} ({duration})}}"
+  },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {Đang chờ {way} hoàn tất # phản hồi trong {chats}, sau đó tải {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {Đang chờ trong khi {mac} phục vụ {serving} cho {chats}: {node} sẽ tải khi cuộc trò chuyện đó được đóng hoặc chuyển sang nút khác ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Không lưu được thay đổi"
@@ -10154,6 +10175,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Nếu chưa nạp"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Nếu Mac của nó đang phục vụ nút khác"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Các nút theo thứ tự"
   },
@@ -10357,6 +10381,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "Nếu {node} chưa được nạp, {next} sẽ nhận việc trong lúc đó và không có gì được nạp."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Thêm nút thứ hai để dùng nút tiếp theo."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Tiếp quản"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Nút này tải ngay khi các phản hồi đang chạy của nút kia kết thúc. Cuộc trò chuyện đang nghỉ giữa các tin nhắn sẽ mất nút của nó."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Dùng nút tiếp theo"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Trong khi Mac của nó trả lời cuộc trò chuyện khác, hoặc giữ nút của cuộc trò chuyện khác giữa các tin nhắn, nút tiếp theo sẽ nhận lượt. Không có gì bị dừng."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Chờ"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "Lượt sẽ chờ cho đến khi các cuộc trò chuyện khác dùng xong nút của chúng — phản hồi kết thúc và mỗi cuộc trò chuyện được đóng hoặc chuyển sang nút khác — rồi nút này mới tải."
   },
   "strategies.setOwn": {
     "defaultMessage": "Đặt các nút riêng của nó"

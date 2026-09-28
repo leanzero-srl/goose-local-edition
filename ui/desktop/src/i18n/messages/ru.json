@@ -6755,6 +6755,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "Повторить {primary}"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} работает на {node} ({rank}): {mac} обслуживает {serving} для {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "Первый запуск ещё не измерен"
   },
@@ -7115,6 +7118,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Освободить место"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} не загружен: {mac} обслуживает {serving} для {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Удалить"
   },
@@ -7174,6 +7180,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Разделы узлов"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "другого чата"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "«{chat}»"
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, one {чата {names}} few {чатов {names}} many {чатов {names}} other {чатов {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Настройте свои Mac"
@@ -7270,6 +7285,12 @@
   },
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, one {Ждём, пока {way} закончит # ответ, затем загрузим {node} ({duration})} few {Ждём, пока {way} закончит # ответа, затем загрузим {node} ({duration})} many {Ждём, пока {way} закончит # ответов, затем загрузим {node} ({duration})} other {Ждём, пока {way} закончит # ответа, затем загрузим {node} ({duration})}}"
+  },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, one {Ждём, пока {way} закончит # ответ в {chats}, затем загрузится {node} ({duration})} few {Ждём, пока {way} закончит # ответа в {chats}, затем загрузится {node} ({duration})} many {Ждём, пока {way} закончит # ответов в {chats}, затем загрузится {node} ({duration})} other {Ждём, пока {way} закончит # ответа в {chats}, затем загрузится {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, one {Ждём, пока {mac} обслуживает {serving} для {chats}: {node} загрузится, когда этот чат закроют или он перейдёт на другой узел ({duration})} few {Ждём, пока {mac} обслуживает {serving} для {chats}: {node} загрузится, когда эти чаты закроют или они перейдут на другой узел ({duration})} many {Ждём, пока {mac} обслуживает {serving} для {chats}: {node} загрузится, когда эти чаты закроют или они перейдут на другой узел ({duration})} other {Ждём, пока {mac} обслуживает {serving} для {chats}: {node} загрузится, когда эти чаты закроют или они перейдут на другой узел ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Изменение не удалось сохранить"
@@ -10154,6 +10175,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Если не загружен"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Если его Mac обслуживает другой узел"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Узлы по порядку"
   },
@@ -10357,6 +10381,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "Если {node} не загружен, тем временем работу берёт {next}, и ничего не загружается."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Добавьте второй узел, чтобы использовать следующий."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Перехватить"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Этот узел загрузится, как только закончатся текущие ответы другого узла. Чат, отдыхающий между сообщениями, теряет свой узел."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Использовать следующий узел"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Пока его Mac отвечает другому чату или держит узел другого чата между его сообщениями, ход берёт следующий узел. Ничего не останавливается."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Ждать"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "Ход ждёт, пока другие чаты не закончат со своим узлом — их ответы завершатся, и каждый чат будет закрыт или перейдёт на другой узел, — затем загружается этот."
   },
   "strategies.setOwn": {
     "defaultMessage": "Задать собственные узлы"

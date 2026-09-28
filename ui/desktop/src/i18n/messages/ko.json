@@ -6755,6 +6755,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} 다시 시도"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role}은(는) {node}({rank})에서 실행 중: {mac}이(가) {chats}을(를) 위해 {serving}을(를) 제공 중입니다"
+  },
   "nodes.firstStart": {
     "defaultMessage": "첫 시작은 아직 측정되지 않았습니다"
   },
@@ -7115,6 +7118,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "공간 확보"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node}을(를) 불러오지 않았습니다: {mac}이(가) {chats}을(를) 위해 {serving}을(를) 제공 중입니다."
+  },
   "nodes.remove": {
     "defaultMessage": "제거"
   },
@@ -7174,6 +7180,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "노드 섹션"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "다른 채팅"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "\"{chat}\""
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, other {채팅 {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Mac 설정"
@@ -7270,6 +7285,12 @@
   },
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, other {{way}이(가) 답변 # 개를 마칠 때까지 기다린 후 {node}을(를) 로드합니다({duration})}}"
+  },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, other {{way}이(가) {chats}의 응답 #개를 마칠 때까지 기다린 뒤 {node}을(를) 불러옵니다({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, other {{mac}이(가) {chats}을(를) 위해 {serving}을(를) 제공하는 동안 기다립니다: 그 채팅이 닫히거나 다른 노드로 옮기면 {node}을(를) 불러옵니다({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "변경 사항을 저장할 수 없습니다"
@@ -10154,6 +10175,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "로드되지 않았다면"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "그 Mac이 다른 노드를 제공 중이면"
+  },
   "strategies.colNodes": {
     "defaultMessage": "순서대로 노드"
   },
@@ -10357,6 +10381,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "{node}이(가) 로드되어 있지 않으면 그동안 {next}이(가) 작업을 맡고, 아무것도 로드되지 않습니다."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "다음 노드를 쓰려면 두 번째 노드를 추가하세요."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "넘겨받기"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "다른 노드의 진행 중인 응답이 끝나는 즉시 이 노드를 불러옵니다. 메시지 사이에 쉬고 있는 채팅은 노드를 잃습니다."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "다음 노드 사용"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "그 Mac이 다른 채팅에 응답하거나 다른 채팅의 노드를 메시지 사이에 유지하는 동안에는 다음 노드가 이 차례를 맡습니다. 아무것도 중지되지 않습니다."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "기다리기"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "다른 채팅들이 자신의 노드 사용을 마칠 때까지(응답이 끝나고 각 채팅이 닫히거나 다른 노드로 옮길 때까지) 차례가 기다린 뒤 이 노드를 불러옵니다."
   },
   "strategies.setOwn": {
     "defaultMessage": "자체 노드 설정"

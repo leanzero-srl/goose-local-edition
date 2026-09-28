@@ -28,9 +28,9 @@ use crate::config::{Config, ConfigError};
 
 pub use goose_sdk_types::custom_requests::{
     BuildRefusal, BuildRefusalDto, NodeChainEntry, NodeDef, NodeDefKind, NodeIfNotLoaded,
-    NodeModelFrom, NodeOrigin, NodePlacement, NodeRole, NodeRoleEntry, NodeStrategy,
-    NodeStrategyRoles, NodeWhen, NodesConfig, NodesForBuilds, NodesForNewChats, NodesReadResponse,
-    NodesRefusal, NodesRefusalCode, NodesWriteResponse, ResolvedNodeDef,
+    NodeIfServingOther, NodeModelFrom, NodeOrigin, NodePlacement, NodeRole, NodeRoleEntry,
+    NodeStrategy, NodeStrategyRoles, NodeWhen, NodesConfig, NodesForBuilds, NodesForNewChats,
+    NodesReadResponse, NodesRefusal, NodesRefusalCode, NodesWriteResponse, ResolvedNodeDef,
 };
 
 /// The config key.
@@ -1178,11 +1178,16 @@ pub fn chat_set_roles(nodes: &[String], answer_on_next: bool) -> NodeStrategyRol
             chain: answering.iter().map(link).collect(),
             when: NodeWhen::Failover,
             if_not_loaded: NodeIfNotLoaded::Load,
+            // Q-428: a chat's own node set is made from the chip, which carries no setting — it
+            // keeps the behaviour it had (the running reply is still never cut). "Save as a
+            // strategy" hands it to the strategy editor, where the setting is chosen.
+            if_serving_other: NodeIfServingOther::TakeOver,
         }),
         build: Some(NodeRoleEntry {
             chain: nodes.iter().map(link).collect(),
             when: NodeWhen::Share,
             if_not_loaded: NodeIfNotLoaded::Load,
+            if_serving_other: NodeIfServingOther::TakeOver,
         }),
         ..NodeStrategyRoles::default()
     }

@@ -11,6 +11,7 @@ import {
   routeNodeIds,
   swapOfReports,
   swapStopsEngine,
+  turnAwaitsItsNode,
   type NodeSwap,
 } from './nodeSwap';
 import {
@@ -159,7 +160,9 @@ describe('Q-272: the loader’s facts, as every surface reads them', () => {
     expect(nodeWaitOf(J3_READ, waiting([CHAT]), [SPLIT])).toEqual({
       target: expect.objectContaining({ id: SPLIT }),
       reason: 'r',
-      replies: { way: 'Qwen3.8-27B-Atlassian-Q8-mlx · this Mac', count: 2 },
+      // An older goosed names no chats: an empty list, never a guessed one.
+      replies: { way: 'Qwen3.8-27B-Atlassian-Q8-mlx · this Mac', count: 2, chats: [] },
+      servingOther: null,
       load: { medianMs: 1000, count: 1 },
     });
     expect(nodeWaitOf(J3_READ, waiting(['gone']), [SPLIT])?.replies?.way).toBe("this Mac's engine");
@@ -218,5 +221,21 @@ describe('Q-272: the loader’s facts, as every surface reads them', () => {
     expect(isNodeSwap(swap)).toBe(true);
     expect(isNodeSwap({ ...swap, load: { medianMs: '5' } })).toBe(false);
     expect(measuredLoadOf(measured, CHAT)).toBeNull();
+  });
+});
+
+describe('Q-430: a routed turn awaits its node while none of its MLX nodes serves', () => {
+  it('a node route on a way that does not serve awaits it; once it serves it does not', () => {
+    expect(turnAwaitsItsNode(J3_READ, J3_SERVING_SINGLE, `node:${J3_BUILD_NODE.def.id}`)).toBe(
+      true
+    );
+    expect(turnAwaitsItsNode(J3_READ, J3_SERVING_SINGLE, `node:${J3_CHAT_NODE.def.id}`)).toBe(
+      false
+    );
+    // A strategy with one of its nodes serving is not awaiting anything.
+    expect(turnAwaitsItsNode(J3_READ, J3_SERVING_SINGLE, J3_STRATEGY)).toBe(false);
+    expect(turnAwaitsItsNode(J3_READ, J3_SWAP_TO_SPLIT, J3_STRATEGY)).toBe(true);
+    // Auto and cloud-only routes never wait on the loader.
+    expect(turnAwaitsItsNode(J3_READ, J3_SERVING_SINGLE, 'swarm')).toBe(false);
   });
 });

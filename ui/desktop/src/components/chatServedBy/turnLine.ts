@@ -1,5 +1,10 @@
 import type { IntlShape } from 'react-intl';
-import type { NodeRole, NodeServedTurnDto, NodesReadResponse_unstable } from '@aaif/goose-sdk';
+import type {
+  NodeRole,
+  NodeServedTurnDto,
+  NodeServingOtherDto,
+  NodesReadResponse_unstable,
+} from '@aaif/goose-sdk';
 import { defineMessages } from '../../i18n';
 import { ROLE_WORD } from '../nodes/NodeChips';
 import { nodeNamesById } from '../nodes/model';
@@ -15,6 +20,18 @@ const i18n = defineMessages({
     defaultMessage: '{rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}',
   },
   retry: { id: 'nodes.fellBackRetry', defaultMessage: 'Retry {primary}' },
+  // Q-428: the 1st was left to the node its Mac serves for other chats (the role's "Use the next
+  // node"): no "can't run" — it could, and was not interrupted.
+  fellBackServingOther: {
+    id: 'nodes.fellBackServingOther',
+    defaultMessage: '{role} is on {node} ({rank}): {mac} is serving {serving} for {chats}',
+  },
+  servingChats: {
+    id: 'nodes.servingChats',
+    defaultMessage: '{count, plural, one {chat {names}} other {chats {names}}}',
+  },
+  servingChatQuoted: { id: 'nodes.servingChatQuoted', defaultMessage: '"{chat}"' },
+  servingAnotherChat: { id: 'nodes.servingAnotherChat', defaultMessage: 'another chat' },
   // Q-381: the person asked this one turn onto a later node ("Answer on {next} for now").
   fellBackAsked: {
     id: 'nodes.fellBackAsked',
@@ -36,6 +53,19 @@ export interface ChatFellBack {
   reason: string;
   /** The person asked this turn past the 1st ("Answer on {next} for now", Q-381). */
   asked: boolean;
+  /** The 1st was left to the node its Mac serves for other chats (Q-428); null = another reason. */
+  servingOther: NodeServingOtherDto | null;
+}
+
+/** 'chat "Kickoff notes"', 'chats "A" and "B"' — the chats a node serves, in the person's words. */
+export function servingChatsText(intl: IntlShape, chats: readonly string[]): string {
+  if (chats.length === 0) return intl.formatMessage(i18n.servingAnotherChat);
+  return intl.formatMessage(i18n.servingChats, {
+    count: chats.length,
+    names: intl.formatList(
+      chats.map((chat) => intl.formatMessage(i18n.servingChatQuoted, { chat }))
+    ),
+  });
 }
 
 /**
@@ -59,6 +89,7 @@ export function fellBackOf(
     primaryId: primary.node,
     reason: record.reason,
     asked: record.askedForThisTurn === true,
+    servingOther: record.servingOther ?? null,
   };
 }
 
@@ -69,6 +100,16 @@ export function fellBackText(intl: IntlShape, fell: ChatFellBack): string {
       node: fell.node,
       rank: intl.formatMessage(i18n.rank, { rank: fell.rank }),
       primary: fell.primary,
+    });
+  }
+  if (fell.servingOther) {
+    return intl.formatMessage(i18n.fellBackServingOther, {
+      role: intl.formatMessage(ROLE_WORD[fell.role]),
+      node: fell.node,
+      rank: intl.formatMessage(i18n.rank, { rank: fell.rank }),
+      mac: fell.servingOther.mac,
+      serving: fell.servingOther.serving,
+      chats: servingChatsText(intl, fell.servingOther.chats),
     });
   }
   return intl.formatMessage(i18n.fellBack, {

@@ -9,6 +9,7 @@ import type {
 } from '../../utils/nodeSwap';
 import { formatElapsed } from '../leanzero-swarm/mlxLiveStats';
 import { loadPhaseWord } from '../nodes/loadPhaseWord';
+import { servingChatsText } from './turnLine';
 
 const i18n = defineMessages({
   // DESIGN-NODES-AND-STRATEGIES.md §8.7, as the table words them.
@@ -20,6 +21,18 @@ const i18n = defineMessages({
     id: 'nodes.turnWaiting',
     defaultMessage:
       'Waiting for {way} to finish {count, plural, one {# reply} other {# replies}}, then loading {node} ({duration})',
+  },
+  // Q-430: the wait names the chat whose reply it waits for — the loader's hold says whose.
+  turnWaitingInChat: {
+    id: 'nodes.turnWaitingInChat',
+    defaultMessage:
+      'Waiting for {way} to finish {count, plural, one {# reply} other {# replies}} in {chats}, then loading {node} ({duration})',
+  },
+  // Q-428 `wait`: the Mac serves another node for chats resting between messages.
+  turnWaitingServing: {
+    id: 'nodes.turnWaitingServing',
+    defaultMessage:
+      'Waiting while {mac} serves {serving} for {chats}: {node} loads when {count, plural, one {that chat is} other {those chats are}} closed or moved to another node ({duration})',
   },
   turnFirstLoad: {
     id: 'nodes.turnFirstLoad',
@@ -55,6 +68,11 @@ const i18n = defineMessages({
     defaultMessage: "Can't load {node} on {mac}: {verdict}",
   },
   loadFailed: { id: 'nodes.loadFailed', defaultMessage: '{node} failed to load: {words}' },
+  // Q-428 "Use the next node": the node was left to the one its Mac serves for other chats.
+  refusedServingOther: {
+    id: 'nodes.refusedServingOther',
+    defaultMessage: '{node} was not loaded: {mac} is serving {serving} for {chats}.',
+  },
   // The ledger's words for a way the loader stopped (Q-254): what the stopped way reads, on every
   // surface, while the loader loads the node — never "Failed" or "No model is mounted".
   swappingTo: { id: 'nodes.swappingTo', defaultMessage: 'Swapping to {node}' },
@@ -114,6 +132,13 @@ export function refusalText(intl: IntlShape, refusal: NodeRefusal): string {
       return intl.formatMessage(i18n.refusedFit, { node, mac: facts.mac, verdict: facts.verdict });
     case 'loadFailed':
       return intl.formatMessage(i18n.loadFailed, { node, words: facts.words });
+    case 'servingOther':
+      return intl.formatMessage(i18n.refusedServingOther, {
+        node,
+        mac: facts.mac,
+        serving: facts.serving,
+        chats: servingChatsText(intl, facts.chats),
+      });
     case undefined:
       return headline(refusal.reason);
   }
@@ -129,7 +154,26 @@ export function loaderText(intl: IntlShape, loader: ChatLoader): string {
   switch (loader.kind) {
     case 'waiting': {
       const { wait } = loader;
+      if (wait.servingOther) {
+        return intl.formatMessage(i18n.turnWaitingServing, {
+          mac: wait.servingOther.mac,
+          serving: wait.servingOther.serving,
+          chats: servingChatsText(intl, wait.servingOther.chats),
+          count: wait.servingOther.chats.length,
+          node: wait.target.name,
+          duration: loadDurationText(intl, wait.load),
+        });
+      }
       if (!wait.replies) return headline(wait.reason);
+      if (wait.replies.chats.length > 0) {
+        return intl.formatMessage(i18n.turnWaitingInChat, {
+          way: wait.replies.way,
+          count: wait.replies.count,
+          chats: servingChatsText(intl, wait.replies.chats),
+          node: wait.target.name,
+          duration: loadDurationText(intl, wait.load),
+        });
+      }
       return intl.formatMessage(i18n.turnWaiting, {
         way: wait.replies.way,
         count: wait.replies.count,

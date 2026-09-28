@@ -6755,6 +6755,9 @@
   "nodes.fellBackRetry": {
     "defaultMessage": "Tentar {primary} de novo"
   },
+  "nodes.fellBackServingOther": {
+    "defaultMessage": "{role} está em {node} ({rank}): {mac} está servindo {serving} para {chats}"
+  },
   "nodes.firstStart": {
     "defaultMessage": "Primeira inicialização ainda não medida"
   },
@@ -7115,6 +7118,9 @@
   "nodes.refusedMakeRoom": {
     "defaultMessage": "Liberar espaço"
   },
+  "nodes.refusedServingOther": {
+    "defaultMessage": "{node} não foi carregado: {mac} está servindo {serving} para {chats}."
+  },
   "nodes.remove": {
     "defaultMessage": "Remover"
   },
@@ -7174,6 +7180,15 @@
   },
   "nodes.sections": {
     "defaultMessage": "Seções de nós"
+  },
+  "nodes.servingAnotherChat": {
+    "defaultMessage": "outro chat"
+  },
+  "nodes.servingChatQuoted": {
+    "defaultMessage": "\"{chat}\""
+  },
+  "nodes.servingChats": {
+    "defaultMessage": "{count, plural, one {o chat {names}} other {os chats {names}}}"
   },
   "nodes.setUpMacs": {
     "defaultMessage": "Configure seus Macs"
@@ -7270,6 +7285,12 @@
   },
   "nodes.turnWaiting": {
     "defaultMessage": "{count, plural, one {Aguardando {way} terminar # resposta; depois carrega {node} ({duration})} other {Aguardando {way} terminar # respostas; depois carrega {node} ({duration})}}"
+  },
+  "nodes.turnWaitingInChat": {
+    "defaultMessage": "{count, plural, one {Aguardando {way} terminar # resposta em {chats}; depois carrega {node} ({duration})} other {Aguardando {way} terminar # respostas em {chats}; depois carrega {node} ({duration})}}"
+  },
+  "nodes.turnWaitingServing": {
+    "defaultMessage": "{count, plural, one {Aguardando enquanto {mac} serve {serving} para {chats}: {node} carrega quando esse chat for fechado ou passar para outro nó ({duration})} other {Aguardando enquanto {mac} serve {serving} para {chats}: {node} carrega quando esses chats forem fechados ou passarem para outro nó ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Não foi possível salvar a alteração"
@@ -10154,6 +10175,9 @@
   "strategies.colIfNotLoaded": {
     "defaultMessage": "Se não carregado"
   },
+  "strategies.colIfServingOther": {
+    "defaultMessage": "Se o Mac dele estiver servindo outro nó"
+  },
   "strategies.colNodes": {
     "defaultMessage": "Nós em ordem"
   },
@@ -10357,6 +10381,27 @@
   },
   "strategies.sentenceUseNextMany": {
     "defaultMessage": "Se {node} não estiver carregado, {next} assume o trabalho nesse meio-tempo e nada é carregado."
+  },
+  "strategies.servingOtherNeedsNext": {
+    "defaultMessage": "Adicione um segundo nó para usar o próximo."
+  },
+  "strategies.servingOtherTakeOver": {
+    "defaultMessage": "Assumir"
+  },
+  "strategies.servingOtherTakeOverSays": {
+    "defaultMessage": "Este carrega assim que as respostas em andamento do outro nó terminarem. Um chat em pausa entre mensagens perde o seu nó."
+  },
+  "strategies.servingOtherUseNext": {
+    "defaultMessage": "Usar o próximo nó"
+  },
+  "strategies.servingOtherUseNextSays": {
+    "defaultMessage": "Enquanto o Mac dele responde a outro chat, ou mantém o nó de outro chat entre as mensagens dele, o próximo nó assume a vez. Nada é interrompido."
+  },
+  "strategies.servingOtherWait": {
+    "defaultMessage": "Aguardar"
+  },
+  "strategies.servingOtherWaitSays": {
+    "defaultMessage": "A vez aguarda até os outros chats terminarem com o nó deles — as respostas acabam, e cada chat é fechado ou passa para outro nó — e então este carrega."
   },
   "strategies.setOwn": {
     "defaultMessage": "Definir seus próprios nós"
