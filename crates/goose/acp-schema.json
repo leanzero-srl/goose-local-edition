@@ -13525,6 +13525,14 @@
           },
           "description": "Sessions with a loop that has not ended (session loops, Q-228), each with its status as\nread now; an unreadable loop record is listed with its error.",
           "default": []
+        },
+        "notesWaiting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NotesWaitingDto"
+          },
+          "description": "Chats with notes from the person's other chats waiting there (Q-358), oldest note first.",
+          "default": []
         }
       },
       "required": [
@@ -13870,6 +13878,36 @@
       ],
       "description": "The loop's status (§4.7). `elsewhere` is never written: it is derived at read time for a loop\nwhose owner is another live goose process."
     },
+    "NotesWaitingDto": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "sessionName": {
+          "type": "string"
+        },
+        "workingDir": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fromName": {
+          "type": "string",
+          "description": "The chat the oldest waiting note came from."
+        }
+      },
+      "required": [
+        "sessionId",
+        "sessionName",
+        "workingDir",
+        "count",
+        "fromName"
+      ],
+      "description": "A chat with notes waiting for the person: the sidebar's Note chip and \"1 note waiting\"."
+    },
     "ResolveNeedsYouRequest_unstable": {
       "type": "object",
       "properties": {
@@ -13917,6 +13955,613 @@
       ],
       "x-side": "agent",
       "x-method": "_goose/unstable/needs_you/resolve"
+    },
+    "NotesListRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "A chat's notes: the drafts written in it and the notes sent to it.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/list"
+    },
+    "NotesListResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "drafts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NoteDraftDto"
+          }
+        },
+        "inbox": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InboxNoteDto"
+          }
+        }
+      },
+      "required": [
+        "drafts",
+        "inbox"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/list"
+    },
+    "NoteDraftDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "toQuery": {
+          "type": "string",
+          "description": "The words the model used for the other chat."
+        },
+        "text": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "RFC 3339."
+        },
+        "resolution": {
+          "$ref": "#/$defs/NoteResolution"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteChatDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NoteChatDto"
+          },
+          "description": "The equally matching chats when `resolution` is `ambiguous`, most recent first.",
+          "default": []
+        },
+        "status": {
+          "$ref": "#/$defs/NoteDraftStatus"
+        },
+        "delivery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteDelivery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sentAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteOutcomeDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set for a sent note."
+        }
+      },
+      "required": [
+        "id",
+        "toQuery",
+        "text",
+        "createdAt",
+        "resolution",
+        "status"
+      ],
+      "description": "A note in the chat that wrote it."
+    },
+    "NoteResolution": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "picked_by_person"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "title_words",
+          "description": "The title words named one chat."
+        },
+        {
+          "type": "string",
+          "const": "live_state",
+          "description": "Several matched equally; only one was live."
+        },
+        {
+          "type": "string",
+          "const": "ambiguous",
+          "description": "Several matched equally: `candidates` lists them for the person to pick."
+        },
+        {
+          "type": "string",
+          "const": "no_match",
+          "description": "No chat's title or folder matched: the person picks one or cancels."
+        }
+      ]
+    },
+    "NoteChatDto": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "workingDir": {
+          "type": "string"
+        },
+        "folder": {
+          "type": "string",
+          "description": "The folder as the card shows it: `~/billing` under the home folder."
+        },
+        "live": {
+          "$ref": "#/$defs/NoteLiveState"
+        },
+        "lastActiveAt": {
+          "type": "string",
+          "description": "RFC 3339: the chat's last message."
+        }
+      },
+      "required": [
+        "sessionId",
+        "name",
+        "workingDir",
+        "folder",
+        "live",
+        "lastActiveAt"
+      ]
+    },
+    "NoteLiveState": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "working",
+          "description": "goose is working there (a turn runs)."
+        },
+        {
+          "type": "string",
+          "const": "idle",
+          "description": "Open in a window, no turn running."
+        },
+        {
+          "type": "string",
+          "const": "not_open",
+          "description": "Not open in any window."
+        }
+      ],
+      "description": "Where a chat stands right now, as the draft card says it."
+    },
+    "NoteDraftStatus": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "sent",
+        "cancelled"
+      ]
+    },
+    "NoteDelivery": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "steer_now",
+          "description": "Into the chat's running turn, or its own turn as soon as it is idle in a window."
+        },
+        {
+          "type": "string",
+          "const": "leave_there",
+          "description": "Waits in the chat's inbox for the person there."
+        }
+      ]
+    },
+    "NoteOutcomeDto": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/NoteOutcomeState"
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "RFC 3339: when it was delivered or dismissed."
+        },
+        "how": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteDeliveredHow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "NoteOutcomeState": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "waiting",
+            "steering",
+            "with_next_message",
+            "delivered",
+            "dismissed"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "gone",
+          "description": "The target chat, or the note in it, is gone: `reason` says why."
+        }
+      ],
+      "description": "What became of a sent note, read from the target chat."
+    },
+    "NoteDeliveredHow": {
+      "type": "string",
+      "enum": [
+        "steered",
+        "own_turn",
+        "with_your_message"
+      ]
+    },
+    "InboxNoteDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "fromSessionId": {
+          "type": "string"
+        },
+        "fromName": {
+          "type": "string"
+        },
+        "fromWorkingDir": {
+          "type": "string"
+        },
+        "fromFolder": {
+          "type": "string",
+          "description": "The sending chat's folder as the tray shows it: `~/p` under the home folder."
+        },
+        "text": {
+          "type": "string"
+        },
+        "sentAt": {
+          "type": "string",
+          "description": "RFC 3339."
+        },
+        "delivery": {
+          "$ref": "#/$defs/NoteDelivery"
+        },
+        "status": {
+          "$ref": "#/$defs/InboxNoteStatus"
+        },
+        "offerWhenIdle": {
+          "type": "boolean",
+          "description": "Offered as a turn of its own as soon as the chat is idle in a window."
+        },
+        "deliveredAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deliveredHow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteDeliveredHow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dismissedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "messageId": {
+          "type": "string",
+          "description": "The id its message takes in this chat."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Exactly what goose reads: submit it with `_meta.goose.crossNote = {noteId, messageId}`."
+        }
+      },
+      "required": [
+        "id",
+        "fromSessionId",
+        "fromName",
+        "fromWorkingDir",
+        "fromFolder",
+        "text",
+        "sentAt",
+        "delivery",
+        "status",
+        "offerWhenIdle",
+        "messageId",
+        "prompt"
+      ],
+      "description": "A note in the chat it was sent to."
+    },
+    "InboxNoteStatus": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "waiting",
+            "delivered",
+            "dismissed"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "steering",
+          "description": "Queued into the running turn; goose reads it between tool calls."
+        },
+        {
+          "type": "string",
+          "const": "with_next_message",
+          "description": "Goes with the person's next message there."
+        }
+      ]
+    },
+    "NotesTargetsRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "The chats a note written in `sessionId` could go to, most recently active first.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/targets"
+    },
+    "NotesTargetsResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "chats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NoteChatDto"
+          }
+        }
+      },
+      "required": [
+        "chats"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/targets"
+    },
+    "NotesSendRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "noteId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "delivery": {
+          "$ref": "#/$defs/NoteDelivery"
+        }
+      },
+      "required": [
+        "sessionId",
+        "noteId",
+        "text",
+        "delivery"
+      ],
+      "description": "THE PERSON'S CLICK on a draft: the only request that sends a note. `text` is the draft as the\nperson left it.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/send"
+    },
+    "NotesSendResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/NoteDraftDto"
+        }
+      },
+      "required": [
+        "draft"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/send"
+    },
+    "NotesDraftRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "noteId": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/NoteDraftAction"
+        }
+      },
+      "required": [
+        "sessionId",
+        "noteId",
+        "action"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/draft"
+    },
+    "NoteDraftAction": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "toSessionId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "retarget"
+            }
+          },
+          "required": [
+            "kind",
+            "toSessionId"
+          ],
+          "description": "\"Not this chat\": the person picked another."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cancel"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "NotesDraftResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/NoteDraftDto"
+        }
+      },
+      "required": [
+        "draft"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/draft"
+    },
+    "NotesInboxRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "noteId": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/NoteInboxAction"
+        }
+      },
+      "required": [
+        "sessionId",
+        "noteId",
+        "action"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/inbox"
+    },
+    "NoteInboxAction": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "dismiss"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "steer_this_turn",
+          "description": "goose is working: into this turn, between tool calls."
+        },
+        {
+          "type": "string",
+          "const": "after_this_turn",
+          "description": "goose is working: its own turn once this one ends."
+        },
+        {
+          "type": "string",
+          "const": "add_to_next_message",
+          "description": "goose is idle: with the person's next message."
+        }
+      ],
+      "description": "What the person in the target chat does with a note. \"Give it to goose now\" is not one: the\nwindow submits the note's `prompt` with `_meta.goose.crossNote`."
+    },
+    "NotesInboxResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "note": {
+          "$ref": "#/$defs/InboxNoteDto"
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/inbox"
+    },
+    "NotesShowingRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "showing": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sessionId",
+        "showing"
+      ],
+      "description": "This window shows (or stopped showing) `sessionId`. goosed offers a chat's due note only to the\nwindows that show it, and a draft card says \"not open in any window\" from these.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/showing"
+    },
+    "NotesShowingResponse_unstable": {
+      "type": "object",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/showing"
     },
     "LeanzeroLinkRemoteExecuteRequest_unstable": {
       "type": "object",
@@ -18057,6 +18702,49 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/loops/changed"
     },
+    "NotesDeliverDueNotification_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "noteId": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "noteId",
+        "messageId",
+        "prompt"
+      ],
+      "description": "A note is due as its own turn in `sessionId` (Q-358): sent only to the windows that show the chat\n(`notes/showing`). The window, if the chat is idle there, submits `prompt` as a user message with\nid `messageId` carrying `_meta.goose.crossNote = {noteId, messageId}`, so the reply streams where\nthe person sees it; otherwise it ignores the offer and goosed offers it again when the chat's turn\nends or a window shows it.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/deliverDue"
+    },
+    "NotesChangedNotification_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "sessionIds"
+      ],
+      "description": "These chats' notes changed (a draft pinned, sent, delivered, dismissed): the cards, trays and\nlists showing them re-read `notes/list`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/notes/changed"
+    },
     "RequestRecipeParams_unstable": {
       "type": "object",
       "properties": {
@@ -19602,6 +20290,60 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/NotesListRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/notes/list",
+                  "title": "NotesListRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NotesTargetsRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/notes/targets",
+                  "title": "NotesTargetsRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NotesSendRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/notes/send",
+                  "title": "NotesSendRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NotesDraftRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/notes/draft",
+                  "title": "NotesDraftRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NotesInboxRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/notes/inbox",
+                  "title": "NotesInboxRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NotesShowingRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/notes/showing",
+                  "title": "NotesShowingRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/LeanzeroLinkRemoteExecuteRequest_unstable"
                     }
                   ],
@@ -20732,6 +21474,54 @@
                     {
                       "allOf": [
                         {
+                          "$ref": "#/$defs/NotesListResponse_unstable"
+                        }
+                      ],
+                      "title": "NotesListResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NotesTargetsResponse_unstable"
+                        }
+                      ],
+                      "title": "NotesTargetsResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NotesSendResponse_unstable"
+                        }
+                      ],
+                      "title": "NotesSendResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NotesDraftResponse_unstable"
+                        }
+                      ],
+                      "title": "NotesDraftResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NotesInboxResponse_unstable"
+                        }
+                      ],
+                      "title": "NotesInboxResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NotesShowingResponse_unstable"
+                        }
+                      ],
+                      "title": "NotesShowingResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
                           "$ref": "#/$defs/LeanzeroLinkRemoteExecuteResponse_unstable"
                         }
                       ],
@@ -20938,6 +21728,24 @@
                   ],
                   "description": "Params for _goose/unstable/loops/changed",
                   "title": "LoopsChangedNotification_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NotesDeliverDueNotification_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/notes/deliverDue",
+                  "title": "NotesDeliverDueNotification_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NotesChangedNotification_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/notes/changed",
+                  "title": "NotesChangedNotification_unstable"
                 }
               ]
             },

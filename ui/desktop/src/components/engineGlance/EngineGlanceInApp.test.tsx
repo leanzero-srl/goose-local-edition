@@ -157,6 +157,7 @@ describe('glanceSessionsOf — the session-state store as the glance reports it'
       ],
       failed: [],
       stopped: [],
+      notesWaiting: [],
       elicitations: [],
     } as unknown as Parameters<typeof glanceSessionsOf>[0]);
     expect(report).toEqual({

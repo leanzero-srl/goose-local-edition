@@ -7103,6 +7103,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "Где запускать этот чат"
   },
+  "notes.chip": {
+    "defaultMessage": "Заметка"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {Заметка из «{from}» ждёт в этом чате} few {# заметки ждут в этом чате} many {# заметок ждут в этом чате} other {# заметки ждут в этом чате}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Под «{query}» подходит несколько чатов. Какой?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Заметка в другой чат"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "Оставить там"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "простаивает с {time}"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "не открыт ни в одном окне"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose там работает"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "Ни один чат не подходит под «{query}». Выберите чат для этой заметки."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Не этот чат"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Назад"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Найти чат по названию или папке"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Читаю ваши чаты…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "Ни один чат не подходит под эти слова."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Выберите чат"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "Направить сейчас"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "Заметка"
+  },
+  "notes.failed": {
+    "defaultMessage": "Не удалось: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Добавить к моему следующему сообщению"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "После этого хода"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose прочтёт её, когда этот ход закончится."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "Заметка из «{name}»"
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Отклонить"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "Отдать goose сейчас"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "Направить в этот ход"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Направлена в этот ход: goose прочтёт её между вызовами инструментов."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Отправлена из другого вашего чата. goose её ещё не прочёл."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Уйдёт вместе с вашим следующим сообщением."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Скрыть заметку"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Показать заметку"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "Заметка из «{name}» · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Закрыть эту строку"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "Заметка отправлена в «{name}» · отклонена там"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "Заметка отправлена в «{name}» · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "Заметка отправлена в «{name}» · прочитана в своём ходе в {time}"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "Заметка отправлена в «{name}» · ждёт там"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "Не удалось прочитать заметки этого чата: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# заметка ждёт} few {# заметки ждут} many {# заметок ждут} other {# заметки ждут}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "из «{from}»"
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Заметки, которые ждут вас"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."
   },

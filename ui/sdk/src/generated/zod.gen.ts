@@ -5889,13 +5889,25 @@ export const zLoopSummaryDto = z.object({
     ]).optional()
 });
 
+/**
+ * A chat with notes waiting for the person: the sidebar's Note chip and "1 note waiting".
+ */
+export const zNotesWaitingDto = z.object({
+    sessionId: z.string(),
+    sessionName: z.string(),
+    workingDir: z.string(),
+    count: z.number().int().gte(0),
+    fromName: z.string()
+});
+
 export const zSessionActivityResponse_unstable = z.object({
     running: z.array(zRunningSessionDto),
     needsYou: z.array(zNeedsYouItemDto),
     failed: z.array(zFailedSessionDto),
     stopped: z.array(zStoppedSessionDto).optional().default([]),
     background: z.array(zBackgroundSessionDto).optional().default([]),
-    looping: z.array(zLoopSummaryDto).optional().default([])
+    looping: z.array(zLoopSummaryDto).optional().default([]),
+    notesWaiting: z.array(zNotesWaitingDto).optional().default([])
 });
 
 export const zNeedsYouAction = z.enum(['answer', 'dismiss']);
@@ -5919,6 +5931,234 @@ export const zResolveNeedsYouRequest_unstable = z.object({
 export const zResolveNeedsYouResponse_unstable = z.object({
     item: zNeedsYouItemDto
 });
+
+/**
+ * A chat's notes: the drafts written in it and the notes sent to it.
+ */
+export const zNotesListRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+export const zNoteResolution = z.union([
+    z.enum(['picked_by_person']),
+    z.literal('title_words'),
+    z.literal('live_state'),
+    z.literal('ambiguous'),
+    z.literal('no_match')
+]);
+
+/**
+ * Where a chat stands right now, as the draft card says it.
+ */
+export const zNoteLiveState = z.union([
+    z.literal('working'),
+    z.literal('idle'),
+    z.literal('not_open')
+]);
+
+export const zNoteChatDto = z.object({
+    sessionId: z.string(),
+    name: z.string(),
+    workingDir: z.string(),
+    folder: z.string(),
+    live: zNoteLiveState,
+    lastActiveAt: z.string()
+});
+
+export const zNoteDraftStatus = z.enum([
+    'draft',
+    'sent',
+    'cancelled'
+]);
+
+export const zNoteDelivery = z.union([
+    z.literal('steer_now'),
+    z.literal('leave_there')
+]);
+
+/**
+ * What became of a sent note, read from the target chat.
+ */
+export const zNoteOutcomeState = z.union([
+    z.literal('waiting'),
+    z.literal('steering'),
+    z.literal('with_next_message'),
+    z.literal('delivered'),
+    z.literal('dismissed'),
+    z.literal('gone')
+]);
+
+export const zNoteDeliveredHow = z.enum([
+    'steered',
+    'own_turn',
+    'with_your_message'
+]);
+
+export const zNoteOutcomeDto = z.object({
+    state: zNoteOutcomeState,
+    at: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    how: z.union([
+        zNoteDeliveredHow,
+        z.null()
+    ]).optional(),
+    reason: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * A note in the chat that wrote it.
+ */
+export const zNoteDraftDto = z.object({
+    id: z.string(),
+    toQuery: z.string(),
+    text: z.string(),
+    createdAt: z.string(),
+    resolution: zNoteResolution,
+    target: z.union([
+        zNoteChatDto,
+        z.null()
+    ]).optional(),
+    candidates: z.array(zNoteChatDto).optional().default([]),
+    status: zNoteDraftStatus,
+    delivery: z.union([
+        zNoteDelivery,
+        z.null()
+    ]).optional(),
+    sentAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    outcome: z.union([
+        zNoteOutcomeDto,
+        z.null()
+    ]).optional()
+});
+
+export const zInboxNoteStatus = z.union([
+    z.literal('waiting'),
+    z.literal('delivered'),
+    z.literal('dismissed'),
+    z.literal('steering'),
+    z.literal('with_next_message')
+]);
+
+/**
+ * A note in the chat it was sent to.
+ */
+export const zInboxNoteDto = z.object({
+    id: z.string(),
+    fromSessionId: z.string(),
+    fromName: z.string(),
+    fromWorkingDir: z.string(),
+    fromFolder: z.string(),
+    text: z.string(),
+    sentAt: z.string(),
+    delivery: zNoteDelivery,
+    status: zInboxNoteStatus,
+    offerWhenIdle: z.boolean(),
+    deliveredAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    deliveredHow: z.union([
+        zNoteDeliveredHow,
+        z.null()
+    ]).optional(),
+    dismissedAt: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    messageId: z.string(),
+    prompt: z.string()
+});
+
+export const zNotesListResponse_unstable = z.object({
+    drafts: z.array(zNoteDraftDto),
+    inbox: z.array(zInboxNoteDto)
+});
+
+/**
+ * The chats a note written in `sessionId` could go to, most recently active first.
+ */
+export const zNotesTargetsRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+export const zNotesTargetsResponse_unstable = z.object({
+    chats: z.array(zNoteChatDto)
+});
+
+/**
+ * THE PERSON'S CLICK on a draft: the only request that sends a note. `text` is the draft as the
+ * person left it.
+ */
+export const zNotesSendRequest_unstable = z.object({
+    sessionId: z.string(),
+    noteId: z.string(),
+    text: z.string(),
+    delivery: zNoteDelivery
+});
+
+export const zNotesSendResponse_unstable = z.object({
+    draft: zNoteDraftDto
+});
+
+export const zNoteDraftAction = z.union([
+    z.object({
+        toSessionId: z.string(),
+        kind: z.literal('retarget')
+    }),
+    z.object({
+        kind: z.literal('cancel')
+    })
+]);
+
+export const zNotesDraftRequest_unstable = z.object({
+    sessionId: z.string(),
+    noteId: z.string(),
+    action: zNoteDraftAction
+});
+
+export const zNotesDraftResponse_unstable = z.object({
+    draft: zNoteDraftDto
+});
+
+/**
+ * What the person in the target chat does with a note. "Give it to goose now" is not one: the
+ * window submits the note's `prompt` with `_meta.goose.crossNote`.
+ */
+export const zNoteInboxAction = z.union([
+    z.enum(['dismiss']),
+    z.literal('steer_this_turn'),
+    z.literal('after_this_turn'),
+    z.literal('add_to_next_message')
+]);
+
+export const zNotesInboxRequest_unstable = z.object({
+    sessionId: z.string(),
+    noteId: z.string(),
+    action: zNoteInboxAction
+});
+
+export const zNotesInboxResponse_unstable = z.object({
+    note: zInboxNoteDto
+});
+
+/**
+ * This window shows (or stopped showing) `sessionId`. goosed offers a chat's due note only to the
+ * windows that show it, and a draft card says "not open in any window" from these.
+ */
+export const zNotesShowingRequest_unstable = z.object({
+    sessionId: z.string(),
+    showing: z.boolean()
+});
+
+export const zNotesShowingResponse_unstable = z.record(z.unknown());
 
 /**
  * Send a fresh prompt to an idle linked node (self or a peer) and start a NEW session
@@ -7476,6 +7716,28 @@ export const zLoopsChangedNotification_unstable = z.object({
     loop: zLoopRecord
 });
 
+/**
+ * A note is due as its own turn in `sessionId` (Q-358): sent only to the windows that show the chat
+ * (`notes/showing`). The window, if the chat is idle there, submits `prompt` as a user message with
+ * id `messageId` carrying `_meta.goose.crossNote = {noteId, messageId}`, so the reply streams where
+ * the person sees it; otherwise it ignores the offer and goosed offers it again when the chat's turn
+ * ends or a window shows it.
+ */
+export const zNotesDeliverDueNotification_unstable = z.object({
+    sessionId: z.string(),
+    noteId: z.string(),
+    messageId: z.string(),
+    prompt: z.string()
+});
+
+/**
+ * These chats' notes changed (a draft pinned, sent, delivered, dismissed): the cards, trays and
+ * lists showing them re-read `notes/list`.
+ */
+export const zNotesChangedNotification_unstable = z.object({
+    sessionIds: z.array(z.string())
+});
+
 export const zRequestRecipeParams_unstable = z.object({
     sessionId: z.string(),
     parameters: z.array(zRecipeParameterDto)
@@ -7658,6 +7920,12 @@ export const zExtRequest = z.object({
             zAnswerMemoryProposalRequest_unstable,
             zSessionActivityRequest_unstable,
             zResolveNeedsYouRequest_unstable,
+            zNotesListRequest_unstable,
+            zNotesTargetsRequest_unstable,
+            zNotesSendRequest_unstable,
+            zNotesDraftRequest_unstable,
+            zNotesInboxRequest_unstable,
+            zNotesShowingRequest_unstable,
             zLeanzeroLinkRemoteExecuteRequest_unstable,
             zNodesReadRequest_unstable,
             zNodesWriteRequest_unstable,
@@ -7806,6 +8074,12 @@ export const zExtResponse = z.union([
                 zAnswerMemoryProposalResponse_unstable,
                 zSessionActivityResponse_unstable,
                 zResolveNeedsYouResponse_unstable,
+                zNotesListResponse_unstable,
+                zNotesTargetsResponse_unstable,
+                zNotesSendResponse_unstable,
+                zNotesDraftResponse_unstable,
+                zNotesInboxResponse_unstable,
+                zNotesShowingResponse_unstable,
                 zLeanzeroLinkRemoteExecuteResponse_unstable,
                 zNodesReadResponse_unstable,
                 zNodesWriteResponse_unstable,
@@ -7842,7 +8116,9 @@ export const zExtNotification = z.object({
         z.union([
             zGooseSessionNotification_unstable,
             zLoopsTickDueNotification_unstable,
-            zLoopsChangedNotification_unstable
+            zLoopsChangedNotification_unstable,
+            zNotesDeliverDueNotification_unstable,
+            zNotesChangedNotification_unstable
         ]),
         z.union([
             z.record(z.unknown()),

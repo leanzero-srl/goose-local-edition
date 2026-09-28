@@ -10,6 +10,7 @@ import { Button } from './ui/button';
 import { defineMessages, useIntl } from '../i18n';
 import { cx } from './lz';
 import { TickMarker } from './loops/TickMarker';
+import { NoteMarker, noteMessageSender } from './notes/NoteMarker';
 import { loopWords } from './loops/loopWords';
 import { parseTickId } from './loops/model';
 import { LoopSessionContext, requestStartLoop } from './loops/startLoopRequest';
@@ -129,7 +130,8 @@ interface UserMessageProps {
 
 /**
  * A user message: the person's bubble — or, for a loop tick's prompt (its id is the runner-minted
- * `looptick_…`), the tick's divider (§8.5), which is never edited, forked or looped.
+ * `looptick_…`), the tick's divider (§8.5), which is never edited, forked or looped — or, for a
+ * note from the person's other chat (`crossnote_…`, Q-358), the note's divider, likewise.
  */
 export default function UserMessage(props: UserMessageProps) {
   const { message } = props;
@@ -138,6 +140,8 @@ export default function UserMessage(props: UserMessageProps) {
     message.metadata.loopTick ??
     (parsed && message.id ? { loopId: parsed.loopId, n: parsed.n, messageId: message.id } : null);
   if (tick) return <TickMarker message={message} tick={tick} />;
+  const noteFrom = noteMessageSender(message);
+  if (noteFrom !== null) return <NoteMarker message={message} from={noteFrom} />;
   return <PersonMessage {...props} />;
 }
 

@@ -7103,6 +7103,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "Jalankan chat ini di"
   },
+  "notes.chip": {
+    "defaultMessage": "Catatan"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {Satu catatan dari \"{from}\" menunggu di chat ini} other {# catatan menunggu di chat ini}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Beberapa chat cocok dengan \"{query}\". Yang mana?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Catatan untuk chat lain"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "Biarkan di sana"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "diam sejak {time}"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "tidak terbuka di jendela mana pun"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose sedang bekerja di sana"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "Tidak ada chat yang cocok dengan \"{query}\". Pilih chat tujuan catatan ini."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Bukan chat ini"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Kembali"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Cari chat menurut judul atau foldernya"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Membaca chat Anda…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "Tidak ada chat yang cocok dengan kata-kata ini."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Pilih chat"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "Arahkan sekarang"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "Catatannya"
+  },
+  "notes.failed": {
+    "defaultMessage": "Tidak dapat melakukannya: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Tambahkan ke pesan saya berikutnya"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "Setelah giliran ini"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose membacanya saat giliran ini selesai."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "Catatan dari \"{name}\""
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Tutup"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "Berikan ke goose sekarang"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "Arahkan giliran ini"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Diarahkan ke giliran ini: goose membacanya di antara panggilan alat."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Dikirim dari chat Anda yang lain. goose belum membacanya."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Ikut dengan pesan Anda berikutnya."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Sembunyikan catatan"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Tampilkan catatan"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "Catatan dari \"{name}\" · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Tutup baris ini"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "Catatan dikirim ke \"{name}\" · ditutup di sana"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "Catatan dikirim ke \"{name}\" · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "Catatan dikirim ke \"{name}\" · dibaca pada gilirannya pukul {time}"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "Catatan dikirim ke \"{name}\" · menunggu di sana"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "Catatan chat ini tidak dapat dibaca: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# catatan menunggu} other {# catatan menunggu}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "dari \"{from}\""
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Catatan yang menunggu Anda"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Server mungkin sedang dimulai atau tidak tersedia untuk sementara."
   },

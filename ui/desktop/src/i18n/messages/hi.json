@@ -7103,6 +7103,129 @@
   "nodesChipMenu.title": {
     "defaultMessage": "यह चैट यहाँ चलाएँ"
   },
+  "notes.chip": {
+    "defaultMessage": "नोट"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {\"{from}\" का एक नोट इस चैट में इंतज़ार कर रहा है} other {# नोट इस चैट में इंतज़ार कर रहे हैं}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "कई चैट \"{query}\" से मेल खाते हैं। कौन सा?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "दूसरे चैट के लिए नोट"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "वहीं छोड़ दें"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "{time} से निष्क्रिय"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "किसी विंडो में खुला नहीं"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose वहाँ काम कर रहा है"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "कोई चैट \"{query}\" से मेल नहीं खाता। वह चैट चुनें जिसके लिए यह नोट है।"
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "यह चैट नहीं"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "वापस"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "शीर्षक या फ़ोल्डर से चैट खोजें"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "आपके चैट पढ़े जा रहे हैं…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "इन शब्दों से कोई चैट मेल नहीं खाता।"
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "चैट चुनें"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "अभी मोड़ें"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "नोट"
+  },
+  "notes.failed": {
+    "defaultMessage": "यह नहीं हो सका: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "मेरे अगले संदेश के साथ जोड़ें"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "इस टर्न के बाद"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "यह टर्न खत्म होने पर goose इसे पढ़ेगा।"
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "\"{name}\" से नोट"
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "हटाएँ"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "अभी goose को दें"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "इस टर्न में मोड़ें"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "इस टर्न में मोड़ा गया: goose इसे टूल कॉल के बीच पढ़ता है।"
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "आपके दूसरे चैट से भेजा गया। goose ने इसे अभी तक नहीं पढ़ा है।"
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "आपके अगले संदेश के साथ जाएगा।"
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "नोट छिपाएँ"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "नोट दिखाएँ"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "\"{name}\" से नोट · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "यह पंक्ति बंद करें"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "\"{name}\" को नोट भेजा · वहाँ हटाया गया"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "\"{name}\" को नोट भेजा · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "\"{name}\" को नोट भेजा · {time} पर उसके टर्न में पढ़ा गया"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "\"{name}\" को नोट भेजा · वहाँ इंतज़ार में"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "इस चैट के नोट पढ़े नहीं जा सके: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# नोट इंतज़ार में} other {# नोट इंतज़ार में}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "\"{from}\" से"
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "आपके लिए इंतज़ार कर रहे नोट"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"
   },

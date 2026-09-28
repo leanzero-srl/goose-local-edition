@@ -145,6 +145,30 @@ pub struct LoopsChangedNotification {
     pub record: LoopRecord,
 }
 
+/// A note is due as its own turn in `sessionId` (Q-358): sent only to the windows that show the chat
+/// (`notes/showing`). The window, if the chat is idle there, submits `prompt` as a user message with
+/// id `messageId` carrying `_meta.goose.crossNote = {noteId, messageId}`, so the reply streams where
+/// the person sees it; otherwise it ignores the offer and goosed offers it again when the chat's turn
+/// ends or a window shows it.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcNotification)]
+#[notification(method = "_goose/unstable/notes/deliverDue")]
+#[serde(rename_all = "camelCase")]
+pub struct NotesDeliverDueNotification {
+    pub session_id: String,
+    pub note_id: String,
+    pub message_id: String,
+    pub prompt: String,
+}
+
+/// These chats' notes changed (a draft pinned, sent, delivered, dismissed): the cards, trays and
+/// lists showing them re-read `notes/list`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcNotification)]
+#[notification(method = "_goose/unstable/notes/changed")]
+#[serde(rename_all = "camelCase")]
+pub struct NotesChangedNotification {
+    pub session_ids: Vec<String>,
+}
+
 fn notification_schema<T>(generator: &mut SchemaGenerator) -> CustomMethodSchema
 where
     T: Default + JsonRpcMessage + JsonSchema,
@@ -172,6 +196,8 @@ pub fn custom_notification_schemas(generator: &mut SchemaGenerator) -> Vec<Custo
         notification_schema::<GooseSessionNotification>(generator),
         notification_schema::<LoopsTickDueNotification>(generator),
         notification_schema::<LoopsChangedNotification>(generator),
+        notification_schema::<NotesDeliverDueNotification>(generator),
+        notification_schema::<NotesChangedNotification>(generator),
     ]
 }
 
@@ -222,6 +248,8 @@ mod tests {
                 "_goose/unstable/session/update",
                 "_goose/unstable/loops/tickDue",
                 "_goose/unstable/loops/changed",
+                "_goose/unstable/notes/deliverDue",
+                "_goose/unstable/notes/changed",
             ]
         );
 

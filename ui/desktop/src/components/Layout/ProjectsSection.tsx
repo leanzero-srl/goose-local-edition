@@ -66,6 +66,7 @@ import { SessionActivityMarker, useSessionStateAttrs } from '../sessionActivity/
 import {
   activityOf,
   disambiguatedNames,
+  isActive,
   publishListedNames,
   useSessionActivity,
 } from '../sessionActivity/sessionActivityStore';
@@ -583,16 +584,10 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
   // A running or waiting session is pinned first and never folded behind "Show more".
   const activity = useSessionActivity();
   const ordered = useMemo(() => {
-    const isActive = (s: SessionListItem) => {
-      const a = activityOf(activity, s.id);
-      return a.needsYou > 0 || a.runningSince !== undefined;
-    };
-    return [...known.filter(isActive), ...known.filter((s) => !isActive(s))];
+    const leads = (s: SessionListItem) => isActive(activityOf(activity, s.id));
+    return [...known.filter(leads), ...known.filter((s) => !leads(s))];
   }, [known, activity]);
-  const activeCount = ordered.filter((s) => {
-    const a = activityOf(activity, s.id);
-    return a.needsYou > 0 || a.runningSince !== undefined;
-  }).length;
+  const activeCount = ordered.filter((s) => isActive(activityOf(activity, s.id))).length;
   const preview = ordered.slice(0, Math.max(PREVIEW_COUNT, activeCount));
   // The chat the user is in stays in view too: an older open chat folded under "Show more" left the
   // sidebar with no sign of where the user is (seen as a CI flake of the Studio test, 2026-09-27).
@@ -893,10 +888,7 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
       const defaultOpen =
         index < DEFAULT_OPEN_FOLDERS ||
         (activeSessionId != null && project.sessions.some((s) => s.id === activeSessionId)) ||
-        project.sessions.some((s) => {
-          const a = activityOf(activity, s.id);
-          return a.needsYou > 0 || a.runningSince !== undefined;
-        });
+        project.sessions.some((s) => isActive(activityOf(activity, s.id)));
       return toggled.has(project.path) ? !defaultOpen : defaultOpen;
     },
     [toggled, activeSessionId, activity]

@@ -37,6 +37,9 @@ import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
 import NeedsYouTray from './sessionActivity/NeedsYouCard';
+import NoteDraftTray from './notes/NoteDraftCard';
+import NoteInboxTray from './notes/NoteInboxTray';
+import { useShowsChat } from './notes/notesStore';
 import { answersWaiting, useAnswerQueue } from './sessionActivity/needsYouAnswerQueue';
 import { BackgroundWorkLine } from './sessionActivity/BackgroundWorkLine';
 import { TurnWorkingRow } from './turnWorking/TurnWorkingRow';
@@ -286,6 +289,8 @@ export default function BaseChat({
   });
   // Q-341: answers queued on a needs-you card go before the composer's queued messages.
   const answerQueue = useAnswerQueue(sessionId);
+  // Q-358: goosed offers a chat's due notes only to the windows that show it.
+  useShowsChat(sessionId, isActiveSession);
 
   const handleWorkingDirChange = useCallback(
     async (newDir: string) => {
@@ -730,6 +735,16 @@ export default function BaseChat({
             chatInputSubmit({ msg: text, images: [], needsYouAnswers: answered })
           }
           submitElicitationResponse={submitElicitationResponse}
+          className="relative z-10 mx-4 mb-2"
+        />
+
+        {/* Notes between the person's chats (Q-358): drafts this chat's goose pinned, which only the
+          person sends, and notes sent here, which only the person hands to goose. */}
+        <NoteDraftTray sessionId={sessionId} className="relative z-10 mx-4 mb-2" />
+        <NoteInboxTray
+          sessionId={sessionId}
+          chatState={chatState}
+          sendBlocked={queueProcessingBlocked}
           className="relative z-10 mx-4 mb-2"
         />
 
