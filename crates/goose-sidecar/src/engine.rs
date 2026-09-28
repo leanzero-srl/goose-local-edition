@@ -1255,6 +1255,26 @@ fn single_engine_need(_dir: &Path, weights_bytes: u64, _kv_mode: Option<KvCacheM
     )
 }
 
+/// Where the single engine's stderr is kept on this Mac (`logs/mlx-engine/` under goose's state
+/// dir, beside goosed's own logs). No directory is said loudly: the stderr then lives only in the
+/// sidecar's in-memory tail.
+#[cfg(unix)]
+fn engine_log_dir() -> Option<PathBuf> {
+    crate::distributed::rank_log::engine_log_dir()
+        .inspect_err(|e| {
+            tracing::warn!(
+                "the engine's durable log has no directory ({e:#}); its stderr lives only in the \
+                 in-memory tail"
+            )
+        })
+        .ok()
+}
+
+#[cfg(not(unix))]
+fn engine_log_dir() -> Option<PathBuf> {
+    None
+}
+
 /// A fixed, standard spawn PATH for the engine process. goosed's own PATH is a grab-bag of
 /// goose-internal tool shims — the MCP `mcp-hermit` bootstrap AND the desktop-bundled
 /// `ui/desktop/src/bin/uvx` wrapper — and inheriting it resolved `uvx` to those shims twice
@@ -1871,6 +1891,7 @@ impl MlxEngineManager {
                     config.startup_watch = Some(watch);
                     config.shutdown_line = Some(shutdown_began);
                     config.start_cancel = Some(cancel);
+                    config.log_dir = engine_log_dir();
                     Sidecar::start(config)
                         .await
                         .map(|sidecar| (Box::new(sidecar), true))

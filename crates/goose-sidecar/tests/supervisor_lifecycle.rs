@@ -307,3 +307,93 @@ async fn a_restart_marks_its_own_phases_from_its_respawn() {
     assert_eq!(first.phase_marks(), first_marks);
     sidecar.shutdown().await;
 }
+
+/// The line Rapid-MLX logs when a stream's generator raises, before it sends the client only
+/// "Internal error during streaming" (helpers.py, disconnect_guard) — shaped as the engine prints
+/// it; the exception is a stand-in.
+const STREAM_ERROR_LINE: &str = "ERROR:rapid_mlx.service.helpers:[disconnect_guard] generator \
+     raised RuntimeError: [metal::malloc] Unable to allocate 18874368000 bytes., 1 chunks, \
+     elapsed=1108.4s";
+
+fn engine_logs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dir)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default()
+}
+
+/// Q-423: the Studio's single engine logged why a 191k-token answer failed mid-stream, and the
+/// only copy was goosed's 200-line memory tail. Every stderr line now lands, stamped, in the
+/// engine's own log file under `log_dir` — the stream's ERROR line with it.
+#[tokio::test]
+async fn every_stderr_line_is_kept_in_the_engines_durable_log() {
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = fake_engine_config(port);
+    config.command = vec![
+        "python3".to_string(),
+        "-c".to_string(),
+        format!(
+            "import sys\nprint({STREAM_ERROR_LINE:?}, file=sys.stderr, flush=True)\n{FAKE_ENGINE}"
+        ),
+        port.to_string(),
+    ];
+    config.log_dir = Some(dir.path().to_path_buf());
+    let sidecar = Sidecar::start(config).await.unwrap();
+
+    let asked = Instant::now();
+    let kept = loop {
+        let logs = engine_logs(dir.path());
+        let text: String = logs
+            .iter()
+            .filter_map(|p| std::fs::read_to_string(p).ok())
+            .collect();
+        if text.contains(STREAM_ERROR_LINE) || asked.elapsed() > Duration::from_secs(10) {
+            break (logs, text);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    sidecar.shutdown().await;
+
+    let (logs, text) = kept;
+    assert_eq!(logs.len(), 1, "one log per spawned engine: {logs:?}");
+    let name = logs[0].file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        name.starts_with("fake-engine-") && name.ends_with(".log"),
+        "{name}"
+    );
+    let line = text
+        .lines()
+        .find(|l| l.contains(STREAM_ERROR_LINE))
+        .unwrap_or_else(|| panic!("the engine's ERROR line is not in its log:\n{text}"));
+    assert!(
+        line.ends_with(&format!("Z err {STREAM_ERROR_LINE}")),
+        "stamped with the instant goosed read it and the stream: {line}"
+    );
+}
+
+/// A log that cannot be opened is said in the stderr tail — the words a failed start reports —
+/// never a silent absence.
+#[tokio::test]
+async fn an_engine_log_that_cannot_be_opened_is_said_in_the_tail() {
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let not_a_dir = dir.path().join("a-file");
+    std::fs::write(&not_a_dir, b"").unwrap();
+    let mut config = fake_engine_config(port);
+    config.command = vec![
+        "python3".to_string(),
+        "-c".to_string(),
+        "import sys\nprint('ValueError: no weights', file=sys.stderr, flush=True)\nsys.exit(3)"
+            .to_string(),
+    ];
+    config.log_dir = Some(not_a_dir.join("mlx-engine"));
+    let err = match Sidecar::start(config).await {
+        Ok(_) => panic!("a child that exits at once must not count as started"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(
+        err.contains("goose: this engine's durable log is unavailable"),
+        "{err}"
+    );
+    assert!(err.contains("ValueError: no weights"), "{err}");
+}

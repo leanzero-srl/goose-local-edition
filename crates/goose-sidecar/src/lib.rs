@@ -103,6 +103,11 @@ pub struct SidecarConfig {
     /// process lived 6 more minutes finishing a prefill, with no line in goosed's log). `None`: the
     /// engine's shutdown is seen only at its exit.
     pub shutdown_line: Option<fn(&str) -> bool>,
+    /// Where every stderr line of each spawned child is kept, stamped, in a file of its own
+    /// (`<name>-<millis>.log`, bounded like the rank logs — `distributed::rank_log`). `None`: the
+    /// stderr lives only in the in-memory tail. Q-423: the Studio's single engine logged the
+    /// exception that ended a 191k-token answer mid-stream, and the only copy was that tail.
+    pub log_dir: Option<std::path::PathBuf>,
 }
 
 /// Ends a start in flight — [`Sidecar::start`], or a supervised restart through
@@ -252,6 +257,7 @@ impl SidecarConfig {
             startup_watch: None,
             start_cancel: None,
             shutdown_line: None,
+            log_dir: None,
         }
     }
 }
@@ -704,6 +710,11 @@ impl Sidecar {
         let shutting_down = Arc::new(StdMutex::new(None));
         let exit_report = Arc::new(StdMutex::new(None));
         let (stderr_closed, stderr_closed_rx) = tokio::sync::watch::channel(false);
+        let mut log = self
+            .config
+            .log_dir
+            .as_deref()
+            .map(|dir| child_log::open(dir, &self.config.name, pid));
         let stderr_reader = child.stderr.take().map(|stderr| {
             let tail = Arc::clone(&stderr_tail);
             let count = Arc::clone(&stderr_lines);
@@ -722,6 +733,9 @@ impl Sidecar {
                         watch.mark_phase(tail.make_contiguous());
                     }
                 };
+                if let Some(Err(why)) = &log {
+                    push(why.clone());
+                }
                 // Bytes, decoded lossily: `lines()` ends at the first non-UTF-8 byte, and every
                 // line after it — the traceback that explains a failed load — would be dropped.
                 let mut stderr = BufReader::new(stderr);
@@ -734,6 +748,17 @@ impl Sidecar {
                             let line = String::from_utf8_lossy(&buf);
                             let line = line.trim_end_matches(['\n', '\r']).to_string();
                             tracing::debug!(sidecar = %name, "{line}");
+                            if let Some(stopped) = child_log::append(&mut log, &line) {
+                                tracing::warn!(sidecar = %name, "{stopped}");
+                                push(stopped);
+                            }
+                            if child_log::is_error_line(&line) {
+                                tracing::warn!(
+                                    sidecar = %name,
+                                    log = %child_log::describe(&log),
+                                    "engine error: {line}"
+                                );
+                            }
                             count.fetch_add(1, Ordering::Relaxed);
                             if shutdown_line.is_some_and(|is_shutdown| is_shutdown(&line)) {
                                 announce_shutdown(&name, pid, &line, &stopped_by, &shutting_down);
@@ -1480,6 +1505,90 @@ fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {
     tail.lock()
         .map(|t| t.iter().cloned().collect::<Vec<_>>().join("\n"))
         .unwrap_or_default()
+}
+
+/// The durable copy of a child's stderr (`SidecarConfig::log_dir`): the file, or the line that
+/// says why there is none — never a silent absence.
+mod child_log {
+    use std::path::Path;
+
+    #[cfg(unix)]
+    type Log = crate::distributed::rank_log::RankLog;
+    #[cfg(not(unix))]
+    type Log = std::convert::Infallible;
+
+    pub(crate) type Slot = Option<Result<Log, String>>;
+
+    #[cfg(unix)]
+    pub(crate) fn open(dir: &Path, name: &str, pid: Option<u32>) -> Result<Log, String> {
+        let stem = crate::distributed::rank_log::slug(name);
+        match Log::open_family(dir, &stem, &stem) {
+            Ok(log) => {
+                tracing::info!(
+                    sidecar = name,
+                    pid,
+                    log = %log.path().display(),
+                    "every stderr line of this engine is kept in its log"
+                );
+                Ok(log)
+            }
+            Err(e) => {
+                let why = format!("goose: this engine's durable log is unavailable: {e:#}");
+                tracing::warn!(sidecar = name, pid, "{why}");
+                Err(why)
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn open(dir: &Path, _name: &str, _pid: Option<u32>) -> Result<Log, String> {
+        Err(format!(
+            "goose: this engine's durable log is unavailable: {} cannot hold one on this platform \
+             (the log's free-space bound is measured on unix only)",
+            dir.display()
+        ))
+    }
+
+    /// Appends `line`. A write that fails ends the log: the slot then carries why, and the
+    /// returned line says it once, naming the file that holds the output up to here.
+    #[cfg(unix)]
+    pub(crate) fn append(slot: &mut Slot, line: &str) -> Option<String> {
+        let Some(Ok(log)) = slot else {
+            return None;
+        };
+        let e = log.append("err", line).err()?;
+        let why = format!(
+            "goose: this engine's durable log stopped: {e:#} (the output up to here is in {})",
+            log.path().display()
+        );
+        *slot = Some(Err(why.clone()));
+        Some(why)
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn append(_slot: &mut Slot, _line: &str) -> Option<String> {
+        None
+    }
+
+    /// Where the log is, or why there is none.
+    pub(crate) fn describe(slot: &Slot) -> String {
+        match slot {
+            #[cfg(unix)]
+            Some(Ok(log)) => log.path().display().to_string(),
+            #[cfg(not(unix))]
+            Some(Ok(never)) => match *never {},
+            Some(Err(why)) => why.clone(),
+            None => "none (only the in-memory tail keeps its stderr)".to_string(),
+        }
+    }
+
+    /// A line the engine logged at ERROR or CRITICAL (Python logging's default
+    /// `LEVEL:logger:message`). Rapid-MLX logs a failed stream this way before it sends the client
+    /// only "Internal error during streaming" (helpers.py, F-131: the SSE body is sanitized, the
+    /// server log carries the exception and its traceback) — so goose's own log must carry it.
+    pub(crate) fn is_error_line(line: &str) -> bool {
+        line.starts_with("ERROR:") || line.starts_with("CRITICAL:")
+    }
 }
 
 #[cfg(test)]

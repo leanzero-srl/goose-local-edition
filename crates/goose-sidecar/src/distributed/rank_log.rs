@@ -14,6 +14,12 @@
 //! goosed still writes) until the rest fit — and half is the launch itself, in two generations: a
 //! log that reaches a quarter moves to `<name>.1` (replacing the previous one) and starts again,
 //! so a long-lived launch keeps its most recent output.
+//!
+//! The single engine's stderr is kept the same way (Q-423): [`RankLog::open_family`] opens a log of
+//! another FAMILY — its own file-name prefix in its own directory (`logs/mlx-engine/`), pruned
+//! only among its own files. On 2026-09-28 the Studio's single engine failed a 191k-token answer
+//! mid-stream; it logged the exception with its traceback, goosed held it in a 200-line memory tail
+//! behind `tracing::debug!`, and no file on the Studio named the cause.
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -54,22 +60,32 @@ pub fn goose_state_dir(
 }
 
 /// The directory rank logs are written to on this Mac.
-#[cfg(not(test))]
 pub fn rank_log_dir() -> Result<PathBuf> {
+    logs_subdir("distributed")
+}
+
+/// The directory the single engine's stderr is written to on this Mac.
+pub fn engine_log_dir() -> Result<PathBuf> {
+    logs_subdir("mlx-engine")
+}
+
+#[cfg(not(test))]
+fn logs_subdir(name: &str) -> Result<PathBuf> {
     Ok(goose_state_dir(
         std::env::var_os("GOOSE_PATH_ROOT"),
         std::env::var_os("XDG_STATE_HOME"),
         dirs::home_dir(),
     )?
-    .join("logs/distributed"))
+    .join("logs")
+    .join(name))
 }
 
-/// Test builds never write into the owner's state dir: a stand-in rank's log goes to this test
+/// Test builds never write into the owner's state dir: a stand-in's log goes to this test
 /// process's own temp dir.
 #[cfg(test)]
-pub fn rank_log_dir() -> Result<PathBuf> {
+fn logs_subdir(name: &str) -> Result<PathBuf> {
     Ok(std::env::temp_dir()
-        .join("goose-sidecar-test-rank-logs")
+        .join(format!("goose-sidecar-test-{name}-logs"))
         .join(std::process::id().to_string()))
 }
 
@@ -126,7 +142,7 @@ pub fn utc_stamp(at: SystemTime) -> String {
     )
 }
 
-fn slug(node: &str) -> String {
+pub fn slug(node: &str) -> String {
     let slug: String = node
         .chars()
         .map(|c| {
@@ -143,13 +159,16 @@ fn slug(node: &str) -> String {
         .join("-")
 }
 
-fn is_rank_log(name: &str) -> bool {
-    name.starts_with("rank") && (name.ends_with(".log") || name.ends_with(".log.1"))
+/// The rank logs' family: `rank0-…`, `rank1-…`.
+const RANK_FAMILY: &str = "rank";
+
+fn is_log_of(family: &str, name: &str) -> bool {
+    name.starts_with(family) && (name.ends_with(".log") || name.ends_with(".log.1"))
 }
 
-/// Removes this directory's oldest rank logs until the rest hold at most `keep` bytes, skipping
-/// every log this process is writing now. Returns what it removed.
-fn prune(dir: &Path, keep: u64) -> Result<Vec<PathBuf>> {
+/// Removes this directory's oldest logs of `family` until the rest hold at most `keep` bytes,
+/// skipping every log this process is writing now. Returns what it removed.
+fn prune(dir: &Path, family: &str, keep: u64) -> Result<Vec<PathBuf>> {
     let open = open_logs().lock().unwrap().clone();
     let mut logs = Vec::new();
     for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
@@ -160,7 +179,7 @@ fn prune(dir: &Path, keep: u64) -> Result<Vec<PathBuf>> {
             || name
                 .strip_suffix(".1")
                 .is_some_and(|base| open.contains(&dir.join(base)));
-        if !is_rank_log(&name) || current {
+        if !is_log_of(family, &name) || current {
             continue;
         }
         let meta = entry.metadata()?;
@@ -191,21 +210,34 @@ pub struct RankLog {
 impl RankLog {
     /// Opens a new log for `rank` on `node` in `dir`, bounded by the free space measured now.
     pub fn open(dir: &Path, rank: usize, node: &str) -> Result<Self> {
-        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        let free = free_bytes(dir)?;
-        let budget = (free as f64 * super::RANK_LOG_SHARE_OF_FREE_SPACE) as u64;
-        Self::open_within(dir, rank, node, budget)
+        Self::open_family(dir, RANK_FAMILY, &format!("{RANK_FAMILY}{rank}-{}", slug(node)))
     }
 
     /// [`RankLog::open`] with the directory's budget given.
     pub fn open_within(dir: &Path, rank: usize, node: &str, budget: u64) -> Result<Self> {
+        let stem = format!("{RANK_FAMILY}{rank}-{}", slug(node));
+        Self::open_family_within(dir, RANK_FAMILY, &stem, budget)
+    }
+
+    /// Opens a new log `<stem>-<millis>.log` in `dir`, one of `family`'s (`stem` starts with it):
+    /// opening prunes only that family's oldest logs, bounded by the free space measured now.
+    pub fn open_family(dir: &Path, family: &str, stem: &str) -> Result<Self> {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        prune(dir, budget / 2)?;
+        let free = free_bytes(dir)?;
+        let budget = (free as f64 * super::RANK_LOG_SHARE_OF_FREE_SPACE) as u64;
+        Self::open_family_within(dir, family, stem, budget)
+    }
+
+    /// [`RankLog::open_family`] with the directory's budget given.
+    pub fn open_family_within(dir: &Path, family: &str, stem: &str, budget: u64) -> Result<Self> {
+        debug_assert!(stem.starts_with(family), "{stem} is not of family {family}");
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        prune(dir, family, budget / 2)?;
         let millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let path = dir.join(format!("rank{rank}-{}-{millis}.log", slug(node)));
+        let path = dir.join(format!("{stem}-{millis}.log"));
         let file = OpenOptions::new()
             .create(true)
             .append(true)
