@@ -91,6 +91,45 @@ fn live() -> &'static Mutex<HashSet<i32>> {
     LIVE.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// An own-group command that ENDED while its group still had members — a server the model started
+/// with `&`. Before Q-406 such a server sat in goosed's group and died with the desktop's quit
+/// signal; in a group of its own only goose serve's teardown reaches it. The leader is gone by then
+/// and a group id is reusable once the group empties, so each member is stamped with its start
+/// time: the teardown signals the group only while a stamped member is provably the same process.
+#[cfg(unix)]
+pub struct Lingering {
+    leader: i32,
+    stamps: Vec<(i32, String)>,
+}
+
+#[cfg(unix)]
+fn lingering() -> &'static Mutex<Vec<Lingering>> {
+    static LINGERING: OnceLock<Mutex<Vec<Lingering>>> = OnceLock::new();
+    LINGERING.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// The process's start time as `ps` prints it; a pid reused by another process starts later.
+#[cfg(unix)]
+fn start_time(pid: i32) -> Option<String> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let stamp = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!stamp.is_empty()).then_some(stamp)
+}
+
+#[cfg(unix)]
+impl Lingering {
+    /// A stamped member still alive, still in the group, and still the same process — proof the
+    /// group id has not been handed to anyone else (it cannot be while a member lives).
+    fn still_the_same_group(&self) -> bool {
+        self.stamps.iter().any(|(pid, stamp)| {
+            pgid_of(*pid) == Some(self.leader) && start_time(*pid).as_deref() == Some(stamp)
+        })
+    }
+}
+
 /// `killpg(leader, signal)` only when the sidecar's proof holds on this exact pid: it is the LIVE
 /// leader of its own group (`getpgid(leader) == leader`) and that group is not ours
 /// (`leader != getpgrp()`) — the gate-4-sanctioned shape. Returns whether the group was signalled;
@@ -175,6 +214,44 @@ impl CommandProcesses {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&self.leader);
+    }
+
+    /// The command ended on its own (or was terminated and something survived): like `finished`,
+    /// and if its own group still has members they are recorded, stamped, for goose serve's
+    /// teardown — the model may have started a server on purpose, and it may run until goose goes.
+    pub fn ended(&mut self) {
+        self.finished();
+        if !self.own_group || !group_alive(self.leader) {
+            return;
+        }
+        let Ok(members) = self.members() else {
+            return;
+        };
+        let stamps: Vec<(i32, String)> = members
+            .into_iter()
+            .filter_map(|pid| start_time(pid).map(|t| (pid, t)))
+            .collect();
+        if stamps.is_empty() {
+            return;
+        }
+        let mut lingering = lingering().lock().unwrap_or_else(|e| e.into_inner());
+        lingering.retain(|l| l.leader != self.leader && group_alive(l.leader));
+        lingering.push(Lingering {
+            leader: self.leader,
+            stamps,
+        });
+    }
+
+    /// An own group this process did not just spawn (the teardown's view): never armed, never
+    /// counted as live.
+    fn adopt(leader: i32) -> Self {
+        Self {
+            leader,
+            own_group: true,
+            group: leader,
+            seen: Vec::new(),
+            armed: false,
+        }
     }
 
     /// Every process of the command right now (the leader included while it lives).
@@ -282,43 +359,79 @@ pub async fn terminate_live_commands() -> String {
         .unwrap_or_else(|e| e.into_inner())
         .drain()
         .collect();
-    terminate_command_groups(leaders).await
-}
-
-async fn terminate_command_groups(leaders: Vec<i32>) -> String {
-    if leaders.is_empty() {
-        return "no shell command was running".to_string();
-    }
     #[cfg(unix)]
     {
-        let mut commands: Vec<CommandProcesses> = leaders
-            .iter()
-            .map(|leader| {
-                let mut command = CommandProcesses::spawned(*leader, true);
-                command.finished();
-                let _ = command.members();
-                command.sigterm();
-                command
-            })
+        let ended: Vec<Lingering> = lingering()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
             .collect();
-        tokio::time::sleep(EXIT_GRACE).await;
-        let killed: Vec<i32> = commands
-            .iter_mut()
-            .flat_map(|c| c.sigkill_survivors())
-            .collect();
-        let survivors: Vec<i32> = commands.iter_mut().flat_map(|c| c.survivors()).collect();
-        format!(
-            "{} shell command group(s) sent SIGTERM (leaders {leaders:?}); SIGKILL to {killed:?}; still present: {survivors:?}",
-            leaders.len()
-        )
+        terminate_command_groups(leaders, ended).await
     }
     #[cfg(not(unix))]
     {
-        format!(
-            "{} shell command(s) left running: no process groups on this platform",
-            leaders.len()
-        )
+        if leaders.is_empty() {
+            "no shell command was running".to_string()
+        } else {
+            format!(
+                "{} shell command(s) left running: no process groups on this platform",
+                leaders.len()
+            )
+        }
     }
+}
+
+/// Test door: the recorded ended group containing `pid`, taken out of the process-wide registry so
+/// a test acts on its own group only (the teardown itself drains everything, including groups of
+/// tests running beside it).
+#[cfg(all(test, unix))]
+pub(crate) fn take_lingering_with(pid: i32) -> Option<Lingering> {
+    let mut lingering = lingering().lock().unwrap_or_else(|e| e.into_inner());
+    let at = lingering
+        .iter()
+        .position(|l| l.stamps.iter().any(|(p, _)| *p == pid))?;
+    Some(lingering.remove(at))
+}
+
+#[cfg(all(test, unix))]
+pub(crate) async fn terminate_ended_for_test(ended: Lingering) -> String {
+    terminate_command_groups(Vec::new(), vec![ended]).await
+}
+
+/// In-flight groups by their live leader (the proof-gated killpg), ended groups only after their
+/// stamps prove the group is still the one recorded (then per pid — their leader is gone).
+#[cfg(unix)]
+async fn terminate_command_groups(leaders: Vec<i32>, ended: Vec<Lingering>) -> String {
+    let (still_ours, gone): (Vec<Lingering>, Vec<Lingering>) =
+        ended.into_iter().partition(|l| l.still_the_same_group());
+    if leaders.is_empty() && still_ours.is_empty() {
+        return format!(
+            "no shell command was running and none left processes behind ({} ended group(s) already gone)",
+            gone.len()
+        );
+    }
+    let ended_leaders: Vec<i32> = still_ours.iter().map(|l| l.leader).collect();
+    let mut commands: Vec<CommandProcesses> = leaders
+        .iter()
+        .chain(ended_leaders.iter())
+        .map(|leader| {
+            let mut command = CommandProcesses::adopt(*leader);
+            let _ = command.members();
+            command.sigterm();
+            command
+        })
+        .collect();
+    tokio::time::sleep(EXIT_GRACE).await;
+    let killed: Vec<i32> = commands
+        .iter_mut()
+        .flat_map(|c| c.sigkill_survivors())
+        .collect();
+    let survivors: Vec<i32> = commands.iter_mut().flat_map(|c| c.survivors()).collect();
+    format!(
+        "SIGTERM to {} running shell command group(s) {leaders:?} and {} ended group(s) with processes left behind {ended_leaders:?}; SIGKILL to {killed:?}; still present: {survivors:?}",
+        leaders.len(),
+        ended_leaders.len()
+    )
 }
 
 /// Record a spawned group under the session that spawned it. pgid <= 1 is refused at the door —
@@ -548,6 +661,32 @@ mod tests {
         assert_eq!(status.signal(), Some(libc::SIGTERM));
     }
 
+    /// An ended group whose stamps no longer prove it is the same group is never signalled — the
+    /// shape a reused group id would take.
+    #[tokio::test]
+    async fn an_ended_group_that_cannot_be_proven_the_same_is_left_alone() {
+        let leader = spawn_own_group_daemonizer();
+        assert!(wait_for(|| pgrep(&["-g", &leader.to_string()])
+            .map(|m| m.len() == 1)
+            .unwrap_or(false)));
+        let member = pgrep(&["-g", &leader.to_string()]).unwrap()[0];
+        let forged = Lingering {
+            leader,
+            stamps: vec![(member, "Thu Jan  1 00:00:00 1970".to_string())],
+        };
+        assert!(!forged.still_the_same_group());
+        let outcome = terminate_command_groups(Vec::new(), vec![forged]).await;
+        assert!(outcome.contains("already gone"), "{outcome}");
+        assert!(alive(member), "an unproven group must not be signalled");
+        let genuine = Lingering {
+            leader,
+            stamps: vec![(member, start_time(member).unwrap())],
+        };
+        assert!(genuine.still_the_same_group());
+        terminate_command_groups(Vec::new(), vec![genuine]).await;
+        assert!(wait_for(|| !group_alive(leader)));
+    }
+
     /// goose serve's teardown step on a group this test made: a pipeline leader plus its members
     /// all go, and the step says what it did.
     #[tokio::test]
@@ -563,7 +702,7 @@ mod tests {
         assert!(wait_for(|| pgrep(&["-g", &leader.to_string()])
             .map(|m| m.len() >= 3)
             .unwrap_or(false)));
-        let outcome = terminate_command_groups(vec![leader]).await;
+        let outcome = terminate_command_groups(vec![leader], Vec::new()).await;
         assert!(outcome.contains("SIGTERM"), "{outcome}");
         let _ = child.wait();
         assert!(

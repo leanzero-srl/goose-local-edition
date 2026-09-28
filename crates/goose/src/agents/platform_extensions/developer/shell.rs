@@ -777,7 +777,7 @@ async fn run_command(
             Ok(wait_result) => {
                 #[cfg(unix)]
                 if let Some(processes) = processes.as_mut() {
-                    processes.finished();
+                    processes.ended();
                 }
                 wait_result
                     .map_err(|error| format!("Failed waiting on shell command: {}", error))?
@@ -854,7 +854,7 @@ async fn run_command(
             .map_err(|error| format!("Failed waiting on shell command: {}", error))?;
         #[cfg(unix)]
         if let Some(processes) = processes.as_mut() {
-            processes.finished();
+            processes.ended();
         }
         status.code()
     };
@@ -875,7 +875,7 @@ async fn run_command(
                 drained = tokio::time::timeout(drain_window, &mut output_task).await;
             }
             survivors = processes.survivors();
-            processes.finished();
+            processes.ended();
         }
     }
     #[cfg(not(unix))]
@@ -1768,6 +1768,40 @@ mod tests {
         );
         assert!(execution.survivors.is_empty(), "{:?}", execution.survivors);
         assert!(none_left(marker).await, "a pipeline process survived");
+    }
+
+    /// A command that ENDED with a backgrounded child (the `&` server shape) leaves it running —
+    /// on purpose — and records its group, stamped, for goose serve's teardown: before Q-406 the
+    /// desktop's quit signal to goosed's group reached it; in a group of its own only that
+    /// teardown does.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_backgrounded_child_outlives_its_command_until_the_teardown() {
+        use super::super::process_groups;
+        let marker = "sleep 406022";
+        let _cleanup = PkillOnDrop(marker);
+        let execution = run_command(&format!("{marker} &"), Some(30), None, None, None, true)
+            .await
+            .expect("run");
+        assert!(!execution.timed_out);
+        let pids = String::from_utf8(
+            std::process::Command::new("pgrep")
+                .args(["-f", marker])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let pid: i32 = pids
+            .split_whitespace()
+            .next()
+            .expect("the server must run")
+            .parse()
+            .unwrap();
+        let recorded =
+            process_groups::take_lingering_with(pid).expect("its group must be recorded");
+        let outcome = process_groups::terminate_ended_for_test(recorded).await;
+        assert!(none_left(marker).await, "{outcome}");
     }
 
     /// A cancelled tool call drops the shell future; dropping it terminates the command instead
