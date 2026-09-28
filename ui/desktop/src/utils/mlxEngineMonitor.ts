@@ -22,6 +22,7 @@ import {
 } from './mlxDistributedReport';
 import { leaveCause } from './leaveCause';
 import { routePeerGone, type RouteContact } from './routeContact';
+import { redactRelayCapability } from './redactRelay';
 import {
   attributeServing,
   servingRowsForEngine,
@@ -109,7 +110,7 @@ export interface MlxEngineSnapshot {
   modelId: string | null;
   baseUrl: string | null;
   stats: MlxLiveStats | null;
-  /** Why `stats` is absent or stale, verbatim. */
+  /** Why `stats` is absent or stale, in the read's own words — a relay's capability redacted. */
   statusDetail: string | null;
   /**
    * goose's measured runs for the way this engine runs (its measurement store, read through goosed's
@@ -145,8 +146,12 @@ export interface MlxEngineMonitorDeps {
   remoteRoute(): {
     state: string;
     baseUrl: string | null;
-    /** The Mac it serves from and the model — the run book's key; absent = the relay names it. */
-    peerName?: string;
+    /**
+     * The Mac it serves from (`routePeerName`, the one way a Mac is named) — with the model, the run
+     * book's key, and the contact book's. Never stood in for by the relay URL: that path IS the
+     * relay's capability (Q-409).
+     */
+    peerName: string;
     modelId?: string | null;
     /** The route's reason — carries the Mac's own "quit goose" (Q-51) while it says so. */
     lastError?: string | null;
@@ -243,6 +248,22 @@ export function mlxEngineConfigFromYaml(text: string): {
         ? `http://127.0.0.1:${port}`
         : null,
     modelId: typeof modelId === 'string' && modelId ? modelId : null,
+  };
+}
+
+/**
+ * A snapshot as it leaves the loop — for the tray, the glance, every window and anything that logs
+ * one: each text that can quote a routed base passes goose's relay rule (Q-409). A linked Mac's
+ * base is goosed's relay, whose path is its capability, and a failed read's words can quote it.
+ * The loop reads with the route's own base; nothing reads an engine from a snapshot.
+ */
+function redactedSnapshot(snapshot: MlxEngineSnapshot): MlxEngineSnapshot {
+  const said = (text: string | null) => (text == null ? null : redactRelayCapability(text));
+  return {
+    ...snapshot,
+    baseUrl: said(snapshot.baseUrl),
+    statusDetail: said(snapshot.statusDetail),
+    failedError: said(snapshot.failedError),
   };
 }
 
@@ -366,7 +387,7 @@ export class MlxEngineMonitor {
 
   /** One read. Exposed for tests; production reads go through `wake`. */
   async tick(): Promise<void> {
-    const next = await this.read();
+    const next = redactedSnapshot(await this.read());
     this.snapshot = next;
     this.deps.onSnapshot(next);
     if (next.mode === 'running' || next.mode === 'mounting' || next.mode === 'reconnecting') {
@@ -389,11 +410,10 @@ export class MlxEngineMonitor {
     if (route) {
       const base = remoteLiveBase(route);
       const read = base
-        ? await this.readRouted('remote', base, route.peerName ?? base, route.modelId ?? null)
+        ? await this.readRouted('remote', base, route.peerName, route.modelId ?? null)
         : this.routeUnread(route.state);
       const said = [route.lastError, read.statusDetail].filter((t): t is string => t != null);
-      const mac = route.peerName ?? base ?? '';
-      return { ...read, contact: this.trackContact(mac, read.mode, said) };
+      return { ...read, contact: this.trackContact(route.peerName, read.mode, said) };
     }
     // A wait belongs to a published route: one dropped mid-wait (Stop waiting) never lends its
     // start to the next route's mount, which would measure hours as a comeback.

@@ -76,11 +76,11 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
-        let response = self
-            .api_client
-            .response_get("models")
-            .await
-            .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
+        let response = self.api_client.response_get("models").await.map_err(|e| {
+            ProviderError::RequestFailed(super::http_status::redact_relay_capability(
+                &e.to_string(),
+            ))
+        })?;
         let json = handle_response_openai_compat(response).await?;
 
         if let Some(err_obj) = json.get("error") {

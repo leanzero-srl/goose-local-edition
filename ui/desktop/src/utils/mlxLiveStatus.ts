@@ -1,5 +1,6 @@
 import type { FetchLike } from './fleetProbe';
 import { MLX_STATUS_POLL_MS } from '../components/leanzero-swarm/mlxLiveStats';
+import { redactRelayCapability } from './redactRelay';
 
 /**
  * The LeanZero MLX engine's live instrument read, done by MAIN (IPC `mlx-live-status`): a GET of
@@ -57,10 +58,28 @@ export function mlxLiveStatusUrl(baseUrl: string): string {
   return `http://${host}${url.port ? `:${url.port}` : ''}${path}/v1/status`;
 }
 
+/**
+ * One GET of `<baseUrl>/v1/status`. Every result leaves with its URL and detail redacted by goose's
+ * relay rule (Q-409): a remote single's base IS goosed's relay, whose path is the capability, and
+ * this result reaches the renderer, the tray and the glance — a refused base is quoted in its
+ * detail, and a body the JSON parser refuses is quoted in its message.
+ */
 export async function fetchMlxLiveStatus(
   baseUrl: string,
   fetchImpl: FetchLike,
   timeoutMs = MLX_LIVE_STATUS_TIMEOUT_MS
+): Promise<MlxLiveStatusResult> {
+  const result = await readLiveStatus(baseUrl, fetchImpl, timeoutMs);
+  const url = redactRelayCapability(result.url);
+  return result.ok
+    ? { ...result, url }
+    : { ...result, url, detail: redactRelayCapability(result.detail) };
+}
+
+async function readLiveStatus(
+  baseUrl: string,
+  fetchImpl: FetchLike,
+  timeoutMs: number
 ): Promise<MlxLiveStatusResult> {
   let url: string;
   try {

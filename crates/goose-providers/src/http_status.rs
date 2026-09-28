@@ -12,22 +12,7 @@ use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Response, StatusCode};
 use serde_json::Value;
 
-/// Strip credentials and sensitive query parameters from a URL for safe
-/// inclusion in error messages and logs. Drops userinfo (`user:pass@`) and
-/// all query parameters (which may contain API keys like `?key=...`).
-/// Returns the original string unchanged if it doesn't parse as a URL
-/// (e.g. a bare path like "v1/models").
-pub fn sanitize_url(raw: &str) -> String {
-    let Ok(mut url) = url::Url::parse(raw) else {
-        return raw.to_string();
-    };
-    if !url.username().is_empty() || url.password().is_some() {
-        let _ = url.set_username("");
-        let _ = url.set_password(None);
-    }
-    url.set_query(None);
-    url.to_string()
-}
+pub use crate::redact::{redact_relay_capability, sanitize_url};
 
 /// Hard cap on retry delays we'll honor from remote responses. A malformed
 /// 429 with `retry_after_seconds: 1e30` (or a far-future HTTP-date) should
@@ -238,6 +223,7 @@ pub fn map_http_error_to_provider_error(
     payload: Option<Value>,
     url: &str,
 ) -> ProviderError {
+    let url = &sanitize_url(url);
     let extract_message = || -> String {
         payload
             .as_ref()
@@ -308,11 +294,13 @@ pub fn map_http_error_to_provider_error(
     };
 
     if !status.is_success() {
+        // A Link relay's hold refusal names its re-rooted `/relay/<capability>/…` admission path.
         tracing::warn!(
-            "Provider request failed with status: {}. Payload: {:?}. Returning error: {:?}",
-            status,
-            payload,
-            error
+            "{}",
+            redact_relay_capability(&format!(
+                "Provider request failed with status: {status}. Payload: {payload:?}. \
+                 Returning error: {error:?}"
+            ))
         );
     }
 

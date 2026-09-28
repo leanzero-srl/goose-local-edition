@@ -28,6 +28,8 @@ import { toMlxDistributedReport, type MlxDistributedReport } from './mlxDistribu
 
 const BASE = 'http://127.0.0.1:8090';
 const RANK0 = 'http://127.0.0.1:8091';
+/** A published route's Mac, as `routePeerName` names it; a test routes to it unless it names another. */
+const PEER = 'Mac Studio';
 
 /** goose's `distributedStatus` of an UP split whose rank 0 answers at `baseUrl`, as main is told. */
 const splitUpAt = (baseUrl: string): MlxDistributedReport => ({
@@ -102,7 +104,8 @@ function harness(opts: {
     distributedRun: () => opts.distributedRun?.() ?? null,
     remoteRoute: () => {
       const route = opts.remoteRoute?.() ?? null;
-      return typeof route === 'string' ? { state: 'ready', baseUrl: route } : route;
+      if (typeof route === 'string') return { state: 'ready', baseUrl: route, peerName: PEER };
+      return route && { peerName: PEER, ...route };
     },
     swarmRuns: () => ['bench-r9'],
     onSnapshot: (s) => snapshots.push(s),
@@ -617,6 +620,71 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
     await h.monitor.tick();
     expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'reconnecting' });
     expect(h.readStatus).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MlxEngineMonitor — Q-409: a linked Mac’s relay capability never leaves the loop', () => {
+  // goosed's relay as leanzero-link mints it: holding this path IS the authorization.
+  const CAPABILITY = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+  const RELAY = `http://127.0.0.1:61001/relay/${CAPABILITY}`;
+  const leaks = (snapshots: readonly MlxEngineSnapshot[]) =>
+    snapshots.filter((s) => JSON.stringify(s).includes(CAPABILITY.slice(0, 3)));
+
+  it('a routed base whose Mac has no name: every snapshot, in every state, carries no capability', async () => {
+    // An empty name is the absence the IPC guard admits (`isMlxRemoteReport`); the loop keys the
+    // Mac by it and never by the relay URL.
+    let answer: MlxLiveStatusResult = answered(GENERATING_STATUS);
+    const h = harness({
+      status: () => answer,
+      remoteRoute: () => ({ state: 'ready', baseUrl: RELAY, peerName: '' }),
+    });
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'running' });
+    answer = { ok: false, url: `${RELAY}/v1/status`, error: 'http', detail: 'engine returned 502' };
+    h.clock.ms = 10_000;
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({
+      mode: 'reconnecting',
+      contact: { lostSinceMs: 10_000 },
+    });
+    answer = {
+      ok: false,
+      url: RELAY,
+      error: 'bad-base-url',
+      detail: `engine base URL is not a loopback host: ${RELAY}`,
+    };
+    await h.monitor.tick();
+    // The loop still reads the relay itself — only what it SAYS is redacted.
+    expect(h.readStatus).toHaveBeenCalledWith(RELAY);
+    expect(h.readStatus).toHaveBeenCalledTimes(3);
+    expect(h.snapshots).toHaveLength(3);
+    expect(leaks(h.snapshots)).toEqual([]);
+    expect(h.monitor.current().baseUrl).toBe('http://127.0.0.1:61001/relay/…');
+    expect(h.monitor.current().statusDetail).toBe(
+      'bad-base-url: engine base URL is not a loopback host: http://127.0.0.1:61001/relay/…'
+    );
+  });
+
+  it("a failed routed read's detail is redacted: V8's bad-json message quotes the body at the fault", async () => {
+    // Measured (node 22, `Response.json()` on a body quoting its relay path):
+    // `Unexpected token '/', ...", "path": /relay/9f8"... is not valid JSON` — ten characters of
+    // the body after the fault, the capability's first ones among them.
+    const h = harness({
+      status: () => ({
+        ok: false,
+        url: `${RELAY}/v1/status`,
+        error: 'bad-json',
+        detail: `Unexpected token '/', ...", "path": /relay/${CAPABILITY.slice(0, 3)}"... is not valid JSON`,
+      }),
+      remoteRoute: () => ({ state: 'ready', baseUrl: RELAY, peerName: 'Work’s Mac Studio' }),
+    });
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({
+      engine: 'remote',
+      mode: 'reconnecting',
+      statusDetail: `bad-json: Unexpected token '/', ...", "path": /relay/…"... is not valid JSON`,
+    });
+    expect(leaks(h.snapshots)).toEqual([]);
   });
 });
 
