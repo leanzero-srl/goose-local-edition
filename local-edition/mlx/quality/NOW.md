@@ -21,7 +21,10 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
     - Turn 5: 348 s. projects.csv saved; all 12 leads added to users.csv, 4 of them inactive; two runs MD5-identical.
       Model slip: it said dropping inactive users would orphan FRT, but FRT's lead mkowalski is active by its own
       output. No goose defect.
-    - Turn 6 (identity-resolution PLAN script; loaded atlassian-migration-scripts-skill) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
+    - Turn 6: 852 s, 14 tools. identity-plan.js 309/55/36/30, every lead migrates, byte-identical on a re-run.
+      But "resumable" was never exercised ("state: undefined rows checkpointed") and it was called verified,
+      after an assert-then-retract about its own code → Q-451 (model behaviour, parked; forge-tuner c0cf851).
+    - Turn 7 (node:test for the decision rules) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -63,6 +66,6 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-451. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-452. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
