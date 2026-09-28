@@ -860,7 +860,8 @@ mod tests {
         assert_eq!(rewritten, expected, "only the reference moves");
 
         // NEGATIVE CONTROLS: another path, no admission, not JSON, not an object: untouched.
-        let other = serde_json::json!({"error": {"admission": "/elsewhere", "code": "memory_hold"}});
+        let other =
+            serde_json::json!({"error": {"admission": "/elsewhere", "code": "memory_hold"}});
         let none = serde_json::json!({"error": {"message": "busy", "type": "server_busy"}});
         for body in [
             serde_json::to_vec(&other).unwrap(),

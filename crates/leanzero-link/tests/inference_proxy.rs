@@ -108,14 +108,18 @@ impl Drop for AdmissionWait {
 }
 
 /// rank_admission.py `Admission.wait_open()`: no response head until admission is open.
-async fn engine_admission(axum::extract::State(engine): axum::extract::State<Arc<Engine>>) -> Response {
+async fn engine_admission(
+    axum::extract::State(engine): axum::extract::State<Arc<Engine>>,
+) -> Response {
     engine.admission_waits.fetch_add(1, Ordering::SeqCst);
     let mut wait = AdmissionWait {
         abandoned: engine.admission_wait_abandoned.clone(),
         answered: false,
     };
     let mut open = engine.admission.subscribe();
-    open.wait_for(|open| *open).await.expect("the engine outlives its handlers");
+    open.wait_for(|open| *open)
+        .await
+        .expect("the engine outlives its handlers");
     wait.answered = true;
     Response::builder()
         .status(200)
@@ -1072,23 +1076,31 @@ async fn a_peers_memory_hold_is_waited_out_through_the_relay_until_the_lift() {
     else {
         panic!("not the hold: {hold:?}");
     };
-    assert_eq!(reason.as_deref(), Some(HOLD_REASON), "the watchdog's words cross");
+    assert_eq!(
+        reason.as_deref(),
+        Some(HOLD_REASON),
+        "the watchdog's words cross"
+    );
     assert_eq!(
         admission_url.as_deref(),
         Some(format!("{}/goose/admission", rig.relay.base_url()).as_str()),
         "the wait is resolved inside the relay's capability, not at its bare origin"
     );
 
-    let waiting = tokio::spawn(async move {
-        goose_provider_types::engine_hold::wait_for_admission(&hold).await
-    });
+    let waiting =
+        tokio::spawn(
+            async move { goose_provider_types::engine_hold::wait_for_admission(&hold).await },
+        );
     until("the peer's engine is asked to wait", || {
         rig.engine.admission_waits.load(Ordering::SeqCst) == 1
     })
     .await;
     // Many in-flight looks pass while the engine holds: the relay never ends a held wait.
     tokio::time::sleep(LOOK_INTERVAL * 10).await;
-    assert!(!waiting.is_finished(), "the wait ended while the engine still held");
+    assert!(
+        !waiting.is_finished(),
+        "the wait ended while the engine still held"
+    );
 
     rig.engine.admission.send_replace(true);
     tokio::time::timeout(DEADLINE, waiting)
@@ -1100,7 +1112,11 @@ async fn a_peers_memory_hold_is_waited_out_through_the_relay_until_the_lift() {
 
     let (body, outcome) = drain(post_chat(rig.relay.base_url()).await).await;
     assert_eq!(outcome, Ok(()));
-    assert_eq!(body, format!("{CHUNK_1}{CHUNK_2}{CHUNK_END}{DONE}"), "then the chat is answered");
+    assert_eq!(
+        body,
+        format!("{CHUNK_1}{CHUNK_2}{CHUNK_END}{DONE}"),
+        "then the chat is answered"
+    );
 }
 
 #[tokio::test]
@@ -1163,7 +1179,10 @@ async fn the_admission_route_is_bearer_gated_and_refuses_browsers() {
     let wrong = format!("{}0000/goose/admission", base.rsplit_once('/').unwrap().0);
     assert_eq!(client().get(wrong).send().await.unwrap().status(), 404);
     let bare_origin = format!("http://{}/goose/admission", rig.relay.local_addr());
-    assert_eq!(client().get(bare_origin).send().await.unwrap().status(), 404);
+    assert_eq!(
+        client().get(bare_origin).send().await.unwrap().status(),
+        404
+    );
     let browser = client()
         .get(format!("{base}/goose/admission"))
         .header(header::ORIGIN, "http://localhost:3000")
@@ -1173,7 +1192,12 @@ async fn the_admission_route_is_bearer_gated_and_refuses_browsers() {
     assert_eq!(browser.status(), 403);
     assert_eq!(rig.engine.admission_waits.load(Ordering::SeqCst), 1);
     assert_eq!(
-        client().get(format!("{base}/goose/admission")).send().await.unwrap().status(),
+        client()
+            .get(format!("{base}/goose/admission"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
         200
     );
     assert_eq!(rig.engine.admission_waits.load(Ordering::SeqCst), 2);
@@ -1198,9 +1222,10 @@ async fn a_peer_that_leaves_during_its_hold_ends_the_wait_with_its_words() {
     .unwrap();
 
     let hold = refused_hold(relay.base_url()).await;
-    let waiting = tokio::spawn(async move {
-        goose_provider_types::engine_hold::wait_for_admission(&hold).await
-    });
+    let waiting =
+        tokio::spawn(
+            async move { goose_provider_types::engine_hold::wait_for_admission(&hold).await },
+        );
     until("the peer's engine is asked to wait", || {
         engine.admission_waits.load(Ordering::SeqCst) == 1
     })
