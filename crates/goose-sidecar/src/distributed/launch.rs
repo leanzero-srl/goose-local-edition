@@ -6296,8 +6296,9 @@ print("GOOSE_TEST " + json.dumps(seen))
         );
         assert_eq!(waiting["client"], "127.0.0.1:50100");
         assert_eq!(
-            second["num_running"], 3,
-            "the rows still held count as running (no HTTP handler is in flight here): {second}"
+            second["num_running"], 1,
+            "only the user's call is waited for: the three rows still held are listed `leaving` \
+             and not counted (Q-403; no HTTP handler is in flight here): {second}"
         );
         assert_eq!(second["status"], "generating");
         let named: std::collections::BTreeSet<&str> = second_state_requests(&upstream);
@@ -6340,6 +6341,354 @@ print("GOOSE_TEST " + json.dumps(seen))
             fixed_printed.contains("GOOSE_RANK_ADMISSION"),
             "{fixed_printed}"
         );
+    }
+
+    /// Q-403 through the REAL mlx_lm 0.31.3 generation loop and rank 0's real HTTP handler (every
+    /// dropped call is a raw socket POSTing /v1/chat/completions, so do_POST's in-flight count is
+    /// the one the router read): E2E #3r's 13:40 turn replayed in its order. Two end-of-turn
+    /// reviewers are read together (#3r: seven rows in step 23862, 13:40:34.8 → 13:41:17.6Z), a
+    /// third arrives while no room is left and is HELD (#3r's req-580, 16,396 tokens), a fourth is
+    /// still queued; goose closes all four mid-step (turn_priority, 13:40:37.6Z), and the router
+    /// reads /v1/status before it sends the chat's own call (13:40:41.9Z, `free_slots 0`). Now the
+    /// status reads every live socket before it counts: num_running is 0 while the step still runs,
+    /// the two batch rows are listed stopped `cancelled_by_client`, and at the step's end they
+    /// leave; the held and the queued request are dropped unshared — never in a prompt step — and
+    /// the user's call is read at the very next step (#3r: req-580 was released, read a 2,048-token
+    /// chunk, and held the chat's call 6.5 s). Each departure is named exactly once. The pre-fix
+    /// wrapper (3.0.7x) counts the four do_POST handlers (num_running 4 for the whole step), releases
+    /// the held call and admits the queued one into step 3 beside the user's.
+    #[test]
+    fn a_client_that_leaves_during_prefill_frees_its_slot_before_the_step_ends() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+import socket as sk
+from mlx_lm.models import llama
+
+mx.metal.is_available = lambda: False
+VOCAB = 64
+END = VOCAB - 1
+SYSTEM = 12
+
+
+class Detokenizer:
+    last_segment = ""
+
+    def add_token(self, token):
+        self.last_segment = "w"
+
+
+class Tokenizer:
+    has_tool_calling = False
+    has_thinking = False
+    tool_parser = None
+    eos_token_ids = {END}
+    eos_token_id = END
+    chat_template = QWEN38
+
+    def encode(self, text, add_special_tokens=False):
+        return [1]
+
+    def convert_ids_to_tokens(self, ids):
+        return "<end>"
+
+    @property
+    def detokenizer(self):
+        return Detokenizer()
+
+
+tok = Tokenizer()
+model = llama.Model(llama.ModelArgs(model_type="llama", hidden_size=16, num_hidden_layers=1,
+    intermediate_size=32, num_attention_heads=2, rms_norm_eps=1e-5, vocab_size=VOCAB, num_key_value_heads=2))
+mx.eval(model.parameters())
+
+provider = responses.model_provider
+provider.tokenizer = tok
+provider.is_batchable = True
+provider.load_default = lambda: None
+provider.load = lambda *names: (model, tok)
+cli.prefill_step_size = 4
+responses.prompt_cache = server.LRUPromptCache(cli.prompt_cache_size)
+responses._state_machine_cache = {}
+responses._stop = False
+responses._rank = 0
+responses._time_budget = server.TimeBudget.__new__(server.TimeBudget)
+defaults = inspect.signature(server.TimeBudget.__init__).parameters
+responses._time_budget.__dict__.update(
+    _is_distributed=True, _budget=defaults["budget"].default,
+    _iterations=defaults["iterations"].default, _sync_frequency=defaults["sync_frequency"].default,
+    _start=None, _current_iterations=None, _loops=0, _time_spent=0)
+
+
+def prompt_ids(request):
+    # A direct call names its ids; an HTTP chat request says "<length> <first>".
+    ids = getattr(request, "ids", None)
+    if ids is None:
+        length, first = map(int, request.messages[-1]["content"].split())
+        ids = [(first + i) % (VOCAB - 2) + 1 for i in range(length)]
+    return list(ids)
+
+
+original_tokenize = lambda self, tokenizer, request, args: (prompt_ids(request), None, None, None)
+responses._tokenize = lambda tokenizer, request, args: (
+    prompt_ids(request), [prompt_ids(request)[:SYSTEM], prompt_ids(request)[SYSTEM:]],
+    ["system", "user"], "normal")
+
+
+def arguments(max_tokens):
+    return server.GenerationArguments(
+        model=server.ModelDescription("goose-test", None, None),
+        sampling=server.SamplingArguments(0.0, 1.0, 0, 0.0, 0.0, 0.0),
+        logits=server.LogitsProcessorArguments({END: -1e9}, 1.0, 20, 0.0, 20, 0.0, 20),
+        stop_words=[], max_tokens=max_tokens, num_draft_tokens=0, logprobs=False, top_logprobs=0,
+        seed=None, chat_template_kwargs=None)
+
+
+steps, hooks = [], {}
+wrapper_prompt = mlx_generate.PromptProcessingBatch.prompt
+
+
+def hooked(self, tokens):
+    if tokens:
+        steps.append([batch_rows.get(uid) for uid in self.uids])
+        hook = hooks.pop(len(steps), None)
+        if hook is not None:
+            hook()
+    return wrapper_prompt(self, tokens)
+
+
+mlx_generate.PromptProcessingBatch.prompt = hooked
+
+
+def until(what, done):
+    # A harness bound, never the engine's.
+    deadline = time.monotonic() + 20
+    while not done():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.002)
+
+
+def post(length, first):
+    # goose's HTTP client, as a raw socket the test can close mid-request.
+    body = json.dumps({"model": served, "max_tokens": 50, "stream": False,
+                       "messages": [{"role": "user", "content": f"{length} {first}"}]}).encode()
+    client = sk.create_connection(("127.0.0.1", httpd.server_address[1]))
+    waiting = responses.requests.qsize()
+    client.sendall(
+        b"POST /v1/chat/completions HTTP/1.1\r\nHost: goose\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+    )
+    port = f"127.0.0.1:{client.getsockname()[1]}"
+    until(f"{port} reaches the queue", lambda: responses.requests.qsize() > waiting)
+    with lock:
+        request_id = next(rid for rid, h in handling.items() if h["client"] == port)
+    return client, request_id
+
+
+def ask(length, first, max_tokens, port):
+    ours, theirs = sk.socketpair()
+    call = {"theirs": theirs, "done": threading.Event(), "pieces": 0, "request": types.SimpleNamespace(
+        ids=[(first + i) % (VOCAB - 2) + 1 for i in range(length)], tools=None, request_type="chat")}
+    waiting = responses.requests.qsize()
+
+    def run():
+        try:
+            ctx, tokens = responses.generate(call["request"], arguments(max_tokens), None,
+                                             client=ours, address=("127.0.0.1", port))
+            for _ in tokens:
+                call["pieces"] += 1
+        finally:
+            call["done"].set()
+
+    threading.Thread(target=run, daemon=True).start()
+    until("the user's call reaches the queue", lambda: responses.requests.qsize() > waiting)
+    return call
+
+
+def status():
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/status"
+    with urllib.request.urlopen(url, timeout=10) as reply:
+        return json.loads(reply.read())
+
+
+seen, dropped = {}, {}
+limit = prompt_cache_limit
+reviewers = [post(60, 0), post(60, 20)]
+user = {}
+
+
+def first_step():
+    # No room is left: the next arrival is held (#3r req-580).
+    global prompt_cache_limit
+    prompt_cache_limit = 1
+    dropped["held"] = post(40, 40)
+
+
+def second_step():
+    # The held one waits; one more is queued; goose closes every one of them mid-step.
+    global prompt_cache_limit
+    dropped["queued"] = post(40, 50)
+    seen["held_before"] = list(held_ids[0])
+    for client, _ in [*reviewers, dropped["held"], dropped["queued"]]:
+        client.close()
+    # The router's probe, before the chat's own call is sent (a harness bound: the pre-fix
+    # wrapper never drops below the four handlers while this step runs).
+    deadline = time.monotonic() + 10
+    while True:
+        seen["during"] = status()
+        if seen["during"]["num_running"] == 0 or time.monotonic() > deadline:
+            break
+        time.sleep(0.01)
+    prompt_cache_limit = limit
+    user["call"] = ask(30, 7, 3, 50100)
+
+
+hooks[1] = first_step
+hooks[2] = second_step
+engine = threading.Thread(target=responses._generate, daemon=True)
+engine.start()
+until("the engine reads its second prompt step", lambda: "call" in user)
+assert user["call"]["done"].wait(60), "the user's call is answered"
+until("every dropped handler has ended", lambda: all(
+    rid not in handling or handling[rid]["handler_left"]
+    for _, rid in [*reviewers, dropped["held"], dropped["queued"]]))
+seen.update(
+    steps=steps,
+    reviewer_ids=[rid for _, rid in reviewers],
+    held_id=dropped["held"][1],
+    queued_id=dropped["queued"][1],
+    user_id=user["call"]["request"].goose_request_id,
+    user_pieces=user["call"]["pieces"],
+    final=status(),
+)
+responses._stop = True
+engine.join(30)
+print("GOOSE_TEST " + json.dumps(seen))
+"#;
+        let (seen, printed) = run_wrapper_checks_with(&python, checks, |program| {
+            if let RankProgram::MlxLmServer {
+                prompt_cache_limit_bytes,
+                prefill_step_yields,
+                ..
+            } = program
+            {
+                *prompt_cache_limit_bytes = Some(17_333_813_248);
+                *prefill_step_yields = true;
+            }
+        });
+        let id = |key: &str| seen[key].as_str().unwrap().to_string();
+        let reviewers: Vec<String> = seen["reviewer_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        let (held, queued, user) = (id("held_id"), id("queued_id"), id("user_id"));
+        assert_eq!(
+            seen["held_before"],
+            serde_json::json!([held]),
+            "the third call was held for room before goose closed it: {seen}"
+        );
+
+        let during = &seen["during"];
+        assert_eq!(
+            during["num_running"], 0,
+            "the router's probe, mid-step, sees every slot free: four clients left and nobody \
+             waits for their answers (pre-fix: 4, one per do_POST handler): {during}"
+        );
+        assert_eq!(
+            during["status"], "generating",
+            "the step still runs: {during}"
+        );
+        for reviewer in &reviewers {
+            let row = during["requests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["request_id"] == reviewer.as_str())
+                .unwrap_or_else(|| panic!("{reviewer}'s batch row is listed: {during}"));
+            assert_eq!(row["stopped"]["reason"], "cancelled_by_client", "{row}");
+            assert_eq!(row["stopped"]["phase"], "prefill", "{row}");
+        }
+
+        let steps: Vec<Vec<String>> = seen["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|rows| {
+                rows.as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| r.as_str().unwrap_or("").to_string())
+                    .collect()
+            })
+            .collect();
+        let read_in = |request: &str| -> Vec<usize> {
+            (1..=steps.len())
+                .filter(|&n| steps[n - 1].iter().any(|r| r == request))
+                .collect()
+        };
+        for reviewer in &reviewers {
+            assert_eq!(
+                read_in(reviewer),
+                [1, 2],
+                "{reviewer} leaves at the end of the step it was in when its client left: {steps:?}"
+            );
+        }
+        assert_eq!(
+            read_in(&held),
+            Vec::<usize>::new(),
+            "the held call is never given a prompt step (#3r req-580 read 2,048 tokens): {steps:?}"
+        );
+        assert_eq!(
+            read_in(&queued),
+            Vec::<usize>::new(),
+            "the queued call is never given a prompt step: {steps:?}"
+        );
+        assert_eq!(
+            read_in(&user).first(),
+            Some(&3),
+            "the user's call is read at the very next step: {steps:?}"
+        );
+        assert_eq!(
+            seen["user_pieces"], 3,
+            "the user's call is answered: {seen}"
+        );
+
+        let stops: Vec<serde_json::Value> = printed
+            .lines()
+            .filter_map(|l| l.strip_prefix("GOOSE_RANK_CANCELLED_BY_CLIENT "))
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let phase_of = |request: &str| -> Vec<&str> {
+            stops
+                .iter()
+                .filter(|s| s["request_id"] == request)
+                .map(|s| s["phase"].as_str().unwrap())
+                .collect()
+        };
+        for reviewer in &reviewers {
+            assert_eq!(phase_of(reviewer), ["prefill"], "named once: {printed}");
+        }
+        assert_eq!(phase_of(&held), ["queued"], "named once: {printed}");
+        assert_eq!(phase_of(&queued), ["queued"], "named once: {printed}");
+        assert_eq!(stops.len(), 4, "{printed}");
+        let dropped: Vec<serde_json::Value> = printed
+            .lines()
+            .filter_map(|l| l.strip_prefix("GOOSE_RANK_ADMISSION "))
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .filter(|a| a.get("dropped_departed").is_some())
+            .collect();
+        assert_eq!(
+            dropped,
+            [serde_json::json!({"dropped_departed": [held], "still_held": 0})],
+            "the rank's log says the held call left the hold unshared: {printed}"
+        );
+
+        let last = &seen["final"];
+        assert_eq!(last["requests"], serde_json::json!([]), "{last}");
+        assert_eq!(last["num_running"], 0, "{last}");
     }
 
     fn second_state_requests(seen: &serde_json::Value) -> std::collections::BTreeSet<&str> {

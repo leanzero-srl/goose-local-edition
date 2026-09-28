@@ -143,6 +143,20 @@
 #   handler did). Each row now names its client, its engine stop, whether it is held for room, and
 #   stays listed (`leaving`) until its batch row is gone; GOOSE_RANK_STATE names each row's request
 #   and GOOSE_RANK_ROW_LEFT says how long a stopped row held the batch.
+# - a request whose client has left stops counting as running the moment anyone reads its socket,
+#   and one not yet given batch work never gets any (Q-403, `client_departure` / `still_wanted`):
+#   E2E #3r (2026-09-28) — goose dropped the end-of-turn reviewers at 13:40:37.6Z while one prompt
+#   step read seven of them (steps 23862, 13:40:34.8 → 13:41:17.6Z) and an eighth (req-580) waited
+#   held for room. Nothing read their sockets until that step ended, so /v1/status went on counting
+#   eight handlers and the chat's own call, 4 s later, was picked with `free_slots 0`; then the
+#   held req-580 was released into the emptied batch, read a 2,048-token chunk and only then was
+#   found gone (13:41:24.36Z) — the chat's 207,104-token call held behind it the whole time. Now
+#   /v1/status reads every live request's socket before it counts (a row whose client left is
+#   listed, stopped `cancelled_by_client`, and not counted; its generation is told to stop and its
+#   handler, wherever it waits, is woken to end), and rank 0 reads a held or arriving request's
+#   socket before it shares it: a departed one is named once (phase `queued`) and never reaches
+#   the batch. What cannot move is the step already running: MLX's forward pass is not
+#   interruptible, so a row in it leaves at that step's end, as Q-231 already does.
 # - a tool parameter typed through a union or a reference converts as that type (Q-232,
 #   rank_tool_schema.py): mlx_lm's qwen3_coder read `{"type": ["string", "null"]}` as neither string
 #   nor number and literal_eval'd the value — `10m` raised a SyntaxError and the whole call was lost,
@@ -329,7 +343,16 @@ served = spec["served_id"]
 # 0's only; an older requester's spec carries none (Q-131).
 served_aliases = [name for name in spec.get("served_aliases", []) if name != served]
 served_names = [served, *served_aliases]
-state = {"steps": 0, "inflight": 0, "admission_open": True, "admission_reason": None}
+state = {
+    "steps": 0,
+    "inflight": 0,
+    # Handlers inside do_POST whose request has no row in `live` yet (reading, validating): part of
+    # /v1/status's num_running (Q-403). `posting` marks the handler thread until its row exists.
+    "before_row": 0,
+    "admission_open": True,
+    "admission_reason": None,
+}
+posting = threading.local()
 # rank_sampling.py (Q-159): rank 0's layers under each request's own sampling fields. Only rank 0
 # resolves — the workers sample from the arguments it shares.
 sampling_defaults = None
@@ -357,6 +380,9 @@ samplings = {}
 # The same requests' handling (Q-231, rank_live.py `row_handling`): the client that sent each, the
 # engine's named stop of its answer, and whether its handler and its batch row have left. A
 # request whose answer ended while its row still holds the batch stays listed until the row leaves.
+# Rank 0 also keeps what a departure needs to reach the request wherever it is (Q-403,
+# `client_departure`): the client's connection, the answer queue its handler waits on, its
+# generation context once the loop has handed it back, and how its client left (None while there).
 handling = {}
 # Which request each row of the batch serves (uid → request id), kept by the generation thread of
 # every rank (the id rides the shared request, `goose_request_id`), and the request
@@ -646,10 +672,28 @@ class DepartureContext(server.GenerationContext):
     client = None
     answers = None
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # The request the loop builds this context for (`_next_request`'s `arriving`, the id
+        # `insert_segments` names the row by).
+        self.__dict__["request_id"] = arriving[0]
+
     @property
     def _should_stop(self):
         if self.__dict__.get("stopped") or self.__dict__.get("departed"):
             return True
+        request_id = self.__dict__.get("request_id")
+        if request_id is not None and group.rank() == 0:
+            # Q-403: a departure named before this context reached its handler — the handler may
+            # already have ended (woken while it waited), and then nobody would ever stop the row.
+            with lock:
+                handled = handling.get(request_id)
+                orphaned = request_id in in_batch and (
+                    handled is None or handled["departed"] is not None
+                )
+            if orphaned:
+                self.__dict__["departed"] = "handler_ended"
+                return True
         client = self.client
         if client is None:
             return False
@@ -917,25 +961,48 @@ def publish_held():
     held_ids[0] = tuple(getattr(request[1], "goose_request_id", None) for request, _ in held)
 
 
+def drop_departed_held():
+    """Rank 0 (Q-403): every held request nobody waits for any more leaves the hold unshared. E2E
+    #3r's req-580 was released into the batch 40 s after goose dropped it, read a 2,048-token chunk,
+    and held the chat's own call behind it for 6.5 s."""
+    kept, dropped = [], []
+    for item in held:
+        if still_wanted(item[0]):
+            kept.append(item)
+        else:
+            dropped.append(getattr(item[0][1], "goose_request_id", None))
+    if not dropped:
+        return
+    held.clear()
+    held.extend(kept)
+    publish_held()
+    emit("RANK_ADMISSION", {"dropped_departed": dropped, "still_held": len(held)})
+
+
 def rank0_request(self, timeout):
     """The request rank 0 shares now, or None: the oldest held one once the batch has room for
     it, else the next arrival — held instead when the batch it would join cannot fit it (behind
-    any request already held, so arrivals keep their order)."""
+    any request already held, so arrivals keep their order). A request whose client has left is
+    never shared (Q-403): the hold drops it, and an arrival answered on its own queue is followed
+    by the next arrival at once, so the request behind it is not left for another step."""
+    drop_departed_held()
     if held and room_for(held[0][1]):
         request, tokens = held.popleft()
         publish_held()
         emit("RANK_ADMISSION", {"released_tokens": tokens, "still_held": len(held)})
         return request
-    try:
-        if timeout is None or held:
-            request = self.requests.get_nowait()
-        else:
-            request = self.requests.get(timeout=timeout)
-    except QueueEmpty:
-        return None
-    request, tokens = settle(self, request)
-    if request is None:
-        return None
+    while True:
+        try:
+            if timeout is None or held:
+                request = self.requests.get_nowait()
+            else:
+                request = self.requests.get(timeout=timeout)
+        except QueueEmpty:
+            return None
+        request, tokens = settle(self, request)
+        if request is not None:
+            break
+        timeout = None
     if not held and room_for(tokens):
         return request
     held.append((request, tokens))
@@ -1032,8 +1099,9 @@ class RequestTap:
     keeping the answer queue it creates: the handler hands it to its context, so the generation
     loop can wake a handler whose client it found gone (Q-231)."""
 
-    def __init__(self, generator):
+    def __init__(self, generator, handled):
         self.generator = generator
+        self.handled = handled
         self.answers = None
 
     @property
@@ -1042,6 +1110,9 @@ class RequestTap:
 
     def put(self, item):
         self.answers = item[0]
+        # Before the request is queued: from here a departure can wake the handler (Q-403).
+        with lock:
+            self.handled["answers"] = item[0]
         self.generator.requests.put(item)
 
 
@@ -1058,6 +1129,85 @@ def client_left(connection):
     except OSError as reset:
         return f"{type(reset).__name__}: {reset}"
     return None if peeked else "eof"
+
+
+def request_phase(entry):
+    """Where a live request is, as its /v1/status row says it (rank_live.py `live_request`)."""
+    if entry["first_token"] is not None:
+        return "generation"
+    return "queued" if entry["prefill_started"] is None else "prefill"
+
+
+def client_departure(request_id, how, phase):
+    """Rank 0 (Q-403): the client of `request_id` has left, seen by whoever read its socket first
+    — its handler at a piece, the generation loop at a step (through the handler it wakes),
+    /v1/status, or the admission of a request not yet given batch work. Named once
+    (GOOSE_RANK_CANCELLED_BY_CLIENT, `last_engine_stop`); from then on its row is not counted as
+    running, its generation context is told to stop (the loop removes the row at its step's end),
+    and its handler, wherever it waits — for the context or for a piece — is woken to end."""
+    with lock:
+        handled = handling.get(request_id)
+        if handled is None or handled["departed"] is not None:
+            return
+        handled["departed"] = how
+        entry = live[request_id]
+        watch = watches.get(request_id)
+        ctx, answers = handled["ctx"], handled["answers"]
+    stop = {
+        "request_id": request_id,
+        "reason": "cancelled_by_client",
+        "how": how,
+        "phase": phase,
+        "prompt_tokens": entry["prompt_tokens"],
+        "prefilled": entry["prefilled"],
+        "completion_tokens": entry["completion"],
+    }
+    if watch is not None:
+        withholding = watch.withholding()
+        stop.update(
+            withholding=None if withholding is None else withholding[0],
+            generated_chars=watch.generated_chars,
+            sent_chars=watch.sent_chars,
+            tail=watch.tail,
+        )
+        watch.stop = stop
+    record_stop(stop)
+    if ctx is not None:
+        ctx.stop()
+    if answers is not None:
+        answers.put(ClientDeparted(how))
+
+
+def read_departure(request_id, connection, phase):
+    """Rank 0 (Q-403): reads `connection` without waiting and names the departure when its client
+    has left. True when the request is gone — just now, or its handler already closed the
+    connection (the handler ended the request itself)."""
+    try:
+        how = client_left(connection)
+    except (ValueError, OSError):
+        return True
+    if how is None:
+        return False
+    client_departure(request_id, how, phase)
+    return True
+
+
+def still_wanted(request):
+    """Rank 0, before a queued or held request is given batch work (Q-403): False once nobody
+    waits for its answer — its client has left (named here if nobody saw it first) or its handler
+    has already ended. A request that reached the queue without this wrapper's `generate` carries
+    no id and no connection to read, so there is nothing to judge it by."""
+    request_id = getattr(request[1], "goose_request_id", None)
+    if request_id is None:
+        return True
+    with lock:
+        handled = handling.get(request_id)
+        if handled is None or handled["departed"] is not None:
+            return False
+        connection = handled["connection"]
+    if connection is None:
+        return True
+    return not read_departure(request_id, connection, "queued")
 
 
 def generate(
@@ -1088,13 +1238,21 @@ def generate(
             "completion": 0,
         }
         live[request_id] = entry
-        handling[request_id] = {
+        if getattr(posting, "before_row", False):
+            posting.before_row = False
+            state["before_row"] -= 1
+        handled = {
             "client": None if address is None else f"{address[0]}:{address[1]}",
             "stopped": None,
             "stopped_at": None,
             "handler_left": False,
             "handler_left_at": None,
+            "connection": client,
+            "answers": None,
+            "ctx": None,
+            "departed": None,
         }
+        handling[request_id] = handled
 
     # The generation context, once mlx_lm hands it back: every piece arrives after it.
     started = []
@@ -1108,25 +1266,8 @@ def generate(
             departed(how, phase)
 
     def departed(how, phase):
-        stop = {
-            "request_id": request_id,
-            "reason": "cancelled_by_client",
-            "how": how,
-            "phase": phase,
-            "prompt_tokens": entry["prompt_tokens"],
-            "prefilled": entry["prefilled"],
-            "completion_tokens": entry["completion"],
-        }
-        if watch is not None:
-            withholding = watch.withholding()
-            stop.update(
-                withholding=None if withholding is None else withholding[0],
-                generated_chars=watch.generated_chars,
-                sent_chars=watch.sent_chars,
-                tail=watch.tail,
-            )
-            watch.stop = stop
-        record_stop(stop)
+        # Named here unless /v1/status or rank 0's admission saw it first (Q-403).
+        client_departure(request_id, how, phase)
         started[0].stop()
         raise ClientGone(how)
 
@@ -1155,7 +1296,7 @@ def generate(
             samplings.pop(request_id, None)
             handling.pop(request_id, None)
 
-    tap = RequestTap(self)
+    tap = RequestTap(self, handled)
     try:
         ctx, tokens = original_generate(tap, request, generation_args, progress)
     except ContextFull as full:
@@ -1164,12 +1305,24 @@ def generate(
     except EmptyPrompt as empty:
         leave()
         raise Refused(400, str(empty), "empty_prompt") from None
+    except ClientDeparted as departure:
+        # Q-403: its client left before the loop gave it batch work; named where it was seen, and
+        # rank 0 never shares it.
+        leave()
+        raise ClientGone(departure.how) from None
     except BaseException:
         leave()
         raise
     ctx.answers = tap.answers
     ctx.client = client
     started.append(ctx)
+    with lock:
+        handled["ctx"] = ctx
+        gone = handled["departed"] is not None
+    if gone:
+        # Seen gone between the loop handing the context back and here: the row leaves at its
+        # first step's end, and the ClientDeparted on its queue ends this handler at its first read.
+        ctx.stop()
     entry["max_tokens"] = generation_args.max_tokens
     # The generation thread hands back the context as it takes the request into its batch: from
     # here the engine is reading the prompt, though mlx_lm reports the first progress only after
@@ -1231,7 +1384,10 @@ def settle(self, request):
     — tool-call arguments become dicts — and a second pass over the same objects would fail), and
     the budget replaces the client's absence (None, kept by validate_model_parameters below). A
     request that cannot be counted or has no room is answered on its own queue and never shared,
-    as mlx_lm answers a tokenization failure."""
+    as mlx_lm answers a tokenization failure. A request whose client has already left is not
+    counted at all (Q-403, `still_wanted`): its handler is woken, and nothing is shared."""
+    if not still_wanted(request):
+        return None, 0
     rqueue, completion, args = request
     try:
         prompt = original_tokenize(
@@ -1430,14 +1586,30 @@ def do_GET(self):
             },
         )
     if self.path == "/v1/status":
-        # Every accepted-and-unfinished request is counted in num_running, and every row whose
-        # answer has ended but which still holds the batch (`leaving`, Q-231); mlx_lm does not split
-        # queued from batched, so num_waiting carries none of them (the sum is the busy fact). The
-        # request table tells prefill from generation per request.
-        # A streamed chat request's row carries `stream` (rank_stream_watch.py, Q-146): what its
-        # client has and has not been sent, and the last words written; null for any other request.
-        # Each row says who sent it and, when it waits or has ended, on what (rank_live.py
-        # `row_handling`, Q-231).
+        # num_running counts the requests someone still waits for (Q-403): every live row whose
+        # client is there and whose answer has not ended — queued, held, reading or writing — and
+        # every handler that has not reached `generate` yet. mlx_lm does not split queued from
+        # batched, so num_waiting carries none of them (the sum is the busy fact goose's router
+        # sizes its free slots by). A row whose client left, or whose answer ended while it still
+        # holds the batch (`leaving`, Q-231), is listed and not counted: nobody waits for it, and
+        # the loop drops it at its step's end — before it takes any request that arrives now. So
+        # every live request's socket is read first, without waiting: E2E #3r's chat call was
+        # picked with `free_slots 0` 4 s after goose had closed all eight reviewers, because
+        # nothing read their sockets until the 43 s prompt step they were in ended.
+        # The request table tells prefill from generation per request. A streamed chat request's
+        # row carries `stream` (rank_stream_watch.py, Q-146): what its client has and has not been
+        # sent, and the last words written; null for any other request. Each row says who sent it
+        # and, when it waits or has ended, on what (rank_live.py `row_handling`, Q-231).
+        with lock:
+            unread = [
+                (request_id, handled["connection"], request_phase(live[request_id]))
+                for request_id, handled in handling.items()
+                if handled["departed"] is None
+                and not handled["handler_left"]
+                and handled["connection"] is not None
+            ]
+        for request_id, connection, phase in unread:
+            read_departure(request_id, connection, phase)
         now = time.monotonic()
         held_for_room = set(held_ids[0])
         with lock:
@@ -1445,7 +1617,7 @@ def do_GET(self):
                 live_request(request_id, now=now, **entry)
                 for request_id, entry in live.items()
             ]
-            leaving = 0
+            waited_for = 0
             for row in rows:
                 request_id = row["request_id"]
                 watch = watches.get(request_id)
@@ -1462,9 +1634,10 @@ def do_GET(self):
                         request_id in held_for_room,
                     )
                 )
-                leaving += handled["handler_left"]
+                waited_for += not handled["handler_left"] and handled["departed"] is None
+            num_running = waited_for + state["before_row"]
             last_stop = engine_stops["last"]
-        body = live_status({"num_running": state["inflight"] + leaving, "num_waiting": 0}, rows)
+        body = live_status({"num_running": num_running, "num_waiting": 0}, rows)
         body["sampling_defaults"] = sampling_defaults.report()
         # The last answer the engine ended itself (Q-161, Q-181): its row leaves /v1/status with it.
         body["last_engine_stop"] = last_stop
@@ -1525,6 +1698,8 @@ def do_POST(self):
         )
     with lock:
         state["inflight"] += 1
+        state["before_row"] += 1
+    posting.before_row = True
     try:
         original_post(self)
     except Refused as refusal:
@@ -1558,6 +1733,9 @@ def do_POST(self):
     finally:
         with lock:
             state["inflight"] -= 1
+            if posting.before_row:
+                state["before_row"] -= 1
+        posting.before_row = False
 
 
 def apply_sampling(handler):
