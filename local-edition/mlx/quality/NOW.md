@@ -68,7 +68,8 @@ Updated: 2026-09-28 19:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   running). If either dies again: re-send after 18:40, same ids.
 
 - 3.0.72 = merge-072 49e2269d0: batch 2 + 2b (g072b GREEN but the waitClock guard → fixed 967ef755d) + Q-397 +
-  Q-394a (acp_ws harness conflict hand-unioned, shared brace fixed, rustfmt ok). FINAL gate /tmp/g072c.out
+  Q-394a (acp_ws harness conflict hand-unioned, shared brace fixed, rustfmt ok). FINAL gate /tmp/g072c.out (RELAUNCHED 19:4x after a Q-397×Q-357 seam: the hold status line lacked
+  `compaction: None` — fixed; main + Q-405 merged in; app QUIT to free the idle split's ~37 GB — swap was 80 GB)
   (scratchpad/gate072c.sh, own session). Green → ff main → release 3.0.72 → install both → E2E #3t, NO cargo.
 - CI red once on e3b810895: Q-346's lib test raced sources.rs tests swapping GOOSE_PATH_ROOT → Q-405 fixed on main
   274e12820 (env lock); the failed job re-run. merge-072 takes it when main is merged in before the ff.
