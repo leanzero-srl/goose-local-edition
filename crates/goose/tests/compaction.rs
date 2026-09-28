@@ -759,7 +759,7 @@ async fn test_context_limit_recovery_compaction() -> Result<()> {
 /// exact bytes of the file it was editing.
 #[tokio::test]
 async fn keep_tail_survives_compaction_verbatim_and_zero_is_identity() -> Result<()> {
-    use goose::context_mgmt::compact_messages_with_tail;
+    use goose::context_mgmt::{compact_messages_with_tail, SummaryRequest};
     use rmcp::model::{AnnotateAble, CallToolRequestParams, CallToolResult, RawContent};
     use rmcp::object;
 
@@ -795,8 +795,16 @@ async fn keep_tail_survives_compaction_verbatim_and_zero_is_identity() -> Result
 
     // Direction 1 — K=3: the tail returns verbatim among the agent-visible messages, and the kept
     // tail never OPENS on an orphan tool response (the cut extended back to include its request).
-    let (compacted, _) =
-        compact_messages_with_tail(&provider, &model_config, "s1", &convo, false, 3).await?;
+    let (compacted, _) = compact_messages_with_tail(
+        &provider,
+        &model_config,
+        "s1",
+        &convo,
+        false,
+        3,
+        &SummaryRequest::Transcript,
+    )
+    .await?;
     let visible: Vec<_> = compacted
         .messages()
         .iter()
@@ -840,8 +848,16 @@ async fn keep_tail_survives_compaction_verbatim_and_zero_is_identity() -> Result
 
     // Direction 2 — K=0: identical to the legacy call (same visible set as compact_messages'
     // pre-K4 shape: summary + continuation + preserved user text, and NO verbatim tool tail).
-    let (legacy, _) =
-        compact_messages_with_tail(&provider, &model_config, "s2", &convo, false, 0).await?;
+    let (legacy, _) = compact_messages_with_tail(
+        &provider,
+        &model_config,
+        "s2",
+        &convo,
+        false,
+        0,
+        &SummaryRequest::Transcript,
+    )
+    .await?;
     let legacy_text = legacy
         .messages()
         .iter()
