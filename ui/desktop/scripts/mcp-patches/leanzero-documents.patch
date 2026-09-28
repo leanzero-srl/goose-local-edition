@@ -1,17 +1,18 @@
 --- a/package.json
 +++ b/package.json
-@@ -26,8 +26,9 @@
+@@ -26,8 +26,10 @@
      "test:create-pptx": "node --test test/test-create-pptx.js",
      "test:fact-check": "node --test test/test-fact-check.js",
      "test:format-router": "node --test test/test-format-router.js",
 +    "test:output-location": "node --test test/test-output-location.js",
++    "test:create-doc-tables": "node --test test/test-create-doc-tables.js",
      "insights": "node scripts/insights-report.mjs",
 -    "test:all": "npm test && npm run test:read-doc && npm run test:schemas && npm run test:render && npm run test:upload && npm run test:http && npm run test:auth && npm run test:oauth && npm run test:pdf && npm run test:create-tags && npm run test:create-pdf && npm run test:create-pptx && npm run test:fact-check && npm run test:format-router",
-+    "test:all": "npm test && npm run test:read-doc && npm run test:schemas && npm run test:render && npm run test:upload && npm run test:http && npm run test:auth && npm run test:oauth && npm run test:pdf && npm run test:create-tags && npm run test:create-pdf && npm run test:create-pptx && npm run test:fact-check && npm run test:format-router && npm run test:output-location",
++    "test:all": "npm test && npm run test:read-doc && npm run test:schemas && npm run test:render && npm run test:upload && npm run test:http && npm run test:auth && npm run test:oauth && npm run test:pdf && npm run test:create-tags && npm run test:create-pdf && npm run test:create-pptx && npm run test:fact-check && npm run test:format-router && npm run test:output-location && npm run test:create-doc-tables",
      "lint:no-console-log": "! grep -rn 'console\\.log(' src/ --include='*.js'"
    },
    "dependencies": {
-@@ -43,7 +44,10 @@
+@@ -43,7 +45,10 @@
      "pdf-parse": "^2.4.5",
      "pptxgenjs": "^4.0.1",
      "puppeteer": "^25.1.0",
@@ -436,7 +437,20 @@
    registerDocumentInRegistry,
    getCategoryPath,
    classifyDocumentContent,
-@@ -49,7 +48,7 @@
+@@ -44,12 +43,19 @@
+   mimeTypeFromExtension,
+ } from "./utils.js";
+ import { applyDNAToInput, loadDNA, recordUsage, signatureSimilarity } from "../utils/dna-manager.js";
+-import { assessFormattingQuality, shouldRejectPlainText, suggestBetterFormat } from "../utils/formatting-quality.js";
++import JSZip from "jszip";
++import {
++  assessFormattingQuality,
++  assessWrittenDocx,
++  reconcileFormatting,
++  shouldRejectPlainText,
++  suggestBetterFormat,
++} from "../utils/formatting-quality.js";
+ import { resolveClientProfile } from "../utils/client-profile.js";
  import { logInsight, memoryNudge } from "../utils/insights.js";
  import { buildDownloadUrl } from "../utils/download-registry.js";
  import { log } from "../utils/logger.js";
@@ -445,7 +459,35 @@
  import { recordWrite } from "../services/lineage-tracker.js";
  import { loadBlueprint, listBlueprints } from "../utils/blueprint-store.js";
  import { validateAgainstBlueprint } from "../services/blueprint-extractor.js";
-@@ -262,45 +261,6 @@
+@@ -57,9 +63,11 @@
+ import {
+   stripMarkdownLinePrefixes,
+   parseInlineMarkdown,
+-  parseMarkdownToDocx,
+   stripMarkdownPlain,
+   extractHeadingLevels,
++  headingOutline,
++  renderBodyEntries,
++  tableOptionsFromStyle,
+   createParagraph,
+   createTableFromData,
+   createDocHeader,
+@@ -224,10 +232,10 @@
+     // Auto-extract heading levels from markdown content
+     const processedParagraphs = extractHeadingLevels(paragraphs);
+ 
+-    // Assess structural formatting (headings/lists/emphasis/tables). Returned as
+-    // a non-fatal `formattingQuality` field so the model gets a correction signal
+-    // when it produced flat text. With REQUIRE_FORMATTING enabled, a wholly
+-    // unformatted substantive body is hard-rejected instead of written.
++    // Assess the INPUT's structural formatting (headings/lists/emphasis/tables). It
++    // gates REQUIRE_FORMATTING (a wholly unformatted substantive body is rejected) and
++    // is what a dry run reports (basis: "input"); a real write reports what the FILE
++    // holds instead (reconcileFormatting, after Packer).
+     const formattingQuality = assessFormattingQuality({
+       paragraphs: processedParagraphs,
+       content: parsedInput.content,
+@@ -262,45 +270,6 @@
        }
      }
  
@@ -491,7 +533,16 @@
      // Validate against blueprint if specified
      if (parsedInput.blueprint) {
        const blueprint = loadBlueprint(parsedInput.blueprint);
-@@ -325,27 +285,32 @@
+@@ -311,7 +280,7 @@
+         };
+       }
+ 
+-      const validation = validateAgainstBlueprint(processedParagraphs, blueprint);
++      const validation = validateAgainstBlueprint(headingOutline(processedParagraphs), blueprint);
+       if (!validation.valid) {
+         return {
+           success: false,
+@@ -325,27 +294,32 @@
  
      // Normalize input with extension handling FIRST (fixes .md → .docx before docs folder check)
      const normalized = validateAndNormalizeInput(input, [], "docx");
@@ -542,6 +593,177 @@
      }
  
      // Dry run mode: return a preview without writing to disk
+@@ -462,6 +436,10 @@
+ 
+     // Get merged style configuration
+     const styleConfig = getStyleConfig(stylePreset, parsedInput.style || {});
++    // tableHeaderFill colours every table header — explicit `tables` and markdown pipe tables alike.
++    if (parsedInput.tableHeaderFill) {
++      styleConfig.table = { ...styleConfig.table, headerFill: parsedInput.tableHeaderFill };
++    }
+ 
+     // Build section properties with proper headers/footers
+     const sectionProps = {};
+@@ -548,110 +526,15 @@
+       );
+     }
+ 
+-    // Add paragraphs with proper styling.
+-    //
+-    // STRING entries: pass through `parseMarkdownToDocx` which handles
+-    // bullet/numbered lists, blockquotes, horizontal rules, hyperlinks,
+-    // inline markdown tables, fenced code blocks, and inline emphasis.
+-    //
+-    // OBJECT entries with explicit `headingLevel`: use the legacy inline
+-    // path so the caller's intent (this is a heading, not a paragraph) is
+-    // preserved exactly — block-level parsing would re-tokenize the text
+-    // and could split it.
+-    for (const para of processedParagraphs) {
+-      if (!para) continue;
+-
+-      if (typeof para === "string") {
+-        const baseStyle = {
+-          size: styleConfig.font.size,
+-          fontFamily: styleConfig.font.family,
+-          color: styleConfig.font.color,
+-          codeColor: styleConfig.code?.color,
+-          codeBackground: styleConfig.code?.backgroundColor,
+-          linkColor: styleConfig.link?.color,
+-        };
+-        children.push(...parseMarkdownToDocx(para, baseStyle, styleConfig));
+-      } else if (para && typeof para === "object" && para.text) {
+-        // Determine heading level and apply preset styling
+-        const isHeading =
+-          para.headingLevel === "heading1" ||
+-          para.headingLevel === "heading2" ||
+-          para.headingLevel === "heading3";
+-
+-        // Get specific heading level config or fallback to font style
+-        let paragraphStyle;
+-        if (isHeading) {
+-          paragraphStyle =
+-            styleConfig[para.headingLevel] || styleConfig.heading;
+-        } else {
+-          paragraphStyle = styleConfig.font;
+-        }
+-
+-        // Parse inline markdown from para.text, using the paragraph's explicit style as base
+-        const objBaseStyle = {
+-          size: para.size || paragraphStyle.size,
+-          bold: para.bold ?? (isHeading ? paragraphStyle.bold : false),
+-          italics: para.italics ?? (isHeading ? paragraphStyle.italic : false),
+-          underline: para.underline
+-            ? isHeading
+-              ? paragraphStyle.underline
+-              : false
+-            : false,
+-          fontFamily: isHeading
+-            ? (styleConfig.headingFont || styleConfig.font.family)
+-            : styleConfig.font.family,
+-          color:
+-            para.color ||
+-            (isHeading ? paragraphStyle.color : styleConfig.font.color),
+-          codeColor: styleConfig.code?.color,
+-          codeBackground: styleConfig.code?.backgroundColor,
+-        };
+-        const objTextRuns = parseInlineMarkdown(para.text, objBaseStyle);
+-
+-        children.push(
+-          createParagraph(objTextRuns, {
+-            heading:
+-              para.headingLevel === "heading1"
+-                ? HeadingLevel.HEADING_1
+-                : para.headingLevel === "heading2"
+-                  ? HeadingLevel.HEADING_2
+-                  : para.headingLevel === "heading3"
+-                    ? HeadingLevel.HEADING_3
+-                    : undefined,
+-            alignment: para.alignment || styleConfig.paragraph.alignment,
+-            spacingBefore: isHeading
+-              ? paragraphStyle.spacingBefore
+-              : styleConfig.paragraph.spacingBefore,
+-            spacingAfter: isHeading
+-              ? paragraphStyle.spacingAfter
+-              : styleConfig.paragraph.spacingAfter,
+-            lineSpacing: styleConfig.paragraph.lineSpacing,
+-          }),
+-        );
+-      }
+-    }
++    // Paragraph entries and explicit tables. One renderer serves create-doc and
++    // edit-doc (renderBodyEntries): a string entry is markdown — headings, lists,
++    // blockquotes, rules, fenced code and pipe tables — and an object entry keeps
++    // the caller's explicit heading/inline styling.
++    children.push(...renderBodyEntries(processedParagraphs, styleConfig));
+ 
+-    // Add tables
+     for (const tableData of tables) {
+       if (!Array.isArray(tableData) || tableData.length === 0) continue;
+-
+-      children.push(
+-        createTableFromData(tableData, {
+-          borderColor: styleConfig.table.borderColor,
+-          borderStyle: styleConfig.table.borderStyle,
+-          borderWidth: styleConfig.table.borderWidth,
+-          headerFill: parsedInput.tableHeaderFill || styleConfig.table.headerFill,
+-          headerFontColor: styleConfig.table.headerFontColor,
+-          zebraFill: styleConfig.table.zebraFill,
+-          zebraInterval: styleConfig.table.zebraInterval,
+-          insideBorderColor: styleConfig.table.insideBorderColor,
+-          insideBorderWidth: styleConfig.table.insideBorderWidth,
+-          outsideBorderWidth: styleConfig.table.outsideBorderWidth,
+-          cellSize: styleConfig.font.size,
+-          fontFamily: styleConfig.font.family,
+-          color: styleConfig.font.color,
+-        }),
+-      );
++      children.push(createTableFromData(tableData, tableOptionsFromStyle(styleConfig)));
+     }
+ 
+     // Create document with proper section configuration and embedded styles
+@@ -689,6 +572,10 @@
+     }
+ 
+     const buffer = await Packer.toBuffer(doc);
++    // formattingQuality describes the bytes going to disk, never the input alone
++    // (goose Q-454): a feature the body held but the file lacks is named in `dropped`.
++    const writtenXml = await (await JSZip.loadAsync(buffer)).file("word/document.xml").async("string");
++    const writtenQuality = reconcileFormatting(formattingQuality, assessWrittenDocx(writtenXml));
+     await fs.writeFile(outputPath, buffer);
+ 
+     // Register document in registry (non-blocking, failure is non-fatal)
+@@ -706,7 +593,7 @@
+     }
+ 
+     // Compute structure signature (pure function, no side effects)
+-    const structSig = computeStructureSignature(processedParagraphs);
++    const structSig = computeStructureSignature(headingOutline(processedParagraphs));
+ 
+     // Record usage in DNA for auto-learning with override tracking (non-fatal)
+     if (hasDNA) {
+@@ -828,8 +715,12 @@
+         : "";
+ 
+     const downloadLine = downloadUrl ? ` Download it: ${downloadUrl} (link valid ~24h).` : "";
+-    const interactiveMessage = uploadInteractiveMsg + downloadLine;
++    const droppedLine = writtenQuality.dropped.length > 0
++      ? `\nWARNING: NOT WRITTEN — the body's ${writtenQuality.dropped.join(", ")} did not reach the file. ${writtenQuality.hint}\n`
++      : "";
++    const interactiveMessage = uploadInteractiveMsg + downloadLine + droppedLine;
+     const agentMessage = `DOCX FILE WRITTEN TO DISK at: ${outputPath}\n\nIMPORTANT: This tool has created an actual .docx file on your filesystem. Do NOT create any additional markdown or text files. The document is available at the absolute path shown above.\n\n${enforcementMessage}` +
++      droppedLine +
+       (downloadUrl ? `\nDOWNLOAD (hosted; valid ~24h): ${downloadUrl}\nTo save it on the user's machine, fetch that URL (or share it with the user to click).\n` : "") +
+       (blueprintMatch ? `\nBLUEPRINT MATCH: ${blueprintMatch.message}\n` : "") +
+       (memories ? `\nDocument memories active (${Object.keys(memories).length}): ${Object.values(memories).map(m => m.text).join("; ")}` : "") +
+@@ -862,7 +753,7 @@
+         : null,
+       stylePreset: stylePreset,
+       styleReason: styleReason,
+-      formattingQuality: isInteractive ? undefined : formattingQuality,
++      formattingQuality: isInteractive ? undefined : writtenQuality,
+       formatSuggestion: isInteractive ? undefined : suggestBetterFormat({ paragraphs: processedParagraphs, content: parsedInput.content, tables }, "docx"),
+       memoryNudge: (isInteractive || !profile.canPersistMemory) ? undefined : memoryNudge(learning, `create-doc:${category || "general"}:${stylePreset}`),
+       styleConfig: isInteractive ? undefined : {
 --- a/src/tools/create-markdown.js
 +++ b/src/tools/create-markdown.js
 @@ -3,9 +3,8 @@
@@ -1012,9 +1234,12 @@
  import { handleDNA } from "./tools/dna-tool.js";
  import { handleBlueprint } from "./tools/blueprint-tool.js";
  import { handleDriftMonitor } from "./tools/drift-tool.js";
-@@ -70,6 +71,10 @@
+@@ -69,7 +70,13 @@
+   "    supply the rows — headers, zebra striping, and column widths are automatic.",
    "  • Responses carry a `formattingQuality` object. If `isPlainText` is true,",
    "    re-create the document WITH markdown structure before returning to the user.",
++  "    create-doc's reports what the written FILE holds (basis 'written'); a",
++  "    non-empty `dropped` names structure from your body that is NOT in the file.",
    "",
 +  "Paths:",
 +  "  • `outputPath` absolute = written exactly there. Relative = resolved against",
@@ -1023,7 +1248,7 @@
    "Workflow:",
    "  • Always call `read-doc` with mode 'indepth' BEFORE `edit-doc` so you see",
    "    the existing structure.",
-@@ -206,10 +211,10 @@
+@@ -206,10 +213,10 @@
    "stylePreset: 'claude-like' (modern blue-accented professional) is the default for general-purpose docs; 'professional' is the executive serif look; auto-selected from category if omitted.";
  const P_REGISTRY =
    "category: subfolder for organization. tags: for registry search and discovery. description: brief note stored in the registry. docType: tone and depth of the documentation.";
@@ -1036,7 +1261,16 @@
  const P_STYLE = "style: advanced fine-grained overrides merged on top of stylePreset.";
  const P_PAGE =
    "header: {text, alignment?:'left'|'center'|'right', color?:'#hex' e.g. '#666666'}, applied to every page. footer: same shape; {current} and {total} in its text are replaced with page numbers. margins: {top, bottom, left, right} in twips (1440 = 1 inch); defaults top/bottom 720 (1440 if a header/footer is set), left/right 1080.";
-@@ -338,7 +343,7 @@
+@@ -273,7 +280,7 @@
+       "NOT for: a final/print/send-as-PDF deliverable (→ create-pdf), code/API/README docs (→ create-markdown), or tabular/numeric data (→ create-excel). The most full-featured tool: Document DNA defaults, 8 style presets, headers/footers with page numbers, margins, blueprint validation, and real tables. " +
+       "ALWAYS format the body with markdown — never a wall of plain text. Simplest: put the whole body in the `content` string. " +
+       MARKDOWN_FEATURES + " " + CONTENT_EXAMPLE + " " +
+-      "Title MUST be specific. Duplicate → { duplicate: true, existingPath } (switch to edit-doc). Response includes `formattingQuality` and `formatSuggestion` — if formatSuggestion is set, the content fits another format better, so heed it. Use dryRun: true for preview." +
++      "Title MUST be specific. Duplicate → { duplicate: true, existingPath } (switch to edit-doc). Response includes `formattingQuality` (read from the written file; `dropped` lists body structure that did not reach it) and `formatSuggestion` — if formatSuggestion is set, the content fits another format better, so heed it. Use dryRun: true for preview." +
+       params(
+         "title: specific descriptive title (rejected: 'Document', 'Untitled', etc.); becomes the document H1.",
+         P_CONTENT,
+@@ -338,7 +345,7 @@
          P_OUTPUT_PATH,
          P_REGISTRY,
          P_DRY_RUN,
@@ -1045,7 +1279,7 @@
          P_CLIENT_HINT,
          P_UPLOAD,
        ),
-@@ -380,8 +385,8 @@
+@@ -380,8 +387,8 @@
          "style: optional overrides on top of stylePreset — font {family, size, color, bold}, columnWidths {<columnIndex>: width in characters}, rowHeights {<rowIndex>: height in points}, headerBold, zebraColor (hex for striped rows).",
          "title: workbook title (used for filename, registry, and auto-categorization).",
          P_STYLE_PRESET,
@@ -1056,7 +1290,7 @@
          P_DRY_RUN,
          P_REGISTRY,
          P_CLIENT_HINT,
-@@ -538,7 +543,7 @@
+@@ -538,7 +545,7 @@
          "title: optional heading to use when replace-slide content has no leading '## '.",
          P_STYLE_PRESET,
          P_STYLE,
@@ -1065,7 +1299,7 @@
          P_CLIENT_HINT,
          P_UPLOAD,
        ),
-@@ -786,6 +791,9 @@
+@@ -786,6 +793,9 @@
  // clients render a saveable/clickable artifact (others still see the URL in the
  // JSON text). This is how a remote server delivers the generated file.
  function wrapCreateResult(r, toolName) {
@@ -1075,7 +1309,7 @@
    const content = [{ type: "text", text: JSON.stringify(r, null, 2) }];
    // Make failures VISIBLE to the learning loop. Successes are logged inside the
    // create-* handlers themselves (with full detail + memory nudge); here we only
-@@ -817,7 +825,12 @@
+@@ -817,7 +827,12 @@
    return { content, isError: !r.success };
  }
  
@@ -1089,7 +1323,7 @@
    const { name, arguments: params } = request.params;
  
    log("info", "Tool called:", { toolName: name });
-@@ -830,7 +843,7 @@
+@@ -830,7 +845,7 @@
          name === "check-drift";
  
        if (!skipValidation) {
@@ -1246,3 +1480,1070 @@
  
        return {
          success: true,
+--- a/src/tools/doc-utils.js
++++ b/src/tools/doc-utils.js
+@@ -20,11 +20,19 @@
+ /**
+  * Extracts heading levels from markdown content
+  * Converts markdown headings (#, ##, ###) to proper HeadingLevel values
++ *
++ * Only a ONE-LINE entry is a heading. A multi-line entry is a markdown body — the
++ * `content` string arrives here as a single entry, and the tool descriptions tell
++ * models to start it at '## ' — so turning it into a heading object sent the whole
++ * body down the inline path as one Heading paragraph: every table, list and callout
++ * flattened into its text (goose Q-454). Bodies stay strings and reach
++ * parseMarkdownToDocx, which renders their headings itself.
+  */
+ export function extractHeadingLevels(paragraphs) {
+   if (!Array.isArray(paragraphs)) return paragraphs;
+ 
+   return paragraphs.map((para) => {
++    if (typeof para === "string" && para.trim().includes("\n")) return para;
+     if (typeof para === "string") {
+       // Check for markdown headings
+       let headingLevel = null;
+@@ -67,6 +75,29 @@
+ }
+ 
+ /**
++ * The document's heading outline as {text, headingLevel} entries, in order: explicit
++ * heading objects as given, plus the '#'..'###' headings inside markdown string entries.
++ * Blueprint validation and the structure signature read this instead of assuming every
++ * heading arrived as its own paragraph entry.
++ */
++export function headingOutline(paragraphs) {
++  if (!Array.isArray(paragraphs)) return [];
++  const outline = [];
++  for (const para of paragraphs) {
++    if (para && typeof para === "object" && para.headingLevel) {
++      outline.push({ text: para.text || "", headingLevel: para.headingLevel });
++    } else if (typeof para === "string") {
++      for (const token of marked.lexer(para)) {
++        if (token.type === "heading" && token.depth <= 3) {
++          outline.push({ text: token.text, headingLevel: `heading${token.depth}` });
++        }
++      }
++    }
++  }
++  return outline;
++}
++
++/**
+  * Strips markdown line-level prefixes from a string.
+  * Removes heading markers, bullet prefixes, blockquote markers, horizontal rules,
+  * and image references. Returns cleaned text.
+@@ -361,8 +392,16 @@
+   });
+ }
+ 
++const CELL_ALIGNMENT = { left: "left", center: "center", right: "right" };
++
+ /**
+- * Creates a table with proper borders and column widths
++ * Creates a table with proper borders and column widths.
++ *
++ * A cell is a string (inline markdown, parsed here) or a marked table cell
++ * ({text, tokens}) whose inline tokens are rendered as they were lexed, so a cell
++ * that reads "- n/a" or "1. first" keeps its text. `options.align` is the per-column
++ * alignment from the markdown delimiter row. The first row is the header: a repeating
++ * header row whose text is always bold.
+  */
+ export function createTableFromData(data, options = {}) {
+   const borderColor = options.borderColor || "D9D9D9";
+@@ -391,15 +430,21 @@
+       const isZebraRow = !isHeader && zebraFill && (rowIndex % zebraInterval === 0);
+ 
+       return new TableRow({
+-        children: row.map((cell) => {
+-          const cellText = typeof cell === "string" ? cell : String(cell);
++        children: row.map((cell, colIndex) => {
+           const cellBaseStyle = {
+             size: options.cellSize || 11,
+             fontFamily: options.fontFamily,
+             color: isHeader && headerFontColor ? headerFontColor : (options.color || undefined),
+-            bold: isHeader && headerFill ? true : undefined,
++            bold: isHeader ? true : undefined,
++            codeColor: options.codeColor,
++            codeBackground: options.codeBackground,
++            linkColor: options.linkColor,
+           };
+-          const cellRuns = parseInlineMarkdown(cellText, cellBaseStyle);
++          const cellRuns =
++            cell && typeof cell === "object" && Array.isArray(cell.tokens)
++              ? renderInlineTokens(cell.tokens, cellBaseStyle)
++              : parseInlineMarkdown(typeof cell === "string" ? cell : String(cell ?? ""), cellBaseStyle);
++          if (cellRuns.length === 0) cellRuns.push(createText("", cellBaseStyle));
+ 
+           // Determine cell shading
+           let cellShading = undefined;
+@@ -418,7 +463,7 @@
+           }
+ 
+           return new TableCell({
+-            children: [createParagraph(cellRuns, {})],
++            children: [createParagraph(cellRuns, { alignment: CELL_ALIGNMENT[options.align?.[colIndex]] })],
+             ...(cellShading ? { shading: cellShading } : {}),
+           });
+         }),
+@@ -809,30 +854,9 @@
+  * array and reusing createTableFromData.
+  */
+ function renderMarkdownTableToken(token, styleConfig) {
+-  const headerRow = (token.header || []).map((cell) => {
+-    if (typeof cell === "string") return cell;
+-    return cell.text || "";
+-  });
+-  const dataRows = (token.rows || []).map((row) =>
+-    row.map((cell) => (typeof cell === "string" ? cell : (cell.text || ""))),
+-  );
+-  const data = [headerRow, ...dataRows];
++  const data = [token.header || [], ...(token.rows || [])];
+ 
+-  return createTableFromData(data, {
+-    borderColor: styleConfig.table?.borderColor,
+-    borderStyle: styleConfig.table?.borderStyle,
+-    borderWidth: styleConfig.table?.borderWidth,
+-    headerFill: styleConfig.table?.headerFill,
+-    headerFontColor: styleConfig.table?.headerFontColor,
+-    zebraFill: styleConfig.table?.zebraFill,
+-    zebraInterval: styleConfig.table?.zebraInterval,
+-    insideBorderColor: styleConfig.table?.insideBorderColor,
+-    insideBorderWidth: styleConfig.table?.insideBorderWidth,
+-    outsideBorderWidth: styleConfig.table?.outsideBorderWidth,
+-    cellSize: styleConfig.font?.size,
+-    fontFamily: styleConfig.font?.family,
+-    color: styleConfig.font?.color,
+-  });
++  return createTableFromData(data, tableOptionsFromStyle(styleConfig, { align: token.align }));
+ }
+ 
+ /**
+@@ -918,4 +942,100 @@
+   }
+ 
+   return out;
++}
++
++/**
++ * Render create-doc/edit-doc paragraph entries (after extractHeadingLevels) to docx
++ * body elements — the ONE renderer both tools use (goose Q-454: edit-doc had its own
++ * inline-only copy that dropped a markdown table outright and wrote an explicit heading
++ * object as a plain paragraph).
++ *
++ * A STRING entry is markdown and goes through parseMarkdownToDocx: headings, lists,
++ * blockquotes, rules, fenced code and pipe tables. An OBJECT entry ({text, headingLevel,
++ * bold, italics, underline, color, size, alignment}) keeps the caller's explicit intent
++ * on the inline path — block-level parsing would re-tokenize the text and could split it.
++ *
++ * @param {Array} entries - strings and/or paragraph objects
++ * @param {Object} styleConfig - full preset config from getStyleConfig()
++ * @returns {Array<Paragraph|Table>}
++ */
++export function renderBodyEntries(entries, styleConfig) {
++  const children = [];
++  for (const para of entries || []) {
++    if (!para) continue;
++
++    if (typeof para === "string") {
++      const baseStyle = {
++        size: styleConfig.font.size,
++        fontFamily: styleConfig.font.family,
++        color: styleConfig.font.color,
++        codeColor: styleConfig.code?.color,
++        codeBackground: styleConfig.code?.backgroundColor,
++        linkColor: styleConfig.link?.color,
++      };
++      children.push(...parseMarkdownToDocx(para, baseStyle, styleConfig));
++    } else if (typeof para === "object" && para.text) {
++      const isHeading =
++        para.headingLevel === "heading1" ||
++        para.headingLevel === "heading2" ||
++        para.headingLevel === "heading3";
++      const paragraphStyle = isHeading
++        ? styleConfig[para.headingLevel] || styleConfig.heading
++        : styleConfig.font;
++
++      const objBaseStyle = {
++        size: para.size || paragraphStyle.size,
++        bold: para.bold ?? (isHeading ? paragraphStyle.bold : false),
++        italics: para.italics ?? (isHeading ? paragraphStyle.italic : false),
++        underline: para.underline ? (isHeading ? paragraphStyle.underline : false) : false,
++        fontFamily: isHeading
++          ? (styleConfig.headingFont || styleConfig.font.family)
++          : styleConfig.font.family,
++        color: para.color || (isHeading ? paragraphStyle.color : styleConfig.font.color),
++        codeColor: styleConfig.code?.color,
++        codeBackground: styleConfig.code?.backgroundColor,
++      };
++
++      children.push(
++        createParagraph(parseInlineMarkdown(para.text, objBaseStyle), {
++          heading:
++            para.headingLevel === "heading1"
++              ? HeadingLevel.HEADING_1
++              : para.headingLevel === "heading2"
++                ? HeadingLevel.HEADING_2
++                : para.headingLevel === "heading3"
++                  ? HeadingLevel.HEADING_3
++                  : undefined,
++          alignment: para.alignment || styleConfig.paragraph.alignment,
++          spacingBefore: isHeading ? paragraphStyle.spacingBefore : styleConfig.paragraph.spacingBefore,
++          spacingAfter: isHeading ? paragraphStyle.spacingAfter : styleConfig.paragraph.spacingAfter,
++          lineSpacing: styleConfig.paragraph.lineSpacing,
++        }),
++      );
++    }
++  }
++  return children;
+ }
++
++/** The docx table options a style preset implies — one mapping for every table a tool writes. */
++export function tableOptionsFromStyle(styleConfig, overrides = {}) {
++  return {
++    borderColor: styleConfig.table?.borderColor,
++    borderStyle: styleConfig.table?.borderStyle,
++    borderWidth: styleConfig.table?.borderWidth,
++    headerFill: styleConfig.table?.headerFill,
++    headerFontColor: styleConfig.table?.headerFontColor,
++    zebraFill: styleConfig.table?.zebraFill,
++    zebraInterval: styleConfig.table?.zebraInterval,
++    insideBorderColor: styleConfig.table?.insideBorderColor,
++    insideBorderWidth: styleConfig.table?.insideBorderWidth,
++    outsideBorderWidth: styleConfig.table?.outsideBorderWidth,
++    cellSize: styleConfig.font?.size,
++    fontFamily: styleConfig.font?.family,
++    color: styleConfig.font?.color,
++    codeColor: styleConfig.code?.color,
++    codeBackground: styleConfig.code?.backgroundColor,
++    linkColor: styleConfig.link?.color,
++    ...overrides,
++  };
++}
+--- a/src/tools/docx-patch.js
++++ b/src/tools/docx-patch.js
+@@ -1,10 +1,10 @@
+ import JSZip from "jszip";
+ import { Packer, Document, Paragraph, HeadingLevel } from "docx";
+ import {
+-  parseInlineMarkdown,
+   createParagraph,
+   createTableFromData,
+-  createCodeBlock,
++  renderBodyEntries,
++  tableOptionsFromStyle,
+ } from "./doc-utils.js";
+ import { getStyleConfig, buildDocumentStyles, createNumberingConfig } from "./styling.js";
+ import { log } from "../utils/logger.js";
+@@ -202,145 +202,96 @@
+ }
+ 
+ /**
+- * Generate XML for paragraphs using the docx library
+- * This "borrows" the docx library's XML generation capability
++ * Render body elements in a throwaway document and hand back its word/document.xml
++ * plus the hyperlink relationships it declared — the "borrowed" docx-library XML the
++ * patch paths splice into an existing file.
+  */
+-async function generateParagraphsXML(paragraphs, styleConfig) {
+-  const children = [];
+-  const baseStyle = {
+-    size: styleConfig.font.size,
+-    fontFamily: styleConfig.font.family,
+-    color: styleConfig.font.color,
+-  };
+-
+-  for (const para of paragraphs) {
+-    if (!para) continue;
+-
+-    if (typeof para === "string") {
+-      // Detect fenced code blocks (```...```)
+-      if (para.trimStart().startsWith("```")) {
+-        children.push(...createCodeBlock(para, styleConfig.code));
+-        continue;
+-      }
+-
+-      const patchBaseStyle = {
+-        ...baseStyle,
+-        codeColor: styleConfig.code?.color,
+-        codeBackground: styleConfig.code?.backgroundColor,
+-      };
+-      const textRuns = parseInlineMarkdown(para, patchBaseStyle);
+-      children.push(
+-        createParagraph(textRuns, {
+-          alignment: styleConfig.paragraph.alignment,
+-          spacingBefore: styleConfig.paragraph.spacingBefore,
+-          spacingAfter: styleConfig.paragraph.spacingAfter,
+-          lineSpacing: styleConfig.paragraph.lineSpacing,
+-        }),
+-      );
+-    } else if (para && typeof para === "object" && para.text) {
+-      const textRuns = parseInlineMarkdown(para.text, baseStyle);
+-      children.push(
+-        createParagraph(textRuns, {
+-          alignment: para.alignment || styleConfig.paragraph.alignment,
+-          spacingBefore: styleConfig.paragraph.spacingBefore,
+-          spacingAfter: styleConfig.paragraph.spacingAfter,
+-          lineSpacing: styleConfig.paragraph.lineSpacing,
+-        }),
+-      );
+-    }
+-  }
+-
+-  // Create a temporary document to generate the XML (with embedded styles).
+-  // Numbering config is included so list paragraphs from parseMarkdownToDocx
+-  // render correctly even when emitted via the XML-patch path.
++async function renderToXML(children, styleConfig) {
+   const tempDoc = new Document({
+     styles: buildDocumentStyles(styleConfig),
+     numbering: createNumberingConfig(),
+     sections: [
+       {
+-        children:
+-          children.length > 0 ? children : [new Paragraph({ text: "" })],
++        children: children.length > 0 ? children : [new Paragraph({ text: "" })],
+       },
+     ],
+   });
+ 
+-  // Pack to buffer and extract XML
+   const buffer = await Packer.toBuffer(tempDoc);
+   const zip = await JSZip.loadAsync(buffer);
+   const documentXml = await zip.file("word/document.xml").async("string");
++  const relsXml = (await zip.file("word/_rels/document.xml.rels")?.async("string")) ?? "";
++  const hyperlinkRels = [...relsXml.matchAll(/<Relationship\b[^>]*\/>/g)]
++    .map((m) => m[0])
++    .filter((rel) => /Type="[^"]*\/hyperlink"/.test(rel));
+ 
+-  return documentXml;
++  return { documentXml, hyperlinkRels };
+ }
+ 
+ /**
++ * Generate XML for paragraph entries with the renderer create-doc uses
++ * (renderBodyEntries): a markdown string keeps its headings, lists, quotes, code and
++ * pipe tables; a heading object is written as that heading. The inline-only copy that
++ * lived here dropped a pipe table outright (goose Q-454).
++ */
++async function generateParagraphsXML(paragraphs, styleConfig) {
++  return renderToXML(renderBodyEntries(paragraphs, styleConfig), styleConfig);
++}
++
++/**
+  * Generate XML for tables using the docx library
+  */
+ async function generateTablesXML(tables, styleConfig) {
+-  const children = [];
++  const children = tables
++    .filter((tableData) => Array.isArray(tableData) && tableData.length > 0)
++    .map((tableData) => createTableFromData(tableData, tableOptionsFromStyle(styleConfig)));
+ 
+-  for (const tableData of tables) {
+-    if (!Array.isArray(tableData) || tableData.length === 0) continue;
+-
+-    children.push(
+-      createTableFromData(tableData, {
+-        borderColor: styleConfig.table.borderColor,
+-        borderStyle: styleConfig.table.borderStyle,
+-        borderWidth: styleConfig.table.borderWidth,
+-        headerFill: styleConfig.table.headerFill,
+-        headerFontColor: styleConfig.table.headerFontColor,
+-        zebraFill: styleConfig.table.zebraFill,
+-        zebraInterval: styleConfig.table.zebraInterval,
+-        insideBorderColor: styleConfig.table.insideBorderColor,
+-        insideBorderWidth: styleConfig.table.insideBorderWidth,
+-        outsideBorderWidth: styleConfig.table.outsideBorderWidth,
+-        cellSize: styleConfig.font.size,
+-        fontFamily: styleConfig.font.family,
+-        color: styleConfig.font.color,
+-      }),
+-    );
+-  }
+-
+-  if (children.length === 0) return "";
+-
+-  const tempDoc = new Document({
+-    styles: buildDocumentStyles(styleConfig),
+-    numbering: createNumberingConfig(),
+-    sections: [
+-      {
+-        children,
+-      },
+-    ],
+-  });
+-
+-  const buffer = await Packer.toBuffer(tempDoc);
+-  const zip = await JSZip.loadAsync(buffer);
+-  const documentXml = await zip.file("word/document.xml").async("string");
+-
+-  return documentXml;
++  if (children.length === 0) return { documentXml: "", hyperlinkRels: [] };
++  return renderToXML(children, styleConfig);
+ }
+ 
+ /**
+- * Extract paragraph and table nodes from generated XML
++ * Extract the TOP-LEVEL paragraph and table nodes of a generated body, in order.
++ * A table's cell paragraphs belong to the table: extracting them as well wrote every
++ * appended table's cell text a second time as loose paragraphs after it (goose Q-454).
+  */
+ function extractContentNodes(xmlString) {
+   const parser = new SimpleXMLParser(xmlString);
+ 
+-  // Find all paragraphs and tables
+   const paragraphs = parser.findAllTags("w:p");
+   const tables = parser.findAllTags("w:tbl");
+ 
+-  // Extract the XML content
+   const nodes = [];
+-
+-  // Combine and sort by position
+-  const allNodes = [...paragraphs, ...tables].sort((a, b) => a.start - b.start);
+-
+-  for (const node of allNodes) {
+-    // Extract from the ORIGINAL xml string, not parser.xml which might be modified
++  let coveredUntil = -1;
++  for (const node of [...paragraphs, ...tables].sort((a, b) => a.start - b.start)) {
++    if (node.start < coveredUntil) continue;
+     nodes.push(xmlString.substring(node.start, node.end));
++    coveredUntil = node.end;
+   }
+ 
+   return nodes;
++}
++
++/**
++ * Declare, in the target document's relationships, the hyperlinks the spliced nodes
++ * point at. Without them a spliced <w:hyperlink r:id> names a relationship the file
++ * does not have.
++ */
++async function addHyperlinkRels(zip, insertedXml, hyperlinkRels) {
++  const used = hyperlinkRels.filter((rel) => {
++    const id = rel.match(/\bId="([^"]+)"/)?.[1];
++    return id && insertedXml.includes(`r:id="${id}"`);
++  });
++  if (used.length === 0) return;
++
++  const relsPath = "word/_rels/document.xml.rels";
++  const relsXml = await zip.file(relsPath)?.async("string");
++  if (!relsXml) {
++    throw new Error(`Invalid DOCX: ${relsPath} is missing, so the appended hyperlinks cannot be declared`);
++  }
++  const missing = used.filter((rel) => !relsXml.includes(`Id="${rel.match(/\bId="([^"]+)"/)[1]}"`));
++  if (missing.length === 0) return;
++  zip.file(relsPath, relsXml.replace("</Relationships>", `${missing.join("")}</Relationships>`));
+ }
+ 
+ /**
+@@ -392,16 +343,19 @@
+ 
+     // Generate XML for new paragraphs
+     let newContentNodes = [];
++    const hyperlinkRels = [];
+ 
+     if (paragraphs.length > 0) {
+-      const paraXml = await generateParagraphsXML(paragraphs, styleConfig);
+-      newContentNodes.push(...extractContentNodes(paraXml));
++      const generated = await generateParagraphsXML(paragraphs, styleConfig);
++      newContentNodes.push(...extractContentNodes(generated.documentXml));
++      hyperlinkRels.push(...generated.hyperlinkRels);
+     }
+ 
+     // Generate XML for new tables
+     if (tables.length > 0) {
+-      const tableXml = await generateTablesXML(tables, styleConfig);
+-      newContentNodes.push(...extractContentNodes(tableXml));
++      const generated = await generateTablesXML(tables, styleConfig);
++      newContentNodes.push(...extractContentNodes(generated.documentXml));
++      hyperlinkRels.push(...generated.hyperlinkRels);
+     }
+ 
+     if (newContentNodes.length === 0) {
+@@ -466,6 +420,7 @@
+ 
+     // Update the ZIP file with the modified XML
+     zip.file(documentXmlPath, parser.toString());
++    await addHyperlinkRels(zip, contentToInsert, hyperlinkRels);
+ 
+     // Generate the new DOCX buffer
+     const newBuffer = await zip.generateAsync({
+@@ -558,15 +513,18 @@
+     }
+ 
+     // Generate paragraphs
++    const hyperlinkRels = [];
+     if (paragraphs.length > 0) {
+-      const paraXml = await generateParagraphsXML(paragraphs, styleConfig);
+-      newContentNodes.push(...extractContentNodes(paraXml));
++      const generated = await generateParagraphsXML(paragraphs, styleConfig);
++      newContentNodes.push(...extractContentNodes(generated.documentXml));
++      hyperlinkRels.push(...generated.hyperlinkRels);
+     }
+ 
+     // Generate tables
+     if (tables.length > 0) {
+-      const tableXml = await generateTablesXML(tables, styleConfig);
+-      newContentNodes.push(...extractContentNodes(tableXml));
++      const generated = await generateTablesXML(tables, styleConfig);
++      newContentNodes.push(...extractContentNodes(generated.documentXml));
++      hyperlinkRels.push(...generated.hyperlinkRels);
+     }
+ 
+     // Build the new body content
+@@ -599,6 +557,7 @@
+ 
+     // Update the ZIP file
+     zip.file(documentXmlPath, newDocumentXml);
++    await addHyperlinkRels(zip, newBodyContent, hyperlinkRels);
+ 
+     // Update core properties if title provided
+     if (title) {
+--- a/src/tools/edit-doc.js
++++ b/src/tools/edit-doc.js
+@@ -19,11 +19,11 @@
+ import { log } from "../utils/logger.js";
+ // Import shared utilities from doc-utils.js (eliminates code duplication)
+ import {
+-  parseInlineMarkdown,
+   extractHeadingLevels,
+   createParagraph,
+   createTableFromData,
+-  createCodeBlock,
++  renderBodyEntries,
++  tableOptionsFromStyle,
+ } from "./doc-utils.js";
+ 
+ /**
+@@ -326,63 +326,13 @@
+             fontFamily: styleConfig.font.family,
+           }),
+         );
+-      }
+-
+-      // Add new paragraphs with markdown parsing
+-      const editBaseStyle1 = {
+-        ...baseStyle,
+-        codeColor: styleConfig.code?.color,
+-        codeBackground: styleConfig.code?.backgroundColor,
+-      };
+-      for (const para of newParagraphs) {
+-        if (!para) continue;
+-        if (typeof para === "string") {
+-          if (para.trimStart().startsWith("```")) {
+-            children.push(...createCodeBlock(para, styleConfig.code));
+-            continue;
+-          }
+-          const textRuns = parseInlineMarkdown(para, editBaseStyle1);
+-          children.push(
+-            createParagraph(textRuns, {
+-              alignment: styleConfig.paragraph.alignment,
+-              spacingBefore: styleConfig.paragraph.spacingBefore,
+-              spacingAfter: styleConfig.paragraph.spacingAfter,
+-              lineSpacing: styleConfig.paragraph.lineSpacing,
+-            }),
+-          );
+-        } else if (para && typeof para === "object" && para.text) {
+-          const textRuns = parseInlineMarkdown(para.text, editBaseStyle1);
+-          children.push(
+-            createParagraph(textRuns, {
+-              alignment: para.alignment || styleConfig.paragraph.alignment,
+-              spacingBefore: styleConfig.paragraph.spacingBefore,
+-              spacingAfter: styleConfig.paragraph.spacingAfter,
+-              lineSpacing: styleConfig.paragraph.lineSpacing,
+-            }),
+-          );
+-        }
+       }
+ 
+-      // Add new tables
++      // New paragraphs and tables — the same renderer as create-doc and the patch path.
++      children.push(...renderBodyEntries(processedParagraphs, styleConfig));
+       for (const tableData of newTables) {
+         if (!Array.isArray(tableData) || tableData.length === 0) continue;
+-        children.push(
+-          createTableFromData(tableData, {
+-            borderColor: styleConfig.table.borderColor,
+-            borderStyle: styleConfig.table.borderStyle,
+-            borderWidth: styleConfig.table.borderWidth,
+-            headerFill: styleConfig.table.headerFill,
+-            headerFontColor: styleConfig.table.headerFontColor,
+-            zebraFill: styleConfig.table.zebraFill,
+-            zebraInterval: styleConfig.table.zebraInterval,
+-            insideBorderColor: styleConfig.table.insideBorderColor,
+-            insideBorderWidth: styleConfig.table.insideBorderWidth,
+-            outsideBorderWidth: styleConfig.table.outsideBorderWidth,
+-            cellSize: styleConfig.font.size,
+-            fontFamily: styleConfig.font.family,
+-            color: styleConfig.font.color,
+-          }),
+-        );
++        children.push(createTableFromData(tableData, tableOptionsFromStyle(styleConfig)));
+       }
+ 
+       const doc = new Document({
+@@ -444,61 +394,11 @@
+     // Add a separator
+     children.push(new Paragraph({ text: "" }));
+ 
+-    // Add new paragraphs with markdown parsing
+-    const editBaseStyle2 = {
+-      ...baseStyle,
+-      codeColor: styleConfig.code?.color,
+-      codeBackground: styleConfig.code?.backgroundColor,
+-    };
+-    for (const para of newParagraphs) {
+-      if (!para) continue;
+-      if (typeof para === "string") {
+-        if (para.trimStart().startsWith("```")) {
+-          children.push(...createCodeBlock(para, styleConfig.code));
+-          continue;
+-        }
+-        const textRuns = parseInlineMarkdown(para, editBaseStyle2);
+-        children.push(
+-          createParagraph(textRuns, {
+-            alignment: styleConfig.paragraph.alignment,
+-            spacingBefore: styleConfig.paragraph.spacingBefore,
+-            spacingAfter: styleConfig.paragraph.spacingAfter,
+-            lineSpacing: styleConfig.paragraph.lineSpacing,
+-          }),
+-        );
+-      } else if (para && typeof para === "object" && para.text) {
+-        const textRuns = parseInlineMarkdown(para.text, editBaseStyle2);
+-        children.push(
+-          createParagraph(textRuns, {
+-            alignment: para.alignment || styleConfig.paragraph.alignment,
+-            spacingBefore: styleConfig.paragraph.spacingBefore,
+-            spacingAfter: styleConfig.paragraph.spacingAfter,
+-            lineSpacing: styleConfig.paragraph.lineSpacing,
+-          }),
+-        );
+-      }
+-    }
+-
+-    // Add new tables
++    // New paragraphs and tables — the same renderer as create-doc and the patch path.
++    children.push(...renderBodyEntries(processedParagraphs, styleConfig));
+     for (const tableData of newTables) {
+       if (!Array.isArray(tableData) || tableData.length === 0) continue;
+-      children.push(
+-        createTableFromData(tableData, {
+-          borderColor: styleConfig.table.borderColor,
+-          borderStyle: styleConfig.table.borderStyle,
+-          borderWidth: styleConfig.table.borderWidth,
+-          headerFill: styleConfig.table.headerFill,
+-          headerFontColor: styleConfig.table.headerFontColor,
+-          zebraFill: styleConfig.table.zebraFill,
+-          zebraInterval: styleConfig.table.zebraInterval,
+-          insideBorderColor: styleConfig.table.insideBorderColor,
+-          insideBorderWidth: styleConfig.table.insideBorderWidth,
+-          outsideBorderWidth: styleConfig.table.outsideBorderWidth,
+-          cellSize: styleConfig.font.size,
+-          fontFamily: styleConfig.font.family,
+-          color: styleConfig.font.color,
+-        }),
+-      );
++      children.push(createTableFromData(tableData, tableOptionsFromStyle(styleConfig)));
+     }
+ 
+     const doc = new Document({
+--- a/src/utils/formatting-quality.js
++++ b/src/utils/formatting-quality.js
+@@ -85,6 +85,7 @@
+     !headings && !lists && !emphasis && !tables && !blockquotes && !codeBlocks;
+ 
+   const result = {
++    basis: "input",
+     headings,
+     lists,
+     emphasis,
+@@ -99,7 +100,118 @@
+   return result;
+ }
+ 
++const FEATURES = ["headings", "lists", "emphasis", "tables", "blockquotes", "codeBlocks", "links"];
++
++const isOn = (props, tag) => new RegExp(`<w:${tag}/>|<w:${tag} w:val="(?:true|1|on)"/>`).test(props);
++
++function runProps(paragraphXml) {
++  return [...paragraphXml.matchAll(/<w:rPr>([\s\S]*?)<\/w:rPr>/g)].map((m) => m[1]);
++}
++
+ /**
++ * What a written DOCX body actually holds, read from its word/document.xml — the
++ * counterpart of assessFormattingQuality, which reads the INPUT (goose Q-454: the input
++ * held seven pipe tables, the file held none, and the result still said tables:true).
++ *
++ * Counts, in the vocabulary this server's renderer writes:
++ *   tables — <w:tbl> elements; headings — Heading1..6 paragraphs (not the Title);
++ *   listItems — paragraphs carrying <w:numPr>; links — <w:hyperlink>;
++ *   blockquotes — body paragraphs with a left paragraph border and indent, no shading;
++ *   codeBlocks — shaded, bordered paragraph runs (counted at each block's top border);
++ *   emphasisRuns — bold/italic/strike/inline-code runs in body text and table body rows
++ *     (a heading's, title's or header row's own bold is style, not emphasis; a quote's
++ *     italic is its style, so only its bold counts).
++ *
++ * @param {string} documentXml - word/document.xml of the written file
++ */
++export function assessWrittenDocx(documentXml) {
++  const xml = String(documentXml);
++  const tableXml = [...xml.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>/g)].map((m) => m[0]);
++  const bodyXml = xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, "");
++  const bodyParagraphs = [...bodyXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map((m) => m[0]);
++  const pPr = (p) => (p.match(/<w:pPr>([\s\S]*?)<\/w:pPr>/) || [, ""])[1];
++
++  let blockquotes = 0;
++  let codeBlocks = 0;
++  let emphasisRuns = 0;
++  for (const p of bodyParagraphs) {
++    const props = pPr(p);
++    if (/<w:pStyle w:val="(?:Title|Heading\d)"\/>/.test(props)) continue;
++    const shaded = /<w:shd\b/.test(props);
++    const bordered = /<w:pBdr>/.test(props);
++    const quote = bordered && !shaded && /<w:pBdr>[\s\S]*<w:left\b/.test(props) && /<w:ind\b[^>]*w:left=/.test(props);
++    if (quote) blockquotes++;
++    if (shaded && bordered && /<w:pBdr>[\s\S]*<w:top\b/.test(props)) codeBlocks++;
++    if (shaded && bordered) continue;
++    for (const r of runProps(p.replace(/<w:pPr>[\s\S]*?<\/w:pPr>/, ""))) {
++      const styled = isOn(r, "b") || (!quote && isOn(r, "i")) || isOn(r, "strike") || /<w:shd\b/.test(r);
++      if (styled) emphasisRuns++;
++    }
++  }
++  for (const t of tableXml) {
++    const bodyRows = [...t.matchAll(/<w:tr>[\s\S]*?<\/w:tr>/g)].map((m) => m[0]).filter((r) => !r.includes("<w:tblHeader/>"));
++    for (const row of bodyRows) {
++      for (const r of runProps(row)) {
++        if (isOn(r, "b") || isOn(r, "i") || isOn(r, "strike") || /<w:shd\b/.test(r)) emphasisRuns++;
++      }
++    }
++  }
++
++  return {
++    tables: tableXml.length,
++    headings: (xml.match(/<w:pStyle w:val="Heading\d"\/>/g) || []).length,
++    listItems: (xml.match(/<w:numPr>/g) || []).length,
++    blockquotes,
++    codeBlocks,
++    links: (xml.match(/<w:hyperlink\b/g) || []).length,
++    emphasisRuns,
++  };
++}
++
++/**
++ * The `formattingQuality` a written document reports: every feature flag is read from
++ * the file (`written`), the input's own reading is kept beside it (`input`), and any
++ * feature the input held that the file does not is named in `dropped` — never reported
++ * as present.
++ *
++ * @param {object} input - assessFormattingQuality() of the call's body
++ * @param {object} written - assessWrittenDocx() of the file's document.xml
++ */
++export function reconcileFormatting(input, written) {
++  const present = {
++    headings: written.headings > 0,
++    lists: written.listItems > 0,
++    emphasis: written.emphasisRuns > 0,
++    tables: written.tables > 0,
++    blockquotes: written.blockquotes > 0,
++    codeBlocks: written.codeBlocks > 0,
++    links: written.links > 0,
++  };
++  const dropped = FEATURES.filter((f) => input[f] && !present[f]);
++  const isPlainText =
++    !present.headings && !present.lists && !present.emphasis && !present.tables && !present.blockquotes && !present.codeBlocks;
++
++  const result = {
++    basis: "written",
++    ...present,
++    isPlainText,
++    length: input.length,
++    written,
++    input: Object.fromEntries(FEATURES.map((f) => [f, !!input[f]])),
++    dropped,
++  };
++  if (dropped.length > 0) {
++    result.hint =
++      `The body you sent has ${dropped.join(", ")} that did NOT reach the file. ` +
++      "Send the whole body as ONE markdown string in `content` (not inside a {text, headingLevel} object), " +
++      "give each table a '|---|---|' separator row directly under its header row, and re-create the document.";
++  } else if (isPlainText) {
++    result.hint = FORMATTING_HINT;
++  }
++  return result;
++}
++
++/**
+  * Self-correcting format check: when a DOCX/PDF body is really the WRONG shape
+  * for the format, suggest the better tool. Conservative — only fires on clear
+  * dominance so it isn't noisy. Returns null when the format fits.
+--- /dev/null
++++ b/test/fixtures/q454-create-doc-args.json
+@@ -0,0 +1,14 @@
++{
++  "title": "Harbourline Freight — Jira Data Center to Cloud Migration Readiness Assessment",
++  "content": "## 1. Executive Summary\n\nHarbourline Freight runs **Jira Data Center 9.12.x on a single node with PostgreSQL**, with Confluence out of scope for this assessment. The site is on the short side of a published, hard clock: Atlassian announced the **end of life for Data Center on 28 March 2029**, and the last date on which an existing customer can buy subscriptions, Marketplace apps, or user expansions is **30 March 2028**.\n\nWe modelled the user estate (430 accounts) and project estate (15 projects, 173,879 issues in total) and produced a per-user identity plan and a per-project migration plan. The headline findings are:\n\n- **309 of 430 users** can be migrated directly; **55** are case-only duplicate email pairs that should be merged before cutover; **36** should be skipped (service accounts or inactive past the 24-month threshold); **30** need human review (no email address).\n- **9 projects** can migrate in the first wave; **1** (FRT, 70,412 issues) should be a separate wave; **4** are candidates for archiving rather than migrating; **1** (EDI) needs its lead reviewed because the lead is a service account.\n- **Four project leads** would have been dropped by the inactivity rule alone — including two who have not logged in for five years or more — and would have been left owning live projects. They have all been exempted.\n\n> **Important:** the user and project datasets used here are a **synthetic model** of the estate, built from the profile described at the 2026-09-27 kickoff call. The actual user export was under NDA and was not available to us. All counts in this report are the shape of the estate, not its exact contents. The scripts that produced these plans are included and will be re-run against the live export before anything is actioned.\n\n## 2. Scope\n\n| Item | Detail |\n|---|---|\n| Product | Jira Data Center 9.12.x, single node, PostgreSQL |\n| Confluence | Out of scope for this assessment |\n| Users | 430 accounts (modelled) |\n| Projects | 15 projects, 173,879 issues in total |\n| Decision inputs | 24-month inactivity cutoff (per Aoife Brennan), project leads never dropped |\n| Deliverables | This report; re-runnable assessment scripts |\n\nThe assessment covers the identity-resolution and project-waving phases of the migration. It does not cover field/automation/attachment mapping, Cloud edition sizing beyond flagging the drivers, or the Confluence estate.\n\n## 3. User Findings\n\nOf 430 modelled accounts, the identity plan produced the following decisions:\n\n| Decision | Count | Meaning |\n|---|---|---|\n| Migrate | 309 | Active, unique, has an email address |\n| Merge | 55 | Case-only duplicate email — fold into the most recently active twin |\n| Skip | 36 | Service account, or inactive for more than 24 months |\n| Review | 30 | No email address — needs a human decision |\n\nThe dominant data-quality finding is **55 case-only duplicate email pairs** — two accounts for one person that differ only in letter casing. This is the classic consequence of the AD synchronisation being switched off in 2023. Our plan merges each pair into the most recently active account.\n\nAtlassian's own migration tooling will refuse to migrate duplicate emails, and its \"merge duplicates\" option selects the surviving account **at random** — so leaving these to the migration is leaving the choice to chance. Merging first, on paper, lets the most recently active person keep their history.\n\nFour project leads are exempted from the skip rule despite being inactive:\n\n| Lead | Project(s) | Last login | Without the lead rule |\n|---|---|---|---|\n| aoconnor | CUS, PLAN | 2021-11-13 | Skipped — inactive 1,780 days |\n| dbyrne | FLT | 2021-07-31 | Skipped — inactive 1,885 days |\n| jfarrell | SALES | 2020-06-01 | Skipped — inactive 2,310 days |\n| svc-edi | EDI | 2019-03-21 | Skipped — service account and inactive |\n\nThe case to put in front of management is the last two: a project lead not seen for six years still holds a live project's ownership. That is either a strong case that the rule is protecting real accountability, or a sign that a stale ownership record needs fixing — either way, it is a conversation, not a cleanup.\n\n## 4. Project Findings\n\nThe project plan produced the following decisions across the 15 projects:\n\n| Decision | Count | Projects |\n|---|---|---|\n| Migrate — wave 1 | 9 | WHS, CUS, FIN, HR, FLT, PORT, SAFE, ITSD, SALES |\n| Separate wave | 1 | FRT (70,412 issues — 40% of the site's total) |\n| Archive candidate | 4 | OLDWMS, MIG19, TRN, PLAN |\n| Lead review | 1 | EDI (lead is a service account) |\n\nFRT is worth naming on its own. At 70,412 issues it is 40% of the site's 173,879 issues, and it is the number Marek gave us by hand at the kickoff, which is what makes it a real finding rather than an estimate. Migrating it in the same wave as the other nine would put 40% of the site on one cutover.\n\nThe four archive candidates are all untouched for two years or more, and are a combined 3,728 issues — 2% of the site. Archiving them reduces the migration's surface and lets the client focus on the 11 live projects.\n\n## 5. Data Center End of Life\n\nThe following dates come from Atlassian's own announcement and should be the frame in which the client reads every other number in this report.\n\n| Date | What happens |\n|---|---|\n| **30 March 2026** | End of sales to new customers |\n| **30 March 2028** | End of sales to existing customers — no new subscriptions, apps, or user expansions |\n| **28 March 2029** | End of life — all Data Center products and Marketplace apps go read-only |\n\nA practical consequence worth stating plainly: the client has **less than two years** to migrate, and effectively **less than 12 months** in which to buy anything, once the 30 March 2028 purchase cutoff has passed.\n\nSources:\n\n- https://www.atlassian.com/licensing/data-center-end-of-life\n- https://support.atlassian.com/migration/docs/update-or-install-the-jira-cloud-migration-assistant/\n\n## 6. Risks\n\n| Risk | Impact | Mitigation | Owner |\n|---|---|---|---|\n| 30 no-email accounts cannot be matched at cutover | Work orphaned, licences wasted on ghost accounts | Resolve during the review phase before wave 1 | Marek |\n| 55 case-only duplicates left to the migration | Atlassian merges at random — someone keeps a stranger's history | Pre-migration merge per the identity plan | Mihai |\n| FRT (70k issues) shares a wave with the rest | 40% of the site on one cutover — long outage window, hard rollback | Separate wave, own cutover window | Aoife |\n| Four leads dropped by the inactivity rule | Ownership vacated on live projects, including svc-edi on EDI | Lead override is in the plan; confirm ownership with each lead | Aoife |\n| 3,728 issues in 4 archive candidates migrate anyway | Licences and clutter carried over needlessly | Archive before wave 1; confirm no live reporting points at them | Marek |\n| No-Cloud edition decision pending | Standard vs Premium affects cost and capacity headroom | Run the sizing script against the live export before the next call | Mihai |\n\n## 7. Next Steps\n\n| When | What | Owner |\n|---|---|---|\n| By 2026-10-02 call | Resolve the 30 no-email accounts — each needs a decision (merge, skip, or keep) | Marek |\n| By 2026-10-02 call | Confirm the lead ownership for aoconnor, dbyrne, jfarrell, and svc-edi | Aoife |\n| By 2026-10-02 call | Present edition sizing (Standard vs Premium) — needs live export to be exact | Mihai |\n| Before wave 1 | Run the identity and project plans against the real data export | Mihai |\n| Before wave 1 | Execute the 55 case-only merges per the plan | Mihai |\n| Before wave 1 | Archive the 4 archive candidates | Marek |\n\n---\n*Prepared 2026-09-29. All figures are from the modelled dataset described in the Executive Summary.*\n",
++  "stylePreset": "professional",
++  "category": "business",
++  "docType": "formal",
++  "tags": [
++    "harbourline",
++    "migration",
++    "readiness",
++    "jira"
++  ],
++  "clientHint": "agent"
++}
+--- /dev/null
++++ b/test/support/isolated-data-dir.js
+@@ -0,0 +1,11 @@
++// goose Q-454: the registry, logs and insights resolve DATA_DIR when their modules load,
++// so a test that creates real documents points it at a throwaway folder BEFORE importing
++// the tools — the user's own registry never learns about a test document.
++import { after } from "node:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import os from "node:os";
++import path from "node:path";
++
++const dir = mkdtempSync(path.join(os.tmpdir(), "docs-test-data-"));
++process.env.DATA_DIR = dir;
++after(() => rmSync(dir, { recursive: true, force: true }));
+--- /dev/null
++++ b/test/test-create-doc-tables.js
+@@ -0,0 +1,239 @@
++/**
++ * goose Q-454: create-doc must write a markdown pipe table as a real Word table, and
++ * its `formattingQuality` must describe the file it wrote, not the input it was given.
++ *
++ * The fixture is the exact create-doc call from E2E #3u (session message 772754): a
++ * `content` body that starts at '## ' — as the tool description tells models to — and
++ * holds seven GFM tables. Before the fix the whole body collapsed into ONE Heading 2
++ * paragraph (word/document.xml had no <w:tbl>) while the result said `tables: true`.
++ *
++ * Every expectation below is derived from the input text by this file's own reading of
++ * the markdown, never from the renderer, and checked against the unzipped XML.
++ */
++
++import "./support/isolated-data-dir.js";
++import "./support/doc-output-dir.js";
++import { describe, test, after } from "node:test";
++import assert from "node:assert";
++import fs from "node:fs/promises";
++import { readFileSync } from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import JSZip from "jszip";
++
++import { createDoc } from "../src/tools/create-doc.js";
++import { editDoc } from "../src/tools/edit-doc.js";
++import { assessWrittenDocx, reconcileFormatting, assessFormattingQuality } from "../src/utils/formatting-quality.js";
++
++const ARGS = JSON.parse(
++  readFileSync(new URL("./fixtures/q454-create-doc-args.json", import.meta.url), "utf8"),
++);
++
++const outDir = await fs.mkdtemp(path.join(os.tmpdir(), "q454-"));
++after(() => fs.rm(outDir, { recursive: true, force: true }));
++// Document DNA and blueprints load from the working directory: run where neither exists,
++// so the repo's own .document-dna.json neither styles these documents nor learns from them.
++process.chdir(outDir);
++
++const DELIMITER_ROW = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
++
++function splitRow(line) {
++  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
++}
++
++const stripEmphasis = (s) => s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
++
++/** The pipe tables in a markdown body: header + body rows, as the reader would see them. */
++function pipeTables(markdown) {
++  const lines = markdown.split("\n");
++  const tables = [];
++  for (let i = 1; i < lines.length; i++) {
++    if (!DELIMITER_ROW.test(lines[i]) || !lines[i - 1].includes("|")) continue;
++    const rows = [splitRow(lines[i - 1])];
++    for (let j = i + 1; j < lines.length && lines[j].trim().startsWith("|"); j++) {
++      rows.push(splitRow(lines[j]));
++    }
++    tables.push(rows.map((r) => r.map(stripEmphasis)));
++  }
++  return tables;
++}
++
++const decode = (s) =>
++  s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
++
++const textOf = (xml) => decode([...xml.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((m) => m[1]).join(""));
++
++/** Each <w:tbl> as rows of cells: {text, xml}. */
++function docxTables(documentXml) {
++  return [...documentXml.matchAll(/<w:tbl>([\s\S]*?)<\/w:tbl>/g)].map((t) => ({
++    xml: t[0],
++    rows: [...t[1].matchAll(/<w:tr>([\s\S]*?)<\/w:tr>/g)].map((r) => ({
++      xml: r[0],
++      cells: [...r[1].matchAll(/<w:tc>([\s\S]*?)<\/w:tc>/g)].map((c) => ({ xml: c[0], text: textOf(c[1]) })),
++    })),
++  }));
++}
++
++async function documentXml(filePath) {
++  const zip = await JSZip.loadAsync(await fs.readFile(filePath));
++  return zip.file("word/document.xml").async("string");
++}
++
++/** The runs of a cell whose text equals `text`, with their run properties. */
++function runsWithText(cellXml, text) {
++  return [...cellXml.matchAll(/<w:r>([\s\S]*?)<\/w:r>/g)]
++    .map((r) => ({ props: (r[1].match(/<w:rPr>([\s\S]*?)<\/w:rPr>/) || [, ""])[1], text: textOf(r[1]) }))
++    .filter((r) => r.text === text);
++}
++
++const isOn = (props, tag) => new RegExp(`<w:${tag}/>|<w:${tag} w:val="(true|1|on)"/>`).test(props);
++
++describe("create-doc renders the Q-454 report's pipe tables as Word tables", async () => {
++  const expected = pipeTables(ARGS.content);
++  const result = await createDoc({
++    ...ARGS,
++    outputPath: path.join(outDir, "readiness-assessment.docx"),
++    preventDuplicates: false,
++  });
++  const xml = result.success ? await documentXml(result.filePath) : "";
++  const tables = docxTables(xml);
++
++  test("the fixture is the report as sent: seven pipe tables", () => {
++    assert.strictEqual(expected.length, 7);
++    assert.strictEqual(result.success, true, result.message);
++  });
++
++  test("<w:tbl> count equals the input's pipe-table count", () => {
++    assert.strictEqual((xml.match(/<w:tbl>/g) || []).length, expected.length);
++  });
++
++  test("every header and body cell's text is in its table, in order", () => {
++    expected.forEach((rows, t) => {
++      const got = tables[t].rows.map((r) => r.cells.map((c) => c.text));
++      assert.deepStrictEqual(got, rows, `table ${t + 1} (header: ${rows[0].join(" | ")})`);
++    });
++  });
++
++  test("the first row is a repeating header row, bold, in the preset's header fill", () => {
++    assert.strictEqual(tables.length, expected.length);
++    for (const table of tables) {
++      const header = table.rows[0];
++      assert.match(header.xml, /<w:tblHeader\/>/);
++      for (const cell of header.cells) {
++        assert.match(cell.xml, /w:fill="2C2C2C"/, `header cell "${cell.text}" is not in professional's fill`);
++        for (const run of runsWithText(cell.xml, cell.text)) assert.ok(isOn(run.props, "b"), `header "${cell.text}" not bold`);
++      }
++    }
++  });
++
++  test("tables carry borders in the preset's colours", () => {
++    assert.strictEqual(tables.length, expected.length);
++    for (const table of tables) {
++      const borders = table.xml.match(/<w:tblBorders>([\s\S]*?)<\/w:tblBorders>/);
++      assert.ok(borders, "no <w:tblBorders>");
++      assert.match(borders[1], /<w:top w:val="single"[^>]*w:color="999999"/);
++      assert.match(borders[1], /<w:insideH w:val="single"[^>]*w:color="CCCCCC"/);
++    }
++  });
++
++  test("**bold** inside a cell survives as a bold run with the markers removed", () => {
++    const eol = tables.find((t) => t.rows[0].cells[0].text === "Date");
++    const cell = eol.rows[1].cells[0];
++    assert.strictEqual(cell.text, "30 March 2026");
++    const runs = runsWithText(cell.xml, "30 March 2026");
++    assert.ok(runs.length === 1 && isOn(runs[0].props, "b"), "the date is not a bold run");
++    assert.ok(!cell.xml.includes("**"));
++  });
++
++  test("the headings, bullets and callout around the tables are written too", () => {
++    const headings = ARGS.content.split("\n").filter((l) => /^## /.test(l)).length;
++    assert.strictEqual((xml.match(/<w:pStyle w:val="Heading2"\/>/g) || []).length, headings);
++    assert.ok(textOf(xml).includes("1. Executive Summary"), "a numbered heading lost its number");
++    const bullets = ARGS.content.split("\n").filter((l) => /^- /.test(l)).length;
++    assert.strictEqual((xml.match(/<w:numPr>/g) || []).length, bullets);
++    assert.ok(textOf(xml).includes("synthetic model"));
++  });
++
++  test("formattingQuality reports what was WRITTEN", () => {
++    const q = result.formattingQuality;
++    assert.strictEqual(q.basis, "written");
++    assert.strictEqual(q.tables, true);
++    assert.strictEqual(q.written.tables, expected.length);
++    assert.strictEqual(q.written.headings, 7);
++    assert.deepStrictEqual(q.dropped, []);
++  });
++});
++
++describe("create-doc keeps inline emphasis inside table cells", () => {
++  test("**bold** and *italic* in cells become bold and italic runs", async () => {
++    const result = await createDoc({
++      title: "Vendor Shortlist Matrix — Q4 Tooling Review",
++      content: "## Shortlist\n\n| Vendor | Note |\n|---|---|\n| **Acme Tools** | *pending* security review |\n",
++      stylePreset: "minimal",
++      outputPath: path.join(outDir, "shortlist.docx"),
++      preventDuplicates: false,
++    });
++    assert.strictEqual(result.success, true, result.message);
++    const [table] = docxTables(await documentXml(result.filePath));
++    const [vendor, note] = table.rows[1].cells;
++    assert.ok(isOn(runsWithText(vendor.xml, "Acme Tools")[0].props, "b"));
++    assert.ok(isOn(runsWithText(note.xml, "pending")[0].props, "i"));
++    assert.strictEqual(note.text, "pending security review");
++  });
++});
++
++describe("edit-doc append writes the same tables create-doc does", () => {
++  test("a markdown table, a heading object, an explicit table and a link land once each", async () => {
++    const created = await createDoc({
++      title: "Cutover Runbook — Wave One Rehearsal",
++      content: "Rehearsal notes follow.",
++      outputPath: path.join(outDir, "runbook.docx"),
++      preventDuplicates: false,
++    });
++    assert.strictEqual(created.success, true, created.message);
++
++    const edited = await editDoc({
++      filePath: created.filePath,
++      action: "append",
++      paragraphs: [
++        "## Owners\n\n| Step | Owner |\n|---|---|\n| Freeze | **Marek** |\n\nSee [the checklist](https://example.com/checklist).",
++        { text: "Rollback", headingLevel: "heading2" },
++      ],
++      tables: [[["Check", "Result"], ["Smoke test", "passed"]]],
++    });
++    assert.strictEqual(edited.success, true, edited.message);
++
++    const zip = await JSZip.loadAsync(await fs.readFile(created.filePath));
++    const xml = await zip.file("word/document.xml").async("string");
++    const tables = docxTables(xml);
++    assert.deepStrictEqual(
++      tables.map((t) => t.rows.map((r) => r.cells.map((c) => c.text))),
++      [
++        [["Step", "Owner"], ["Freeze", "Marek"]],
++        [["Check", "Result"], ["Smoke test", "passed"]],
++      ],
++    );
++    const outsideTables = textOf(xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, ""));
++    assert.ok(!outsideTables.includes("Smoke test") && !outsideTables.includes("Freeze"), "table cells were written again as loose paragraphs");
++    assert.strictEqual((xml.match(/<w:pStyle w:val="Heading2"\/>/g) || []).length, 2);
++
++    const rid = xml.match(/<w:hyperlink [^>]*r:id="([^"]+)"/)?.[1];
++    assert.ok(rid, "the link was not written as a hyperlink");
++    const rels = await zip.file("word/_rels/document.xml.rels").async("string");
++    assert.match(rels, new RegExp(`Id="${rid}"[^>]*Target="https://example.com/checklist"|Target="https://example.com/checklist"[^>]*Id="${rid}"`));
++  });
++});
++
++describe("formattingQuality never claims a table the file does not hold", () => {
++  test("a body written as one heading paragraph reports tables:false and names the drop", () => {
++    const input = assessFormattingQuality({ content: ARGS.content });
++    const collapsed =
++      '<w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Executive Summary | Item | Detail |</w:t></w:r></w:p></w:body>';
++    const q = reconcileFormatting(input, assessWrittenDocx(collapsed));
++    assert.strictEqual(input.tables, true);
++    assert.strictEqual(q.tables, false);
++    assert.strictEqual(q.written.tables, 0);
++    assert.ok(q.dropped.includes("tables") && q.dropped.includes("lists") && q.dropped.includes("blockquotes"));
++    assert.match(q.hint, /tables/);
++  });
++});
