@@ -3,6 +3,8 @@ use super::loaded_skill_context_with_args;
 use crate::agents::extension::PlatformExtensionContext;
 use crate::agents::mcp_client::{Error, McpClientTrait};
 use crate::agents::ToolCallContext;
+use crate::conversation::message::{Message, MessageContent};
+use crate::session::SessionManager;
 use async_trait::async_trait;
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
 use rmcp::model::{
@@ -10,6 +12,7 @@ use rmcp::model::{
     ServerCapabilities, ServerNotification, Tool,
 };
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +22,7 @@ pub struct SkillsClient {
     info: InitializeResult,
     working_dir: PathBuf,
     exclude_builtin_skills: bool,
+    session_manager: Arc<SessionManager>,
 }
 
 impl SkillsClient {
@@ -40,6 +44,7 @@ impl SkillsClient {
             info,
             working_dir,
             exclude_builtin_skills: false,
+            session_manager: context.session_manager,
         })
     }
 
@@ -76,6 +81,92 @@ fn bound_supporting_file(content: &str, max_chars: usize) -> (String, Option<Str
     )
 }
 
+/// How far back the model can still read `rendered`, byte for byte, as a load_skill result, counted
+/// in tool results: 1 is the most recent result in the conversation. `None` when no agent-visible
+/// result carries it — never loaded, condensed or compacted away (both hide the original from the
+/// agent), offloaded by the large-response handler, or rendered from a skill that has changed on
+/// disk since.
+fn tool_results_back(messages: &[Message], rendered: &str) -> Option<usize> {
+    let results: Vec<_> = messages
+        .iter()
+        .filter(|m| m.is_agent_visible())
+        .flat_map(|m| m.content.iter())
+        .filter_map(|content| match content {
+            MessageContent::ToolResponse(response) => Some(response),
+            _ => None,
+        })
+        .collect();
+    let at = results.iter().rposition(|response| {
+        response.tool_result.as_ref().is_ok_and(|result| {
+            result
+                .content
+                .iter()
+                .any(|item| item.as_text().is_some_and(|text| text.text == rendered))
+        })
+    })?;
+    Some(results.len() - at)
+}
+
+fn already_loaded_note(what: &str, chars: usize, back: usize) -> String {
+    let where_it_is = if back == 1 {
+        "your previous tool result".to_string()
+    } else {
+        format!("the load_skill result {back} tool results back")
+    };
+    format!(
+        "{what} is already loaded in this conversation: {where_it_is} holds its full text ({chars} \
+         characters), identical to what this call would return, so it was not sent again. Read and \
+         follow it there — loading a skill only puts its text in your context; it does not run \
+         anything or do the work. If compaction removes that earlier copy, or the skill changes on \
+         disk, load_skill returns the full text again."
+    )
+}
+
+impl SkillsClient {
+    /// Q-297 (E2E #3o, session 20260928_17): the model loaded atlassian-migration-scripts-skill
+    /// (55,278 chars, ~14.9k tokens) five times, four inside one turn — "Let me run the skill that
+    /// matches this instead of doing it by hand" — and the context went 102k → 193k of 262k. A load
+    /// whose exact text the model can still read in this conversation answers with a note naming
+    /// where; anything else — the copy compacted away, the skill edited, the history unreadable —
+    /// loads in full.
+    async fn unless_already_loaded(
+        &self,
+        ctx: &ToolCallContext,
+        what: &str,
+        rendered: String,
+    ) -> CallToolResult {
+        let back = match self
+            .session_manager
+            .get_session(&ctx.session_id, true)
+            .await
+        {
+            Ok(session) => session
+                .conversation
+                .as_ref()
+                .and_then(|conversation| tool_results_back(conversation.messages(), &rendered)),
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %ctx.session_id,
+                    %err,
+                    "load_skill: session history unreadable, so {what} is sent in full without checking for an earlier copy"
+                );
+                None
+            }
+        };
+        match back {
+            Some(back) => {
+                tracing::info!(%what, back, chars = rendered.len(), "skill already in the conversation; not sent again");
+                CallToolResult::success(vec![Content::text(already_loaded_note(
+                    what,
+                    rendered.chars().count(),
+                    back,
+                ))])
+            }
+            None => CallToolResult::success(vec![Content::text(rendered)]),
+        }
+    }
+}
+
 #[async_trait]
 impl McpClientTrait for SkillsClient {
     async fn list_tools(
@@ -101,9 +192,12 @@ impl McpClientTrait for SkillsClient {
 
         let tool = Tool::new(
             "load_skill",
-            "Load a skill's full content into your context so you can follow its instructions.\n\n\
+            "Load a skill's full content into your context so you can follow its instructions. \
+             Loading returns the skill's text; it does not run the skill or do its work.\n\n\
              Skills are listed in your system instructions. When you need to use one, \
-             load it first to get the detailed instructions.\n\n\
+             load it first to get the detailed instructions. A loaded skill stays in this \
+             conversation: follow it from that earlier result. Loading it again while that copy is \
+             still in your context returns a short note instead of the text.\n\n\
              Examples:\n\
              - load_skill(name: \"gdrive\") → Loads the gdrive skill instructions\n\
              - load_skill(name: \"my-skill\", args: \"the arguments for the skill\") → Loads a skill with arguments\n\
@@ -121,7 +215,7 @@ impl McpClientTrait for SkillsClient {
 
     async fn call_tool(
         &self,
-        _ctx: &ToolCallContext,
+        ctx: &ToolCallContext,
         name: &str,
         arguments: Option<JsonObject>,
         _cancellation_token: CancellationToken,
@@ -154,7 +248,9 @@ impl McpClientTrait for SkillsClient {
         if let Some(skill) = skills.iter().find(|s| s.name == skill_name) {
             tracing::info!(skill = %skill.name, chars = skill.content.len(), "skill loaded");
             return match loaded_skill_context_with_args(skill, args) {
-                Ok(rendered) => Ok(CallToolResult::success(vec![Content::text(rendered)])),
+                Ok(rendered) => Ok(self
+                    .unless_already_loaded(ctx, &format!("Skill '{}'", skill.name), rendered)
+                    .await),
                 Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                     "Failed to parse skill arguments: {}",
                     e
@@ -192,12 +288,18 @@ impl McpClientTrait for SkillsClient {
                                         ),
                                     );
                                     tracing::info!(file = %skill_name, chars = content.len(), truncated = note.is_some(), "skill file loaded");
-                                    CallToolResult::success(vec![Content::text(format!(
+                                    let rendered = format!(
                                         "# Loaded: {}\n\n{}\n\n---\n{}File loaded into context.",
                                         skill_name,
                                         content,
                                         note.unwrap_or_default()
-                                    ))])
+                                    );
+                                    self.unless_already_loaded(
+                                        ctx,
+                                        &format!("File '{skill_name}'"),
+                                        rendered,
+                                    )
+                                    .await
                                 }
                                 Err(e) => CallToolResult::error(vec![Content::text(format!(
                                     "Failed to read '{}': {}",
@@ -375,6 +477,186 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error.unwrap_or(false));
+    }
+
+    fn text_of(result: &CallToolResult) -> String {
+        match &result.content[0].raw {
+            rmcp::model::RawContent::Text(t) => t.text.clone(),
+            _ => panic!("expected text"),
+        }
+    }
+
+    /// A session in its own store holding one skill with a supporting file, and a client on it.
+    async fn session_with_skill(
+        temp_dir: &TempDir,
+    ) -> (SkillsClient, Arc<SessionManager>, String, PathBuf) {
+        let skill_dir = temp_dir.path().join("project/.agents/skills/big-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: big-skill\ndescription: A large skill\n---\nStep one, step two.",
+        )
+        .unwrap();
+        fs::write(skill_dir.join("template.md"), "A template.").unwrap();
+
+        let session_manager = Arc::new(SessionManager::new(temp_dir.path().join("sessions")));
+        let session = session_manager
+            .create_session(
+                temp_dir.path().join("project"),
+                "q-297".to_string(),
+                crate::session::session_manager::SessionType::User,
+                crate::config::GooseMode::Auto,
+            )
+            .await
+            .unwrap();
+        let client = SkillsClient::new(PlatformExtensionContext {
+            extension_manager: None,
+            session_manager: session_manager.clone(),
+            session: None,
+            use_login_shell_path: false,
+            working_dir: Some(temp_dir.path().join("project")),
+        })
+        .unwrap()
+        .with_builtin_skills(false);
+        (client, session_manager, session.id, skill_dir)
+    }
+
+    /// Runs load_skill(name) as the agent loop does: the call, then the request and its result
+    /// saved to the session.
+    async fn load(
+        client: &SkillsClient,
+        session_manager: &SessionManager,
+        session_id: &str,
+        name: &str,
+    ) -> String {
+        let args: JsonObject = serde_json::from_value(serde_json::json!({ "name": name })).unwrap();
+        let ctx = ToolCallContext::new(session_id.to_string(), None, None);
+        let result = client
+            .call_tool(
+                &ctx,
+                "load_skill",
+                Some(args.clone()),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let id = format!("call-{}", uuid::Uuid::new_v4());
+        session_manager
+            .add_message(
+                session_id,
+                &Message::assistant().with_tool_request(
+                    id.clone(),
+                    Ok(rmcp::model::CallToolRequestParams::new("load_skill").with_arguments(args)),
+                ),
+            )
+            .await
+            .unwrap();
+        session_manager
+            .add_message(
+                session_id,
+                &Message::user().with_tool_response(id, Ok(result.clone())),
+            )
+            .await
+            .unwrap();
+        text_of(&result)
+    }
+
+    /// Q-297: the second load of an unchanged skill in one conversation names the earlier copy
+    /// instead of sending the text again; so does a supporting file's.
+    #[tokio::test]
+    async fn a_skill_already_in_the_conversation_is_not_sent_again() {
+        let temp_dir = TempDir::new().unwrap();
+        let (client, sessions, session_id, _) = session_with_skill(&temp_dir).await;
+
+        let first = load(&client, &sessions, &session_id, "big-skill").await;
+        assert!(first.starts_with("# Loaded Skill: big-skill"));
+        assert!(first.contains("Step one, step two."));
+
+        let second = load(&client, &sessions, &session_id, "big-skill").await;
+        assert!(!second.contains("Step one, step two."), "{second}");
+        assert!(
+            second.starts_with("Skill 'big-skill' is already loaded in this conversation"),
+            "{second}"
+        );
+        assert!(
+            second.contains("your previous tool result holds"),
+            "{second}"
+        );
+        assert!(second.contains(&format!("({} characters)", first.chars().count())));
+
+        let file = load(&client, &sessions, &session_id, "big-skill/template.md").await;
+        assert!(file.contains("A template."));
+        let file_again = load(&client, &sessions, &session_id, "big-skill/template.md").await;
+        assert!(
+            file_again.starts_with("File 'big-skill/template.md' is already loaded"),
+            "{file_again}"
+        );
+
+        let third = load(&client, &sessions, &session_id, "big-skill").await;
+        assert!(
+            third.contains("the load_skill result 4 tool results back holds"),
+            "{third}"
+        );
+    }
+
+    /// Q-297: once compaction hides the earlier copy from the model, the skill loads in full.
+    #[tokio::test]
+    async fn a_skill_compacted_out_of_the_conversation_loads_in_full() {
+        let temp_dir = TempDir::new().unwrap();
+        let (client, sessions, session_id, _) = session_with_skill(&temp_dir).await;
+        load(&client, &sessions, &session_id, "big-skill").await;
+
+        let session = sessions.get_session(&session_id, true).await.unwrap();
+        let compacted = crate::conversation::Conversation::new_unvalidated(
+            session
+                .conversation
+                .unwrap()
+                .messages()
+                .iter()
+                .map(|m| m.clone().with_visibility(true, false)),
+        );
+        sessions
+            .replace_conversation(&session_id, &compacted)
+            .await
+            .unwrap();
+
+        let again = load(&client, &sessions, &session_id, "big-skill").await;
+        assert!(again.starts_with("# Loaded Skill: big-skill"), "{again}");
+        assert!(again.contains("Step one, step two."));
+    }
+
+    /// Q-297: a skill edited on disk since its earlier load is new text, so it loads in full.
+    #[tokio::test]
+    async fn a_skill_changed_on_disk_loads_in_full() {
+        let temp_dir = TempDir::new().unwrap();
+        let (client, sessions, session_id, skill_dir) = session_with_skill(&temp_dir).await;
+        load(&client, &sessions, &session_id, "big-skill").await;
+
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: big-skill\ndescription: A large skill\n---\nStep one, step two, step three.",
+        )
+        .unwrap();
+
+        let again = load(&client, &sessions, &session_id, "big-skill").await;
+        assert!(again.contains("Step one, step two, step three."), "{again}");
+    }
+
+    /// Q-297: a history goose cannot read proves nothing about an earlier copy — the skill loads
+    /// in full.
+    #[tokio::test]
+    async fn an_unreadable_history_loads_the_skill_in_full() {
+        let temp_dir = TempDir::new().unwrap();
+        let (client, _, _, _) = session_with_skill(&temp_dir).await;
+        let args: JsonObject =
+            serde_json::from_value(serde_json::json!({"name": "big-skill"})).unwrap();
+        let ctx = ToolCallContext::new("no-such-session".to_string(), None, None);
+        let result = client
+            .call_tool(&ctx, "load_skill", Some(args), CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(text_of(&result).contains("Step one, step two."));
     }
 
     /// Q-267: the skills client reads the folder the extension manager started it for — a chat's

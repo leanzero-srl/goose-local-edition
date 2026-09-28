@@ -616,6 +616,9 @@ fn scan_skills_from_dir(
                         }
                     },
                 );
+                // read_dir order is the filesystem's; a loaded skill must render the same text on
+                // every load for load_skill to recognise the copy already in the conversation (Q-297).
+                files.sort();
                 source.supporting_files = files;
 
                 seen.insert(source.name.clone());
