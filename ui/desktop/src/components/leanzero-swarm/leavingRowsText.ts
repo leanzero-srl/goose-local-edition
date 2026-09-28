@@ -11,7 +11,37 @@ export const leavingRowsMessages = defineMessages({
       '{rows, plural, one {stopped request} other {stopped requests}} still leaving the engine{since, select, none {} other { · stopped {since} ago}}',
   },
   stoppedAgo: { id: 'leavingRows.stoppedAgo', defaultMessage: 'stopped {since} ago' },
+  reasonCancelled: {
+    id: 'leavingRows.reasonCancelled',
+    defaultMessage: 'Cancelled by its caller',
+  },
+  reasonToolRepeat: {
+    id: 'leavingRows.reasonToolRepeat',
+    defaultMessage: 'Stopped by the engine: it repeated the same tool call',
+  },
+  reasonTextCycle: {
+    id: 'leavingRows.reasonTextCycle',
+    defaultMessage: 'Stopped by the engine: its answer went in circles',
+  },
+  reasonOther: { id: 'leavingRows.reasonOther', defaultMessage: 'Stopped: {reason}' },
 });
+
+/**
+ * Why a row's answer was stopped, from rank 0's named stop (Q-231 `stopped.reason`, the
+ * `last_engine_stop` shape): the three the engine names today in words, any other by its name.
+ */
+export function stopReasonText(intl: IntlShape, reason: string): string {
+  switch (reason) {
+    case 'cancelled_by_client':
+      return intl.formatMessage(leavingRowsMessages.reasonCancelled);
+    case 'tool_call_repeated':
+      return intl.formatMessage(leavingRowsMessages.reasonToolRepeat);
+    case 'text_cycle':
+      return intl.formatMessage(leavingRowsMessages.reasonTextCycle);
+    default:
+      return intl.formatMessage(leavingRowsMessages.reasonOther, { reason });
+  }
+}
 
 /**
  * The words for rows whose answers already ended but still hold the engine's batch (Q-231

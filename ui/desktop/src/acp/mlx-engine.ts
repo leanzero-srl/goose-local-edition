@@ -19,6 +19,33 @@ import { rememberLocalMlxEngineStatus } from './mlx-engine-latest';
 
 export type MlxEngineState = 'stopped' | 'mounting' | 'running' | 'failed';
 
+/** The rule a port's holder failed to be this goose's own leftover engine (goose-sidecar `NotOursRule`). */
+export type MlxStrayHolderRule =
+  | 'unreadable'
+  | 'initOrSelf'
+  | 'otherUser'
+  | 'otherEngine'
+  | 'noMarker'
+  | 'liveStarter';
+
+/** One process listening on the engine port while this goose supervises no engine there. */
+export interface MlxStrayListenerHolder {
+  pid: number;
+  /** Its command line; empty when it could not be read. */
+  argv: string[];
+  /** Proven an engine this goose started on this port whose goose is gone: a Mount stops it. */
+  ours: boolean;
+  /**
+   * When not ours: the rule it failed (an `MlxStrayHolderRule`; a rule this build does not know is
+   * shown by its finding), and the finding in full.
+   */
+  notOursRule?: string | null;
+  notOursReason?: string | null;
+  /** When what started it is alive (another goose, or a shell): that process — the one to quit. */
+  liveStarterPid?: number | null;
+  liveStarterArgv?: string[] | null;
+}
+
 export interface MlxEngineStatus {
   state: MlxEngineState;
   modelId?: string;
@@ -52,6 +79,14 @@ export interface MlxEngineStatus {
    * Optional defensively: older agents do not send it.
    */
   strayListenerPort?: number;
+  /**
+   * Who holds `strayListenerPort` (Q-249), read while no mount is in flight: every process
+   * listening on it — the facts a refused Mount names. Absent when the port is not stray, while a
+   * mount is in flight, from a goose before it, or exactly when `strayListenerHoldersError` says
+   * why they could not be read.
+   */
+  strayListenerHolders?: MlxStrayListenerHolder[] | null;
+  strayListenerHoldersError?: string | null;
   /**
    * Memory a mount can take: free pages plus the file cache the OS reclaims on demand (on macOS,
    * Activity Monitor's physical minus used). 0 exactly when `memoryError` is set.

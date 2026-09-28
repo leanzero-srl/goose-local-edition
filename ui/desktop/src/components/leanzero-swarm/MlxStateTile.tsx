@@ -50,7 +50,12 @@ import { distributedStateWord } from './mlxModeLabel';
 import { engineWayOf, measuredRunsOf, type MeasuredRuns } from './measuredRuns';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
 import { engineFigures, type EngineFigure } from './engineFigures';
-import { leavingFigureText, leavingStageWord, stoppedAgoText } from './leavingRowsText';
+import {
+  leavingFigureText,
+  leavingStageWord,
+  stopReasonText,
+  stoppedAgoText,
+} from './leavingRowsText';
 import {
   engineHeadline,
   formatElapsed,
@@ -573,6 +578,11 @@ function LeavingRow({ request }: { request: MlxLiveRequest }) {
         <span className={cx('min-w-0 truncate', WEIGHT.semibold)}>{parts.join(' · ')}</span>
         {after && <span className="shrink-0">{after}</span>}
       </div>
+      {request.stopped && (
+        <span data-testid="mlx-leaving-reason" className={cx('break-words', LABEL)}>
+          {stopReasonText(intl, request.stopped)}
+        </span>
+      )}
     </li>
   );
 }

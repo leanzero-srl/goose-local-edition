@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, other {件の停止済みリクエストがまだエンジンから抜けていません}}{since, select, none {} other { · {since} 前に停止}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "呼び出し元がキャンセル"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "停止: {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "エンジンが停止: 回答が同じところを回っていた"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "エンジンが停止: 同じツール呼び出しを繰り返していた"
+  },
   "leavingRows.stage": {
     "defaultMessage": "停止済み · 退出中"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "共有"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "コピーしました"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "コピー"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "コマンド {command} をコピー"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "この goose のアプリ自身がエンジンのポートで待ち受けています"
+  },
+  "strayListener.label": {
+    "defaultMessage": "ポート {port} は使用中です"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "この goose のものではありません — pid {pid}（{command}）が起動し、今も動かしています: この Mac の別の goose か、ターミナルです"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "この goose のものではありません — goose エンジンの印がありません（古い goose か別のプログラムが起動しました）"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "ポート {port} で何かが応答していますが、今は待ち受けているプロセスがありません — 終了した直後かもしれません。"
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "この goose のものではありません — 別のエンジンまたは別のポート用に起動された goose エンジンです"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "この goose のものではありません — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "この goose のものではありません — この Mac の別のユーザーとして動いています"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "この goose 自身のエンジンで、前回の実行の残りです — 今は何も動かしていません"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "次へ: このコマンドで停止し、実行 でもう一度起動します。"
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "次へ: 実行 でもう一度起動します — 起動時にこの残りを先に停止します。"
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "次へ: エンジンの設定で別のポートを指定します。"
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "次へ: 起動元（pid {pid}）を終了し、実行 でもう一度起動します。"
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "この goose が動かしていないプロセスがポート {port} で待ち受けています — Unmount で停止します。"
+  },
+  "strayListener.unread": {
+    "defaultMessage": "ポート {port} を使っているものを読み取れませんでした（{error}）。Unmount はそこで待ち受けているものを停止します。"
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "この goose のものと証明できません — 起動元を読み取れませんでした"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "コマンドラインを読み取れません"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name}プロバイダーが設定されています"

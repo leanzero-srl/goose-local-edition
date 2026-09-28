@@ -130,6 +130,7 @@ import {
 } from '../../acp/mlx-remote-single';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PeerHeldLine } from './PeerHeldLine';
+import { StrayListenerBanner } from './StrayListenerBanner';
 import { dropRoute } from './routeSwitch';
 import { useCutGuard } from './cutGuard';
 import { macLine, macStateWord, type MacSummary } from './macSummary';
@@ -1015,13 +1016,7 @@ function EngineSection(props: EngineSectionProps) {
       {status?.gateMessage && status.gateVerdict === 'warn' && (
         <ToneBanner tone="warn" label="Memory pressure" text={status.gateMessage} />
       )}
-      {strayPort != null && (
-        <ToneBanner
-          tone="warn"
-          label="Unsupervised engine"
-          text={`unsupervised engine on port ${strayPort} — Unmount reclaims it`}
-        />
-      )}
+      {strayPort != null && status && <StrayListenerBanner port={strayPort} status={status} />}
       {banners.mountError && (
         <ToneBanner
           tone="err"

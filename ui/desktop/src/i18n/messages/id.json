@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, other {permintaan yang dihentikan dan masih keluar dari mesin}}{since, select, none {} other { · dihentikan {since} lalu}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "Dibatalkan oleh pemanggilnya"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "Dihentikan: {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "Dihentikan oleh mesin: jawabannya berputar-putar"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "Dihentikan oleh mesin: mengulang panggilan alat yang sama"
+  },
   "leavingRows.stage": {
     "defaultMessage": "Dihentikan · sedang keluar"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "berbagi"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "Disalin"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "Salin"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "Salin perintah {command}"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "Aplikasi goose ini sendiri mendengarkan di port mesin"
+  },
+  "strayListener.label": {
+    "defaultMessage": "Port {port} sedang dipakai"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "Bukan milik goose ini — pid {pid} ({command}) memulainya dan masih menjalankannya: goose lain di Mac ini, atau terminal"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "Bukan milik goose ini — tidak membawa tanda mesin goose (goose versi lama, atau program lain, yang memulainya)"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "Ada yang menjawab di port {port}, tetapi tidak ada proses yang mendengarkan di sana sekarang — mungkin baru saja berhenti."
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "Bukan milik goose ini — mesin goose yang dimulai untuk mesin atau port lain"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "Bukan milik goose ini — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "Bukan milik goose ini — berjalan sebagai pengguna lain di Mac ini"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "Mesin milik goose ini sendiri, sisa dari jalanan sebelumnya — tidak ada yang menjalankannya sekarang"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "Berikutnya: hentikan dengan perintah ini, lalu mulai lagi di Jalankan."
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "Berikutnya: mulai lagi di Jalankan — saat mulai, sisa ini dihentikan dulu."
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "Berikutnya: beri mesin port lain di pengaturannya."
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "Berikutnya: tutup yang memulainya (pid {pid}), lalu mulai lagi di Jalankan."
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "Sebuah proses yang tidak dijalankan goose ini mendengarkan di port {port} — Unmount menghentikannya."
+  },
+  "strayListener.unread": {
+    "defaultMessage": "Siapa yang memakai port {port} tidak dapat dibaca ({error}). Unmount menghentikan apa pun yang mendengarkan di sana."
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "Tidak terbukti milik goose ini — siapa yang memulainya tidak dapat dibaca"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "baris perintah tidak terbaca"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Penyedia {name} telah dikonfigurasi"

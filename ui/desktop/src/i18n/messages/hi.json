@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, one {रोका गया अनुरोध, जो अभी भी इंजन छोड़ रहा है} other {रोके गए अनुरोध, जो अभी भी इंजन छोड़ रहे हैं}}{since, select, none {} other { · {since} पहले रोका गया}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "भेजने वाले ने रद्द किया"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "रोका गया: {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "इंजन ने रोका: जवाब घूम-फिरकर दोहराया जा रहा था"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "इंजन ने रोका: एक ही टूल कॉल दोहराई जा रही थी"
+  },
   "leavingRows.stage": {
     "defaultMessage": "रोका गया · निकल रहा है"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "साझा"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "कॉपी हुआ"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "कॉपी करें"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "कमांड {command} कॉपी करें"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "इस goose का अपना ऐप इंजन पोर्ट पर सुन रहा है"
+  },
+  "strayListener.label": {
+    "defaultMessage": "पोर्ट {port} पहले से लिया हुआ है"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "इस goose का नहीं — pid {pid} ({command}) ने इसे शुरू किया और अब भी चला रहा है: इस Mac पर कोई दूसरा goose, या कोई टर्मिनल"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "इस goose का नहीं — इस पर goose इंजन का निशान नहीं है (किसी पुराने goose या दूसरे प्रोग्राम ने इसे शुरू किया)"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "पोर्ट {port} पर कुछ जवाब दे रहा है, पर अभी वहाँ कोई प्रोसेस नहीं सुन रहा — शायद वह अभी-अभी बंद हुआ है।"
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "इस goose का नहीं — किसी दूसरे इंजन या पोर्ट के लिए शुरू किया गया goose इंजन"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "इस goose का नहीं — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "इस goose का नहीं — यह इस Mac पर किसी दूसरे यूज़र के रूप में चल रहा है"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "इस goose का अपना इंजन, पिछली बार से बचा हुआ — अब इसे कोई नहीं चला रहा"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "आगे: इस कमांड से इसे रोकें, फिर चलाएँ में दोबारा शुरू करें।"
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "आगे: चलाएँ में दोबारा शुरू करें — शुरू होते समय यह बचा हुआ इंजन पहले रोका जाएगा।"
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "आगे: इंजन की सेटिंग में उसे दूसरा पोर्ट दें।"
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "आगे: जिसने इसे शुरू किया उसे बंद करें (pid {pid}), फिर चलाएँ में दोबारा शुरू करें।"
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "एक प्रोसेस जिसे यह goose नहीं चलाता, पोर्ट {port} पर सुन रहा है — Unmount इसे रोकता है।"
+  },
+  "strayListener.unread": {
+    "defaultMessage": "पोर्ट {port} किसके पास है, यह पढ़ा नहीं जा सका ({error})। Unmount वहाँ सुन रही किसी भी चीज़ को रोकता है।"
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "इस goose का होना साबित नहीं — इसे किसने शुरू किया, यह पढ़ा नहीं जा सका"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "कमांड लाइन पढ़ी नहीं जा सकी"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} प्रदाता कॉन्फ़िगर किया गया है"

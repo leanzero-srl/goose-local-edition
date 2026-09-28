@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, one {gestoppte Anfrage verlässt noch die Engine} other {gestoppte Anfragen verlassen noch die Engine}}{since, select, none {} other { · vor {since} gestoppt}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "Vom Aufrufer abgebrochen"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "Gestoppt: {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "Von der Engine gestoppt: die Antwort drehte sich im Kreis"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "Von der Engine gestoppt: derselbe Tool-Aufruf wiederholte sich"
+  },
   "leavingRows.stage": {
     "defaultMessage": "Gestoppt · verlässt die Engine"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "teilen"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "Kopiert"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "Kopieren"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "Befehl {command} kopieren"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "PID {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "Die goose-App selbst lauscht auf dem Engine-Port"
+  },
+  "strayListener.label": {
+    "defaultMessage": "Port {port} ist belegt"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "Nicht von diesem goose — PID {pid} ({command}) hat ihn gestartet und betreibt ihn noch: ein anderes goose auf diesem Mac oder ein Terminal"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "Nicht von diesem goose — er trägt keine goose-Engine-Markierung (ein älteres goose oder ein anderes Programm hat ihn gestartet)"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "Auf Port {port} antwortet etwas, aber dort lauscht jetzt kein Prozess — er wurde vielleicht gerade beendet."
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "Nicht von diesem goose — eine goose-Engine, gestartet für eine andere Engine oder einen anderen Port"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "Nicht von diesem goose — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "Nicht von diesem goose — er läuft als anderer Benutzer auf diesem Mac"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "Die eigene Engine dieses goose, übrig von einem früheren Lauf — nichts betreibt sie mehr"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "Weiter: mit diesem Befehl beenden, dann in Ausführen erneut starten."
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "Weiter: in Ausführen erneut starten — der Start beendet diesen Rest zuerst."
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "Weiter: der Engine in ihren Einstellungen einen anderen Port geben."
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "Weiter: beenden, was ihn gestartet hat (PID {pid}), dann in Ausführen erneut starten."
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "Ein Prozess, den dieses goose nicht betreibt, lauscht auf Port {port} — Unmount beendet ihn."
+  },
+  "strayListener.unread": {
+    "defaultMessage": "Wer Port {port} belegt, konnte nicht gelesen werden ({error}). Unmount beendet, was dort lauscht."
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "Nicht als dieses goose nachgewiesen — wer ihn gestartet hat, konnte nicht gelesen werden"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "Befehlszeile nicht lesbar"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Anbieter {name} ist konfiguriert"
