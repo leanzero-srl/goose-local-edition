@@ -475,6 +475,7 @@ impl ShellTool {
             working_dir,
             login_path_ref,
             session_id,
+            super::process_groups::spawn_in_own_group(),
         )
         .await
         {
@@ -567,6 +568,16 @@ impl ShellTool {
                 "\n\nCommand timed out after {} seconds",
                 resolve_shell_timeout(params.timeout_secs)
             ));
+            if let Some(cause) = &execution.stall_cause {
+                rendered.push_str(&format!("\n{cause}"));
+            }
+            if !execution.survivors.is_empty() {
+                rendered.push_str(&format!(
+                    "\nIts processes {:?} were still present after SIGKILL — a process stuck in \
+                     the kernel dies only when that call returns.",
+                    execution.survivors
+                ));
+            }
             true
         } else {
             execution.exit_code.unwrap_or(1) != 0
@@ -630,6 +641,11 @@ struct ExecutionOutput {
     timed_out: bool,
     output_truncated: bool,
     output_collection_error: Option<String>,
+    /// Q-406: why a timed-out command was still running, read from its processes before they
+    /// were signalled (`stall::diagnose`); `None` only when nothing timed out.
+    stall_cause: Option<String>,
+    /// Processes of a terminated command still in its group after SIGKILL.
+    survivors: Vec<i32>,
     /// II-7: set when the timeout expired on a REGISTERED own-group spawn and the process was
     /// detached instead of killed — the caller renders a measurement, never an error.
     detached: Option<DetachedShell>,
@@ -694,6 +710,7 @@ async fn run_command(
     working_dir: Option<&std::path::Path>,
     login_path: Option<&str>,
     session_id: Option<&str>,
+    own_group: bool,
 ) -> Result<ExecutionOutput, String> {
     let timeout_secs = Some(resolve_shell_timeout(timeout_secs));
 
@@ -703,25 +720,34 @@ async fn run_command(
     command.stderr(Stdio::piped());
     command.stdin(Stdio::null());
 
-    // Own process group per spawn when the host process opted in (the swarm engine does): a
-    // backgrounded grandchild then daemonizes INTO THIS GROUP instead of the engine's, so it stays
-    // reapable per attempt and a sweep of it can never signal the engine. r2 died to the inverse:
-    // an app server leaked into the engine's group, and the operator's killpg took both.
+    // Own process group per spawn unless a terminal Ctrl+C must reach the command (see
+    // process_groups): a pipeline's processes — and a backgrounded grandchild — then live in THIS
+    // group, so a timeout, a cancel or goose serve's teardown can signal all of them under the
+    // group proof, and a sweep of it can never signal the engine. r2 died to the inverse (an app
+    // server leaked into the engine's group, the operator's killpg took both); Q-406 to its twin
+    // (a timeout killed bash alone and the TCC-blocked find outlived the turn forever).
     #[cfg(unix)]
-    let own_group = super::process_groups::enabled();
+    let swarm_registry = super::process_groups::enabled();
     #[cfg(unix)]
     if own_group {
         command.process_group(0);
     }
+    #[cfg(not(unix))]
+    let _ = own_group;
 
+    let started = std::time::Instant::now();
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to spawn shell command: {}", error))?;
 
     #[cfg(unix)]
+    let mut processes = child
+        .id()
+        .map(|pid| super::process_groups::CommandProcesses::spawned(pid as i32, own_group));
+    #[cfg(unix)]
     let spawned_pgid = if own_group {
         let pgid = child.id().map(|p| p as i32);
-        if let (Some(pgid), Some(sid)) = (pgid, session_id) {
+        if let (true, Some(pgid), Some(sid)) = (swarm_registry, pgid, session_id) {
             super::process_groups::register(sid, pgid);
         }
         pgid
@@ -741,15 +767,22 @@ async fn run_command(
         .ok_or_else(|| "Failed to capture stderr".to_string())?;
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let output_task = tokio::spawn(collect_tagged_lines(child_stdout, child_stderr, tx));
+    let mut output_task = tokio::spawn(collect_tagged_lines(child_stdout, child_stderr, tx));
     let abort_handle = output_task.abort_handle();
 
     let mut timed_out = false;
+    let mut stall_cause = None;
     let exit_code = if let Some(timeout_secs) = timeout_secs.filter(|value| *value > 0) {
         match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await {
-            Ok(wait_result) => wait_result
-                .map_err(|error| format!("Failed waiting on shell command: {}", error))?
-                .code(),
+            Ok(wait_result) => {
+                #[cfg(unix)]
+                if let Some(processes) = processes.as_mut() {
+                    processes.finished();
+                }
+                wait_result
+                    .map_err(|error| format!("Failed waiting on shell command: {}", error))?
+                    .code()
+            }
             Err(_) => {
                 // II-7: expiry is a MEASUREMENT, not an error path, when the spawn leads its own
                 // REGISTERED process group (the swarm's attempt-scoped sessions). The timeout
@@ -761,10 +794,13 @@ async fn run_command(
                 //
                 // A pipe nobody reads would block the detached process at the ~64KB buffer (or
                 // SIGPIPE it if we dropped the read ends), so the collector task is kept alive
-                // and a drainer discards its lines for the group's lifetime. Unregistered spawns
-                // (interactive goose; no session) keep the kill exactly as before.
+                // and a drainer discards its lines for the group's lifetime. Every other spawn —
+                // goose serve, the desktop, the terminal — is terminated below.
                 #[cfg(unix)]
-                if let (Some(pgid), Some(_)) = (spawned_pgid, session_id) {
+                if let (true, Some(pgid), Some(_)) = (swarm_registry, spawned_pgid, session_id) {
+                    if let Some(processes) = processes.as_mut() {
+                        processes.finished();
+                    }
                     let listening_ports = group_listening_ports(pgid).await;
                     let mut lines = Vec::new();
                     while let Ok(item) = rx.try_recv() {
@@ -781,6 +817,8 @@ async fn run_command(
                         timed_out: false,
                         output_truncated: false,
                         output_collection_error: None,
+                        stall_cause: None,
+                        survivors: Vec::new(),
                         detached: Some(DetachedShell {
                             pgid,
                             listening_ports,
@@ -788,27 +826,63 @@ async fn run_command(
                     });
                 }
                 timed_out = true;
+                // The cause is read BEFORE any signal: the stuck process's stack and working
+                // directory are gone the moment it dies.
+                #[cfg(unix)]
+                if let Some(processes) = processes.as_mut() {
+                    let members = processes.members();
+                    stall_cause = Some(super::stall::diagnose(&members, started.elapsed()).await);
+                    processes.sigterm();
+                    if tokio::time::timeout(super::process_groups::EXIT_GRACE, child.wait())
+                        .await
+                        .is_err()
+                    {
+                        processes.sigkill_survivors();
+                    }
+                }
+                #[cfg(not(unix))]
+                let _ = (&started, &mut stall_cause);
                 let _ = child.start_kill();
                 let _ = child.wait().await;
                 None
             }
         }
     } else {
-        child
+        let status = child
             .wait()
             .await
-            .map_err(|error| format!("Failed waiting on shell command: {}", error))?
-            .code()
+            .map_err(|error| format!("Failed waiting on shell command: {}", error))?;
+        #[cfg(unix)]
+        if let Some(processes) = processes.as_mut() {
+            processes.finished();
+        }
+        status.code()
     };
 
-    const OUTPUT_DRAIN_TIMEOUT_MILLIS: u64 = 500;
+    let drain_window = super::process_groups::EXIT_GRACE;
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut drained = tokio::time::timeout(drain_window, &mut output_task).await;
+    // A terminated command whose pipe is still held after SIGTERM: SIGKILL what is left, per pid,
+    // and give the pipe the same window again. A command that exited on its own keeps its
+    // backgrounded children — the model may have started a server on purpose.
+    #[cfg(unix)]
+    let mut survivors = Vec::new();
+    #[cfg(unix)]
+    if timed_out {
+        if let Some(processes) = processes.as_mut() {
+            if drained.is_err() {
+                processes.sigkill_survivors();
+                drained = tokio::time::timeout(drain_window, &mut output_task).await;
+            }
+            survivors = processes.survivors();
+            processes.finished();
+        }
+    }
+    #[cfg(not(unix))]
+    let survivors = Vec::new();
+
     let mut output_collection_error = None;
-    let output_truncated = match tokio::time::timeout(
-        Duration::from_millis(OUTPUT_DRAIN_TIMEOUT_MILLIS),
-        output_task,
-    )
-    .await
-    {
+    let output_truncated = match drained {
         Ok(Ok(Ok(()))) => false,
         Ok(Ok(Err(e))) => {
             output_collection_error = Some(format!("Failed to collect shell output: {}", e));
@@ -820,8 +894,8 @@ async fn run_command(
         }
         Err(_) => {
             tracing::debug!(
-                    "output drain timed out after {OUTPUT_DRAIN_TIMEOUT_MILLIS}ms (backgrounded process?)"
-                );
+                "output drain timed out after {drain_window:?} (backgrounded process?)"
+            );
             abort_handle.abort();
             true
         }
@@ -836,7 +910,7 @@ async fn run_command(
     // A group with no survivors leaves the registry now; one whose daemonized grandchildren live
     // on STAYS registered — that entry is the leak-in-waiting the attempt-end reap exists to kill.
     #[cfg(unix)]
-    if let Some(pgid) = spawned_pgid {
+    if let (true, Some(pgid)) = (swarm_registry, spawned_pgid) {
         super::process_groups::prune_finished(pgid);
     }
 
@@ -846,6 +920,8 @@ async fn run_command(
         timed_out,
         output_truncated,
         output_collection_error,
+        stall_cause,
+        survivors,
         detached: None,
     })
 }
@@ -1613,5 +1689,147 @@ mod tests {
             "killed process should have no exit code"
         );
         assert!(extract_text(&result).contains("Command timed out after 1 seconds"));
+    }
+
+    /// Ends every process whose command line carries `marker` if a test fails before its command
+    /// did — a failing leak test must not leak for the rest of the machine's day.
+    #[cfg(unix)]
+    struct PkillOnDrop(&'static str);
+
+    #[cfg(unix)]
+    impl Drop for PkillOnDrop {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", self.0])
+                .status();
+        }
+    }
+
+    /// Whether no process's command line carries `marker` any more (polled: a killed orphan is
+    /// reaped by launchd/init a moment after it dies).
+    #[cfg(unix)]
+    async fn none_left(marker: &str) -> bool {
+        for _ in 0..150 {
+            let status = std::process::Command::new("pgrep")
+                .args(["-f", marker])
+                .status()
+                .expect("pgrep");
+            if status.code() == Some(1) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    /// Q-406, the orphan half: a timeout used to kill the shell alone, so the pipeline's
+    /// processes lived on as PPID-1 orphans and the one holding the pipe made the drain time out.
+    /// Now the whole command goes, and the drain reaches EOF.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_timed_out_pipeline_leaves_no_survivor_and_the_drain_reaches_eof() {
+        let marker = "sleep 406001";
+        let _cleanup = PkillOnDrop(marker);
+        let tool = ShellTool::new_for_test().unwrap();
+        let result = tool
+            .shell(ShellParams {
+                command: format!("{marker} | cat"),
+                timeout_secs: Some(1),
+            })
+            .await;
+        let text = extract_text(&result).to_string();
+        let shell_output = extract_shell_output(&result);
+        assert!(shell_output.timed_out, "{text}");
+        assert!(
+            !shell_output.output_truncated,
+            "the drain must reach EOF once the command's processes are gone: {text}"
+        );
+        assert!(
+            none_left(marker).await,
+            "a pipeline process survived: {text}"
+        );
+    }
+
+    /// The same guarantee for a command in the terminal's SHARED group (goose in a terminal
+    /// keeps it for Ctrl+C): no killpg is possible there, so the shell and its descendants are
+    /// signalled per pid.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_timed_out_pipeline_in_the_shared_group_leaves_no_survivor() {
+        let marker = "sleep 406002";
+        let _cleanup = PkillOnDrop(marker);
+        let execution = run_command(&format!("{marker} | cat"), Some(1), None, None, None, false)
+            .await
+            .expect("run");
+        assert!(execution.timed_out);
+        assert!(
+            !execution.output_truncated,
+            "the drain must reach EOF once the command's processes are gone"
+        );
+        assert!(execution.survivors.is_empty(), "{:?}", execution.survivors);
+        assert!(none_left(marker).await, "a pipeline process survived");
+    }
+
+    /// A cancelled tool call drops the shell future; dropping it terminates the command instead
+    /// of leaving it running under a turn that is already over.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_cancelled_command_leaves_no_survivor() {
+        let marker = "sleep 406003";
+        let _cleanup = PkillOnDrop(marker);
+        let tool = ShellTool::new_for_test().unwrap();
+        let call = tool.shell(ShellParams {
+            command: format!("{marker} | cat"),
+            timeout_secs: Some(600),
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), call)
+                .await
+                .is_err(),
+            "the command must still be running when the call is dropped"
+        );
+        assert!(none_left(marker).await, "the cancelled command survived");
+    }
+
+    /// Q-406, the cause half. A reader blocked opening a FIFO with no writer sits in open()
+    /// exactly like find inside a folder macOS privacy protection is holding — the portable
+    /// stand-in for the TCC block (which it is not: no privacy request names this pid, so the
+    /// cause must say open() and the directory, not claim privacy protection).
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_command_blocked_in_open_gets_a_named_cause() {
+        use std::os::unix::ffi::OsStrExt;
+        let marker = "cat q406-no-writer";
+        let _cleanup = PkillOnDrop(marker);
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("q406-no-writer");
+        let fifo_c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+        let tool = ShellTool::new_for_test().unwrap();
+        let result = tool
+            .shell_with_cwd(
+                ShellParams {
+                    command: marker.to_string(),
+                    timeout_secs: Some(1),
+                },
+                Some(dir.path()),
+            )
+            .await;
+        let text = extract_text(&result).to_string();
+        let real_dir = dir.path().canonicalize().unwrap();
+        assert!(text.contains("Command timed out after 1 seconds"), "{text}");
+        assert!(text.contains("`cat` (pid "), "{text}");
+        assert!(
+            text.contains(&format!(
+                "blocked in open() on an entry of {}",
+                real_dir.display()
+            )),
+            "{text}"
+        );
+        assert!(
+            !text.contains("blocked by macOS privacy protection"),
+            "a FIFO is not a privacy block: {text}"
+        );
+        assert!(none_left(marker).await, "{text}");
     }
 }

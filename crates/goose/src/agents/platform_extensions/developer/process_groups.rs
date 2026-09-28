@@ -10,31 +10,315 @@
 //!    whole subtree (backgrounded servers included) is addressable as one unit that is not ours.
 //! 2. The engine's own process group is NEVER signalled by the reaper, whatever the registry holds.
 //!
-//! OFF unless `enable()` is called: an interactive goose session keeps today's behaviour, where a
-//! terminal Ctrl+C reaches shell children through the shared foreground group. The swarm engine
-//! enables it because its workers are exactly the callers whose leftovers must be reapable per
-//! attempt. Registration is keyed by session id — each swarm attempt runs in its own session — so a
-//! reap of one attempt can never touch a concurrent sibling's processes.
+//! THE REGISTRY is OFF unless `enable()` is called; the swarm engine enables it because its
+//! workers are exactly the callers whose leftovers must be reapable per attempt. Registration is
+//! keyed by session id — each swarm attempt runs in its own session — so a reap of one attempt can
+//! never touch a concurrent sibling's processes.
+//!
+//! OWN-GROUP SPAWNING is wider (Q-406, 2026-09-28): every shell command leads its own group unless
+//! a terminal Ctrl+C can reach this process (`host_holds_terminal_foreground`). Before Q-406 it
+//! followed `enable()`, so goose serve and the desktop spawned into goosed's group, and a timeout
+//! killed bash ALONE: a `find ~ … | head` whose find sat in a macOS privacy (TCC) `open()` outlived
+//! the turn forever as a PPID-1 orphan, head held the output pipe, and the model saw a bare
+//! "(no output)". The terminal keeps the shared foreground group because that is what lets a
+//! Ctrl+C — and a `sudo`/`ssh` prompt on /dev/tty — reach the command; a background group would
+//! stop on SIGTTIN instead. `CommandProcesses` is what signals a command's processes on timeout,
+//! cancel and goose serve's teardown, through the same proof the sidecar's group kill requires.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// How long a command's processes get to exit (and its pipes to close) before the next step: the
+/// shell tool's post-exit output drain, and the SIGTERM → SIGKILL window of a terminated command.
+/// One window for both because they wait on the same thing — the last holder of the pipe going.
+pub const EXIT_GRACE: Duration = Duration::from_millis(500);
+
+/// Whether a terminal Ctrl+C reaches this process: it has a controlling terminal and its group is
+/// that terminal's foreground group (goose in a terminal). Opening /dev/tty fails with ENXIO when
+/// there is no controlling terminal — goose serve under the desktop, a daemon — and that failure
+/// IS the answer "no terminal", so it reads as false.
+pub fn host_holds_terminal_foreground() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
+        let Ok(tty) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOCTTY)
+            .open("/dev/tty")
+        else {
+            return false;
+        };
+        unsafe { libc::tcgetpgrp(tty.as_raw_fd()) == libc::getpgrp() }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// Whether the next shell command leads its own process group (see the module doc).
+pub fn spawn_in_own_group() -> bool {
+    enabled() || !host_holds_terminal_foreground()
+}
 
 fn registry() -> &'static Mutex<Vec<(String, i32)>> {
     static REGISTRY: OnceLock<Mutex<Vec<(String, i32)>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// Turn own-group spawning ON for this process. One-way and idempotent: the swarm engine calls it
-/// on every worker dispatch, and there is no path back because a half-enabled process would mix
-/// reapable and unreapable children under the same sessions.
+/// Turn the session registry ON for this process (and own-group spawning with it, terminal or
+/// not). One-way and idempotent: the swarm engine calls it on every worker dispatch, and there is
+/// no path back because a half-enabled process would mix reapable and unreapable children under
+/// the same sessions.
 pub fn enable() {
     ENABLED.store(true, Ordering::Relaxed);
 }
 
 pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
+}
+
+/// Leaders of own-group shell commands whose `run_command` is still in flight — what goose serve's
+/// teardown stops on its way out. Before Q-406 those commands sat in goosed's own group, which the
+/// desktop signals on quit; in groups of their own that signal no longer reaches them.
+fn live() -> &'static Mutex<HashSet<i32>> {
+    static LIVE: OnceLock<Mutex<HashSet<i32>>> = OnceLock::new();
+    LIVE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// `killpg(leader, signal)` only when the sidecar's proof holds on this exact pid: it is the LIVE
+/// leader of its own group (`getpgid(leader) == leader`) and that group is not ours
+/// (`leader != getpgrp()`) — the gate-4-sanctioned shape. Returns whether the group was signalled;
+/// `false` means nothing was.
+#[cfg(unix)]
+pub fn signal_owned_group(leader: i32, signal: i32) -> bool {
+    if leader <= 1 || !goose_sidecar::owns_process_group(leader as u32) {
+        return false;
+    }
+    unsafe { libc::killpg(leader, signal) == 0 }
+}
+
+/// pids `pgrep` matches for `args`. Exit 1 is pgrep's "matched nothing" — an honest empty; any
+/// other failure is an error the caller must state, never an empty list.
+#[cfg(unix)]
+fn pgrep(args: &[&str]) -> std::io::Result<Vec<i32>> {
+    let out = std::process::Command::new("pgrep").args(args).output()?;
+    match out.status.code() {
+        Some(0) => Ok(String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect()),
+        Some(1) => Ok(Vec::new()),
+        _ => Err(std::io::Error::other(format!(
+            "pgrep {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))),
+    }
+}
+
+#[cfg(unix)]
+fn pgid_of(pid: i32) -> Option<i32> {
+    let pgid = unsafe { libc::getpgid(pid) };
+    (pgid > 0).then_some(pgid)
+}
+
+/// The processes of one shell command, from spawn until it is finished, detached, or terminated.
+/// Own-group commands are addressed as their group (members: `pgrep -g leader`, and an orphan
+/// keeps the pgid); a command in the terminal's shared group is addressed as the shell plus its
+/// descendants, per pid. Every pid ever enumerated is remembered, because an orphan of a shared-
+/// group command is no longer anyone's descendant by the time the SIGKILL leg looks.
+///
+/// Dropped while still ARMED — the tool call was cancelled and its future dropped — it signals the
+/// command itself: SIGTERM now, SIGKILL for whatever is left after `EXIT_GRACE`.
+#[cfg(unix)]
+pub struct CommandProcesses {
+    leader: i32,
+    own_group: bool,
+    group: i32,
+    seen: Vec<i32>,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl CommandProcesses {
+    pub fn spawned(leader: i32, own_group: bool) -> Self {
+        if own_group {
+            live()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(leader);
+        }
+        Self {
+            leader,
+            own_group,
+            group: if own_group {
+                leader
+            } else {
+                unsafe { libc::getpgrp() }
+            },
+            seen: vec![leader],
+            armed: true,
+        }
+    }
+
+    /// The command ended on its own or was detached on purpose: nothing of it is signalled from
+    /// here on, and goose serve's teardown no longer counts it as live.
+    pub fn finished(&mut self) {
+        self.armed = false;
+        live()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.leader);
+    }
+
+    /// Every process of the command right now (the leader included while it lives).
+    pub fn members(&mut self) -> std::io::Result<Vec<i32>> {
+        let found = if self.own_group {
+            pgrep(&["-g", &self.leader.to_string()])?
+        } else {
+            let mut found = vec![self.leader];
+            let mut frontier = vec![self.leader];
+            while let Some(parent) = frontier.pop() {
+                for child in pgrep(&["-P", &parent.to_string()])? {
+                    if !found.contains(&child) {
+                        found.push(child);
+                        frontier.push(child);
+                    }
+                }
+            }
+            found
+        };
+        for pid in &found {
+            if !self.seen.contains(pid) {
+                self.seen.push(*pid);
+            }
+        }
+        Ok(found)
+    }
+
+    /// A pid this command may still signal: alive, never us, and still in the group it was seen
+    /// in (a group id cannot be reused while any member lives, so a match is the same process
+    /// group; for the shared group the pid was confirmed a descendant when it was seen).
+    fn still_ours(&self, pid: i32) -> bool {
+        let own_pid = std::process::id() as i32;
+        let own_group = unsafe { libc::getpgrp() };
+        if pid <= 1 || pid == own_pid || (self.own_group && self.group == own_group) {
+            return false;
+        }
+        pgid_of(pid) == Some(self.group)
+    }
+
+    /// SIGTERM the command: its whole group under the proof, else each confirmed member per pid
+    /// (the leader already gone, or the terminal's shared group — never a killpg there).
+    pub fn sigterm(&mut self) {
+        if self.own_group && signal_owned_group(self.leader, libc::SIGTERM) {
+            return;
+        }
+        let _ = self.members();
+        for pid in self.seen.clone() {
+            if self.still_ours(pid) {
+                unsafe { libc::kill(pid, libc::SIGTERM) };
+            }
+        }
+    }
+
+    /// SIGKILL, per pid, every process of the command still in its group; returns those pids.
+    pub fn sigkill_survivors(&mut self) -> Vec<i32> {
+        let _ = self.members();
+        let mut killed = Vec::new();
+        for pid in self.seen.clone() {
+            if self.still_ours(pid) && unsafe { libc::kill(pid, libc::SIGKILL) } == 0 {
+                killed.push(pid);
+            }
+        }
+        killed
+    }
+
+    /// Processes of the command that are still in its group — after a SIGKILL, the ones the kernel
+    /// has not let go of (a process in uninterruptible sleep dies only when the call returns).
+    pub fn survivors(&mut self) -> Vec<i32> {
+        let _ = self.members();
+        self.seen
+            .iter()
+            .copied()
+            .filter(|p| self.still_ours(*p))
+            .collect()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CommandProcesses {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.sigterm();
+        self.finished();
+        let mut rest = CommandProcesses {
+            leader: self.leader,
+            own_group: self.own_group,
+            group: self.group,
+            seen: std::mem::take(&mut self.seen),
+            armed: false,
+        };
+        std::thread::spawn(move || {
+            std::thread::sleep(EXIT_GRACE);
+            rest.sigkill_survivors();
+        });
+    }
+}
+
+/// goose serve's teardown step: SIGTERM every in-flight own-group shell command under the group
+/// proof, then SIGKILL per pid whatever is left after `EXIT_GRACE`. One line describes the outcome.
+pub async fn terminate_live_commands() -> String {
+    let leaders: Vec<i32> = live()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .collect();
+    terminate_command_groups(leaders).await
+}
+
+async fn terminate_command_groups(leaders: Vec<i32>) -> String {
+    if leaders.is_empty() {
+        return "no shell command was running".to_string();
+    }
+    #[cfg(unix)]
+    {
+        let mut commands: Vec<CommandProcesses> = leaders
+            .iter()
+            .map(|leader| {
+                let mut command = CommandProcesses::spawned(*leader, true);
+                command.finished();
+                let _ = command.members();
+                command.sigterm();
+                command
+            })
+            .collect();
+        tokio::time::sleep(EXIT_GRACE).await;
+        let killed: Vec<i32> = commands
+            .iter_mut()
+            .flat_map(|c| c.sigkill_survivors())
+            .collect();
+        let survivors: Vec<i32> = commands.iter_mut().flat_map(|c| c.survivors()).collect();
+        format!(
+            "{} shell command group(s) sent SIGTERM (leaders {leaders:?}); SIGKILL to {killed:?}; still present: {survivors:?}",
+            leaders.len()
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        format!(
+            "{} shell command(s) left running: no process groups on this platform",
+            leaders.len()
+        )
+    }
 }
 
 /// Record a spawned group under the session that spawned it. pgid <= 1 is refused at the door —
@@ -204,5 +488,87 @@ mod tests {
         register("attempt-session-d", 0);
         register("attempt-session-d", -1);
         assert!(reap_session("attempt-session-d").is_empty());
+    }
+
+    fn alive(pid: i32) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    /// Gate 4's proof, on every shape it must refuse: our own group (the r2 death), a child that
+    /// shares our group (not a leader), and a group whose leader already exited (an orphan keeps
+    /// the dead leader's pgid). Refusing means NOTHING is signalled — the survivors prove it.
+    #[test]
+    fn the_group_kill_refuses_when_the_proof_fails() {
+        let own_group = unsafe { libc::getpgrp() };
+        assert!(!signal_owned_group(own_group, 0), "never our own group");
+        assert!(!signal_owned_group(std::process::id() as i32, 0));
+        assert!(!signal_owned_group(1, 0));
+
+        let mut shared = std::process::Command::new("sleep")
+            .arg("406011")
+            .spawn()
+            .expect("spawn shared-group sleep");
+        let shared_pid = shared.id() as i32;
+        assert!(
+            !signal_owned_group(shared_pid, libc::SIGTERM),
+            "a child in our group is not the leader of its own"
+        );
+        assert!(shared.try_wait().unwrap().is_none(), "it must still run");
+        let _ = shared.kill();
+        let _ = shared.wait();
+
+        // Leader exits at once and is reaped; its backgrounded sleep lives on in the group.
+        let leader = spawn_own_group_daemonizer();
+        // The daemonizing subshell exits a beat after the leader; wait for the lone sleeper.
+        assert!(wait_for(|| pgrep(&["-g", &leader.to_string()])
+            .map(|m| m.len() == 1)
+            .unwrap_or(false)));
+        let orphans = pgrep(&["-g", &leader.to_string()]).unwrap();
+        assert_eq!(orphans.len(), 1, "{orphans:?}");
+        assert!(
+            !signal_owned_group(leader, libc::SIGTERM),
+            "a reaped leader proves nothing"
+        );
+        assert!(alive(orphans[0]), "the refused signal must not have landed");
+        // The per-pid leg still reaches it: confirmed in the group, killed by pid.
+        let mut command = CommandProcesses::spawned(leader, true);
+        command.finished();
+        assert_eq!(command.sigkill_survivors(), orphans);
+        assert!(wait_for(|| !group_alive(leader)));
+
+        use std::os::unix::process::CommandExt;
+        let mut owned = std::process::Command::new("sleep")
+            .arg("406012")
+            .process_group(0)
+            .spawn()
+            .expect("spawn own-group sleep");
+        assert!(signal_owned_group(owned.id() as i32, libc::SIGTERM));
+        let status = owned.wait().unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(status.signal(), Some(libc::SIGTERM));
+    }
+
+    /// goose serve's teardown step on a group this test made: a pipeline leader plus its members
+    /// all go, and the step says what it did.
+    #[tokio::test]
+    async fn teardown_terminates_an_in_flight_command_group() {
+        use std::os::unix::process::CommandExt;
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "sleep 406013 | cat"])
+            .process_group(0)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn pipeline");
+        let leader = child.id() as i32;
+        assert!(wait_for(|| pgrep(&["-g", &leader.to_string()])
+            .map(|m| m.len() >= 3)
+            .unwrap_or(false)));
+        let outcome = terminate_command_groups(vec![leader]).await;
+        assert!(outcome.contains("SIGTERM"), "{outcome}");
+        let _ = child.wait();
+        assert!(
+            wait_for(|| pgrep(&["-f", "sleep 406013"]).unwrap().is_empty()),
+            "{outcome}"
+        );
     }
 }
