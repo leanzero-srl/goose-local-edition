@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Gooseが{toolName}を実行しようとしています。許可しますか？"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {停止済みでまだエンジンから抜けていない # 件のリクエストの後ろで待機中} other {停止済みでまだエンジンから抜けていない # 件のリクエストの後ろで待機中}}{since, select, none {} other { · {since} 前に停止}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "実行中のリクエストが終わるまで待機中 — 合流するためのメモリの空きがありません"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "アップデートはバックグラウンドで自動的にダウンロードされます。"
   },

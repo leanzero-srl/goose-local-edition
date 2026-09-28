@@ -342,6 +342,7 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     busyWithOthers: null,
     busyIn: null,
     turnRequest: null,
+    turnWait: null,
     readTps: null,
     readiness: { kind: 'ready' },
   };
@@ -406,6 +407,37 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     expect(phase.textContent).toBe('Busy in ‘Jira Migration Kickoff Notes’ · 39m 15s');
     expect(phase).toHaveAttribute('title', phase.textContent);
     expect(phase.className).toContain('truncate');
+  });
+
+  it('Q-238: a queued turn says WHY, in the split’s own figures — stopped rows leaving, or no memory room', async () => {
+    const queued = { phase: 'held', activity: 'prefill', work: 'thisChat' } as const;
+    const cases = [
+      [
+        { kind: 'leaving', rows: 3, sinceStopS: 3.258 },
+        'Queued behind 3 stopped requests still leaving the engine · stopped 3s ago',
+      ],
+      [
+        { kind: 'leaving', rows: 1, sinceStopS: null },
+        'Queued behind 1 stopped request still leaving the engine',
+      ],
+      [{ kind: 'room' }, 'Queued until the running requests finish — no memory room to join them'],
+    ] as const;
+    for (const [turnWait, words] of cases) {
+      const { unmount } = renderChip({ ...STUDIO, ...queued, turnWait });
+      const phase = await screen.findByTestId('model-chip-phase');
+      expect(phase.textContent).toBe(words);
+      expect(phase).toHaveAttribute('data-turn-wait', turnWait.kind);
+      // The long sentence gives way before the dot and keeps itself whole in the title.
+      expect(phase).toHaveAttribute('title', words);
+      expect(phase.className).toContain('truncate');
+      expect(screen.getAllByTestId('lz-status-dot')[0]).toHaveAttribute('data-phase', 'held');
+      unmount();
+    }
+    // No reason reported: the plain word, as before.
+    renderChip({ ...STUDIO, ...queued });
+    const plain = await screen.findByTestId('model-chip-phase');
+    expect(plain.textContent).toBe('Queued');
+    expect(plain).not.toHaveAttribute('title');
   });
 
   it('a route to the Studio: "<model> · Work\'s Mac Studio" with the phase dot — never "swarm"', () => {

@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose quiere invocar {toolName}. ¿Permitir?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {En cola detrás de # solicitud detenida que aún está saliendo del motor} other {En cola detrás de # solicitudes detenidas que aún están saliendo del motor}}{since, select, none {} other { · detenida hace {since}}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "En cola hasta que terminen las solicitudes en curso — no hay memoria para unirse a ellas"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "La actualización se descargará automáticamente en segundo plano."
   },

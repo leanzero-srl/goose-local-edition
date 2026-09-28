@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   SPARK_WINDOW,
+  answeredRequests,
   parseSamplingDefaults,
   advanceMountWatch,
   compactTokens,
@@ -24,6 +25,7 @@ import {
   GENERATING_STATUS,
   IDLE_STATUS,
   PREFILL_STATUS,
+  SPLIT_TURN_BEHIND_LEAVING_3M,
 } from './mlxLiveStatus.fixtures';
 
 const GIB = 1024 * 1024 * 1024;
@@ -366,6 +368,44 @@ describe('parseSamplingDefaults — the split rank 0’s sampling_defaults (Q-17
     expect(parseMlxLiveStatus({ status: 'idle', requests: [] })).toMatchObject({
       ok: true,
       stats: { samplingDefaults: null },
+    });
+  });
+});
+
+/**
+ * Q-238: the tensor split's rank 0 names what a queued turn waits on (Q-231's row fields). The parser
+ * dropped all five, so no surface could say it.
+ */
+describe('Q-238: the split’s row facts — who sent it, held for room, stopped, leaving', () => {
+  it('reads E2E #3m’s rows: three dropped fact checks leaving, the user’s turn queued', () => {
+    const rows = statsOf(SPLIT_TURN_BEHIND_LEAVING_3M).requests;
+    expect(rows[0]).toMatchObject({
+      id: 'req-31',
+      client: '127.0.0.1:50001',
+      heldForRoom: false,
+      stopped: 'cancelled_by_client',
+      stoppedAfterS: 3.642,
+      leaving: true,
+    });
+    expect(rows[3]).toMatchObject({
+      id: 'req-34',
+      status: 'waiting',
+      heldForRoom: false,
+      stopped: null,
+      stoppedAfterS: null,
+      leaving: false,
+    });
+    // Nobody is answered by a leaving row: only the user's turn is anyone's request.
+    expect(answeredRequests(rows).map((r) => r.id)).toEqual(['req-34']);
+  });
+
+  it('the single engine reports none of them: null and not leaving, never guessed', () => {
+    expect(statsOf(PREFILL_STATUS).requests[0]).toMatchObject({
+      client: null,
+      heldForRoom: null,
+      stopped: null,
+      stoppedAfterS: null,
+      leaving: false,
     });
   });
 });

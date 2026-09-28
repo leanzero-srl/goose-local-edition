@@ -43,6 +43,24 @@ export interface MlxLiveRequest {
    */
   prefilledTokens: number | null;
   promptTps: number | null;
+  /**
+   * What the tensor split's rank 0 adds to a row (Q-231, rank_live.py `row_handling`) — the facts
+   * that say what a queued turn waits on. Rapid-MLX's single engine reports none of them: null /
+   * false there, never guessed.
+   *  - `client`: the HTTP peer ("host:port") that sent it;
+   *  - `heldForRoom`: rank 0 took this queued request and holds it until the batch it would join has
+   *    memory room for it (rank_prefill.py `admits`);
+   *  - `stopped`: the engine's named stop of the answer (`cancelled_by_client`, `tool_call_repeated`,
+   *    `text_cycle`), null while it runs;
+   *  - `stoppedAfterS`: when, from the request's arrival, it was stopped;
+   *  - `leaving`: the answer ended — nobody is answered by it any more — but its row still holds the
+   *    engine's batch until the generation loop lets it go.
+   */
+  client: string | null;
+  heldForRoom: boolean | null;
+  stopped: string | null;
+  stoppedAfterS: number | null;
+  leaving: boolean;
 }
 
 export interface MlxLiveStats {
@@ -135,6 +153,21 @@ function obj(v: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/** rank 0's `stopped` (`{reason: …}`, the `last_engine_stop` shape) → its reason; null while it runs. */
+function stopReason(v: unknown): string | null {
+  const stop = obj(v);
+  return stop && typeof stop.reason === 'string' && stop.reason ? stop.reason : null;
+}
+
+/**
+ * The rows someone is still answered by: a `leaving` row's answer ended (its client left, or the
+ * engine stopped it) and only its batch slot remains, so it is nobody's request — never a turn,
+ * never "another client" (Q-238: E2E #3m's three dropped fact checks read as unattributed work).
+ */
+export function answeredRequests(requests: readonly MlxLiveRequest[]): MlxLiveRequest[] {
+  return requests.filter((r) => !r.leaving);
+}
+
 /** A `/v1/status` body → typed stats, or a named reason it is not one. Absent fields stay null. */
 export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
   const root = obj(body);
@@ -161,6 +194,11 @@ export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
       cachedTokens: num(r.cached_tokens),
       prefilledTokens: num(r.prefilled_tokens),
       promptTps: num(r.prompt_tokens_per_second),
+      client: typeof r.client === 'string' && r.client ? r.client : null,
+      heldForRoom: typeof r.held_for_room === 'boolean' ? r.held_for_room : null,
+      stopped: stopReason(r.stopped),
+      stoppedAfterS: num(r.stopped_after_s),
+      leaving: r.leaving === true,
     });
   });
   return {

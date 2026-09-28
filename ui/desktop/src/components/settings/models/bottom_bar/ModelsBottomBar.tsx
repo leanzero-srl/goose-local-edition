@@ -36,6 +36,7 @@ import type { ChatServedBy, ChatWork } from '../../../chatServedBy/chatServedBy'
 import { splitStopReason } from '../../../chatServedBy/splitStopText';
 import { peerGoneOf, peerGoneText } from '../../../chatServedBy/peerGoneText';
 import { busyInHeadline } from '../../../chatServedBy/busyInText';
+import { turnWaitText } from '../../../chatServedBy/turnWaitText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
 import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 
@@ -336,13 +337,17 @@ export default function ModelsBottomBar({
       ? intl.formatMessage(i18n.phaseReconnecting)
       : splitStop
         ? intl.formatMessage(i18n.phaseSplitStopped)
-        : served?.busyIn
-          ? busyInHeadline(intl, served.busyIn)
-          : served?.work && served.work !== 'thisChat'
-            ? intl.formatMessage(WORK_WORD[served.work])
-            : served?.phase
-              ? intl.formatMessage(PHASE_WORD[served.phase])
-              : intl.formatMessage(i18n.phaseUnknown);
+        : served?.turnWait
+          ? turnWaitText(intl, served.turnWait)
+          : served?.busyIn
+            ? busyInHeadline(intl, served.busyIn)
+            : served?.work && served.work !== 'thisChat'
+              ? intl.formatMessage(WORK_WORD[served.work])
+              : served?.phase
+                ? intl.formatMessage(PHASE_WORD[served.phase])
+                : intl.formatMessage(i18n.phaseUnknown);
+  // The words that can outgrow the chip: they truncate before the dot and keep a title.
+  const longWords = goneWords != null || served?.busyIn != null || served?.turnWait != null;
   const chipLabel =
     servedModel == null
       ? null
@@ -369,12 +374,13 @@ export default function ModelsBottomBar({
                 <span
                   data-testid="model-chip-phase"
                   data-work={served.work ?? undefined}
-                  title={goneWords ?? (served.busyIn ? phaseWord : undefined)}
+                  data-turn-wait={served.turnWait?.kind}
+                  title={longWords ? phaseWord : undefined}
                   className={cx(
                     'mr-1.5 text-lz-meta font-lz-semibold',
                     // The gone sentence and the busy chat's name are the chip's longest words: they
                     // give way before the dot.
-                    goneWords || served.busyIn ? 'min-w-0 truncate' : 'shrink-0'
+                    longWords ? 'min-w-0 truncate' : 'shrink-0'
                   )}
                 >
                   {phaseWord}

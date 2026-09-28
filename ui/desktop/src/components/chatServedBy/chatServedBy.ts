@@ -13,6 +13,7 @@ import { routePeerName } from '../leanzero-swarm/macs';
 import { activityPhase, remotePhase, runPhase, singlePhase } from '../leanzero-swarm/mlxPhase';
 import {
   MLX_STATUS_POLL_MS,
+  answeredRequests,
   mlxActivity,
   requestActivity,
   type MlxActivity,
@@ -72,6 +73,18 @@ export interface ChatBusyIn {
   /** The engine holds a request WAITING: a message sent now waits too, rather than running beside. */
   waits: boolean;
 }
+
+/**
+ * Why THIS chat's turn is queued on the engine, in the split's own row facts (Q-231's rank 0 fields,
+ * Q-238: E2E #3m's turn sat "Queued" 38 s with no reason on screen):
+ *  - `leaving`: rows whose answers already ended still hold the batch — `rows` of them, the one
+ *    held longest stopped `sinceStopS` ago by the engine's own clock (null: no stop time reported);
+ *  - `room`: rank 0 holds the turn until the batch it would join has memory room for it.
+ * null = not queued, or the engine reports neither (Rapid-MLX's single engine never does).
+ */
+export type TurnWait =
+  | { kind: 'leaving'; rows: number; sinceStopS: number | null }
+  | { kind: 'room' };
 
 /** Requests on the serving engine that are not this chat's — a new turn waits behind them. */
 export interface ChatBusy {
@@ -408,6 +421,8 @@ export interface ChatServedBy extends MlxEngineServing {
    * in flight or it cannot be told apart from someone else's.
    */
   turnRequest: MlxLiveRequest | null;
+  /** Why that turn is queued, from the engine's own row facts; null when it is not, or unsaid. */
+  turnWait: TurnWait | null;
   /**
    * goose's measured reading rate for THIS turn's prompt on this way — the median of its runs at the
    * prompt's size (goose's measurement store, via main); null = none measured at that size.
@@ -582,7 +597,11 @@ function busyWith(
   }
   if (!(turnInFlight && own === 0)) others += serving.unattributed;
   if (others <= 0) return null;
-  const reading = activity === 'prefill' && own === 0 ? readingRequest(stats) : undefined;
+  // Someone else's prompt being read — never a `leaving` row's, whose answer already ended.
+  const reading =
+    activity === 'prefill' && own === 0
+      ? readingRequest({ ...stats, requests: answeredRequests(stats.requests) })
+      : undefined;
   return { requests: others, readingTokens: reading?.promptTokens ?? null };
 }
 
@@ -627,6 +646,28 @@ function busyInOf(
   };
 }
 
+/**
+ * Why the turn waits, only while it IS queued: rows already leaving come first (they are what holds
+ * the batch — E2E #3m's three dropped fact checks), else rank 0 holding it for memory room.
+ */
+function turnWaitOf(stats: MlxLiveStats, turnRequest: MlxLiveRequest | null): TurnWait | null {
+  if (!turnRequest || requestActivity(turnRequest) !== 'queued') return null;
+  const leaving = stats.requests.filter((r) => r.leaving);
+  if (leaving.length > 0) {
+    const sinceStop = leaving
+      .map((r) =>
+        r.elapsedS != null && r.stoppedAfterS != null ? r.elapsedS - r.stoppedAfterS : null
+      )
+      .filter((s): s is number => s != null && s >= 0);
+    return {
+      kind: 'leaving',
+      rows: leaving.length,
+      sinceStopS: sinceStop.length > 0 ? Math.max(...sinceStop) : null,
+    };
+  }
+  return turnRequest.heldForRoom === true ? { kind: 'room' } : null;
+}
+
 function phaseOf(
   serving: MlxEngineServing,
   inputs: ChatServedInputs,
@@ -666,6 +707,7 @@ const NOT_MLX: ChatServedBy = {
   busyWithOthers: null,
   busyIn: null,
   turnRequest: null,
+  turnWait: null,
   readTps: null,
   readiness: UNKNOWN,
 };
@@ -741,6 +783,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       readiness,
     };
@@ -767,6 +810,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       readiness,
     };
@@ -792,6 +836,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
         ? busyInOf(main, stats, activity, sessionId, inputs.turnInFlight)
         : null,
     turnRequest,
+    turnWait: stats ? turnWaitOf(stats, turnRequest) : null,
     readTps: main && turnRequest ? readingForPrompt(main.measured, turnRequest.promptTokens) : null,
     readiness,
   };

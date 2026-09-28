@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "goose가 {toolName}을 호출하려고 합니다. 허용하시겠습니까?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {아직 엔진에서 빠져나가는 중인 중지된 요청 #개 뒤에서 대기 중} other {아직 엔진에서 빠져나가는 중인 중지된 요청 #개 뒤에서 대기 중}}{since, select, none {} other { · {since} 전에 중지됨}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "실행 중인 요청이 끝날 때까지 대기 중 — 합류할 메모리 공간이 없습니다"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "업데이트는 백그라운드에서 자동으로 다운로드됩니다."
   },

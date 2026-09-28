@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose, {toolName}'yi aramak istiyor. İzin vermek?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {Motordan hâlâ çıkmakta olan # durdurulmuş isteğin arkasında sırada} other {Motordan hâlâ çıkmakta olan # durdurulmuş isteğin arkasında sırada}}{since, select, none {} other { · {since} önce durduruldu}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "Çalışan istekler bitene kadar sırada — onlara katılmak için bellekte yer yok"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Güncelleme arka planda otomatik olarak indirilecektir."
   },

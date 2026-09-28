@@ -12,6 +12,7 @@ import {
   GENERATING_STATUS,
   IDLE_STATUS,
   PREFILL_STATUS,
+  SPLIT_TURN_BEHIND_LEAVING_3M,
 } from '../leanzero-swarm/mlxLiveStatus.fixtures';
 import {
   deriveChatServedBy,
@@ -158,6 +159,7 @@ describe('deriveChatServedBy — the six moments', () => {
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       readiness: { kind: 'ready' },
     });
@@ -183,6 +185,7 @@ describe('deriveChatServedBy — the six moments', () => {
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       readiness: { kind: 'remote', status: ROUTE },
     });
@@ -207,6 +210,7 @@ describe('deriveChatServedBy — the six moments', () => {
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       // While it loads there, this Mac's own Mount stays one click away (Q-57).
       readiness: { kind: 'remote', status: mounting, instead: { kind: 'switch', mount: HF } },
@@ -230,6 +234,7 @@ describe('deriveChatServedBy — the six moments', () => {
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       readiness: { kind: 'ready' },
     });
@@ -250,6 +255,7 @@ describe('deriveChatServedBy — the six moments', () => {
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       readiness: { kind: 'ready' },
     });
@@ -277,6 +283,7 @@ describe('deriveChatServedBy — the six moments', () => {
       busyWithOthers: null,
       busyIn: null,
       turnRequest: null,
+      turnWait: null,
       readTps: null,
       readiness: {
         kind: 'unmounted',
@@ -896,5 +903,108 @@ describe('deriveChatServedBy — the chip is THIS chat’s request (Q-124)', () 
     const served = derive(false, IDLE_STATUS, []);
     expect(served.work).toBeNull();
     expect(served.phase).toBe('idle');
+  });
+});
+
+/**
+ * Q-238: E2E #3m turn 3 sat "Queued" 38 s behind three end-of-turn fact checks goose had already
+ * dropped, and nothing on screen said why. Since Q-231 the split's rank 0 names them (`leaving`,
+ * `stopped`, `held_for_room`); the one derivation turns those facts into `turnWait`.
+ */
+describe('deriveChatServedBy — why this chat’s turn is queued (Q-238)', () => {
+  const mine = {
+    key: 'chat:s-mine',
+    kind: 'chat' as const,
+    work: null,
+    sessionId: 's-mine',
+    sessionName: 'Jira Migration Kickoff Notes',
+    count: 1,
+  };
+  const titleCall = {
+    key: 'session:h1',
+    kind: 'session' as const,
+    work: null,
+    sessionId: 'h1',
+    sessionName: null,
+    sessionType: 'hidden',
+    count: 1,
+  };
+  const [check31, check32, check33, turn] = SPLIT_TURN_BEHIND_LEAVING_3M.requests;
+  const body = (...requests: object[]) => ({ ...SPLIT_TURN_BEHIND_LEAVING_3M, requests });
+  const derive = (
+    engineBody: unknown,
+    clients: NonNullable<MlxEngineSnapshot['serving']>['clients'] = [mine],
+    unattributed = 0
+  ) =>
+    deriveChatServedBy(
+      inputs({
+        distributed: SPLIT,
+        turnInFlight: true,
+        main: snapshot('distributed', engineBody, {
+          clients,
+          unattributed,
+          swarmRuns: [],
+          error: null,
+        }),
+      })
+    );
+
+  it('#3m: queued behind 3 stopped rows still leaving — the turn is ours, held, and the reason is named', () => {
+    const served = derive(SPLIT_TURN_BEHIND_LEAVING_3M);
+    expect(served.turnRequest).toMatchObject({ id: 'req-34', promptTokens: 88660 });
+    expect(served).toMatchObject({ activity: 'prefill', work: 'thisChat', phase: 'held' });
+    expect(served.turnWait).toEqual({ kind: 'leaving', rows: 3, sinceStopS: expect.any(Number) });
+    // 6.9 s since they arrived, stopped 3.642 s in: 3.258 s ago, by the engine's own clock.
+    expect(served.turnWait?.kind === 'leaving' && served.turnWait.sinceStopS).toBeCloseTo(3.258, 3);
+  });
+
+  it('NEGATIVE CONTROL — the monitor counting the leaving rows as unattributed (before Q-238): "shared", no turn, no reason', () => {
+    const served = derive(SPLIT_TURN_BEHIND_LEAVING_3M, [mine], 3);
+    expect(served).toMatchObject({ work: 'shared', turnRequest: null, turnWait: null });
+  });
+
+  it('NEGATIVE CONTROL — 3.0.63’s table listed none of them: queued, and nothing is claimed', () => {
+    const served = derive(body(turn));
+    expect(served).toMatchObject({ work: 'thisChat', phase: 'held', turnWait: null });
+  });
+
+  it('held for room behind goose’s own running call, with nothing leaving: the memory reason', () => {
+    const titleRunning = { ...check31, phase: 'generation', stopped: null, leaving: false };
+    const served = derive(body(titleRunning, { ...turn, held_for_room: true }), [mine, titleCall]);
+    expect(served.turnRequest?.id).toBe('req-34');
+    expect(served.turnWait).toEqual({ kind: 'room' });
+  });
+
+  it('the turn already reading: nothing to explain, even with rows still leaving', () => {
+    const reading = { ...turn, status: 'running', phase: 'prefill', prefilled_tokens: 2048 };
+    const served = derive(body(check31, check32, check33, reading));
+    expect(served).toMatchObject({ phase: 'reading', turnWait: null });
+  });
+
+  it('a LEAVING row larger than the turn (the chat’s own stopped answer) is never taken for the turn', () => {
+    const stoppedTurn = { ...check33, request_id: 'req-30', prompt_tokens: 120000 };
+    const served = derive(body(stoppedTurn, turn));
+    expect(served.turnRequest?.id).toBe('req-34');
+    expect(served.turnWait).toMatchObject({ kind: 'leaving', rows: 1 });
+  });
+
+  it('the single engine reports none of these facts: a queued turn keeps its plain word', () => {
+    const served = deriveChatServedBy(
+      inputs({
+        remote: ROUTE,
+        turnInFlight: true,
+        main: snapshot(
+          'remote',
+          {
+            status: 'generating',
+            requests: [
+              { request_id: 'm', status: 'waiting', phase: 'queued', prompt_tokens: 32000 },
+            ],
+          },
+          { clients: [mine], unattributed: 0, swarmRuns: [], error: null }
+        ),
+      })
+    );
+    expect(served).toMatchObject({ work: 'thisChat', phase: 'held', turnWait: null });
   });
 });

@@ -9791,6 +9791,12 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose ingin memanggil {toolName}. Izinkan?"
   },
+  "turnWait.leaving": {
+    "defaultMessage": "{rows, plural, one {Mengantre di belakang # permintaan yang dihentikan dan masih keluar dari mesin} other {Mengantre di belakang # permintaan yang dihentikan dan masih keluar dari mesin}}{since, select, none {} other { · dihentikan {since} lalu}}"
+  },
+  "turnWait.room": {
+    "defaultMessage": "Mengantre sampai permintaan yang berjalan selesai — tidak ada ruang memori untuk bergabung"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan mengunduh pembaruan di latar belakang dan menginstalnya saat Anda keluar atau memulai ulang berikutnya."
   },

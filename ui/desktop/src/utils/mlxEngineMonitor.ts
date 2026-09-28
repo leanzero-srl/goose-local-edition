@@ -1,5 +1,9 @@
 import * as yaml from 'yaml';
-import { parseMlxLiveStatus, type MlxLiveStats } from '../components/leanzero-swarm/mlxLiveStats';
+import {
+  answeredRequests,
+  parseMlxLiveStatus,
+  type MlxLiveStats,
+} from '../components/leanzero-swarm/mlxLiveStats';
 import {
   MEASURED_PENDING,
   isMlxMeasuredRead,
@@ -429,13 +433,16 @@ export class MlxEngineMonitor {
   }
 
   private async attribute(stats: MlxLiveStats, onPeer: boolean): Promise<MlxServing> {
-    if (stats.requests.length === 0) {
+    // A `leaving` row answers nobody (its client is gone — goose already dropped it): counting it
+    // made E2E #3m's three dropped fact checks "unattributed" work beside the turn (Q-238).
+    const answered = answeredRequests(stats.requests).length;
+    if (answered === 0) {
       return attributeServing([], 0, this.deps.swarmRuns(), null);
     }
     const read = await this.deps.readServing();
     return attributeServing(
       read.ok ? servingRowsForEngine(read.rows, onPeer) : [],
-      stats.requests.length,
+      answered,
       this.deps.swarmRuns(),
       read.ok ? null : read.detail
     );

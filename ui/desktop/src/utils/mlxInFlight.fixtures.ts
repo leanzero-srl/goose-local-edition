@@ -19,6 +19,11 @@ export const LIVE_WRITING: MlxLiveRequest = {
   cachedTokens: 0,
   prefilledTokens: null,
   promptTps: null,
+  client: null,
+  heldForRoom: null,
+  stopped: null,
+  stoppedAfterS: null,
+  leaving: false,
 };
 
 export function liveStats(requests: MlxLiveRequest[]): MlxLiveStats {
