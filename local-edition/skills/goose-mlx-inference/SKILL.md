@@ -471,6 +471,16 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   argv, the failed rule and the step — the device leaves the pool through `engine-mount-failed`. TRAP: an in-process
   stub listener is "this goosed itself" and is refused — reuse tests need a REAL stand-in process
   (`swarm_engine.rs` tests `fast_path_ownership`). Off unix nothing is ever reused (`engine-port-held`, unreadable).
+- LOADING OFF (THE DEFAULT) PROVES THE SAME WAY (Q-250, 2026-09-28). With `allow_model_load: false` the pre-warm and
+  `ensure_loaded` never run, so Q-248 alone left `exclude_unmountable_sidecar_devices` keeping ANY sidecar device whose
+  id the port served (measured red, 3 tests). Now its catalog keep asks the device's engine `SwarmEngine::prove_served`,
+  which reads the SAME verdict (`SidecarEngine::served_by`, shared with `reuse_served`): Own/Supervised → kept exactly
+  as before (Supervised said once per pid, `sidecar-engine-shared`, drained at the next `take_probe_absences` seam);
+  Leftover → excluded (`sidecar-device-excluded{id, reason: "sidecar-leftover-not-adopted: … next step: mount the engine
+  from a goose window or enable loading …"}` — with loading off nothing would stop and supervise it); anything else →
+  `sidecar-device-excluded{reason: "engine-port-held: …"}` naming pid, argv, rule, step. Nothing is signalled. LM Studio's
+  `prove_served` is Ok by definition (goose starts no process behind it). The desktop's own engine is `Supervised`
+  because the Electron app spawns `goose swarm` as a separate process whose parent is not goosed.
 - A KILLED CHILD IS "GONE" TO sysinfo BEFORE ITS PARENT CAN SEE IT (Q-245, 2026-09-28). Measured: for 48 of 50
   SIGKILLed children `proc_pidinfo` (so `machine::process_start`/`prove`) answered nothing while `waitid(WNOWAIT)` did
   not yet report the exit. A test that waits for a killed child and then asserts the supervisor's next `try_wait`

@@ -104,11 +104,18 @@ pub async fn resolve_fleet(
     for ev in engines.take_probe_absences() {
         sink.write_value(ev);
     }
-    for ev in sidecar_exclusion_events(&exclude_unmountable_sidecar_devices(
+    let exclusions = exclude_unmountable_sidecar_devices(
         &mut fleet_pool,
         &served,
         cfg.allow_model_load,
-    )) {
+        &engines,
+    );
+    // The exclusion's ownership proof says a shared engine as a probe fact (Q-250); this path has
+    // no later drain, so it rides out here, after the exclusions.
+    for ev in sidecar_exclusion_events(&exclusions)
+        .into_iter()
+        .chain(engines.take_probe_absences())
+    {
         sink.write_value(ev);
     }
     if require_servable() && all_resident_unservable_per_engine(&fleet_pool, &served) {
