@@ -6,16 +6,25 @@
 // A turn with no change on screen for STALL_FACTOR x the running median turn length (never below the first
 // turn's own length) is logged STALL with a screenshot and the soak goes on waiting; HANG_FACTOR x ends the soak —
 // a hang is the finding, and the driver never cancels, retries or edits the turn itself.
+// NEEDS-YOU (Q-376): every card goose raises in this chat is answered like a person would, through the card's
+// own controls, from the brief's `needsYou` guidance (needsyou.mjs) — mid-turn (the answer must show Queued,
+// Q-341) and at each turn end (the answer turn runs before the next brief turn). One needsyou.tsv row per card:
+// answer + source, queued, delivered, cleared, siblings still open (Q-344), the model's next words. A card
+// still there after its answer turn, or a sibling closed by a card answer, is a LIVE finding that ends the run
+// at the turn boundary.
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
 import { mainPage } from './mainpage.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { liveCheck } from './livecheck.mjs';
+import { loadGuidance, chooseAnswer, planClick, isAnswerMessage, readDbItems, sessionIdOf, readTray, readChat, answerCard, norm } from './needsyou.mjs';
 const dir = process.argv[2];
 const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
 const work = `${dir}/work`; mkdirSync(work, { recursive: true });
 const STALL_FACTOR = 5; // ratio: of the median turn length measured in this soak
 const HANG_FACTOR = 15; // ratio: same; the soak.py hang rule of Step 1b used 10x a running median
 const AWAY_IDLE_POLLS = 3; // three 2-s polls with nothing served: a gap between calls or the turn end, never mid-stream
+const LIVE_EVERY = 30; // ratio: 2-s polls per live check (~a minute, livecheck's cadence since Q-147); the needs-you look rides it
+const TRAY_SETTLE_POLLS = 5; // ratio: 2 x the tray's 5-s session-activity read (ACTIVITY_POLL_MS) in 2-s polls — bounds a UI refresh, never model work
 const out = `${dir}/turns.tsv`;
 writeFileSync(out, 'turn\tstart\tend\tsecs\tended\ttools\trecalled\tchip\tcounter\tnotice\n');
 // What THIS turn added: the messages after the send, never the whole page (the smoke run matched an older
@@ -24,6 +33,7 @@ const FAIL = /empty response|stopped answering|quit goose mid|No node can|Ran in
 const added = (n0) => p.evaluate((n0) => { const ms = [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).slice(n0).map((m) => m.innerText); const recalled = ms.join('\n').split('\n').filter((l) => /^recalled:/.test(l.trim())).join(' | '); const tools = [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).slice(n0).reduce((k, m) => k + m.querySelectorAll('[class*=tool i], details').length, 0); return { text: ms.join(' ').replace(/\s+/g, ' '), tools, recalled }; }, n0);
 const briefArg = process.argv.indexOf('--brief');
 const brief = briefArg > 0 ? JSON.parse(readFileSync(process.argv[briefArg + 1], 'utf8')) : null;
+const guidance = loadGuidance(brief);
 const builtin = [
   `Work only inside ${work}. Create a Python package "ledger" with ledger/__init__.py and ledger/core.py holding a class Ledger that records (date, account, amount, memo) entries in memory. Show me the files.`,
   `Add pytest tests in ${work}/tests/test_core.py for adding entries and for the balance of one account. Run them with python3 -m pytest -q from ${work} and show the output.`,
@@ -68,34 +78,32 @@ const screen = () => p.evaluate(() => {
 let chatUrl = ''; let title = ''; const liveSeen = new Set();
 const lengths = []; const median = () => { const s = [...lengths].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 const maxTurns = maxTurnsArg || (brief ? steps.length : 200);
-for (let turn = 0; turn < maxTurns; turn++) {
-  // A STOP file ends the run at this boundary, before the next turn is sent — killing r1 from outside raced
-  // its 3-s gap and sent #3i's turn 4 into an install that stopped the split (Q-219).
-  if (existsSync(`${dir}/STOP`)) { appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} STOPPED by ${dir}/STOP before turn ${turn}\n`); break; }
-  const prompt = turn < steps.length ? steps[turn] : `Continue improving the ledger package in ${work}: pick the next most useful feature or fix, implement it with a test, and run the suite. (turn ${turn})`;
-  const n0 = await p.evaluate(() => [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).length);
-  // The owner shares this app while it runs (Q-147: he was on Providers mid-turn). Mid-turn the driver never
-  // yanks his view; to TYPE it must be in its own chat, so it returns there only at a turn boundary.
-  if (chatUrl && p.url() !== chatUrl) { appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} RETURN to own chat from ${p.url().split('#')[1]}\n`); await p.goto(chatUrl); await p.waitForTimeout(3000); }
-  const input = p.locator('[data-testid=chat-input]:visible').first();
-  await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
-  const start = Date.now(); let lastChange = Date.now(); let prev = null; let ended = ''; let stallLogged = false;
+const iso = () => new Date().toISOString();
+const note = (line) => appendFileSync(`${dir}/events.log`, `${iso()} ${line}\n`);
+
+// One turn, from a send already made until the chat stops working: the done / notice / stall / hang rules, the
+// live check and the needs-you look every LIVE_EVERY polls, one turns.tsv row. `label` is the brief turn's
+// number, or `<n>a<k>` for the k-th answer turn after brief turn n (Q-376). n0 = assistant messages before it.
+async function runTurn(label, n0, start) {
+  let lastChange = Date.now(); let prev = null; let ended = ''; let stallLogged = false;
   await p.waitForTimeout(3000);
   let polls = 0; let away = false; let idleAway = 0;
   while (true) {
     if (!chatUrl && (Date.now() - start) > 8000) chatUrl = p.url();
     // Every ~minute: does every surface agree that this session is live? (livecheck.mjs, Q-147)
-    if (polls++ % 30 === 0) {
+    if (polls++ % LIVE_EVERY === 0) {
       // Re-read every time: goose retitles a chat after its first answer, and a title read once at the start
       // ('New Session') made every later check report the live session as not listed (E2E #5b).
       title = await p.evaluate(() => document.querySelector('[data-testid=session-title-trigger]')?.innerText.trim() ?? '').catch(() => title);
       const lc = await liveCheck(p, { title }).catch((e) => ({ findings: [{ kind: 'PROBE_ERROR', says: String(e) }] }));
-      appendFileSync(`${dir}/live.jsonl`, JSON.stringify({ turn, ...lc }) + '\n');
-      for (const f of lc.findings) if (!liveSeen.has(f.kind)) { liveSeen.add(f.kind); await p.screenshot({ path: `${dir}/live-${turn}-${f.kind}.png` }); appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} LIVE ${f.kind} ${JSON.stringify(f).slice(0, 300)}\n`); }
+      appendFileSync(`${dir}/live.jsonl`, JSON.stringify({ turn: label, ...lc }) + '\n');
+      for (const f of lc.findings) if (!liveSeen.has(f.kind)) { liveSeen.add(f.kind); await p.screenshot({ path: `${dir}/live-${label}-${f.kind}.png` }); note(`LIVE ${f.kind} ${JSON.stringify(f).slice(0, 300)}`); }
+      // Q-376: a card open while the turn runs is answered now and must show Queued (Q-341).
+      await nyTick(label, { mayStart: false }).catch((e) => note(`NEEDS_YOU_PROBE_ERROR ${String(e).slice(0, 300)}`));
     }
     // Someone else moved the view: nothing on screen is this turn's, so no done/stall verdict is taken from it.
     if (chatUrl && p.url() !== chatUrl) {
-      if (!away) { away = true; idleAway = 0; appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} VIEW_AWAY ${p.url().split('#')[1]}\n`); }
+      if (!away) { away = true; idleAway = 0; note(`VIEW_AWAY ${p.url().split('#')[1]}`); }
       // Q-186: with the view away, the turn's end is invisible — #3i waited until a human navigated back.
       // When the engine serves nothing for a few polls in a row, goose is between calls or done: go back
       // to the chat, where the boundary can be read (a person on another page is only moved while idle).
@@ -103,30 +111,258 @@ for (let turn = 0; turn < maxTurns; turn++) {
       idleAway = busy ? 0 : idleAway + 1;
       if (idleAway >= AWAY_IDLE_POLLS) {
         await p.goto(chatUrl); await p.waitForTimeout(4000);
-        appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} VIEW_RETURNED engine idle ${idleAway} polls\n`);
+        note(`VIEW_RETURNED engine idle ${idleAway} polls`);
       }
       lastChange = Date.now(); await p.waitForTimeout(2000); continue;
     }
     away = false;
-    for (const u of pollCalls()) appendFileSync(`${dir}/calls.tsv`, [turn, u.input_tokens, u.output_tokens, u.cache_read_input_tokens ?? ''].join('\t') + '\n');
+    for (const u of pollCalls()) appendFileSync(`${dir}/calls.tsv`, [label, u.input_tokens, u.output_tokens, u.cache_read_input_tokens ?? ''].join('\t') + '\n');
     const s = await screen();
     if (!prev || s.len !== prev.len || s.chip !== prev.chip) lastChange = Date.now();
     prev = s;
     const quiet = (Date.now() - lastChange) / 1000; const m = median() ?? (Date.now() - start) / 1000;
     if (!s.stop && (Date.now() - start) > 5000) { ended = 'done'; break; }
-    if (!stallLogged && lengths.length && quiet > STALL_FACTOR * m) { stallLogged = true; await p.screenshot({ path: `${dir}/stall-${turn}.png` }); appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} STALL turn ${turn} quiet ${quiet.toFixed(0)}s median ${m.toFixed(0)}s chip ${s.chip}\n`); }
-    if (lengths.length && quiet > HANG_FACTOR * m) { ended = 'hang'; await p.screenshot({ path: `${dir}/hang-${turn}.png` }); break; }
+    if (!stallLogged && lengths.length && quiet > STALL_FACTOR * m) { stallLogged = true; await p.screenshot({ path: `${dir}/stall-${label}.png` }); note(`STALL turn ${label} quiet ${quiet.toFixed(0)}s median ${m.toFixed(0)}s chip ${s.chip}`); }
+    if (lengths.length && quiet > HANG_FACTOR * m) { ended = 'hang'; await p.screenshot({ path: `${dir}/hang-${label}.png` }); break; }
     await p.waitForTimeout(2000);
   }
   const end = Date.now(); const secs = (end - start) / 1000; const s = await screen();
   const a = await added(n0); const failed = a.text.match(FAIL);
-  if (failed && ended === 'done') { ended = 'notice'; await p.screenshot({ path: `${dir}/notice-${turn}.png` }); }
+  if (failed && ended === 'done') { ended = 'notice'; await p.screenshot({ path: `${dir}/notice-${label}.png` }); }
   if (ended === 'done') lengths.push(secs);
-  appendFileSync(out, [turn, new Date(start).toISOString(), new Date(end).toISOString(), secs.toFixed(1), ended, a.tools, a.recalled, s.chip, s.counter, failed ? a.text.slice(Math.max(0, failed.index - 60), failed.index + 140) : ''].join('\t') + '\n');
+  appendFileSync(out, [label, new Date(start).toISOString(), new Date(end).toISOString(), secs.toFixed(1), ended, a.tools, a.recalled, s.chip, s.counter, failed ? a.text.slice(Math.max(0, failed.index - 60), failed.index + 140) : ''].join('\t') + '\n');
+  return { ended, secs, text: a.text };
+}
+
+// ---------------------------------------------------------------- needs-you (Q-376)
+// State per card r1 has met: `recs`, one per item id. A rec is `done` once its row is written (answered and its
+// answer turn checked, or left unanswered with the reason).
+const nyOut = `${dir}/needsyou.tsv`;
+writeFileSync(nyOut, 'turn\titem\tquestion\toptions\tanswer\tsource\tmatch\tclick\tansweredAt\tqueued\tdeliveredAt\tdeliveredDb\tanswerFirst\tanswerTurn\tcleared\tdbStatus\tsiblings\tsiblingsOpen\treply\n');
+const recs = []; let nyStop = ''; const nyNotShown = new Set();
+const cell = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ');
+const nyLog = (turn, event, rec, findings = []) => appendFileSync(`${dir}/live.jsonl`, JSON.stringify({
+  turn, at: iso(), kind: 'needs_you', event, item: rec?.itemId, question: rec?.question, options: rec?.options, optionsFrom: rec?.optionsFrom, answer: rec?.answer,
+  source: rec?.source, click: rec?.click, answeredAt: rec?.answeredAt, queued: rec?.queued, deliveredAt: rec?.deliveredAt,
+  answerFirst: rec?.answerFirst, cleared: rec?.cleared, siblings: rec?.siblingState, reply: rec?.reply, findings,
+}) + '\n');
+// A FINDING is a live.jsonl finding AND an events.log `LIVE` line (runwatch.sh wakes on those); `stops` ends the
+// run at the next turn boundary with the reason, the way a STOP file does.
+async function nyFinding(turn, rec, kind, says, truth, stops) {
+  const f = { kind, surface: 'needs-you card', item: rec?.itemId ?? '', says, truth };
+  nyLog(turn, 'finding', rec, [f]);
+  note(`LIVE ${kind} ${JSON.stringify(f).slice(0, 300)}`);
+  await p.screenshot({ path: `${dir}/needsyou-${turn}-${kind}.png` }).catch(() => {});
+  if (stops && !nyStop) nyStop = `${kind} ${f.item}: ${says}`;
+}
+const nyRow = (rec) => {
+  const sib = Object.entries(rec.siblingState);
+  appendFileSync(nyOut, [rec.turn, rec.itemId, rec.question, rec.options.join(' | '), rec.answer, rec.source, rec.match, rec.click, rec.answeredAt, rec.queued,
+    rec.deliveredAt, rec.deliveredDb, rec.answerFirst, rec.answerTurn, rec.cleared, rec.dbStatus, sib.map(([k, v]) => `${k}:${v}`).join(', '),
+    sib.length ? (sib.every(([, v]) => v.startsWith('y')) ? 'y' : 'n') : '-', rec.reply].map(cell).join('\t') + '\n');
+};
+const onScreen = (tray, id) => tray.cards.some((c) => c.id === id);
+
+function nyMarkDelivered(chat, db) {
+  for (const r of recs) {
+    if (!r.answeredAt || r.deliveredAt) continue;
+    const i = chat.users.slice(r.usersAtAnswer).findIndex((t) => isAnswerMessage(t, r));
+    // "The answer turn runs first" (Q-341): the first message the chat gained after the answer is the answer.
+    if (i >= 0) { r.deliveredAt = iso(); r.answerFirst = i === 0 ? 'y' : `n (${i} message(s) before it)`; r.assistAtDelivery = chat.assistant; }
+  }
+  for (const r of recs) if (r.deliveredAt && !r.deliveredDb) r.deliveredDb = db.ok ? db.items.find((it) => it.id === r.itemId)?.answer_delivered_at ?? '' : '';
+}
+
+// Q-344: the questions that were open beside this one when it was answered must still be open (or answered by
+// r1 itself) once goosed has read the answer — never superseded or dismissed by it.
+async function nyCheckSiblings(turn, r, db, tray) {
+  for (const sid of r.siblings) {
+    const mine = recs.some((x) => x.itemId === sid && x.answeredAt);
+    const status = db.ok ? (db.items.find((it) => it.id === sid)?.status ?? 'missing') : `store unreadable: ${db.error}`;
+    const ok = db.ok ? status === 'open' || (mine && status === 'answered') : onScreen(tray, sid) || mine;
+    r.siblingState[sid] = `${ok ? 'y' : 'n'} ${status}${onScreen(tray, sid) ? '' : ' (no card)'}`;
+    if (!ok) await nyFinding(turn, r, 'NEEDS_YOU_SIBLING_CLOSED', `answering "${r.question.slice(0, 80)}" left sibling ${sid} ${status}`, 'Q-344: a card answer closes only its own question', true);
+  }
+  r.siblingsChecked = true;
+}
+
+// One look at the chat's cards: mark delivered answers, check siblings, answer what is open. Never navigates:
+// with the view away from r1's chat it does nothing. mayStart = an answer may be sent at once (the turn has
+// ended) — then at most one card is answered and true is returned, so the caller runs that answer turn.
+// Mid-turn (mayStart false) every open card is answered and must queue.
+async function nyTick(turn, { mayStart }) {
+  if (!chatUrl || p.url() !== chatUrl) return false;
+  const db = readDbItems(sessionIdOf(chatUrl));
+  const tray = await readTray(p); const chat = await readChat(p);
+  nyMarkDelivered(chat, db);
+  for (const r of recs) if (r.deliveredAt && !r.siblingsChecked && (chat.assistant > r.assistAtDelivery || !tray.busy)) await nyCheckSiblings(turn, r, db, tray);
+  for (const e of tray.elicitations) {
+    if (recs.some((r) => r.itemId === e.id)) continue;
+    const rec = nyRec(turn, { id: e.id, question: e.message, options: [] }, chat, 'dom');
+    rec.source = 'unanswerable: an MCP elicitation form, not an ask_user card'; rec.done = true;
+    nyRow(rec); nyLog(turn, 'unanswerable', rec); note(`NEEDS_YOU unanswerable ${e.id}: elicitation`);
+  }
+  const idle = !tray.busy;
+  if (idle && !mayStart) return false;
+  // An answer already given and not yet delivered goes first (the tray sends it when the turn ends).
+  if (idle && recs.some((r) => r.answeredAt && !r.deliveredAt && !r.done)) return false;
+  for (const c of tray.cards) {
+    if (recs.some((r) => r.itemId === c.id)) continue;
+    // A sibling of an answer goosed has not read yet waits: answering it first would hide a supersede (Q-344).
+    if (recs.some((r) => r.answeredAt && !r.siblingsChecked && r.siblings.includes(c.id))) continue;
+    const it = db.ok ? db.items.find((x) => x.id === c.id) : null;
+    const rec = nyRec(turn, { id: c.id, question: it?.question ?? c.question, options: it ? it.options ?? [] : c.chips }, chat, it ? 'db' : `dom (${db.ok ? 'not in the store' : db.error})`);
+    const answeredBefore = recs.filter((r) => r !== rec && r.answeredAt && norm(r.question) === norm(rec.question)).length;
+    if (answeredBefore) await nyFinding(turn, rec, 'NEEDS_YOU_REASKED', `asked again after ${answeredBefore} answer(s): ${rec.question.slice(0, 120)}`, 'an answered question does not come back', false);
+    const choice = chooseAnswer({ question: rec.question, recommended: c.recommended || it?.recommended_answer || '', options: rec.options }, guidance);
+    rec.source = choice.source; rec.match = choice.match;
+    if (choice.answer === null || answeredBefore >= 2) {
+      rec.source = choice.answer === null ? `unanswerable: ${choice.reason}` : `unanswered: re-asked after ${answeredBefore} answers`;
+      rec.done = true; nyRow(rec); nyLog(turn, 'unanswerable', rec); note(`NEEDS_YOU ${rec.source} ${c.id}: ${rec.question.slice(0, 120)}`);
+      continue;
+    }
+    const plan = planClick({ chips: c.chips, recommended: c.recommended }, choice.answer);
+    // What the card SENDS: the recommended button carries its full words (answer + reason), not the guidance's.
+    rec.answer = plan.text;
+    rec.click = plan.kind === 'option' ? `option ${plan.index}` : plan.kind;
+    rec.siblings = tray.cards.filter((x) => x.id !== c.id).map((x) => x.id);
+    for (const sid of rec.siblings) rec.siblingState[sid] = '?';
+    let card;
+    try { card = await answerCard(p, c.id, plan); } catch (e) {
+      rec.source += ` (answer failed: ${String(e.message ?? e).slice(0, 160)})`; rec.done = true; nyRow(rec);
+      await nyFinding(turn, rec, 'NEEDS_YOU_ANSWER_FAILED', String(e.message ?? e).slice(0, 200), 'the card takes an answer through its own controls', false);
+      continue;
+    }
+    rec.answeredAt = iso();
+    if (!idle) {
+      // Q-341: mid-turn the answer waits on the card as Queued and goes when the turn ends.
+      const queued = await card.getByTestId('needs-you-queued').waitFor({ state: 'attached' }).then(() => true, () => false);
+      const still = (await screen()).stop;
+      rec.queued = queued ? 'y' : still ? 'n' : 'n (the turn ended at the click)';
+      if (!queued && still) await nyFinding(turn, rec, 'NEEDS_YOU_NOT_QUEUED', `answered mid-turn, no Queued row on the card`, 'Q-341: an answer given while the turn runs is queued', false);
+    } else {
+      rec.queued = await card.getByTestId('needs-you-queued').count().then((n) => (n ? 'y (the chat was not idle at the click)' : 'n'), () => 'n');
+    }
+    nyLog(turn, 'answered', rec);
+    note(`NEEDS_YOU answered ${c.id} ${rec.source} via ${rec.click} queued=${rec.queued}: ${rec.answer.slice(0, 100)}`);
+    if (idle) return true;
+  }
+  return false;
+}
+
+function nyRec(turn, { id, question, options }, chat, optionsFrom) {
+  const rec = { turn, itemId: id, question, options, optionsFrom, answer: '', source: '', match: '', click: '', answeredAt: '', queued: '', deliveredAt: '', deliveredDb: '',
+    answerFirst: '', answerTurn: '', cleared: '', dbStatus: '', siblings: [], siblingState: {}, siblingsChecked: false, reply: '',
+    usersAtAnswer: chat.users.length, assistAtDelivery: chat.assistant, done: false };
+  recs.push(rec);
+  return rec;
+}
+
+// The store lists an open question the tray has not drawn yet: give the tray its refresh (it re-reads every 5 s).
+async function nySettle(turn) {
+  for (let i = 0; ; i++) {
+    const db = readDbItems(sessionIdOf(chatUrl));
+    if (!db.ok) { note(`NEEDS_YOU store unreadable: ${db.error}`); return; }
+    const tray = await readTray(p);
+    const missing = db.items.filter((it) => it.status === 'open' && !onScreen(tray, it.id) && !recs.some((r) => r.itemId === it.id && r.done));
+    if (!missing.length) return;
+    if (i >= TRAY_SETTLE_POLLS) {
+      for (const it of missing) if (!nyNotShown.has(it.id)) { nyNotShown.add(it.id); await nyFinding(turn, { itemId: it.id, question: it.question }, 'NEEDS_YOU_NOT_SHOWN', `open in the store, no card in the chat after ${i} polls: ${it.question.slice(0, 120)}`, 'every open question of the chat has a card', false); }
+      return;
+    }
+    await p.waitForTimeout(2000);
+  }
+}
+
+// An answer given, not yet in the chat: wait for its message (the tray sends it at once when idle, or when the
+// running turn ends). True = an answer turn has started. Not there after the tray's refresh while the chat
+// is idle = the answer went nowhere (Q-341's hazard): a finding that ends the run.
+async function nyAwaitDelivery(turn) {
+  const t0 = Date.now();
+  for (let i = 0; ; i++) {
+    const db = readDbItems(sessionIdOf(chatUrl));
+    nyMarkDelivered(await readChat(p), db);
+    if (recs.some((r) => r.deliveredAt && !r.done)) return true;
+    const pending = recs.filter((r) => r.answeredAt && !r.deliveredAt && !r.done);
+    if (!pending.length) return false;
+    // A queued answer waits for a running turn (one r1 did not send — a loop tick); that wait is bounded
+    // like any turn, by the hang ratio of this run's median.
+    const m = median();
+    if (i >= TRAY_SETTLE_POLLS && (!(await screen()).stop || (m && (Date.now() - t0) / 1000 > HANG_FACTOR * m))) {
+      const tray = await readTray(p);
+      for (const r of pending) {
+        r.dbStatus = db.ok ? db.items.find((it) => it.id === r.itemId)?.status ?? 'missing' : db.error; r.cleared = onScreen(tray, r.itemId) ? 'n' : 'y'; r.done = true; nyRow(r);
+        await nyFinding(turn, r, 'NEEDS_YOU_NOT_DELIVERED', `answered at ${r.answeredAt}, no answer message in the chat; store ${r.dbStatus}${tray.unsent.length ? `; notice: ${tray.unsent[0].slice(0, 120)}` : ''}`, 'an answer reaches the model as the next chat message', true);
+      }
+      return false;
+    }
+    await p.waitForTimeout(2000);
+  }
+}
+
+// After the answer turn: each answered card is gone from the chat and Answered in the store, siblings checked,
+// the model's first words recorded so a reader can see it used the answer.
+async function nyFinalize(label, batch, res) {
+  let tray; let db;
+  for (let i = 0; ; i++) {
+    db = readDbItems(sessionIdOf(chatUrl)); tray = await readTray(p);
+    if (!batch.some((r) => onScreen(tray, r.itemId)) || i >= TRAY_SETTLE_POLLS) break;
+    await p.waitForTimeout(2000);
+  }
+  for (const r of batch) {
+    if (!r.siblingsChecked) await nyCheckSiblings(label, r, db, tray);
+    r.dbStatus = db.ok ? db.items.find((it) => it.id === r.itemId)?.status ?? 'missing' : `store unreadable: ${db.error}`;
+    const shown = onScreen(tray, r.itemId);
+    r.cleared = !shown && (r.dbStatus === 'answered' || !db.ok) ? 'y' : `n (${shown ? 'card still in the chat' : 'card gone'}; store ${r.dbStatus})`;
+    r.answerTurn = label; r.reply = res.text.slice(0, 300); r.done = true;
+    nyRow(r); nyLog(label, 'final', r);
+    if (r.cleared !== 'y') await nyFinding(label, r, 'NEEDS_YOU_NOT_CLEARED', `after its answer turn ${label}: ${r.cleared}`, 'an answered question leaves the chat and reads Answered', true);
+  }
+}
+
+// At a turn boundary: answer the chat's open cards and run every answer turn before the next brief turn.
+// True = an answer turn ended in a notice or a hang (the run stops, as for a brief turn).
+async function nyTurnEnd(turn) {
+  for (let k = 1; !nyStop && !existsSync(`${dir}/STOP`); ) {
+    if (!chatUrl || p.url() !== chatUrl) { if (recs.some((r) => !r.done)) note(`NEEDS_YOU skipped at the end of turn ${turn}: the view is not r1's chat`); return false; }
+    await nySettle(String(turn));
+    await nyTick(String(turn), { mayStart: true });
+    if (!recs.some((r) => r.answeredAt && !r.done)) return false;
+    if (!(await nyAwaitDelivery(String(turn)))) return false;
+    const batch = recs.filter((r) => r.deliveredAt && !r.done);
+    const label = `${turn}a${k++}`;
+    const res = await runTurn(label, Math.min(...batch.map((r) => r.assistAtDelivery)), Date.parse(batch[0].deliveredAt));
+    await nyFinalize(label, batch, res);
+    if (res.ended === 'hang' || res.ended === 'notice') return true;
+    await p.waitForTimeout(3000);
+  }
+  return false;
+}
+
+for (let turn = 0; turn < maxTurns; turn++) {
+  // A STOP file ends the run at this boundary, before the next turn is sent — killing r1 from outside raced
+  // its 3-s gap and sent #3i's turn 4 into an install that stopped the split (Q-219).
+  if (existsSync(`${dir}/STOP`)) { note(`STOPPED by ${dir}/STOP before turn ${turn}`); break; }
+  const prompt = turn < steps.length ? steps[turn] : `Continue improving the ledger package in ${work}: pick the next most useful feature or fix, implement it with a test, and run the suite. (turn ${turn})`;
+  const n0 = await p.evaluate(() => [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).length);
+  // The owner shares this app while it runs (Q-147: he was on Providers mid-turn). Mid-turn the driver never
+  // yanks his view; to TYPE it must be in its own chat, so it returns there only at a turn boundary.
+  if (chatUrl && p.url() !== chatUrl) { note(`RETURN to own chat from ${p.url().split('#')[1]}`); await p.goto(chatUrl); await p.waitForTimeout(3000); }
+  const input = p.locator('[data-testid=chat-input]:visible').first();
+  await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
+  const r = await runTurn(String(turn), n0, Date.now());
   if (turn % 5 === 0) await p.screenshot({ path: `${dir}/turn-${turn}.png` });
   // STOP RULE (skill): a turn that ends in a notice ends the round — E2E #3e sent 29 more turns into a stopped
   // split, 5 s each, and recorded them as turns.
-  if (ended === 'hang' || ended === 'notice') break;
+  if (r.ended === 'hang' || r.ended === 'notice') break;
   await p.waitForTimeout(3000);
+  // Q-376: the cards this turn raised are answered, and their answer turns run, before the next brief turn.
+  const answerTurnFailed = await nyTurnEnd(turn);
+  // STOP RULE (Q-376): a card still there after its answer turn, a sibling closed by a card answer, or an
+  // answer that never reached the chat ends the run here, with the reason.
+  if (nyStop) { note(`STOPPED by needs-you finding after turn ${turn}: ${nyStop}`); break; }
+  if (answerTurnFailed) break;
 }
+// A card met but not settled when the run ended (a stop, a hang) still gets its row, saying so.
+for (const r of recs) if (!r.done) { r.cleared = r.cleared || 'unchecked: the run ended first'; r.done = true; nyRow(r); nyLog(r.turn, 'unsettled', r); }
 await b.close(); process.exit(0);
