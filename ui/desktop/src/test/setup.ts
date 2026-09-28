@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom';
-import { vi, afterEach } from 'vitest';
+import { vi, afterEach, expect } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import { TONE_TEXT, TONES } from '../components/lz/tokens';
 
 // Mock Electron modules before any imports
 vi.mock('electron', () => ({
@@ -24,6 +25,20 @@ vi.mock('electron', () => ({
 // automatic cleanup runs after each test.
 afterEach(() => {
   cleanup();
+});
+
+// Q-247: every element any test rendered that NAMES a tone as its text colour must PAINT it in the
+// compiled CSS — an error line carrying a TYPE step's ink painted grey across the app for weeks
+// while every class-name assertion passed. Registered AFTER cleanup: vitest runs afterEach hooks
+// as a stack, so this reads the DOM before cleanup empties it.
+const TONE_TEXT_SELECTOR = TONES.map((tone) => `.${TONE_TEXT[tone]}`).join(', ');
+afterEach(async () => {
+  if (typeof document === 'undefined' || !document.body.querySelector(TONE_TEXT_SELECTOR)) return;
+  const { tonesThatDoNotPaint } = await import('../components/lz/tonePaint');
+  expect(
+    await tonesThatDoNotPaint(document.body),
+    'a tone that does not paint (Q-247) — another colour utility wins in the compiled CSS'
+  ).toEqual([]);
 });
 
 // Mock console methods to avoid noise in tests

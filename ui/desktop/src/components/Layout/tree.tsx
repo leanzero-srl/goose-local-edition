@@ -231,9 +231,8 @@ export const TreeContextMenu: React.FC<{
                 title={item.title}
                 className={cx(
                   itemBase,
-                  item.danger ? 'text-lz-err' : 'text-lz-ink',
-                  SURFACE.hover,
-                  item.disabled && 'text-lz-ink-3'
+                  item.disabled ? 'text-lz-ink-3' : item.danger ? 'text-lz-err' : 'text-lz-ink',
+                  SURFACE.hover
                 )}
                 onClick={() =>
                   item.danger && item.confirmLabel ? setConfirming(item.key) : item.onClick()

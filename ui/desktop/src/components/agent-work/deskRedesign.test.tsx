@@ -2,6 +2,7 @@ import { act, fireEvent, render as renderBase, screen } from '@testing-library/r
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'react-intl';
 import { assertStudioClean } from '../lz/assertStudioClean';
+import { resolvedPaint, studioToken } from '../lz/resolvedPaint';
 import {
   foldDesk,
   sourceUrls,
@@ -452,7 +453,15 @@ describe('UX audit A1 (2026-09-23): phases coloured by who worked, and a lane ca
     expect(outcome.textContent).toBe('Its report is this tick’s result, shown above.');
     expect(outcome.className).toContain('line-clamp-1');
     expect(row.textContent).not.toContain('JavaScript | MDN');
-  });
+    // Q-247: TYPE.meta carries ink-3, and ink-3 beats any other ink beside it in the compiled CSS —
+    // the role (ink-2) and the duration (ink) were written that way and painted ink-3.
+    const twoInks = Array.from(row.querySelectorAll('*')).filter(
+      (el) => Array.from(el.classList).filter((c) => /^text-lz-ink(-\d)?$/.test(c)).length > 1
+    );
+    expect(twoInks.map((el) => el.getAttribute('class'))).toEqual([]);
+    const role = row.querySelector<HTMLElement>('.text-lz-meta.text-lz-ink-2')!;
+    expect((await resolvedPaint(role, 'light')).text).toBe(studioToken('--color-lz-ink-2', 'light'));
+  }, 30_000);
 
   it('a settled lane that was not delivered leads with its first sentence only', async () => {
     const { outcomeOf } = await import('./LaneBoard');

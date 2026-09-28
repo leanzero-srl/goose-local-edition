@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { IntlProvider } from 'react-intl';
 import { BenchmarkSection, benchRunHref, deriveEras } from './BenchmarkSection';
 import type { BenchSession, CatalogBenchmark } from '../benchmark/bridge';
+import { resolvedPaint, studioToken } from '../lz/resolvedPaint';
 
 const nav = vi.hoisted(() => ({ navigate: vi.fn(), startChat: vi.fn() }));
 vi.mock('react-router-dom', async (orig) => ({
@@ -121,8 +122,16 @@ describe('BenchmarkSection', () => {
 
     fireEvent.contextMenu(screen.getByTestId('bench-run-start-2026-08-30T10:00:00.000Z'));
     const running = await screen.findByTestId('bench-run-context-menu');
-    expect(within(running).getByText('Delete run').closest('button')).toBeDisabled();
-  });
+    const disabledDelete = within(running).getByText('Delete run').closest('button')!;
+    expect(disabledDelete).toBeDisabled();
+    // Q-247: a disabled danger item paints the disabled ink, not err — its state picks ONE colour
+    // (the stylesheet, not the class order, would decide between two).
+    for (const theme of ['light', 'dark'] as const) {
+      expect((await resolvedPaint(disabledDelete, theme)).text).toBe(
+        studioToken('--color-lz-ink-3', theme)
+      );
+    }
+  }, 30_000);
 
   it('deriveEras: the current era first, runs newest first, unknown eras from runs alone', () => {
     const eras = deriveEras(SESSIONS, CATALOG);

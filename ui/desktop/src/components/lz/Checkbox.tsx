@@ -71,10 +71,14 @@ export function Checkbox({
         aria-hidden
         className={cx(
           'mt-px flex size-4 shrink-0 items-center justify-center rounded-[4px] border [&_svg]:size-3',
-          checked
-            ? 'border-lz-accent bg-lz-accent text-lz-accent-ink'
-            : 'border-lz-border-strong bg-lz-surface',
-          disabled && 'border-lz-border bg-lz-surface-2 text-lz-ink-3',
+          // One branch per state, never an override: the stylesheet — not the class order —
+          // decides between two colours, and the white tick would win over a disabled ink-3 on
+          // the surface-2 fill (Q-247).
+          disabled
+            ? 'border-lz-border bg-lz-surface-2 text-lz-ink-3'
+            : checked
+              ? 'border-lz-accent bg-lz-accent text-lz-accent-ink'
+              : 'border-lz-border-strong bg-lz-surface',
           MOTION
         )}
       >
