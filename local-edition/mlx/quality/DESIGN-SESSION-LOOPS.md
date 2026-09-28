@@ -510,12 +510,15 @@ State file: {state_file} — read it before anything else; rewrite it before you
 (Now · Next · Found · Done; keep it short enough to read in one go).
 What each tick does (the user's steps, as they left them in the dialog):
 {steps}
-Last tick ({n-1}, {time}, {outcome}): "{report.summary}" — next step it named: "{report.next_step}"
-{if check ran}  Check `{check}` after tick {n-1}: {passed | exited {code}}. Its output ended with:
+{f = the last FINISHED tick; a tick a yield or the user's stop cut short is unfinished (Q-278)}
+Last tick ({f}, {time}, {outcome}): "{report.summary}" — next step it named: "{report.next_step}"
+   ("Last finished tick" when unfinished ticks follow it; "No tick of this loop has finished yet." when none did)
+{if check ran}  Check `{check}` after tick {f}: {passed | exited {code}}. Its output ended with:
 {output_tail}
-{if check could not run}  Check `{check}` could not run after tick {n-1}: {error}.
-{if outcome was yielded}  Tick {n-1} was stopped at {time} for the user's turn in "{chat}"; its partial work is above.
-{if outcome was asked}  Tick {n-1} asked the user "{question}"; {their answer is above | they dismissed it}.
+{if check could not run}  Check `{check}` could not run after tick {f}: {error}.
+{if outcome was asked}  Tick {f} asked the user "{question}"; {they answered: "{answer}" | they dismissed it | it is still open}.
+{per unfinished tick k}  Tick {k} ({start}) did not finish: {it was stopped at {time} for the user's turn in "{chat, named as it is NOW}" | the user stopped it at {time}}.{ Before it stopped, it reported: "…" — next step it named: "…".} It wrote or edited {files | no file outside the state file}; any command it ran is in the conversation above.
+{if any unfinished}  Tick {n} carries on from there: what tick {k} left unfinished is part of this tick's work, not a tick of its own.
 {if self_paced}  Say when to come back: next_in ("10m", "2h") and why.
 Finish by calling loop_report; calling it ends this tick.
 ```
@@ -1010,7 +1013,7 @@ state file reaches the next tick without re-typing the steps:
 | `{state_file}` | the record's state file | never absent (required at start) |
 | `{check}` | the record's check command | the step renders "no check command is set; run the command that shows the change works and quote it" |
 | `{goal_first_line}` | the goal | never absent (required at start) |
-| `{last_next_step}` | tick n−1's `report.next_step` | the step renders "this is the first tick" (tick 1) or "tick {n-1} named no next step" |
+| `{last_next_step}` | the newest `report.next_step` from the last FINISHED tick on (a yielded tick that never reported does not erase it, Q-278) | the step renders "this is the first tick" (tick 1) or "tick {n} named no next step" |
 | `{working_dir}` | the session's working dir | never absent |
 
 The dialog shows the steps RENDERED with the current facts (slots highlighted as chips the user can see are facts)
@@ -1022,9 +1025,9 @@ that a user never saw (gate 2's target: engine-dispatched descriptions such as "
 
 | Template | Name | Steps (the text a tick receives under "What each tick does") | Suggested check | Default cadence |
 |---|---|---|---|---|
-| `quality` | Software quality loop | 1. Discover: open `{state_file}`, then run or read what "{goal_first_line}" names in `{working_dir}`. List what is broken, missing or confusing, each with the evidence you saw (command output, file:line). 2. Critique: rank what you found by how much it blocks the goal; pick the ONE item that matters most (the last tick named: {last_next_step}). 3. Fix: make that change, and only that change. 4. Prove: run `{check}` and quote its result. A fix without a quoted result is not done. 5. Rewrite `{state_file}`: what is now true, what is next, what you found but did not fix. | the project's test command, from the dialog | every 10m |
+| `quality` | Software quality loop | 1. Discover: open `{state_file}`, then run or read what your goal points at in `{working_dir}`. List what is broken, missing or confusing, each with the evidence you saw (command output, file:line). 2. Critique: rank what you found by how much it blocks the goal; pick the ONE item that matters most (the last tick named: {last_next_step}). 3. Fix: make that change, and only that change. 4. Prove: run `{check}` and quote its result. A fix without a quoted result is not done. 5. Rewrite `{state_file}`: what is now true, what is next, what you found but did not fix. | the project's test command, from the dialog | every 10m |
 | `until_check` | Until a check passes | 1. Run `{check}` and read why it fails. 2. Fix the first cause it names. 3. Run `{check}` again and quote the result. 4. Rewrite `{state_file}`. | required | back to back |
-| `watch` | Watch and act | 1. Look at what "{goal_first_line}" names (a build, a deploy, a folder, a URL) and compare it with `{state_file}`. 2. If nothing changed, say so in one line and report progress. 3. If something changed, do what the goal asks and quote the evidence. 4. Rewrite `{state_file}`. | optional | every 30m |
+| `watch` | Watch and act | 1. Look at what your goal watches (a build, a deploy, a folder, a URL) and compare it with `{state_file}`. 2. If nothing changed, say so in one line and report progress. 3. If something changed, do what the goal asks and quote the evidence. 4. Rewrite `{state_file}`. | optional | every 30m |
 | `blank` | Blank | (empty; the goal alone) | optional | goose decides |
 
 **`/goal` inside a tick.** The quality template's step 4 already demands proof inside the tick. A user who also wants
@@ -1318,9 +1321,13 @@ are the full `border-lz-border`.
 ```
 
 - **The marker.** A tick's prompt message (id `looptick_…`) renders as a full-width divider, not a user bubble.
+  Its third part is what started the tick: the cadence label for a cadence-started tick, else the origin —
+  "after your turn", "after your answer", "after your Mac woke", "after you resumed", "run by you" (Q-279; the
+  tick after a yield once read "back to back").
   "Show prompt" expands the exact text sent, the §4.4 transparency.
 - **Yielded tick:** the divider gets a second line: "Stopped at {HH:MM} for your message in "{chat}" — the loop
-  continues after your turn."
+  continues after your turn." `{chat}` is the chat's name when shown (read, then kept by rename events), not the
+  name frozen at the yield — a new chat is "New Chat" until its first turn names it (Q-279).
 - **Steers** inside a tick render as today (user bubble, `metadata.steer`).
 - Hover actions on a marker: "Copy prompt" only. There is no Edit or Loop this.
 
