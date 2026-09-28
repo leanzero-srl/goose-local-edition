@@ -1087,7 +1087,13 @@ impl Hub {
             if runs.get(session_id).map(|run| run.run_id.as_str()) != Some(run_id) {
                 return;
             }
-            runs.remove(session_id);
+            let run = runs.remove(session_id).expect("checked above");
+            // Whatever is still queued for the ended turn never reaches it: dropped here, under the
+            // lock `steer` queues under, so a note steered in its last moment cannot also drain into
+            // a later turn after it was put back to wait.
+            if let Some(agent) = run.agent.upgrade() {
+                agent.discard_pending_steers(session_id).await;
+            }
             self.running
                 .lock()
                 .expect("notes hub runs poisoned")

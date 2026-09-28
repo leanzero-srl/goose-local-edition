@@ -254,6 +254,20 @@ import type {
   NodesServedLastResponse_unstable,
   NodesWriteRequest_unstable,
   NodesWriteResponse_unstable,
+  NotesChangedNotification_unstable,
+  NotesDeliverDueNotification_unstable,
+  NotesDraftRequest_unstable,
+  NotesDraftResponse_unstable,
+  NotesInboxRequest_unstable,
+  NotesInboxResponse_unstable,
+  NotesListRequest_unstable,
+  NotesListResponse_unstable,
+  NotesSendRequest_unstable,
+  NotesSendResponse_unstable,
+  NotesShowingRequest_unstable,
+  NotesShowingResponse_unstable,
+  NotesTargetsRequest_unstable,
+  NotesTargetsResponse_unstable,
   OnboardingImportApplyRequest_unstable,
   OnboardingImportApplyResponse_unstable,
   OnboardingImportScanRequest_unstable,
@@ -435,6 +449,14 @@ import {
   zNodesResidencyResponse_unstable,
   zNodesServedLastResponse_unstable,
   zNodesWriteResponse_unstable,
+  zNotesChangedNotification_unstable,
+  zNotesDeliverDueNotification_unstable,
+  zNotesDraftResponse_unstable,
+  zNotesInboxResponse_unstable,
+  zNotesListResponse_unstable,
+  zNotesSendResponse_unstable,
+  zNotesShowingResponse_unstable,
+  zNotesTargetsResponse_unstable,
   zOnboardingImportApplyResponse_unstable,
   zOnboardingImportScanResponse_unstable,
   zParseRecipeResponse_unstable,
@@ -2238,6 +2260,68 @@ export class GooseExtClient {
     ) as ResolveNeedsYouResponse_unstable;
   }
 
+  async notesList_unstable(
+    params: NotesListRequest_unstable,
+  ): Promise<NotesListResponse_unstable> {
+    const raw = await this.conn.extMethod("_goose/unstable/notes/list", params);
+    return zNotesListResponse_unstable.parse(raw) as NotesListResponse_unstable;
+  }
+
+  async notesTargets_unstable(
+    params: NotesTargetsRequest_unstable,
+  ): Promise<NotesTargetsResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/notes/targets",
+      params,
+    );
+    return zNotesTargetsResponse_unstable.parse(
+      raw,
+    ) as NotesTargetsResponse_unstable;
+  }
+
+  async notesSend_unstable(
+    params: NotesSendRequest_unstable,
+  ): Promise<NotesSendResponse_unstable> {
+    const raw = await this.conn.extMethod("_goose/unstable/notes/send", params);
+    return zNotesSendResponse_unstable.parse(raw) as NotesSendResponse_unstable;
+  }
+
+  async notesDraft_unstable(
+    params: NotesDraftRequest_unstable,
+  ): Promise<NotesDraftResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/notes/draft",
+      params,
+    );
+    return zNotesDraftResponse_unstable.parse(
+      raw,
+    ) as NotesDraftResponse_unstable;
+  }
+
+  async notesInbox_unstable(
+    params: NotesInboxRequest_unstable,
+  ): Promise<NotesInboxResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/notes/inbox",
+      params,
+    );
+    return zNotesInboxResponse_unstable.parse(
+      raw,
+    ) as NotesInboxResponse_unstable;
+  }
+
+  async notesShowing_unstable(
+    params: NotesShowingRequest_unstable,
+  ): Promise<NotesShowingResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/notes/showing",
+      params,
+    );
+    return zNotesShowingResponse_unstable.parse(
+      raw,
+    ) as NotesShowingResponse_unstable;
+  }
+
   async leanzeroLinkRemoteExecute_unstable(
     params: LeanzeroLinkRemoteExecuteRequest_unstable,
   ): Promise<LeanzeroLinkRemoteExecuteResponse_unstable> {
@@ -2457,6 +2541,12 @@ export interface GooseExtNotifications {
   unstable_loopsChanged?: (
     notification: LoopsChangedNotification_unstable,
   ) => Promise<void>;
+  unstable_notesDeliverDue?: (
+    notification: NotesDeliverDueNotification_unstable,
+  ) => Promise<void>;
+  unstable_notesChanged?: (
+    notification: NotesChangedNotification_unstable,
+  ) => Promise<void>;
 }
 
 export interface GooseExtAgentRequests {
@@ -2498,6 +2588,20 @@ export function installGooseExtNotificationDispatcher(
             params,
           ) as LoopsChangedNotification_unstable;
           await callbacks.unstable_loopsChanged?.(parsed);
+          return;
+        }
+        case "_goose/unstable/notes/deliverDue": {
+          const parsed = zNotesDeliverDueNotification_unstable.parse(
+            params,
+          ) as NotesDeliverDueNotification_unstable;
+          await callbacks.unstable_notesDeliverDue?.(parsed);
+          return;
+        }
+        case "_goose/unstable/notes/changed": {
+          const parsed = zNotesChangedNotification_unstable.parse(
+            params,
+          ) as NotesChangedNotification_unstable;
+          await callbacks.unstable_notesChanged?.(parsed);
           return;
         }
         default:

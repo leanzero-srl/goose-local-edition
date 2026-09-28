@@ -1348,6 +1348,54 @@ impl GooseAcpAgent {
         self.on_resolve_needs_you(req).await
     }
 
+    #[custom_method(NotesListRequest)]
+    async fn dispatch_notes_list(
+        &self,
+        req: NotesListRequest,
+    ) -> Result<NotesListResponse, agent_client_protocol::Error> {
+        self.on_notes_list(req).await
+    }
+
+    #[custom_method(NotesTargetsRequest)]
+    async fn dispatch_notes_targets(
+        &self,
+        req: NotesTargetsRequest,
+    ) -> Result<NotesTargetsResponse, agent_client_protocol::Error> {
+        self.on_notes_targets(req).await
+    }
+
+    #[custom_method(NotesSendRequest)]
+    async fn dispatch_notes_send(
+        &self,
+        req: NotesSendRequest,
+    ) -> Result<NotesSendResponse, agent_client_protocol::Error> {
+        self.on_notes_send(req).await
+    }
+
+    #[custom_method(NotesDraftRequest)]
+    async fn dispatch_notes_draft(
+        &self,
+        req: NotesDraftRequest,
+    ) -> Result<NotesDraftResponse, agent_client_protocol::Error> {
+        self.on_notes_draft(req).await
+    }
+
+    #[custom_method(NotesInboxRequest)]
+    async fn dispatch_notes_inbox(
+        &self,
+        req: NotesInboxRequest,
+    ) -> Result<NotesInboxResponse, agent_client_protocol::Error> {
+        self.on_notes_inbox(req).await
+    }
+
+    #[custom_method(NotesShowingRequest)]
+    async fn dispatch_notes_showing(
+        &self,
+        req: NotesShowingRequest,
+    ) -> Result<NotesShowingResponse, agent_client_protocol::Error> {
+        self.on_notes_showing(req).await
+    }
+
     #[custom_method(LeanzeroLinkRemoteExecuteRequest)]
     async fn dispatch_leanzero_link_remote_execute(
         &self,
