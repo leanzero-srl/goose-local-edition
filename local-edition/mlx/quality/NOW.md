@@ -50,7 +50,11 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 ## Agents (worktrees)
 - none running.
 
-## 3.0.74 = main edd009c6b — RELEASE PACKAGING (01:46) (~/goose-builds/release-3.0.74.log, goose-rel, own session)
+## 3.0.74 = main edd009c6b — DMG BUILT 01:5x (notarized; ~/goose-builds/dmg + the Studio's ~/Downloads)
+- Install on BOTH Macs AFTER #3u ends (10 turns left at 02:00, incl. the turn-28 recall check). Installing
+  mid-run would kill the split's rank 1. Then split-start smoke → E2E #3v on 3.0.74.
+- CI Lint went RED after landing: a Linux-only string slice in Q-407's process_groups.rs:168 (the Mac gate
+  never lints Linux cfg). Fixed on main 7f3368173 for 3.0.75; the macOS build is unaffected.
 - Contents:
   - Q-417, Q-407, Q-423 (BOTH Macs), Q-426;
   - Q-428/430/432 and Q-441/442/443 (don't-interrupt option + follow-ups);
