@@ -330,8 +330,9 @@ pub struct Agent {
     /// VA-107 (opt-in, set per lane by the swarm): the per-turn `<turn-context>` block carries the
     /// measured `context: N of M tokens used (P%)` line — the two numbers the compaction guard
     /// compares — in place of MOIM's threshold-relative "~Nk tokens remaining" figure, and a call
-    /// that reported no usage is announced to the caller. Default false → every non-swarm agent is
-    /// byte-identical.
+    /// that reported no usage is announced to the caller. Default false → a swarm worker keeps the
+    /// countdown its golden run measured; a chat reads the same measured line (Q-455, `moim.rs`
+    /// `ContextReport::Chat`) with no announcement.
     swarm_measured_context: std::sync::atomic::AtomicBool,
     /// The repeat guard (`tool_monitor`): on for every agent, off for swarm workers, whose loops the
     /// judge supervises and whose golden benchmark was measured without it. Shared with the
@@ -2219,23 +2220,31 @@ impl Agent {
                     break;
                 }
 
-                let measured_context = self
+                let context_report = if self
                     .swarm_measured_context
                     .load(std::sync::atomic::Ordering::Relaxed)
-                    .then_some(last_call_usage);
+                {
+                    super::moim::ContextReport::Measured(last_call_usage)
+                } else if self.is_swarm_worker() {
+                    super::moim::ContextReport::CompactionCountdown
+                } else {
+                    super::moim::ContextReport::Chat(last_call_usage)
+                };
                 let conversation_with_moim = super::moim::inject_moim(
                     &session_config.id,
                     conversation.clone(),
                     &self.extension_manager,
                     turns_taken,
                     max_turns,
-                    measured_context,
+                    context_report,
                     !self.is_swarm_worker(),
                 ).await;
                 // VA-107: the not-reported arm is LOUD to the caller — the swarm turns this notice
                 // into one `usage_unavailable{task, attempt, turn}` event per lane.
-                if measured_context
-                    == Some(crate::context_mgmt::context_line::LastCallUsage::NotReported)
+                if context_report
+                    == super::moim::ContextReport::Measured(
+                        crate::context_mgmt::context_line::LastCallUsage::NotReported,
+                    )
                 {
                     yield AgentEvent::Message(Message::assistant().with_system_notification(
                         SystemNotificationType::InlineMessage,

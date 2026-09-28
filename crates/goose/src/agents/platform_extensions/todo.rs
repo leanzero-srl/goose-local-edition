@@ -43,8 +43,7 @@ impl TodoClient {
                 - In flight — what you are in the middle of, exact next action
                 - Next — remaining steps
                 - Facts — paths, commands, numbers, decisions and the reasons behind them
-                When the turn context says compaction is near, refresh it FIRST. After a compaction,
-                trust the scratchpad over the summary where they differ.
+                After a compaction, trust the scratchpad over the summary where they differ.
             "#}
                 .to_string(),
             );
@@ -98,8 +97,7 @@ impl TodoClient {
             indoc! {r#"
                     Overwrite your scratchpad — the notes that survive context compaction verbatim and
                     are shown to you every turn. Keep Goal, Done, In flight, Next and Facts (paths,
-                    commands, numbers, decisions) current after every meaningful step, and refresh it
-                    first when the turn context says compaction is near.
+                    commands, numbers, decisions) current after every meaningful step.
 
                     WARNING: This operation completely replaces the existing content. Always include
                     all content you want to keep, not just the changes.

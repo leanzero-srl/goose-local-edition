@@ -7,7 +7,7 @@ When a session grows past the context limit, goose summarizes the older part of 
 
 ## The scratchpad (this session)
 
-The `todo` extension's content is goose's scratchpad. It is stored with the session, shown to the model in every turn's context inside a `<scratchpad>` block, and survives compaction verbatim. goose is told to keep it current after every meaningful step in five parts — Goal, Done, In flight, Next, Facts (paths, commands, numbers, decisions and why) — and when the turn context says compaction is near, a `<scratchpad-notice>` asks it to refresh the scratchpad first. The notice fires in the last quarter of the room before the compaction threshold, and only when the scratchpad extension is on.
+The `todo` extension's content is goose's scratchpad. It is stored with the session, shown to the model in every turn's context inside a `<scratchpad>` block, and survives compaction verbatim. goose is told to keep it current after every meaningful step in five parts — Goal, Done, In flight, Next, Facts (paths, commands, numbers, decisions and why). The turn context states how much of the context window the conversation fills, as a fact and not a budget: compaction is automatic, and the work continues after it.
 
 ## The project ledger (this project)
 
