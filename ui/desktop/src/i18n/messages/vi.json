@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Đang bận trong ‘{name}’} other {Đang bận trong cuộc trò chuyện khác}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Tin nhắn gửi bây giờ sẽ đến {node} — không chờ câu trả lời đó."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Tin nhắn gửi bây giờ chờ câu trả lời đó xong, rồi nạp {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Tin nhắn gửi bây giờ dùng chung engine với câu trả lời đó — chạy chậm hơn, hoặc chờ nếu không còn chỗ."
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Chọn một mô hình"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Mặc định"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Mô hình"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "Hiện thêm"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Đang bắt đầu phiên ở đây — phiên sẽ mở khi các tiện ích mở rộng được tải xong"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Phiên không tên"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "Giống như {role} thay vào đó"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Các lượt ủy quyền của cuộc trò chuyện dùng chiến lược này, và bản dựng swarm."
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "Được bản dựng swarm dùng."

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -6,6 +6,7 @@ import {
   Folder,
   FolderOpen,
   GitFork,
+  Loader2,
   MessageSquarePlus,
   MoreVertical,
   Pencil,
@@ -93,6 +94,10 @@ const i18n = defineMessages({
   newSessionHere: {
     id: 'projectsSection.newSessionHere',
     defaultMessage: 'New session here',
+  },
+  startingSession: {
+    id: 'projectsSection.startingSession',
+    defaultMessage: 'Starting a session here — it opens when its extensions are loaded',
   },
   revealInFinder: {
     id: 'projectsSection.revealInFinder',
@@ -517,6 +522,8 @@ interface ProjectRowProps {
   state: ProjectSessionsState | undefined;
   showAll: boolean;
   activeSessionId?: string;
+  /** A session this row's "New session here" asked for is being created (Q-440). */
+  creating: boolean;
   onToggle: () => void;
   onNewSession: () => void;
   onRemove?: () => void;
@@ -534,6 +541,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
   state,
   showAll,
   activeSessionId,
+  creating,
   onToggle,
   onNewSession,
   onRemove,
@@ -671,20 +679,21 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
             'absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-px pl-1',
             RADIUS.control,
             SURFACE.inset,
-            rowActionClass(menu != null)
+            rowActionClass(menu != null || creating)
           )}
         >
           <Button
             variant="ghost"
             size="sm"
-            icon={<Plus />}
+            icon={creating ? <Loader2 className="animate-spin" /> : <Plus />}
             onClick={(e) => {
               e.stopPropagation();
               onNewSession();
             }}
+            disabled={creating}
             aria-label={`${intl.formatMessage(i18n.newSessionHere)} — ${name}`}
-            title={intl.formatMessage(i18n.newSessionHere)}
-            className={rowActionClass(false)}
+            title={intl.formatMessage(creating ? i18n.startingSession : i18n.newSessionHere)}
+            className={rowActionClass(creating)}
           />
           <Button
             variant="ghost"
@@ -965,8 +974,17 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
     return () => window.removeEventListener(AppEvents.PROJECTS_CHANGED, onProjectsChanged);
   }, []);
 
+  // Q-440: creating a session loads its extensions first (seconds — measured 5 s on the owner's
+  // demo), and until then nothing moved: a second use made a second session and the first was
+  // left empty. One creation per folder at a time — the ref refuses a second use synchronously,
+  // the state shows the folder's "+" working — and the session opens when it exists.
+  const creatingRef = useRef<Set<string>>(new Set());
+  const [creatingIn, setCreatingIn] = useState<ReadonlySet<string>>(new Set());
   const handleNewSession = useCallback(
     async (projectPath: string) => {
+      if (creatingRef.current.has(projectPath)) return;
+      creatingRef.current.add(projectPath);
+      setCreatingIn(new Set(creatingRef.current));
       try {
         await startNewSession(undefined, setView, projectPath, {
           allExtensions: extensionsList,
@@ -974,6 +992,9 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
       } catch (error) {
         console.error('Failed to start project session:', error);
         toast.error(intl.formatMessage(i18n.sessionFailed));
+      } finally {
+        creatingRef.current.delete(projectPath);
+        setCreatingIn(new Set(creatingRef.current));
       }
     },
     [setView, extensionsList, intl]
@@ -1098,6 +1119,7 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
                   state={sessionsByProject[project.path]}
                   showAll={showAll.has(project.path)}
                   activeSessionId={activeSessionId}
+                  creating={creatingIn.has(project.path)}
                   onToggle={() => toggleProject(project.path)}
                   onNewSession={() => void handleNewSession(project.path)}
                   onRemove={

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
@@ -12,7 +12,14 @@ import { parseMlxLiveStatus } from '../leanzero-swarm/mlxLiveStats';
 import { MEASURED_PENDING } from '../../utils/mlxMeasuredRuns';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { ComposerReadinessStrip } from '../noNodeNotice/ComposerReadiness';
-import { deriveChatServedBy, servedReady, type ChatServedInputs } from './chatServedBy';
+import type { NodesReadResponse_unstable, NodesResidencyResponse_unstable } from '@aaif/goose-sdk';
+import {
+  deriveChatServedBy,
+  servedReady,
+  type ChatNodesFacts,
+  type ChatServedInputs,
+} from './chatServedBy';
+import { NODE_CLOUD, NODE_SPLIT, NODE_STUDIO } from '../nodes/nodeGlance.fixtures';
 import {
   publishListedNames,
   resetListedNamesForTests,
@@ -242,5 +249,93 @@ describe('Q-152: the composer says where the engine is busy, what a send does, a
       'A message sent now goes first: goose sets this check aside and runs it again after.'
     );
     resetListedNamesForTests();
+  });
+});
+
+/**
+ * Q-431 (owner demo, shot sd-B3-03): a chat on "Studio chat, split for heavy work" — Chat on the
+ * Studio single, then the cloud, "Use the next meanwhile" — while the split answered another chat.
+ * The bar said a message "shares the engine with that answer"; its turn went to the cloud.
+ */
+describe('Q-431: the busy bar says where THIS chat’s next message goes, by its own chain', () => {
+  const read = (ifNotLoaded: 'load' | 'useNext'): NodesReadResponse_unstable => ({
+    config: {
+      version: 1,
+      defs: [NODE_SPLIT.def, NODE_STUDIO.def, NODE_CLOUD.def],
+      strategies: [
+        {
+          id: 'studio-chat',
+          name: 'Studio chat, split for heavy work',
+          roles: {
+            chat: {
+              chain: [
+                { node: NODE_STUDIO.def.id, weight: 1 },
+                { node: NODE_CLOUD.def.id, weight: 1 },
+              ],
+              when: 'failover',
+              ifNotLoaded,
+            },
+            build: { chain: [{ node: NODE_SPLIT.def.id, weight: 1 }] },
+          },
+        },
+      ],
+    },
+    nodes: [NODE_SPLIT, NODE_STUDIO, NODE_CLOUD],
+    stored: true,
+    lmStudioHidden: 0,
+  });
+  const residency: NodesResidencyResponse_unstable = {
+    nodes: [
+      { node: NODE_SPLIT.def.id, residency: { kind: 'serving' } },
+      { node: NODE_STUDIO.def.id, residency: { kind: 'notRunning', otherWay: 'the split' } },
+      { node: NODE_CLOUD.def.id, residency: { kind: 'alwaysReady' } },
+    ],
+    serving: null,
+    loaderInstalled: true,
+  };
+  const detail = (model: string, nodes: ChatNodesFacts) => {
+    const served = deriveChatServedBy(
+      inputs({ main: main([request()], [LIVE_CHAT]), model, nodes })
+    );
+    render(
+      <IntlTestWrapper>
+        <MemoryRouter>
+          <ComposerReadinessStrip
+            serving={{ served, single: STOPPED, armed: true, turnInFlight: false }}
+          />
+        </MemoryRouter>
+      </IntlTestWrapper>
+    );
+    const text = screen.getByTestId('composer-readiness-detail').textContent;
+    cleanup();
+    return text;
+  };
+
+  it('Use the next meanwhile: it names the node the message goes to, and that it does not wait', () => {
+    expect(
+      detail('strategy:studio-chat', { read: read('useNext'), residency, servedNode: null })
+    ).toBe(
+      'A message sent now goes to Claude Sonnet · OpenRouter — it does not wait for that answer.'
+    );
+  });
+
+  it('Load it and wait: the message waits for that answer, then loads its node', () => {
+    const loads =
+      'A message sent now waits for that answer to finish, then loads 27B · Work’s Mac Studio.';
+    expect(
+      detail('strategy:studio-chat', { read: read('load'), residency, servedNode: null })
+    ).toBe(loads);
+    // A chat on one node is that node's chain of one: it loads after the answer.
+    expect(
+      detail(`node:${NODE_STUDIO.def.id}`, { read: read('load'), residency, servedNode: null })
+    ).toBe(loads);
+  });
+
+  it('a chat whose next turn goes to the busy way still shares the engine', () => {
+    expect(
+      detail(`node:${NODE_SPLIT.def.id}`, { read: read('load'), residency, servedNode: null })
+    ).toBe(
+      'A message sent now shares the engine with that answer — it runs slower, or waits if there is no room.'
+    );
   });
 });

@@ -182,11 +182,24 @@ function StrategiesBody({ eligibility }: StrategiesTabProps) {
     }
   };
 
-  const save = async (draft: NodeStrategy) => {
+  const save = async (edited: NodeStrategy) => {
     if (!config) return;
     setSaving(true);
     const list = config.strategies ?? [];
-    const at = list.findIndex((s) => s.id === draft.id);
+    const at = list.findIndex((s) => s.id === edited.id);
+    // A new strategy's id follows the name it is first saved under (Q-438: it kept the
+    // placeholder's "new-strategy"), unique among the strategies; a stored one keeps its id —
+    // chats and builds name it by id.
+    const draft =
+      at >= 0
+        ? edited
+        : {
+            ...edited,
+            id: nodeIdFor(
+              edited.name.trim() || edited.id,
+              list.map((s) => s.id)
+            ),
+          };
     const next = at >= 0 ? list.map((s, i) => (i === at ? draft : s)) : [...list, draft];
     const refused = await write({ ...config, strategies: next });
     setSaving(false);

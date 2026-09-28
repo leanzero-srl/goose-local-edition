@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Ocupado em “{name}”} other {Ocupado em outro chat}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Uma mensagem enviada agora vai para {node} — ela não espera por essa resposta."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Uma mensagem enviada agora espera essa resposta terminar e então carrega {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Uma mensagem enviada agora compartilha o motor com essa resposta — roda mais devagar, ou aguarda se não houver espaço."
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Escolha um modelo"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Padrão"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Modelo"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "Mostrar mais"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Iniciando uma sessão aqui — ela abre quando suas extensões forem carregadas"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sessão sem título"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "Igual a {role} em vez disso"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Delegações de chats nesta estratégia e builds do enxame."
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "Usada pelos builds do enxame."

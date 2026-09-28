@@ -2948,6 +2948,8 @@ impl GooseAcpAgent {
         let user = offer
             .is_none()
             .then(|| loop_door::UserPrompt::begin(self.loops.clone(), &session_id));
+        // A new reply: the load an earlier one paid is not this one's (served.rs, Q-434).
+        crate::nodes::served::reply_began(&session_id);
         // The reply, for the node loader (design §6.4 step 8): every model call of this turn —
         // and of its delegates — holds the way it used until the turn ends, however it ends. Opened
         // after the busy check: a refused prompt must not take over the running reply's slot.

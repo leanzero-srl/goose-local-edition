@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {正在处理“{name}”} other {正在处理另一个聊天}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "现在发送的消息会发往 {node}——不等待那个回答。"
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "现在发送的消息会等那个回答结束，然后加载 {node}。"
+  },
   "busyIn.sendShares": {
     "defaultMessage": "现在发送的消息将与该回答共享引擎 — 速度会变慢，若没有空间则会等待。"
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "选择模型"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "默认"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "模型"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "显示更多"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "正在此处启动会话——扩展加载完成后即打开"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "无标题会话"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "改为与 {role} 相同"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "使用此策略的聊天的委派，以及 swarm 构建。"
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "由 swarm 构建使用。"

@@ -26,8 +26,11 @@ import { usePlacementPlans } from '../leanzero-swarm/usePlacementPlans';
 import { PlacementBadge, pickerBadgeOf } from '../leanzero-swarm/PlacementCard';
 import { PlacementCandidates, waysOf, type Way } from '../leanzero-swarm/PlacementCandidates';
 import { formatGb } from '../leanzero-swarm/primitives';
-import { providerRowState } from '../leanzero-swarm/cloudProviderState';
-import { isUserEndpoint } from '../settings/models/leanzeroSelectorPolicy';
+import {
+  providerListKind,
+  providerRowState,
+  type ProviderListKind,
+} from '../leanzero-swarm/cloudProviderState';
 import { acpListProviderDetails, acpListProviderLiveModels } from '../../acp/providers';
 import type { PlacementGoal } from '../../acp/mlx-placement';
 import type { ProviderDetails } from '../../types/providers';
@@ -130,6 +133,7 @@ const i18n = defineMessages({
     defaultMessage: '{provider} has no model listing; these are the models goose knows for it.',
   },
   pickModel: { id: 'nodes.newPickModel', defaultMessage: 'Pick a model' },
+  providerDefault: { id: 'nodes.newProviderDefault', defaultMessage: 'Default' },
   nameIt: { id: 'nodes.newNameIt', defaultMessage: 'Name it' },
   name: { id: 'nodes.newName', defaultMessage: 'Name' },
   keepLoaded: {
@@ -360,10 +364,12 @@ function NewNodeDialogBody({
       alive = false;
     };
   }, []);
-  const configured = (want: 'cloud' | 'endpoint') =>
+  // The providers the Cloud Providers tab lists as configured, of one kind — never a local engine
+  // (Q-429): the tile's count and the Provider step read this one list.
+  const configured = (want: ProviderListKind) =>
     providers.kind === 'read'
       ? providers.providers.filter(
-          (p) => providerRowState(p) !== 'not-set-up' && (want === 'endpoint') === isUserEndpoint(p)
+          (p) => providerRowState(p) !== 'not-set-up' && providerListKind(p) === want
         )
       : [];
 
@@ -438,8 +444,11 @@ function NewNodeDialogBody({
     if (kind === 'mlx' && model && placement) {
       return defaultNodeName(intl, model, whereWords(intl, placement, macs.macs), takenNames);
     }
+    // A provider's node is named by the model id as the provider lists it (Q-439: two
+    // providers' "deepseek-v4.1-flash" are different models); the card's model line under the
+    // name carries the short name.
     if (kind !== 'mlx' && providerModel) {
-      return uniqueName(`${modelShortName(providerModel)} · ${providerName}`, takenNames);
+      return uniqueName(`${providerModel.trim()} · ${providerName}`, takenNames);
     }
     return '';
   };
@@ -750,7 +759,8 @@ function NewNodeDialogBody({
             selected={provider === p.name}
             onClick={() => {
               setProvider(p.name);
-              setProviderModel('');
+              // The default chosen in Cloud Providers is the first pick (Q-437).
+              setProviderModel(p.default_model ?? '');
             }}
             testId="new-node-provider-row"
           >
@@ -771,12 +781,18 @@ function NewNodeDialogBody({
     </div>
   );
 
-  const modelOptions =
+  const listed =
     models.kind === 'read'
       ? models.models
       : models.kind === 'unlisted' || models.kind === 'failed'
         ? models.catalog
         : [];
+  // The provider's default model (chosen and proven in Cloud Providers, whose dialog promises it
+  // "leads the list whenever you add a node") leads, marked — then the provider's own order (Q-437).
+  const providerDefault = providerDetails?.default_model || null;
+  const modelOptions = providerDefault
+    ? [providerDefault, ...listed.filter((m) => m !== providerDefault)]
+    : listed;
   const providerModelStep = (
     <div className="flex flex-col gap-3" data-testid="new-node-provider-model">
       <p className={cx(TYPE.body, WEIGHT.semibold)}>{intl.formatMessage(i18n.whichModel)}</p>
@@ -799,7 +815,10 @@ function NewNodeDialogBody({
         <Combobox
           aria-label={intl.formatMessage(i18n.providerModels)}
           placeholder={intl.formatMessage(i18n.pickModel)}
-          options={modelOptions.map((m) => ({ value: m }))}
+          options={modelOptions.map((m) => ({
+            value: m,
+            hint: m === providerDefault ? intl.formatMessage(i18n.providerDefault) : undefined,
+          }))}
           value={providerModel}
           onChange={setProviderModel}
         />

@@ -397,7 +397,7 @@ Memory "fit" on a card is the fit rule's own numbers from the plan's candidate f
 
 ### 4.4 Naming
 
-A new MLX node's name defaults to `<model short name> · <where>`, where `<where>` is "this Mac", "<Mac name>" or "both Macs" / "<n> Macs". Examples: "27B Atlassian · both Macs", "Flash · Work's Mac Studio". A cloud node's name defaults to `<model short name> · <provider>`, for example "Claude Sonnet · OpenRouter". Names are editable and unique.
+A new MLX node's name defaults to `<model short name> · <where>`, where `<where>` is "this Mac", "<Mac name>" or "both Macs" / "<n> Macs". Examples: "27B Atlassian · both Macs", "Flash · Work's Mac Studio". A cloud or endpoint node's name defaults to `<model id as the provider lists it> · <provider>`, for example "anthropic/claude-sonnet-4.5 · OpenRouter"; its card carries the short name ("claude-sonnet-4.5") on the model line under the name (Q-439, owner demo 2026-09-28: two providers' "deepseek-v4.1-flash" are different models). Names are editable and unique.
 
 ### 4.5 Adoption of today's pool, on every `nodes/read`
 

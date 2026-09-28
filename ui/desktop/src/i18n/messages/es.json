@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Ocupado en «{name}»} other {Ocupado en otro chat}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Un mensaje enviado ahora va a {node}: no espera a esa respuesta."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Un mensaje enviado ahora espera a que termine esa respuesta y luego carga {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Un mensaje enviado ahora comparte el motor con esa respuesta: va más lento o espera si no hay espacio."
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Elige un modelo"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Predeterminado"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Modelo"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "Mostrar más"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Iniciando una sesión aquí: se abre cuando sus extensiones están cargadas"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sesión sin título"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "Igual que {role} en su lugar"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Delegaciones de los chats con esta estrategia y compilaciones del enjambre."
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "Usada por las compilaciones del enjambre."

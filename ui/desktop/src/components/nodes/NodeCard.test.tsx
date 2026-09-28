@@ -326,6 +326,23 @@ describe('NodeCard — the parts of a card', () => {
     expect(screen.getByTestId('node-details-line')).toHaveTextContent(`Model: ${MODEL_27B}`);
   });
 
+  it('Q-439: a cloud node named by its provider’s model id carries the short name under it', () => {
+    const node: ResolvedNodeDef = {
+      ...NODE_CLOUD,
+      def: {
+        ...NODE_CLOUD.def,
+        name: 'deepseek/deepseek-v4.1-flash · OpenRouter',
+        model: 'deepseek/deepseek-v4.1-flash',
+      },
+      model: 'deepseek/deepseek-v4.1-flash',
+    };
+    renderCard(node, facts());
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent(
+      'deepseek/deepseek-v4.1-flash · OpenRouter'
+    );
+    expect(screen.getByTestId('node-model')).toHaveTextContent(/^deepseek-v4\.1-flash$/);
+  });
+
   it('Q-303: a follows node shows where it runs NOW — the split’s Macs, not “This Mac”', () => {
     renderCard(NODE_POOL, facts({ residency: read({ kind: 'serving' }), serving: WAY_SPLIT }));
     expect(screen.getByTestId('node-where')).toHaveTextContent('Split · 2 Macs');

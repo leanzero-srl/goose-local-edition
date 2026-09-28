@@ -1,5 +1,5 @@
 import type React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'react-intl';
@@ -223,6 +223,39 @@ describe('Q-271: a split that is starting is loading — the loader’s line, ne
   });
 });
 
+/**
+ * Q-434 (owner demo, c2t2 19:38:09): two parallel delegates of a chat on a strategy demanded the
+ * split; the PARENT's composer and chip said "Loading … both Macs for this chat: Loading weights" —
+ * the load was its delegates', named by the loader (`loading.demandedBy`).
+ */
+describe('Q-434: a load the loader names for other sessions is never "for this chat"', () => {
+  const loadingFor = (demandedBy: string[]) =>
+    withRows(J3_SERVING_SINGLE, {
+      [CHAT.id]: { node: CHAT.id, residency: { kind: 'notRunning' } },
+      [SPLIT.id]: { node: SPLIT.id, residency: { kind: 'loading', phase: 'loading', demandedBy } },
+    });
+
+  it('its delegates’ load: the parent says the swap, not that it loads for this chat', async () => {
+    residency = loadingFor(['20260928_42', '20260928_43']);
+    mockStatus.mockResolvedValue(STOPPED);
+    show(J3_STRATEGY, true);
+    const line = await screen.findByTestId('composer-readiness-loader');
+    expect(line.textContent).toBe('Swapping to Qwen3.8-27B-Atlassian-Q8-mlx · both Macs');
+    expect(line.textContent).not.toContain('for this chat');
+  });
+
+  it('positive control: its own demand among them is its own load', async () => {
+    residency = loadingFor(['20260928_42', 'chat-1']);
+    mockStatus.mockResolvedValue(STOPPED);
+    show(J3_STRATEGY, true);
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-readiness-loader').textContent).toBe(
+        'Loading Qwen3.8-27B-Atlassian-Q8-mlx · both Macs for this chat: Loading weights'
+      )
+    );
+  });
+});
+
 describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
   it('nodes.turnWaiting: the way waited on by its node’s name, the replies ahead, the duration', async () => {
     residency = withRows(J3_SERVING_SINGLE, {
@@ -375,8 +408,18 @@ describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
     }
   );
 
+  /** The displaced chat's last turn ran on the node that was stopped (the router's record). */
+  const RAN_ON_CHAT_NODE: NodeServedTurnDto = {
+    node: CHAT.id,
+    role: 'chat',
+    rank: 1,
+    tried: [],
+    atMs: 0,
+  };
+
   it('nodes.displacedNotice: the displaced chat is told, with its two actions', async () => {
     residency = DISPLACED;
+    servedRecord = RAN_ON_CHAT_NODE;
     mockStatus.mockResolvedValue(STOPPED);
     show(`node:${CHAT.id}`, false);
     const notice = await screen.findByTestId('composer-readiness-displaced');
@@ -399,6 +442,7 @@ describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
 
   it('Keep {node} loaded: the node’s Keep loaded is written, then it loads back', async () => {
     residency = DISPLACED;
+    servedRecord = RAN_ON_CHAT_NODE;
     mockStatus.mockResolvedValue(STOPPED);
     show(`node:${CHAT.id}`, false);
     fireEvent.click(await screen.findByTestId('composer-readiness-keep-loaded'));
@@ -412,6 +456,23 @@ describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
       (d) => d.id === CHAT.id
     );
     expect(written?.keepLoaded).toBe(true);
+  });
+
+  it('Q-435: a chat that never ran on the stopped node is not told it was stopped', async () => {
+    // Shot 40: a brand-new chat set to the node another chat displaced read "… was stopped for
+    // … Your next message loads it back" — nothing was stopped for it.
+    residency = DISPLACED;
+    servedRecord = null;
+    mockStatus.mockResolvedValue(STOPPED);
+    show(`node:${CHAT.id}`, false);
+    await waitFor(() => expect(screen.getByTestId('model-chip-served')).toBeTruthy());
+    expect(screen.queryByTestId('composer-readiness-displaced')).toBeNull();
+    cleanup();
+    // Its last turn ran on another node: the stopped one was not serving it either.
+    servedRecord = { ...RAN_ON_CHAT_NODE, node: SPLIT.id };
+    show(`node:${CHAT.id}`, false);
+    await waitFor(() => expect(screen.getByTestId('model-chip-served')).toBeTruthy());
+    expect(screen.queryByTestId('composer-readiness-displaced')).toBeNull();
   });
 
   it('the chat that asked for the other node is not "displaced" — the swap was its own', async () => {
@@ -430,6 +491,7 @@ describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
       ...DISPLACED,
       displaced: DISPLACED.displaced?.map((d) => ({ ...d, failed: 'rank 1 exited' })),
     };
+    servedRecord = RAN_ON_CHAT_NODE;
     mockStatus.mockResolvedValue(STOPPED);
     show(`node:${CHAT.id}`, false);
     const notice = await screen.findByTestId('composer-readiness-displaced');

@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named,select,yes{{elapsed,select,none{Busy in ‘{name}’} other{Busy in ‘{name}’ · {elapsed}}}} other{{elapsed,select,none{Busy in another chat} other{Busy in another chat · {elapsed}}}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "A message sent now goes to {node} — it does not wait for that answer."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "A message sent now waits for that answer to finish, then loads {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "A message sent now shares the engine with that answer — it runs slower, or waits if there is no room."
   },
@@ -6992,6 +6998,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Pick a model"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Default"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
   },
@@ -8209,6 +8218,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "Show more"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Starting a session here — it opens when its extensions are loaded"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Untitled session"
@@ -10408,6 +10420,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "Same as {role} instead"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Delegates of chats on this strategy, and swarm builds."
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "Used by swarm builds."

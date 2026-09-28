@@ -73,6 +73,11 @@ const i18n = defineMessages({
   setOwn: { id: 'strategies.setOwn', defaultMessage: 'Set its own nodes' },
   useSameAs: { id: 'strategies.useSameAs', defaultMessage: 'Same as {role} instead' },
   usedByBuilds: { id: 'strategies.usedByBuilds', defaultMessage: 'Used by swarm builds.' },
+  // Q-433: Build also runs the delegates of a chat on this strategy (summon's `@build`).
+  usedByBuildRole: {
+    id: 'strategies.usedByBuildRole',
+    defaultMessage: 'Delegates of chats on this strategy, and swarm builds.',
+  },
   addNode: { id: 'strategies.addNode', defaultMessage: 'Add a node' },
   addNodeOnlyOne: {
     id: 'strategies.addNodeOnlyOne',
@@ -271,7 +276,9 @@ export function StrategyEditor({
         <RoleChip role={role} />
         <p className={cx('break-words', TYPE.bodyMuted)}>{intl.formatMessage(ROLE_WHAT[role])}</p>
         {role !== 'chat' && (
-          <p className={cx('break-words', TYPE.meta)}>{intl.formatMessage(i18n.usedByBuilds)}</p>
+          <p className={cx('break-words', TYPE.meta)}>
+            {intl.formatMessage(role === 'build' ? i18n.usedByBuildRole : i18n.usedByBuilds)}
+          </p>
         )}
       </div>
     );

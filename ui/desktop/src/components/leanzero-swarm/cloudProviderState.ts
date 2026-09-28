@@ -1,5 +1,8 @@
 import type { ProviderDetails } from '../../types/providers';
-import { isUserEndpoint } from '../settings/models/leanzeroSelectorPolicy';
+import {
+  isLocalEditionCloudProvider,
+  isUserEndpoint,
+} from '../settings/models/leanzeroSelectorPolicy';
 
 /**
  * THE rule for what a provider row is on the Cloud Providers tab — one home, read by the row's chip,
@@ -34,6 +37,22 @@ export function providerRowState(provider: RowFacts): ProviderRowState {
     return 'unchecked';
   }
   return 'not-set-up';
+}
+
+/**
+ * Which Cloud Providers list a provider belongs to: `endpoint` (an OpenAI-compatible server the
+ * person added), `cloud` (one of the key-based cloud providers the tab offers), or null — a local
+ * engine (oMLX, Goose Swarm, LM Studio), which the tab never lists and no count may include (Q-429:
+ * New node's "A cloud model · 2 set up" counted oMLX and Goose Swarm while the tab said 0 of 14).
+ */
+export type ProviderListKind = 'cloud' | 'endpoint';
+
+export function providerListKind(
+  provider: Pick<ProviderDetails, 'name' | 'provider_type'>
+): ProviderListKind | null {
+  if (isUserEndpoint(provider)) return 'endpoint';
+  if (isLocalEditionCloudProvider(provider.name)) return 'cloud';
+  return null;
 }
 
 export function isListedConfigured(provider: RowFacts): boolean {

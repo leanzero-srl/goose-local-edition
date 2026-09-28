@@ -42,6 +42,21 @@ export interface NodeSwap {
   phase: string | null;
   /** The target's measured loads (its way's Ready median); null = not measured yet. */
   load: MeasuredLoad | null;
+  /**
+   * The sessions whose demands the loader loads it for (`loading.demandedBy`, Q-382); empty = no
+   * loader demand is behind it (Run it, a restore, a card's Start).
+   */
+  demandedBy: string[];
+}
+
+/**
+ * Whether a load is not `sessionId`'s own: the loader names the sessions it loads for, and this one
+ * is not among them — a delegate's load, or another chat's (Q-434: the parent's composer said
+ * "Loading … for this chat" while its delegate's demand was being loaded). A load no demand is
+ * behind names no one, so it is not claimed to be someone else's.
+ */
+export function loadIsOthers(swap: NodeSwap, sessionId: string | null): boolean {
+  return swap.demandedBy.length > 0 && (sessionId == null || !swap.demandedBy.includes(sessionId));
 }
 
 /** A node's measured loads: the median of its way's Ready loads and how many it is over. */
@@ -84,9 +99,14 @@ export function nodeSwapOf(
   residency: NodesResidencyResponse_unstable,
   prefer: readonly string[] = []
 ): NodeSwap | null {
-  const loading = new Map<string, string | null>();
+  const loading = new Map<string, { phase: string | null; demandedBy: string[] }>();
   for (const row of residency.nodes) {
-    if (row.residency.kind === 'loading') loading.set(row.node, row.residency.phase ?? null);
+    if (row.residency.kind === 'loading') {
+      loading.set(row.node, {
+        phase: row.residency.phase ?? null,
+        demandedBy: row.residency.demandedBy ?? [],
+      });
+    }
   }
   if (loading.size === 0) return null;
   const rank = (node: ResolvedNodeDef): number =>
@@ -96,10 +116,12 @@ export function nodeSwapOf(
     .map((node, i) => ({ node, i }))
     .sort((a, b) => rank(a.node) - rank(b.node) || a.i - b.i)[0];
   if (!found) return null;
+  const mark = loading.get(found.node.def.id);
   return {
     target: targetOf(found.node),
-    phase: loading.get(found.node.def.id) ?? null,
+    phase: mark?.phase ?? null,
     load: measuredLoadOf(residency, found.node.def.id),
+    demandedBy: mark?.demandedBy ?? [],
   };
 }
 
@@ -188,12 +210,20 @@ export interface NodeDisplaced {
   load: MeasuredLoad | null;
 }
 
+/**
+ * `servedNode` is the node the router says served this chat's last turn (`nodes/servedLast`):
+ * the notice says "was stopped … your next message loads it back", which is true only of a chat
+ * that node was serving — never of a chat that never ran on it (Q-435: a brand-new chat set to
+ * the stopped node was told it). Unread (undefined) or another node proves nothing: no notice.
+ */
 export function displacedOf(
   read: NodesReadResponse_unstable,
   residency: NodesResidencyResponse_unstable,
   nodeId: string,
-  sessionId: string | null
+  sessionId: string | null,
+  servedNode: string | null | undefined
 ): NodeDisplaced | null {
+  if (servedNode !== nodeId) return null;
   const entry = (residency.displaced ?? []).find((d) => d.node === nodeId);
   if (!entry || (sessionId != null && entry.bySession === sessionId)) return null;
   // goosed drops a notice the moment its node serves again; a read that raced it is not said.

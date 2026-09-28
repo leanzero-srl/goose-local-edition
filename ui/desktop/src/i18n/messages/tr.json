@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {‘{name}’ içinde meşgul} other {Başka bir sohbette meşgul}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Şimdi gönderilen bir mesaj {node} düğümüne gider — o yanıtı beklemez."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Şimdi gönderilen bir mesaj o yanıtın bitmesini bekler, sonra {node} yüklenir."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Şimdi gönderilen bir mesaj motoru o yanıtla paylaşır — daha yavaş çalışır veya yer yoksa bekler."
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Bir model seçin"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Varsayılan"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "Daha fazla göster"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Burada bir oturum başlatılıyor — uzantıları yüklenince açılır"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Adsız oturum"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "Bunun yerine {role} ile aynı"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Bu stratejideki sohbetlerin devretmeleri ve swarm derlemeleri."
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "Swarm derlemeleri tarafından kullanılır."

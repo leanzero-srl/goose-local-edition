@@ -35,10 +35,12 @@ import {
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { splitStopAt, type SplitStop } from './splitStop';
+import { busyNextOf, type BusyNext } from './busyNext';
 import type { ChatLoader } from './loaderText';
 import { effectiveEntry, nodeNameOfDevice, nodeNamesById } from '../nodes/model';
 import {
   displacedOf,
+  loadIsOthers,
   nodeRefusalOf,
   nodeSwapOf,
   nodeWaitOf,
@@ -96,6 +98,11 @@ export interface ChatBusyIn {
   elapsedS: number | null;
   /** The engine holds a request WAITING: a message sent now waits too, rather than running beside. */
   waits: boolean;
+  /**
+   * Where this chat's next turn goes by its own chain when that is NOT beside the busy answer
+   * (busyNext.ts, Q-431); absent = it goes to the busy way, or the chat names no chain.
+   */
+  next?: BusyNext | null;
 }
 
 /**
@@ -825,13 +832,17 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
   if (!facts) return sayMismatch(core, given, null, null);
   const routeIds = routeNodeIds(facts.read, given.model);
   const route = routeOf(facts, given.model);
-  const named = sayMismatch(withNodeNames(core, facts.read), given, facts, route);
+  const named = withBusyNext(
+    sayMismatch(withNodeNames(core, facts.read), given, facts, route),
+    facts,
+    given.model
+  );
   const loader = chatLoaderOf(facts, routeIds, route, given);
   const own = route?.nodeId ?? null;
   // Between turns only: while a turn is in flight the loader's own line says what happens.
   const displaced =
     !given.turnInFlight && own != null
-      ? displacedOf(facts.read, facts.residency, own, given.sessionId)
+      ? displacedOf(facts.read, facts.residency, own, given.sessionId, facts.servedNode)
       : null;
   const fellBack = given.turnInFlight ? null : fellBackOf(facts.servedRecord, facts.read);
   if (!loader) {
@@ -874,6 +885,16 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
     displaced,
     fellBack,
   };
+}
+
+/** The busy bar says where this chat's own chain sends a message now (Q-431, busyNext.ts). */
+function withBusyNext(
+  served: ChatServedBy,
+  facts: ChatNodesFacts,
+  model: string | null | undefined
+): ChatServedBy {
+  if (!served.busyIn) return served;
+  return { ...served, busyIn: { ...served.busyIn, next: busyNextOf(facts, model) } };
 }
 
 /**
@@ -983,7 +1004,10 @@ function chatLoaderOf(
   const swap = nodeSwapOf(read, residency, routeIds ?? []);
   if (swap) {
     const forThisChat =
-      inputs.turnInFlight && routeIds != null && routeIds.includes(swap.target.id);
+      inputs.turnInFlight &&
+      routeIds != null &&
+      routeIds.includes(swap.target.id) &&
+      !loadIsOthers(swap, inputs.sessionId);
     if (forThisChat || engineStoppedBy(swap, inputs)) {
       return { kind: 'loading', swap, forThisChat };
     }

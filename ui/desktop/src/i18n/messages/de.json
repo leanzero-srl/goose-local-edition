@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Beschäftigt in „{name}“} other {Beschäftigt in einem anderen Chat}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Eine jetzt gesendete Nachricht geht an {node} — sie wartet nicht auf diese Antwort."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Eine jetzt gesendete Nachricht wartet, bis diese Antwort fertig ist, und lädt dann {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Eine jetzt gesendete Nachricht teilt sich die Engine mit dieser Antwort — sie läuft langsamer oder wartet, wenn kein Platz ist."
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Modell wählen"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Standard"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Modell"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "Mehr anzeigen"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Sitzung wird hier gestartet — sie öffnet sich, sobald ihre Erweiterungen geladen sind"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Unbenannte Sitzung"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "Stattdessen wie {role}"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Delegationen von Chats mit dieser Strategie und Schwarm-Builds."
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "Wird von Schwarm-Builds genutzt."

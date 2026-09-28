@@ -374,6 +374,11 @@ describe('the strategy editor', () => {
     expect(within(chat).getByTestId('strategy-sentence')).toHaveTextContent(
       'Chat runs on 27B Atlassian · both Macs. If it can’t run, on Claude Sonnet · OpenRouter. If 27B Atlassian · both Macs isn’t loaded, it loads and your turn waits; its first load is not measured yet.'
     );
+    // Q-433: Build also runs this strategy's chats' delegates, and says so.
+    expect(roleRow('build')).toHaveTextContent(
+      'Delegates of chats on this strategy, and swarm builds.'
+    );
+    expect(within(roleRow('build')).queryByText('Used by swarm builds.')).toBeNull();
     expect(within(roleRow('build')).getByTestId('strategy-sentence')).toHaveTextContent(
       'Build is shared: 27B Atlassian · both Macs 2 parts, Claude Sonnet · OpenRouter 1 part.'
     );
@@ -453,6 +458,31 @@ describe('the strategy editor', () => {
       NODE_CLOUD.def.id,
     ]);
     await waitFor(() => expect(screen.queryByTestId('strategy-editor')).toBeNull());
+  });
+
+  it('Q-438: a new strategy’s id follows the name it is first saved under, unique; a rename keeps it', async () => {
+    renderTab();
+    await userEvent.click(screen.getByTestId('strategies-new'));
+    const name = screen.getByTestId('strategy-name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Studio chat, split for heavy work');
+    await userEvent.click(screen.getByTestId('strategy-save'));
+    await waitFor(() => expect(mockWrite).toHaveBeenCalledTimes(1));
+    const first = (mockWrite.mock.calls[0][0] as NodesConfig).strategies?.[3];
+    expect(first).toMatchObject({
+      id: 'studio-chat-split-for-heavy-work',
+      name: 'Studio chat, split for heavy work',
+    });
+    await waitFor(() => expect(screen.queryByTestId('strategy-editor')).toBeNull());
+    // A name whose id another strategy holds gets the next free one.
+    await userEvent.click(screen.getByTestId('strategies-new'));
+    await userEvent.clear(screen.getByTestId('strategy-name'));
+    await userEvent.type(screen.getByTestId('strategy-name'), 'Quick!');
+    await userEvent.click(screen.getByTestId('strategy-save'));
+    await waitFor(() => expect(mockWrite).toHaveBeenCalledTimes(2));
+    const ids = (mockWrite.mock.calls[1][0] as NodesConfig).strategies?.map((s) => s.id);
+    expect(ids).toContain('quick-2');
+    expect(ids?.filter((id) => id === 'quick')).toHaveLength(1);
   });
 
   it('Set its own nodes, then share with two MLX ways: flagged before save, refused verbatim on save', async () => {

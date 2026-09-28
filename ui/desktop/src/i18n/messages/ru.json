@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Занят в «{name}»} other {Занят в другом чате}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Сообщение, отправленное сейчас, уйдёт на {node} — оно не ждёт этого ответа."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Сообщение, отправленное сейчас, дождётся конца этого ответа, затем загрузит {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Сообщение, отправленное сейчас, делит движок с этим ответом — оно идёт медленнее или ждёт, если нет места."
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Выберите модель"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "По умолчанию"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Модель"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "Показать ещё"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Сеанс запускается здесь — он откроется, когда загрузятся его расширения"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Сеанс без названия"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "Вместо этого — так же, как {role}"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Делегаты чатов с этой стратегией и сборки swarm."
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "Используется сборками swarm."

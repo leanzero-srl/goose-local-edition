@@ -204,6 +204,20 @@ function getSubagentSessionId(
 }
 
 /**
+ * Q-434: delegates started "at the same time" run in the background, and the parent waits on each
+ * with summon's `load(source: <task id>)` — the card that is Working while the delegate runs. Its
+ * source IS the delegate's session (summon.rs `is_session_id`: `<8 digits>_<n>`), known before the
+ * result carries it; any other source (a skill, a recipe) names no delegate.
+ */
+function awaitedDelegateOf(toolCall: { name: string; arguments?: Record<string, unknown> }) {
+  if (toolCall.name !== 'summon__load') return null;
+  const source = toolCall.arguments?.source;
+  if (typeof source !== 'string') return null;
+  const parts = source.split('_');
+  return parts.length === 2 && /^\d{8}$/.test(parts[0]) ? source : null;
+}
+
+/**
  * Q-382: a synchronous delegate announces its session the moment it starts (summon.rs,
  * `subagent_started`), before its first model call — so its card can say the node is loading FOR
  * it while that call waits on the load. It names the session only: never a log line.
@@ -674,11 +688,14 @@ function ToolCallView({
   // Q-382: a delegate's card says when its node is LOADING for it — the loader's own fact, read
   // only for a delegate card, and the card opens while it lasts (unless the person closed it).
   const subagentSessionId = getSubagentSessionId(toolResponse, notifications);
-  const delegateNodes = useGlanceNodesWhen(subagentSessionId != null);
+  // A running `load` of a background delegate is that delegate's card while it runs (Q-434).
+  const delegateSession =
+    subagentSessionId ?? (loadingStatus === 'loading' ? awaitedDelegateOf(toolCall) : null);
+  const delegateNodes = useGlanceNodesWhen(delegateSession != null);
   const delegateLoading =
-    subagentSessionId != null &&
+    delegateSession != null &&
     delegateNodes.kind === 'read' &&
-    delegateLoadOf(delegateNodes.residency, subagentSessionId) != null;
+    delegateLoadOf(delegateNodes.residency, delegateSession) != null;
 
   const progress = notifications
     ?.filter((notification) => {
@@ -1008,15 +1025,16 @@ function ToolCallView({
       )}
 
       {(() => {
-        if (!subagentSessionId) return null;
+        if (!delegateSession) return null;
         const running = loadingStatus === 'loading';
         if (running) {
           return delegateLoading ? (
             <div className="border-t border-border-primary">
-              <DelegateServedLine sessionId={subagentSessionId} running />
+              <DelegateServedLine sessionId={delegateSession} running />
             </div>
           ) : null;
         }
+        if (!subagentSessionId) return null;
         return (
           <div className="border-t border-border-primary">
             <DelegateServedLine sessionId={subagentSessionId} />

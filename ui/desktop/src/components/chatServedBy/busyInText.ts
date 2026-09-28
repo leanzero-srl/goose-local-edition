@@ -25,6 +25,14 @@ const i18n = defineMessages({
     id: 'busyIn.sendWaits',
     defaultMessage: 'A message sent now waits until the engine has room for it.',
   },
+  sendGoesTo: {
+    id: 'busyIn.sendGoesTo',
+    defaultMessage: 'A message sent now goes to {node} — it does not wait for that answer.',
+  },
+  sendLoadsAfter: {
+    id: 'busyIn.sendLoadsAfter',
+    defaultMessage: 'A message sent now waits for that answer to finish, then loads {node}.',
+  },
   sendShares: {
     id: 'busyIn.sendShares',
     defaultMessage:
@@ -51,11 +59,20 @@ export function busyInHeadline(intl: IntlShape, busy: ChatBusyIn): string {
 }
 
 /**
- * What a send does now, from what the engine reports: it holds a request WAITING — a new one waits
+ * What a send does now: where the chat's own chain sends it when that is not the busy way
+ * (busyNext.ts); otherwise, from what the engine reports: it holds a request WAITING — a new one waits
  * too; otherwise the engine batches, so a new request runs beside the answer or is held for room
  * (Rapid-MLX batches, Q-40; the split's rank 0 holds a request its batch has no KV room for).
  */
 export function busyInSendText(intl: IntlShape, busy: ChatBusyIn): string {
+  // The chat's own chain decides first (Q-431): a turn that goes elsewhere, or loads its node
+  // after the busy answer, never shares the engine with it.
+  if (busy.next?.kind === 'goesTo') {
+    return intl.formatMessage(i18n.sendGoesTo, { node: busy.next.node });
+  }
+  if (busy.next?.kind === 'loadsAfter') {
+    return intl.formatMessage(i18n.sendLoadsAfter, { node: busy.next.node });
+  }
   if (busy.work && YIELDS_TO_A_TURN.has(busy.work)) return intl.formatMessage(i18n.sendYields);
   return intl.formatMessage(busy.waits ? i18n.sendWaits : i18n.sendShares);
 }

@@ -413,20 +413,77 @@ describe('New node · a cloud model or an endpoint', () => {
     await userEvent.click(await screen.findByRole('combobox', { name: 'Model' }));
     await userEvent.click(await screen.findByText('openai/gpt-5'));
     await next();
+    // Q-439: named by the model id as the provider lists it, not its short name.
     expect((screen.getByTestId('new-node-name-input') as HTMLInputElement).value).toBe(
-      'gpt-5 · OpenRouter'
+      'openai/gpt-5 · OpenRouter'
     );
     expect(screen.queryByTestId('new-node-create-start')).toBeNull();
     await userEvent.click(screen.getByTestId('new-node-create'));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     expect(lastDef()).toEqual({
-      id: 'gpt-5-openrouter',
-      name: 'gpt-5 · OpenRouter',
+      id: 'openai-gpt-5-openrouter',
+      name: 'openai/gpt-5 · OpenRouter',
       kind: 'cloud',
       model: 'openai/gpt-5',
       provider: 'openrouter',
       origin: 'user',
     });
+  });
+
+  it('Q-429: the cloud tile counts and lists cloud providers only — never a local engine', async () => {
+    // The demo's 3.0.73 list: oMLX and Goose Swarm read configured (they need no key) while the
+    // Cloud Providers tab said 0 of 14 — the tile said "2 set up".
+    const OMLX = provider('omlx', 'oMLX');
+    const SWARM = provider('swarm', 'Goose Swarm');
+    const LMSTUDIO = provider('lmstudio', 'LM Studio');
+    mockProviders.mockResolvedValue([OMLX, SWARM, LMSTUDIO, NOT_SET_UP, ENDPOINT]);
+    renderDialog();
+    await waitFor(() =>
+      expect(screen.getByTestId('new-node-kind-cloud')).toHaveTextContent('None set up')
+    );
+    expect(screen.getByTestId('new-node-kind-endpoint')).toHaveTextContent('1 added');
+    cleanup();
+    mockProviders.mockResolvedValue([OMLX, SWARM, LMSTUDIO, OPENROUTER, ENDPOINT]);
+    renderDialog();
+    await waitFor(() =>
+      expect(screen.getByTestId('new-node-kind-cloud')).toHaveTextContent('1 set up')
+    );
+    await userEvent.click(screen.getByTestId('new-node-kind-cloud'));
+    await next();
+    expect(screen.getAllByTestId('new-node-provider-row').map((p) => p.textContent)).toEqual([
+      'OpenRouter',
+    ]);
+  });
+
+  it('Q-437: the provider’s default model leads the model list, marked, and is the first pick', async () => {
+    mockProviders.mockResolvedValue([
+      { ...OPENROUTER, default_model: 'deepseek/deepseek-v4.1-flash' },
+    ]);
+    mockLive.mockResolvedValue([
+      'aion-labs/aion-2.0',
+      'aion-labs/aion-3.0',
+      'deepseek/deepseek-v4.1-flash',
+      'openai/gpt-5',
+    ]);
+    renderDialog();
+    await waitFor(() =>
+      expect(screen.getByTestId('new-node-kind-cloud')).toHaveTextContent('1 set up')
+    );
+    await userEvent.click(screen.getByTestId('new-node-kind-cloud'));
+    await next();
+    await userEvent.click(screen.getAllByTestId('new-node-provider-row')[0]);
+    await next();
+    const box = await screen.findByRole('combobox', { name: 'Model' });
+    expect(box).toHaveValue('deepseek/deepseek-v4.1-flash');
+    expect(screen.getByTestId('new-node-next')).toBeEnabled();
+    await userEvent.clear(box);
+    const options = await screen.findAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual([
+      'deepseek/deepseek-v4.1-flashDefault',
+      'aion-labs/aion-2.0',
+      'aion-labs/aion-3.0',
+      'openai/gpt-5',
+    ]);
   });
 
   it('none configured: the tile says so and leads to Cloud Providers', async () => {

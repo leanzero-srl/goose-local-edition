@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Sibuk dalam ‘{name}’} other {Sibuk dalam sembang lain}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Mesej yang dihantar sekarang pergi ke {node} — ia tidak menunggu jawapan itu."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Mesej yang dihantar sekarang menunggu jawapan itu selesai, kemudian memuatkan {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Mesej yang dihantar sekarang berkongsi enjin dengan jawapan itu — berjalan lebih perlahan, atau menunggu jika tiada ruang."
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Pilih model"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Lalai"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "Tunjuk lagi"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Memulakan sesi di sini — ia dibuka apabila sambungannya dimuatkan"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sesi tanpa tajuk"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "Sama seperti {role} sebagai gantinya"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Wakilan sembang pada strategi ini, dan binaan swarm."
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "Digunakan oleh binaan swarm."

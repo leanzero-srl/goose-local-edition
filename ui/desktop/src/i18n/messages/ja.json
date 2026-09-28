@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {「{name}」で処理中} other {別のチャットで処理中}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "今送信したメッセージは {node} に送られます — その回答を待ちません。"
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "今送信したメッセージはその回答が終わるのを待ってから {node} を読み込みます。"
+  },
   "busyIn.sendShares": {
     "defaultMessage": "今送信したメッセージは、その回答とエンジンを共有します — 遅くなるか、空きがなければ待機します。"
   },
@@ -6968,6 +6974,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "モデルを選択"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "デフォルト"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "モデル"
   },
@@ -8185,6 +8194,9 @@
   },
   "projectsSection.showMore": {
     "defaultMessage": "もっと見る"
+  },
+  "projectsSection.startingSession": {
+    "defaultMessage": "ここでセッションを開始しています — 拡張機能の読み込みが終わると開きます"
   },
   "projectsSection.untitledSession": {
     "defaultMessage": "無題のセッション"
@@ -10384,6 +10396,9 @@
   },
   "strategies.useSameAs": {
     "defaultMessage": "代わりに {role} と同じにする"
+  },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "この戦略のチャットのデリゲートと、swarm のビルド。"
   },
   "strategies.usedByBuilds": {
     "defaultMessage": "swarm のビルドで使用されています。"
