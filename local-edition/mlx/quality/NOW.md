@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 23:3x (tick 4, 23:5x) (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.73 on BOTH Macs; the app serves the 27B SPLIT (Thunderbolt/jaccl, 0.46 ms).
@@ -14,7 +14,11 @@ Updated: 2026-09-28 23:3x (tick 4, 23:5x) (date) · heartbeat cron 90b0083a + ru
     Q-367's error text was NOT exercised, so it stays "awaiting live prove".
   - Turn 3: 815 s, 12 tools. It spiralled through self-contradicting checks and closed on "Re-running … now: 128
     groups" with no tool run, and the reply check was silent → Q-450 (agent: claim_check extension + replay).
-    Turn 4 (run twice, prove identical) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
+    - Turn 4: 619 s, 11 tools. It read the bytes, fixed the twin block and proved two runs identical (MD5).
+      Still wrong: the "case-only duplicate emails" are case-only USERNAMES — the emails are lowercased by
+      construction, and it said so itself at 772533. It re-used a restated paragraph (772527 = 772511) and
+      rationalised the invented 128. Model behaviour, covered by the Q-448/Q-450 addenda; no goose defect.
+    - Turn 5 (projects.csv + every lead in users.csv) is running. Decode is 9.5–11.9 tok/s since the 23:30 flip.
 - Q-447 (STABILITY/perf), REFINED at 23:40:
   - It is not "cache hit ⇒ slow". Within ONE launch, decode flipped from 4.1 to 11.5 tok/s at 20:29:56Z, right
     after a 2-row batch (a helper beside the agent call) returned to 1 row.
