@@ -937,24 +937,10 @@ impl Agent {
             )
             .await
     }
-    async fn load_project_instructions(&self, session: &Session) -> Option<String> {
-        let project_id = session.project_id.as_deref()?;
-        let entry = crate::sources::read_project(project_id).ok()?;
-        let mut parts = Vec::new();
-        parts.push(format!("# Project: {}", entry.name));
-        if !entry.description.is_empty() {
-            parts.push(entry.description.clone());
-        }
-        if !entry.content.is_empty() {
-            parts.push(entry.content.clone());
-        }
-        Some(parts.join("\n\n"))
-    }
-
     /// Q-342: the summary request a compaction of this session sends — the chat's own next request
-    /// with the system prompt and tools built exactly as `reply_internal` builds them for the
-    /// session's next reply (tools and prompt, the project's instructions, tool disclosure). The
-    /// swarm's workers keep the transcript request their golden run measured.
+    /// with the system prompt and tools built by the one builder `reply_internal` uses for the
+    /// session's next reply (`prepare_tools_and_prompt`, then tool disclosure). The swarm's workers
+    /// keep the transcript request their golden run measured.
     pub(crate) async fn summary_request_for_next_reply(
         &self,
         session: &Session,
@@ -962,12 +948,7 @@ impl Agent {
         if self.is_swarm_worker() {
             return Ok(crate::context_mgmt::SummaryRequest::Transcript);
         }
-        let (tools, _, mut system_prompt, _) = self
-            .prepare_tools_and_prompt(&session.id, session.working_dir.as_path())
-            .await?;
-        if let Some(project_addendum) = self.load_project_instructions(session).await {
-            system_prompt = format!("{system_prompt}\n\n{project_addendum}");
-        }
+        let (tools, _, system_prompt, _) = self.prepare_tools_and_prompt(session).await?;
         Ok(self.summary_request_extending(&tools, &system_prompt).await)
     }
 
@@ -990,9 +971,8 @@ impl Agent {
 
     async fn prepare_reply_context(
         &self,
-        session_id: &str,
+        session: &Session,
         unfixed_conversation: Conversation,
-        working_dir: &std::path::Path,
     ) -> Result<ReplyContext> {
         let unfixed_messages = unfixed_conversation.messages().clone();
         let (conversation, issues) = fix_conversation(unfixed_conversation.clone());
@@ -1008,9 +988,8 @@ impl Agent {
         }
         let initial_messages = conversation.messages().clone();
 
-        let (tools, toolshim_tools, system_prompt, model_config) = self
-            .prepare_tools_and_prompt(session_id, working_dir)
-            .await?;
+        let (tools, toolshim_tools, system_prompt, model_config) =
+            self.prepare_tools_and_prompt(session).await?;
 
         let goose_mode = *self.current_goose_mode.lock().await;
 
@@ -2107,9 +2086,7 @@ impl Agent {
         session: Session,
         cancel_token: Option<CancellationToken>,
     ) -> Result<BoxStream<'_, Result<AgentEvent>>> {
-        let context = self
-            .prepare_reply_context(&session.id, conversation, session.working_dir.as_path())
-            .await?;
+        let context = self.prepare_reply_context(&session, conversation).await?;
         let ReplyContext {
             mut conversation,
             mut tools,
@@ -2120,10 +2097,6 @@ impl Agent {
             initial_messages,
             model_config,
         } = context;
-
-        if let Some(project_addendum) = self.load_project_instructions(&session).await {
-            system_prompt = format!("{system_prompt}\n\n{project_addendum}");
-        }
 
         self.reset_retry_attempts().await;
 
@@ -3007,21 +2980,16 @@ impl Agent {
                     });
                 }
 
-                if tools_updated {
+                // Q-346: the hints load first so one rebuild carries both refreshes (a rebuild for
+                // updated tools used to run before the hints landed, and skip them for the turn).
+                let has_new_hints = self
+                    .prompt_manager
+                    .lock()
+                    .await
+                    .load_subdirectory_hints(&working_dir);
+                if tools_updated || has_new_hints {
                     (tools, toolshim_tools, system_prompt, _) =
-                        self.prepare_tools_and_prompt(&session_config.id, &session.working_dir).await?;
-                }
-
-                {
-                    let has_new_hints = self
-                        .prompt_manager
-                        .lock()
-                        .await
-                        .load_subdirectory_hints(&working_dir);
-                    if has_new_hints && !tools_updated {
-                        (tools, toolshim_tools, system_prompt, _) =
-                            self.prepare_tools_and_prompt(&session_config.id, &session.working_dir).await?;
-                    }
+                        self.prepare_tools_and_prompt(&session).await?;
                 }
 
                 // An empty provider response — no tool calls, no text, and no error

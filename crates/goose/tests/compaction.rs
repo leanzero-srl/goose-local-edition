@@ -252,9 +252,7 @@ async fn counted_next_request(agent: &Agent, session_id: &str) -> Result<i32> {
         .session_manager
         .get_session(session_id, true)
         .await?;
-    let (tools, _, system_prompt, _) = agent
-        .prepare_tools_and_prompt(session_id, &session.working_dir)
-        .await?;
+    let (tools, _, system_prompt, _) = agent.prepare_tools_and_prompt(&session).await?;
     let counter = goose::token_counter::create_token_counter()
         .await
         .map_err(anyhow::Error::msg)?;

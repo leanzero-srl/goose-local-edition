@@ -4072,4 +4072,218 @@ mod tests {
             Ok(())
         }
     }
+
+    /// Q-346: a mid-turn refresh of the system prompt (tools updated, or a folder's hints newly
+    /// loaded) rebuilds it with everything the reply's first call carried — the project's
+    /// instructions included — and changes it only by what was refreshed.
+    mod mid_turn_prompt_refresh_tests {
+        use super::*;
+        use async_trait::async_trait;
+        use goose::agents::{AgentConfig, SessionConfig};
+        use goose::config::permission::PermissionManager;
+        use goose::config::GooseMode;
+        use goose::conversation::message::Message;
+        use goose::providers::base::{stream_from_single_message, MessageStream, Provider};
+        use goose::session::session_manager::SessionType;
+        use goose::session::SessionManager;
+        use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
+        use goose_providers::errors::ProviderError;
+        use goose_providers::model::ModelConfig;
+        use goose_sdk_types::custom_requests::SourceType;
+        use rmcp::model::{CallToolRequestParams, Tool};
+        use rmcp::object;
+        use std::collections::HashMap;
+        use std::sync::Mutex as StdMutex;
+
+        const PROJECT_RULE: &str = "Q346 PROJECT RULE: every answer names the ledger row.";
+        const SUBDIR_HINT: &str = "Q346 SUBDIR HINT: files under sub/ use tabs.";
+
+        /// What `after` removed from `before` and what it put in its place, between their longest
+        /// common prefix and suffix (on char boundaries).
+        fn changed_regions<'a, 'b>(before: &'a str, after: &'b str) -> (&'a str, &'b str) {
+            let prefix: usize = before
+                .chars()
+                .zip(after.chars())
+                .take_while(|(a, b)| a == b)
+                .map(|(c, _)| c.len_utf8())
+                .sum();
+            let before_rest = before.get(prefix..).expect("a char boundary");
+            let after_rest = after.get(prefix..).expect("a char boundary");
+            let suffix: usize = before_rest
+                .chars()
+                .rev()
+                .zip(after_rest.chars().rev())
+                .take_while(|(a, b)| a == b)
+                .map(|(c, _)| c.len_utf8())
+                .sum();
+            (
+                before_rest
+                    .get(..before_rest.len() - suffix)
+                    .expect("a char boundary"),
+                after_rest
+                    .get(..after_rest.len() - suffix)
+                    .expect("a char boundary"),
+            )
+        }
+
+        fn usage() -> ProviderUsage {
+            ProviderUsage::new(
+                "mock-model".to_string(),
+                Usage::new(Some(10), Some(5), Some(15)),
+            )
+        }
+
+        /// Call 0 reads a file inside `sub/` (whose hints file the reply has not loaded yet);
+        /// every later call answers. Records the system prompt each call was sent.
+        #[derive(Default)]
+        struct ReadsIntoHintedFolder {
+            system_prompts: StdMutex<Vec<String>>,
+        }
+
+        #[async_trait]
+        impl Provider for ReadsIntoHintedFolder {
+            async fn stream(
+                &self,
+                _model_config: &ModelConfig,
+                system_prompt: &str,
+                _messages: &[Message],
+                _tools: &[Tool],
+            ) -> Result<MessageStream, ProviderError> {
+                let call = {
+                    let mut prompts = self.system_prompts.lock().unwrap();
+                    prompts.push(system_prompt.to_string());
+                    prompts.len() - 1
+                };
+                let message = if call == 0 {
+                    Message::assistant().with_tool_request(
+                        "call_q346",
+                        Ok(CallToolRequestParams::new("q346_read")
+                            .with_arguments(object!({"path": "sub/notes.txt"}))),
+                    )
+                } else {
+                    Message::assistant().with_text("done")
+                };
+                Ok(stream_from_single_message(message, usage()))
+            }
+
+            fn get_name(&self) -> &str {
+                "q346-reads-into-hinted-folder"
+            }
+        }
+
+        #[tokio::test]
+        async fn a_hints_refresh_mid_turn_keeps_the_projects_instructions() -> Result<()> {
+            let working_dir = tempfile::tempdir()?;
+            let sub = working_dir.path().join("sub");
+            std::fs::create_dir_all(&sub)?;
+            std::fs::write(sub.join(".goosehints"), SUBDIR_HINT)?;
+            std::fs::write(sub.join("notes.txt"), "notes")?;
+
+            let slug = format!("q346-{}", std::process::id());
+            let project = goose::sources::create_source(
+                SourceType::Project,
+                &slug,
+                "",
+                PROJECT_RULE,
+                true,
+                None,
+                HashMap::new(),
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+            let sessions_dir = tempfile::tempdir()?;
+            let session_manager = Arc::new(SessionManager::new(sessions_dir.path().to_path_buf()));
+            let agent = Agent::with_config(AgentConfig::new(
+                session_manager.clone(),
+                PermissionManager::instance(),
+                None,
+                GooseMode::Auto,
+                true,
+                GoosePlatform::GooseCli,
+            ));
+            let session = session_manager
+                .create_session(
+                    working_dir.path().to_path_buf(),
+                    "q346".to_string(),
+                    SessionType::Hidden,
+                    GooseMode::default(),
+                )
+                .await?;
+            session_manager
+                .update(&session.id)
+                .project_id(Some(slug.clone()))
+                .apply()
+                .await?;
+            let provider = Arc::new(ReadsIntoHintedFolder::default());
+            agent
+                .update_provider(
+                    provider.clone(),
+                    ModelConfig::new("mock-model"),
+                    &session.id,
+                )
+                .await?;
+
+            for text in ["read sub/notes.txt", "and now?"] {
+                let reply = agent
+                    .reply(
+                        Message::user().with_text(text),
+                        SessionConfig {
+                            id: session.id.clone(),
+                            schedule_id: None,
+                            max_turns: Some(2),
+                            retry_config: None,
+                        },
+                        None,
+                    )
+                    .await?;
+                tokio::pin!(reply);
+                while let Some(event) = reply.next().await {
+                    event?;
+                }
+            }
+            let reloaded = session_manager.get_session(&session.id, false).await?;
+            let (_, _, rebuilt, _) = agent.prepare_tools_and_prompt(&reloaded).await?;
+            goose::sources::delete_source(SourceType::Project, &project.path)
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+            let prompts = provider.system_prompts.lock().unwrap().clone();
+            assert_eq!(
+                prompts.len(),
+                3,
+                "the tool call and the answer, then the next turn's answer"
+            );
+            assert_eq!(
+                prompts[2], prompts[1],
+                "the next turn starts on the byte-identical prompt the refreshed call carried"
+            );
+            assert_eq!(
+                prompts[2], rebuilt,
+                "a rebuild from unchanged inputs is byte-identical to the prompt last sent"
+            );
+            let (first, refreshed) = (&prompts[0], &prompts[1]);
+            assert!(
+                first.contains(PROJECT_RULE),
+                "the reply's first call carries the project's instructions"
+            );
+            assert!(
+                refreshed.contains(SUBDIR_HINT),
+                "the read into sub/ loaded its hints mid-turn, so the prompt was rebuilt"
+            );
+            assert!(
+                refreshed.contains(PROJECT_RULE),
+                "the mid-turn rebuild dropped the project's instructions"
+            );
+
+            let (removed, inserted) = changed_regions(first, refreshed);
+            assert_eq!(
+                removed, "",
+                "the rebuild only inserts; nothing the first call was sent is rewritten"
+            );
+            assert!(
+                inserted.contains(SUBDIR_HINT) && !inserted.contains(PROJECT_RULE),
+                "what changed is the loaded hint and nothing else: {inserted:?}"
+            );
+            Ok(())
+        }
+    }
 }
