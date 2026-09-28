@@ -21,6 +21,26 @@ pub const KEPT_CLOSE: &str = "</kept-by-goose>";
 /// The first line of a summary written under a note: how the model read the note.
 pub const NOTE_MARKER: &str = "NOTE";
 
+/// The five parts goose keeps, in the block's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pillar {
+    Asked,
+    Files,
+    Failed,
+    Notes,
+    Ledger,
+}
+
+impl Pillar {
+    pub const ALL: [Pillar; 5] = [
+        Pillar::Asked,
+        Pillar::Files,
+        Pillar::Failed,
+        Pillar::Notes,
+        Pillar::Ledger,
+    ];
+}
+
 /// One message the person wrote, as the kept block carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Asked {
@@ -137,95 +157,123 @@ impl Pillars {
             "{KEPT_OPEN}\ngoose kept these word for word from the whole conversation — facts, not \
              a paraphrase.\n"
         );
-        if !self.asked.is_empty() {
-            out.push_str(&format!(
-                "\n## The person's messages ({}, oldest first)\n",
-                self.asked.len()
-            ));
-            for (i, asked) in self.asked.iter().enumerate() {
-                let mut lines = asked.text.lines();
-                out.push_str(&format!("[{}] {}\n", i + 1, lines.next().unwrap_or("")));
-                for line in lines {
-                    out.push_str(&format!("    {line}\n"));
-                }
-                if asked.cut {
-                    out.push_str(&format!(
-                        "    (cut to its start here; {} chars in all)\n",
-                        asked.chars
-                    ));
-                }
-            }
-        }
-        if !self.files.is_empty() {
-            let under = common_dir(self.files.iter().map(|f| f.path.as_str()));
-            match under {
-                Some(dir) => out.push_str(&format!(
-                    "\n## Files written ({}, under {dir})\n",
-                    self.files.len()
-                )),
-                None => out.push_str(&format!("\n## Files written ({})\n", self.files.len())),
-            }
-            for file in &self.files {
-                let shown = under
-                    .and_then(|dir| file.path.strip_prefix(dir))
-                    .map(|rest| rest.trim_start_matches(['/', '\\']))
-                    .unwrap_or(&file.path);
-                out.push_str(&format!("- {}\n", file_line(shown, file)));
-            }
-        }
-        if !self.failed.is_empty() || self.failed_left_out > 0 {
-            out.push_str(&format!(
-                "\n## Tool calls that failed ({})\n",
-                self.failed.len() + self.failed_left_out
-            ));
-            if self.failed_left_out > 0 {
-                out.push_str(&format!(
-                    "({} earlier failed calls are not listed here)\n",
-                    self.failed_left_out
-                ));
-            }
-            for failed in &self.failed {
-                out.push_str(&format!("- {} {}.", failed.call, failed.outcome));
-                if !failed.output.is_empty() {
-                    out.push_str(&format!(" {}", failed.output));
-                }
-                out.push('\n');
-            }
-        }
-        if self.note.is_some() || !self.pins.is_empty() {
-            out.push_str("\n## The person's notes\n");
-            if let Some(note) = &self.note {
-                out.push_str(&format!("- Note for this compaction: {note}\n"));
-            }
-            for pin in &self.pins {
-                out.push_str(&format!("- Pinned: {pin}\n"));
-            }
-        }
-        match &self.ledger {
-            LedgerRead::Entries(entries) if !entries.is_empty() || self.ledger_left_out > 0 => {
-                out.push_str(&format!(
-                    "\n## Ledger ({} entries, oldest first)\n",
-                    entries.len() + self.ledger_left_out
-                ));
-                if self.ledger_left_out > 0 {
-                    out.push_str(&format!(
-                        "({} older entries are not listed here; ledger_read has them)\n",
-                        self.ledger_left_out
-                    ));
-                }
-                for entry in entries {
-                    out.push_str(&format!("- {entry}\n"));
-                }
-            }
-            LedgerRead::Entries(_) => {}
-            LedgerRead::Unreadable(error) => {
-                out.push_str(&format!(
-                    "\n## Ledger\nThe ledger could not be read ({error}).\n"
-                ));
-            }
+        for pillar in Pillar::ALL {
+            out.push_str(&self.section(pillar));
         }
         out.push_str(KEPT_CLOSE);
         out
+    }
+
+    /// One part of the block as it renders — empty when the part holds nothing.
+    pub fn section(&self, pillar: Pillar) -> String {
+        let mut out = String::new();
+        match pillar {
+            Pillar::Asked if !self.asked.is_empty() => {
+                out.push_str(&format!(
+                    "\n## The person's messages ({}, oldest first)\n",
+                    self.asked.len()
+                ));
+                for (i, asked) in self.asked.iter().enumerate() {
+                    let mut lines = asked.text.lines();
+                    out.push_str(&format!("[{}] {}\n", i + 1, lines.next().unwrap_or("")));
+                    for line in lines {
+                        out.push_str(&format!("    {line}\n"));
+                    }
+                    if asked.cut {
+                        out.push_str(&format!(
+                            "    (cut to its start here; {} chars in all)\n",
+                            asked.chars
+                        ));
+                    }
+                }
+            }
+            Pillar::Files if !self.files.is_empty() => {
+                let under = common_dir(self.files.iter().map(|f| f.path.as_str()));
+                match under {
+                    Some(dir) => out.push_str(&format!(
+                        "\n## Files written ({}, under {dir})\n",
+                        self.files.len()
+                    )),
+                    None => out.push_str(&format!("\n## Files written ({})\n", self.files.len())),
+                }
+                for file in &self.files {
+                    let shown = under
+                        .and_then(|dir| file.path.strip_prefix(dir))
+                        .map(|rest| rest.trim_start_matches(['/', '\\']))
+                        .unwrap_or(&file.path);
+                    out.push_str(&format!("- {}\n", file_line(shown, file)));
+                }
+            }
+            Pillar::Failed if !self.failed.is_empty() || self.failed_left_out > 0 => {
+                out.push_str(&format!(
+                    "\n## Tool calls that failed ({})\n",
+                    self.failed.len() + self.failed_left_out
+                ));
+                if self.failed_left_out > 0 {
+                    out.push_str(&format!(
+                        "({} earlier failed calls are not listed here)\n",
+                        self.failed_left_out
+                    ));
+                }
+                for failed in &self.failed {
+                    out.push_str(&format!("- {}\n", failed_line(failed)));
+                }
+            }
+            Pillar::Notes if self.note.is_some() || !self.pins.is_empty() => {
+                out.push_str("\n## The person's notes\n");
+                if let Some(note) = &self.note {
+                    out.push_str(&format!("- Note for this compaction: {note}\n"));
+                }
+                for pin in &self.pins {
+                    out.push_str(&format!("- Pinned: {pin}\n"));
+                }
+            }
+            Pillar::Ledger => match &self.ledger {
+                LedgerRead::Entries(entries) if !entries.is_empty() || self.ledger_left_out > 0 => {
+                    out.push_str(&format!(
+                        "\n## Ledger ({} entries, oldest first)\n",
+                        entries.len() + self.ledger_left_out
+                    ));
+                    if self.ledger_left_out > 0 {
+                        out.push_str(&format!(
+                            "({} older entries are not listed here; ledger_read has them)\n",
+                            self.ledger_left_out
+                        ));
+                    }
+                    for entry in entries {
+                        out.push_str(&format!("- {entry}\n"));
+                    }
+                }
+                LedgerRead::Entries(_) => {}
+                LedgerRead::Unreadable(error) => {
+                    out.push_str(&format!(
+                        "\n## Ledger\nThe ledger could not be read ({error}).\n"
+                    ));
+                }
+            },
+            _ => {}
+        }
+        out
+    }
+
+    /// One part's items as a person reads them (the Context tab): each message, file, failed call,
+    /// note line or ledger entry.
+    pub fn items(&self, pillar: Pillar) -> Vec<String> {
+        match pillar {
+            Pillar::Asked => self.asked.iter().map(|a| a.text.clone()).collect(),
+            Pillar::Files => self.files.iter().map(|f| file_line(&f.path, f)).collect(),
+            Pillar::Failed => self.failed.iter().map(failed_line).collect(),
+            Pillar::Notes => self
+                .note
+                .iter()
+                .cloned()
+                .chain(self.pins.iter().cloned())
+                .collect(),
+            Pillar::Ledger => match &self.ledger {
+                LedgerRead::Entries(entries) => entries.clone(),
+                LedgerRead::Unreadable(_) => Vec::new(),
+            },
+        }
     }
 
     /// What goose keeps, as the summary instruction names it — this chat's counts and names, so
@@ -308,6 +356,14 @@ fn common_dir<'a>(mut paths: impl Iterator<Item = &'a str>) -> Option<&'a str> {
         .iter()
         .rposition(|b| *b == b'/' || *b == b'\\')?;
     (count > 1 && dir > 0).then(|| &first[..dir])
+}
+
+fn failed_line(failed: &Failed) -> String {
+    if failed.output.is_empty() {
+        format!("{} {}.", failed.call, failed.outcome)
+    } else {
+        format!("{} {}. {}", failed.call, failed.outcome, failed.output)
+    }
 }
 
 fn file_line(shown: &str, file: &WrittenFile) -> String {

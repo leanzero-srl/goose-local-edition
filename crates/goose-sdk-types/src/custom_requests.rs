@@ -16,6 +16,8 @@ mod nodes;
 pub use nodes::*;
 mod loops;
 pub use loops::*;
+mod compaction;
+pub use compaction::*;
 
 /// Schema descriptor for a single custom method, produced by the
 /// `#[custom_methods]` macro's generated `custom_method_schemas()` function.

@@ -1,4 +1,5 @@
 mod agent;
+pub(crate) mod compaction_run;
 pub mod container;
 pub mod execute_commands;
 pub mod extension;

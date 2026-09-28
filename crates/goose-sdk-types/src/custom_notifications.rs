@@ -69,6 +69,11 @@ pub enum StatusMessage {
         /// line from these numbers. Absent for every other notice.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stopped: Option<StoppedTurnStatus>,
+        /// How a compaction of this chat ended (Q-357): compacted, stopped at a question about the
+        /// person's note, or failed — the card at the compaction point. Absent for every other
+        /// notice.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compaction: Option<CompactionStatus>,
     },
     #[serde(rename_all = "camelCase")]
     Progress {
@@ -77,7 +82,92 @@ pub enum StatusMessage {
         /// its status line. Absent for every other progress status.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         forming: Option<FormingStatus>,
+        /// A compaction of this chat under way (Q-357): reading the conversation, then writing the
+        /// summary. Absent for every other progress status.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compaction: Option<CompactionStatus>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CompactionStage {
+    /// The summary request is sent; the engine reads the conversation.
+    Reading,
+    /// The model writes the summary.
+    Writing,
+    Done,
+    /// The model asked about the person's note; nothing was compacted.
+    Question,
+    /// Nothing was compacted.
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CompactionTriggerKind {
+    /// The person asked.
+    Manual,
+    /// The conversation passed the chat's compaction point.
+    Auto,
+    /// The chat's own request was refused as too long.
+    Recovery,
+}
+
+/// How the model read the person's note (its NOTE line).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CompactionNoteVerdict {
+    Ok,
+    Question,
+    Concern,
+    /// The summary did not say how it read the note; it was followed as written.
+    Missing,
+    /// The summary was asked for as a transcript, whose request carries no note.
+    NotSent,
+}
+
+/// One compaction of a chat as its card shows it. Every figure is goose's own measurement; a figure
+/// goose could not take is absent, never zero.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionStatus {
+    pub stage: CompactionStage,
+    pub trigger: CompactionTriggerKind,
+    /// Context tokens when the compaction began, as the chat counts them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_before: Option<u64>,
+    /// Context tokens once compacted (Done).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_after: Option<u64>,
+    /// Output tokens the summary has streamed, by goose's tokenizer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written_tokens: Option<u64>,
+    /// The section headings the summary has written, in order.
+    #[serde(default)]
+    pub parts: Vec<String>,
+    /// The sections the summary is asked for.
+    pub parts_total: u32,
+    /// Since the compaction began.
+    pub elapsed_ms: u64,
+    /// Since the summary's first output (Writing, Done).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writing_ms: Option<u64>,
+    /// The person's note this compaction ran under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_verdict: Option<CompactionNoteVerdict>,
+    /// The model's question or concern about the note, word for word.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<String>,
+    /// Failed: why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Something goose could not read and did without, said plainly (a note saved for the chat
+    /// that could not be read).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 /// A turn the person stopped: how long it ran and the output tokens the model had written.
@@ -188,6 +278,7 @@ mod tests {
                 status: StatusMessage::Notice {
                     message: "Compaction complete".to_string(),
                     stopped: None,
+                    compaction: None,
                 },
             }),
         };

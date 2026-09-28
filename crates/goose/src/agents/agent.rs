@@ -19,6 +19,7 @@ use super::split_record;
 use super::tool_confirmation_router::ToolConfirmationRouter;
 use super::tool_execution::{ToolCallResult, CHAT_MODE_TOOL_SKIPPED_RESPONSE, DECLINED_RESPONSE};
 use crate::action_required_manager::ElicitationOutcome;
+use crate::agents::compaction_run::{CompactionEnd, CompactionRun, CompactionStep};
 use crate::agents::extension::{ExtensionConfig, ExtensionResult, ToolInfo};
 use crate::agents::extension_manager::{
     get_parameter_names, ExtensionManager, ExtensionManagerCapabilities,
@@ -33,9 +34,7 @@ use crate::agents::types::{FrontendTool, SessionConfig, SharedProvider, ToolResu
 use crate::config::extensions::name_to_key;
 use crate::config::permission::PermissionManager;
 use crate::config::{get_enabled_extensions, Config, GooseMode};
-use crate::context_mgmt::{
-    check_if_compaction_needed, compact_messages, DEFAULT_COMPACTION_THRESHOLD,
-};
+use crate::context_mgmt::check_if_compaction_needed;
 use crate::conversation::message::{
     ActionRequiredData, InferenceMetadata, Message, MessageContent, ProviderErrorNotice,
     ProviderMetadata, SystemNotificationType, ToolRequest,
@@ -70,7 +69,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 const DEFAULT_MAX_TURNS: u32 = 1000;
 const DEFAULT_STOP_HOOK_BLOCK_CAP: u32 = 8;
-const COMPACTION_THINKING_TEXT: &str = "goose is compacting the conversation...";
+pub(crate) const COMPACTION_THINKING_TEXT: &str = "goose is compacting the conversation...";
 /// Public because the swarm's supervision seams must strip/recognize EXACTLY the sentence the loop
 /// emits (r6a seq 58: a judge probe's reply was ONLY this filler and the lenient verdict parser
 /// minted a DRIFTING from it). One constant at emit and matcher — the JUDGE_ENDED_NEEDLE pattern —
@@ -1896,6 +1895,13 @@ impl Agent {
                 .await;
         }
 
+        // Q-357: `/compact [note]` runs in the reply stream, so it shows what auto compaction shows.
+        if let Some(note) = crate::agents::compaction_run::compact_command_note(&message_text) {
+            return self
+                .manual_compaction_reply(user_message, session_config, note)
+                .await;
+        }
+
         let command_result = self
             .execute_command(&message_text, &session_config.id)
             .await;
@@ -2030,66 +2036,29 @@ impl Agent {
             let final_conversation = if !needs_auto_compact {
                 conversation
             } else {
-                let config = Config::global();
-                let threshold = config
-                    .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
-                    .unwrap_or(DEFAULT_COMPACTION_THRESHOLD);
-                let threshold_percentage = (threshold * 100.0) as u32;
-
-                let inline_msg = format!(
-                    "Exceeded auto-compact threshold of {}%. Performing auto-compaction...",
-                    threshold_percentage
-                );
-
-                yield AgentEvent::Message(
-                    Message::assistant().with_system_notification(
-                        SystemNotificationType::InlineMessage,
-                        inline_msg,
-                    )
-                );
-
-                yield AgentEvent::Message(
-                    Message::assistant().with_system_notification(
-                        SystemNotificationType::ThinkingMessage,
-                        COMPACTION_THINKING_TEXT,
-                    )
-                );
-
                 let compact_model_config = self.model_config_for_session(&session_config.id).await?;
-                let summary_request = self.summary_request_for_next_reply(&session).await?;
-                match compact_messages(
-                    self.provider().await?.as_ref(),
-                    &compact_model_config,
+                let mut compaction = self.run_compaction(
                     &session_config.id,
-                    &conversation_to_compact,
-                    false,
-                    &summary_request,
-                )
-                .await
-                {
-                    Ok((compacted_conversation, summarization_usage)) => {
-                        session_manager.replace_conversation(&session_config.id, &compacted_conversation).await?;
-                        self.update_session_metrics(&session_config.id, session_config.schedule_id.clone(), &summarization_usage, true).await?;
-
-                        yield AgentEvent::HistoryReplaced(compacted_conversation.clone());
-
-                        yield AgentEvent::Message(
-                            Message::assistant().with_system_notification(
-                                SystemNotificationType::InlineMessage,
-                                "Compaction complete",
-                            )
-                        );
-
-                        compacted_conversation
+                    session_config.schedule_id.clone(),
+                    compact_model_config,
+                    conversation_to_compact,
+                    CompactionRun::AtReplyStart,
+                );
+                let mut end = None;
+                while let Some(step) = compaction.next().await {
+                    match step {
+                        CompactionStep::Event(event) => yield event,
+                        CompactionStep::Done(done) => end = Some(done),
                     }
-                    Err(e) => {
-                        yield AgentEvent::Message(
-                            Message::assistant().with_text(
-                                format!("Ran into this error trying to compact: {e}.\n\nPlease try again or create a new session")
-                            )
-                        );
+                }
+                drop(compaction);
+                match end {
+                    Some(CompactionEnd::Compacted(compacted)) => compacted,
+                    Some(CompactionEnd::Failed { legacy: Some(message) }) => {
+                        yield AgentEvent::Message(message);
                         return;
                     }
+                    _ => return,
                 }
             };
 
@@ -2863,51 +2832,35 @@ impl Agent {
                                 break;
                             }
 
-                            yield AgentEvent::Message(
-                                Message::assistant().with_system_notification(
-                                    SystemNotificationType::InlineMessage,
-                                    "Context limit reached. Compacting to continue conversation...",
-                                )
-                            );
-                            yield AgentEvent::Message(
-                                Message::assistant().with_system_notification(
-                                    SystemNotificationType::ThinkingMessage,
-                                    COMPACTION_THINKING_TEXT,
-                                )
-                            );
-
                             // The chat's own request was just refused as too long, so a summary
                             // request extending it cannot fit (Q-342): the transcript request.
-                            match compact_messages(
-                                self.provider().await?.as_ref(),
-                                &model_config,
+                            let mut compaction = self.run_compaction(
                                 &session_config.id,
-                                &conversation,
-                                false,
-                                &crate::context_mgmt::SummaryRequest::Transcript,
-                            )
-                            .await
-                            {
-                                Ok((compacted_conversation, usage)) => {
-                                    session_manager.replace_conversation(&session_config.id, &compacted_conversation).await?;
-                                    self.update_session_metrics(&session_config.id, session_config.schedule_id.clone(), &usage, true).await?;
-                                    conversation = compacted_conversation;
-                                    did_recovery_compact_this_iteration = true;
-                                    yield AgentEvent::HistoryReplaced(conversation.clone());
-                                    break;
-                                }
-                                Err(e) => {
-                                    #[cfg(feature = "telemetry")]
-                                    crate::posthog::emit_error("compaction_failed", &e.to_string());
-                                    error!("Compaction failed: {}", e);
-                                    let message = Message::assistant().with_text(
-                                        format!("Ran into this error trying to compact: {e}.\n\nPlease try again or create a new session")
-                                    ).user_only();
-                                    messages_to_add.push(message.clone());
-                                    yield AgentEvent::Message(message);
-                                    break;
+                                session_config.schedule_id.clone(),
+                                model_config.clone(),
+                                conversation.clone(),
+                                CompactionRun::Recovery,
+                            );
+                            let mut end = None;
+                            while let Some(step) = compaction.next().await {
+                                match step {
+                                    CompactionStep::Event(event) => yield event,
+                                    CompactionStep::Done(done) => end = Some(done),
                                 }
                             }
+                            drop(compaction);
+                            match end {
+                                Some(CompactionEnd::Compacted(compacted_conversation)) => {
+                                    conversation = compacted_conversation;
+                                    did_recovery_compact_this_iteration = true;
+                                }
+                                Some(CompactionEnd::Failed { legacy: Some(message) }) => {
+                                    messages_to_add.push(message.clone());
+                                    yield AgentEvent::Message(message);
+                                }
+                                _ => {}
+                            }
+                            break;
                         }
                         Err(ref provider_err @ ProviderError::CreditsExhausted { details: _, ref top_up_url }) => {
                             provider_errored = true;
@@ -3305,46 +3258,26 @@ impl Agent {
                         .await
                         .unwrap_or(false);
                         if needs_proactive_compact {
-                            yield AgentEvent::Message(Message::assistant().with_system_notification(
-                                SystemNotificationType::InlineMessage,
-                                "Context near the cap — compacting to stay lean...",
-                            ));
-                            yield AgentEvent::Message(Message::assistant().with_system_notification(
-                                SystemNotificationType::ThinkingMessage,
-                                COMPACTION_THINKING_TEXT,
-                            ));
-                            let summary_request =
-                                self.summary_request_extending(&tools, &system_prompt).await;
-                            match compact_messages(
-                                self.provider().await?.as_ref(),
-                                &model_config,
+                            let mut compaction = self.run_compaction(
                                 &session_config.id,
-                                &conversation,
-                                false,
-                                &summary_request,
-                            )
-                            .await
-                            {
-                                Ok((compacted_conversation, usage)) => {
-                                    session_manager
-                                        .replace_conversation(
-                                            &session_config.id,
-                                            &compacted_conversation,
-                                        )
-                                        .await?;
-                                    self.update_session_metrics(
-                                        &session_config.id,
-                                        session_config.schedule_id.clone(),
-                                        &usage,
-                                        true,
-                                    )
-                                    .await?;
-                                    conversation = compacted_conversation;
-                                    yield AgentEvent::HistoryReplaced(conversation.clone());
+                                session_config.schedule_id.clone(),
+                                model_config.clone(),
+                                conversation.clone(),
+                                CompactionRun::MidTurn {
+                                    tools: tools.clone(),
+                                    system_prompt: system_prompt.clone(),
+                                },
+                            );
+                            let mut end = None;
+                            while let Some(step) = compaction.next().await {
+                                match step {
+                                    CompactionStep::Event(event) => yield event,
+                                    CompactionStep::Done(done) => end = Some(done),
                                 }
-                                Err(e) => {
-                                    tracing::warn!("per-turn proactive compaction failed: {e}");
-                                }
+                            }
+                            drop(compaction);
+                            if let Some(CompactionEnd::Compacted(compacted_conversation)) = end {
+                                conversation = compacted_conversation;
                             }
                         }
                     }

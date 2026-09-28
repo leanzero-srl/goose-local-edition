@@ -15935,6 +15935,351 @@
         }
       ]
     },
+    "CompactionPreviewRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "What the next compaction of this chat would keep, computed by code alone — no model call.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/session/compaction/preview"
+    },
+    "CompactionPreviewResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "kept": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KeptPillarDto"
+          }
+        },
+        "writtenParts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WrittenPartDto"
+          }
+        },
+        "alwaysHere": {
+          "$ref": "#/$defs/AlwaysHereDto"
+        },
+        "steer": {
+          "$ref": "#/$defs/CompactionSteerDto"
+        },
+        "last": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LastCompactionDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastKept": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The latest compaction's stored summary: what the model wrote, then what goose kept."
+        },
+        "keptBudgetTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The kept block's share of the window, in tokens; absent when the window is unknown.",
+          "minimum": 0
+        },
+        "steerError": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The note saved for this chat could not be read; the steer shown is empty because of it."
+        }
+      },
+      "required": [
+        "kept",
+        "writtenParts",
+        "alwaysHere",
+        "steer"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/session/compaction/preview"
+    },
+    "KeptPillarDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/KeptPillarId"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Each item as the block carries it (a message, a file line, a failed call, an entry)."
+        },
+        "leftOut": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "Older items the block's share of the window left out."
+        },
+        "cut": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "Items cut to their start to fit."
+        },
+        "tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The part's size by goose's tokenizer; absent when it could not be built.",
+          "minimum": 0
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The part could not be read (the ledger), said instead of an empty list."
+        }
+      },
+      "required": [
+        "id",
+        "items"
+      ],
+      "description": "One part goose keeps word for word, as the next compaction would keep it now."
+    },
+    "KeptPillarId": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "asked",
+          "description": "P1 — every message the person wrote."
+        },
+        {
+          "type": "string",
+          "const": "files",
+          "description": "P2 — the files the chat's write/edit calls changed."
+        },
+        {
+          "type": "string",
+          "const": "failed",
+          "description": "P3 — the tool calls that failed."
+        },
+        {
+          "type": "string",
+          "const": "notes",
+          "description": "P4 — the note and the pins."
+        },
+        {
+          "type": "string",
+          "const": "ledger",
+          "description": "P5 — the ledger."
+        }
+      ]
+    },
+    "WrittenPartDto": {
+      "type": "object",
+      "properties": {
+        "heading": {
+          "type": "string"
+        },
+        "ask": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "heading",
+        "ask"
+      ],
+      "description": "A section the model writes."
+    },
+    "AlwaysHereDto": {
+      "type": "object",
+      "properties": {
+        "scratchpad": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ledgerTail": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The ledger's newest entries, newest first.",
+          "default": []
+        }
+      },
+      "description": "What rides every turn already, beside the conversation."
+    },
+    "CompactionSteerDto": {
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The note for the next compaction."
+        },
+        "standing": {
+          "type": "boolean",
+          "description": "The note is used for every compaction of this chat, not only the next.",
+          "default": false
+        },
+        "pins": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Lines kept word for word in every compaction of this chat.",
+          "default": []
+        },
+        "followAsWritten": {
+          "type": "boolean",
+          "description": "The next manual compaction follows the note as written instead of asking about it (the\nperson answered \"Compact as written\").",
+          "default": false
+        }
+      },
+      "description": "What the person set for this chat's compactions (`compaction.v0` in the session)."
+    },
+    "LastCompactionDto": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "description": "RFC 3339."
+        },
+        "trigger": {
+          "$ref": "#/$defs/CompactionTriggerKind"
+        },
+        "tokensBefore": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tokensAfter": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "noteVerdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompactionNoteVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "said": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "at",
+        "trigger",
+        "elapsedMs"
+      ],
+      "description": "The chat's latest compaction."
+    },
+    "CompactionTriggerKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "manual",
+          "description": "The person asked."
+        },
+        {
+          "type": "string",
+          "const": "auto",
+          "description": "The conversation passed the chat's compaction point."
+        },
+        {
+          "type": "string",
+          "const": "recovery",
+          "description": "The chat's own request was refused as too long."
+        }
+      ]
+    },
+    "CompactionNoteVerdict": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "ok",
+            "question",
+            "concern"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "missing",
+          "description": "The summary did not say how it read the note; it was followed as written."
+        },
+        {
+          "type": "string",
+          "const": "notSent",
+          "description": "The summary was asked for as a transcript, whose request carries no note."
+        }
+      ],
+      "description": "How the model read the person's note (its NOTE line)."
+    },
+    "CompactionSteerRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "steer": {
+          "$ref": "#/$defs/CompactionSteerDto"
+        }
+      },
+      "required": [
+        "sessionId",
+        "steer"
+      ],
+      "description": "Replaces what the person set for this chat's compactions.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/session/compaction/steer"
+    },
+    "CompactionSteerResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "steer": {
+          "$ref": "#/$defs/CompactionSteerDto"
+        }
+      },
+      "required": [
+        "steer"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/session/compaction/steer"
+    },
     "LoopsGetRequest_unstable": {
       "type": "object",
       "properties": {
@@ -17799,6 +18144,17 @@
               ],
               "description": "The turn the person stopped, when this notice says so (Q-169) — the chat renders the\nline from these numbers. Absent for every other notice."
             },
+            "compaction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CompactionStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How a compaction of this chat ended (Q-357): compacted, stopped at a question about the\nperson's note, or failed — the card at the compaction point. Absent for every other\nnotice."
+            },
             "type": {
               "type": "string",
               "const": "notice"
@@ -17825,6 +18181,17 @@
                 }
               ],
               "description": "A response still forming tool calls, as received so far — what the chat lists behind\nits status line. Absent for every other progress status."
+            },
+            "compaction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CompactionStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A compaction of this chat under way (Q-357): reading the conversation, then writing the\nsummary. Absent for every other progress status."
             },
             "type": {
               "type": "string",
@@ -17858,6 +18225,142 @@
         "elapsedMs"
       ],
       "description": "A turn the person stopped: how long it ran and the output tokens the model had written."
+    },
+    "CompactionStatus": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "$ref": "#/$defs/CompactionStage"
+        },
+        "trigger": {
+          "$ref": "#/$defs/CompactionTriggerKind"
+        },
+        "tokensBefore": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Context tokens when the compaction began, as the chat counts them.",
+          "minimum": 0
+        },
+        "tokensAfter": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Context tokens once compacted (Done).",
+          "minimum": 0
+        },
+        "writtenTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Output tokens the summary has streamed, by goose's tokenizer.",
+          "minimum": 0
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The section headings the summary has written, in order.",
+          "default": []
+        },
+        "partsTotal": {
+          "type": "integer",
+          "description": "The sections the summary is asked for.",
+          "minimum": 0
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "description": "Since the compaction began.",
+          "minimum": 0
+        },
+        "writingMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Since the summary's first output (Writing, Done).",
+          "minimum": 0
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The person's note this compaction ran under."
+        },
+        "noteVerdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompactionNoteVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "said": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The model's question or concern about the note, word for word."
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Failed: why."
+        },
+        "warning": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Something goose could not read and did without, said plainly (a note saved for the chat\nthat could not be read)."
+        }
+      },
+      "required": [
+        "stage",
+        "trigger",
+        "partsTotal",
+        "elapsedMs"
+      ],
+      "description": "One compaction of a chat as its card shows it. Every figure is goose's own measurement; a figure\ngoose could not take is absent, never zero."
+    },
+    "CompactionStage": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "done"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "reading",
+          "description": "The summary request is sent; the engine reads the conversation."
+        },
+        {
+          "type": "string",
+          "const": "writing",
+          "description": "The model writes the summary."
+        },
+        {
+          "type": "string",
+          "const": "question",
+          "description": "The model asked about the person's note; nothing was compacted."
+        },
+        {
+          "type": "string",
+          "const": "failed",
+          "description": "Nothing was compacted."
+        }
+      ]
     },
     "FormingStatus": {
       "type": "object",
@@ -19619,6 +20122,24 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/CompactionPreviewRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/session/compaction/preview",
+                  "title": "CompactionPreviewRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/CompactionSteerRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/session/compaction/steer",
+                  "title": "CompactionSteerRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/LoopsGetRequest_unstable"
                     }
                   ],
@@ -20710,6 +21231,22 @@
                         }
                       ],
                       "title": "NodesEnsureServingResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/CompactionPreviewResponse_unstable"
+                        }
+                      ],
+                      "title": "CompactionPreviewResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/CompactionSteerResponse_unstable"
+                        }
+                      ],
+                      "title": "CompactionSteerResponse_unstable"
                     },
                     {
                       "allOf": [

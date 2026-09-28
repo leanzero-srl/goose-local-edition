@@ -333,9 +333,20 @@ fn assert_conversation_compacted(conversation: &Conversation) {
     }
 
     // Any messages AFTER the continuation (e.g., preserved recent user message)
-    // should be fully visible to both agent and user
+    // should be fully visible to both agent and user — but the compaction's own card (Q-357), which
+    // is the person's alone.
     let continuation_end = summary_index + 2;
     for (idx, msg) in messages.iter().enumerate() {
+        let is_compaction_card = msg.content.iter().any(|c| {
+            c.as_system_notification()
+                .and_then(|n| n.data.as_ref())
+                .and_then(|d| d.get("kind"))
+                .is_some_and(|kind| kind == "compaction")
+        });
+        if is_compaction_card {
+            assert!(msg.is_user_visible() && !msg.is_agent_visible());
+            continue;
+        }
         if idx >= continuation_end {
             assert!(
                 msg.is_agent_visible() && msg.is_user_visible(),
@@ -581,11 +592,14 @@ async fn test_context_limit_recovery_compaction() -> Result<()> {
 
     // Setup session with messages that will push context over the limit
     // Each message = 100 tokens, but we'll add a large one
+    // The large message is the ASSISTANT's: a chat's compaction keeps every message the PERSON
+    // wrote word for word (Q-357), so the marker that makes this mock count 15,000 tokens would ride
+    // the kept block if the person had written it.
     let messages = vec![
         Message::user().with_text("Hello"),
         Message::assistant().with_text("Hi there"),
-        Message::user().with_text("Can you process this long_tool_call result?"),
-        Message::assistant().with_text("Processing..."),
+        Message::user().with_text("Can you process this result?"),
+        Message::assistant().with_text("Processing the long_tool_call result..."),
     ];
     // Token calculation:
     // - 3 regular messages: 300 tokens
@@ -874,5 +888,287 @@ async fn keep_tail_survives_compaction_verbatim_and_zero_is_identity() -> Result
         !legacy_text.contains("expected 42 got 41"),
         "K=0 must not keep the tool tail (byte-identical legacy): {legacy_text}"
     );
+    Ok(())
+}
+
+/// Q-357: answers each compaction call with the next scripted text (streamed a few characters at a
+/// time, as an engine does) and every other call with a short reply; counts both.
+struct ScriptedCompactionProvider {
+    answers: std::sync::Mutex<Vec<String>>,
+    compactions: std::sync::atomic::AtomicUsize,
+    replies: std::sync::atomic::AtomicUsize,
+    instructions: std::sync::Mutex<Vec<String>>,
+}
+
+impl ScriptedCompactionProvider {
+    fn new(answers: &[&str]) -> Self {
+        Self {
+            answers: std::sync::Mutex::new(answers.iter().rev().map(|a| a.to_string()).collect()),
+            compactions: Default::default(),
+            replies: Default::default(),
+            instructions: Default::default(),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for ScriptedCompactionProvider {
+    async fn stream(
+        &self,
+        _model_config: &ModelConfig,
+        _system_prompt: &str,
+        messages: &[Message],
+        _tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        let last = messages
+            .last()
+            .map(|m| m.as_concat_text())
+            .unwrap_or_default();
+        let usage = ProviderUsage::new(
+            "scripted".to_string(),
+            Usage::new(Some(900), Some(100), Some(1000)),
+        );
+        if !last.contains("## Summarize this conversation for yourself") {
+            self.replies.fetch_add(1, Ordering::SeqCst);
+            return Ok(stream_from_single_message(
+                Message::assistant().with_text("a reply"),
+                usage,
+            ));
+        }
+        self.compactions.fetch_add(1, Ordering::SeqCst);
+        self.instructions.lock().unwrap().push(last);
+        let answer = self
+            .answers
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("a scripted answer");
+        let chars: Vec<char> = answer.chars().collect();
+        let chunks: Vec<String> = chars.chunks(3).map(|c| c.iter().collect()).collect();
+        let last_chunk = chunks.len() - 1;
+        Ok(Box::pin(
+            futures::stream::iter(chunks.into_iter().enumerate()).map(move |(i, chunk)| {
+                Ok((
+                    Some(Message::assistant().with_text(chunk)),
+                    (i == last_chunk).then(|| usage.clone()),
+                ))
+            }),
+        ))
+    }
+
+    fn get_name(&self) -> &str {
+        "scripted-compaction"
+    }
+}
+
+fn compaction_statuses(events: &[AgentEvent]) -> Vec<serde_json::Value> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Message(message) => message.content.iter().find_map(|c| {
+                c.as_system_notification()
+                    .and_then(|n| n.data.clone())
+                    .filter(|d| d["kind"] == "compaction")
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn run_reply(agent: &Agent, session_id: &str, text: &str) -> Result<Vec<AgentEvent>> {
+    let stream = agent
+        .reply(
+            Message::user().with_text(text),
+            SessionConfig {
+                id: session_id.to_string(),
+                schedule_id: None,
+                max_turns: None,
+                retry_config: None,
+            },
+            None,
+        )
+        .await?;
+    tokio::pin!(stream);
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event?);
+    }
+    Ok(events)
+}
+
+async fn compaction_state(
+    agent: &Agent,
+    session_id: &str,
+) -> Result<goose::context_mgmt::state::CompactionState> {
+    goose::context_mgmt::state::CompactionState::load(&agent.config.session_manager, session_id)
+        .await
+}
+
+/// Q-357 STEER + VISUAL: `/compact <note>` runs in the reply stream — the same statuses an
+/// automatic compaction sends (reading, writing with its parts, done) — keeps the note word for
+/// word, spends a one-time note, records the compaction, stores the card so a reload shows it, and
+/// starts no turn.
+#[tokio::test]
+async fn test_compact_with_a_note_runs_in_the_reply_stream() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let agent = Agent::new();
+    let messages = vec![
+        Message::user().with_text("inactive means no login in 24 months"),
+        Message::assistant().with_text("noted"),
+    ];
+    let session = setup_test_session(&agent, &temp_dir, "compact-note", messages).await?;
+    let provider = Arc::new(ScriptedCompactionProvider::new(&[
+        "NOTE OK\n## Where we are\nplanning the users\n## Next step\nrun it\n## Decisions and reasons\n24 months",
+    ]));
+    agent
+        .update_provider(
+            provider.clone(),
+            ModelConfig::new("mock-model"),
+            &session.id,
+        )
+        .await?;
+
+    let events = run_reply(&agent, &session.id, "/compact keep the 24-month rule").await?;
+
+    let statuses = compaction_statuses(&events);
+    let stages: Vec<&str> = statuses
+        .iter()
+        .map(|s| s["stage"].as_str().unwrap())
+        .collect();
+    assert_eq!(stages.first(), Some(&"reading"), "{stages:?}");
+    assert_eq!(stages.last(), Some(&"done"), "{stages:?}");
+    assert!(stages.contains(&"writing"), "{stages:?}");
+    let parts_seen: Vec<usize> = statuses
+        .iter()
+        .filter(|s| s["stage"] == "writing")
+        .map(|s| s["parts"].as_array().unwrap().len())
+        .collect();
+    assert_eq!(parts_seen.last(), Some(&3), "{parts_seen:?}");
+    let done = statuses.last().unwrap();
+    assert_eq!(done["trigger"], "manual");
+    assert_eq!(done["note"], "keep the 24-month rule");
+    assert_eq!(done["noteVerdict"], "ok");
+    assert!(done["tokensAfter"].as_u64().is_some());
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::HistoryReplaced(_))));
+    assert_eq!(provider.compactions.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        provider.replies.load(Ordering::SeqCst),
+        0,
+        "no turn follows"
+    );
+    let instruction = provider.instructions.lock().unwrap()[0].clone();
+    assert!(
+        instruction.contains("\"keep the 24-month rule\""),
+        "{instruction}"
+    );
+    assert!(instruction.contains("`NOTE QUESTION: <one question>`"));
+
+    let stored = agent
+        .config
+        .session_manager
+        .get_session(&session.id, true)
+        .await?
+        .conversation
+        .unwrap();
+    let summary = goose::context_mgmt::latest_summary(stored.messages()).expect("a summary");
+    assert!(
+        summary.starts_with("## Where we are\nplanning the users"),
+        "{summary}"
+    );
+    assert!(summary.contains("[1] inactive means no login in 24 months"));
+    assert!(summary.contains("- Note for this compaction: keep the 24-month rule"));
+    assert!(!summary.contains("NOTE OK") && !summary.contains("/compact"));
+    let card = stored.messages().last().unwrap();
+    assert!(card.is_user_visible() && !card.is_agent_visible());
+    assert_eq!(
+        card.content[0]
+            .as_system_notification()
+            .unwrap()
+            .data
+            .as_ref()
+            .unwrap()["stage"],
+        "done"
+    );
+
+    let state = compaction_state(&agent, &session.id).await?;
+    assert_eq!(state.note, None, "a one-time note is spent");
+    let last = state.last.expect("the compaction is recorded");
+    assert_eq!(
+        last.note_verdict,
+        Some(goose_sdk_types::custom_notifications::CompactionNoteVerdict::Ok)
+    );
+    Ok(())
+}
+
+/// Q-357 STEER: a note the conversation contradicts stops a manual compaction at the model's
+/// question — nothing is compacted, the note is kept, the question is stored as the card — and
+/// "Compact as written" (follow_as_written) compacts under it without asking again.
+#[tokio::test]
+async fn test_a_question_about_the_note_stops_then_compact_as_written_follows_it() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let agent = Agent::new();
+    let messages = vec![
+        Message::user().with_text("inactive means no login in 24 months"),
+        Message::assistant().with_text("noted: 24 months"),
+    ];
+    let session = setup_test_session(&agent, &temp_dir, "compact-question", messages).await?;
+    let provider = Arc::new(ScriptedCompactionProvider::new(&[
+        "NOTE QUESTION: The chat says 24 months; change it to 12?\n## Where we are\nnever read",
+        "NOTE CONCERN: the chat said 24.\n## Where we are\nplanning with 12 months",
+    ]));
+    agent
+        .update_provider(
+            provider.clone(),
+            ModelConfig::new("mock-model"),
+            &session.id,
+        )
+        .await?;
+
+    let events = run_reply(&agent, &session.id, "/compact use the 12-month cutoff").await?;
+    let question = compaction_statuses(&events).last().cloned().unwrap();
+    assert_eq!(question["stage"], "question");
+    assert_eq!(
+        question["said"],
+        "The chat says 24 months; change it to 12?"
+    );
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::HistoryReplaced(_))));
+    let conversation = agent
+        .config
+        .session_manager
+        .get_session(&session.id, true)
+        .await?
+        .conversation
+        .unwrap();
+    assert!(goose::context_mgmt::latest_summary(conversation.messages()).is_none());
+    let state = compaction_state(&agent, &session.id).await?;
+    assert_eq!(state.note.as_deref(), Some("use the 12-month cutoff"));
+
+    // "Compact as written".
+    state
+        .clone()
+        .with_steer(goose_sdk_types::custom_requests::CompactionSteerDto {
+            follow_as_written: true,
+            ..state.steer()
+        })
+        .save(&agent.config.session_manager, &session.id)
+        .await?;
+    let events = run_reply(&agent, &session.id, "/compact").await?;
+    let done = compaction_statuses(&events).last().cloned().unwrap();
+    assert_eq!(done["stage"], "done");
+    assert_eq!(done["noteVerdict"], "concern");
+    assert_eq!(done["said"], "the chat said 24.");
+    let second = provider.instructions.lock().unwrap()[1].clone();
+    assert!(
+        second.contains("`NOTE CONCERN: <one sentence>`"),
+        "{second}"
+    );
+    assert!(!second.contains("NOTE QUESTION"));
+    let state = compaction_state(&agent, &session.id).await?;
+    assert_eq!(state.note, None);
+    assert!(!state.follow_as_written);
     Ok(())
 }

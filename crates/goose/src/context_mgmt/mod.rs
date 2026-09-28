@@ -20,8 +20,10 @@ use tokio::task::JoinHandle;
 use tracing::info;
 use tracing::log::warn;
 
+pub mod acp;
 pub mod context_line;
 pub mod pillars;
+pub mod state;
 
 use pillars::{KeptSources, LedgerRead, NoteVerdict, Pillars};
 
@@ -102,10 +104,11 @@ struct ChatInstruction {
 pub enum CompactionTrigger {
     /// The person asked (`/compact`, the meter menu, the Context tab).
     Manual,
-    /// The conversation passed the chat's compaction point: `used` of `limit` tokens.
+    /// The conversation passed the chat's compaction point: `used` of `limit` tokens, each absent
+    /// when goose could not measure it.
     Auto {
-        used: usize,
-        limit: usize,
+        used: Option<usize>,
+        limit: Option<usize>,
         threshold: f64,
     },
     /// The chat's own request was refused as too long.
@@ -146,7 +149,7 @@ pub struct ChatCompaction {
 // ratio: the kept block may take a sixteenth of the window — E2E #3p's model-written summary was
 // 8,821 chars (~2.2k tokens) on a 178,176-token window; a sixteenth (11.1k tokens) leaves the
 // person's words, the files, errors and ledger five times that room before anything is cut.
-const KEPT_WINDOW_SHARE: f64 = 1.0 / 16.0;
+pub(crate) const KEPT_WINDOW_SHARE: f64 = 1.0 / 16.0;
 
 /// The kept block's budget in chars for a window of `context_limit` tokens.
 pub fn kept_budget_chars(context_limit: Option<usize>) -> Option<usize> {
@@ -754,7 +757,21 @@ enum ChatSummary {
 }
 
 /// The continuation text every compaction leaves after its summary begins with this.
-const COMPACTED_PREFIX: &str = "Your context was compacted";
+pub(crate) const COMPACTED_PREFIX: &str = "Your context was compacted";
+
+/// The summary the latest compaction stored: the agent-only message before the continuation line
+/// every compaction leaves after it.
+pub fn latest_summary(messages: &[Message]) -> Option<String> {
+    let continuation = messages.iter().rposition(|m| {
+        m.role == Role::Assistant
+            && m.is_agent_visible()
+            && !m.is_user_visible()
+            && m.as_concat_text().starts_with(COMPACTED_PREFIX)
+    })?;
+    let summary = messages.get(continuation.checked_sub(1)?)?;
+    (summary.role == Role::User && summary.is_agent_visible() && !summary.is_user_visible())
+        .then(|| summary.as_concat_text())
+}
 
 fn thousands(n: usize) -> String {
     let digits = n.to_string();
@@ -782,14 +799,19 @@ fn chat_instruction(
             used,
             limit,
             threshold,
-        } => Some(format!(
-            "The conversation reached {} of {} tokens ({}%), past this chat's compaction point \
-             of {}%.",
-            thousands(*used),
-            thousands(*limit),
-            (*used as f64 * 100.0 / (*limit).max(1) as f64).round() as u32,
-            (threshold * 100.0).round() as u32
-        )),
+        } => {
+            let point = (threshold * 100.0).round() as u32;
+            Some(match (used, limit) {
+                (Some(used), Some(limit)) if *limit > 0 => format!(
+                    "The conversation reached {} of {} tokens ({}%), past this chat's compaction \
+                     point of {point}%.",
+                    thousands(*used),
+                    thousands(*limit),
+                    (*used as f64 * 100.0 / *limit as f64).round() as u32,
+                ),
+                _ => format!("The conversation passed this chat's compaction point of {point}%."),
+            })
+        }
         CompactionTrigger::Recovery => None,
     };
     let earlier_summary = messages.iter().any(|m| {
@@ -1903,8 +1925,8 @@ mod tests {
                 CompactionTrigger::Manual
             } else {
                 CompactionTrigger::Auto {
-                    used: 143_000,
-                    limit: 178_176,
+                    used: Some(143_000),
+                    limit: Some(178_176),
                     threshold: 0.8,
                 }
             },

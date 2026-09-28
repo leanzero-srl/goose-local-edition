@@ -8,7 +8,6 @@ use goose_sdk_types::custom_requests::{
     LoopsChangeResponse, LoopsControlRequest, LoopsGetRequest, LoopsGetResponse, LoopsStartRequest,
 };
 
-use crate::context_mgmt::compact_messages;
 use crate::conversation::message::Message;
 use crate::session_loops::rules::{self as loop_rules, LoopCommand};
 use crate::session_loops::{acp as loops_acp, agent_sync, record as loop_record};
@@ -138,7 +137,7 @@ impl Agent {
         match command {
             "prompts" => self.handle_prompts_command(&params, session_id).await,
             "prompt" => self.handle_prompt_command(&params, session_id).await,
-            "compact" => self.handle_compact_command(session_id).await,
+            "compact" => self.handle_compact_command(session_id, params_str).await,
             "clear" => self.handle_clear_command(session_id).await,
             "skills" => self.handle_skills_command(session_id).await,
             "doctor" => Ok(Some(crate::doctor::run(self, session_id).await?)),
@@ -162,33 +161,55 @@ impl Agent {
         }
     }
 
-    async fn handle_compact_command(&self, session_id: &str) -> Result<Option<Message>> {
-        let manager = self.config.session_manager.clone();
-        let session = manager.get_session(session_id, true).await?;
-        let summary_request = self.summary_request_for_next_reply(&session).await?;
+    /// `/compact [note]` for a caller outside the reply stream (`reply` runs it in its own stream):
+    /// the same compaction, answered with the line its card shows.
+    async fn handle_compact_command(
+        &self,
+        session_id: &str,
+        note: &str,
+    ) -> Result<Option<Message>> {
+        use crate::agents::compaction_run::{CompactionEnd, CompactionRun, CompactionStep};
+        use futures::StreamExt;
+
+        let session = self
+            .config
+            .session_manager
+            .get_session(session_id, true)
+            .await?;
         let conversation = session
             .conversation
             .ok_or_else(|| anyhow!("Session has no conversation"))?;
-
         let model_config = self.model_config_for_session(session_id).await?;
-        let (compacted_conversation, usage) = compact_messages(
-            self.provider().await?.as_ref(),
-            &model_config,
+        let note = Some(note.trim().to_string()).filter(|note| !note.is_empty());
+        let mut compaction = self.run_compaction(
             session_id,
-            &conversation,
-            true, // is_manual_compact
-            &summary_request,
-        )
-        .await?;
-
-        manager
-            .replace_conversation(session_id, &compacted_conversation)
-            .await?;
-
-        self.update_session_metrics(session_id, session.schedule_id, &usage, true)
-            .await?;
-
-        Ok(Some(user_only_assistant_text("Compaction complete")))
+            session.schedule_id,
+            model_config,
+            conversation,
+            CompactionRun::Manual { note },
+        );
+        let mut said = None;
+        while let Some(step) = compaction.next().await {
+            match step {
+                CompactionStep::Event(super::AgentEvent::Message(message)) => {
+                    if let Some(notice) = message.content.iter().find_map(|c| {
+                        c.as_system_notification().filter(|n| {
+                            n.notification_type
+                                == crate::conversation::message::SystemNotificationType::InlineMessage
+                        })
+                    }) {
+                        said = Some(notice.msg.clone());
+                    }
+                }
+                CompactionStep::Done(CompactionEnd::Failed {
+                    legacy: Some(message),
+                }) => return Err(anyhow!(message.as_concat_text())),
+                _ => {}
+            }
+        }
+        Ok(Some(user_only_assistant_text(
+            said.unwrap_or_else(|| "Compaction complete".to_string()),
+        )))
     }
 
     async fn handle_clear_command(&self, session_id: &str) -> Result<Option<Message>> {
