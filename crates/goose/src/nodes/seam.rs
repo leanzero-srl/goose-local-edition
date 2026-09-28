@@ -119,6 +119,8 @@ pub trait NodeLoader: Send + Sync {
     async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing;
     /// The way an MLX lease of `session` used (the reply holds it for its whole life).
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto);
+    /// A lease of `session` on no MLX way (cloud, LM Studio): the chat moved off its last way.
+    fn note_lease_off_mlx(&self, session: &str);
     /// A SYNCHRONOUS delegate session runs inside its parent's reply (the parent is blocked in the
     /// tool call): its demand is the parent's own.
     fn note_child(&self, child_session: &str, parent_session: &str);
@@ -191,6 +193,12 @@ pub async fn ensure_serving(demand: Demand) -> NodeEnsureServing {
 pub fn note_lease(session: &str, way: &MlxPlacementKeyDto) {
     if let Some(loader) = LOADER.get() {
         loader.note_lease(session, way);
+    }
+}
+
+pub fn note_lease_off_mlx(session: &str) {
+    if let Some(loader) = LOADER.get() {
+        loader.note_lease_off_mlx(session);
     }
 }
 

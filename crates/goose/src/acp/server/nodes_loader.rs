@@ -595,6 +595,9 @@ impl Core {
                 }
                 Look::Go(go) => *go,
             };
+            // It switches now: from here no reply that opens after it may lease the way it will
+            // stop (a yielding entry would still let one through until the claim — Q-428).
+            self.set_yields(seq, false);
             // From here the demanding reply has no model call in flight: it holds nothing.
             if let (None, Some(root), Some(session)) = (&paused, &root, &session) {
                 paused = Some(self.pause(root, session));
@@ -800,7 +803,7 @@ impl Core {
         if let Some(ahead) = self.queue_ahead(seq, tick) {
             // Q-428: a switch to another node is next on this Mac — under `useNext` that is the
             // Mac serving another node, and the next node of the chain takes the work.
-            if setting == NodeIfServingOther::UseNext {
+            if setting == NodeIfServingOther::UseNext && ahead.node != node.def.id {
                 return Look::Refused(self.switching_to_other(node, &ahead).await);
             }
             return Look::Wait {
@@ -855,7 +858,7 @@ impl Core {
         // no one uses is not "serving another node": it is switched under every setting.
         let mut yields = false;
         if setting != NodeIfServingOther::TakeOver {
-            match self.serving_other(node, &plan, own).await {
+            match self.serving_other(node, &plan, own, seq).await {
                 Err(r) => return Look::Refused(r),
                 Ok(None) => {}
                 Ok(Some(other)) => match setting {
@@ -1100,6 +1103,7 @@ impl Core {
             .iter()
             .find(|q| q.goes_before(seq, asker_is_tick))
             .map(|q| Ahead {
+                node: q.node.clone(),
                 node_name: q.node_name.clone(),
                 session: q.session.clone(),
             })
@@ -1140,10 +1144,23 @@ impl Core {
         node: &ResolvedNodeDef,
         plan: &SwitchPlan,
         own: holds::Own<'_>,
+        seq: u64,
     ) -> Result<Option<NodeServingOtherDto>, Refusal> {
         if plan.stops.is_empty() {
             return Ok(None);
         }
+        // A chat whose own turn waits in this loader for a node is MOVING off the way it last
+        // used, not resting on it: counting it would leave two `wait` demands each waiting for
+        // the other (the refuter's case — two chats last on the split, both moved to the Studio).
+        let moving: Vec<String> = {
+            let queue = self.queue.lock().unwrap();
+            queue
+                .iter()
+                .filter(|q| q.seq != seq)
+                .filter_map(|q| q.session.clone())
+                .collect()
+        };
+        let moving: Vec<String> = moving.iter().map(|s| self.holds.root_of(s)).collect();
         let running = self
             .holds
             .blockers(&plan.stops, own)
@@ -1161,7 +1178,8 @@ impl Core {
         }
         let mut idle_way: Option<String> = None;
         for (root, way) in self.holds.last_on(&plan.stops, own_root) {
-            if roots.contains(&root) || !self.ways.chat_open(&root).await {
+            if roots.contains(&root) || moving.contains(&root) || !self.ways.chat_open(&root).await
+            {
                 continue;
             }
             idle_way.get_or_insert(way);
@@ -1330,6 +1348,7 @@ impl Core {
 
 /// A queued switch ahead of a demand: the node it loads and the session it loads it for.
 struct Ahead {
+    node: String,
     node_name: String,
     session: Option<String>,
 }
@@ -1419,6 +1438,10 @@ impl NodeLoader for Seam {
 
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto) {
         self.0.holds.note_lease(session, key_of(way));
+    }
+
+    fn note_lease_off_mlx(&self, session: &str) {
+        self.0.holds.note_lease_off_mlx(session);
     }
 
     fn note_child(&self, child_session: &str, parent_session: &str) {

@@ -1420,16 +1420,18 @@ pub(crate) async fn route_stream(
         };
         match stream_on(lease, providers, kwargs_source, &turn).await? {
             Streamed::Served(stream, node) => {
-                note_served(seam, pool_lease_way(seam, &node), || NodeServedTurnDto {
-                    node: node.id.clone(),
-                    role: None,
-                    rank: 1,
-                    reason: None,
-                    tried: Vec::new(),
-                    loaded_ms: None,
-                    at_ms: now_ms(),
-                    asked_for_this_turn: false,
-                    serving_other: None,
+                note_served(seam, &node, pool_lease_way(seam, &node), || {
+                    NodeServedTurnDto {
+                        node: node.id.clone(),
+                        role: None,
+                        rank: 1,
+                        reason: None,
+                        tried: Vec::new(),
+                        loaded_ms: None,
+                        at_ms: now_ms(),
+                        asked_for_this_turn: false,
+                        serving_other: None,
+                    }
                 });
                 return Ok(stream);
             }
@@ -1742,6 +1744,8 @@ pub(crate) trait NodesSeam: Send + Sync {
     async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing;
     fn loader_installed(&self) -> bool;
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto);
+    /// A lease on no MLX way (cloud, LM Studio): the chat moved off its last way (Q-428).
+    fn note_lease_off_mlx(&self, session: &str);
     fn served(&self, session: &str, turn: NodeServedTurnDto);
     /// See `nodes::seam::queued_switch_ahead` (asked before every MLX lease).
     fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String>;
@@ -1764,6 +1768,10 @@ impl NodesSeam for LiveNodesSeam {
 
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto) {
         crate::nodes::seam::note_lease(session, way);
+    }
+
+    fn note_lease_off_mlx(&self, session: &str) {
+        crate::nodes::seam::note_lease_off_mlx(session);
     }
 
     fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {
@@ -1805,14 +1813,20 @@ fn now_ms() -> u64 {
 /// a probe) has no record to keep.
 fn note_served(
     seam: &dyn NodesSeam,
+    node: &Node,
     way: Option<MlxPlacementKeyDto>,
     record: impl FnOnce() -> NodeServedTurnDto,
 ) {
     let Some(session) = crate::session_context::current_session_id() else {
         return;
     };
-    if let Some(way) = way {
-        seam.note_lease(&session, &way);
+    match (way, &node.kind) {
+        (Some(way), _) => seam.note_lease(&session, &way),
+        (None, NodeKind::LmStudio { .. } | NodeKind::Cloud { .. }) => {
+            seam.note_lease_off_mlx(&session)
+        }
+        // An MLX lease whose way is unknown (already logged by `lease_way`): nothing is said.
+        (None, _) => {}
     }
     seam.served(&session, record());
 }
@@ -2677,7 +2691,7 @@ pub(crate) async fn route_chain(
         match stream_on(lease, providers, kwargs_source, &turn).await? {
             Streamed::Served(stream, node) => {
                 let way = way.or_else(|| pool_lease_way(seam, &node));
-                note_served(seam, way, || {
+                note_served(seam, &node, way, || {
                     chain_record(
                         plan,
                         &node.id,
@@ -5141,6 +5155,8 @@ devices:
         demands: StdMutex<Vec<String>>,
         /// Each demand's `ifServingOther` (Q-428).
         settings: StdMutex<Vec<NodeIfServingOther>>,
+        /// Sessions whose lease was on no MLX way (Q-428: the chat moved off its last way).
+        off_mlx: StdMutex<Vec<String>>,
         served: StdMutex<Vec<(String, NodeServedTurnDto)>>,
         notes: StdMutex<Vec<(String, MlxPlacementKeyDto)>>,
         /// What each "is a switch queued ahead?" is answered, in order; none left = nothing is.
@@ -5196,6 +5212,10 @@ devices:
                 .lock()
                 .unwrap()
                 .push((session.to_string(), way.clone()));
+        }
+
+        fn note_lease_off_mlx(&self, session: &str) {
+            self.off_mlx.lock().unwrap().push(session.to_string());
         }
 
         fn served(&self, session: &str, turn: NodeServedTurnDto) {
@@ -5626,6 +5646,8 @@ devices:
         let record = seam.last();
         assert_eq!((record.node.as_str(), record.rank), ("b", 2));
         assert_eq!(record.serving_other, Some(other));
+        // The chat's turn went to a node on no MLX way: it moved off its last way.
+        assert_eq!(*seam.off_mlx.lock().unwrap(), vec![SESSION.to_string()]);
         assert_eq!(
             record.reason.as_deref(),
             Some("Work’s Mac Studio is serving 27B · both Macs for chat \"Kickoff notes\"; Node a is left to it")

@@ -346,6 +346,23 @@ impl Holds {
         self.bump();
     }
 
+    /// A chat's own reply leased a node on no MLX way (a cloud or LM Studio node): the chat has
+    /// moved off the way it last used (Q-428) — it no longer rests on it. A delegate's lease says
+    /// nothing about its chat's own turn, and a lease outside a reply (a helper) is not a turn.
+    pub fn note_lease_off_mlx(&self, session: &str) {
+        {
+            let mut state = self.state.lock().unwrap();
+            let root = root_in(&state, session);
+            if root != session || !state.open.contains_key(&root) {
+                return;
+            }
+            if state.last_way.remove(&root).is_none() {
+                return;
+            }
+        }
+        self.bump();
+    }
+
     pub fn note_child(&self, child: &str, parent: &str) {
         let mut state = self.state.lock().unwrap();
         let root = root_in(&state, parent);

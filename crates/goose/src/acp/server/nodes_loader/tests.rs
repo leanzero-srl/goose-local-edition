@@ -2277,3 +2277,86 @@ async fn a_waiting_demand_under_wait_holds_no_reply_of_the_chat_it_waits_for() {
         assert_eq!(answer(b).await, NodeEnsureServing::Ready, "{setting:?}");
     }
 }
+
+/// Refuter case 1: chats A and B both last used the split and both now want the Studio under
+/// `wait`. Each chat's own demand means it is MOVING off the split, not resting on it — neither
+/// waits for the other, and one switch serves both.
+#[tokio::test]
+async fn two_wait_demands_moving_off_one_way_never_wait_for_each_other() {
+    let fake = serving_split();
+    let core = Core::new(fake.clone(), None);
+    for chat in ["chat-a", "chat-b"] {
+        let reply = core.holds().open_reply(chat);
+        lease(&core, chat, &fake, "split");
+        drop(reply);
+    }
+    let _a = core.holds().open_reply("chat-a");
+    let _b = core.holds().open_reply("chat-b");
+    let (c1, c2) = (Arc::clone(&core), Arc::clone(&core));
+    let d1 = demand_as(&fake, "studio", "chat-a", NodeIfServingOther::Wait);
+    let d2 = demand_as(&fake, "studio", "chat-b", NodeIfServingOther::Wait);
+    let a = tokio::spawn(async move { c1.ensure_serving(d1).await });
+    let b = tokio::spawn(async move { c2.ensure_serving(d2).await });
+    assert_eq!(answer(a).await, NodeEnsureServing::Ready);
+    assert_eq!(answer(b).await, NodeEnsureServing::Ready);
+    assert!(switched(&fake), "one switch for both: {:?}", fake.log());
+}
+
+/// Refuter case 2: a chat whose next turn went to a cloud node moved off the split — it no longer
+/// rests on it, so `useNext` loads instead of passing over forever.
+#[tokio::test]
+async fn a_chat_whose_turn_moved_to_the_cloud_no_longer_rests_on_its_way() {
+    let fake = serving_split();
+    let core = Core::new(fake.clone(), None);
+    let a = core.holds().open_reply("chat-a");
+    lease(&core, "chat-a", &fake, "split");
+    drop(a);
+    let a = core.holds().open_reply("chat-a");
+    core.holds().note_lease_off_mlx("chat-a");
+    drop(a);
+    let _b = core.holds().open_reply("chat-b");
+    let got = tokio::time::timeout(
+        SETTLE,
+        core.ensure_serving(demand_as(
+            &fake,
+            "studio",
+            "chat-b",
+            NodeIfServingOther::UseNext,
+        )),
+    )
+    .await
+    .expect("nothing rests on the split");
+    assert_eq!(got, NodeEnsureServing::Ready);
+    assert!(switched(&fake), "{:?}", fake.log());
+}
+
+/// Refuter case 3: `useNext` passes over only a switch to ANOTHER node. Chat B2's demand for the
+/// Studio while chat B1's switch to the Studio runs is the same load: it waits for it.
+#[tokio::test]
+async fn use_next_never_passes_over_its_own_nodes_load() {
+    let fake = serving_split();
+    let gate = Arc::new(Notify::new());
+    *fake.start_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let core = Core::new(fake.clone(), None);
+    let _b1 = core.holds().open_reply("chat-b1");
+    let _b2 = core.holds().open_reply("chat-b2");
+    let c = Arc::clone(&core);
+    let d = demand_as(&fake, "studio", "chat-b1", NodeIfServingOther::UseNext);
+    let b1 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("B1's switch is starting the Studio", || {
+        fake.log().iter().any(|l| l == "start studio")
+    })
+    .await;
+    let c = Arc::clone(&core);
+    let d = demand_as(&fake, "studio", "chat-b2", NodeIfServingOther::UseNext);
+    let b2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !b2.is_finished(),
+        "B2 waits for the Studio's load, never refused"
+    );
+    gate.notify_waiters();
+    assert_eq!(answer(b1).await, NodeEnsureServing::Ready);
+    assert_eq!(answer(b2).await, NodeEnsureServing::Ready);
+    assert!(switched(&fake), "one switch: {:?}", fake.log());
+}
