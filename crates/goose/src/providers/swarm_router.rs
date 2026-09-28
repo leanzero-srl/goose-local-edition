@@ -1870,12 +1870,18 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
                     crate::nodes::role_str(role)
                 )
             })?;
-            Ok(ChainPlan {
-                label: format!(
+            // A chat's own node set (Q-359) is named for what it is to the person — never by the
+            // strategy name the set carries only for uniqueness. Only the words differ.
+            let label = match &strategy.chat {
+                Some(_) => format!("this chat's nodes ({})", crate::nodes::role_str(role)),
+                None => format!(
                     "the strategy \"{}\" ({})",
                     strategy.name,
                     crate::nodes::role_str(role)
                 ),
+            };
+            Ok(ChainPlan {
+                label,
                 role: Some(role),
                 share_key: crate::nodes::format_route_model(&RouteModel::Strategy {
                     id: id.clone(),
@@ -5380,6 +5386,7 @@ devices:
                 )),
                 ..Default::default()
             },
+            chat: None,
         }];
         let read = read_of(config);
         let chat = chain_plan(&nodes_route("strategy:daily").unwrap().unwrap(), &read).unwrap();
@@ -5415,6 +5422,48 @@ devices:
             .err()
             .unwrap();
         assert!(gone.contains("the strategy 'ghost' was removed"), "{gone}");
+    }
+
+    #[test]
+    fn a_chats_own_node_set_is_named_so_and_routes_as_any_strategy() {
+        let mut config = crate::nodes::empty_config();
+        config.defs = vec![cloud_def("a"), cloud_def("b")];
+        let nodes = vec!["a".to_string(), "b".to_string()];
+        let set = crate::nodes::NodeStrategy {
+            id: "chat-7".to_string(),
+            name: "This chat's nodes (7)".to_string(),
+            note: None,
+            roles: crate::nodes::chat_set_roles(&nodes, false),
+            chat: Some("7".to_string()),
+        };
+        let named = crate::nodes::NodeStrategy {
+            id: "named".to_string(),
+            name: "Named".to_string(),
+            chat: None,
+            ..set.clone()
+        };
+        config.strategies = vec![set, named];
+        let read = read_of(config);
+        for (role, suffix) in [("", "chat"), ("@build", "build")] {
+            let own = chain_plan(
+                &nodes_route(&format!("strategy:chat-7{role}"))
+                    .unwrap()
+                    .unwrap(),
+                &read,
+            )
+            .unwrap();
+            let same = chain_plan(
+                &nodes_route(&format!("strategy:named{role}"))
+                    .unwrap()
+                    .unwrap(),
+                &read,
+            )
+            .unwrap();
+            assert_eq!(own.label, format!("this chat's nodes ({suffix})"));
+            assert_eq!(same.label, format!("the strategy \"Named\" ({suffix})"));
+            assert_eq!(own.entry, same.entry, "the label is the only difference");
+            assert_eq!(own.role, same.role);
+        }
     }
 
     fn pinned_def(id: &str, model: &str, placement: NodePlacement) -> ResolvedNodeDef {

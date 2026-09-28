@@ -21,7 +21,7 @@ import { usedByOf } from './nodeGlance';
 import { useNodeFacts } from './useNodeFacts';
 import { nodeIdFor, putNode, uniqueName } from './nodeDraft';
 import { RemoveConfirmDialog, type RemoveConfirmation } from './RemoveConfirmDialog';
-import type { NodeDef, NodesConfig, ResolvedNodeDef } from './model';
+import { chatNodeSetCount, type NodeDef, type NodesConfig, type ResolvedNodeDef } from './model';
 
 /**
  * THE NODES TAB (DESIGN-NODES-AND-STRATEGIES.md §8.2): every node definition as a card, in two
@@ -101,6 +101,16 @@ const i18n = defineMessages({
     defaultMessage:
       '{count, plural, one {A strategy uses this node} other {# strategies use this node}}, so it can’t be removed on its own.',
   },
+  removeFromChatNodeSets: {
+    id: 'nodes.removeAlsoFromChatNodeSets',
+    defaultMessage:
+      '{count, plural, one {Also take it out of # chat’s node set} other {Also take it out of # chats’ node sets}}',
+  },
+  removeFromChatNodeSetsWhy: {
+    id: 'nodes.removeAlsoFromChatNodeSetsWhy',
+    defaultMessage:
+      '{count, plural, one {A chat runs on it with other nodes} other {# chats run on it with other nodes}}. A chat left with no node is told so on its next message.',
+  },
   removeNewChatsAuto: {
     id: 'nodes.removeNewChatsAuto',
     defaultMessage: 'Start new chats on Any node (Auto) instead',
@@ -135,6 +145,7 @@ const RESTORE_BUSY = ':restore-pool';
 interface RemoveState {
   node: ResolvedNodeDef;
   alsoFromStrategies: boolean;
+  alsoFromChatNodeSets: boolean;
   andNewChatsAuto: boolean;
   acknowledged: number | null;
   refusals: { code: string; message: string; liveSessions?: number | null }[];
@@ -167,6 +178,8 @@ function RemoveDialog({
     ...new Set((config ? usedByOf(config, id) : []).map((u) => u.strategyName)),
   ];
   const inStrategies = strategyNames.length > 0 || codes.has('nodeInUse');
+  const chatSets = config ? chatNodeSetCount(config, id) : 0;
+  const inChatSets = chatSets > 0 || codes.has('nodeInChatNodeSets');
   const forNewChats =
     (config?.forNewChats?.kind === 'node' && config.forNewChats.id === id) ||
     codes.has('nodeIsForNewChats');
@@ -193,6 +206,18 @@ function RemoveDialog({
       testId: 'node-remove-from-strategies',
     });
   }
+  if (inChatSets) {
+    confirmations.push({
+      key: 'chatNodeSets',
+      label: intl.formatMessage(i18n.removeFromChatNodeSets, { count: Math.max(chatSets, 1) }),
+      description: intl.formatMessage(i18n.removeFromChatNodeSetsWhy, {
+        count: Math.max(chatSets, 1),
+      }),
+      checked: state.alsoFromChatNodeSets,
+      onChange: (v) => onChange({ ...state, alsoFromChatNodeSets: v }),
+      testId: 'node-remove-from-chat-node-sets',
+    });
+  }
   if (forNewChats) {
     confirmations.push({
       key: 'newChats',
@@ -213,7 +238,7 @@ function RemoveDialog({
       testId: 'node-remove-acknowledge',
     });
   }
-  const answered = new Set<string>(['nodeInUse', 'nodeIsForNewChats']);
+  const answered = new Set<string>(['nodeInUse', 'nodeInChatNodeSets', 'nodeIsForNewChats']);
   if (liveCount != null) answered.add('liveSessionsNotAcknowledged');
 
   return (
@@ -326,6 +351,7 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
     try {
       const response = await nodesRemoveNode(state.node.def.id, {
         alsoFromStrategies: state.alsoFromStrategies,
+        ...(state.alsoFromChatNodeSets ? { alsoFromChatNodeSets: true } : {}),
         andNewChatsAuto: state.andNewChatsAuto,
         ...(state.acknowledged != null ? { acknowledgedSessions: state.acknowledged } : {}),
       });
@@ -447,6 +473,7 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
         setRemoving({
           node,
           alsoFromStrategies: false,
+          alsoFromChatNodeSets: false,
           andNewChatsAuto: false,
           acknowledged: null,
           refusals: [],

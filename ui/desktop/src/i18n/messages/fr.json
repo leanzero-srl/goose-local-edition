@@ -557,6 +557,96 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "En attente de l'enregistrement des images..."
   },
+  "chatNodes.add": {
+    "defaultMessage": "Ajouter"
+  },
+  "chatNodes.addContextNone": {
+    "defaultMessage": "Le premier nœud que vous ajoutez répond à cette discussion."
+  },
+  "chatNodes.addContextSet": {
+    "defaultMessage": "{lead} répond à cette discussion. Ses délégations partagent chaque nœud que vous ajoutez."
+  },
+  "chatNodes.addContextStrategy": {
+    "defaultMessage": "S’ajoute uniquement à cette discussion ; {strategy} reste inchangée. {lead} continue de répondre à cette discussion."
+  },
+  "chatNodes.addNamed": {
+    "defaultMessage": "Ajouter {node} à cette discussion"
+  },
+  "chatNodes.addTitle": {
+    "defaultMessage": "Ajouter un nœud à cette discussion"
+  },
+  "chatNodes.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "chatNodes.close": {
+    "defaultMessage": "Fermer"
+  },
+  "chatNodes.lineFirstStart": {
+    "defaultMessage": "Premier démarrage pas encore mesuré"
+  },
+  "chatNodes.lineLoading": {
+    "defaultMessage": "Chargement · {phase}"
+  },
+  "chatNodes.lineServing": {
+    "defaultMessage": "En service"
+  },
+  "chatNodes.lineStartsIn": {
+    "defaultMessage": "{count,plural,one{Non chargé · démarre en environ {duration} · médiane de # chargement} other{Non chargé · démarre en environ {duration} · médiane de # chargements}}"
+  },
+  "chatNodes.lineStopsOtherChat": {
+    "defaultMessage": "{mac} répond à la discussion « {chat} » sur {node}. L’ajouter arrête cela après sa réponse"
+  },
+  "chatNodes.lineWaiting": {
+    "defaultMessage": "En attente de chargement · {words}"
+  },
+  "chatNodes.noOthers": {
+    "defaultMessage": "Tous les nœuds que vous avez exécutent déjà cette discussion."
+  },
+  "chatNodes.notBeforeC3": {
+    "defaultMessage": "Ne peut pas encore tourner à côté de {lead} : vos Mac ne servent goose qu’avec un seul modèle à la fois"
+  },
+  "chatNodes.notLeadSplit": {
+    "defaultMessage": "{lead} tourne sur les deux Mac, donc aucun Mac n’est libre pour un autre modèle"
+  },
+  "chatNodes.notSameMac": {
+    "defaultMessage": "Tourne sur {mac}, où {lead} répond à cette discussion. Un Mac exécute un seul modèle à la fois pour goose"
+  },
+  "chatNodes.notSaved": {
+    "defaultMessage": "Non enregistré"
+  },
+  "chatNodes.readFailed": {
+    "defaultMessage": "Impossible de lire vos nœuds : {error}"
+  },
+  "chatNodes.reading": {
+    "defaultMessage": "Lecture de vos nœuds…"
+  },
+  "chatNodes.refused": {
+    "defaultMessage": "Non ajouté"
+  },
+  "chatNodes.save": {
+    "defaultMessage": "Enregistrer comme stratégie"
+  },
+  "chatNodes.saveBody": {
+    "defaultMessage": "Cette discussion continue de tourner dessus. Elle est répertoriée sous Stratégies, où les nouvelles discussions et les builds de l’essaim peuvent aussi l’utiliser."
+  },
+  "chatNodes.saveEmptyName": {
+    "defaultMessage": "Donnez-lui un nom pour l’enregistrer"
+  },
+  "chatNodes.saveFailed": {
+    "defaultMessage": "Impossible d’enregistrer la stratégie"
+  },
+  "chatNodes.saveName": {
+    "defaultMessage": "Nom"
+  },
+  "chatNodes.saveTitle": {
+    "defaultMessage": "Enregistrer les nœuds de cette discussion comme stratégie"
+  },
+  "chatNodes.thisMacMid": {
+    "defaultMessage": "ce Mac"
+  },
+  "chatNodes.thisMacStart": {
+    "defaultMessage": "Ce Mac"
+  },
   "chatServedBy.peerGone": {
     "defaultMessage": "{because, select, quit {goose ne tourne pas sur {peer}} other {{peer} ne répond plus depuis {time} — goose y est peut-être fermé, ou il est hors ligne}}"
   },
@@ -1594,6 +1684,18 @@
   },
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Afficher {count} options"
+  },
+  "delegateServed.loaded": {
+    "defaultMessage": "sur {node} · chargé pour cette délégation en {duration}"
+  },
+  "delegateServed.on": {
+    "defaultMessage": "sur {node}"
+  },
+  "delegateServed.passedOver": {
+    "defaultMessage": "sur {node} : {primary} ne peut pas tourner ({reason})"
+  },
+  "delegateServed.unread": {
+    "defaultMessage": "Impossible de lire le nœud sur lequel cette délégation s’est exécutée : {error}"
   },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Signaler un problème"
@@ -5858,6 +5960,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.chatNodesRefused": {
+    "defaultMessage": "Les nœuds de cette discussion n’ont pas été modifiés"
+  },
   "modelsBottomBar.checking": {
     "defaultMessage": "Vérification…"
   },
@@ -6764,6 +6869,12 @@
   "nodes.remove": {
     "defaultMessage": "Supprimer"
   },
+  "nodes.removeAlsoFromChatNodeSets": {
+    "defaultMessage": "{count,plural,one{Le retirer aussi de l’ensemble de nœuds de # discussion} other{Le retirer aussi des ensembles de nœuds de # discussions}}"
+  },
+  "nodes.removeAlsoFromChatNodeSetsWhy": {
+    "defaultMessage": "{count,plural,one{Une discussion tourne dessus avec d’autres nœuds. Une discussion sans nœud en est informée à son prochain message.} other{# discussions tournent dessus avec d’autres nœuds. Une discussion sans nœud en est informée à son prochain message.}}"
+  },
   "nodes.removeAlsoFromStrategies": {
     "defaultMessage": "Le retirer aussi de {strategies}"
   },
@@ -6929,6 +7040,21 @@
   "nodes.whereThisMac": {
     "defaultMessage": "Ce Mac"
   },
+  "nodesChipMenu.addNode": {
+    "defaultMessage": "Ajouter un nœud à cette discussion…"
+  },
+  "nodesChipMenu.answerOnNext": {
+    "defaultMessage": "Si {lead} ne peut pas tourner, répondre sur le nœud suivant"
+  },
+  "nodesChipMenu.answerOnNextWhy": {
+    "defaultMessage": "Désactivé : quand {lead} ne peut pas tourner, le tour se termine et en indique la raison."
+  },
+  "nodesChipMenu.answers": {
+    "defaultMessage": "répond"
+  },
+  "nodesChipMenu.chatNodes": {
+    "defaultMessage": "Les nœuds de cette discussion"
+  },
   "nodesChipMenu.chatOn": {
     "defaultMessage": "Discussion → {node}"
   },
@@ -6944,17 +7070,35 @@
   "nodesChipMenu.nodes": {
     "defaultMessage": "Nœuds"
   },
+  "nodesChipMenu.noneLine": {
+    "defaultMessage": "Aucun nœud ne répond nommément à cette discussion. Le premier nœud que vous ajoutez y répondra."
+  },
+  "nodesChipMenu.oneLine": {
+    "defaultMessage": "La discussion et ses délégations tournent sur {lead}."
+  },
   "nodesChipMenu.otherModels": {
     "defaultMessage": "Autres modèles et fournisseurs…"
   },
   "nodesChipMenu.otherModelsHint": {
     "defaultMessage": "Modèles cloud et vos endpoints"
   },
+  "nodesChipMenu.saveAsStrategy": {
+    "defaultMessage": "Enregistrer comme stratégie…"
+  },
+  "nodesChipMenu.setLine": {
+    "defaultMessage": "Les délégations partagent ces nœuds. La discussion répond sur {lead}."
+  },
   "nodesChipMenu.startsIn": {
     "defaultMessage": "démarre en environ {duration}"
   },
   "nodesChipMenu.strategies": {
     "defaultMessage": "Stratégies"
+  },
+  "nodesChipMenu.strategyLine": {
+    "defaultMessage": "Sur {strategy} : la discussion répond sur {lead}. Ajouter un nœud donne à cette discussion ses propres nœuds ; {strategy} reste inchangée."
+  },
+  "nodesChipMenu.takeOut": {
+    "defaultMessage": "Retirer {node} de cette discussion"
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Exécuter cette discussion sur"
@@ -9625,6 +9769,9 @@
   },
   "strategies.cancel": {
     "defaultMessage": "Annuler"
+  },
+  "strategies.chatNodeSets": {
+    "defaultMessage": "{count,plural,one{# discussion a son propre ensemble de nœuds, créé à partir de sa puce : elle tourne là, non listée ici} other{# discussions ont leur propre ensemble de nœuds, créé à partir de leur puce : elles tournent là, non listées ici}}"
   },
   "strategies.cloudRow": {
     "defaultMessage": "{node} : toujours disponible"

@@ -232,6 +232,130 @@
           "kind": "pool"
         }
       }
+    },
+    {
+      "name": "a chat's own node set beside a named strategy",
+      "config": {
+        "version": 1,
+        "defs": [
+          {
+            "id": "27b-both",
+            "name": "27B Atlassian · both Macs",
+            "kind": "mlx",
+            "model": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+            "placement": {
+              "kind": "pipeline",
+              "macs": [
+                "local",
+                "link:studio"
+              ],
+              "link": "jaccl"
+            },
+            "goal": "chat",
+            "origin": "runIt"
+          },
+          {
+            "id": "sonnet",
+            "name": "Claude Sonnet · OpenRouter",
+            "kind": "cloud",
+            "model": "anthropic/claude-sonnet-4",
+            "provider": "openrouter",
+            "origin": "user"
+          }
+        ],
+        "strategies": [
+          {
+            "id": "everyday",
+            "name": "Everyday",
+            "note": "Big model thinks and builds; the cloud takes the overflow.",
+            "roles": {
+              "chat": {
+                "chain": [
+                  {
+                    "node": "27b-both",
+                    "weight": 1
+                  },
+                  {
+                    "node": "sonnet",
+                    "weight": 1
+                  }
+                ],
+                "when": "failover",
+                "ifNotLoaded": "load"
+              },
+              "planning": {
+                "chain": [
+                  {
+                    "node": "27b-both",
+                    "weight": 1
+                  }
+                ],
+                "when": "failover",
+                "ifNotLoaded": "load"
+              },
+              "build": {
+                "chain": [
+                  {
+                    "node": "27b-both",
+                    "weight": 2
+                  },
+                  {
+                    "node": "sonnet",
+                    "weight": 1
+                  }
+                ],
+                "when": "share",
+                "ifNotLoaded": "useNext"
+              }
+            }
+          },
+          {
+            "id": "chat-20260928_7",
+            "name": "This chat's nodes (20260928_7)",
+            "roles": {
+              "chat": {
+                "chain": [
+                  {
+                    "node": "27b-both",
+                    "weight": 1
+                  },
+                  {
+                    "node": "sonnet",
+                    "weight": 1
+                  }
+                ],
+                "when": "failover",
+                "ifNotLoaded": "load"
+              },
+              "build": {
+                "chain": [
+                  {
+                    "node": "27b-both",
+                    "weight": 1
+                  },
+                  {
+                    "node": "sonnet",
+                    "weight": 1
+                  }
+                ],
+                "when": "share",
+                "ifNotLoaded": "load"
+              }
+            },
+            "chat": "20260928_7"
+          }
+        ],
+        "declined": [
+
+        ],
+        "forNewChats": {
+          "kind": "strategy",
+          "id": "everyday"
+        },
+        "forBuilds": {
+          "kind": "pool"
+        }
+      }
     }
   ],
   "modelIds": [
@@ -3826,6 +3950,172 @@
         "flash-here": "Flash · this Mac"
       },
       "expect": null
+    }
+  ],
+  "chatNodeSets": [
+    {
+      "name": "one node: the chat and its delegates on it",
+      "session": "20260928_7",
+      "nodes": [
+        "27b-both"
+      ],
+      "answerOnNext": false,
+      "strategy": {
+        "id": "chat-20260928_7",
+        "name": "This chat's nodes (20260928_7)",
+        "roles": {
+          "chat": {
+            "chain": [
+              {
+                "node": "27b-both",
+                "weight": 1
+              }
+            ],
+            "when": "failover",
+            "ifNotLoaded": "load"
+          },
+          "build": {
+            "chain": [
+              {
+                "node": "27b-both",
+                "weight": 1
+              }
+            ],
+            "when": "share",
+            "ifNotLoaded": "load"
+          }
+        },
+        "chat": "20260928_7"
+      }
+    },
+    {
+      "name": "a Mac model and a cloud node: the chat stays on its lead",
+      "session": "20260928_7",
+      "nodes": [
+        "27b-both",
+        "sonnet"
+      ],
+      "answerOnNext": false,
+      "strategy": {
+        "id": "chat-20260928_7",
+        "name": "This chat's nodes (20260928_7)",
+        "roles": {
+          "chat": {
+            "chain": [
+              {
+                "node": "27b-both",
+                "weight": 1
+              }
+            ],
+            "when": "failover",
+            "ifNotLoaded": "load"
+          },
+          "build": {
+            "chain": [
+              {
+                "node": "27b-both",
+                "weight": 1
+              },
+              {
+                "node": "sonnet",
+                "weight": 1
+              }
+            ],
+            "when": "share",
+            "ifNotLoaded": "load"
+          }
+        },
+        "chat": "20260928_7"
+      }
+    },
+    {
+      "name": "answer on the next node: the chat fails over down the set",
+      "session": "20260928_7",
+      "nodes": [
+        "27b-both",
+        "sonnet"
+      ],
+      "answerOnNext": true,
+      "strategy": {
+        "id": "chat-20260928_7",
+        "name": "This chat's nodes (20260928_7)",
+        "roles": {
+          "chat": {
+            "chain": [
+              {
+                "node": "27b-both",
+                "weight": 1
+              },
+              {
+                "node": "sonnet",
+                "weight": 1
+              }
+            ],
+            "when": "failover",
+            "ifNotLoaded": "load"
+          },
+          "build": {
+            "chain": [
+              {
+                "node": "27b-both",
+                "weight": 1
+              },
+              {
+                "node": "sonnet",
+                "weight": 1
+              }
+            ],
+            "when": "share",
+            "ifNotLoaded": "load"
+          }
+        },
+        "chat": "20260928_7"
+      }
+    },
+    {
+      "name": "three nodes, the lead a cloud node",
+      "session": "20260928_7",
+      "nodes": [
+        "sonnet",
+        "flash-here",
+        "my-server"
+      ],
+      "answerOnNext": false,
+      "strategy": {
+        "id": "chat-20260928_7",
+        "name": "This chat's nodes (20260928_7)",
+        "roles": {
+          "chat": {
+            "chain": [
+              {
+                "node": "sonnet",
+                "weight": 1
+              }
+            ],
+            "when": "failover",
+            "ifNotLoaded": "load"
+          },
+          "build": {
+            "chain": [
+              {
+                "node": "sonnet",
+                "weight": 1
+              },
+              {
+                "node": "flash-here",
+                "weight": 1
+              },
+              {
+                "node": "my-server",
+                "weight": 1
+              }
+            ],
+            "when": "share",
+            "ifNotLoaded": "load"
+          }
+        },
+        "chat": "20260928_7"
+      }
     }
   ]
 }

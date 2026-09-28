@@ -4,12 +4,18 @@ import { Plus, RefreshCw, Route as RouteIcon } from 'lucide-react';
 import type { BuildEligibility } from '../../acp/nodes';
 import { nodesRemoveStrategy, nodesWrite } from '../../acp/nodes';
 import { defineMessages, useIntl } from '../../i18n';
-import { Button, EmptyState, SURFACE, TYPE, cx } from '../lz';
+import { Button, EmptyState, SURFACE, TYPE, WEIGHT, cx } from '../lz';
 import { ToneBanner } from '../leanzero-swarm/studio';
 import { WithMacs } from '../leanzero-swarm/useMacs';
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
 import { refreshGlanceNodes } from '../engineGlance/glanceStore';
-import type { NodeStrategy, NodesConfig, ResolvedNodeDef } from './model';
+import {
+  chatNodeSetCount,
+  namedStrategies,
+  type NodeStrategy,
+  type NodesConfig,
+  type ResolvedNodeDef,
+} from './model';
 import { measuredStart, type Read } from './nodeGlance';
 import { nodeIdFor, uniqueName } from './nodeDraft';
 import { strategyFit, type MeasuredLoad } from './strategyFit';
@@ -35,6 +41,11 @@ const i18n = defineMessages({
       'A strategy says which node does what: its roles, the order to try nodes in, and when to use the next one.',
   },
   new: { id: 'strategies.new', defaultMessage: 'New strategy' },
+  chatNodeSets: {
+    id: 'strategies.chatNodeSets',
+    defaultMessage:
+      '{count, plural, one {# chat has its own node set, made from its chip: it runs there, not listed here} other {# chats have their own node sets, made from their chips: they run there, not listed here}}',
+  },
   defaultName: { id: 'strategies.defaultName', defaultMessage: 'New strategy' },
   emptyTitle: { id: 'strategies.emptyTitle', defaultMessage: 'No strategies yet' },
   emptyBody: {
@@ -107,7 +118,11 @@ function StrategiesBody({ eligibility }: StrategiesTabProps) {
   const { store, nodes, servingNode, loads, macs, glanceOf } = useNodeFacts();
   const read = store.kind === 'read' ? store.read : null;
   const config: NodesConfig | null = read?.config ?? null;
-  const strategies = config?.strategies ?? [];
+  // Every write keeps the chats' own node sets (`allStrategies`); the tab lists and names only the
+  // strategies the person named, and counts the rest (Q-359).
+  const allStrategies = config?.strategies ?? [];
+  const strategies = namedStrategies(config);
+  const chatSets = chatNodeSetCount(config);
 
   const [fresh, setFresh] = useState<{ initial: NodeStrategy; seq: number } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -203,11 +218,11 @@ function StrategiesBody({ eligibility }: StrategiesTabProps) {
     if (!config) return;
     const name = uniqueName(
       intl.formatMessage(i18n.defaultName),
-      strategies.map((s) => s.name)
+      allStrategies.map((s) => s.name)
     );
     const id = nodeIdFor(
       name,
-      strategies.map((s) => s.id)
+      allStrategies.map((s) => s.id)
     );
     setRefusals([]);
     setFresh((prev) => ({
@@ -232,15 +247,15 @@ function StrategiesBody({ eligibility }: StrategiesTabProps) {
       case 'duplicate': {
         const name = uniqueName(
           strategy.name,
-          strategies.map((s) => s.name)
+          allStrategies.map((s) => s.name)
         );
         const id = nodeIdFor(
           name,
-          strategies.map((s) => s.id)
+          allStrategies.map((s) => s.id)
         );
         void act(strategy, {
           ...config,
-          strategies: [...strategies, { ...strategy, id, name }],
+          strategies: [...allStrategies, { ...strategy, id, name }],
         });
         return;
       }
@@ -321,9 +336,19 @@ function StrategiesBody({ eligibility }: StrategiesTabProps) {
   return (
     <div className="flex flex-col gap-5" data-testid="strategies-list">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className={cx('max-w-[70ch] break-words', TYPE.bodyMuted)}>
-          {intl.formatMessage(i18n.subtitle)}
-        </p>
+        <div className="flex min-w-0 flex-col gap-1">
+          <p className={cx('max-w-[70ch] break-words', TYPE.bodyMuted)}>
+            {intl.formatMessage(i18n.subtitle)}
+          </p>
+          {chatSets > 0 && (
+            <p
+              className={cx('max-w-[70ch] break-words', TYPE.body, WEIGHT.semibold)}
+              data-testid="strategies-chat-node-sets"
+            >
+              {intl.formatMessage(i18n.chatNodeSets, { count: chatSets })}
+            </p>
+          )}
+        </div>
         <Button
           variant="primary"
           icon={<Plus />}

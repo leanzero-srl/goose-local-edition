@@ -104,6 +104,12 @@ function patchAcpSessionProviderModel(
   });
 }
 
+/** goosed changed the session's provider+model itself (`nodes/setChatNodes` sets a chat onto its
+ *  own node set in the same call): the store is patched with what goosed answered. */
+export function noteSessionProviderModel(sessionId: string, providerId: string, modelId: string) {
+  patchAcpSessionProviderModel(sessionId, { providerId, modelId });
+}
+
 /** THE one way a session's provider+model changes from the renderer: the ACP config-option writes,
  *  then the store patched with what the agent actually applied. The Switch-model dialog
  *  (`changeModel`) and the legacy-session migration both go through here. */

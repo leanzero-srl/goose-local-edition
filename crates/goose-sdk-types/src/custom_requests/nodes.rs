@@ -204,6 +204,11 @@ pub struct NodeStrategy {
     pub note: Option<String>,
     #[serde(default)]
     pub roles: NodeStrategyRoles,
+    /// Set when the strategy is ONE chat's node set (Q-359): the session it belongs to. Made only by
+    /// `nodes/setChatNodes`; never what new chats start on or what swarm builds use; removed with
+    /// its chat. "Save as a strategy" names it and clears this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<String>,
 }
 
 /// What a new chat starts on. `auto` = "Any node (Auto)", today's pool routing.
@@ -356,6 +361,13 @@ pub enum NodesRefusalCode {
     LiveSessionsNotAcknowledged,
     RemovedOutsideRemoveNode,
     BuildIneligible,
+    /// A chat's node set is that chat's alone: it is never what new chats start on or what swarm
+    /// builds use.
+    ChatNodeSetNotShared,
+    /// Two node sets name the same chat, or one names no chat.
+    BadChatNodeSet,
+    /// A node is in chats' node sets; `alsoFromChatNodeSets` takes it out of them.
+    NodeInChatNodeSets,
 }
 
 /// The named reasons a strategy cannot drive a swarm build (Tier A, design §7.2).
@@ -487,6 +499,36 @@ pub struct NodesRemoveNodeRequest {
     pub and_new_chats_auto: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acknowledged_sessions: Option<u32>,
+    /// "Also take it out of N chats' node sets": a set left empty goes, and its chat is told on its
+    /// next message.
+    #[serde(default)]
+    pub also_from_chat_node_sets: bool,
+}
+
+/// One chat's own nodes (Q-359): `nodes[0]` answers the chat, delegates share every node of the
+/// set (Build, `share`, weight 1 each); with `answerOnNext` the chat fails over down the set when
+/// its 1st can't run. goosed builds the chat's strategy and sets the chat's model to
+/// `strategy:<id>` in the same call. An empty `nodes` removes the chat's set and leaves its model
+/// alone (the caller has already moved the chat to what it runs on next).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/nodes/setChatNodes", response = NodesSetChatNodesResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct NodesSetChatNodesRequest {
+    /// The chat's session id.
+    pub session: String,
+    pub nodes: Vec<String>,
+    #[serde(default)]
+    pub answer_on_next: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct NodesSetChatNodesResponse {
+    pub write: NodesWriteResponse,
+    /// The model the chat now runs on (`strategy:<id>`), set in this call; absent when nothing was
+    /// written or the set was removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Remove a strategy. Refused while new chats start on it (unless `andNewChatsAuto`) or while

@@ -108,6 +108,7 @@ impl GooseAcpAgent {
             .remove_session_if_loaded(&req.session_id)
             .await
             .internal_err_ctx("Failed to remove in-memory agent")?;
+        crate::nodes::acp::forget_chat(&req.session_id).await;
         Ok(EmptyResponse {})
     }
 

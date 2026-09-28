@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import fixture from '../../../../../crates/goose/src/nodes/nodes.fixture.json';
 import {
+  chatNodeSetCount,
+  chatNodeSetOf,
+  chatNodesOf,
   effectiveEntry,
   effectiveRole,
   formatRouteModel,
   inheritsFrom,
+  namedStrategies,
   newChatsModel,
   parseRouteModel,
   placementMacs,
   ROLES,
   validId,
   type NodeRole,
+  type NodeStrategy,
   type NodeStrategyRoles,
   type NodesConfig,
   type RouteModel,
@@ -67,6 +72,30 @@ describe('the nodes model — the fixture goosed is pinned to', () => {
     expect(newChatsModel({ kind: 'auto' })).toBe('swarm');
     expect(newChatsModel({ kind: 'node', id: 'flash' })).toBe('node:flash');
     expect(newChatsModel({ kind: 'strategy', id: 'everyday' })).toBe('strategy:everyday');
+  });
+
+  it('reads every chat node set back exactly as goosed builds it (Q-359)', () => {
+    expect(fixture.chatNodeSets.length).toBeGreaterThanOrEqual(4);
+    for (const { name, session, nodes, answerOnNext, strategy } of fixture.chatNodeSets) {
+      expect(chatNodesOf(strategy as NodeStrategy), name).toEqual({
+        strategyId: strategy.id,
+        session,
+        nodes,
+        answerOnNext,
+      });
+      const { chat: _chat, ...named } = strategy;
+      expect(chatNodesOf(named as NodeStrategy), `${name}: a named strategy`).toBeNull();
+    }
+  });
+
+  it('keeps a chat node set out of every strategy list and counts it instead', () => {
+    const config = fixture.configs.find((c) => c.name.startsWith('a chat'))!.config as NodesConfig;
+    expect(namedStrategies(config).map((s) => s.id)).toEqual(['everyday']);
+    expect(chatNodeSetCount(config)).toBe(1);
+    expect(chatNodeSetCount(config, 'sonnet')).toBe(1);
+    expect(chatNodeSetCount(config, 'flash-here')).toBe(0);
+    expect(chatNodeSetOf(config, '20260928_7')?.nodes).toEqual(['27b-both', 'sonnet']);
+    expect(chatNodeSetOf(config, 'another-chat')).toBeNull();
   });
 
   it('gives a pinned way its Macs and a follows node none', () => {

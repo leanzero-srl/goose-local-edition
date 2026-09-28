@@ -7,6 +7,7 @@ import { StudioSelect, ToneBanner, type StudioSelectOption } from '../leanzero-s
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
 import { refreshGlanceNodes } from '../engineGlance/glanceStore';
 import {
+  namedStrategies,
   nodeNamesById,
   type NodesConfig,
   type NodesForBuilds,
@@ -72,7 +73,8 @@ export function UseSelectors({ config, nodes, eligibility }: UseSelectorsProps) 
   const intl = useIntl();
   const [busy, setBusy] = useState(false);
   const [refusals, setRefusals] = useState<string[]>([]);
-  const strategies = config.strategies ?? [];
+  // A chat's own node set is that chat's alone: never what new chats start on or builds use.
+  const strategies = namedStrategies(config);
   const names = nodeNamesById(nodes);
 
   const chatOptions: UseOption[] = [
