@@ -82,8 +82,8 @@ Updated: 2026-09-28 20:2x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - Spend/usage limit hit 19:1x (resets 21:50): Q-399, Q-400, Q-394b agents RESUMED by SendMessage on the owner's
   "retry please all"; if they die again, re-send after 21:50.
 
-- 3.0.73 = /tmp/merge-073: Q-399/401 + Q-402 + Q-409 merged (5d149699b); Q-400+403 waits on the Q-403 lane
-  merging main (rank_wrapper.py conflict with Q-397 — resolved by its author, not by me); Q-406 MERGED (13280e94d: own process groups, proof-gated
+- 3.0.73 = /tmp/merge-073: Q-399/401 + Q-402 + Q-409 merged (5d149699b); Q-400+403 merged (8805a72e8 — rank_wrapper conflict resolved by its
+  author); FULL GATE /tmp/g073.out (scratchpad/gate073.sh, target g073); Q-406 MERGED (13280e94d: own process groups, proof-gated
   group kill, named TCC cause; #3r trace YES); Q-407 (goosed crash leaves commands running) cutting.
 
 ## Next actions (in order)
