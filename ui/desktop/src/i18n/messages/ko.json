@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "더 보기"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "여기서 세션을 시작하는 중 — 확장 프로그램이 로드되면 열립니다"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "제목 없는 세션"
   },

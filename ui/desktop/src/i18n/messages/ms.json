@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "Tunjuk lagi"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Memulakan sesi di sini — ia dibuka apabila sambungannya dimuatkan"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sesi tanpa tajuk"
   },

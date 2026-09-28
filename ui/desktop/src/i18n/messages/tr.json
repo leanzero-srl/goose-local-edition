@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "Daha fazla göster"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Burada bir oturum başlatılıyor — uzantıları yüklenince açılır"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "Adsız oturum"
   },

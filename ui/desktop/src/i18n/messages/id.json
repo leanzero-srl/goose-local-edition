@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "Tampilkan lebih banyak"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Memulai sesi di sini — sesi terbuka setelah ekstensinya dimuat"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sesi tanpa judul"
   },

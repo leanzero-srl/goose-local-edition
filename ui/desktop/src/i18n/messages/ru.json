@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "Показать ещё"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Сеанс запускается здесь — он откроется, когда загрузятся его расширения"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "Сеанс без названия"
   },

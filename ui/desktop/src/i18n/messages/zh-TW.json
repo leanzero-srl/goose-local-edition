@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "顯示更多"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "正在此處啟動工作階段——擴充功能載入完成後即開啟"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "未命名的工作階段"
   },

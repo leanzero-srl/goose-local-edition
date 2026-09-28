@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "Mehr anzeigen"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Sitzung wird hier gestartet — sie öffnet sich, sobald ihre Erweiterungen geladen sind"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "Unbenannte Sitzung"
   },

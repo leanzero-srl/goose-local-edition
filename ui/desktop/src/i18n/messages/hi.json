@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "और दिखाएँ"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "यहाँ सत्र शुरू हो रहा है — इसके एक्सटेंशन लोड होते ही यह खुलेगा"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "बिना शीर्षक सत्र"
   },

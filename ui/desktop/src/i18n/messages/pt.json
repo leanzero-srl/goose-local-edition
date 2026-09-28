@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "Mostrar mais"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Iniciando uma sessão aqui — ela abre quando suas extensões forem carregadas"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "Sessão sem título"
   },

@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "もっと見る"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "ここでセッションを開始しています — 拡張機能の読み込みが終わると開きます"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "無題のセッション"
   },

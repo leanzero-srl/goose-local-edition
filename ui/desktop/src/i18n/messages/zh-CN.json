@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "显示更多"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "正在此处启动会话——扩展加载完成后即打开"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "无标题会话"
   },

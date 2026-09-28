@@ -8216,6 +8216,9 @@
   "projectsSection.showMore": {
     "defaultMessage": "Hiện thêm"
   },
+  "projectsSection.startingSession": {
+    "defaultMessage": "Đang bắt đầu phiên ở đây — phiên sẽ mở khi các tiện ích mở rộng được tải xong"
+  },
   "projectsSection.untitledSession": {
     "defaultMessage": "Phiên không tên"
   },
