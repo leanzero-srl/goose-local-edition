@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 14:0x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 14:1x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -18,12 +18,13 @@ Updated: 2026-09-28 14:0x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 ## Agents
 - Q-344 (a card answer must not supersede its sibling; ON the Q-340/341 branch — they land together) ·
   Q-347 (post-compaction cold head).
-- Q-342 MERGED to main 757c3458a (gate green). Q-346 done → scratch /tmp/merge-q346, gate /tmp/g346.out queued
+- Q-342 MERGED to main 757c3458a (gate green). Q-346 done → scratch /tmp/merge-q346, gate /tmp/g346.out (tracked task; the nohup waiter died) queued
   behind g344's cargo (one main target). Q-350+343 done → /tmp/merge-q350, UI gate now,
   cargo /tmp/g350.out behind g346. Disk swept 16 → 75 GB (my old scratchpad held 56 GB).
 - #3r turn 2 (13:40): the 27B invented `websearch`/`fetch` 13× before the real web tool → Q-367 + Q-368
   (facts paragraph restated 4×) CUTTING (wire read first). Turn 2 ended 761 s, 27 tools, a correct
-  sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turn 3 running. Studio-side: forge-tuner got a
+  sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turns 3–4 done (1106 s / 176 s);
+  turn 3's `write` lost every `=>` (SyntaxError, two rewrites) → Q-371 CUTTING. Turn 5 running. Studio-side: forge-tuner got a
   goose tool-call training proposal (docs/GOOSE-TOOLCALL-ROUND.md, 6631628) — owner picks public vs private data.
 - Owner features (designs DESIGN-Q357/358/359-*.md): Q-357 compaction revamp CUTTING (all slices, on merge-q342) ·
   Q-358 search S1+S2 CUTTING; notes S3–S5 QUEUED behind: merge-q344 · Q-359 C0/C1/C2/C4 CUTTING; C3 SCHEDULED
