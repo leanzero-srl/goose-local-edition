@@ -142,6 +142,7 @@ impl Holds {
             .is_some_and(|r| r.kind == ReplyKind::Tick)
     }
 
+    #[cfg(test)]
     pub fn open_reply(self: &Arc<Self>, session: &str) -> ReplyGuard {
         self.open_reply_as(session, ReplyKind::User)
     }

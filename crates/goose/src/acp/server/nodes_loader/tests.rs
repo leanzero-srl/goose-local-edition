@@ -920,7 +920,7 @@ async fn a_background_delegate_holds_its_own_reply_and_never_stops_its_parents_w
     let seam = Seam(Arc::clone(&core));
     let parent = core.holds().open_reply("parent");
     lease(&core, "parent", &fake, "flash");
-    let task_reply = seam.open_reply("task");
+    let task_reply = seam.open_reply("task", "parent");
     let c = Arc::clone(&core);
     let d = demand(&fake, "split", Some("task"));
     let task = tokio::spawn(async move { c.ensure_serving(d).await });
