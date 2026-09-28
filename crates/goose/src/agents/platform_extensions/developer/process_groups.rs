@@ -165,7 +165,7 @@ pub(super) fn start_time(pid: i32) -> Option<String> {
 #[cfg(target_os = "linux")]
 pub(super) fn start_time(pid: i32) -> Option<String> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let after_name = &stat[stat.rfind(')')? + 1..];
+    let (_, after_name) = stat.rsplit_once(')')?;
     after_name.split_whitespace().nth(19).map(str::to_string)
 }
 
