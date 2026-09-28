@@ -8,6 +8,7 @@ pub mod ext_manager;
 pub mod ledger;
 pub mod loop_report;
 pub mod needs_you;
+pub mod notes;
 pub mod orchestrator;
 pub mod recall;
 pub mod summarize;
@@ -91,6 +92,21 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 hidden: false,
                 requires_human: true,
                 client_factory: |ctx| Box::new(needs_you::NeedsYouClient::new(ctx).unwrap()),
+            },
+        );
+
+        map.insert(
+            notes::EXTENSION_NAME,
+            PlatformExtensionDef {
+                name: notes::EXTENSION_NAME,
+                display_name: "Notes to other chats",
+                description:
+                    "When you ask, goose drafts a note to another of your chats; you send it with one click",
+                default_enabled: true,
+                unprefixed_tools: true,
+                hidden: false,
+                requires_human: true,
+                client_factory: |ctx| Box::new(notes::NotesClient::new(ctx).unwrap()),
             },
         );
 
