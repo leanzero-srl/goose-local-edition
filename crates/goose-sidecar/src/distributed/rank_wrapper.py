@@ -133,6 +133,12 @@
 #   handler did). Each row now names its client, its engine stop, whether it is held for room, and
 #   stays listed (`leaving`) until its batch row is gone; GOOSE_RANK_STATE names each row's request
 #   and GOOSE_RANK_ROW_LEFT says how long a stopped row held the batch.
+# - a tool parameter typed through a union or a reference converts as that type (Q-232,
+#   rank_tool_schema.py): mlx_lm's qwen3_coder read `{"type": ["string", "null"]}` as neither string
+#   nor number and literal_eval'd the value — `10m` raised a SyntaxError and the whole call was lost,
+#   `true` under ["boolean", "null"] was dropped, and a `$ref` object parameter arrived as its JSON
+#   text. The parser's `_get_arguments_config` is wrapped so the whole-call parse and the streamer
+#   read the type Rapid-MLX's parser reads (single engine, pipeline fork).
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -268,6 +274,9 @@ for owner, name in (
             f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no {getattr(owner, '__name__', owner)}.{name}; "
             "the wrapper was written against mlx_lm 0.31.3"
         )
+
+# Q-232 (rank_tool_schema.py): before any parse or streamer reads a tool's parameters.
+qwen3_coder._get_arguments_config = typed_arguments_config(qwen3_coder._get_arguments_config)
 
 prefill = spec.get("prefill")
 if prefill is not None:
