@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "Invece come {role}"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Deleghe delle chat con questa strategia e build dello sciame."
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "Usata dalle build dello sciame."
   },

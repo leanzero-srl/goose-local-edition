@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "Comme {role} à la place"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Délégations des discussions sur cette stratégie, et builds de l’essaim."
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "Utilisée par les builds de l’essaim."
   },

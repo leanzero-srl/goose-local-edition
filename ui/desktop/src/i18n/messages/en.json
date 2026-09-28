@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "Same as {role} instead"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Delegates of chats on this strategy, and swarm builds."
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "Used by swarm builds."
   },

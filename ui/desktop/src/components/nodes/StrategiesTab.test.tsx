@@ -374,6 +374,11 @@ describe('the strategy editor', () => {
     expect(within(chat).getByTestId('strategy-sentence')).toHaveTextContent(
       'Chat runs on 27B Atlassian · both Macs. If it can’t run, on Claude Sonnet · OpenRouter. If 27B Atlassian · both Macs isn’t loaded, it loads and your turn waits; its first load is not measured yet.'
     );
+    // Q-433: Build also runs this strategy's chats' delegates, and says so.
+    expect(roleRow('build')).toHaveTextContent(
+      'Delegates of chats on this strategy, and swarm builds.'
+    );
+    expect(within(roleRow('build')).queryByText('Used by swarm builds.')).toBeNull();
     expect(within(roleRow('build')).getByTestId('strategy-sentence')).toHaveTextContent(
       'Build is shared: 27B Atlassian · both Macs 2 parts, Claude Sonnet · OpenRouter 1 part.'
     );

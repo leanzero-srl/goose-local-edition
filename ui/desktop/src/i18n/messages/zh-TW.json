@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "改與 {role} 相同"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "使用此策略的聊天的委派，以及 swarm 建置。"
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "由 swarm 建置使用。"
   },

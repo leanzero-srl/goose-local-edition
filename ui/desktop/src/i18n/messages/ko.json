@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "대신 {role}과(와) 동일하게"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "이 전략을 쓰는 채팅의 위임과 swarm 빌드."
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "swarm 빌드가 사용합니다."
   },

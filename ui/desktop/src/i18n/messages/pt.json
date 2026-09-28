@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "Igual a {role} em vez disso"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Delegações de chats nesta estratégia e builds do enxame."
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "Usada pelos builds do enxame."
   },

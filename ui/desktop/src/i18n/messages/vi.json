@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "Giống như {role} thay vào đó"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Các lượt ủy quyền của cuộc trò chuyện dùng chiến lược này, và bản dựng swarm."
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "Được bản dựng swarm dùng."
   },

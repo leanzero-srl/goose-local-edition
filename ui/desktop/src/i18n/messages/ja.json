@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "代わりに {role} と同じにする"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "この戦略のチャットのデリゲートと、swarm のビルド。"
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "swarm のビルドで使用されています。"
   },

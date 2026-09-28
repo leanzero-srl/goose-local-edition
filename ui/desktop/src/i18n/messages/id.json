@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "Sama seperti {role} sebagai gantinya"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Delegasi dari chat dengan strategi ini, dan build swarm."
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "Dipakai oleh build swarm."
   },

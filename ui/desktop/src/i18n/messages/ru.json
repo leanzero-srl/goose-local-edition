@@ -10415,6 +10415,9 @@
   "strategies.useSameAs": {
     "defaultMessage": "Вместо этого — так же, как {role}"
   },
+  "strategies.usedByBuildRole": {
+    "defaultMessage": "Делегаты чатов с этой стратегией и сборки swarm."
+  },
   "strategies.usedByBuilds": {
     "defaultMessage": "Используется сборками swarm."
   },
