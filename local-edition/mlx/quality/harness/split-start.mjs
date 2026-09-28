@@ -42,7 +42,9 @@ const complete = async (secs) => {
 if (/distributed\/running/.test(await status()) && (await servesWanted())) await complete(0);
 // 3.0.61 install (2026-09-27): the restore was still STARTING when this looked — no Run button, not yet running —
 // and it exited 2 on a split that answered 20 s later. A restore in flight is waited for, not reported missing.
-for (let k = 0; /^distributed\/(mounting|unknown|reconnecting)/.test(await status()); k++) {
+// 3.0.68 (2026-09-28): the restore passed through a state this list lacked and the script exited 2 on a split
+// that was Ready seconds later — every in-flight state is waited for, not only three.
+for (let k = 0; /^distributed\/(mounting|unknown|reconnecting|starting|loading|warming|restoring|recovering|stopped)/.test(await status()); k++) {
   if (k % 6 === 0) console.log(`restore in flight: ${await status()}`);
   await p.waitForTimeout(5000);
   if (/distributed\/running/.test(await status()) && (await servesWanted())) await complete('restored');
