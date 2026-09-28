@@ -171,15 +171,22 @@ describe('Q-272: the loader’s facts, as every surface reads them', () => {
       { [CHAT]: { node: CHAT, residency: { kind: 'notRunning' } } },
       { displaced }
     );
-    expect(displacedOf(J3_READ, stopped, CHAT, 'chat-1')).toMatchObject({
+    expect(displacedOf(J3_READ, stopped, CHAT, 'chat-1', CHAT)).toMatchObject({
       node: { id: CHAT },
       other: { id: SPLIT, name: 'Qwen3.8-27B-Atlassian-Q8-mlx · both Macs' },
       chat: 'K',
       failed: null,
     });
-    expect(displacedOf(J3_READ, stopped, CHAT, 'kickoff')).toBeNull();
+    expect(displacedOf(J3_READ, stopped, CHAT, 'kickoff', CHAT)).toBeNull();
     // A read that raced its return: the node serves, nothing is said.
-    expect(displacedOf(J3_READ, { ...J3_SERVING_SINGLE, displaced }, CHAT, 'chat-1')).toBeNull();
+    expect(
+      displacedOf(J3_READ, { ...J3_SERVING_SINGLE, displaced }, CHAT, 'chat-1', CHAT)
+    ).toBeNull();
+    // Q-435: only a chat the node was serving — never one that never ran (null), ran elsewhere,
+    // or whose record was not read (undefined).
+    expect(displacedOf(J3_READ, stopped, CHAT, 'chat-1', null)).toBeNull();
+    expect(displacedOf(J3_READ, stopped, CHAT, 'chat-1', SPLIT)).toBeNull();
+    expect(displacedOf(J3_READ, stopped, CHAT, 'chat-1', undefined)).toBeNull();
   });
 
   it('the swap carries its measured load across the IPC boundary; a malformed load does not pass', () => {

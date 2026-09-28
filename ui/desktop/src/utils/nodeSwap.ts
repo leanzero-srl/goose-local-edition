@@ -188,12 +188,20 @@ export interface NodeDisplaced {
   load: MeasuredLoad | null;
 }
 
+/**
+ * `servedNode` is the node the router says served this chat's last turn (`nodes/servedLast`):
+ * the notice says "was stopped … your next message loads it back", which is true only of a chat
+ * that node was serving — never of a chat that never ran on it (Q-435: a brand-new chat set to
+ * the stopped node was told it). Unread (undefined) or another node proves nothing: no notice.
+ */
 export function displacedOf(
   read: NodesReadResponse_unstable,
   residency: NodesResidencyResponse_unstable,
   nodeId: string,
-  sessionId: string | null
+  sessionId: string | null,
+  servedNode: string | null | undefined
 ): NodeDisplaced | null {
+  if (servedNode !== nodeId) return null;
   const entry = (residency.displaced ?? []).find((d) => d.node === nodeId);
   if (!entry || (sessionId != null && entry.bySession === sessionId)) return null;
   // goosed drops a notice the moment its node serves again; a read that raced it is not said.

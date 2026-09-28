@@ -1,5 +1,5 @@
 import type React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'react-intl';
@@ -375,8 +375,18 @@ describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
     }
   );
 
+  /** The displaced chat's last turn ran on the node that was stopped (the router's record). */
+  const RAN_ON_CHAT_NODE: NodeServedTurnDto = {
+    node: CHAT.id,
+    role: 'chat',
+    rank: 1,
+    tried: [],
+    atMs: 0,
+  };
+
   it('nodes.displacedNotice: the displaced chat is told, with its two actions', async () => {
     residency = DISPLACED;
+    servedRecord = RAN_ON_CHAT_NODE;
     mockStatus.mockResolvedValue(STOPPED);
     show(`node:${CHAT.id}`, false);
     const notice = await screen.findByTestId('composer-readiness-displaced');
@@ -399,6 +409,7 @@ describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
 
   it('Keep {node} loaded: the node’s Keep loaded is written, then it loads back', async () => {
     residency = DISPLACED;
+    servedRecord = RAN_ON_CHAT_NODE;
     mockStatus.mockResolvedValue(STOPPED);
     show(`node:${CHAT.id}`, false);
     fireEvent.click(await screen.findByTestId('composer-readiness-keep-loaded'));
@@ -412,6 +423,23 @@ describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
       (d) => d.id === CHAT.id
     );
     expect(written?.keepLoaded).toBe(true);
+  });
+
+  it('Q-435: a chat that never ran on the stopped node is not told it was stopped', async () => {
+    // Shot 40: a brand-new chat set to the node another chat displaced read "… was stopped for
+    // … Your next message loads it back" — nothing was stopped for it.
+    residency = DISPLACED;
+    servedRecord = null;
+    mockStatus.mockResolvedValue(STOPPED);
+    show(`node:${CHAT.id}`, false);
+    await waitFor(() => expect(screen.getByTestId('model-chip-served')).toBeTruthy());
+    expect(screen.queryByTestId('composer-readiness-displaced')).toBeNull();
+    cleanup();
+    // Its last turn ran on another node: the stopped one was not serving it either.
+    servedRecord = { ...RAN_ON_CHAT_NODE, node: SPLIT.id };
+    show(`node:${CHAT.id}`, false);
+    await waitFor(() => expect(screen.getByTestId('model-chip-served')).toBeTruthy());
+    expect(screen.queryByTestId('composer-readiness-displaced')).toBeNull();
   });
 
   it('the chat that asked for the other node is not "displaced" — the swap was its own', async () => {
@@ -430,6 +458,7 @@ describe('Q-272: the five §8.7 lines, from the loader’s facts', () => {
       ...DISPLACED,
       displaced: DISPLACED.displaced?.map((d) => ({ ...d, failed: 'rank 1 exited' })),
     };
+    servedRecord = RAN_ON_CHAT_NODE;
     mockStatus.mockResolvedValue(STOPPED);
     show(`node:${CHAT.id}`, false);
     const notice = await screen.findByTestId('composer-readiness-displaced');

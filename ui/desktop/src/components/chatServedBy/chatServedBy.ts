@@ -841,7 +841,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
   // Between turns only: while a turn is in flight the loader's own line says what happens.
   const displaced =
     !given.turnInFlight && own != null
-      ? displacedOf(facts.read, facts.residency, own, given.sessionId)
+      ? displacedOf(facts.read, facts.residency, own, given.sessionId, facts.servedNode)
       : null;
   const fellBack = given.turnInFlight ? null : fellBackOf(facts.servedRecord, facts.read);
   if (!loader) {
