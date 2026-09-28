@@ -22,7 +22,8 @@ import type { ContentBlock } from '../types/message';
 import McpAppRenderer from './McpApps/McpAppRenderer';
 import ToolApprovalButtons from './ToolApprovalButtons';
 import { defineMessages, useIntl } from '../i18n';
-import { DelegateServedLine } from './chatServedBy/DelegateServedLine';
+import { DelegateServedLine, delegateLoadOf } from './chatServedBy/DelegateServedLine';
+import { useGlanceNodesWhen } from './engineGlance/glanceStore';
 import { DiffCounts, DiffView } from './changes/DiffView';
 import {
   type FileDiff,
@@ -189,7 +190,10 @@ function getSubagentSessionId(
       const data = message.params?.data;
       if (data && typeof data === 'object' && 'type' in data && 'subagent_id' in data) {
         const record = data as Record<string, unknown>;
-        if (record.type === 'subagent_tool_request' && typeof record.subagent_id === 'string') {
+        if (
+          (record.type === 'subagent_tool_request' || record.type === SUBAGENT_STARTED) &&
+          typeof record.subagent_id === 'string'
+        ) {
           return record.subagent_id;
         }
       }
@@ -197,6 +201,23 @@ function getSubagentSessionId(
   }
 
   return null;
+}
+
+/**
+ * Q-382: a synchronous delegate announces its session the moment it starts (summon.rs,
+ * `subagent_started`), before its first model call — so its card can say the node is loading FOR
+ * it while that call waits on the load. It names the session only: never a log line.
+ */
+const SUBAGENT_STARTED = 'subagent_started';
+
+function isSubagentStarted(notification: NotificationEvent): boolean {
+  const message = notification.message as { params?: { data?: unknown } };
+  const data = message.params?.data;
+  return (
+    data != null &&
+    typeof data === 'object' &&
+    (data as Record<string, unknown>).type === SUBAGENT_STARTED
+  );
 }
 
 function getToolResultContent(toolResult: Record<string, unknown>): ContentBlock[] {
@@ -646,9 +667,18 @@ function ToolCallView({
   const logs = notifications
     ?.filter((notification) => {
       const message = notification.message as { method?: string };
-      return message.method === 'notifications/message';
+      return message.method === 'notifications/message' && !isSubagentStarted(notification);
     })
     .map(logToString);
+
+  // Q-382: a delegate's card says when its node is LOADING for it — the loader's own fact, read
+  // only for a delegate card, and the card opens while it lasts (unless the person closed it).
+  const subagentSessionId = getSubagentSessionId(toolResponse, notifications);
+  const delegateNodes = useGlanceNodesWhen(subagentSessionId != null);
+  const delegateLoading =
+    subagentSessionId != null &&
+    delegateNodes.kind === 'read' &&
+    delegateLoadOf(delegateNodes.residency, subagentSessionId) != null;
 
   const progress = notifications
     ?.filter((notification) => {
@@ -888,7 +918,7 @@ function ToolCallView({
   );
   return (
     <ToolCallExpandable
-      isStartExpanded={isRenderingProgress || isExpandToolDetails}
+      isStartExpanded={isRenderingProgress || isExpandToolDetails || delegateLoading}
       isForceExpand={false}
       expandToken={revealToken}
       label={
@@ -978,9 +1008,15 @@ function ToolCallView({
       )}
 
       {(() => {
-        if (loadingStatus === 'loading') return null;
-        const subagentSessionId = getSubagentSessionId(toolResponse, notifications);
         if (!subagentSessionId) return null;
+        const running = loadingStatus === 'loading';
+        if (running) {
+          return delegateLoading ? (
+            <div className="border-t border-border-primary">
+              <DelegateServedLine sessionId={subagentSessionId} running />
+            </div>
+          ) : null;
+        }
         return (
           <div className="border-t border-border-primary">
             <DelegateServedLine sessionId={subagentSessionId} />
@@ -1052,7 +1088,9 @@ function CodeModeView({ toolGraph, code }: CodeModeViewProps) {
   return (
     <div className="px-4 py-2">
       {toolGraph && (
-        <pre className="font-mono text-xs text-text-secondary whitespace-pre-wrap">{renderGraph()}</pre>
+        <pre className="font-mono text-xs text-text-secondary whitespace-pre-wrap">
+          {renderGraph()}
+        </pre>
       )}
       {code && (
         <div className="border-t border-border-primary -mx-4 mt-2">

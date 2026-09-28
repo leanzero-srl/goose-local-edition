@@ -6305,6 +6305,12 @@ export type NodeResidency = {
     kind: 'serving';
 } | {
     phase?: string | null;
+    /**
+     * The sessions whose demands the installed loader loads it for (Q-382: a delegate's
+     * card says "Loading {node} for this delegate"). Empty when no loader demand is behind
+     * the load (Run it, a restore, a card's Start).
+     */
+    demandedBy?: Array<string>;
     kind: 'loading';
 } | {
     reason: string;

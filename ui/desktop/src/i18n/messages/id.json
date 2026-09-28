@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "di {node} · dimuat untuk delegasi ini dalam {duration}"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Memuat {node} untuk delegasi ini: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "di {node}"
   },

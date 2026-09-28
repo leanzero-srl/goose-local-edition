@@ -274,6 +274,24 @@ async fn get_final_output(agent: &Agent, has_response_schema: bool) -> Option<St
     }
 }
 
+/// Q-382: a synchronous delegate names its session the moment it starts — before its first model
+/// call, which may wait on the node loader — so its card can say the node is loading FOR it. It
+/// carries the session only: surfaces show it as no log line.
+pub const SUBAGENT_STARTED_TYPE: &str = "subagent_started";
+
+pub fn create_started_notification(subagent_id: &str) -> ServerNotification {
+    ServerNotification::LoggingMessageNotification(Notification::new(
+        LoggingMessageNotificationParam::new(
+            LoggingLevel::Info,
+            serde_json::json!({
+                "type": SUBAGENT_STARTED_TYPE,
+                "subagent_id": subagent_id,
+            }),
+        )
+        .with_logger(format!("subagent:{}", subagent_id)),
+    ))
+}
+
 pub fn create_tool_notification(
     content: &MessageContent,
     subagent_id: &str,
@@ -304,7 +322,29 @@ pub fn create_tool_notification(
 
 #[cfg(test)]
 mod tests {
-    use super::{create_tool_notification, SUBAGENT_TOOL_REQUEST_TYPE};
+    use super::{
+        create_started_notification, create_tool_notification, SUBAGENT_STARTED_TYPE,
+        SUBAGENT_TOOL_REQUEST_TYPE,
+    };
+
+    /// Q-382: the start names the delegate's session under the key the desktop's card reads.
+    #[test]
+    fn the_start_names_the_delegates_session() {
+        let ServerNotification::LoggingMessageNotification(log) =
+            create_started_notification("20260928_7")
+        else {
+            panic!("expected a logging notification");
+        };
+        let data = log.params.data.as_object().unwrap();
+        assert_eq!(
+            data.get("type").and_then(|v| v.as_str()),
+            Some(SUBAGENT_STARTED_TYPE)
+        );
+        assert_eq!(
+            data.get("subagent_id").and_then(|v| v.as_str()),
+            Some("20260928_7")
+        );
+    }
     use crate::conversation::message::MessageContent;
     use rmcp::model::{CallToolRequestParams, ServerNotification};
     use serde_json::json;

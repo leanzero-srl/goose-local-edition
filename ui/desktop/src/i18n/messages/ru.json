@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "на {node} · загружен для этого делегата за {duration}"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Загрузка {node} для этого делегата: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "на {node}"
   },

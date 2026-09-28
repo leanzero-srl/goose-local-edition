@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "{node}에서 · 이 위임을 위해 {duration}에 로드됨"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "이 위임을 위해 {node} 로드 중: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "{node}에서"
   },

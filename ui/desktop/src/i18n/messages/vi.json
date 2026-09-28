@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "trên {node} · đã nạp cho lượt ủy quyền này trong {duration}"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Đang nạp {node} cho lượt ủy quyền này: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "trên {node}"
   },

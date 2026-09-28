@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "在 {node} 上 · 為此委派在 {duration} 內載入完成"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "正在為此委派載入 {node}：{phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "在 {node} 上"
   },

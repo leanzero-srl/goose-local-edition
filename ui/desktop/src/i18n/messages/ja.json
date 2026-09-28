@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "{node} で · このデリゲート用に {duration} でロード済み"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "このデリゲート用に {node} をロード中: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "{node} で"
   },

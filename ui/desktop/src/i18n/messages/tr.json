@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "{node} üzerinde · bu devretme için {duration} içinde yüklendi"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Bu devretme için {node} yükleniyor: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "{node} üzerinde"
   },

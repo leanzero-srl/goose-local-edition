@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "{node} पर · इस डेलिगेट के लिए {duration} में लोड हुआ"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "इस डेलिगेट के लिए {node} लोड हो रहा है: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "{node} पर"
   },

@@ -6450,6 +6450,7 @@ export const zNodeResidency = z.union([
             z.string(),
             z.null()
         ]).optional(),
+        demandedBy: z.array(z.string()).optional(),
         kind: z.literal('loading')
     }),
     z.object({

@@ -15232,6 +15232,13 @@
                 "null"
               ]
             },
+            "demandedBy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The sessions whose demands the installed loader loads it for (Q-382: a delegate's\ncard says \"Loading {node} for this delegate\"). Empty when no loader demand is behind\nthe load (Run it, a restore, a card's Start)."
+            },
             "kind": {
               "type": "string",
               "const": "loading"

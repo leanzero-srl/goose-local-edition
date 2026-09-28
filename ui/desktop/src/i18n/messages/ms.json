@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "pada {node} · dimuatkan untuk wakilan ini dalam {duration}"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Memuatkan {node} untuk wakilan ini: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "pada {node}"
   },

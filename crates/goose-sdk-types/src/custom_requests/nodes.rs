@@ -623,6 +623,11 @@ pub enum NodeResidency {
     Loading {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         phase: Option<String>,
+        /// The sessions whose demands the installed loader loads it for (Q-382: a delegate's
+        /// card says "Loading {node} for this delegate"). Empty when no loader demand is behind
+        /// the load (Run it, a restore, a card's Start).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        demanded_by: Vec<String>,
     },
     /// The installed loader queued a demand for it; `reason` is the loader's words. `replies` is
     /// set when what it waits on is replies on a way the switch would stop (design §8.7

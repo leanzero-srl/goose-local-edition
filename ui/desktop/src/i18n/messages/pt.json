@@ -1688,6 +1688,9 @@
   "delegateServed.loaded": {
     "defaultMessage": "em {node} · carregado para esta delegação em {duration}"
   },
+  "delegateServed.loading": {
+    "defaultMessage": "Carregando {node} para esta delegação: {phase}"
+  },
   "delegateServed.on": {
     "defaultMessage": "em {node}"
   },
