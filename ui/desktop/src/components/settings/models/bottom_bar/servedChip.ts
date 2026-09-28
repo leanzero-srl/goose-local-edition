@@ -3,7 +3,8 @@ import { defineMessages } from '../../../../i18n';
 import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
 import { peerGoneOf, peerGoneText } from '../../../chatServedBy/peerGoneText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
-import { loaderText } from '../../../chatServedBy/loaderText';
+import { displacedText, loaderText } from '../../../chatServedBy/loaderText';
+import { fellBackText } from '../../../chatServedBy/turnLine';
 
 const i18n = defineMessages({
   servedChip: {
@@ -28,6 +29,10 @@ export interface ServedChipWords {
   goneWords: string | null;
   /** The node loader's line while it is in this chat's way (Q-254) — the composer bar's words. */
   loaderWords: string | null;
+  /** This chat's node was stopped for another chat's (§8.7) — the composer notice's words. */
+  displacedWords: string | null;
+  /** The last turn ran on a later entry of its chain (§8.7 `nodes.fellBack`) — the composer's words. */
+  fellBackWords: string | null;
   /** The chip's label; null = the chip keeps the model it was given. */
   chipLabel: string | null;
 }
@@ -59,6 +64,10 @@ export function servedChipWords(
   const goneWords = away ? peerGoneText(intl, away.mac, away.gone) : null;
   const loader = !isModelLoading ? (served?.loader ?? null) : null;
   const loaderWords = loader ? loaderText(intl, loader) : null;
+  const displaced = !isModelLoading ? (served?.displaced ?? null) : null;
+  const displacedWords = displaced ? displacedText(intl, displaced) : null;
+  const fellBack = !isModelLoading ? (served?.fellBack ?? null) : null;
+  const fellBackWords = fellBack ? fellBackText(intl, fellBack) : null;
   // A `node:` / `strategy:` chat names what it runs on by the Nodes page's names (design §8.5,
   // Q-255): the node, or the strategy and the node its turns go to — never `node:<id>`.
   const route = !isModelLoading ? (served?.route ?? null) : null;
@@ -79,5 +88,15 @@ export function servedChipWords(
   // While the loader loads a node, the chip names that node: the stopped way is on its way out.
   const chipLabel =
     routeLabel ?? (loader?.kind === 'loading' ? loader.swap.target.name : engineLabel);
-  return { servedModel, servedWhere, servedRunning, splitStop, goneWords, loaderWords, chipLabel };
+  return {
+    servedModel,
+    servedWhere,
+    servedRunning,
+    splitStop,
+    goneWords,
+    loaderWords,
+    displacedWords,
+    fellBackWords,
+    chipLabel,
+  };
 }

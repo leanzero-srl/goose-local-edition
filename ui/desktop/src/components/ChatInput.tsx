@@ -1671,7 +1671,11 @@ export default function ChatInput({
         style={{ display: 'none' }}
         accept="*/*"
       />
-      <ComposerReadinessStrip serving={chatServing} />
+      <ComposerReadinessStrip
+        serving={chatServing}
+        sessionId={sessionId}
+        onModelChanged={setModelOverride}
+      />
       {/* Message Queue Display */}
       {queuedMessages.length > 0 && (
         <MessageQueue

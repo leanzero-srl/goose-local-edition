@@ -219,6 +219,7 @@ describe('swarmReadiness — the distributed engine owns this Mac', () => {
       nodes: ['mihai-mlx'],
       status: DIST_STARTING,
       wanted: ALIAS,
+      wantedBy: 'mihai-mlx',
     });
     const flash = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
     const other: MlxDistributedStatus = { ...DIST_READY, modelId: flash, servedModelId: flash };

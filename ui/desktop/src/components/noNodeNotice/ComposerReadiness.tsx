@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronRight,
+  GitBranch,
   Hourglass,
   Laptop,
   Loader2,
   MessageSquare,
   Network,
+  Pin,
   Play,
+  RotateCcw,
   ServerOff,
   Settings2,
   Unplug,
@@ -43,7 +46,18 @@ import { splitStopHeadline, splitStopMemory } from '../chatServedBy/splitStopTex
 import { peerGoneText } from '../chatServedBy/peerGoneText';
 import { busyInHeadline, busyInSendText } from '../chatServedBy/busyInText';
 import { turnWaitText } from '../chatServedBy/turnWaitText';
-import { loaderText, type ChatLoader } from '../chatServedBy/loaderText';
+import {
+  displacedText,
+  loaderDetail,
+  loaderText,
+  type ChatLoader,
+} from '../chatServedBy/loaderText';
+import { fellBackRetryText, fellBackText, type ChatFellBack } from '../chatServedBy/turnLine';
+import type { NodeDisplaced } from '../../utils/nodeSwap';
+import { nodesEnsureServing } from '../../acp/nodes';
+import { putNode } from '../nodes/nodeDraft';
+import { useRunChatOn } from '../nodes/useRunChatOn';
+import { refreshGlanceNodes, useGlanceNodes } from '../engineGlance/glanceStore';
 import {
   distributedProblem,
   distributedServedId,
@@ -67,9 +81,10 @@ const i18n = defineMessages({
     id: 'composerReadiness.failed',
     defaultMessage: 'The last mount failed: {error}',
   },
-  mismatch: {
-    id: 'composerReadiness.mismatch',
-    defaultMessage: 'The saved MLX model serves {served}; the node wants {wanted}.',
+  // Q-273: said only where it decides this chat's turn, in that node's name.
+  mismatchNode: {
+    id: 'composerReadiness.mismatchNode',
+    defaultMessage: 'The saved MLX model serves {served}; {node} wants {wanted}.',
   },
   noTarget: {
     id: 'composerReadiness.noTarget',
@@ -79,9 +94,9 @@ const i18n = defineMessages({
     id: 'composerReadiness.distributed',
     defaultMessage: '{mode} · {state} — {nodes}',
   },
-  distributedMismatch: {
-    id: 'composerReadiness.distributedMismatch',
-    defaultMessage: 'The split serves {served}; the node wants {wanted}.',
+  distributedMismatchNode: {
+    id: 'composerReadiness.distributedMismatchNode',
+    defaultMessage: 'The split serves {served}; {node} wants {wanted}.',
   },
   remoteLoading: {
     id: 'composerReadiness.remoteLoading',
@@ -175,6 +190,15 @@ const i18n = defineMessages({
   openEngine: { id: 'composerReadiness.openEngine', defaultMessage: 'Open Engine' },
   openBusyChat: { id: 'composerReadiness.openBusyChat', defaultMessage: 'Open that chat' },
   theEngine: { id: 'composerReadiness.theEngine', defaultMessage: 'The engine' },
+  // §8.7's actions: the displaced notice's two, the fit refusal's Make room.
+  keepNodeLoaded: { id: 'nodes.displacedKeep', defaultMessage: 'Keep {node} loaded' },
+  keepNodeLoadedHint: {
+    id: 'nodes.displacedKeepHint',
+    defaultMessage: 'Loads {node} back now, and never stops it for another node',
+  },
+  useInstead: { id: 'nodes.displacedUse', defaultMessage: 'Use {next} instead' },
+  makeRoom: { id: 'nodes.refusedMakeRoom', defaultMessage: 'Make room' },
+  actionFailed: { id: 'nodes.displacedActionFailed', defaultMessage: 'That did not work: {error}' },
 });
 
 /** Where "Open Engine" goes: the Providers view's LeanZero MLX tab (Engine, with Run it). */
@@ -187,16 +211,33 @@ export const ENGINE_ROUTE = '/leanzero-swarm?tab=mlx';
  * it), or this chat's own turn queued for a reason the engine names (`turnWait`). While everything is ready it renders nothing: the model chip names what serves (Q-8, Q-17).
  * It never blocks typing. Every fact comes from `serving` — the one derivation, never its own read.
  */
-export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
+export function ComposerReadinessStrip({
+  serving,
+  sessionId = null,
+  onModelChanged,
+}: {
+  serving: ChatServing;
+  /** The chat — the displaced notice's "Use {next} instead" sets ITS model. */
+  sessionId?: string | null;
+  onModelChanged?: (override: { model: string; provider: string }) => void;
+}) {
   return (
     <>
       <PeerHeldLine />
-      <ReadinessBar serving={serving} />
+      <ReadinessBar serving={serving} sessionId={sessionId} onModelChanged={onModelChanged} />
     </>
   );
 }
 
-function ReadinessBar({ serving }: { serving: ChatServing }) {
+function ReadinessBar({
+  serving,
+  sessionId,
+  onModelChanged,
+}: {
+  serving: ChatServing;
+  sessionId: string | null;
+  onModelChanged?: (override: { model: string; provider: string }) => void;
+}) {
   const intl = useIntl();
   const { served, single, armed } = serving;
   const { readiness } = served;
@@ -273,6 +314,16 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
   // The node loader is at work for this chat, or stopped the way it was on (Q-254): its words, never
   // "No model is mounted" or the stopped way's "exit status: 143".
   if (served.loader) return <LoaderBar loader={served.loader} />;
+  // The node this chat is on was stopped for another chat's (§8.7): said until it serves again.
+  if (served.displaced) {
+    return (
+      <DisplacedBar
+        displaced={served.displaced}
+        sessionId={sessionId}
+        onModelChanged={onModelChanged}
+      />
+    );
+  }
   // A relaunch bringing back what served: that is the line, not "No model is mounted" + Mount.
   if (armed && restoreText != null && !servedReady(served)) {
     return (
@@ -307,7 +358,8 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
     // same words as the chip's status line, from the same join.
     if (served.turnWait) return <TurnWaitBar wait={served.turnWait} />;
     if (served.busyIn) return <BusyInBar busy={served.busyIn} />;
-    return served.busyWithOthers ? <BusyBar served={served} busy={served.busyWithOthers} /> : null;
+    if (served.busyWithOthers) return <BusyBar served={served} busy={served.busyWithOthers} />;
+    return served.fellBack ? <FellBackBar fell={served.fellBack} /> : null;
   }
   if (readiness.kind === 'unknown' || readiness.kind === 'ready' || readiness.kind === 'loader') {
     return null;
@@ -455,17 +507,20 @@ function TurnWaitBar({ wait }: { wait: TurnWait }) {
  */
 function LoaderBar({ loader }: { loader: ChatLoader }) {
   const intl = useIntl();
+  const navigate = useNavigate();
   const loading = loader.kind === 'loading';
+  const refused = loader.kind === 'refused';
+  const detail = loaderDetail(intl, loader);
   return (
     <div
-      role="status"
+      role={refused ? 'alert' : 'status'}
       data-testid="composer-readiness"
       data-readiness="loader"
       data-loader={loader.kind}
       className={cx(
         'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
         RADIUS.control,
-        loading ? PHASE_FILL.loading : PHASE_FILL.held
+        loading ? PHASE_FILL.loading : refused ? PHASE_FILL.failed : PHASE_FILL.held
       )}
     >
       {loading ? (
@@ -475,17 +530,210 @@ function LoaderBar({ loader }: { loader: ChatLoader }) {
           data-for="loader"
           className="size-4 shrink-0 animate-spin"
         />
+      ) : refused ? (
+        <ServerOff aria-hidden className="size-4 shrink-0" />
       ) : (
         <Hourglass aria-hidden className="size-4 shrink-0" />
       )}
-      <span
-        data-testid="composer-readiness-loader"
-        className={cx('min-w-0 flex-1 break-words text-lz-body', WEIGHT.semibold)}
-      >
-        {loaderText(intl, loader)}
-      </span>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span
+          data-testid="composer-readiness-loader"
+          className={cx('break-words text-lz-body', WEIGHT.semibold)}
+        >
+          {loaderText(intl, loader)}
+        </span>
+        {detail && (
+          <span data-testid="composer-readiness-detail" className="text-lz-meta break-words">
+            {detail}
+          </span>
+        )}
+      </div>
       <div className="flex shrink-0 items-center gap-2">
+        {/* §8.7 `nodes.refusedFit`'s action: the existing Make room, where it lives (Run it). */}
+        {refused && loader.refusal.facts?.kind === 'fit' && (
+          <Button
+            size="sm"
+            variant="secondary"
+            data-testid="composer-readiness-make-room"
+            onClick={() => navigate(ENGINE_ROUTE)}
+          >
+            {intl.formatMessage(i18n.makeRoom)}
+          </Button>
+        )}
         <OpenEngineButton />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * §8.7's displaced notice, above the composer of the chat whose node the loader stopped for another
+ * chat's: what stopped it, for whom, and that the next message loads it back — with the two ways
+ * out the design names (keep it loaded, or move this chat to the node that runs now). A swap whose
+ * load failed says so, and offers neither: there is nothing to move to.
+ */
+function DisplacedBar({
+  displaced,
+  sessionId,
+  onModelChanged,
+}: {
+  displaced: NodeDisplaced;
+  sessionId: string | null;
+  onModelChanged?: (override: { model: string; provider: string }) => void;
+}) {
+  const intl = useIntl();
+  const nodes = useGlanceNodes();
+  const runOn = useRunChatOn(sessionId, onModelChanged);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const failed = displaced.failed != null;
+  const { node, other } = displaced;
+
+  const act = async (work: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await work();
+    } catch (e) {
+      setError(errorMessage(e, String(e)));
+    } finally {
+      setBusy(false);
+      refreshGlanceNodes();
+    }
+  };
+
+  // "Keep {node} loaded": the node's Keep loaded, through the Nodes page's one writer, then its load
+  // back now (the loader's own Start, in the background — the bar follows it through residency).
+  const keep = () =>
+    act(async () => {
+      if (nodes.kind !== 'read')
+        throw new Error(nodes.kind === 'failed' ? nodes.error : 'the nodes are not read yet');
+      const def = nodes.read.config.defs?.find((d) => d.id === node.id);
+      if (!def) throw new Error(node.id);
+      const written = await putNode({ ...def, keepLoaded: true }, nodes.read.config);
+      if (!written.written) {
+        throw new Error((written.refusals ?? []).map((r) => r.message).join('; '));
+      }
+      const answer = await nodesEnsureServing(node.id);
+      if (answer.kind === 'refused') throw new Error(answer.reason);
+    });
+
+  return (
+    <div
+      role="status"
+      data-testid="composer-readiness"
+      data-readiness="displaced"
+      data-displaced-failed={failed ? 'yes' : undefined}
+      className={cx(
+        'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
+        RADIUS.control,
+        failed ? PHASE_FILL.failed : TONE_FILL.stopped
+      )}
+    >
+      <GitBranch aria-hidden className="size-4 shrink-0" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span
+          data-testid="composer-readiness-displaced"
+          className={cx('break-words text-lz-body', WEIGHT.semibold)}
+        >
+          {displacedText(intl, displaced)}
+        </span>
+        {error && (
+          <span data-testid="composer-readiness-detail" className="text-lz-meta break-words">
+            {intl.formatMessage(i18n.actionFailed, { error })}
+          </span>
+        )}
+      </div>
+      {!failed && (
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={busy ? <Loader2 className="animate-spin" /> : <Pin />}
+            disabled={busy}
+            title={intl.formatMessage(i18n.keepNodeLoadedHint, { node: node.name })}
+            data-testid="composer-readiness-keep-loaded"
+            onClick={() => void keep()}
+          >
+            {intl.formatMessage(i18n.keepNodeLoaded, { node: node.name })}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            data-testid="composer-readiness-use-instead"
+            onClick={() =>
+              void act(async () => {
+                await runOn(`node:${other.id}`, other.name);
+              })
+            }
+          >
+            {intl.formatMessage(i18n.useInstead, { next: other.name })}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * §8.7 `nodes.fellBack`: the last turn went to a later entry of its role's chain, and why the 1st
+ * could not run — with Retry, which asks the loader for the 1st now (the next turn tries it first
+ * anyway; Retry is not waiting for that turn to find out).
+ */
+function FellBackBar({ fell }: { fell: ChatFellBack }) {
+  const intl = useIntl();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const retry = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const answer = await nodesEnsureServing(fell.primaryId);
+      if (answer.kind === 'refused') setError(answer.reason);
+    } catch (e) {
+      setError(errorMessage(e, String(e)));
+    } finally {
+      setBusy(false);
+      refreshGlanceNodes();
+    }
+  };
+  return (
+    <div
+      role="status"
+      data-testid="composer-readiness"
+      data-readiness="fell-back"
+      className={cx(
+        'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
+        RADIUS.control,
+        PHASE_FILL.held
+      )}
+    >
+      <RotateCcw aria-hidden className="size-4 shrink-0" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span
+          data-testid="composer-readiness-fell-back"
+          className={cx('break-words text-lz-body', WEIGHT.semibold)}
+        >
+          {fellBackText(intl, fell)}
+        </span>
+        {error && (
+          <span data-testid="composer-readiness-detail" className="text-lz-meta break-words">
+            {intl.formatMessage(i18n.actionFailed, { error })}
+          </span>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={busy ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+          disabled={busy}
+          data-testid="composer-readiness-retry-primary"
+          onClick={() => void retry()}
+        >
+          {fellBackRetryText(intl, fell)}
+        </Button>
       </div>
     </div>
   );
@@ -747,8 +995,17 @@ function ReadinessStripBody({
       nodes: readiness.nodes.join(', '),
     });
     const served = distributedServedId(dist);
-    if (distributedServes(dist) && wanted != null && served != null && served !== wanted) {
-      detail = intl.formatMessage(i18n.distributedMismatch, { served, wanted });
+    const mismatch =
+      distributedServes(dist) && wanted != null && served != null && served !== wanted;
+    if (mismatch) {
+      // Q-273: the split's other model is said only where it decides this chat's turn.
+      detail = readiness.mismatchNode
+        ? intl.formatMessage(i18n.distributedMismatchNode, {
+            served,
+            wanted,
+            node: readiness.mismatchNode,
+          })
+        : null;
     } else {
       detail = distributedProblem(dist);
     }
@@ -766,7 +1023,15 @@ function ReadinessStripBody({
         : null);
     if (failure) detail = intl.formatMessage(i18n.failed, { error: failure });
     if (target.kind === 'mismatch') {
-      detail = intl.formatMessage(i18n.mismatch, { served: target.served, wanted: target.wanted });
+      // Q-273: a pool device's mismatch is said only where it decides this chat's turn, in its
+      // node's name — never for a device an Auto chat's turn need not go to.
+      if (readiness.mismatchNode) {
+        detail = intl.formatMessage(i18n.mismatchNode, {
+          served: target.served,
+          wanted: target.wanted,
+          node: readiness.mismatchNode,
+        });
+      }
     } else if (target.kind === 'none') {
       detail = intl.formatMessage(i18n.noTarget);
     } else if (fact === 'mounting' || requesting) {

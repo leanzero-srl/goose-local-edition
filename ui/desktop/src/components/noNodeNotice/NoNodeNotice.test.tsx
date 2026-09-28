@@ -171,7 +171,7 @@ describe('resolveMountTarget', () => {
   it('states a mismatch instead of mounting a model the node would still refuse', () => {
     expect(
       resolveMountTarget('mihai-mlx', [DEVICE], { ...SETTINGS, servedModelName: 'other-alias' })
-    ).toEqual({ kind: 'mismatch', served: 'other-alias', wanted: ALIAS });
+    ).toEqual({ kind: 'mismatch', served: 'other-alias', wanted: ALIAS, device: 'mihai-mlx' });
   });
   it('offers nothing for a node that is not a local sidecar or has no saved model', () => {
     expect(resolveMountTarget('ghost', [DEVICE], SETTINGS)).toEqual({ kind: 'none' });

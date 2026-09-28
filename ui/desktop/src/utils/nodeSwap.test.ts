@@ -29,6 +29,7 @@ describe('nodeSwapOf — the loader’s own mark, by the node’s name', () => {
         way: 'split',
       },
       phase: null,
+      load: null,
     });
   });
 
@@ -72,6 +73,7 @@ describe('swapStopsEngine — the swap’s stop is not a failure; a real failure
     const unknownModel: NodeSwap = {
       target: { ...toSingle!.target, modelId: null },
       phase: null,
+      load: null,
     };
     expect(swapStopsEngine(unknownModel, { way: 'single', modelId: J3_MODEL, failed: true })).toBe(
       false

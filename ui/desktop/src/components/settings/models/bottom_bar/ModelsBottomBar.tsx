@@ -37,6 +37,9 @@ import { splitStopReason } from '../../../chatServedBy/splitStopText';
 import { busyInHeadline } from '../../../chatServedBy/busyInText';
 import { turnWaitText } from '../../../chatServedBy/turnWaitText';
 import { servedChipWords } from './servedChip';
+import { NodesChipMenu } from './NodesChipMenu';
+import { refreshGlanceNodes, useGlanceNodes } from '../../../engineGlance/glanceStore';
+import { useRunChatOn } from '../../../nodes/useRunChatOn';
 import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 
 const i18n = defineMessages({
@@ -305,8 +308,22 @@ export default function ModelsBottomBar({
     onModelChanged({ model, provider });
   };
 
-  const { servedModel, servedWhere, servedRunning, splitStop, goneWords, loaderWords, chipLabel } =
-    servedChipWords(intl, served, isModelLoading);
+  const {
+    servedModel,
+    servedWhere,
+    servedRunning,
+    splitStop,
+    goneWords,
+    loaderWords,
+    displacedWords,
+    fellBackWords,
+    chipLabel,
+  } = servedChipWords(intl, served, isModelLoading);
+  // §8.5's menu (Q-274): the nodes and strategies this chat can run on, read when the menu opens.
+  const glanceNodes = useGlanceNodes();
+  const runOn = useRunChatOn(sessionId, onModelChanged);
+  const nodesMenu =
+    glanceNodes.kind === 'read' && glanceNodes.read.nodes.length > 0 ? glanceNodes : null;
   const splitReason = splitStop ? splitStopReason(intl, splitStop) : null;
   // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is; the
   // node loader's work is said in its own line, the composer bar's (Q-254).
@@ -314,26 +331,37 @@ export default function ModelsBottomBar({
     ? goneWords
     : loaderWords
       ? loaderWords
-      : served?.readiness.kind === 'reconnecting'
-        ? intl.formatMessage(i18n.phaseReconnecting)
-        : splitStop
-          ? intl.formatMessage(i18n.phaseSplitStopped)
-          : served?.turnWait
-            ? turnWaitText(intl, served.turnWait)
-            : served?.busyIn
-              ? busyInHeadline(intl, served.busyIn)
-              : served?.work && served.work !== 'thisChat'
-                ? intl.formatMessage(WORK_WORD[served.work])
-                : served?.phase
-                  ? intl.formatMessage(PHASE_WORD[served.phase])
-                  : intl.formatMessage(i18n.phaseUnknown);
+      : displacedWords
+        ? displacedWords
+        : served?.readiness.kind === 'reconnecting'
+          ? intl.formatMessage(i18n.phaseReconnecting)
+          : splitStop
+            ? intl.formatMessage(i18n.phaseSplitStopped)
+            : served?.turnWait
+              ? turnWaitText(intl, served.turnWait)
+              : served?.busyIn
+                ? busyInHeadline(intl, served.busyIn)
+                : served?.work && served.work !== 'thisChat'
+                  ? intl.formatMessage(WORK_WORD[served.work])
+                  : served?.phase
+                    ? intl.formatMessage(PHASE_WORD[served.phase])
+                    : intl.formatMessage(i18n.phaseUnknown);
   // The words that can outgrow the chip: they truncate before the dot and keep a title.
   const longWords =
-    goneWords != null || loaderWords != null || served?.busyIn != null || served?.turnWait != null;
+    goneWords != null ||
+    loaderWords != null ||
+    displacedWords != null ||
+    served?.busyIn != null ||
+    served?.turnWait != null;
 
   return (
     <div className="relative flex items-center" ref={dropdownRef}>
-      <DropdownMenu>
+      <DropdownMenu
+        onOpenChange={(open) => {
+          // The menu's states are read when it opens — an event, never a poll (design §8.5).
+          if (open) refreshGlanceNodes();
+        }}
+      >
         <DropdownMenuTrigger
           className={cx(
             'flex min-w-0 max-w-[180px] items-center text-lz-ink-3 hover:cursor-pointer hover:text-lz-ink md:max-w-[200px] lg:max-w-[380px]',
@@ -385,7 +413,11 @@ export default function ModelsBottomBar({
             )}
           </div>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="top" align="center" className="w-64 text-sm">
+        <DropdownMenuContent
+          side="top"
+          align="center"
+          className={cx('text-sm', nodesMenu ? 'w-96' : 'w-64')}
+        >
           <h6 className={cx('mt-2 ml-2', TYPE.meta)}>{intl.formatMessage(i18n.currentModel)}</h6>
           {servedModel != null && served ? (
             <div
@@ -401,18 +433,25 @@ export default function ModelsBottomBar({
                   ? goneWords
                   : loaderWords
                     ? loaderWords
-                    : splitReason && servedWhere
-                      ? intl.formatMessage(i18n.servedSplitStopped, {
-                          where: servedWhere,
-                          reason: splitReason,
-                        })
-                      : servedRunning && servedWhere
-                        ? intl.formatMessage(
-                            served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
-                            { phase: phaseWord, where: servedWhere }
-                          )
-                        : intl.formatMessage(i18n.servedNotRunning)}
+                    : displacedWords
+                      ? displacedWords
+                      : splitReason && servedWhere
+                        ? intl.formatMessage(i18n.servedSplitStopped, {
+                            where: servedWhere,
+                            reason: splitReason,
+                          })
+                        : servedRunning && servedWhere
+                          ? intl.formatMessage(
+                              served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
+                              { phase: phaseWord, where: servedWhere }
+                            )
+                          : intl.formatMessage(i18n.servedNotRunning)}
               </p>
+              {fellBackWords && (
+                <p data-testid="model-menu-fell-back" className={cx(TYPE.meta, 'break-words')}>
+                  {fellBackWords}
+                </p>
+              )}
               {served.contextWindow != null && (
                 <p data-testid="model-menu-context" className={cx(TYPE.meta, TNUM)}>
                   {served.contextFromFreeMemory
@@ -445,7 +484,18 @@ export default function ModelsBottomBar({
               </p>
             </div>
           )}
-          {servedModel != null && (
+          {nodesMenu && (
+            <NodesChipMenu
+              read={nodesMenu.read}
+              residency={nodesMenu.residency}
+              currentModel={isSwarm ? (currentModel ?? null) : null}
+              onPick={(model, label) => void runOn(model, label)}
+              onManageNodes={() => setView('nodes')}
+              onEngine={() => setView('mlxEngine')}
+              onOtherModels={() => setIsAddModelModalOpen(true)}
+            />
+          )}
+          {!nodesMenu && servedModel != null && (
             <DropdownMenuItem
               data-testid="model-menu-open-engine"
               onClick={() => setView('mlxEngine')}
@@ -457,25 +507,27 @@ export default function ModelsBottomBar({
               <Cpu className="ml-auto h-4 w-4 shrink-0" />
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            data-testid="model-menu-switch"
-            onClick={() => setIsAddModelModalOpen(true)}
-          >
-            {/* While the chip names the model on your Macs, "Change Provider" opened a picker whose
+          {!nodesMenu && (
+            <DropdownMenuItem
+              data-testid="model-menu-switch"
+              onClick={() => setIsAddModelModalOpen(true)}
+            >
+              {/* While the chip names the model on your Macs, "Change Provider" opened a picker whose
                 swarm row names no model and contradicts the chip (Q-41): the one thing that
                 picker still does from here is leave for a cloud provider, so it says that. */}
-            {servedModel != null ? (
-              <span className="flex min-w-0 flex-col">
-                <span>{intl.formatMessage(i18n.useCloudInstead)}</span>
-                <span className={TYPE.meta}>
-                  {intl.formatMessage(i18n.useCloudInsteadHint, { model: servedModel })}
+              {servedModel != null ? (
+                <span className="flex min-w-0 flex-col">
+                  <span>{intl.formatMessage(i18n.useCloudInstead)}</span>
+                  <span className={TYPE.meta}>
+                    {intl.formatMessage(i18n.useCloudInsteadHint, { model: servedModel })}
+                  </span>
                 </span>
-              </span>
-            ) : (
-              <span>{intl.formatMessage(isSwarm ? i18n.changeProvider : i18n.changeModel)}</span>
-            )}
-            <Sliders className="ml-auto h-4 w-4 shrink-0 rotate-90" />
-          </DropdownMenuItem>
+              ) : (
+                <span>{intl.formatMessage(isSwarm ? i18n.changeProvider : i18n.changeModel)}</span>
+              )}
+              <Sliders className="ml-auto h-4 w-4 shrink-0 rotate-90" />
+            </DropdownMenuItem>
+          )}
           {isSwarm && (
             <>
               <DropdownMenuItem onClick={() => window.electron.openExternal(LEANZERO_DOCS_URL)}>

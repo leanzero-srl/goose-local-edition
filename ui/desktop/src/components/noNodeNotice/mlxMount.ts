@@ -34,7 +34,7 @@ import { errorMessage } from '../../utils/conversionUtils';
  */
 export type MountTarget =
   | { kind: 'ok'; modelId: string; servedId: string }
-  | { kind: 'mismatch'; served: string; wanted: string }
+  | { kind: 'mismatch'; served: string; wanted: string; device: string }
   | { kind: 'none' };
 
 export function resolveMountTarget(
@@ -48,7 +48,7 @@ export function resolveMountTarget(
   }
   const served = settings.servedModelName || settings.modelId;
   if (served !== device.model_id) {
-    return { kind: 'mismatch', served, wanted: device.model_id };
+    return { kind: 'mismatch', served, wanted: device.model_id, device: nodeId };
   }
   return { kind: 'ok', modelId: settings.modelId, servedId: served };
 }

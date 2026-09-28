@@ -1,5 +1,6 @@
 import type {
   BackgroundWorkKind,
+  NodeServedTurnDto,
   NodesReadResponse_unstable,
   NodesResidencyResponse_unstable,
 } from '@aaif/goose-sdk';
@@ -31,7 +32,17 @@ import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { splitStopAt, type SplitStop } from './splitStop';
 import type { ChatLoader } from './loaderText';
 import { effectiveEntry, nodeNameOfDevice, nodeNamesById } from '../nodes/model';
-import { nodeSwapOf, routeNodeIds, swapStopsEngine, type NodeSwap } from '../../utils/nodeSwap';
+import {
+  displacedOf,
+  nodeRefusalOf,
+  nodeSwapOf,
+  nodeWaitOf,
+  routeNodeIds,
+  swapStopsEngine,
+  type NodeDisplaced,
+  type NodeSwap,
+} from '../../utils/nodeSwap';
+import { fellBackOf, type ChatFellBack } from './turnLine';
 import {
   distributedFact,
   distributedServedId,
@@ -133,8 +144,27 @@ export type ComposerReadiness =
    */
   | { kind: 'loader'; loader: ChatLoader }
   | { kind: 'no-nodes' }
-  | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact }
-  | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null }
+  | {
+      kind: 'unmounted';
+      nodes: string[];
+      target: MountTarget;
+      fact: EngineFact;
+      /**
+       * The node a mismatched target is said in, when that mismatch decides THIS chat's turn (Q-273:
+       * an Auto chat's pool device is not where its turn goes); null or absent = not said.
+       */
+      mismatchNode?: string | null;
+    }
+  | {
+      kind: 'distributed';
+      nodes: string[];
+      status: MlxDistributedStatus;
+      wanted: string | null;
+      /** The pool device `wanted` is the model of; null = none. */
+      wantedBy?: string | null;
+      /** As `mismatchNode` above: the node the split's wrong model is said in; null = not said. */
+      mismatchNode?: string | null;
+    }
   | {
       /**
        * The split across the Macs served chat and stopped on its own (a rank died, froze, ran out
@@ -255,6 +285,7 @@ export function swarmReadiness(
       nodes: enabled.map((d) => d.id),
       status: distributed,
       wanted: enabled[0].model_id,
+      wantedBy: enabled[0].id,
     };
   }
   if (!statusIsKnowable(status)) return UNKNOWN;
@@ -456,6 +487,13 @@ export interface ChatServedBy extends MlxEngineServing {
    * route, or no nodes read. Never the raw id.
    */
   route?: ChatRoute | null;
+  /**
+   * The node this chat's turns go to was stopped by the loader for another chat's node (§8.7
+   * `nodes.displacedNotice`); null = not displaced, or its turn is in flight.
+   */
+  displaced?: NodeDisplaced | null;
+  /** The last turn took a later entry of its role's chain (§8.7 `nodes.fellBack`); null = none. */
+  fellBack?: ChatFellBack | null;
 }
 
 /** A `node:` / `strategy:` chat's model, named (design §8.5's chip label). */
@@ -478,6 +516,8 @@ export interface ChatNodesFacts {
    * turn served yet; undefined = not read (or the read failed) — then no node is named.
    */
   servedNode?: string | null;
+  /** That record whole (its role, rank and why the 1st did not serve); absent = not read. */
+  servedRecord?: NodeServedTurnDto | null;
 }
 
 export interface ChatServedInputs {
@@ -763,21 +803,36 @@ const NOT_MLX: ChatServedBy = {
 export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
   const core = deriveEngineServedBy(given);
   const facts = given.nodes ?? null;
-  if (!facts) return core;
+  if (!facts) return sayMismatch(core, given, null, null);
   const routeIds = routeNodeIds(facts.read, given.model);
-  const named = withNodeNames(core, facts.read);
   const route = routeOf(facts, given.model);
-  const loader = chatLoaderOf(facts, routeIds, given);
+  const named = sayMismatch(withNodeNames(core, facts.read), given, facts, route);
+  const loader = chatLoaderOf(facts, routeIds, route, given);
+  const own = route?.nodeId ?? null;
+  // Between turns only: while a turn is in flight the loader's own line says what happens.
+  const displaced =
+    !given.turnInFlight && own != null
+      ? displacedOf(facts.read, facts.residency, own, given.sessionId)
+      : null;
+  const fellBack = given.turnInFlight ? null : fellBackOf(facts.servedRecord, facts.read);
   if (!loader) {
     if (!servedReady(named) && routeServes(route, facts)) {
-      return { ...named, readiness: { kind: 'ready' }, loader: null, route };
+      return {
+        ...named,
+        readiness: { kind: 'ready' },
+        loader: null,
+        route,
+        displaced,
+        fellBack,
+      };
     }
-    return { ...named, loader: null, route };
+    return { ...named, loader: null, route, displaced, fellBack };
   }
-  const waits = loader.kind === 'waiting';
+  const phase =
+    loader.kind === 'waiting' ? 'held' : loader.kind === 'refused' ? 'failed' : 'loading';
   if (servedReady(named)) {
     // The engine still answers — the chat's turn waits on the loader all the same.
-    return { ...named, phase: waits ? 'held' : 'loading', loader, route };
+    return { ...named, phase, loader, route, displaced, fellBack };
   }
   return {
     ...named,
@@ -786,7 +841,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
     model: loader.kind === 'loading' ? (loader.swap.target.modelId ?? named.model) : named.model,
     where: loader.kind === 'loading' ? [] : named.where,
     contextWindow: loader.kind === 'loading' ? null : named.contextWindow,
-    phase: waits ? 'held' : 'loading',
+    phase,
     activity: null,
     work: null,
     busyWithOthers: null,
@@ -797,7 +852,44 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
     readiness: { kind: 'loader', loader },
     loader,
     route,
+    displaced,
+    fellBack,
   };
+}
+
+/**
+ * A pool device's model mismatch is said only where it decides THIS chat's turn, and in its node's
+ * name (Q-273: an Auto chat showed "The saved MLX model serves …; the node wants …" for a pool
+ * device its turn need not go to). It decides the turn when the chat's own node is that device's
+ * node, or — an Auto chat — when that device is the pool's only enabled one.
+ */
+function sayMismatch(
+  served: ChatServedBy,
+  given: ChatServedInputs,
+  facts: ChatNodesFacts | null,
+  route: ChatRoute | null
+): ChatServedBy {
+  const { readiness } = served;
+  const device =
+    readiness.kind === 'unmounted' && readiness.target.kind === 'mismatch'
+      ? readiness.target.device
+      : readiness.kind === 'distributed'
+        ? (readiness.wantedBy ?? null)
+        : null;
+  if (device == null || (readiness.kind !== 'unmounted' && readiness.kind !== 'distributed')) {
+    return served;
+  }
+  const nodes = facts?.read.nodes ?? [];
+  const decides =
+    route != null
+      ? route.nodeId != null &&
+        nodes.some(
+          (n) => n.def.id === route.nodeId && (n.def.id === device || n.def.poolDevice === device)
+        )
+      : given.lookup.state === 'ready' &&
+        given.lookup.devices.filter((d) => d.enabled === true).length === 1;
+  const mismatchNode = decides ? (nodeNameOfDevice(nodes, device) ?? device) : null;
+  return { ...served, readiness: { ...readiness, mismatchNode } };
 }
 
 /**
@@ -864,6 +956,7 @@ function routeServes(route: ChatRoute | null, facts: ChatNodesFacts): boolean {
 function chatLoaderOf(
   facts: ChatNodesFacts,
   routeIds: string[] | null,
+  route: ChatRoute | null,
   inputs: ChatServedInputs
 ): ChatLoader | null {
   const { read, residency } = facts;
@@ -875,14 +968,15 @@ function chatLoaderOf(
       return { kind: 'loading', swap, forThisChat };
     }
   }
-  if (!inputs.turnInFlight || routeIds == null) return null;
-  for (const row of residency.nodes) {
-    if (row.residency.kind === 'waiting' && routeIds.includes(row.node)) {
-      const name = nodeNamesById(read.nodes)[row.node] ?? row.node;
-      return { kind: 'waiting', node: name, reason: row.residency.reason };
-    }
+  if (inputs.turnInFlight && routeIds != null) {
+    const wait = nodeWaitOf(read, residency, routeIds);
+    if (wait) return { kind: 'waiting', wait };
   }
-  return null;
+  // The loader refused the node this chat's next turn goes to: said until a demand for it changes
+  // that (its next load, or a turn that finds it serving).
+  const own = route?.nodeId ?? null;
+  const refusal = own != null ? nodeRefusalOf(read, residency, own) : null;
+  return refusal ? { kind: 'refused', refusal } : null;
 }
 
 /** The engine this chat faces is down, and the swap is why (a split stopping, an engine stopped). */
