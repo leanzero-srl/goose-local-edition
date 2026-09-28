@@ -44,7 +44,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-454 (create-doc renders GFM tables as Word tables; honest formattingQuality).
+- none running.
 
 ## 3.0.74 = main edd009c6b — RELEASE BUILDING (~/goose-builds/release-3.0.74.log, goose-rel, own session)
 - Contents:
@@ -64,7 +64,9 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
        shared-Mac case;
      - Q-426, Q-417, Q-450.
   3. Tell the owner about Q-428.
-  4. Q-454 goes into 3.0.75.
+  4. Q-454 is ON MAIN beff2102e and goes into 3.0.75. Cause: a body starting at `## ` collapsed into ONE
+     heading, which lost tables, lists and quotes. formattingQuality is now read from the written file.
+     Independently re-checked: the pinned tarball plus the patch plus the lock gives 11/11.
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
