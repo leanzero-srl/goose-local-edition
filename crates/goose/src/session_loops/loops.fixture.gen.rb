@@ -86,14 +86,14 @@ WD = '/Users/mihai/work/users-gen'
 STATE = '.goose/loops/users-csv/NOW.md'
 GOAL = "Make scripts/generate_users.js produce every problem class in notes/kickoff.md\nKeep the seed at 42."
 
-QUALITY_STEPS = "1. Discover: open {state_file}, then run or read what {goal_first_line} names in {working_dir}. List what is broken, missing or confusing, each with the evidence you saw (command output, file:line).\n" \
+QUALITY_STEPS = "1. Discover: open {state_file}, then run or read what your goal points at in {working_dir}. List what is broken, missing or confusing, each with the evidence you saw (command output, file:line).\n" \
   "2. Critique: rank what you found by how much it blocks the goal; pick the ONE item that matters most ({last_next_step}).\n" \
   "3. Fix: make that change, and only that change.\n" \
   "4. Prove it. Check to run: {check}. A fix without a quoted result is not done.\n" \
   '5. Rewrite {state_file}: what is now true, what is next, what you found but did not fix.'
 UNTIL_STEPS = "1. Run the check — {check} — and read why it fails.\n2. Fix the first cause it names.\n" \
   "3. Run the check again — {check} — and quote the result.\n4. Rewrite {state_file}."
-WATCH_STEPS = "1. Look at what {goal_first_line} names (a build, a deploy, a folder, a URL) and compare it with {state_file}.\n" \
+WATCH_STEPS = "1. Look at what your goal watches (a build, a deploy, a folder, a URL) and compare it with {state_file}.\n" \
   "2. If nothing changed, say so in one line and report progress.\n" \
   "3. If something changed, do what the goal asks and quote the evidence.\n4. Rewrite {state_file}."
 
@@ -548,10 +548,35 @@ OUTCOME_WORDS = { 'progress' => 'progress', 'done' => 'done', 'blocked' => 'bloc
                   'failed' => 'failed', 'no_report' => 'no report', 'yielded' => 'yielded',
                   'stopped_by_you' => 'stopped by the user' }.freeze
 
+# A yield or the user's stop cancels a tick before its turn ends: it did not finish (Q-278).
+def cut_short?(tk)
+  tk['outcome'] && %w[yielded stopped_by_you].include?(tk['outcome']['kind'])
+end
+
+# [the newest finished tick or nil, the unfinished ticks after it, oldest first]
+def split_finished(ticks)
+  i = ticks.rindex { |tk| !cut_short?(tk) }
+  i.nil? ? [nil, ticks] : [ticks[i], ticks[(i + 1)..-1]]
+end
+
+# `{last_next_step}` at the next tick: the newest tick with a report, from the last finished one on.
+def next_tick_last_step(ticks)
+  return { 'kind' => 'first' } if ticks.empty?
+  finished, after = split_finished(ticks)
+  scope = after.reverse + (finished ? [finished] : [])
+  rep = scope.find { |tk| tk['report'] }
+  if rep
+    step = rep['report']['nextStep'].strip
+    step.empty? ? { 'kind' => 'named_none', 'prev' => rep['n'] } : { 'kind' => 'named', 'text' => step }
+  else
+    { 'kind' => 'named_none', 'prev' => (finished || ticks.last)['n'] }
+  end
+end
+
 def prompt(record, n, facts)
   off = facts['utcOffsetMinutes']
   hm = ->(s) { clock(ptime(s), off) }
-  prev = record['ticks'].last
+  prev, unfinished = split_finished(record['ticks'])
   lines = []
   head = "Loop tick #{n} — \"#{first_line(record['goal'])}\" · #{cadence_label(record['cadence'])}"
   head += " · stop after #{record['stopAfterTicks']} ticks" if record['stopAfterTicks']
@@ -560,13 +585,8 @@ def prompt(record, n, facts)
   lines << record['goal'].strip
   lines << "State file: #{record['stateFile']} — read it before anything else; rewrite it before you call loop_report"
   lines << '(Now · Next · Found · Done; keep it short enough to read in one go).'
-  last_step =
-    if prev.nil? then { 'kind' => 'first' }
-    elsif prev['report'] then { 'kind' => 'named', 'text' => prev['report']['nextStep'] }
-    else { 'kind' => 'named_none', 'prev' => prev['n'] }
-    end
   sf = { 'stateFile' => record['stateFile'], 'goalFirstLine' => first_line(record['goal']),
-         'lastNextStep' => last_step, 'workingDir' => facts['workingDir'] }
+         'lastNextStep' => next_tick_last_step(record['ticks']), 'workingDir' => facts['workingDir'] }
   sf['check'] = record['check'] if record['check']
   steps = render_steps(record['steps'], sf)['text']
   unless steps.strip.empty?
@@ -576,7 +596,8 @@ def prompt(record, n, facts)
   if prev
     p = prev['n']
     oc = prev['outcome']
-    last = "Last tick (#{p}, #{hm.call(prev['startedAt'])}, #{oc ? OUTCOME_WORDS[oc['kind']] : 'not ended'})"
+    label = unfinished.empty? ? 'Last tick' : 'Last finished tick'
+    last = "#{label} (#{p}, #{hm.call(prev['startedAt'])}, #{oc ? OUTCOME_WORDS[oc['kind']] : 'not ended'})"
     if prev['report']
       last += ": \"#{prev['report']['summary'].strip}\" — next step it named: \"#{prev['report']['nextStep'].strip}\""
     elsif oc && oc['kind'] == 'failed'
@@ -610,9 +631,7 @@ def prompt(record, n, facts)
         lines << "Check `#{c['command']}` could not run after tick #{p}: #{c['error'] || 'it did not start and named no error'}. No result can be quoted from it until it runs; fix what stops it, or report blocked on it."
       end
     end
-    if oc && oc['kind'] == 'yielded'
-      lines << "Tick #{p} was stopped at #{hm.call(prev['endedAt'])} for the user's turn in \"#{oc['toChat']}\"; its partial work is above."
-    elsif oc && oc['kind'] == 'asked'
+    if oc && oc['kind'] == 'asked'
       ar = facts['askedResolution']
       res = if ar && ar['kind'] == 'answered' then "they answered: \"#{ar['answer']}\""
             elsif ar && ar['kind'] == 'dismissed' then 'they dismissed it'
@@ -620,6 +639,30 @@ def prompt(record, n, facts)
             end
       lines << "Tick #{p} asked the user \"#{oc['question']}\"; #{res}."
     end
+  elsif !unfinished.empty?
+    lines << 'No tick of this loop has finished yet.'
+  end
+  names = facts['chatNames'] || {}
+  unfinished.each do |tk|
+    oc = tk['outcome']
+    s = "Tick #{tk['n']} (#{hm.call(tk['startedAt'])}) did not finish: "
+    s += if oc['kind'] == 'yielded'
+           "it was stopped at #{hm.call(tk['endedAt'])} for the user's turn in \"#{names[oc['toSession']] || oc['toChat']}\"."
+         else
+           "the user stopped it at #{hm.call(tk['endedAt'])}."
+         end
+    if tk['report']
+      s += " Before it stopped, it reported: \"#{tk['report']['summary'].strip}\" — next step it named: \"#{tk['report']['nextStep'].strip}\"."
+    end
+    s += tk['wrote'].empty? ? ' It wrote or edited no file outside the state file;' : " It wrote or edited #{tk['wrote'].map { |w| "`#{w}`" }.join(', ')};"
+    s += ' any command it ran is in the conversation above.'
+    lines << s
+  end
+  unless unfinished.empty?
+    ns = unfinished.map { |tk| tk['n'] }
+    which = ns.size == 1 ? "tick #{ns[0]}" : "ticks #{ns[0..-2].join(', ')} and #{ns[-1]}"
+    own = ns.size == 1 ? 'a tick of its own' : 'ticks of their own'
+    lines << "Tick #{n} carries on from there: what #{which} left unfinished is part of this tick's work, not #{own}."
   end
   lines << 'In loop_report, set next_in ("10m", "2h") and next_reason: when to come back, and why.' if record['cadence']['kind'] == 'self_paced'
   lines << 'Finish by calling loop_report; calling it ends this tick.'
@@ -928,8 +971,36 @@ pr << ['until a check passes, back to back, reported done but the check failed',
                                                                                                                                   'check' => check_run('pnpm test', t('22:04'), true, 2, '2 failed, 40 passed'))]), 3, pf.call]
 pr << ['blank, self-paced, the last tick made no report',
        rec('template' => 'blank', 'steps' => '', 'cadence' => SELF, 'ticks' => [tick(1, t('22:00'), t('22:06'), 'outcome' => { 'kind' => 'no_report' })]), 2, pf.call]
+yielded = ->(to, chat) { { 'kind' => 'yielded', 'toSession' => to, 'toChat' => chat } }
 pr << ['watch, the last tick yielded to a user turn',
-       rec('template' => 'watch', 'steps' => WATCH_STEPS, 'cadence' => every('30m'), 'ticks' => [tick(5, t('22:00'), t('22:03', 40), 'outcome' => { 'kind' => 'yielded', 'toSession' => 's2', 'toChat' => 'Kickoff notes' })]), 6, pf.call('utcOffsetMinutes' => 180)]
+       rec('template' => 'watch', 'steps' => WATCH_STEPS, 'cadence' => every('30m'),
+           'ticks' => [tick(4, t('21:30'), t('21:31'), 'report' => report('progress', 'The deploy log is unchanged since 21:00.', 'look at the deploy log again'), 'outcome' => { 'kind' => 'progress' }),
+                       tick(5, t('22:00'), t('22:03', 40), 'outcome' => yielded.call('s2', 'Kickoff notes'))]), 6, pf.call('utcOffsetMinutes' => 180)]
+# Q-278, the live J2 sequence on 3.0.66: tick 1 finished (report + a failing check), tick 2 yielded to a chat
+# that was "New Chat" at the yield and "Simple pong reply" when tick 3's prompt was written.
+j2_goal = 'Append exactly one line to /Users/mihai/loopwork/log.txt each tick: the tick number and the output of the date command. Do nothing else. The goal is met when that file has 3 lines.'
+j2_check = 'test "$(wc -l < /Users/mihai/loopwork/log.txt)" -ge 3'
+pr << ['Q-278: completed, then yielded — the next tick carries the finished tick and names the unfinished one',
+       rec('goal' => j2_goal, 'template' => 'until_check', 'steps' => UNTIL_STEPS, 'cadence' => B2B, 'check' => j2_check, 'stopAfterTicks' => 4,
+           'stateFile' => 'loopwork/NOW.md',
+           'ticks' => [tick(1, t('03:45', 25), t('03:48', 58), 'report' => report('progress', 'Created log.txt and appended "tick 1: Mon Sep 28 06:48:10 EEST 2026". File now has 1 line (goal: 3).', 'Append `tick 2: $(date)` to /Users/mihai/loopwork/log.txt'),
+                            'outcome' => { 'kind' => 'progress' }, 'check' => check_run(j2_check, t('03:48', 58), true, 1, '', 'endedAt' => iso(t('03:48', 59)))),
+                       tick(2, t('03:48', 59), t('03:49', 18), 'origin' => 'back_to_back', 'outcome' => yielded.call('20260928_15', 'New Chat'))]),
+       3, pf.call('utcOffsetMinutes' => 180, 'chatNames' => { '20260928_15' => 'Simple pong reply' })]
+pr << ['Q-278: two unfinished ticks after the finished one, one yielded with writes, one stopped by the user after it reported',
+       rec('check' => CHECK,
+           'ticks' => [tick(3, t('22:31'), t('22:37'), 'report' => prog.call('add svc- service accounts with no last_login'), 'outcome' => { 'kind' => 'progress' }, 'wrote' => ['scripts/generate_users.js'],
+                            'check' => check_run(CHECK, t('22:37', 1), true, 1, 'FAIL missing svc- accounts', 'endedAt' => iso(t('22:37', 9)))),
+                       tick(4, t('22:41'), t('22:44'), 'outcome' => yielded.call('s9', 'Kickoff notes'), 'wrote' => ['scripts/generate_users.js', 'notes/classes.md']),
+                       tick(5, t('22:50'), t('22:52'), 'report' => report('progress', 'Half of the svc- rows written.', 'finish the svc- rows'), 'outcome' => { 'kind' => 'stopped_by_you' })]),
+       6, pf.call]
+pr << ['Q-278: the first tick yielded — no tick has finished yet, and the chat could not be read again',
+       rec('check' => CHECK, 'ticks' => [tick(1, t('22:00'), t('22:02'), 'outcome' => yielded.call('s4', 'New Chat'))]), 2, pf.call]
+pr << ['Q-278: a tick asked and was answered, then the next one yielded',
+       rec('check' => CHECK,
+           'ticks' => [tick(2, t('22:00'), t('22:02'), 'report' => prog.call('pick the delimiter'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' }),
+                       tick(3, t('22:10'), t('22:11'), 'origin' => 'after_your_answer', 'outcome' => yielded.call('s2', 'Kickoff notes'))]),
+       4, pf.call('askedResolution' => { 'kind' => 'answered', 'answer' => 'Semicolon — the owner opens it in Excel.' }, 'chatNames' => { 's2' => 'Kickoff notes (Aoife)' })]
 pr << ['the last tick asked and was answered',
        rec('check' => CHECK, 'ticks' => [tick(2, t('22:00'), t('22:02'), 'report' => prog.call('pick the delimiter'), 'outcome' => { 'kind' => 'asked', 'itemId' => 'ny_1', 'question' => 'Comma or semicolon?' })]), 3, pf.call('askedResolution' => { 'kind' => 'answered', 'answer' => 'Semicolon — the owner opens it in Excel.' })]
 pr << ['the last tick asked and it was dismissed',
@@ -945,5 +1016,20 @@ pr << ['the check failed with no output',
 pr << ['resumed after a blocked tick',
        rec('ticks' => [tick(4, t('22:00'), t('22:05'), 'report' => report('blocked', 'Two delimiters fit the notes.', 'ask the owner', 'blockedOn' => 'which CSV delimiter the owner wants'), 'outcome' => { 'kind' => 'blocked' })]), 5, pf.call]
 fixture['prompts'] = pr.map { |name, r, n, fa| { 'name' => name, 'record' => r, 'n' => n, 'facts' => fa, 'expect' => prompt(r, n, fa) } }
+
+# `{last_next_step}` at the next tick — the prompt's slot and the Start/Edit dialog's preview both read it.
+done_t = ->(n, step) { tick(n, t('22:00'), t('22:05'), 'report' => report('progress', 'did a thing', step), 'outcome' => { 'kind' => 'progress' }) }
+yield_t = ->(n, extra = {}) { tick(n, t('22:10'), t('22:11'), { 'outcome' => yielded.call('s2', 'Kickoff notes') }.merge(extra)) }
+fixture['lastNextStep'] = [
+  ['no tick yet', []],
+  ['the last tick named one', [done_t.call(1, 'add svc- accounts')]],
+  ['the last tick named one with spaces around it', [done_t.call(1, '  add svc- accounts  ')]],
+  ['the last tick named a blank step', [done_t.call(1, '   ')]],
+  ['the last tick made no report', [tick(1, t('22:00'), t('22:05'), 'outcome' => { 'kind' => 'no_report' })]],
+  ['a yield does not erase the finished tick\'s step', [done_t.call(1, 'add svc- accounts'), yield_t.call(2)]],
+  ['a stopped tick that reported names the newer step', [done_t.call(1, 'add svc- accounts'), yield_t.call(2), yield_t.call(3, 'report' => report('progress', 'half', 'finish svc- rows'), 'outcome' => { 'kind' => 'stopped_by_you' })]],
+  ['only unfinished ticks, none reported', [yield_t.call(1), yield_t.call(2)]],
+  ['a finished tick with no report after an older report', [done_t.call(1, 'add svc- accounts'), tick(2, t('22:10'), t('22:12'), 'outcome' => { 'kind' => 'failed', 'errorClass' => 'provider', 'error' => 'stream ended early' }), yield_t.call(3)]]
+].map { |name, ticks| { 'name' => name, 'ticks' => ticks, 'expect' => next_tick_last_step(ticks) } }
 
 File.write(OUT, JSON.pretty_generate(fixture) + "\n")

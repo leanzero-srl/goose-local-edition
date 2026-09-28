@@ -19,6 +19,7 @@ import {
   type TickSlice,
 } from './loopView';
 import { durationWords, type LoopCheckRun, type LoopRecord, type LoopTickRecord } from './model';
+import { useChatName } from './useChatName';
 
 const LINK = cx(
   'inline-flex h-6 items-center rounded-lz-control border border-lz-border-strong bg-lz-surface px-2 text-xs font-lz-medium text-lz-ink hover:bg-lz-surface-2',
@@ -56,10 +57,12 @@ export function TickRow({
     seconds === null
       ? time
       : intl.formatMessage(w.tickWhen, { time, duration: durationWords(seconds) });
+  const yieldedTo = tick.outcome?.kind === 'yielded' ? tick.outcome : null;
+  const chatName = useChatName(yieldedTo?.toSession ?? '', yieldedTo?.toChat ?? '');
   const changes = useMemo(() => (messages ? sessionChanges(messages) : null), [messages]);
   const headline = quiet
     ? intl.formatMessage(w.tickQuiet, { time, nextStep: tick.report?.nextStep ?? '' })
-    : collapsedLine(tick, intl.formatMessage);
+    : collapsedLine(tick, intl.formatMessage, chatName);
 
   return (
     <li
@@ -129,7 +132,7 @@ export function TickRow({
           {tick.report?.summary && (
             <p className={cx(TYPE.body, 'whitespace-pre-wrap')}>{tick.report.summary}</p>
           )}
-          <OutcomeLines tick={tick} messages={messages} />
+          <OutcomeLines tick={tick} messages={messages} chatName={chatName} />
           {messages === null ? (
             <p data-testid="loop-tick-removed" className="text-xs text-lz-ink-2">
               {intl.formatMessage(w.tickRemoved)}
@@ -193,11 +196,11 @@ export function TickRow({
 type Format = ReturnType<typeof useIntl>['formatMessage'];
 
 /** The collapsed row's words: the report's first line, else what the outcome itself says. */
-function collapsedLine(tick: LoopTickRecord, format: Format): string {
+function collapsedLine(tick: LoopTickRecord, format: Format, chatName: string): string {
   const outcome = tick.outcome;
   switch (outcome?.kind) {
     case 'yielded':
-      return format(w.tickYielded, { chat: outcome.toChat });
+      return format(w.tickYielded, { chat: chatName });
     case 'failed':
       return format(w.tickFailed, { error: firstLine(outcome.error) });
     case 'no_report':
@@ -213,9 +216,12 @@ function collapsedLine(tick: LoopTickRecord, format: Format): string {
 function OutcomeLines({
   tick,
   messages,
+  chatName,
 }: {
   tick: LoopTickRecord;
   messages: TickSlice['messages'];
+  /** The chat a yielded tick yielded to, by the name it carries now (Q-279). */
+  chatName: string;
 }) {
   const intl = useIntl();
   const outcome = tick.outcome;
@@ -227,7 +233,7 @@ function OutcomeLines({
   );
   switch (outcome.kind) {
     case 'yielded':
-      return line('loop-tick-yielded', intl.formatMessage(w.tickYielded, { chat: outcome.toChat }));
+      return line('loop-tick-yielded', intl.formatMessage(w.tickYielded, { chat: chatName }));
     case 'failed':
       return line(
         'loop-tick-failed',

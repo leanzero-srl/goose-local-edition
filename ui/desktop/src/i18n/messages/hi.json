@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "अगला टिक अभी शुरू हो रहा है"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "आपके जवाब के बाद"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "आपकी बारी के बाद"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "आपने चलाया"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "आपके Mac के जागने के बाद"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "आपके फिर से शुरू करने के बाद"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "अभी तक कोई टिक पूरा नहीं हुआ है।"
   },

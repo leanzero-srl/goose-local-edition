@@ -527,13 +527,22 @@ async fn a_user_turn_mid_tick_yields_it_and_the_next_tick_follows_that_turn() {
     assert_eq!(rec.status, LoopStatus::WaitingTurn);
     settle().await;
     assert_eq!(bed.door.dues().len(), 1);
+    // Q-279: goose names a new chat after its first turn, so the name the yield recorded goes
+    // stale; the next prompt reads the chat's name as it is when the prompt is written.
+    bed.sessions
+        .update(&bed.other)
+        .system_generated_name("Simple pong reply")
+        .apply()
+        .await
+        .unwrap();
     drop(turn);
     let second = bed.due(2).await;
     assert!(
-        second.prompt.contains("Tick 1 was stopped at")
+        second.prompt.contains("did not finish: it was stopped at")
             && second
                 .prompt
-                .contains("for the user's turn in \"Kickoff notes\""),
+                .contains("for the user's turn in \"Simple pong reply\"")
+            && !second.prompt.contains("Kickoff notes"),
         "{}",
         second.prompt
     );
@@ -590,7 +599,10 @@ async fn a_tick_started_under_a_running_user_turn_is_yielded_before_it_returns()
     drop(turn);
     let second = bed.due(2).await;
     assert!(
-        second.prompt.contains("Tick 1 was stopped at"),
+        second.prompt.contains("did not finish: it was stopped at")
+            && second
+                .prompt
+                .contains("No tick of this loop has finished yet."),
         "{}",
         second.prompt
     );

@@ -23,7 +23,7 @@ pub const SLOTS: [&str; 5] = [
     SLOT_WORKING_DIR,
 ];
 
-const QUALITY_STEPS: &str = "1. Discover: open {state_file}, then run or read what {goal_first_line} names in {working_dir}. List what is broken, missing or confusing, each with the evidence you saw (command output, file:line).
+const QUALITY_STEPS: &str = "1. Discover: open {state_file}, then run or read what your goal points at in {working_dir}. List what is broken, missing or confusing, each with the evidence you saw (command output, file:line).
 2. Critique: rank what you found by how much it blocks the goal; pick the ONE item that matters most ({last_next_step}).
 3. Fix: make that change, and only that change.
 4. Prove it. Check to run: {check}. A fix without a quoted result is not done.
@@ -34,7 +34,7 @@ const UNTIL_CHECK_STEPS: &str = "1. Run the check — {check} — and read why i
 3. Run the check again — {check} — and quote the result.
 4. Rewrite {state_file}.";
 
-const WATCH_STEPS: &str = "1. Look at what {goal_first_line} names (a build, a deploy, a folder, a URL) and compare it with {state_file}.
+const WATCH_STEPS: &str = "1. Look at what your goal watches (a build, a deploy, a folder, a URL) and compare it with {state_file}.
 2. If nothing changed, say so in one line and report progress.
 3. If something changed, do what the goal asks and quote the evidence.
 4. Rewrite {state_file}.";

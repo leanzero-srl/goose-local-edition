@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "A próxima rodada começa agora"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "depois da sua resposta"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "depois da sua vez"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "executado por você"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "depois que seu Mac acordou"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "depois que você retomou"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "Nenhuma rodada terminou ainda."
   },

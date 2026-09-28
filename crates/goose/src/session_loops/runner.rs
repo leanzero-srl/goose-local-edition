@@ -22,7 +22,7 @@
 //! 7. **Release**: when this process's last door closes, every loop it owns reads "goose was
 //!    closed" with `owner = None`; a door that opens again (a reload) restores what it released.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
@@ -805,7 +805,8 @@ impl Runner {
                 return;
             }
         };
-        let asked_resolution = match rec.ticks.last().and_then(|t| t.outcome.as_ref()) {
+        let (finished, cut_short) = prompt::last_finished(rec);
+        let asked_resolution = match finished.and_then(|t| t.outcome.as_ref()) {
             Some(LoopTickOutcome::Asked { item_id, .. }) => Some(
                 match needs_you_items(&session)
                     .ok()
@@ -824,10 +825,36 @@ impl Runner {
             ),
             _ => None,
         };
+        let mut chat_names = BTreeMap::new();
+        for tick in cut_short {
+            let Some(LoopTickOutcome::Yielded { to_session, .. }) = &tick.outcome else {
+                continue;
+            };
+            if to_session.is_empty() || chat_names.contains_key(to_session) {
+                continue;
+            }
+            match self
+                .inner
+                .deps
+                .sessions
+                .get_session(to_session, false)
+                .await
+            {
+                Ok(chat) => {
+                    chat_names.insert(to_session.clone(), chat.name);
+                }
+                Err(error) => tracing::warn!(
+                    to_session,
+                    %error,
+                    "loop: the chat a tick yielded to could not be read; the prompt names it as it was at the yield"
+                ),
+            }
+        }
         let facts = PromptFacts {
             working_dir: session.working_dir.to_string_lossy().to_string(),
             asked_resolution,
             utc_offset_minutes: local_utc_offset_minutes(),
+            chat_names,
         };
         let text = match prompt::tick_prompt(rec, offer.n, &facts) {
             Ok(text) => text,

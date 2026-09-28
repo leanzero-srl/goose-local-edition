@@ -209,11 +209,25 @@ export function stepSegments(steps: string, facts: StepPreviewFacts): StepSegmen
   return segments;
 }
 
-/** What `{last_next_step}` says at the loop's next tick: its first, or what the last one named. */
+/**
+ * What `{last_next_step}` says at the loop's next tick (goosed's `prompt::last_next_step`, pinned by
+ * the fixture): the step named by the newest tick that reported, looking no further back than the
+ * last FINISHED tick — a tick a yield or the user's stop cut short does not erase the step the
+ * finished tick before it named (Q-278).
+ */
 export function nextTickLastStep(loop: LoopRecord | null): LastNextStep {
   const ticks = loop?.ticks ?? [];
-  const last = ticks[ticks.length - 1];
-  if (!last) return { kind: 'first' };
-  const named = last.report?.nextStep?.trim();
-  return named ? { kind: 'named', text: named } : { kind: 'named_none', prev: last.n };
+  if (ticks.length === 0) return { kind: 'first' };
+  const cutShort = (t: (typeof ticks)[number]) =>
+    t.outcome?.kind === 'yielded' || t.outcome?.kind === 'stopped_by_you';
+  let finished = ticks.length - 1;
+  while (finished >= 0 && cutShort(ticks[finished])) finished--;
+  const scope = ticks.slice(Math.max(finished, 0)).reverse();
+  const reported = scope.find((t) => t.report);
+  if (reported?.report) {
+    const step = reported.report.nextStep.trim();
+    return step ? { kind: 'named', text: step } : { kind: 'named_none', prev: reported.n };
+  }
+  const named = finished >= 0 ? ticks[finished] : ticks[ticks.length - 1];
+  return { kind: 'named_none', prev: named.n };
 }

@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "Pusingan seterusnya bermula sekarang"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "selepas jawapan anda"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "selepas giliran anda"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "dijalankan oleh anda"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "selepas Mac anda bangun"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "selepas anda sambung semula"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "Belum ada pusingan yang tamat."
   },

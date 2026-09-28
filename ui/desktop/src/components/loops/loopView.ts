@@ -19,6 +19,7 @@ import {
   type LoopRecord,
   type LoopStatus,
   type LoopStatusReason,
+  type LoopTickOrigin,
   type LoopTickRecord,
 } from './model';
 
@@ -166,6 +167,31 @@ export function cadenceWords(cadence: LoopCadence): Words {
         { n }
       );
     }
+  }
+}
+
+/**
+ * What started a tick, for its marker (§8.5): the cadence's own label when the cadence started it,
+ * else the event that did — the tick after a yield starts "after your turn", never "back to back"
+ * (Q-279).
+ */
+export function tickCauseWords(origin: LoopTickOrigin, cadence: LoopCadence): Words {
+  switch (origin) {
+    case 'after_your_turn':
+      return words(w.originAfterYourTurn);
+    case 'after_your_answer':
+      return words(w.originAfterYourAnswer);
+    case 'on_wake':
+      return words(w.originOnWake);
+    case 'resume':
+      return words(w.originResume);
+    case 'now':
+      return words(w.originNow);
+    case 'first':
+    case 'cadence':
+    case 'self_paced':
+    case 'back_to_back':
+      return cadenceWords(cadence);
   }
 }
 

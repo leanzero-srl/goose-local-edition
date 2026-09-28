@@ -2,7 +2,11 @@
 //! loop or the user's own words, or an instructional constant branched on a measured predicate
 //! (self-paced or not, a check ran or not, a yield or not). No line asserts context that may not
 //! exist: the last-tick lines appear only when a tick n−1 exists, the check line only when a check
-//! ran after it, and so on (gate 2; GEN-4).
+//! ran after it, and so on (gate 2; GEN-4). A tick cut short (a yield, the user's stop) is never
+//! "the last tick": the last FINISHED tick's report and check are carried, and each unfinished
+//! tick after it is named with what its record says it did (Q-278).
+
+use std::collections::BTreeMap;
 
 use goose_sdk_types::custom_requests::{
     LoopCadence, LoopRecord, LoopTickOutcome, LoopTickRecord, LoopVerdict,
@@ -14,9 +18,9 @@ use super::rules::{
     cadence_label, clock_time, goal_first_line, render_steps, LastNextStep, StepFacts,
 };
 
-/// How the question tick n−1 asked was resolved (read by the runner from `needs_you.v0`). The
-/// answer is quoted from the item itself, so the prompt never depends on a transcript compaction
-/// may have folded away.
+/// How the question the last finished tick asked was resolved (read by the runner from
+/// `needs_you.v0`). The answer is quoted from the item itself, so the prompt never depends on a
+/// transcript compaction may have folded away.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -37,6 +41,11 @@ pub struct PromptFacts {
     #[serde(default)]
     pub asked_resolution: Option<AskedResolution>,
     pub utc_offset_minutes: i32,
+    /// The name each chat a tick yielded to carries NOW, by session id, read when the prompt is
+    /// written: a chat renamed since the yield (a new chat's first-turn auto-name) is named as it
+    /// is. A chat that could not be read keeps the name the record holds from the yield.
+    #[serde(default)]
+    pub chat_names: BTreeMap<String, String>,
 }
 
 fn outcome_words(outcome: Option<&LoopTickOutcome>) -> &'static str {
@@ -53,26 +62,65 @@ fn outcome_words(outcome: Option<&LoopTickOutcome>) -> &'static str {
     }
 }
 
-/// The step facts of tick `n`, from the record and the tick before it.
-pub fn step_facts(
-    record: &LoopRecord,
-    prev: Option<&LoopTickRecord>,
-    working_dir: &str,
-) -> StepFacts {
+/// A tick cancelled before its turn ended — a yield to the user, or the user's stop — did not
+/// finish its work, so the next tick must not read it as "the last tick".
+pub fn unfinished(tick: &LoopTickRecord) -> bool {
+    matches!(
+        tick.outcome,
+        Some(LoopTickOutcome::Yielded { .. } | LoopTickOutcome::StoppedByYou)
+    )
+}
+
+/// The newest tick that ran to its end (`None` when none has), and the unfinished ticks after it,
+/// oldest first.
+pub fn last_finished(record: &LoopRecord) -> (Option<&LoopTickRecord>, &[LoopTickRecord]) {
+    let split = record
+        .ticks
+        .iter()
+        .rposition(|t| !unfinished(t))
+        .map_or(0, |i| i + 1);
+    let finished = split.checked_sub(1).and_then(|i| record.ticks.get(i));
+    (finished, &record.ticks[split..])
+}
+
+/// What `{last_next_step}` says at the loop's next tick: the next step named by the newest tick
+/// that reported, looking no further back than the last finished tick — an unfinished tick that
+/// never reported does not erase the step the finished tick before it named.
+pub fn last_next_step(record: &LoopRecord) -> LastNextStep {
+    let (finished, cut_short) = last_finished(record);
+    let reported = cut_short
+        .iter()
+        .rev()
+        .chain(finished)
+        .find_map(|t| t.report.as_ref().map(|r| (t.n, r.next_step.trim())));
+    match (reported, finished.or(record.ticks.last())) {
+        (Some((_, step)), _) if !step.is_empty() => LastNextStep::Named {
+            text: step.to_string(),
+        },
+        (Some((n, _)), _) => LastNextStep::NamedNone { prev: n },
+        (None, Some(tick)) => LastNextStep::NamedNone { prev: tick.n },
+        (None, None) => LastNextStep::First,
+    }
+}
+
+/// The step facts of the loop's next tick, from the record.
+pub fn step_facts(record: &LoopRecord, working_dir: &str) -> StepFacts {
     StepFacts {
         state_file: record.state_file.clone(),
         check: record.check.clone(),
         goal_first_line: goal_first_line(&record.goal),
-        last_next_step: match prev {
-            None => LastNextStep::First,
-            Some(prev) => match &prev.report {
-                Some(report) => LastNextStep::Named {
-                    text: report.next_step.clone(),
-                },
-                None => LastNextStep::NamedNone { prev: prev.n },
-            },
-        },
+        last_next_step: last_next_step(record),
         working_dir: working_dir.to_string(),
+    }
+}
+
+/// "tick 2", "ticks 2 and 3", "ticks 2, 3 and 4".
+fn tick_numbers(ticks: &[LoopTickRecord]) -> String {
+    let ns: Vec<String> = ticks.iter().map(|t| t.n.to_string()).collect();
+    match ns.split_last() {
+        Some((last, [])) => format!("tick {last}"),
+        Some((last, rest)) => format!("ticks {} and {last}", rest.join(", ")),
+        None => String::new(),
     }
 }
 
@@ -80,7 +128,6 @@ pub fn step_facts(
 /// is one).
 pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<String, String> {
     let hm = |t: &str| parse_time(t).and_then(|t| clock_time(t, facts.utc_offset_minutes));
-    let prev = record.ticks.last();
     let mut lines: Vec<String> = Vec::new();
 
     let mut head = format!(
@@ -100,7 +147,7 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
     ));
     lines.push("(Now · Next · Found · Done; keep it short enough to read in one go).".to_string());
 
-    let steps = render_steps(&record.steps, &step_facts(record, prev, &facts.working_dir));
+    let steps = render_steps(&record.steps, &step_facts(record, &facts.working_dir));
     if !steps.text.trim().is_empty() {
         lines.push(
             "What each tick does (the user's steps, as they left them in the dialog):".to_string(),
@@ -108,10 +155,16 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
         lines.push(steps.text.trim().to_string());
     }
 
-    if let Some(prev) = prev {
+    let (finished, cut_short) = last_finished(record);
+    if let Some(prev) = finished {
         let p = prev.n;
+        let which = if cut_short.is_empty() {
+            "Last tick"
+        } else {
+            "Last finished tick"
+        };
         let mut last = format!(
-            "Last tick ({p}, {}, {})",
+            "{which} ({p}, {}, {})",
             hm(&prev.started_at)?,
             outcome_words(prev.outcome.as_ref())
         );
@@ -130,7 +183,7 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
             (None, Some(LoopTickOutcome::NoReport)) => {
                 last.push_str(": it ended without calling loop_report.")
             }
-            // A yield, a question or the user's stop ended it; the line after says which.
+            // A question ended it; the line after says which.
             (None, _) => last.push('.'),
         }
         lines.push(last);
@@ -178,31 +231,69 @@ pub fn tick_prompt(record: &LoopRecord, n: u32, facts: &PromptFacts) -> Result<S
             }
         }
 
-        match &prev.outcome {
-            Some(LoopTickOutcome::Yielded { to_chat, .. }) => {
-                let at = prev
-                    .ended_at
-                    .as_deref()
-                    .ok_or_else(|| format!("tick {p} yielded but has no end time"))?;
-                lines.push(format!(
-                    "Tick {p} was stopped at {} for the user's turn in \"{to_chat}\"; its partial work is above.",
+        if let Some(LoopTickOutcome::Asked { question, .. }) = &prev.outcome {
+            let resolution = match &facts.asked_resolution {
+                Some(AskedResolution::Answered { answer }) => {
+                    format!("they answered: \"{answer}\"")
+                }
+                Some(AskedResolution::Dismissed) => "they dismissed it".to_string(),
+                Some(AskedResolution::Open) | None => "it is still open".to_string(),
+            };
+            lines.push(format!(
+                "Tick {p} asked the user \"{question}\"; {resolution}."
+            ));
+        }
+    } else if !cut_short.is_empty() {
+        lines.push("No tick of this loop has finished yet.".to_string());
+    }
+
+    for tick in cut_short {
+        let k = tick.n;
+        let at = tick
+            .ended_at
+            .as_deref()
+            .ok_or_else(|| format!("tick {k} was stopped but has no end time"))?;
+        let mut line = format!("Tick {k} ({}) did not finish: ", hm(&tick.started_at)?);
+        match &tick.outcome {
+            Some(LoopTickOutcome::Yielded {
+                to_session,
+                to_chat,
+                ..
+            }) => {
+                let chat = facts.chat_names.get(to_session).unwrap_or(to_chat);
+                line.push_str(&format!(
+                    "it was stopped at {} for the user's turn in \"{chat}\".",
                     hm(at)?
                 ));
             }
-            Some(LoopTickOutcome::Asked { question, .. }) => {
-                let resolution = match &facts.asked_resolution {
-                    Some(AskedResolution::Answered { answer }) => {
-                        format!("they answered: \"{answer}\"")
-                    }
-                    Some(AskedResolution::Dismissed) => "they dismissed it".to_string(),
-                    Some(AskedResolution::Open) | None => "it is still open".to_string(),
-                };
-                lines.push(format!(
-                    "Tick {p} asked the user \"{question}\"; {resolution}."
-                ));
-            }
-            _ => {}
+            _ => line.push_str(&format!("the user stopped it at {}.", hm(at)?)),
         }
+        if let Some(report) = &tick.report {
+            line.push_str(&format!(
+                " Before it stopped, it reported: \"{}\" — next step it named: \"{}\".",
+                report.summary.trim(),
+                report.next_step.trim()
+            ));
+        }
+        if tick.wrote.is_empty() {
+            line.push_str(" It wrote or edited no file outside the state file;");
+        } else {
+            let wrote: Vec<String> = tick.wrote.iter().map(|p| format!("`{p}`")).collect();
+            line.push_str(&format!(" It wrote or edited {};", wrote.join(", ")));
+        }
+        line.push_str(" any command it ran is in the conversation above.");
+        lines.push(line);
+    }
+    if !cut_short.is_empty() {
+        let own = if cut_short.len() == 1 {
+            "a tick of its own"
+        } else {
+            "ticks of their own"
+        };
+        lines.push(format!(
+            "Tick {n} carries on from there: what {} left unfinished is part of this tick's work, not {own}.",
+            tick_numbers(cut_short)
+        ));
     }
 
     if record.cadence == LoopCadence::SelfPaced {

@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "Sonraki tur şimdi başlıyor"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "yanıtından sonra"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "sıran bittikten sonra"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "senin tarafından çalıştırıldı"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "Mac'in uyandıktan sonra"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "devam ettirdikten sonra"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "Henüz hiçbir tur bitmedi."
   },

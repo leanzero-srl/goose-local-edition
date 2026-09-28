@@ -3083,6 +3083,21 @@
   "loops.now.startsNow": {
     "defaultMessage": "下一輪現在開始"
   },
+  "loops.origin.afterYourAnswer": {
+    "defaultMessage": "在你回答之後"
+  },
+  "loops.origin.afterYourTurn": {
+    "defaultMessage": "在你的回合之後"
+  },
+  "loops.origin.now": {
+    "defaultMessage": "由你執行"
+  },
+  "loops.origin.onWake": {
+    "defaultMessage": "在你的 Mac 喚醒之後"
+  },
+  "loops.origin.resume": {
+    "defaultMessage": "在你恢復之後"
+  },
   "loops.panel.noTicks": {
     "defaultMessage": "還沒有任何一輪結束。"
   },

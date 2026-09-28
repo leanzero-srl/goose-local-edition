@@ -12,7 +12,7 @@ use goose_sdk_types::custom_requests::{
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-use super::prompt::{tick_prompt, PromptFacts};
+use super::prompt::{last_next_step, tick_prompt, PromptFacts};
 use super::record::{self, parse_time, RawLoopValue};
 use super::rules::*;
 use super::{acp, seam, templates};
@@ -297,6 +297,59 @@ fn every_prompt_follows_the_fixture() {
         let got = tick_prompt(&record, case["n"].as_u64().unwrap() as u32, &facts)
             .unwrap_or_else(|e| panic!("{}: {e}", name(&case)));
         assert_eq!(got, case["expect"].as_str().unwrap(), "{}", name(&case));
+    }
+}
+
+#[test]
+fn the_next_ticks_last_step_follows_the_fixture() {
+    for case in cases("lastNextStep") {
+        let ticks: Vec<LoopTickRecord> = typed(&case["ticks"], &name(&case));
+        let record = LoopRecord {
+            ticks,
+            ..Default::default()
+        };
+        let want: LastNextStep = typed(&case["expect"], &name(&case));
+        assert_eq!(last_next_step(&record), want, "{}", name(&case));
+    }
+}
+
+/// Q-280: no template pastes the user's goal into a step. The goal reaches the model once, whole,
+/// under "Your goal (the user's words)"; a step that splices its first line mid-sentence reads
+/// "Look at what Count the files in … Change nothing. names" for a goal written as an instruction.
+#[test]
+fn no_template_splices_the_goal_into_a_step() {
+    let goals = [
+        "Count the files in /Users/mihai/loopwork with ls and report the count. Change nothing.",
+        "Watch the nightly build at https://ci.example.com/job/nightly and fix it when it goes red",
+        "make scripts/generate_users.js produce every problem class in notes/kickoff.md",
+        "Keep the README's install section in sync with package.json",
+    ];
+    for template in templates::all() {
+        assert!(
+            !template
+                .slots
+                .iter()
+                .any(|s| s == templates::SLOT_GOAL_FIRST_LINE),
+            "{:?} splices the goal into its steps",
+            template.id
+        );
+        for goal in goals {
+            let facts = StepFacts {
+                state_file: ".goose/loops/x/NOW.md".into(),
+                check: Some("pnpm test".into()),
+                goal_first_line: goal_first_line(goal),
+                last_next_step: LastNextStep::First,
+                working_dir: "/Users/mihai/work".into(),
+            };
+            let rendered = render_steps(&template.steps, &facts);
+            assert!(rendered.unknown.is_empty(), "{:?}", template.id);
+            assert!(
+                !rendered.text.contains(goal),
+                "{:?} rendered the goal inside a step:\n{}",
+                template.id,
+                rendered.text
+            );
+        }
     }
 }
 
