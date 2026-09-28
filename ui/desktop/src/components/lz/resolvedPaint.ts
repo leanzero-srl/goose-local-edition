@@ -145,7 +145,12 @@ export async function resolvedPaint(
   opts: { hover?: boolean; inherit?: { bg?: string; text?: string } } = {}
 ): Promise<ResolvedPaint> {
   const classes = Array.from(el.classList);
-  const compiled = (await design()).candidatesToCss(classes);
+  const system = await design();
+  const compiled = system.candidatesToCss(classes);
+  // Within a tier the STYLESHEET order decides, never the order of the class attribute: Q-247's
+  // `text-lz-meta text-lz-ink-3 text-lz-err` read as err here (the last class won) while the
+  // compiled CSS painted it ink-3.
+  const sheetOrder = new Map(system.getClassOrder(classes));
   const active =
     el.getAttribute('data-state') === 'active' ||
     el.getAttribute('aria-selected') === 'true' ||
@@ -156,7 +161,7 @@ export async function resolvedPaint(
     ring: null,
     missing: [],
   };
-  const applicable: Array<{ order: number; rule: string }> = [];
+  const applicable: Array<{ order: number; sheet: bigint; rule: string }> = [];
   classes.forEach((cls, i) => {
     const rule = compiled[i];
     if (rule == null) {
@@ -167,9 +172,9 @@ export async function resolvedPaint(
     if (v === 'other') return;
     if (v === 'hover:' && !opts.hover) return;
     if ((v === 'aria-selected:' || v === 'aria-current:' || v === 'data-[state=active]:') && !active) return;
-    applicable.push({ order: VARIANT_ORDER.indexOf(v), rule });
+    applicable.push({ order: VARIANT_ORDER.indexOf(v), sheet: sheetOrder.get(cls) ?? 0n, rule });
   });
-  applicable.sort((a, b) => a.order - b.order);
+  applicable.sort((a, b) => a.order - b.order || (a.sheet < b.sheet ? -1 : a.sheet > b.sheet ? 1 : 0));
   for (const { rule } of applicable) {
     const bg = /background-color:\s*([^;]+);/.exec(rule);
     if (bg) paint.bg = resolveExpr(bg[1], theme);

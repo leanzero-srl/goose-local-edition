@@ -105,6 +105,14 @@ Each step is ONE utility carrying size, weight, tracking and leading (`TYPE.disp
 tokens.ts adds the ink). Emphasis inside a step: `WEIGHT.medium` / `WEIGHT.semibold`
 (`font-lz-medium` / `font-lz-semibold`).
 
+**The base ink yields (Q-247).** `cx(TYPE.meta, TONE_TEXT.err)` paints err: the four
+`text-lz-ink*` are `@utility` rules that sort BEFORE every other text colour in the compiled CSS,
+so any colour an element names beside its TYPE ink wins, under every variant. The class attribute's
+order never decides — the stylesheet's does. Between two inks the later name wins (ink-3 over ink),
+so a line that wants a different ink uses the bare size utility with that ink. Ink is registered per
+namespace (`bg-`, `border-`, `ring-`, `fill-lz-ink*`), never as `--color-lz-ink*`, which would
+regenerate the plain alphabetical rule. `lz/inkYields.test.ts` refuses a regression.
+
 **Measured:** `font-medium`, `font-semibold`, `font-bold` and `font-normal` compile to NO rule in
 this app — the MCP theme registration sets `--font-weight-*` to `initial`. Every such class in
 the existing app is a silent no-op; the Studio never uses them. (Re-measured 2026-09-02 through

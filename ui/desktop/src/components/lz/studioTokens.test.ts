@@ -49,6 +49,8 @@ const SURFACE_TOKENS = [
   '--color-lz-phase-unloaded-line',
 ];
 
+const INK_TOKEN = /^--color-lz-ink(-\d)?$/;
+
 function luminance(hex: string): number {
   const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
   const lin = c.map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
@@ -74,9 +76,25 @@ describe('LeanZero Studio surfaces — the token contract in main.css', () => {
   });
 
   it('every surface token is registered as a Tailwind utility with a host-theme fallback', () => {
-    for (const name of SURFACE_TOKENS) {
+    for (const name of SURFACE_TOKENS.filter((t) => !INK_TOKEN.test(t))) {
       expect(registered[name], name).toBeDefined();
       expect(registered[name], name).toMatch(/^var\(/);
+    }
+  });
+
+  it('the inks register per namespace and their text utility is the yielding @utility (Q-247)', () => {
+    for (const name of SURFACE_TOKENS.filter((t) => INK_TOKEN.test(t))) {
+      const step = name.replace('--color-', '');
+      // a --color-lz-ink* key would also generate a plain text-lz-ink* that beats accent/err
+      expect(registered[name], name).toBeUndefined();
+      for (const ns of ['--background-color', '--border-color', '--ring-color', '--fill']) {
+        expect(registered[`${ns}-${step}`], `${ns}-${step}`).toMatch(
+          new RegExp(`^var\\(${name}, var\\(--color-text-`)
+        );
+      }
+      expect(css).toMatch(
+        new RegExp(`@utility text-${step} \\{\\s*--tw-sort: color;\\s*color: var\\(${name}, var\\(--color-text-`)
+      );
     }
   });
 

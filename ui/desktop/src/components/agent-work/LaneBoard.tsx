@@ -164,7 +164,7 @@ function LaneRow({
         </span>
         <span className="flex min-w-0 flex-col gap-1">
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className={cx(TYPE.meta, 'text-lz-ink-2')}>{role}</span>
+            <span className="text-lz-meta text-lz-ink-2">{role}</span>
             <span className="ml-auto flex shrink-0 items-center gap-2">
               {lane.model && <Chip node={node}>{lane.model}</Chip>}
               <span className="flex items-center gap-1.5">
@@ -176,7 +176,7 @@ function LaneRow({
                 <span className={TYPE.meta}>{lane.status}</span>
               </span>
               {lane.secs != null && (
-                <span className={cx(TYPE.meta, TNUM, 'text-lz-ink')}>
+                <span className={cx('text-lz-meta text-lz-ink', TNUM)}>
                   {fmtDuration(lane.secs * 1000)}
                 </span>
               )}

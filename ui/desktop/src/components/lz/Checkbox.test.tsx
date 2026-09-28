@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Checkbox } from './Checkbox';
 import { assertStudioClean } from './assertStudioClean';
+import { resolvedPaint, studioToken } from './resolvedPaint';
 
 function Controlled({ initial = false }: { initial?: boolean }) {
   const [on, setOn] = useState(initial);
@@ -57,4 +58,15 @@ describe('lz/Checkbox', () => {
     expect(onChange).not.toHaveBeenCalled();
     assertStudioClean(container);
   });
+
+  it('disabled AND checked is the solid neutral with an ink-3 tick — never the white tick on it', async () => {
+    render(<Checkbox checked label="Memory" onChange={() => {}} disabled />);
+    const mark = screen.getByRole('checkbox').querySelector<HTMLElement>('span[aria-hidden]')!;
+    expect(mark.querySelector('svg')).not.toBeNull();
+    for (const theme of ['light', 'dark'] as const) {
+      const paint = await resolvedPaint(mark, theme);
+      expect(paint.bg).toBe(studioToken('--color-lz-surface-2', theme));
+      expect(paint.text).toBe(studioToken('--color-lz-ink-3', theme));
+    }
+  }, 30_000);
 });

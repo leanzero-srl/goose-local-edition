@@ -441,10 +441,26 @@
   --color-lz-surface-2: var(--color-lz-surface-2, var(--color-background-secondary));
   --color-lz-border: var(--color-lz-border, var(--color-border-primary));
   --color-lz-border-strong: var(--color-lz-border-strong, var(--color-border-secondary));
-  --color-lz-ink: var(--color-lz-ink, var(--color-text-primary));
-  --color-lz-ink-2: var(--color-lz-ink-2, var(--color-text-secondary));
-  --color-lz-ink-3: var(--color-lz-ink-3, var(--color-text-tertiary));
-  --color-lz-ink-4: var(--color-lz-ink-4, var(--color-text-tertiary));
+  /* INK is registered per NAMESPACE (bg-, border-, ring-, fill-), never as --color-lz-ink*: a
+     --color-* key also generates a plain text-lz-ink* rule, and Tailwind orders one-declaration
+     colour utilities ALPHABETICALLY, so text-lz-ink* landed after text-lz-accent / text-lz-err and
+     painted over them (Q-247). The text-lz-ink* utilities are the @utility rules after this block. */
+  --background-color-lz-ink: var(--color-lz-ink, var(--color-text-primary));
+  --background-color-lz-ink-2: var(--color-lz-ink-2, var(--color-text-secondary));
+  --background-color-lz-ink-3: var(--color-lz-ink-3, var(--color-text-tertiary));
+  --background-color-lz-ink-4: var(--color-lz-ink-4, var(--color-text-tertiary));
+  --border-color-lz-ink: var(--color-lz-ink, var(--color-text-primary));
+  --border-color-lz-ink-2: var(--color-lz-ink-2, var(--color-text-secondary));
+  --border-color-lz-ink-3: var(--color-lz-ink-3, var(--color-text-tertiary));
+  --border-color-lz-ink-4: var(--color-lz-ink-4, var(--color-text-tertiary));
+  --ring-color-lz-ink: var(--color-lz-ink, var(--color-text-primary));
+  --ring-color-lz-ink-2: var(--color-lz-ink-2, var(--color-text-secondary));
+  --ring-color-lz-ink-3: var(--color-lz-ink-3, var(--color-text-tertiary));
+  --ring-color-lz-ink-4: var(--color-lz-ink-4, var(--color-text-tertiary));
+  --fill-lz-ink: var(--color-lz-ink, var(--color-text-primary));
+  --fill-lz-ink-2: var(--color-lz-ink-2, var(--color-text-secondary));
+  --fill-lz-ink-3: var(--color-lz-ink-3, var(--color-text-tertiary));
+  --fill-lz-ink-4: var(--color-lz-ink-4, var(--color-text-tertiary));
 
   /* THE accent = the existing action fill (white ink in both themes). */
   --color-lz-accent: var(--color-action-solid, #1d4ed8);
@@ -506,6 +522,32 @@
   --color-lz-node-4-ink: var(--color-node-4-ink, #0b0b0b);
   --color-lz-node-5-ink: var(--color-node-5-ink, #ffffff);
   --color-lz-node-6-ink: var(--color-node-6-ink, #0b0b0b);
+}
+
+/* THE BASE INK YIELDS (Q-247). A TYPE step carries its own ink (TYPE.meta = text-lz-meta
+   text-lz-ink-3) and a site adds a tone for an error line: cx(TYPE.meta, TONE_TEXT.err). Both are
+   colour utilities, and Tailwind orders same-property utilities by declaration COUNT (more first),
+   then ALPHABETICALLY — a theme-generated text-lz-ink* sat after text-lz-accent / text-lz-err and
+   painted every such error line grey. `--tw-sort: color` (stripped from the output) gives these four
+   a count of two, so they sort BEFORE every one-declaration colour utility: any colour an element
+   names beside its base ink wins, under every variant. Between two inks the later name still wins
+   (ink-3 over ink) — a site that wants a different ink uses the bare size utility with that ink.
+   lz/inkYields.test.ts refuses a regression against the real compiled CSS. */
+@utility text-lz-ink {
+  --tw-sort: color;
+  color: var(--color-lz-ink, var(--color-text-primary));
+}
+@utility text-lz-ink-2 {
+  --tw-sort: color;
+  color: var(--color-lz-ink-2, var(--color-text-secondary));
+}
+@utility text-lz-ink-3 {
+  --tw-sort: color;
+  color: var(--color-lz-ink-3, var(--color-text-tertiary));
+}
+@utility text-lz-ink-4 {
+  --tw-sort: color;
+  color: var(--color-lz-ink-4, var(--color-text-tertiary));
 }
 
 /* LeanZero Studio surfaces — light. Slate neutrals shared with leanzero.net. Every value is a
