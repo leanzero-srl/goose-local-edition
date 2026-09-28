@@ -9,7 +9,10 @@
 # 2026-09-28: two runs at once (an agent's and the coordinator's) shared target-win and each run's exit rm -rf'd
 # it under the other. Runs now SERIALIZE on a mkdir lock (atomic); a lock whose owner pid is dead is taken over.
 set -eu
-ref=${1:-HEAD}; repo=/Users/mihaiperdum/Projects/goose
+# The ref resolves in the CALLER's checkout (a scratch merge or an agent worktree), not the main tree —
+# `wincheck.sh HEAD` from a scratch merge used to check main's HEAD instead (2026-09-28).
+ref=$(git rev-parse --verify "${1:-HEAD}^{commit}") || { echo "windows check: cannot resolve ${1:-HEAD} here"; exit 2; }
+repo=/Users/mihaiperdum/Projects/goose
 LOCK=$repo/.wincheck.lock
 until mkdir $LOCK 2>/dev/null; do
   owner=$(cat $LOCK/pid 2>/dev/null || true)
