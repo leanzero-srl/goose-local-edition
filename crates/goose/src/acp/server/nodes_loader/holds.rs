@@ -86,6 +86,8 @@ impl Blocker {
 pub(crate) struct BuildHolder {
     pub pid: u32,
     pub what: String,
+    /// The way it holds, in the loader's words; `None` = its record names no way goose can start.
+    pub way: Option<String>,
 }
 
 pub(crate) struct Holds {
@@ -412,9 +414,10 @@ impl Holds {
             .other_records()?
             .into_iter()
             .find_map(|record| match record.kind {
-                HolderKind::SwarmRun { what, .. } => Some(BuildHolder {
+                HolderKind::SwarmRun { what, way, .. } => Some(BuildHolder {
                     pid: record.pid,
                     what,
+                    way: super::switch::WayRef::of_key(&way).map(|w| w.words()),
                 }),
                 HolderKind::Goosed { .. } => None,
             }))

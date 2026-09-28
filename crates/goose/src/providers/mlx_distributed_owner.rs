@@ -194,6 +194,30 @@ pub(crate) fn read_at(path: &Path, self_pid: u32, alive: impl Fn(u32) -> bool) -
     }
 }
 
+/// Whether the published engine answers: its `/v1/models` lists the published served id. `Err`
+/// carries what was read instead (not answering yet, another id, an unreadable body) — the one
+/// liveness measure every goosed applies to another window's split.
+pub async fn answering(engine: &PublishedEngine) -> Result<(), String> {
+    let url = format!("{}/v1/models", engine.base_url);
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("GET {url} failed ({e})"))?;
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("GET {url} body unreadable ({e})"))?;
+    match goose_sidecar::engine::parse_model_info(&body) {
+        Ok((Some(served), _, _)) if served == engine.served_model_id => Ok(()),
+        Ok((served, _, _)) => Err(format!(
+            "{url} lists {served:?}, not the published '{}'",
+            engine.served_model_id
+        )),
+        Err(e) => Err(format!("GET {url}: {e:#}")),
+    }
+}
+
 /// The base URL of the distributed engine THIS goosed supervises, when it serves.
 #[cfg(unix)]
 pub fn own_active_base_url() -> Option<String> {

@@ -1,4 +1,5 @@
 import type {
+  NodeRefusalFactsDto,
   NodesReadResponse_unstable,
   NodesResidencyResponse_unstable,
   ResolvedNodeDef,
@@ -39,6 +40,14 @@ export interface NodeSwap {
   target: SwapTarget;
   /** The engine's load phase ("makingRoom" | "starting" | "loading" | "warming" | …); null = none yet. */
   phase: string | null;
+  /** The target's measured loads (its way's Ready median); null = not measured yet. */
+  load: MeasuredLoad | null;
+}
+
+/** A node's measured loads: the median of its way's Ready loads and how many it is over. */
+export interface MeasuredLoad {
+  medianMs: number;
+  count: number;
 }
 
 /** The Mac key a placement uses for this Mac (components/nodes/model.ts `THIS_MAC`). */
@@ -87,7 +96,116 @@ export function nodeSwapOf(
     .map((node, i) => ({ node, i }))
     .sort((a, b) => rank(a.node) - rank(b.node) || a.i - b.i)[0];
   if (!found) return null;
-  return { target: targetOf(found.node), phase: loading.get(found.node.def.id) ?? null };
+  return {
+    target: targetOf(found.node),
+    phase: loading.get(found.node.def.id) ?? null,
+    load: measuredLoadOf(residency, found.node.def.id),
+  };
+}
+
+/** goosed's measured load of a node (`nodes/residency` `load`); null = not measured yet. */
+export function measuredLoadOf(
+  residency: NodesResidencyResponse_unstable,
+  nodeId: string
+): MeasuredLoad | null {
+  const load = residency.nodes.find((r) => r.node === nodeId)?.load;
+  return load ? { medianMs: load.medianMs, count: load.count } : null;
+}
+
+function nodeTarget(read: NodesReadResponse_unstable, id: string): SwapTarget {
+  const node = read.nodes.find((n) => n.def.id === id);
+  // A node the read no longer lists is named by its id — the one name there is.
+  return node ? targetOf(node) : { id, name: id, modelId: null, way: null };
+}
+
+/**
+ * A demand queued in the loader for one of `nodeIds` (design §8.7 `nodes.turnWaiting`): the
+ * loader's own words, and — when what it waits for is replies on a way the switch would stop — that
+ * way, named as the Nodes page names it (its first node), and how many replies are ahead.
+ */
+export interface NodeWait {
+  target: SwapTarget;
+  reason: string;
+  replies: { way: string; count: number } | null;
+  load: MeasuredLoad | null;
+}
+
+export function nodeWaitOf(
+  read: NodesReadResponse_unstable,
+  residency: NodesResidencyResponse_unstable,
+  nodeIds: readonly string[]
+): NodeWait | null {
+  const row = residency.nodes.find(
+    (r) => r.residency.kind === 'waiting' && nodeIds.includes(r.node)
+  );
+  if (!row || row.residency.kind !== 'waiting') return null;
+  const { reason, replies } = row.residency;
+  const wayNode = replies?.wayNodes?.find((id) => read.nodes.some((n) => n.def.id === id));
+  return {
+    target: nodeTarget(read, row.node),
+    reason,
+    replies: replies
+      ? { way: wayNode ? nodeTarget(read, wayNode).name : replies.way, count: replies.count }
+      : null,
+    load: measuredLoadOf(residency, row.node),
+  };
+}
+
+/** The loader refused its last demand for a node (§8.7 `nodes.refused*`, `nodes.loadFailed`). */
+export interface NodeRefusal {
+  target: SwapTarget;
+  reason: string;
+  facts: NodeRefusalFactsDto | null;
+}
+
+export function nodeRefusalOf(
+  read: NodesReadResponse_unstable,
+  residency: NodesResidencyResponse_unstable,
+  nodeId: string
+): NodeRefusal | null {
+  const row = residency.nodes.find((r) => r.node === nodeId);
+  if (row?.residency.kind !== 'refusedLastTime') return null;
+  return {
+    target: nodeTarget(read, nodeId),
+    reason: row.residency.reason,
+    facts: row.residency.facts ?? null,
+  };
+}
+
+/**
+ * A node the loader stopped to load another, as the chat it was on sees it (§8.7
+ * `nodes.displacedNotice` / `nodes.displacedFailed`): the chat that asked for the other node never
+ * gets it — it is where the swap went.
+ */
+export interface NodeDisplaced {
+  node: SwapTarget;
+  other: SwapTarget;
+  /** The chat whose turn asked for `other`, by its name; null = a Start on its card, or unread. */
+  chat: string | null;
+  /** `other` failed to load: the engine's words. */
+  failed: string | null;
+  /** `node`'s measured load — how long the next message's load back takes. */
+  load: MeasuredLoad | null;
+}
+
+export function displacedOf(
+  read: NodesReadResponse_unstable,
+  residency: NodesResidencyResponse_unstable,
+  nodeId: string,
+  sessionId: string | null
+): NodeDisplaced | null {
+  const entry = (residency.displaced ?? []).find((d) => d.node === nodeId);
+  if (!entry || (sessionId != null && entry.bySession === sessionId)) return null;
+  // goosed drops a notice the moment its node serves again; a read that raced it is not said.
+  const row = residency.nodes.find((r) => r.node === nodeId);
+  if (row?.residency.kind === 'serving' || row?.residency.kind === 'loading') return null;
+  return {
+    node: nodeTarget(read, nodeId),
+    other: nodeTarget(read, entry.forNode),
+    chat: entry.byChat ?? null,
+    failed: entry.failed ?? null,
+    load: measuredLoadOf(residency, nodeId),
+  };
 }
 
 /** The same model, however the two reads spell its case. */
@@ -134,6 +252,12 @@ export function routeNodeIds(
 
 const WAYS: ReadonlySet<string> = new Set<SwapWay>(['single', 'remoteSingle', 'split']);
 
+function isMeasuredLoad(value: unknown): value is MeasuredLoad {
+  if (value == null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.medianMs === 'number' && typeof v.count === 'number';
+}
+
 /** IPC is a trust boundary: a window's swap report is checked field by field. */
 export function isNodeSwap(value: unknown): value is NodeSwap {
   if (value == null || typeof value !== 'object') return false;
@@ -141,6 +265,7 @@ export function isNodeSwap(value: unknown): value is NodeSwap {
   const t = v.target as Record<string, unknown> | null | undefined;
   return (
     (v.phase === null || typeof v.phase === 'string') &&
+    (v.load == null || isMeasuredLoad(v.load)) &&
     t != null &&
     typeof t === 'object' &&
     typeof t.id === 'string' &&

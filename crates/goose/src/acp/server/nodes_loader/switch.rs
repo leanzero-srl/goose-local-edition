@@ -126,6 +126,15 @@ impl WayRef {
             WayKind::Split => "the split across your Macs".to_string(),
         }
     }
+
+    /// Where the way runs, in words ("this Mac").
+    pub fn mac_words(&self) -> String {
+        match self.kind {
+            WayKind::Local => "this Mac".to_string(),
+            WayKind::Peer => self.peer.as_deref().unwrap_or("a linked Mac").to_string(),
+            WayKind::Split => "your Macs".to_string(),
+        }
+    }
 }
 
 /// A peer's node id from its placement key (`link:<node>`), or the key as given.

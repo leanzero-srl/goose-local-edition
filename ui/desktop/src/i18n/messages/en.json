@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "The split serves {served}; the node wants {wanted}."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "The split serves {served}; {node} wants {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "The last mount failed: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "{size,select,none{Load {model} here} other{Load {model} here ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "The saved MLX model serves {served}; the node wants {wanted}."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "The saved MLX model serves {served}; {node} wants {wanted}."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6293,11 +6293,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "That did not work: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} was stopped for {other}, which failed to load: {words}. Your next message loads {node} back."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "Keep {node} loaded"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "Loads {node} back now, and never stops it for another node"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} was stopped for {other} in chat \"{chat}\". Your next message loads it back ({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{node} was stopped to start {other}. Your next message loads it back ({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "Use {next} instead"
+  },
   "nodes.displaces": {
     "defaultMessage": "Starting it stops {names}"
   },
   "nodes.duplicate": {
     "defaultMessage": "Duplicate"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "about {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "first load not measured yet"
   },
   "nodes.editInPool": {
     "defaultMessage": "Edit in your swarm pool"
@@ -6310,6 +6337,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "Always available · served by {provider}"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} is on {node} ({rank}): {primary} can't run: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "Retry {primary}"
   },
   "nodes.firstStart": {
     "defaultMessage": "First start not measured yet"
@@ -6376,6 +6409,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{{count,plural,one{{count, number} LM Studio device in your swarm config is not shown here} other{{count, number} LM Studio device in your swarm config are not shown here}}} other{{count,plural,one{{count, number} LM Studio devices in your swarm config is not shown here} other{{count, number} LM Studio devices in your swarm config are not shown here}}}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} failed to load: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} of {total} GB"
@@ -6623,6 +6659,9 @@
   "nodes.poolSection": {
     "defaultMessage": "Your swarm pool · used by swarm builds while “Swarm builds use” is “Your swarm pool”"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank,selectordinal,one{#st} two{#nd} few{#rd} other{#th}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "Your nodes could not be read"
   },
@@ -6634,6 +6673,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "Not removed"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "Can't load {node}: a swarm build is using {way}. It frees when the build ends."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "Can't load {node} on {mac}: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "Can't load {node}: {kept} is kept loaded on {mac}."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "Make room"
   },
   "nodes.remove": {
     "defaultMessage": "Remove"
@@ -6767,8 +6818,17 @@
   "nodes.title": {
     "defaultMessage": "Nodes"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "First load of {node}, not measured yet"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count,plural,one{Loads in about {duration} · # load measured} other{Loads in about {duration} · median of # loads}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "Loading {node} for this chat: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count,plural,one{Waiting for {way} to finish # reply, then loading {node} ({duration})} other{Waiting for {way} to finish # replies, then loading {node} ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "The change could not be saved"
@@ -6787,6 +6847,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "This Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "Chat → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "Chat → no node set"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "LeanZero MLX engine…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "Manage nodes…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "Nodes"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "Other models and providers…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "Cloud models and your endpoints"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "starts in about {duration}"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "Strategies"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "Run this chat on"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."

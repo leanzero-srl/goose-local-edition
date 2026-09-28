@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Bản chia đang phục vụ {served}; node muốn {wanted}."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "Bản chia đang phục vụ {served}; {node} cần {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Lần gắn gần nhất thất bại: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "Tải {model} tại đây{size, select, none {} other { ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "Mô hình MLX đã lưu phục vụ {served}; nút cần {wanted}."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "Mô hình MLX đã lưu phục vụ {served}; {node} cần {wanted}."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6293,11 +6293,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "Không thành công: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} đã bị dừng để chạy {other}, nhưng {other} không tải được: {words}. Tin nhắn tiếp theo của bạn sẽ tải lại {node}."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "Giữ {node} luôn được tải"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "Tải lại {node} ngay và không bao giờ dừng nó cho nút khác"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} đã bị dừng để chạy {other} trong cuộc trò chuyện \"{chat}\". Tin nhắn tiếp theo của bạn sẽ tải lại nó ({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{node} đã bị dừng để khởi động {other}. Tin nhắn tiếp theo của bạn sẽ tải lại nó ({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "Dùng {next} thay thế"
+  },
   "nodes.displaces": {
     "defaultMessage": "Khởi động nút này sẽ dừng {names}"
   },
   "nodes.duplicate": {
     "defaultMessage": "Nhân bản"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "khoảng {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "lần tải đầu chưa được đo"
   },
   "nodes.editInPool": {
     "defaultMessage": "Sửa trong nhóm của bầy"
@@ -6310,6 +6337,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "Luôn sẵn sàng · do {provider} phục vụ"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} đang chạy trên {node} ({rank}): {primary} không thể chạy: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "Thử lại {primary}"
   },
   "nodes.firstStart": {
     "defaultMessage": "Chưa đo lần khởi động đầu tiên"
@@ -6376,6 +6409,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{{count, number} thiết bị LM Studio trong cấu hình swarm của bạn không được hiển thị ở đây} other{{count, number} thiết bị LM Studio trong cấu hình swarm của bạn không được hiển thị ở đây}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} không tải được: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} trên {total} GB"
@@ -6623,6 +6659,9 @@
   "nodes.poolSection": {
     "defaultMessage": "Nhóm của bầy của bạn · được bản dựng swarm dùng khi “Bản dựng swarm dùng” là “Nhóm của bầy của bạn”"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {thứ #}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "Không đọc được các nút của bạn"
   },
@@ -6634,6 +6673,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "Chưa gỡ"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "Không thể tải {node}: một bản dựng swarm đang dùng {way}. Sẽ trống khi bản dựng kết thúc."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "Không thể tải {node} trên {mac}: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "Không thể tải {node}: {kept} được giữ tải trên {mac}."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "Giải phóng bộ nhớ"
   },
   "nodes.remove": {
     "defaultMessage": "Gỡ"
@@ -6767,8 +6818,17 @@
   "nodes.title": {
     "defaultMessage": "Nút"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "Lần tải đầu của {node}, chưa được đo"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, other {Tải trong khoảng {duration} · trung vị của # lần tải}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "Đang tải {node} cho cuộc trò chuyện này: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, other {Đang chờ {way} hoàn tất # phản hồi, rồi tải {node} ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Không lưu được thay đổi"
@@ -6787,6 +6847,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "Mac này"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "Trò chuyện → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "Trò chuyện → chưa đặt nút"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "Động cơ LeanZero MLX…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "Quản lý nút…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "Nút"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "Mô hình và nhà cung cấp khác…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "Mô hình đám mây và endpoint của bạn"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "khởi động trong khoảng {duration}"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "Chiến lược"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "Chạy cuộc trò chuyện này trên"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."

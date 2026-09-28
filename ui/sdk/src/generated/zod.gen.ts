@@ -6354,6 +6354,40 @@ export const zNodesBuildEligibilityResponse_unstable = z.object({
 export const zNodesResidencyRequest_unstable = z.record(z.unknown());
 
 /**
+ * Replies on a way the switch would stop, which the loader waits for before it stops it.
+ */
+export const zNodeRepliesWaitDto = z.object({
+    way: z.string(),
+    wayNodes: z.array(z.string()).optional().default([]),
+    count: z.number().int().gte(0)
+});
+
+/**
+ * What a refusal names, for the refusals the composer words (design §8.7).
+ */
+export const zNodeRefusalFactsDto = z.union([
+    z.object({
+        keptNode: z.string(),
+        kept: z.string(),
+        mac: z.string(),
+        kind: z.literal('keptLoaded')
+    }),
+    z.object({
+        way: z.string(),
+        kind: z.literal('heldByBuild')
+    }),
+    z.object({
+        mac: z.string(),
+        verdict: z.string(),
+        kind: z.literal('fit')
+    }),
+    z.object({
+        words: z.string(),
+        kind: z.literal('loadFailed')
+    })
+]);
+
+/**
  * One node's residency.
  */
 export const zNodeResidency = z.union([
@@ -6369,6 +6403,10 @@ export const zNodeResidency = z.union([
     }),
     z.object({
         reason: z.string(),
+        replies: z.union([
+            zNodeRepliesWaitDto,
+            z.null()
+        ]).optional(),
         kind: z.literal('waiting')
     }),
     z.object({
@@ -6380,6 +6418,10 @@ export const zNodeResidency = z.union([
     }),
     z.object({
         reason: z.string(),
+        facts: z.union([
+            zNodeRefusalFactsDto,
+            z.null()
+        ]).optional(),
         kind: z.literal('refusedLastTime')
     }),
     z.object({
@@ -6391,9 +6433,21 @@ export const zNodeResidency = z.union([
     })
 ]);
 
+/**
+ * The median of a node's measured Ready loads.
+ */
+export const zNodeLoadMedianDto = z.object({
+    medianMs: z.number().int().gte(0),
+    count: z.number().int().gte(0)
+});
+
 export const zNodeResidencyDto = z.object({
     node: z.string(),
-    residency: zNodeResidency
+    residency: zNodeResidency,
+    load: z.union([
+        zNodeLoadMedianDto,
+        z.null()
+    ]).optional()
 });
 
 /**
@@ -6424,6 +6478,28 @@ export const zNodesServingWayDto = z.object({
     ]).optional()
 });
 
+/**
+ * A node whose way the loader stopped to load another (design §8.7 `nodes.displacedNotice`),
+ * kept until that node serves again.
+ */
+export const zNodeDisplacedDto = z.object({
+    node: z.string(),
+    forNode: z.string(),
+    bySession: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    byChat: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    failed: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    atMs: z.number().int().gte(0)
+});
+
 export const zNodesResidencyResponse_unstable = z.object({
     nodes: z.array(zNodeResidencyDto),
     serving: z.union([
@@ -6434,7 +6510,12 @@ export const zNodesResidencyResponse_unstable = z.object({
         z.string(),
         z.null()
     ]).optional(),
-    loaderInstalled: z.boolean()
+    loaderInstalled: z.boolean(),
+    displaced: z.array(zNodeDisplacedDto).optional().default([]),
+    loadsError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 /**

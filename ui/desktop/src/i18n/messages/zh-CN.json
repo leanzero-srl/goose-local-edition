@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "拆分正在提供 {served}；节点需要 {wanted}。"
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "拆分正在提供 {served}；{node} 需要 {wanted}。"
   },
   "composerReadiness.failed": {
     "defaultMessage": "上次挂载失败:{error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "在此加载 {model}{size, select, none {} other {（{size} GB）}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "已保存的 MLX 模型提供 {served};该节点需要 {wanted}。"
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "已保存的 MLX 模型提供 {served}；{node} 需要 {wanted}。"
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6293,11 +6293,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "未能完成：{error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} 已为 {other} 停止，但 {other} 加载失败：{words}。你的下一条消息会重新加载 {node}。"
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "保持 {node} 已加载"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "立即重新加载 {node}，且不再为其他节点停止它"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} 已为聊天“{chat}”中的 {other} 停止。你的下一条消息会重新加载它（{duration}）。"
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "为启动 {other}，{node} 已停止。你的下一条消息会重新加载它（{duration}）。"
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "改用 {next}"
+  },
   "nodes.displaces": {
     "defaultMessage": "启动它会停止 {names}"
   },
   "nodes.duplicate": {
     "defaultMessage": "复制"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "约 {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "首次加载尚未测量"
   },
   "nodes.editInPool": {
     "defaultMessage": "在蜂群节点池中编辑"
@@ -6310,6 +6337,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "始终可用 · 由 {provider} 提供"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} 在 {node}（{rank}）上：{primary} 无法运行：{reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "重试 {primary}"
   },
   "nodes.firstStart": {
     "defaultMessage": "首次启动尚未测量"
@@ -6376,6 +6409,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{你的 swarm 配置中有 {count, number} 台 LM Studio 设备未在此显示} other{你的 swarm 配置中有 {count, number} 台 LM Studio 设备未在此显示}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} 加载失败：{words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} / {total} GB"
@@ -6623,6 +6659,9 @@
   "nodes.poolSection": {
     "defaultMessage": "你的蜂群节点池 · 当“swarm 构建使用”为“你的蜂群节点池”时，供 swarm 构建使用"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {第 # 个}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "无法读取你的节点"
   },
@@ -6634,6 +6673,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "未移除"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "无法加载 {node}：一个 swarm 构建正在使用 {way}。构建结束后即可释放。"
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "无法在 {mac} 上加载 {node}：{verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "无法加载 {node}：{kept} 在 {mac} 上保持加载。"
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "腾出空间"
   },
   "nodes.remove": {
     "defaultMessage": "移除"
@@ -6767,8 +6818,17 @@
   "nodes.title": {
     "defaultMessage": "节点"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "{node} 首次加载，尚未测量"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, other {约 {duration} 加载 · # 次加载的中位数}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "正在为此聊天加载 {node}：{phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, other {正在等待 {way} 完成 # 条回复，然后加载 {node}（{duration}）}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "此更改无法保存"
@@ -6787,6 +6847,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "这台 Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "聊天 → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "聊天 → 未设置节点"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "LeanZero MLX 引擎…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "管理节点…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "节点"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "其他模型和提供商…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "云模型和你的端点"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "约 {duration} 启动"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "策略"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "在此运行这个聊天"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "服务器可能正在启动或暂时不可用。"

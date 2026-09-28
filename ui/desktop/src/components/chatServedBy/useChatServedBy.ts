@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import type { NodeServedTurnDto } from '@aaif/goose-sdk';
 import { acpReadConfig } from '../../acp/config';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import {
@@ -84,23 +85,27 @@ function useMainEngineSnapshot(enabled: boolean): MlxEngineSnapshot | null {
 }
 
 /**
- * The node the router says served this `node:`/`strategy:` chat's last turn (design §8.5's
+ * The router's record of this `node:`/`strategy:` chat's last turn (design §8.5's
  * `nodes/servedLast`), read when the chat opens and each time a turn ends — an event, never a poll.
- * null = read, no turn served yet; undefined = not read, or the read failed (no node is then named).
+ * record null = read, no turn served yet; undefined = not read, or the read failed (no node is then
+ * named).
  */
 function useServedLast(
   sessionId: string | null,
   model: string | null,
   turnInFlight: boolean
-): string | null | undefined {
+): NodeServedTurnDto | null | undefined {
   const routed = model != null && (model.startsWith('node:') || model.startsWith('strategy:'));
-  const [read, setRead] = useState<{ sessionId: string; node: string | null } | null>(null);
+  const [read, setRead] = useState<{
+    sessionId: string;
+    record: NodeServedTurnDto | null;
+  } | null>(null);
   useEffect(() => {
     if (!routed || !sessionId || turnInFlight) return undefined;
     let alive = true;
     nodesServedLast(sessionId)
       .then((r) => {
-        if (alive) setRead({ sessionId, node: r.record?.node ?? null });
+        if (alive) setRead({ sessionId, record: r.record ?? null });
       })
       .catch(() => {
         if (alive) setRead(null);
@@ -109,7 +114,7 @@ function useServedLast(
       alive = false;
     };
   }, [routed, sessionId, turnInFlight]);
-  return read && read.sessionId === sessionId ? read.node : undefined;
+  return read && read.sessionId === sessionId ? read.record : undefined;
 }
 
 export interface ChatServing {
@@ -167,13 +172,18 @@ export function useChatServedBy(
   // goosed's nodes read — the loader's marks and the node names (Q-254, Q-255): the glance store's
   // one read per window, re-read on each engine change and while the loader is at work.
   const glanceNodes = useGlanceNodes();
-  const servedNode = useServedLast(sessionId, model, turnInFlight);
+  const servedRecord = useServedLast(sessionId, model, turnInFlight);
   const nodes: ChatNodesFacts | null = useMemo(
     () =>
       glanceNodes.kind === 'read'
-        ? { read: glanceNodes.read, residency: glanceNodes.residency, servedNode }
+        ? {
+            read: glanceNodes.read,
+            residency: glanceNodes.residency,
+            servedNode: servedRecord === undefined ? undefined : (servedRecord?.node ?? null),
+            servedRecord,
+          }
         : null,
-    [glanceNodes, servedNode]
+    [glanceNodes, servedRecord]
   );
   const nowServed = `${singleServedId(status) ?? ''}|${distributed ? (distributedServedId(distributed) ?? '') : ''}`;
   useEffect(() => setServedKey(nowServed), [nowServed]);

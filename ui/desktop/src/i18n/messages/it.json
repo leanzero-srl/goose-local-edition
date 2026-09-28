@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "La suddivisione serve {served}; il nodo vuole {wanted}."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "Lo split serve {served}; {node} vuole {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "L’ultimo montaggio non è riuscito: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "Carica {model} qui{size, select, none {} other { ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "Il modello MLX salvato serve {served}; il nodo vuole {wanted}."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "Il modello MLX salvato serve {served}; {node} vuole {wanted}."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6293,11 +6293,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "Non ha funzionato: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} è stato fermato per {other}, che non è riuscito a caricarsi: {words}. Il tuo prossimo messaggio ricarica {node}."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "Mantieni {node} caricato"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "Ricarica {node} ora e non lo ferma mai per un altro nodo"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} è stato fermato per {other} nella chat \"{chat}\". Il tuo prossimo messaggio lo ricarica ({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{node} è stato fermato per avviare {other}. Il tuo prossimo messaggio lo ricarica ({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "Usa {next} invece"
+  },
   "nodes.displaces": {
     "defaultMessage": "Avviarlo arresta {names}"
   },
   "nodes.duplicate": {
     "defaultMessage": "Duplica"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "circa {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "primo caricamento non ancora misurato"
   },
   "nodes.editInPool": {
     "defaultMessage": "Modifica nel pool dello sciame"
@@ -6310,6 +6337,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "Sempre disponibile · servito da {provider}"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} è su {node} ({rank}): {primary} non può funzionare: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "Riprova {primary}"
   },
   "nodes.firstStart": {
     "defaultMessage": "Primo avvio non ancora misurato"
@@ -6376,6 +6409,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{{count, number} dispositivo LM Studio della tua configurazione dello sciame non è mostrato qui} other{{count, number} dispositivi LM Studio della tua configurazione dello sciame non sono mostrati qui}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} non è riuscito a caricarsi: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} di {total} GB"
@@ -6623,6 +6659,9 @@
   "nodes.poolSection": {
     "defaultMessage": "Il tuo pool dello sciame · usato dalle build dello sciame finché «Le build dello sciame usano» è «Il tuo pool dello sciame»"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {#º}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "Impossibile leggere i tuoi nodi"
   },
@@ -6634,6 +6673,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "Non rimosso"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "Impossibile caricare {node}: una build swarm sta usando {way}. Si libera quando la build finisce."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "Impossibile caricare {node} su {mac}: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "Impossibile caricare {node}: {kept} resta caricato su {mac}."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "Fai spazio"
   },
   "nodes.remove": {
     "defaultMessage": "Rimuovi"
@@ -6767,8 +6818,17 @@
   "nodes.title": {
     "defaultMessage": "Nodi"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "Primo caricamento di {node}, non ancora misurato"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, one {Si carica in circa {duration} · # caricamento misurato} other {Si carica in circa {duration} · mediana di # caricamenti}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "Caricamento di {node} per questa chat: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, one {In attesa che {way} finisca # risposta, poi caricamento di {node} ({duration})} other {In attesa che {way} finisca # risposte, poi caricamento di {node} ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Impossibile salvare la modifica"
@@ -6787,6 +6847,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "Questo Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "Chat → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "Chat → nessun nodo"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "Motore LeanZero MLX…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "Gestisci nodi…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "Nodi"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "Altri modelli e provider…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "Modelli cloud e i tuoi endpoint"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "si avvia in circa {duration}"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "Strategie"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "Esegui questa chat su"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Il server potrebbe essere in fase di avvio o temporaneamente non disponibile."

@@ -98,11 +98,15 @@ pub fn residency_of(
         LoaderActivity::Loading { phase, .. } => NodeResidency::Loading {
             phase: phase.clone(),
         },
-        LoaderActivity::Waiting { reason, .. } => NodeResidency::Waiting {
+        LoaderActivity::Waiting {
+            reason, replies, ..
+        } => NodeResidency::Waiting {
             reason: reason.clone(),
+            replies: replies.clone(),
         },
-        LoaderActivity::RefusedLastTime { reason, .. } => NodeResidency::RefusedLastTime {
+        LoaderActivity::RefusedLastTime { reason, facts, .. } => NodeResidency::RefusedLastTime {
             reason: reason.clone(),
+            facts: facts.clone(),
         },
     };
     match serving {
@@ -142,6 +146,7 @@ pub fn residencies(
         .map(|node| NodeResidencyDto {
             node: node.def.id.clone(),
             residency: residency_of(node, serving, loader),
+            load: None,
         })
         .collect()
 }
@@ -171,8 +176,23 @@ pub async fn serving_now(this_mac_name: &str) -> ServingFacts {
         mlx_remote::RouteRecord::Absent | mlx_remote::RouteRecord::Stale(_) => {}
     }
     match owner::read() {
-        owner::OwnerRecord::Mine(engine) | owner::OwnerRecord::Other(engine) => {
-            return split_serving(&engine, owner::read_way())
+        owner::OwnerRecord::Mine(engine) => match own_split_readiness() {
+            SplitReadiness::Serving => return split_serving(&engine, owner::read_way(), None),
+            SplitReadiness::Loading(phase) => {
+                return split_serving(&engine, owner::read_way(), Some(phase))
+            }
+            // This goosed's run ended (failed, stopping, stopped): its record is withdrawn at the
+            // next status read, and it serves nothing meanwhile — this Mac's single is read.
+            SplitReadiness::Over => {}
+        },
+        owner::OwnerRecord::Other(engine) => {
+            // Another window supervises it: its engine answering is the only readiness this
+            // process can measure (the record is published at the start, before the ranks load).
+            let phase = owner::answering(&engine)
+                .await
+                .err()
+                .map(|_| STARTING.to_string());
+            return split_serving(&engine, owner::read_way(), phase);
         }
         owner::OwnerRecord::Unreadable { path, error } => {
             return ServingFacts::Unknown(format!(
@@ -189,9 +209,13 @@ pub async fn serving_now(this_mac_name: &str) -> ServingFacts {
 /// (`read_way` — each Mac's placement key in rank order, `local` for the owner's Mac), so a split
 /// node is matched on its Macs, link and model. A record from a goose that predates the way names
 /// no Macs (empty — unknown, never guessed); an unreadable way makes what serves unknown.
+/// `load_phase`: the split's phase while it has not answered yet (Q-271: a split publishes its
+/// record the moment its start is accepted, long before its ranks load — it is never serving
+/// then).
 pub fn split_serving(
     engine: &crate::providers::mlx_distributed_owner::PublishedEngine,
     way: Result<Option<goose_sdk_types::custom_requests::MlxPlacementKeyDto>, String>,
+    load_phase: Option<String>,
 ) -> ServingFacts {
     let macs = match way {
         Ok(Some(way)) => way.nodes,
@@ -210,8 +234,65 @@ pub fn split_serving(
         model_id: engine.model_id.clone(),
         served_model_id: engine.served_model_id.clone(),
         mac_names: engine.node_names.clone(),
-        load_phase: None,
+        load_phase,
     })
+}
+
+/// A way that runs but has not said it is loading yet (goose-sidecar `EngineLoad`'s own word).
+const STARTING: &str = "starting";
+
+/// How far THIS goosed's split has come, from its supervisor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SplitReadiness {
+    Serving,
+    Loading(String),
+    Over,
+}
+
+/// The supervisor's run state and its ranks' own phases, as a residency phase: `ready`/`serving`
+/// serve; before that the furthest-behind rank's phase (`loading` before `warming`), else
+/// `starting` (launched, no rank has reported a phase); a run recovering from a rank's memory
+/// death is `recovering`.
+#[cfg(unix)]
+pub fn split_readiness_of(
+    state: goose_sidecar::distributed::supervisor::RunState,
+    rank_phases: &[Option<&str>],
+) -> SplitReadiness {
+    use goose_sidecar::distributed::supervisor::RunState;
+    match state {
+        RunState::Ready | RunState::Serving => SplitReadiness::Serving,
+        RunState::Preflight | RunState::Starting => {
+            let has = |p: &str| rank_phases.contains(&Some(p));
+            let phase = if has("loading") {
+                "loading"
+            } else if has("warming") {
+                "warming"
+            } else {
+                STARTING
+            };
+            SplitReadiness::Loading(phase.to_string())
+        }
+        RunState::Recovering => SplitReadiness::Loading("recovering".to_string()),
+        RunState::Failed | RunState::Stopping | RunState::Stopped => SplitReadiness::Over,
+    }
+}
+
+#[cfg(unix)]
+fn own_split_readiness() -> SplitReadiness {
+    let status = goose_sidecar::distributed::global_manager().status();
+    let phases: Vec<Option<&str>> = status
+        .nodes
+        .iter()
+        .map(|n| n.load_phase.map(|p| p.as_str()))
+        .collect();
+    split_readiness_of(status.state, &phases)
+}
+
+/// No goosed on this platform supervises a split, so a record naming this process cannot be
+/// current: its run is over.
+#[cfg(not(unix))]
+fn own_split_readiness() -> SplitReadiness {
+    SplitReadiness::Over
 }
 
 async fn local_single(this_mac_name: &str) -> ServingFacts {
@@ -241,8 +322,13 @@ async fn local_single(this_mac_name: &str) -> ServingFacts {
     let status = goose_sidecar::engine::global_manager().status().await;
     match (status.state.as_str(), status.model_id.clone()) {
         ("mounting", Some(model)) => {
+            // Mounting is never serving (Q-271): the manager reports a load for every mounting
+            // state; a mount it has not measured yet is the process starting.
             let served = served_model_id(&settings, &model);
-            return way(model, served, status.load.map(|l| l.phase));
+            let phase = status
+                .load
+                .map_or_else(|| STARTING.to_string(), |l| l.phase);
+            return way(model, served, Some(phase));
         }
         ("running", Some(model)) => {
             let served = status

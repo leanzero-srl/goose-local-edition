@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Der Split stellt {served} bereit; der Knoten möchte {wanted}."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "Der Split liefert {served}; {node} will {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Das letzte Einbinden ist fehlgeschlagen: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "{model} hier laden{size, select, none {} other { ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "Das gespeicherte MLX-Modell bedient {served}; der Knoten erwartet {wanted}."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "Das gespeicherte MLX-Modell liefert {served}; {node} will {wanted}."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6293,11 +6293,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "Das hat nicht geklappt: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} wurde für {other} gestoppt, das nicht laden konnte: {words}. Deine nächste Nachricht lädt {node} wieder."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "{node} geladen lassen"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "Lädt {node} jetzt wieder und stoppt es nie für einen anderen Node"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} wurde für {other} im Chat „{chat}“ gestoppt. Deine nächste Nachricht lädt es wieder ({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{node} wurde gestoppt, um {other} zu starten. Deine nächste Nachricht lädt es wieder ({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "Stattdessen {next} verwenden"
+  },
   "nodes.displaces": {
     "defaultMessage": "Der Start stoppt {names}"
   },
   "nodes.duplicate": {
     "defaultMessage": "Duplizieren"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "etwa {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "erstes Laden noch nicht gemessen"
   },
   "nodes.editInPool": {
     "defaultMessage": "Im Schwarm-Pool bearbeiten"
@@ -6310,6 +6337,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "Immer verfügbar · bereitgestellt von {provider}"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} läuft auf {node} ({rank}): {primary} kann nicht laufen: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "{primary} erneut versuchen"
   },
   "nodes.firstStart": {
     "defaultMessage": "Erster Start noch nicht gemessen"
@@ -6376,6 +6409,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{{count, number} LM-Studio-Gerät aus deiner Schwarm-Konfiguration wird hier nicht angezeigt} other{{count, number} LM-Studio-Geräte aus deiner Schwarm-Konfiguration werden hier nicht angezeigt}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} konnte nicht laden: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} von {total} GB"
@@ -6623,6 +6659,9 @@
   "nodes.poolSection": {
     "defaultMessage": "Dein Schwarm-Pool · wird von Schwarm-Builds genutzt, solange „Schwarm-Builds nutzen“ „Dein Schwarm-Pool“ ist"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {#.}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "Deine Nodes konnten nicht gelesen werden"
   },
@@ -6634,6 +6673,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "Nicht entfernt"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "{node} kann nicht geladen werden: Ein Swarm-Build nutzt {way}. Es wird frei, wenn der Build endet."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "{node} kann auf {mac} nicht geladen werden: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "{node} kann nicht geladen werden: {kept} bleibt auf {mac} geladen."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "Platz schaffen"
   },
   "nodes.remove": {
     "defaultMessage": "Entfernen"
@@ -6767,8 +6818,17 @@
   "nodes.title": {
     "defaultMessage": "Nodes"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "Erstes Laden von {node}, noch nicht gemessen"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, one {Lädt in etwa {duration} · # Ladevorgang gemessen} other {Lädt in etwa {duration} · Median aus # Ladevorgängen}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "{node} wird für diesen Chat geladen: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, one {Warte, bis {way} # Antwort beendet, dann wird {node} geladen ({duration})} other {Warte, bis {way} # Antworten beendet, dann wird {node} geladen ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Die Änderung konnte nicht gespeichert werden"
@@ -6787,6 +6847,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "Dieser Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "Chat → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "Chat → kein Node festgelegt"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "LeanZero MLX-Engine…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "Nodes verwalten…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "Nodes"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "Andere Modelle und Anbieter…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "Cloud-Modelle und deine Endpunkte"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "startet in etwa {duration}"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "Strategien"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "Diesen Chat ausführen auf"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Der Server startet möglicherweise gerade oder ist vorübergehend nicht verfügbar."

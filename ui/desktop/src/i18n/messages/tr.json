@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Bölme {served} sunuyor; düğüm {wanted} istiyor."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "Bölme {served} sunuyor; {node} {wanted} istiyor."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Son takma başarısız oldu: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "{model} modelini burada yükle{size, select, none {} other { ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "Kayıtlı MLX modeli {served} sunuyor; düğüm {wanted} istiyor."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "Kayıtlı MLX modeli {served} sunuyor; {node} {wanted} istiyor."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6293,11 +6293,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "Bu işe yaramadı: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node}, {other} için durduruldu, ancak {other} yüklenemedi: {words}. Sonraki mesajınız {node} öğesini yeniden yükler."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "{node} yüklü kalsın"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "{node} öğesini şimdi yeniden yükler ve başka bir düğüm için asla durdurmaz"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node}, \"{chat}\" sohbetindeki {other} için durduruldu. Sonraki mesajınız onu yeniden yükler ({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{other} başlatmak için {node} durduruldu. Sonraki mesajınız onu yeniden yükler ({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "Bunun yerine {next} kullan"
+  },
   "nodes.displaces": {
     "defaultMessage": "Başlatınca {names} durur"
   },
   "nodes.duplicate": {
     "defaultMessage": "Çoğalt"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "yaklaşık {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "ilk yükleme henüz ölçülmedi"
   },
   "nodes.editInPool": {
     "defaultMessage": "Sürü havuzunuzda düzenleyin"
@@ -6310,6 +6337,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "Her zaman kullanılabilir · {provider} sunar"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role}, {node} üzerinde ({rank}): {primary} çalışamıyor: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "{primary} yeniden dene"
   },
   "nodes.firstStart": {
     "defaultMessage": "İlk başlatma henüz ölçülmedi"
@@ -6376,6 +6409,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{Swarm yapılandırmanızdaki {count, number} LM Studio cihazı burada gösterilmiyor} other{Swarm yapılandırmanızdaki {count, number} LM Studio cihazı burada gösterilmiyor}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} yüklenemedi: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} / {total} GB"
@@ -6623,6 +6659,9 @@
   "nodes.poolSection": {
     "defaultMessage": "Sürü havuzunuz · “Swarm derlemeleri şunu kullanır” “Sürü havuzunuz” olduğu sürece swarm derlemeleri tarafından kullanılır"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {#.}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "Düğümleriniz okunamadı"
   },
@@ -6634,6 +6673,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "Kaldırılmadı"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "{node} yüklenemiyor: bir swarm derlemesi {way} kullanıyor. Derleme bitince serbest kalır."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "{node}, {mac} üzerinde yüklenemiyor: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "{node} yüklenemiyor: {kept}, {mac} üzerinde yüklü tutuluyor."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "Yer aç"
   },
   "nodes.remove": {
     "defaultMessage": "Kaldır"
@@ -6767,8 +6818,17 @@
   "nodes.title": {
     "defaultMessage": "Düğümler"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "{node} ilk kez yükleniyor, henüz ölçülmedi"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, one {Yaklaşık {duration} içinde yüklenir · # yükleme ölçüldü} other {Yaklaşık {duration} içinde yüklenir · # yüklemenin medyanı}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "Bu sohbet için {node} yükleniyor: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, one {{way} # yanıtı bitirene kadar bekleniyor, ardından {node} yüklenecek ({duration})} other {{way} # yanıtı bitirene kadar bekleniyor, ardından {node} yüklenecek ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Değişiklik kaydedilemedi"
@@ -6787,6 +6847,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "Bu Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "Sohbet → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "Sohbet → düğüm yok"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "LeanZero MLX motoru…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "Düğümleri yönet…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "Düğümler"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "Diğer modeller ve sağlayıcılar…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "Bulut modelleri ve uç noktalarınız"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "yaklaşık {duration} içinde başlar"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "Stratejiler"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "Bu sohbeti şurada çalıştır"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."

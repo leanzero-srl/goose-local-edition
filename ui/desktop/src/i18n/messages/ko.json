@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "분할이 {served}을(를) 제공합니다. 노드는 {wanted}을(를) 원합니다."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "분할이 {served}을(를) 제공 중입니다. {node}에는 {wanted}이(가) 필요합니다."
   },
   "composerReadiness.failed": {
     "defaultMessage": "마지막 마운트에 실패했습니다: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "여기에서 {model} 로드{size, select, none {} other { ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "저장된 MLX 모델은 {served}을(를) 제공하지만 노드는 {wanted}을(를) 원합니다."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "저장된 MLX 모델은 {served}을(를) 제공합니다. {node}에는 {wanted}이(가) 필요합니다."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6293,11 +6293,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "실패했습니다: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{other}을(를) 위해 {node}이(가) 중지되었지만 로드에 실패했습니다: {words}. 다음 메시지에서 {node}을(를) 다시 로드합니다."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "{node} 로드 유지"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "{node}을(를) 지금 다시 로드하고, 다른 노드를 위해 중지하지 않습니다"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node}이(가) 채팅 \"{chat}\"의 {other}을(를) 위해 중지되었습니다. 다음 메시지에서 다시 로드합니다({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{other}을(를) 시작하기 위해 {node}이(가) 중지되었습니다. 다음 메시지에서 다시 로드합니다({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "대신 {next} 사용"
+  },
   "nodes.displaces": {
     "defaultMessage": "시작하면 {names}이(가) 중지됩니다"
   },
   "nodes.duplicate": {
     "defaultMessage": "복제"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "약 {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "첫 로드는 아직 측정되지 않음"
   },
   "nodes.editInPool": {
     "defaultMessage": "스웜 풀에서 편집"
@@ -6310,6 +6337,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "항상 사용 가능 · {provider}에서 제공"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role}은(는) {node}({rank})에서 실행 중: {primary}을(를) 실행할 수 없음: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "{primary} 다시 시도"
   },
   "nodes.firstStart": {
     "defaultMessage": "첫 시작은 아직 측정되지 않았습니다"
@@ -6376,6 +6409,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{swarm 구성의 LM Studio 장치 {count, number}개는 여기에 표시되지 않습니다} other{swarm 구성의 LM Studio 장치 {count, number}개는 여기에 표시되지 않습니다}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} 로드 실패: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} / {total} GB"
@@ -6623,6 +6659,9 @@
   "nodes.poolSection": {
     "defaultMessage": "내 스웜 풀 · “swarm 빌드 사용 대상”이 “내 스웜 풀”일 때 swarm 빌드가 사용합니다"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {#번째}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "노드를 읽을 수 없습니다"
   },
@@ -6634,6 +6673,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "제거되지 않음"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "{node}을(를) 로드할 수 없습니다: swarm 빌드가 {way}을(를) 사용 중입니다. 빌드가 끝나면 비워집니다."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "{mac}에서 {node}을(를) 로드할 수 없습니다: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "{node}을(를) 로드할 수 없습니다: {kept}이(가) {mac}에 로드 유지 중입니다."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "공간 확보"
   },
   "nodes.remove": {
     "defaultMessage": "제거"
@@ -6767,8 +6818,17 @@
   "nodes.title": {
     "defaultMessage": "노드"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "{node} 첫 로드, 아직 측정되지 않음"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, other {약 {duration} 안에 로드 · # 회 로드의 중앙값}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "이 채팅을 위해 {node} 로드 중: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, other {{way}이(가) 답변 # 개를 마칠 때까지 기다린 후 {node}을(를) 로드합니다({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "변경 사항을 저장할 수 없습니다"
@@ -6787,6 +6847,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "이 Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "채팅 → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "채팅 → 노드 없음"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "LeanZero MLX 엔진…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "노드 관리…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "노드"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "다른 모델 및 공급자…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "클라우드 모델과 내 엔드포인트"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "약 {duration} 후 시작"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "전략"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "이 채팅을 실행할 곳"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."
