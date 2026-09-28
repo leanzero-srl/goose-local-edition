@@ -113,10 +113,10 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
             chatrecall::EXTENSION_NAME,
             PlatformExtensionDef {
                 name: chatrecall::EXTENSION_NAME,
-                display_name: "Chat Recall",
+                display_name: "Chat Search",
                 description:
-                    "Search past conversations and load session summaries for contextual memory",
-                default_enabled: false,
+                    "Search your other chats' transcripts, read a stretch of one, and list them",
+                default_enabled: true,
                 unprefixed_tools: false,
                 hidden: false,
                 requires_human: false,

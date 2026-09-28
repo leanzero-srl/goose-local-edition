@@ -24,7 +24,7 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 14;
+pub const CURRENT_SCHEMA_VERSION: i32 = 15;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 const MILLISECOND_TIMESTAMP_THRESHOLD: i64 = 10_000_000_000;
@@ -913,6 +913,14 @@ impl SessionStorage {
                         warn!("Failed to import some legacy sessions: {}", e);
                     }
                 }
+                // Older messages are indexed after startup, never inside the migration's
+                // transaction: the 2026-09-28 history took 5.4 s, a startup lock that long would
+                // stall every other goose process opening the file.
+                if crate::session::transcript_index::backfill_below(&self.pool).await? > 0 {
+                    tokio::spawn(crate::session::transcript_index::backfill(
+                        self.pool.clone(),
+                    ));
+                }
                 Ok::<(), anyhow::Error>(())
             })
             .await?;
@@ -1022,6 +1030,7 @@ impl SessionStorage {
             .await?;
 
         crate::providers::inventory::create_tables(&mut tx).await?;
+        crate::session::transcript_index::create_objects(&mut tx).await?;
 
         tx.commit().await?;
 
@@ -1438,6 +1447,9 @@ impl SessionStorage {
                             .await?;
                     }
                 }
+            }
+            15 => {
+                crate::session::transcript_index::create_objects(tx).await?;
             }
             _ => {
                 anyhow::bail!("Unknown migration version: {}", version);
