@@ -369,12 +369,17 @@ mod read {
             }
             .into());
         }
-        let targets: Vec<HolderProcess> = holders
+        let mut targets: Vec<HolderProcess> = Vec::new();
+        for process in holders
             .iter()
             .filter_map(|h| h.verdict.as_ref().ok())
             .flatten()
-            .cloned()
-            .collect();
+        {
+            // Two listeners of one launcher share its chain; each pid is signalled once.
+            if !targets.iter().any(|t| t.pid == process.pid) {
+                targets.push(process.clone());
+            }
+        }
         let mut reaped = Vec::new();
         let mut left = targets;
         for (signal, name) in [(libc::SIGTERM, "SIGTERM"), (libc::SIGKILL, "SIGKILL")] {
