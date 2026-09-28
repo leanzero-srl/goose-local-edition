@@ -714,6 +714,12 @@ pub struct SessionStorage {
     pool: Pool<Sqlite>,
     initialized: tokio::sync::OnceCell<()>,
     session_dir: PathBuf,
+    /// The transcript-index backfill this store's first open started, when its watermark was above
+    /// zero. Held so a caller can wait for it and read which ranges it indexed; dropping the store
+    /// detaches it, as before.
+    startup_backfill: std::sync::Mutex<
+        Option<tokio::task::JoinHandle<Vec<crate::session::transcript_index::BackfillStep>>>,
+    >,
 }
 
 pub(crate) fn role_to_string(role: &Role) -> &'static str {
@@ -892,6 +898,7 @@ impl SessionStorage {
             pool: Self::create_pool(&db_path),
             initialized: tokio::sync::OnceCell::new(),
             session_dir,
+            startup_backfill: std::sync::Mutex::new(None),
         }
     }
 
@@ -917,14 +924,32 @@ impl SessionStorage {
                 // transaction: the 2026-09-28 history took 5.4 s, a startup lock that long would
                 // stall every other goose process opening the file.
                 if crate::session::transcript_index::backfill_below(&self.pool).await? > 0 {
-                    tokio::spawn(crate::session::transcript_index::backfill(
+                    let run = tokio::spawn(crate::session::transcript_index::backfill(
                         self.pool.clone(),
                     ));
+                    *self
+                        .startup_backfill
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(run);
                 }
                 Ok::<(), anyhow::Error>(())
             })
             .await?;
         Ok(&self.pool)
+    }
+
+    /// Wait for the backfill this store's first open started and return the steps it committed;
+    /// `None` when the open found nothing below the watermark and started none.
+    #[cfg(test)]
+    pub(crate) async fn startup_backfill(
+        &self,
+    ) -> Option<Vec<crate::session::transcript_index::BackfillStep>> {
+        let run = self
+            .startup_backfill
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()?;
+        Some(run.await.expect("the startup backfill panicked"))
     }
 
     async fn create_schema(pool: &Pool<Sqlite>) -> Result<()> {
