@@ -2181,9 +2181,11 @@ impl SessionStorage {
             )
             .await?;
 
+        let mut extension_data = original_session.extension_data;
+        crate::session_loops::agent_sync::strip_for_fork(&mut extension_data);
         let mut builder = session_manager
             .update(&new_session.id)
-            .extension_data(original_session.extension_data)
+            .extension_data(extension_data)
             .schedule_id(original_session.schedule_id)
             .recipe(original_session.recipe)
             .user_recipe_values(original_session.user_recipe_values);
@@ -4168,5 +4170,56 @@ mod tests {
         let loaded = sm.get_session("cache_id", false).await.unwrap();
         assert_eq!(loaded.usage, usage);
         assert_eq!(loaded.accumulated_usage, accumulated_usage);
+    }
+
+    /// Q-228 L3: a fork of a loop chat (an edit defaults to fork) carries no loop and no
+    /// `loop_report` tool; the original keeps both, and every other key is copied as before.
+    #[tokio::test]
+    async fn a_fork_of_a_loop_chat_carries_no_loop() {
+        use crate::session::extension_data::{EnabledExtensionsState, ExtensionState, TodoState};
+        use crate::session_loops::agent_sync::{loop_extension_config, testing};
+        use goose_sdk_types::custom_requests::LoopCadence;
+
+        let (_dir, sm, id) = testing::a_chat().await;
+        testing::store(&sm, &id, testing::a_loop(LoopCadence::SelfPaced, 2, false)).await;
+        let developer = crate::agents::ExtensionConfig::Platform {
+            name: "developer".into(),
+            description: "Write and edit files".into(),
+            display_name: Some("Developer".into()),
+            bundled: Some(true),
+            available_tools: vec![],
+        };
+        sm.set_extension_state(
+            &id,
+            &EnabledExtensionsState::new(vec![developer, loop_extension_config()]),
+        )
+        .await
+        .unwrap();
+        sm.set_extension_state(&id, &TodoState::new("keep me".into()))
+            .await
+            .unwrap();
+        let names = |data: &crate::session::extension_data::ExtensionData| -> Vec<String> {
+            EnabledExtensionsState::from_extension_data(data)
+                .expect("the extension set")
+                .extensions
+                .iter()
+                .map(|e| e.name())
+                .collect()
+        };
+
+        let fork = sm.copy_session(&id, "fork".into()).await.unwrap();
+
+        assert!(testing::stored(&sm, &fork.id).await.is_none());
+        assert_eq!(names(&fork.extension_data), vec!["developer".to_string()]);
+        assert_eq!(
+            TodoState::from_extension_data(&fork.extension_data).map(|t| t.content),
+            Some("keep me".to_string())
+        );
+        let original = sm.get_session(&id, false).await.unwrap();
+        assert_eq!(testing::stored(&sm, &id).await.unwrap().ticks.len(), 2);
+        assert_eq!(
+            names(&original.extension_data),
+            vec!["developer".to_string(), "loop".to_string()]
+        );
     }
 }

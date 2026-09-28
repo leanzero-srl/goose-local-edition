@@ -12,6 +12,7 @@
 //! cuts a tick or a check.
 
 pub mod acp;
+pub mod agent_sync;
 pub mod check;
 pub mod owner;
 pub mod prompt;
