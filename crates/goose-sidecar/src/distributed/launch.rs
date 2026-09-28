@@ -3353,6 +3353,10 @@ print("ok")
     /// shape every 3.0.51 split request had — reads only the system prompt on every step (E2E
     /// #3c: 31,385 of 58,379 / 58,774 / 59,600). And the state restored at the boundary is that
     /// prefix's own: the next logits from it equal a cold read of the whole prompt.
+    /// Q-342: the conversation's compaction is its next request. The summary request that extends
+    /// the chat's (same system, tools, messages and template switches, the instruction last)
+    /// reads the whole prefix; the transcript request E2E #3p sent (0 of 97,590) and the same
+    /// messages under a thinking switch the chat's requests did not render read nothing.
     #[test]
     fn a_tool_step_reads_the_prefix_before_the_turn_context_through_real_mlx_lm() {
         let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
@@ -3531,7 +3535,37 @@ restored, rest = cache.fetch_nearest_cache(provider.model_key, last)
 warm = provider.model(mx.array([rest]), cache=restored)[0, -1]
 cold = provider.model(mx.array([last]), cache=make_prompt_cache(provider.model))[0, -1]
 
+# Q-342: the auto-compaction at the next reply's start. The last step was answered in words, the
+# person's next message arrived, and goose sends ONE summary request, no tail named.
+INSTRUCTION = ("Task Context:\n- An llm context limit was reached when a user was in a working "
+               "session with an agent (you)\n- Generate a version of the messages above with only "
+               "the most verbose parts removed\n- Summarize now, as your reply: call no tool")
+answered = [*stable_messages(json.loads(json.dumps(named[-1][0])), named[-1][1]),
+            {"role": "assistant", "content": "The script ran: 414 users written."},
+            {"role": "user", "content": "Now plan the migration waves.\n" + INSTRUCTION}]
+transcript = [{"role": "system", "content": INSTRUCTION + "\n\n**Conversation History:**\n"
+               + "\n".join(f"[{m['role']}]: {m.get('content')}" for m in answered[1:-1])},
+              {"role": "user", "content": "Please summarize the conversation history provided in "
+               "the system prompt."}]
+
+def summarize(messages, tools, kwargs):
+    body = {"model": served, "messages": messages, "max_tokens": 3, "temperature": 0.0}
+    if tools:
+        body["tools"] = tools
+    if kwargs:
+        body["chat_template_kwargs"] = kwargs
+    status, reply = call("/v1/chat/completions", body)
+    assert status == 200, reply
+    return [reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]]
+
+compaction = {}
+compaction["extends_chat"] = summarize(answered, TOOLS, None)
+compaction["helper_switch"] = summarize(answered, TOOLS, {"enable_thinking": False})
+compaction["thinking_on"] = summarize(answered, TOOLS, {"enable_thinking": True})
+compaction["transcript"] = summarize(transcript, None, {"enable_thinking": False})
+
 print("GOOSE_TEST " + json.dumps({
+    "compaction": compaction,
     "tailed": tailed,
     "untailed": untailed,
     "system_end": system_end,
@@ -3610,6 +3644,45 @@ os._exit(0)
             "the state restored at the boundary continues exactly as a cold read of the prompt"
         );
         assert_eq!(seen["not_a_string"][0], 400, "{}", seen["not_a_string"]);
+
+        let compaction = |shape: &str| -> (u64, u64) {
+            serde_json::from_value(seen["compaction"][shape].clone())
+                .unwrap_or_else(|e| panic!("{shape}: {e}"))
+        };
+        let (prompt, read) = compaction("extends_chat");
+        assert_eq!(
+            read,
+            *bounds.last().unwrap(),
+            "Q-342: the summary request that extends the chat's request reads the conversation \
+             prefix its last call left: {}",
+            seen["compaction"]
+        );
+        assert!(
+            prompt - read < prompt / 3,
+            "and prefills only the answer and the instruction: {}",
+            seen["compaction"]
+        );
+        assert!(
+            compaction("helper_switch").1 >= read,
+            "Q-135: a request carrying tools renders thinking-off whether it pins the switch or \
+             not, so on this engine the helper's switch did not break #3p's compaction — its \
+             shape did: {}",
+            seen["compaction"]
+        );
+        assert_eq!(
+            compaction("thinking_on").1,
+            0,
+            "NEGATIVE CONTROL: a thinking switch the chat's requests did not render reads nothing \
+             — Qwen3.8 writes its reasoning-effort line into the system block — so the summary \
+             request carries the chat's own switches: {}",
+            seen["compaction"]
+        );
+        assert_eq!(
+            compaction("transcript").1,
+            0,
+            "NEGATIVE CONTROL: the transcript request (E2E #3p: 0 of 97,590) reads nothing: {}",
+            seen["compaction"]
+        );
     }
 
     /// Q-347 through the REAL mlx_lm 0.31.3 `LRUPromptCache`, at E2E #3p's measured sizes (the 27B

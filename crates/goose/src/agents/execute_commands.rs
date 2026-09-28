@@ -165,6 +165,7 @@ impl Agent {
     async fn handle_compact_command(&self, session_id: &str) -> Result<Option<Message>> {
         let manager = self.config.session_manager.clone();
         let session = manager.get_session(session_id, true).await?;
+        let summary_request = self.summary_request_for_next_reply(&session).await?;
         let conversation = session
             .conversation
             .ok_or_else(|| anyhow!("Session has no conversation"))?;
@@ -176,6 +177,7 @@ impl Agent {
             session_id,
             &conversation,
             true, // is_manual_compact
+            &summary_request,
         )
         .await?;
 
