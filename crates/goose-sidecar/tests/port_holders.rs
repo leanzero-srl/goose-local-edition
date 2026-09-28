@@ -1,7 +1,8 @@
 //! Q-240: a start that finds its port held names the holder — pid, command line, whether it is
 //! ours — and stops it only on proof it is an engine a goose sidecar started for this name and
 //! port whose starter is gone. Real processes stand in for every shape: a foreign listener, the
-//! leftover `uv` + engine pair of a dead goosed, and an engine whose starter is still alive.
+//! leftover `uv` + engine pair of a dead goosed, and an engine whose starter is still alive — and
+//! the same proof behind Unmount (Q-252), the one step (Q-251) and the status cache (Q-253).
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader};
@@ -10,6 +11,8 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use goose_sidecar::engine::{engine_marker, EngineSettings, MlxEngineManager};
+use goose_sidecar::port_holder::{listener_pids, HoldersCache};
 use goose_sidecar::{sidecar_marker, Sidecar, SidecarConfig, SIDECAR_MARKER_ENV};
 
 const FAKE_ENGINE: &str = r#"
@@ -242,4 +245,257 @@ fn stop_after(pids: &[u32], checks: impl FnOnce()) {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+}
+
+/// The single engine's manager on `port`, supervising nothing.
+fn manager_on(port: u16) -> MlxEngineManager {
+    let manager = MlxEngineManager::new();
+    manager.set_settings(EngineSettings {
+        port,
+        ..Default::default()
+    });
+    manager
+}
+
+/// A goose older than the marker, still running, and the unmarked engine it started in a process
+/// group of its own — the `goosed` → `uv` + python shape (Q-251). The starter runs THIS process's
+/// own program (its argv[0] is this test binary), which is how a goose starter is recognised: a
+/// `/bin/sh` under that name, job control on so the engine it backgrounds leads its own group.
+/// (A python starter cannot stand in: the hermit `python3` shim re-execs under its own argv[0].)
+/// Returns (starter, engine).
+fn older_goose_engine(port: u16) -> (u32, u32) {
+    let own = std::env::current_exe().unwrap();
+    let mut starter = Command::new("/bin/sh")
+        .arg0(&own)
+        .args([
+            "-c",
+            r#"set -m; python3 -c "$1" "$2" & echo $!; wait"#,
+            "sh",
+            FAKE_ENGINE,
+            &port.to_string(),
+        ])
+        .env_remove(SIDECAR_MARKER_ENV)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(starter.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let engine: u32 = line.trim().parse().unwrap();
+    wait_listening(port, engine);
+    let starter = starter.id();
+    let read = |pid| goose_sidecar::port_holder::read_process(pid).unwrap();
+    let (starter_read, engine_read) = (read(starter), read(engine));
+    assert_eq!(
+        starter_read.argv.first().map(String::as_str),
+        own.to_str(),
+        "the stand-in starter runs as this program"
+    );
+    assert_eq!(engine_read.parent, Some(starter), "the starter is its parent");
+    assert_ne!(
+        engine_read.group, starter_read.group,
+        "the engine leads a group of its own, as `uv` does"
+    );
+    assert_eq!(engine_read.marker, None, "an older goose marks nothing");
+    (starter, engine)
+}
+
+/// Q-252: another goose's live engine — marked for this very port, its starter alive — is named by
+/// Unmount with the step to quit that starter, and left serving. Before Q-252 Unmount's reclaim
+/// SIGTERMed every LISTEN pid on the port, this engine included.
+#[tokio::test]
+async fn unmount_leaves_another_gooses_live_engine_serving_and_names_its_starter() {
+    let port = free_port();
+    let (starter, engine) = orphaned_pair(port, Some(&engine_marker(port)), "new_group");
+
+    let outcome = manager_on(port).unmount().await;
+    let untouched = alive(engine) && alive(starter) && listening(port);
+    stop_after(&[starter, engine], || {
+        let refused = match outcome {
+            Ok(()) => panic!("Unmount stopped another goose's live engine {engine}"),
+            Err(refused) => refused.to_string(),
+        };
+        eprintln!("the refusal: {refused}");
+        assert!(untouched, "the engine or its starter was signalled");
+        assert!(refused.starts_with("Unmount stopped nothing: "), "{refused}");
+        assert!(refused.contains(&format!("pid {engine}")), "{refused}");
+        assert!(refused.contains("nothing was signalled"), "{refused}");
+        assert!(
+            refused.contains(&format!("quit what started it (pid {starter})")),
+            "the step: {refused}"
+        );
+        assert!(!refused.contains("kill"), "{refused}");
+    });
+}
+
+/// This goose's own leftover — the launcher and engine a dead goosed left, marked for this port —
+/// is what Unmount still reclaims: both pids stopped, the port free.
+#[tokio::test]
+async fn unmount_stops_this_gooses_own_leftover_pair_per_pid() {
+    let port = free_port();
+    let (launcher, engine) = orphaned_pair(port, Some(&engine_marker(port)), "same_group");
+
+    let outcome = manager_on(port).unmount().await;
+    let (engine_alive, launcher_alive) = (alive(engine), alive(launcher));
+    stop_after(&[launcher, engine], || {
+        if let Err(refused) = outcome {
+            panic!("{refused}");
+        }
+        assert!(!engine_alive, "the leftover engine {engine} still ran");
+        assert!(
+            !launcher_alive,
+            "the leftover launcher {launcher} still ran"
+        );
+        assert!(!listening(port));
+    });
+}
+
+/// Q-251: an engine a goose older than the marker mounted, that goose still running. Every surface
+/// says one step — restart that goose — from one derivation: the start's refusal (Q-240), a
+/// refused Unmount (Q-252), and the status the Engine panel reads (Q-249). Never `kill <pid>`.
+#[tokio::test]
+async fn an_older_gooses_engine_is_told_to_restart_that_goose_everywhere() {
+    let port = free_port();
+    let (starter, engine) = older_goose_engine(port);
+    let manager = manager_on(port);
+
+    let unmount = manager.unmount().await.map_err(|e| e.to_string());
+    let start = goose_sidecar::port_holder::claim_port(port, &engine_marker(port))
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("{e:#}"));
+    let status = manager.status().await;
+    let untouched = alive(engine) && alive(starter) && listening(port);
+    stop_after(&[starter, engine], || {
+        let step = format!("restart the goose that started it (pid {starter})");
+        for (surface, said) in [("Unmount", unmount), ("a start", start)] {
+            let said = match said {
+                Ok(_) => panic!("{surface} stopped the older goose's engine {engine}"),
+                Err(said) => said,
+            };
+            eprintln!("{surface}: {said}");
+            assert!(said.contains(&format!("pid {engine}")), "{said}");
+            assert!(said.contains(&format!("carries no {SIDECAR_MARKER_ENV}")), "{said}");
+            assert!(said.contains(&step), "{surface}'s step: {said}");
+            assert!(!said.contains("kill"), "{surface}: {said}");
+        }
+        let status_step = status.stray_listener_step.as_ref().unwrap_or_else(|| {
+            panic!("no step: {:?}", status.stray_listener_holders_error)
+        });
+        assert_eq!(status_step.kind, "restartGoose");
+        assert_eq!(status_step.pid, Some(starter));
+        assert!(status_step.text.contains(&step), "{}", status_step.text);
+        let holders = status.stray_listener_holders.as_ref().unwrap();
+        assert_eq!(holders[0].not_ours_rule.as_deref(), Some("noMarker"));
+        assert_eq!(holders[0].live_starter_pid, Some(starter));
+        assert!(untouched, "the older goose or its engine was signalled");
+    });
+}
+
+/// Q-253: between reads that change nothing, the holders are served from the cache; a change in
+/// what they were judged from — the starter a verdict named exits, a listener is replaced — reads
+/// them again, so a cached verdict never names a process that has gone.
+#[tokio::test]
+async fn cached_holders_are_read_again_when_what_they_named_is_gone() {
+    let port = free_port();
+    let marker = sidecar_marker("fake-engine", &format!("http://127.0.0.1:{port}"));
+    let cache = HoldersCache::new();
+    let (starter, engine) = orphaned_pair(port, Some(&marker), "new_group");
+
+    let full = std::time::Instant::now();
+    let first = cache.read(port, &marker).await.unwrap();
+    let full = full.elapsed();
+    let cached = std::time::Instant::now();
+    let second = cache.read(port, &marker).await.unwrap();
+    let cached = cached.elapsed();
+    eprintln!("a full read took {full:?}, a cached one {cached:?}");
+    let reads_while_unchanged = cache.full_reads();
+
+    // The starter the verdict names exits: the engine is re-parented to init, and now ours.
+    stop(&[starter]);
+    while alive(starter) {
+        std::thread::sleep(goose_sidecar::GRACE_TICK);
+    }
+    let after_starter = cache.read(port, &marker).await.unwrap();
+    let reads_after_starter = cache.full_reads();
+
+    // The listener itself is replaced on the same port.
+    stop(&[engine]);
+    while listening(port) {
+        std::thread::sleep(goose_sidecar::GRACE_TICK);
+    }
+    let mut replacement = Command::new("python3")
+        .args(["-c", FAKE_ENGINE, &port.to_string()])
+        .spawn()
+        .unwrap();
+    let replacement_pid = replacement.id();
+    wait_listening(port, replacement_pid);
+    let after_replace = cache.read(port, &marker).await.unwrap();
+    let reads_after_replace = cache.full_reads();
+
+    stop_after(&[starter, engine, replacement_pid], || {
+        assert_eq!(first, second, "an unchanged port serves the same facts");
+        assert_eq!(reads_while_unchanged, 1, "the second read was served cached");
+        assert_eq!(
+            first[0].verdict.as_ref().unwrap_err().live_starter.as_ref().map(|s| s.pid),
+            Some(starter)
+        );
+        assert_eq!(reads_after_starter, 2, "the starter's exit read them again");
+        assert!(
+            after_starter[0].verdict.is_ok(),
+            "its starter gone, the engine is this goose's leftover: {}",
+            after_starter[0]
+        );
+        assert_eq!(reads_after_replace, 3, "a new listener read them again");
+        assert_eq!(after_replace.len(), 1);
+        assert_eq!(after_replace[0].pid, replacement_pid, "never the gone {engine}");
+    });
+    replacement.wait().unwrap();
+}
+
+/// The in-process listener read answers what lsof answers: this process's own listener, not a
+/// client connection to it (the negative control), and nothing once it closes.
+#[tokio::test]
+async fn listener_pids_agree_with_lsof() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut client = Command::new("python3")
+        .args([
+            "-c",
+            "import socket, sys, time; s = socket.create_connection(('127.0.0.1', int(sys.argv[1]))); \
+             print('connected', flush=True); time.sleep(600)",
+            &port.to_string(),
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(client.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let (_accepted, _) = listener.accept().unwrap();
+    let client_pid = client.id();
+
+    let libproc = listener_pids(port).unwrap();
+    let lsof = String::from_utf8(
+        Command::new(goose_sidecar::resolve_lsof().unwrap())
+            .args(["-ti", &format!("TCP:{port}"), "-sTCP:LISTEN"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let lsof: Vec<u32> = lsof.split_whitespace().map(|p| p.parse().unwrap()).collect();
+    drop(listener);
+    let closed = listener_pids(port).unwrap();
+    stop_after(&[client_pid], || {
+        assert_eq!(libproc, vec![std::process::id()]);
+        assert_eq!(libproc, lsof);
+        assert!(!libproc.contains(&client_pid), "a client is no listener");
+        assert_eq!(closed, Vec::<u32>::new());
+    });
+    client.wait().unwrap();
 }

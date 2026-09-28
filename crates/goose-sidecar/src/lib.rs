@@ -1030,7 +1030,10 @@ pub(crate) async fn listening_pids(port: u16) -> Result<Vec<u32>> {
 /// Measured on macOS 26.6 (lsof 4.91): no listener → exit 1 with empty stdout AND stderr; a
 /// failed lsof (an illegal option) → exit 1 WITH stderr. `-t` implies `-w`, so a warning never
 /// lands on stderr of an answered run.
-fn listening_pids_of(lsof: &std::path::Path, output: &std::process::Output) -> Result<Vec<u32>> {
+pub(crate) fn listening_pids_of(
+    lsof: &std::path::Path,
+    output: &std::process::Output,
+) -> Result<Vec<u32>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     match output.status.code() {

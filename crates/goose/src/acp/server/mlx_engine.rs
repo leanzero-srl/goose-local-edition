@@ -8,7 +8,7 @@ use crate::config::ConfigError;
 use crate::providers::mlx_serving_intent::{self, IntentKind, IntentRecord, ServingIntent};
 use goose_sidecar::engine::{
     expand_tilde, global_manager, EngineLoad, EngineSettings, MlxEngineManager, ModelProfile,
-    MountRefused, StrayListenerHolder, ThinkingMode,
+    MountRefused, StrayListenerHolder, StrayListenerStep, ThinkingMode,
 };
 use goose_sidecar::fit::{FitVerdict, AVAILABLE_MARGIN_RATIO};
 use goose_sidecar::hf::{self, DownloadTracker};
@@ -201,9 +201,10 @@ pub(super) fn load_engine_settings() -> Result<EngineSettings, agent_client_prot
 /// `goose serve`'s exit path for the engine: stop the sidecar THIS goosed supervises (the
 /// sidecar's own SIGTERM, grace window, proven group kill, then the port is released) and
 /// nothing else — a listener on the port the manager does not supervise is somebody else's
-/// at exit and is left alone; the explicit Unmount is the reclaim for that case. Gated on
-/// the manager's reported state rather than on the port, so a foreign engine on the port
-/// is never killed by goosed quitting.
+/// at exit and is left alone; the explicit Unmount is the reclaim for that case, and it too stops
+/// only what the ownership proof calls this goose's own (Q-252). Gated on the manager's reported
+/// state rather than on the port, so a foreign engine on the port is never killed by goosed
+/// quitting.
 pub(super) async fn shutdown_supervised_engine() -> String {
     let manager = global_manager();
     let status = manager.status().await;
@@ -218,10 +219,12 @@ pub(super) async fn shutdown_supervised_engine() -> String {
                 .pid
                 .map(|pid| pid.to_string())
                 .unwrap_or_else(|| "not yet spawned".to_string());
-            manager.unmount().await;
-            format!(
-                "engine '{model}' ({state}, pid {pid}) on port {port}: SIGTERM, grace, proven group kill, port released"
-            )
+            match manager.unmount().await {
+                Ok(()) => format!(
+                    "engine '{model}' ({state}, pid {pid}) on port {port}: SIGTERM, grace, proven group kill, port released"
+                ),
+                Err(refused) => format!("engine '{model}' ({state}, pid {pid}): {refused}"),
+            }
         }
         state => format!(
             "nothing supervised (state '{state}'); any listener on the engine port is not this goosed's and is left alone"
@@ -468,6 +471,7 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
             .stray_listener_holders
             .map(|holders| holders.into_iter().map(stray_holder_to_dto).collect()),
         stray_listener_holders_error: status.stray_listener_holders_error,
+        stray_listener_step: status.stray_listener_step.map(stray_step_to_dto),
         probe_error: status.probe_error,
         gate_message: status.gate_message,
         gate_verdict: status.gate_verdict,
@@ -502,6 +506,15 @@ fn stray_holder_to_dto(holder: StrayListenerHolder) -> MlxStrayListenerHolderDto
         not_ours_reason: holder.not_ours_reason,
         live_starter_pid: holder.live_starter_pid,
         live_starter_argv: holder.live_starter_argv,
+    }
+}
+
+fn stray_step_to_dto(step: StrayListenerStep) -> MlxStrayListenerStepDto {
+    MlxStrayListenerStepDto {
+        kind: step.kind,
+        pid: step.pid,
+        pids: step.pids,
+        text: step.text,
     }
 }
 
@@ -738,7 +751,9 @@ async fn core_unmount(
     by: EngineStopper,
 ) -> Result<EmptyResponse, agent_client_protocol::Error> {
     *ENGINE_STOPPED_BY.lock().unwrap_or_else(|e| e.into_inner()) = Some(by);
-    global_manager().unmount().await;
+    // A port held by something the ownership proof does not call this goose's is a named
+    // refusal (Q-252): each holder, the rule it failed and the one next step.
+    global_manager().unmount().await.invalid_params_err()?;
     Ok(EmptyResponse {})
 }
 

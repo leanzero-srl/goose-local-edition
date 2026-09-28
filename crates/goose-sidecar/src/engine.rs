@@ -22,9 +22,10 @@ use crate::machine::{
     self, LoadClaim, LoadHolder, LoadLock, LoadLockAttempt, LoadLockHeld, OtherEngine,
 };
 use crate::model_identity::{NodeModel, ServedNames};
+use crate::port_holder;
 use crate::{
-    listening_pids, measure, port_has_listener, sidecar_marker, MemoryReading, PortHolder, Sidecar,
-    SidecarConfig, StartCancel, StartCancelled, StartupWatch, GIB,
+    measure, port_has_listener, sidecar_marker, MemoryReading, PortHolder, Sidecar, SidecarConfig,
+    StartCancel, StartCancelled, StartupWatch, GIB,
 };
 
 /// Milliseconds a load spent in each phase the engine showed. A phase it never showed is absent.
@@ -770,8 +771,9 @@ pub fn engine_marker(port: u16) -> String {
 /// anyway would probe THAT listener as our readiness and report `Running` for a child that
 /// then dies on the bind. The refusal names every holder — pid, command line, and why it is not
 /// this goose's (Q-240); a holder PROVEN ours (an engine this sidecar started whose goosed is
-/// gone, `port_holder::ownership_proof`) is no refusal: the start stops it per pid. `unmount`
-/// reclaims the port from whatever listens on it; a mount after that proceeds.
+/// gone, `port_holder::ownership_proof`) is no refusal: the start stops it per pid. The one next
+/// step is `port_holder::next_step`'s (Q-251) — an Unmount reclaims only what that proof calls
+/// ours (Q-252), so it is never the step for a holder that is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnsupervisedListenerError {
     pub port: u16,
@@ -781,24 +783,22 @@ pub struct UnsupervisedListenerError {
 
 impl std::fmt::Display for UnsupervisedListenerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "port {} has an unsupervised listener", self.port)?;
-        match &self.holders {
-            Ok(holders) => write!(
-                f,
-                ": {}",
-                holders
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            )?,
-            Err(why) => write!(f, " and who holds it could not be read ({why})")?,
-        }
-        write!(
-            f,
-            " — nothing was signalled; stop it, or Unmount, which reclaims the port from whatever \
-             listens on it"
-        )
+        let port = self.port;
+        write!(f, "port {port} has an unsupervised listener")?;
+        let step = match &self.holders {
+            Ok(holders) => {
+                write!(f, ": {}", port_holder::named_holders(holders))?;
+                port_holder::next_step(holders).map(|step| step.to_string())
+            }
+            Err(why) => {
+                write!(f, " and who holds it could not be read ({why})")?;
+                None
+            }
+        };
+        let step = step.unwrap_or_else(|| {
+            format!("find it with `lsof -nP -iTCP:{port} -sTCP:LISTEN`, stop it, then start again")
+        });
+        write!(f, " — nothing was signalled; {step}")
     }
 }
 
@@ -811,7 +811,7 @@ async fn read_port_holders(
 ) -> std::result::Result<Vec<PortHolder>, String> {
     #[cfg(unix)]
     {
-        crate::port_holder::inspect_port(port, marker)
+        port_holder::inspect_port(port, marker)
             .await
             .map_err(|e| format!("{e:#}"))
     }
@@ -821,6 +821,34 @@ async fn read_port_holders(
         Err("this platform cannot read a port's listeners".to_string())
     }
 }
+
+/// An Unmount that supervised nothing on the port, and whose reclaim `port_holder::claim_port`
+/// refused (Q-252): the holders are not proven this goose's own leftover — another goose's live
+/// engine, a terminal's, one older than the marker — or they could not be read. Nothing was
+/// signalled; the refusal names each holder and the one next step.
+#[derive(Debug)]
+pub struct UnmountRefused {
+    pub port: u16,
+    /// A start in flight was stopped before the reclaim was refused.
+    pub stopped_a_start: bool,
+    pub why: anyhow::Error,
+}
+
+impl std::fmt::Display for UnmountRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.stopped_a_start {
+            write!(
+                f,
+                "Unmount stopped the engine start in flight, but port {} is not freed: {:#}",
+                self.port, self.why
+            )
+        } else {
+            write!(f, "Unmount stopped nothing: {:#}", self.why)
+        }
+    }
+}
+
+impl std::error::Error for UnmountRefused {}
 
 /// One LISTEN pid on the engine port while this manager supervises nothing (Q-249): what the
 /// Engine panel names beside `stray_listener_port` — the same facts [`UnsupervisedListenerError`]
@@ -837,9 +865,36 @@ pub struct StrayListenerHolder {
     /// full, with its pids and values.
     pub not_ours_rule: Option<String>,
     pub not_ours_reason: Option<String>,
-    /// When the reason is that what started it is alive: that process — the one to quit.
+    /// When what started it is alive and names the step: that process — the goose (or shell) to
+    /// quit under `liveStarter`, the older goose to restart under `noMarker` (Q-251).
     pub live_starter_pid: Option<u32>,
     pub live_starter_argv: Option<Vec<String>>,
+}
+
+/// The one next step for the port's holders — `port_holder::next_step`, the same derivation a
+/// refused Mount, a refused Unmount and the swarm's events word it from (Q-251).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrayListenerStep {
+    /// `start` (every holder is this goose's own leftover: Run it or Unmount stops it) |
+    /// `quitStarter` | `restartGoose` | `otherPort` | `kill`.
+    pub kind: String,
+    /// The starter to quit or restart.
+    pub pid: Option<u32>,
+    /// For `kill`: the pids no goose runs, to stop.
+    pub pids: Vec<u32>,
+    /// The step in the backend's own words, as the refusals say it.
+    pub text: String,
+}
+
+impl From<&port_holder::NextStep> for StrayListenerStep {
+    fn from(step: &port_holder::NextStep) -> Self {
+        Self {
+            kind: step.kind().to_string(),
+            pid: step.pid(),
+            pids: step.kill_pids().to_vec(),
+            text: step.to_string(),
+        }
+    }
 }
 
 impl From<&PortHolder> for StrayListenerHolder {
@@ -948,13 +1003,17 @@ pub struct EngineStatus {
     pub gate_message: Option<String>,
     pub gate_verdict: Option<String>,
     /// Set when the manager supervises nothing but SOMETHING already listens on the
-    /// configured port — an engine orphaned by a previous goosed. `unmount` reclaims it.
+    /// configured port — an engine orphaned by a previous goosed, or anyone else's. `unmount`
+    /// reclaims it only when every holder is proven this goose's own leftover (Q-252).
     pub stray_listener_port: Option<u16>,
     /// Who holds `stray_listener_port`, read while no mount is in flight (Q-249): every LISTEN
     /// pid with its verdict. `None` when the port is not stray, while a mount is in flight, or
     /// exactly when `stray_listener_holders_error` says why they could not be read.
     pub stray_listener_holders: Option<Vec<StrayListenerHolder>>,
     pub stray_listener_holders_error: Option<String>,
+    /// The one next step for `stray_listener_holders` (Q-251); `None` exactly when they are
+    /// `None` or name no holder.
+    pub stray_listener_step: Option<StrayListenerStep>,
     /// Free pages plus reclaimable file cache (`memory::measure`); 0 exactly when
     /// `memory_error` says the measurement failed.
     pub available_memory_gb: f64,
@@ -1106,50 +1165,24 @@ fn sidecar_spawn_env() -> Vec<(String, String)> {
     ]
 }
 
-/// Terminate whatever LISTENS on `port` — per-pid (never a group: the orphan's group is not
-/// provably ours), SIGTERM then SIGKILL. Reaching for `lsof` is deliberate: the orphan is not
-/// our child, so there is no handle; the port is OUR configured port, which is the authority
-/// to reclaim it. Only LISTEN sockets are targeted — a client connection to the port (goosed's
-/// own probe pool) is not an engine.
-async fn reclaim_port(port: u16) {
-    let pids = match listening_pids(port).await {
-        Ok(pids) => pids,
-        Err(e) => {
-            tracing::warn!(port, error = %e, "reclaim: lsof unavailable; port left occupied");
-            return;
-        }
-    };
-    if pids.is_empty() {
-        tracing::warn!(
-            port,
-            "reclaim: the port answered but lsof names no listener now; nothing signalled"
-        );
-        return;
-    }
-    #[cfg(unix)]
-    {
-        tracing::warn!(
-            port,
-            ?pids,
-            "reclaiming port from unsupervised engine (SIGTERM)"
-        );
-        for pid in &pids {
-            unsafe { libc::kill(*pid as libc::pid_t, libc::SIGTERM) };
-        }
-        if crate::wait_port_clear(port).await {
-            return;
-        }
-        tracing::warn!(port, ?pids, "reclaim: grace window expired (SIGKILL)");
-        for pid in &pids {
-            unsafe { libc::kill(*pid as libc::pid_t, libc::SIGKILL) };
-        }
-    }
-    #[cfg(not(unix))]
-    tracing::warn!(
-        port,
-        ?pids,
-        "reclaim: signal delivery needs Unix; port left occupied"
-    );
+/// Free the engine port an Unmount found held while this manager supervised nothing (Q-252):
+/// through the same proof a start uses (`port_holder::claim_port`) — every holder proven this
+/// goose's own leftover is stopped per pid, its identity re-read before every signal, never a
+/// group; anything else — another goose's live engine, a terminal's, one older than the marker,
+/// this process itself, or holders that cannot be read — is refused by name with the one next
+/// step, and nothing is signalled. Before Q-252 this stopped every LISTEN pid on the port.
+#[cfg(unix)]
+async fn reclaim_port(port: u16) -> Result<()> {
+    port_holder::claim_port(port, &engine_marker(port))
+        .await
+        .map(|_| ())
+}
+
+#[cfg(not(unix))]
+async fn reclaim_port(port: u16) -> Result<()> {
+    anyhow::bail!(
+        "port {port} is held and this platform cannot read who holds it, so nothing was signalled"
+    )
 }
 
 /// A supervised engine that ended: what ended, how, and its last words — and the restart
@@ -1187,6 +1220,10 @@ pub struct MlxEngineManager {
     judging: tokio::sync::RwLock<()>,
     load_observer: StdMutex<Option<LoadObserver>>,
     probe_client: reqwest::Client,
+    /// The status's stray-listener holders, read again only when what they were judged from
+    /// changes (Q-253).
+    #[cfg(unix)]
+    stray_holders: port_holder::HoldersCache,
     /// The memory facts a unit test pins, so a mount's verdict never depends on what else this
     /// Mac is running (Q-105: four lifecycle tests failed whenever other engines held the RAM).
     /// Pinned memory pins the other engines too (none, unless `test_others` names some).
@@ -1224,6 +1261,8 @@ impl MlxEngineManager {
                 .timeout(Duration::from_secs(5))
                 .build()
                 .expect("reqwest client with static configuration"),
+            #[cfg(unix)]
+            stray_holders: port_holder::HoldersCache::new(),
             #[cfg(test)]
             test_memory: StdMutex::new(None),
             #[cfg(test)]
@@ -1232,6 +1271,32 @@ impl MlxEngineManager {
             test_lock_dir: tempfile::tempdir()
                 .expect("a temp dir for the test manager's load lock"),
         }
+    }
+
+    /// Who holds the engine port for the status: [`port_holder::HoldersCache`]'s answer, which is
+    /// `inspect_port`'s from the last full read while its listeners and lineages are unchanged.
+    async fn stray_holders(
+        &self,
+        port: u16,
+        marker: &str,
+    ) -> std::result::Result<Vec<PortHolder>, String> {
+        #[cfg(unix)]
+        {
+            self.stray_holders
+                .read(port, marker)
+                .await
+                .map_err(|e| format!("{e:#}"))
+        }
+        #[cfg(not(unix))]
+        {
+            read_port_holders(port, marker).await
+        }
+    }
+
+    /// How many status reads judged the engine port's holders from scratch (Q-253).
+    #[cfg(unix)]
+    pub fn stray_holder_full_reads(&self) -> u64 {
+        self.stray_holders.full_reads()
     }
 
     fn load_lock_path(&self) -> Result<PathBuf> {
@@ -1751,10 +1816,11 @@ impl MlxEngineManager {
     /// a mount still judging its gate is overtaken and starts nothing. Q-112: an Unmount of a
     /// loading 27B used to return at once while the load ran on to ready holding the Mac, and a
     /// switch's split was refused by that very load. When the manager supervises
-    /// nothing but the configured port is still occupied (an engine orphaned by a previous
-    /// goosed — supervision state is in-memory only), unmount reclaims the port by
-    /// terminating the listeners per-pid: SIGTERM, a grace window, then SIGKILL.
-    pub async fn unmount(&self) {
+    /// nothing but the configured port is still occupied, unmount reclaims the port only from
+    /// what `port_holder`'s proof calls this goose's own leftover (an engine a goose sidecar
+    /// started for this port whose goosed is gone — supervision state is in-memory only), per pid;
+    /// any other holder is [`UnmountRefused`], named, with nothing signalled (Q-252).
+    pub async fn unmount(&self) -> std::result::Result<(), UnmountRefused> {
         *self.waiting_for_load.lock().unwrap() = None;
         self.unmounts
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1769,6 +1835,7 @@ impl MlxEngineManager {
                 _ => (false, None),
             }
         };
+        let stopped_a_start = loading.is_some();
         if let Some(mut start) = loading {
             start.cancel.cancel();
             // The start task owns the engine and the Mac's load lock; it reports once both are
@@ -1779,9 +1846,14 @@ impl MlxEngineManager {
         if !supervised {
             let port = self.settings().port;
             if port_has_listener(port) {
-                reclaim_port(port).await;
+                reclaim_port(port).await.map_err(|why| UnmountRefused {
+                    port,
+                    stopped_a_start,
+                    why,
+                })?;
             }
         }
+        Ok(())
     }
 
     pub async fn status(&self) -> EngineStatus {
@@ -1811,6 +1883,7 @@ impl MlxEngineManager {
             stray_listener_port: None,
             stray_listener_holders: None,
             stray_listener_holders_error: None,
+            stray_listener_step: None,
             available_memory_gb: reading.map_or(0.0, |r| gib_of(r.available_bytes)),
             total_memory_gb: reading.map_or(0.0, |r| gib_of(r.total_bytes)),
             reclaimable_cache_gb: reading.and_then(|r| r.reclaimable_cache_bytes.map(gib_of)),
@@ -1912,8 +1985,14 @@ impl MlxEngineManager {
             // While a mount is in flight the listener is the start's own child; the holders are
             // read only when no start runs, which is when the Engine panel names them.
             if status.state != "mounting" {
-                match read_port_holders(settings.port, &engine_marker(settings.port)).await {
+                match self
+                    .stray_holders(settings.port, &engine_marker(settings.port))
+                    .await
+                {
                     Ok(holders) => {
+                        status.stray_listener_step = port_holder::next_step(&holders)
+                            .as_ref()
+                            .map(StrayListenerStep::from);
                         status.stray_listener_holders =
                             Some(holders.iter().map(StrayListenerHolder::from).collect())
                     }
@@ -2981,12 +3060,11 @@ mod tests {
         assert_eq!(status.stray_listener_holders_error, None);
     }
 
-    #[tokio::test]
-    async fn unmount_reclaims_an_unsupervised_listener() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-        let mut orphan = std::process::Command::new("python3")
+    /// A listener on the engine port this manager does not supervise, started by this process —
+    /// carrying the engine marker when `marked`.
+    async fn listener_child(port: u16, marked: bool) -> std::process::Child {
+        let mut command = std::process::Command::new("python3");
+        command
             .args([
                 "-c",
                 &format!(
@@ -2994,29 +3072,76 @@ mod tests {
                      http.server.BaseHTTPRequestHandler).serve_forever()"
                 ),
             ])
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stderr(std::process::Stdio::piped());
+        if marked {
+            command.env(crate::SIDECAR_MARKER_ENV, engine_marker(port));
+        }
+        let mut child = command.spawn().unwrap();
         // Until it binds, or until it exits — which fails with its own words (Q-245: a fixed 5 s
         // decided this under load).
         while !port_has_listener(port) {
-            if let Some(status) = orphan.try_wait().unwrap() {
+            if let Some(status) = child.try_wait().unwrap() {
                 let mut words = String::new();
-                std::io::Read::read_to_string(&mut orphan.stderr.take().unwrap(), &mut words)
+                std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut words)
                     .unwrap();
-                panic!("the orphan exited ({status}) before it bound {port}: {words}");
+                panic!("the listener exited ({status}) before it bound {port}: {words}");
             }
             tokio::time::sleep(crate::GRACE_TICK).await;
         }
+        child
+    }
 
+    fn free_port() -> u16 {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        probe.local_addr().unwrap().port()
+    }
+
+    /// An engine this very process started for this port, marked, that nothing supervises: the
+    /// proof calls it ours, and Unmount stops it per pid.
+    #[tokio::test]
+    async fn unmount_reclaims_this_gooses_own_unsupervised_engine() {
+        let port = free_port();
+        let mut own = listener_child(port, true).await;
         let manager = test_manager();
         manager.set_settings(EngineSettings {
             port,
             ..Default::default()
         });
-        manager.unmount().await;
-        assert!(!port_has_listener(port), "unmount did not reclaim the port");
-        let _ = orphan.wait();
+        let outcome = manager.unmount().await;
+        let freed = !port_has_listener(port);
+        let _ = own.kill();
+        let _ = own.wait();
+        outcome.unwrap();
+        assert!(freed, "unmount did not reclaim the port");
+    }
+
+    /// Q-252: a listener nothing proves this goose's — here unmarked, a terminal's server or an
+    /// engine an older goose mounted — is named by Unmount and left serving. Before Q-252 the
+    /// reclaim SIGTERMed every LISTEN pid on the port, this one included.
+    #[tokio::test]
+    async fn unmount_refuses_by_name_a_listener_not_proven_ours() {
+        let port = free_port();
+        let mut foreign = listener_child(port, false).await;
+        let pid = foreign.id();
+        let manager = test_manager();
+        manager.set_settings(EngineSettings {
+            port,
+            ..Default::default()
+        });
+        let outcome = manager.unmount().await;
+        let still_serving = port_has_listener(port) && foreign.try_wait().unwrap().is_none();
+        let _ = foreign.kill();
+        let _ = foreign.wait();
+        let refused = outcome.expect_err("Unmount stopped a listener it could not prove its own");
+        let text = refused.to_string();
+        eprintln!("the refusal: {text}");
+        assert!(still_serving, "the listener was signalled");
+        assert!(!refused.stopped_a_start);
+        assert!(text.starts_with("Unmount stopped nothing: "), "{text}");
+        assert!(text.contains(&format!("pid {pid}")), "{text}");
+        assert!(text.contains("not this goose's"), "{text}");
+        assert!(text.contains("nothing was signalled"), "{text}");
+        assert!(text.contains(&format!("`kill {pid}`")), "the step: {text}");
     }
 
     /// A fake engine launched through the REAL serve argv (`spawn_command` + `serve <dir>
@@ -3142,7 +3267,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(status.served_model_id.as_deref(), Some("busy-alias"));
         assert_eq!(status.active_requests, Some(3), "1 running + 2 waiting");
         assert_eq!(status.active_requests_error, None);
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
 
         let port = {
             let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3172,7 +3297,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(status.active_requests, None, "absence is None, never 0");
         let absence = status.active_requests_error.expect("the absence is named");
         assert!(absence.contains("no `num_running`"), "{absence}");
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
         assert_eq!(manager.status().await.active_requests, None);
     }
 
@@ -3247,7 +3372,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let restarted = settle(&manager).await;
         assert_eq!(restarted.state, "running", "{:?}", restarted.last_error);
         assert_ne!(restarted.pid, Some(pid));
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
     }
 
     /// Design §6.4 step 10: a load that ends is told to the observer exactly once, at the path
@@ -3299,7 +3424,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             1,
             "an identical supervised engine is kept, not loaded again"
         );
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
 
         manager.set_settings(settings(
             "import sys\nprint('Loading model with BatchedEngine', file=sys.stderr, flush=True)\n\
@@ -3418,7 +3543,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             !port_has_listener(port),
             "the tripped supervisor must leave nothing on the port"
         );
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
     }
 
     /// The real engine through the manager: `uvx … rapid-mlx serve` on a free port with an
@@ -3600,7 +3725,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         );
         assert!(port_has_listener(port), "the engine stopped serving");
 
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
         assert!(!port_has_listener(port), "port still served after unmount");
         let leftover = std::process::Command::new("pgrep")
             .args(["-g", &leader.to_string()])
@@ -3800,7 +3925,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let mounted = manager.mount("pub/small").await;
         let status = settle(&manager).await;
         let ours_alive = alive(ours);
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
         if ours_alive {
             // SAFETY: as above.
             unsafe { libc::kill(ours as libc::pid_t, libc::SIGKILL) };
@@ -4036,7 +4161,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             ),
             "the finished start released the Mac"
         );
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
     }
 
     /// An Unmount ends a wait: when the holder lets go, the waiting mount does not start.
@@ -4055,7 +4180,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let (mut rank, _) = a_rank_holding_the_mac(&lock);
         manager.mount_after_load("pub/small").await.unwrap();
         assert_eq!(manager.status().await.state, "mounting");
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
         assert_eq!(manager.status().await.state, "stopped");
         rank.stdin.take().unwrap().write_all(b"\n").unwrap();
         rank.wait().unwrap();
@@ -4169,7 +4294,7 @@ while True:
         assert_eq!(holder.port, Some(port));
         assert_eq!(holder.model.as_deref(), Some("pub/slow"));
 
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
 
         assert!(
             pids_with(&marker).is_empty(),
@@ -4215,7 +4340,7 @@ while True:
         else {
             panic!("the test manager's own lock is free")
         };
-        manager.unmount().await;
+        manager.unmount().await.unwrap();
         let err = manager
             .mount_holding("pub/small", lock, before)
             .await

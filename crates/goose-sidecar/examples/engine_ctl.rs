@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await?;
     let started = std::time::Instant::now();
-    manager.unmount().await;
+    manager.unmount().await?;
     println!(
         "unmounted in {:.2}s: {}",
         started.elapsed().as_secs_f64(),
