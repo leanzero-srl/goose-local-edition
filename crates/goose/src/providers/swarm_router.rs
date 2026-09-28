@@ -1044,11 +1044,11 @@ impl Router {
     /// Queue on every slot given and take the first permit that frees — no clock, no cap (gate 5).
     async fn queue_on(&self, servable: &[Slot], key: u64) -> Result<Lease, ProviderError> {
         let start = Instant::now();
-        let depth = self.queued.fetch_add(1, Ordering::SeqCst) + 1;
+        let waiting = Waiting::enter(&self.queued);
         tracing::info!(
             target: "swarm_router",
             nodes = %servable.iter().map(|(n, _, _, _)| n.id.as_str()).collect::<Vec<_>>().join(","),
-            queue_depth = depth,
+            queue_depth = waiting.depth,
             "queued"
         );
         let waits = servable
@@ -1056,7 +1056,7 @@ impl Router {
             .map(|(_, sem, _, _)| Box::pin(sem.clone().acquire_owned()))
             .collect::<Vec<_>>();
         let (first, index, _rest) = futures::future::select_all(waits).await;
-        self.queued.fetch_sub(1, Ordering::SeqCst);
+        drop(waiting);
         let permit = first.map_err(|e| {
             ProviderError::ExecutionError(format!("swarm chat: a node's slot pool closed ({e})"))
         })?;
@@ -1108,6 +1108,28 @@ impl Router {
             _serving: serving,
             context_window,
         }
+    }
+}
+
+/// One caller waiting in `queue_on`, counted in `queue_depth` for exactly as long as it waits.
+/// Q-400: the count was taken back only after the wait returned, so a caller dropped mid-wait — the
+/// end-of-turn reviewer yielding to a user turn drops its call — was counted forever: #3r's
+/// `queue_depth` climbed 0 → 77 over one chat while picks saw 8 free slots.
+struct Waiting<'a> {
+    queued: &'a AtomicUsize,
+    depth: usize,
+}
+
+impl<'a> Waiting<'a> {
+    fn enter(queued: &'a AtomicUsize) -> Self {
+        let depth = queued.fetch_add(1, Ordering::SeqCst) + 1;
+        Self { queued, depth }
+    }
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.queued.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -2957,6 +2979,102 @@ mod tests {
         );
         assert_eq!(router.sticky.lock().unwrap().get(&7).unwrap(), "b");
         drop((lease, second, third));
+    }
+
+    /// Q-400: a caller dropped while it waits in the queue leaves the depth — the reviewer that
+    /// yields to a user turn drops its call mid-wait. #3r counted every one of them forever.
+    #[tokio::test]
+    async fn a_pick_dropped_while_it_waits_leaves_the_queue() {
+        let router = Arc::new(Router::new());
+        let nodes = Arc::new(vec![node("only", 1, 1)]);
+        let probe = Arc::new(FakeProbe::all_idle(&nodes));
+        let held = router
+            .pick(&nodes, &*probe, 1, &HashSet::new())
+            .await
+            .unwrap();
+        let (r, n, p) = (router.clone(), nodes.clone(), probe.clone());
+        let waiter = tokio::spawn(async move { r.pick(&n, &*p, 2, &HashSet::new()).await.is_ok() });
+        while router.queued.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        assert_eq!(router.queued.load(Ordering::SeqCst), 0);
+        drop(held);
+    }
+
+    /// Q-400, #3r (2026-09-28, the split chat 20260928_21, 8 slots): one end-of-turn reviewer per
+    /// turn, each outlived by the next turn. They piled up — 18 asked at 13:42:43, 8 leased and
+    /// 10 queued, all dropped 4 s later by the next turn — and `queue_depth` never came down
+    /// (0 → 55 → 77). Now, across 19 turns: the chat's own call never finds anyone queued ahead of
+    /// it or waits, only the newest turn's reviewer runs once the chat is idle, and the depth is 0.
+    #[tokio::test]
+    async fn a_chats_reviewers_do_not_pile_up_queue_ahead_of_its_turn_or_leak_the_depth() {
+        use crate::turn_priority::TurnPriority;
+        const CHAT: &str = "20260928_21";
+        let router = Arc::new(Router::new());
+        let nodes = Arc::new(vec![node("split", 8, 1)]);
+        let probe = Arc::new(FakeProbe::all_idle(&nodes));
+        let priority = Arc::new(TurnPriority::new());
+        let slots = router.semaphore(&nodes[0]);
+        let settle = || async {
+            for _ in 0..200 {
+                tokio::task::yield_now().await;
+            }
+        };
+        let mut reviewers = Vec::new();
+        for turn in 1..=19u64 {
+            let user = priority.user_turn_in(CHAT);
+            settle().await;
+            assert_eq!(
+                router.queued.load(Ordering::SeqCst),
+                0,
+                "turn {turn}: nobody is queued ahead of the chat's own call"
+            );
+            let agent = router
+                .pick(&nodes, &*probe, 1, &HashSet::new())
+                .await
+                .unwrap();
+            assert_eq!(
+                slots.available_permits(),
+                7,
+                "turn {turn}: the agent's call runs alone"
+            );
+            drop(agent);
+            drop(user);
+            let mark = priority.chat_mark(CHAT);
+            let (r, n, p, pr) = (
+                router.clone(),
+                nodes.clone(),
+                probe.clone(),
+                priority.clone(),
+            );
+            reviewers.push(tokio::spawn(async move {
+                pr.after_user_turns("end-of-turn reviewer", &mark, || {
+                    let (r, n, p) = (r.clone(), n.clone(), p.clone());
+                    async move {
+                        let _lease = r.pick(&n, &*p, 2, &HashSet::new()).await.unwrap();
+                        std::future::pending::<()>().await
+                    }
+                })
+                .await
+            }));
+            settle().await;
+            assert_eq!(
+                slots.available_permits(),
+                7,
+                "turn {turn}: once the chat is idle, only the newest reviewer holds a slot"
+            );
+            assert_eq!(router.queued.load(Ordering::SeqCst), 0, "turn {turn}");
+        }
+        let newest = reviewers.pop().unwrap();
+        for superseded in reviewers {
+            assert_eq!(superseded.await.unwrap(), None);
+        }
+        newest.abort();
+        let _ = newest.await;
+        assert_eq!(slots.available_permits(), 8);
+        assert_eq!(router.queued.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

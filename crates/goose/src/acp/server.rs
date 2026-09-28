@@ -3449,14 +3449,18 @@ impl GooseAcpAgent {
         // response is built and only on EndTurn — a cancelled turn is never assessed, and a turn's
         // result never waits on (or fails because of) its judgement. This turn is over before
         // either is spawned, so neither waits on it.
+        // Q-400: both are marked at this turn's end, so a later user turn in this chat ends them
+        // instead of piling them up behind it.
         drop(user);
         let mut reviewers = Vec::new();
         if !was_cancelled {
+            let mark = crate::turn_priority::chat_mark(&session_id);
             reviewers.push(tokio::spawn(crate::turn_assessment::assess_turn(
                 agent.clone(),
                 self.session_manager.clone(),
                 session_id.clone(),
                 self.config_dir.clone(),
+                mark.clone(),
             )));
             // Q-90: the answer check lands under the reply that is still on screen, and is stored
             // so a reload shows it again.
@@ -3472,6 +3476,7 @@ impl GooseAcpAgent {
                     agent,
                     session_manager,
                     session_id.clone(),
+                    mark,
                 )
                 .await
                 else {

@@ -9,7 +9,15 @@
 //! a user turn that starts drops the check's in-flight call (the stream closes, the engine cancels
 //! the row and ends its batch), and the check is asked again, from the start, once no user turn
 //! runs. Ordering only: no clock and no count decides when the check runs or stops.
+//!
+//! Q-400: a check is asked again only while its chat has not moved on. A user turn in the SAME chat
+//! supersedes it — the reply it reviews is no longer the chat's last, and its notice would land
+//! under the newer reply — so it ends there instead of re-asking. Without that, a chat whose turns
+//! came faster than a check could finish kept every check alive: #3r's split chat held one more
+//! check per turn (1, 2, … 19) and fired all of them at once each time the chat went idle — 18 calls
+//! at 13:42:43, 10 of them queued behind the 8 slots, every one dropped 4 s later by the next turn.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::LazyLock;
 
@@ -25,6 +33,8 @@ struct Turns {
     sessions: Vec<String>,
     /// The chat of the turn that started last, when it named one.
     last_started: Option<String>,
+    /// Per chat: how many user turns have started in it (`user_turn_in`).
+    started_in: HashMap<String, u64>,
 }
 
 pub struct TurnPriority {
@@ -61,6 +71,20 @@ pub struct RunningTurns {
     pub sessions: Vec<String>,
 }
 
+/// The chat a check reviews and how many user turns had started in it when the reviewed turn
+/// ended: a later user turn in that chat supersedes the check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatMark {
+    session: String,
+    started: u64,
+}
+
+impl ChatMark {
+    pub fn session(&self) -> &str {
+        &self.session
+    }
+}
+
 /// A user turn that started after a mark: its chat, when it named one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartedTurn {
@@ -81,6 +105,7 @@ impl TurnPriority {
             t.last_started = session.clone();
             if let Some(session) = &session {
                 t.sessions.push(session.clone());
+                *t.started_in.entry(session.clone()).or_default() += 1;
             }
         });
         UserTurn {
@@ -131,16 +156,59 @@ impl TurnPriority {
             .expect("the sender lives as long as self")
     }
 
+    /// Marks `session_id` as it stands now, for a check of the turn that just ended in it.
+    pub fn chat_mark(&self, session_id: &str) -> ChatMark {
+        ChatMark {
+            session: session_id.to_string(),
+            started: self.started_in(session_id),
+        }
+    }
+
+    fn started_in(&self, session_id: &str) -> u64 {
+        self.turns
+            .borrow()
+            .started_in
+            .get(session_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn superseded(&self, what: &str, mark: &ChatMark) -> bool {
+        let now = self.started_in(&mark.session);
+        let superseded = now != mark.started;
+        if superseded {
+            tracing::info!(
+                what,
+                session_id = %mark.session,
+                newer_turns = now - mark.started,
+                "superseded by a newer turn in its chat; not asked again"
+            );
+        }
+        superseded
+    }
+
     /// Runs `call` when no user turn runs; a user turn that starts while it runs drops it, and it
-    /// is called again once that turn (and any other) has ended.
-    pub async fn after_user_turns<T, Fut>(&self, what: &str, mut call: impl FnMut() -> Fut) -> T
+    /// is called again once that turn (and any other) has ended — unless that turn, or any since
+    /// the mark, was in the marked chat: then `None`, never asked again.
+    pub async fn after_user_turns<T, Fut>(
+        &self,
+        what: &str,
+        mark: &ChatMark,
+        mut call: impl FnMut() -> Fut,
+    ) -> Option<T>
     where
         Fut: Future<Output = T>,
     {
         loop {
+            if self.superseded(what, mark) {
+                return None;
+            }
             let started = self.wait_no_user_turn().await;
+            if self.superseded(what, mark) {
+                return None;
+            }
             tokio::select! {
-                out = call() => return out,
+                out = call() => return Some(out),
                 _ = self.user_turn_started_since(started) => {
                     tracing::info!(what, "yielded to a user turn; asked again once no turn runs");
                 }
@@ -180,11 +248,20 @@ pub async fn user_turn_started_since(started: u64) -> StartedTurn {
     PRIORITY.user_turn_started_since(started).await
 }
 
-pub async fn after_user_turns<T, Fut>(what: &str, call: impl FnMut() -> Fut) -> T
+/// Marks `session_id` in this process's turn priority (see [`TurnPriority::chat_mark`]).
+pub fn chat_mark(session_id: &str) -> ChatMark {
+    PRIORITY.chat_mark(session_id)
+}
+
+pub async fn after_user_turns<T, Fut>(
+    what: &str,
+    mark: &ChatMark,
+    call: impl FnMut() -> Fut,
+) -> Option<T>
 where
     Fut: Future<Output = T>,
 {
-    PRIORITY.after_user_turns(what, call).await
+    PRIORITY.after_user_turns(what, mark, call).await
 }
 
 #[cfg(test)]
@@ -212,8 +289,9 @@ mod tests {
                 finish.clone(),
             );
             tokio::spawn(async move {
+                let mark = priority.chat_mark("chat-a");
                 priority
-                    .after_user_turns("answer check", || {
+                    .after_user_turns("answer check", &mark, || {
                         let (engine, asked, finish) =
                             (engine.clone(), asked.clone(), finish.clone());
                         async move {
@@ -256,7 +334,7 @@ mod tests {
         finish.notify_one();
         assert_eq!(
             check.await.unwrap(),
-            2,
+            Some(2),
             "the check ran to its end after the turn"
         );
     }
@@ -266,7 +344,8 @@ mod tests {
         let priority = TurnPriority::new();
         let asked = AtomicUsize::new(0);
         let turn = priority.user_turn();
-        let check = priority.after_user_turns("assessment", || async {
+        let mark = priority.chat_mark("chat-a");
+        let check = priority.after_user_turns("assessment", &mark, || async {
             asked.fetch_add(1, Ordering::SeqCst);
         });
         tokio::pin!(check);
@@ -280,6 +359,91 @@ mod tests {
         drop(turn);
         check.await;
         assert_eq!(asked.load(Ordering::SeqCst), 1);
+    }
+
+    /// Q-400: a check whose chat takes a newer user turn is dropped with the call and never asked
+    /// again; one whose call was dropped by another chat's turn is asked again as before.
+    #[tokio::test]
+    async fn a_newer_turn_in_its_chat_supersedes_the_check_and_another_chats_does_not() {
+        for (turn_chat, asked_again) in [("chat-a", false), ("chat-b", true)] {
+            let priority = Arc::new(TurnPriority::new());
+            drop(priority.user_turn_in("chat-a"));
+            let asked = Arc::new(AtomicUsize::new(0));
+            let check = {
+                let (priority, asked) = (priority.clone(), asked.clone());
+                tokio::spawn(async move {
+                    let mark = priority.chat_mark("chat-a");
+                    priority
+                        .after_user_turns("answer check", &mark, || {
+                            let asked = asked.clone();
+                            async move {
+                                let n = asked.fetch_add(1, Ordering::SeqCst) + 1;
+                                if n == 1 {
+                                    std::future::pending::<()>().await;
+                                }
+                                n
+                            }
+                        })
+                        .await
+                })
+            };
+            while asked.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            drop(priority.user_turn_in(turn_chat));
+            let out = check.await.unwrap();
+            if asked_again {
+                assert_eq!(out, Some(2), "another chat's turn only postpones the check");
+            } else {
+                assert_eq!(out, None, "the chat moved on: the check ends");
+                assert_eq!(asked.load(Ordering::SeqCst), 1, "and is never asked again");
+            }
+        }
+    }
+
+    /// #3r (2026-09-28, split chat 20260928_21): each turn came before the last turn's check could
+    /// finish, and the checks piled up one per turn — 19 at once by 14:18:35. Now after every turn
+    /// exactly one check runs: the newest.
+    #[tokio::test]
+    async fn checks_do_not_pile_up_across_a_chats_turns() {
+        let priority = Arc::new(TurnPriority::new());
+        let running = Arc::new(AtomicUsize::new(0));
+        let mut checks = Vec::new();
+        for _ in 0..19 {
+            drop(priority.user_turn_in("chat-a"));
+            let (p, in_call) = (priority.clone(), running.clone());
+            let mark = p.chat_mark("chat-a");
+            checks.push(tokio::spawn(async move {
+                p.after_user_turns("answer check", &mark, || {
+                    let running = in_call.clone();
+                    async move {
+                        running.fetch_add(1, Ordering::SeqCst);
+                        struct Ends(Arc<AtomicUsize>);
+                        impl Drop for Ends {
+                            fn drop(&mut self) {
+                                self.0.fetch_sub(1, Ordering::SeqCst);
+                            }
+                        }
+                        let _ends = Ends(running);
+                        std::future::pending::<()>().await
+                    }
+                })
+                .await
+            }));
+            for _ in 0..50 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(
+                running.load(Ordering::SeqCst),
+                1,
+                "only the newest turn's check runs once the chat is idle"
+            );
+        }
+        let last = checks.pop().unwrap();
+        for superseded in checks {
+            assert_eq!(superseded.await.unwrap(), None);
+        }
+        last.abort();
     }
 
     /// The two halves the loop runner uses (Q-228 L2a): "wait until no user turn runs", then "a
