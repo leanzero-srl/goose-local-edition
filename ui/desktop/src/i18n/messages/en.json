@@ -7295,8 +7295,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "Strategies"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "This chat’s message no longer waits for {node}."
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "Load {node} now (stops {serving} for {chats})"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "A reply running on {serving} finishes first; nothing is cut. The strategy’s setting stays as it is."
+  },
   "nodes.title": {
     "defaultMessage": "Nodes"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "Waiting for the switch to {node} for {chats} ({duration}): it was asked for before this message, so it goes first. Then this chat carries on."
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "Waiting for the switch to {node} started from its card ({duration}): it was asked for before this message, so it goes first. Then this chat carries on."
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "First load of {node}, not measured yet"

@@ -3,6 +3,7 @@ import type { NodesResidencyResponse_unstable } from '@aaif/goose-sdk';
 import {
   displacedOf,
   measuredLoadOf,
+  nodeBehindSwitchOf,
   nodeRefusalOf,
   nodeWaitOf,
   isNodeSwap,
@@ -11,7 +12,7 @@ import {
   routeNodeIds,
   swapOfReports,
   swapStopsEngine,
-  turnAwaitsItsNode,
+  turnCanWaitInLoader,
   type NodeSwap,
 } from './nodeSwap';
 import {
@@ -163,11 +164,49 @@ describe('Q-272: the loader’s facts, as every surface reads them', () => {
       // An older goosed names no chats: an empty list, never a guessed one.
       replies: { way: 'Qwen3.8-27B-Atlassian-Q8-mlx · this Mac', count: 2, chats: [] },
       servingOther: null,
+      behind: null,
       load: { medianMs: 1000, count: 1 },
     });
     expect(nodeWaitOf(J3_READ, waiting(['gone']), [SPLIT])?.replies?.way).toBe("this Mac's engine");
     // A wait for a node the chat does not run on is not this chat's.
     expect(nodeWaitOf(J3_READ, waiting([CHAT]), [CHAT])).toBeNull();
+  });
+
+  it('Q-442: a reply behind a queued switch is its own chat’s, named by the switch’s node', () => {
+    const behind = rows(
+      {},
+      {
+        behindSwitches: [
+          {
+            session: 'chat-3',
+            node: CHAT,
+            switchTo: SPLIT,
+            switchToName: 'split node',
+            chats: ['Kickoff'],
+          },
+        ],
+        nodes: J3_SERVING_SINGLE.nodes.map((row) =>
+          row.node === SPLIT ? { ...row, load: { medianMs: 2000, count: 3 } } : row
+        ),
+      }
+    );
+    expect(nodeBehindSwitchOf(J3_READ, behind, 'chat-3')).toEqual({
+      target: expect.objectContaining({ id: CHAT }),
+      reason: '',
+      replies: null,
+      servingOther: null,
+      behind: {
+        switchTo: expect.objectContaining({
+          id: SPLIT,
+          name: 'Qwen3.8-27B-Atlassian-Q8-mlx · both Macs',
+        }),
+        chats: ['Kickoff'],
+      },
+      load: { medianMs: 2000, count: 3 },
+    });
+    // Another chat is not held by it, and neither is a chat with no session yet.
+    expect(nodeBehindSwitchOf(J3_READ, behind, 'chat-1')).toBeNull();
+    expect(nodeBehindSwitchOf(J3_READ, behind, null)).toBeNull();
   });
 
   it('a refusal carries its facts; a node that is not refused has none', () => {
@@ -224,18 +263,12 @@ describe('Q-272: the loader’s facts, as every surface reads them', () => {
   });
 });
 
-describe('Q-430: a routed turn awaits its node while none of its MLX nodes serves', () => {
-  it('a node route on a way that does not serve awaits it; once it serves it does not', () => {
-    expect(turnAwaitsItsNode(J3_READ, J3_SERVING_SINGLE, `node:${J3_BUILD_NODE.def.id}`)).toBe(
-      true
-    );
-    expect(turnAwaitsItsNode(J3_READ, J3_SERVING_SINGLE, `node:${J3_CHAT_NODE.def.id}`)).toBe(
-      false
-    );
-    // A strategy with one of its nodes serving is not awaiting anything.
-    expect(turnAwaitsItsNode(J3_READ, J3_SERVING_SINGLE, J3_STRATEGY)).toBe(false);
-    expect(turnAwaitsItsNode(J3_READ, J3_SWAP_TO_SPLIT, J3_STRATEGY)).toBe(true);
+describe('Q-430 / Q-442: a routed turn on an MLX node can wait in the loader', () => {
+  it('whether or not its node serves (Q-442: behind a queued switch, its own node serves)', () => {
+    expect(turnCanWaitInLoader(J3_READ, `node:${J3_BUILD_NODE.def.id}`)).toBe(true);
+    expect(turnCanWaitInLoader(J3_READ, `node:${J3_CHAT_NODE.def.id}`)).toBe(true);
+    expect(turnCanWaitInLoader(J3_READ, J3_STRATEGY)).toBe(true);
     // Auto and cloud-only routes never wait on the loader.
-    expect(turnAwaitsItsNode(J3_READ, J3_SERVING_SINGLE, 'swarm')).toBe(false);
+    expect(turnCanWaitInLoader(J3_READ, 'swarm')).toBe(false);
   });
 });

@@ -34,6 +34,17 @@ const i18n = defineMessages({
     defaultMessage:
       'Waiting while {mac} serves {serving} for {chats}: {node} loads when {count, plural, one {that chat is} other {those chats are}} closed or moved to another node ({duration})',
   },
+  // Q-442: this chat's node serves, and its reply waits behind a switch asked for before it began.
+  turnBehindSwitch: {
+    id: 'nodes.turnBehindSwitch',
+    defaultMessage:
+      'Waiting for the switch to {node} for {chats} ({duration}): it was asked for before this message, so it goes first. Then this chat carries on.',
+  },
+  turnBehindSwitchStarted: {
+    id: 'nodes.turnBehindSwitchStarted',
+    defaultMessage:
+      'Waiting for the switch to {node} started from its card ({duration}): it was asked for before this message, so it goes first. Then this chat carries on.',
+  },
   turnFirstLoad: {
     id: 'nodes.turnFirstLoad',
     defaultMessage: 'First load of {node}, not measured yet',
@@ -154,6 +165,17 @@ export function loaderText(intl: IntlShape, loader: ChatLoader): string {
   switch (loader.kind) {
     case 'waiting': {
       const { wait } = loader;
+      if (wait.behind) {
+        const duration = loadDurationText(intl, wait.load);
+        const node = wait.behind.switchTo.name;
+        return wait.behind.chats.length > 0
+          ? intl.formatMessage(i18n.turnBehindSwitch, {
+              node,
+              chats: servingChatsText(intl, wait.behind.chats),
+              duration,
+            })
+          : intl.formatMessage(i18n.turnBehindSwitchStarted, { node, duration });
+      }
       if (wait.servingOther) {
         return intl.formatMessage(i18n.turnWaitingServing, {
           mac: wait.servingOther.mac,

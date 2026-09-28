@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "ストラテジー"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "このチャットのメッセージはもう {node} を待っていません。"
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "今すぐ {node} を読み込む（{chats} の {serving} を停止）"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "{serving} で実行中の応答が先に完了します。途中で切られることはありません。ストラテジーの設定は変わりません。"
+  },
   "nodes.title": {
     "defaultMessage": "ノード"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "{chats} のための {node} への切り替えを待っています（{duration}）：このメッセージより前に要求されたため先に行われます。その後、このチャットが続きます。"
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "カードから開始された {node} への切り替えを待っています（{duration}）：このメッセージより前に要求されたため先に行われます。その後、このチャットが続きます。"
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "{node} の初回読み込み、まだ計測されていません"

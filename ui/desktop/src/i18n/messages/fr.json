@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "Stratégies"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "Le message de ce chat n’attend plus {node}."
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "Charger {node} maintenant (arrête {serving} pour {chats})"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "Une réponse en cours sur {serving} se termine d’abord ; rien n’est interrompu. Le réglage de la stratégie reste inchangé."
+  },
   "nodes.title": {
     "defaultMessage": "Nœuds"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "En attente du basculement vers {node} pour {chats} ({duration}) : il a été demandé avant ce message, il passe donc en premier. Ensuite, ce chat continue."
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "En attente du basculement vers {node} lancé depuis sa carte ({duration}) : il a été demandé avant ce message, il passe donc en premier. Ensuite, ce chat continue."
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "Premier chargement de {node}, pas encore mesuré"

@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "Стратегии"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "Сообщение этого чата больше не ждёт {node}."
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "Загрузить {node} сейчас (останавливает {serving} для {chats})"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "Ответ, который выполняется на {serving}, сначала завершится; ничего не прерывается. Настройка стратегии не меняется."
+  },
   "nodes.title": {
     "defaultMessage": "Узлы"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "Ожидание переключения на {node} для {chats} ({duration}): оно запрошено раньше этого сообщения, поэтому идёт первым. Затем этот чат продолжится."
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "Ожидание переключения на {node}, запущенного с его карточки ({duration}): оно запрошено раньше этого сообщения, поэтому идёт первым. Затем этот чат продолжится."
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "Первая загрузка {node}, ещё не измерена"

@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "Stratejiler"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "Bu sohbetin mesajı artık {node} için beklemiyor."
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "{node} şimdi yükle ({chats} için {serving} durdurulur)"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "{serving} üzerinde çalışan yanıt önce biter; hiçbir şey yarıda kesilmez. Stratejinin ayarı olduğu gibi kalır."
+  },
   "nodes.title": {
     "defaultMessage": "Düğümler"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "{chats} için {node} geçişi bekleniyor ({duration}): bu mesajdan önce istendiği için önce gelir. Ardından bu sohbet devam eder."
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "Kartından başlatılan {node} geçişi bekleniyor ({duration}): bu mesajdan önce istendiği için önce gelir. Ardından bu sohbet devam eder."
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "{node} ilk kez yükleniyor, henüz ölçülmedi"

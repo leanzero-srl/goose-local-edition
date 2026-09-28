@@ -52,9 +52,15 @@ import {
   loaderText,
   type ChatLoader,
 } from '../chatServedBy/loaderText';
-import { fellBackRetryText, fellBackText, type ChatFellBack } from '../chatServedBy/turnLine';
+import {
+  fellBackRetryText,
+  fellBackText,
+  takeOverNowHint,
+  takeOverNowText,
+  type ChatFellBack,
+} from '../chatServedBy/turnLine';
 import type { NodeDisplaced } from '../../utils/nodeSwap';
-import { nodesEnsureServing } from '../../acp/nodes';
+import { nodesEnsureServing, nodesTakeOverNow } from '../../acp/nodes';
 import { putNode } from '../nodes/nodeDraft';
 import { useRunChatOn } from '../nodes/useRunChatOn';
 import { refreshGlanceNodes, useGlanceNodes } from '../engineGlance/glanceStore';
@@ -209,6 +215,11 @@ const i18n = defineMessages({
   useInstead: { id: 'nodes.displacedUse', defaultMessage: 'Use {next} instead' },
   makeRoom: { id: 'nodes.refusedMakeRoom', defaultMessage: 'Make room' },
   actionFailed: { id: 'nodes.displacedActionFailed', defaultMessage: 'That did not work: {error}' },
+  // Q-443: the turn stopped waiting between the read and the click (it loaded, moved or ended).
+  takeOverGone: {
+    id: 'nodes.takeOverGone',
+    defaultMessage: 'This chat’s message no longer waits for {node}.',
+  },
 });
 
 /** Where "Open Engine" goes: the Providers view's LeanZero MLX tab (Engine, with Run it). */
@@ -323,7 +334,7 @@ function ReadinessBar({
 
   // The node loader is at work for this chat, or stopped the way it was on (Q-254): its words, never
   // "No model is mounted" or the stopped way's "exit status: 143".
-  if (served.loader) return <LoaderBar loader={served.loader} />;
+  if (served.loader) return <LoaderBar loader={served.loader} sessionId={sessionId} />;
   // The node this chat is on was stopped for another chat's (§8.7): said until it serves again.
   if (served.displaced) {
     return (
@@ -524,12 +535,36 @@ function TurnWaitBar({ wait }: { wait: TurnWait }) {
  * this chat: {phase}", or "Swapping to {node}" — orange while this chat's turn waits in its queue,
  * in its own words. Typing stays open; the turn goes the moment the way serves.
  */
-function LoaderBar({ loader }: { loader: ChatLoader }) {
+function LoaderBar({ loader, sessionId }: { loader: ChatLoader; sessionId: string | null }) {
   const intl = useIntl();
   const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const loading = loader.kind === 'loading';
   const refused = loader.kind === 'refused';
   const detail = loaderDetail(intl, loader);
+  // Q-443: the role's "Wait" ends only when the other node's chats close or move — which the
+  // desktop never does on its own. One click takes the Mac over for this message only.
+  const waitingOnOther =
+    loader.kind === 'waiting' && loader.wait.servingOther && sessionId
+      ? { wait: loader.wait, other: loader.wait.servingOther, sessionId }
+      : null;
+  const takeOver = async () => {
+    if (!waitingOnOther) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const taken = await nodesTakeOverNow(waitingOnOther.wait.target.id, waitingOnOther.sessionId);
+      if (!taken) {
+        setError(intl.formatMessage(i18n.takeOverGone, { node: waitingOnOther.wait.target.name }));
+      }
+    } catch (e) {
+      setError(intl.formatMessage(i18n.actionFailed, { error: errorMessage(e, String(e)) }));
+    } finally {
+      setBusy(false);
+      refreshGlanceNodes();
+    }
+  };
   return (
     <div
       role={refused ? 'alert' : 'status'}
@@ -566,8 +601,26 @@ function LoaderBar({ loader }: { loader: ChatLoader }) {
             {detail}
           </span>
         )}
+        {error && (
+          <span data-testid="composer-readiness-detail" className="text-lz-meta break-words">
+            {error}
+          </span>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        {waitingOnOther && (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={busy ? <Loader2 className="animate-spin" /> : <Play />}
+            disabled={busy}
+            title={takeOverNowHint(intl, waitingOnOther.other)}
+            data-testid="composer-readiness-take-over"
+            onClick={() => void takeOver()}
+          >
+            {takeOverNowText(intl, waitingOnOther.wait.target.name, waitingOnOther.other)}
+          </Button>
+        )}
         {/* §8.7 `nodes.refusedFit`'s action: the existing Make room, where it lives (Run it). */}
         {refused && loader.refusal.facts?.kind === 'fit' && (
           <Button
@@ -699,11 +752,22 @@ function DisplacedBar({
  * §8.7 `nodes.fellBack`: the last turn went to a later entry of its role's chain, and why the 1st
  * could not run — with Retry, which asks the loader for the 1st now (the next turn tries it first
  * anyway; Retry is not waiting for that turn to find out).
+ *
+ * Q-441: on a Q-428 "Use the next node" line the 1st COULD run — it was left to the chats its Mac
+ * serves. The same call (a demand from no turn: the loader takes the Mac over once a running reply
+ * ends) then stops that node for those chats, so the button says so instead of "Retry". Once the
+ * 1st serves or loads, the line reports the last turn and there is nothing left to ask for.
  */
 function FellBackBar({ fell }: { fell: ChatFellBack }) {
   const intl = useIntl();
+  const nodes = useGlanceNodes();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const primaryNow =
+    nodes.kind === 'read'
+      ? nodes.residency.nodes.find((r) => r.node === fell.primaryId)?.residency.kind
+      : undefined;
+  const primaryUp = primaryNow === 'serving' || primaryNow === 'loading';
   const retry = async () => {
     setBusy(true);
     setError(null);
@@ -742,18 +806,30 @@ function FellBackBar({ fell }: { fell: ChatFellBack }) {
           </span>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
-          icon={busy ? <Loader2 className="animate-spin" /> : <RotateCcw />}
-          disabled={busy}
-          data-testid="composer-readiness-retry-primary"
-          onClick={() => void retry()}
-        >
-          {fellBackRetryText(intl, fell)}
-        </Button>
-      </div>
+      {!primaryUp && (
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={
+              busy ? (
+                <Loader2 className="animate-spin" />
+              ) : fell.servingOther ? (
+                <Play />
+              ) : (
+                <RotateCcw />
+              )
+            }
+            disabled={busy}
+            title={fell.servingOther ? takeOverNowHint(intl, fell.servingOther) : undefined}
+            data-testid="composer-readiness-retry-primary"
+            data-take-over={fell.servingOther ? 'yes' : undefined}
+            onClick={() => void retry()}
+          >
+            {fellBackRetryText(intl, fell)}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

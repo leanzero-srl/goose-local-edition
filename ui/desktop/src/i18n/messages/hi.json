@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "रणनीतियाँ"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "इस चैट का संदेश अब {node} की प्रतीक्षा नहीं करता।"
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "{node} अभी लोड करें ({chats} के लिए {serving} रोकता है)"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "{serving} पर चल रहा उत्तर पहले पूरा होता है; कुछ भी बीच में नहीं काटा जाता। रणनीति की सेटिंग जैसी है वैसी रहती है।"
+  },
   "nodes.title": {
     "defaultMessage": "नोड"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "{chats} के लिए {node} पर स्विच की प्रतीक्षा ({duration}): यह इस संदेश से पहले माँगा गया था, इसलिए पहले होता है। फिर यह चैट आगे बढ़ती है।"
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "उसके कार्ड से शुरू किए गए {node} पर स्विच की प्रतीक्षा ({duration}): यह इस संदेश से पहले माँगा गया था, इसलिए पहले होता है। फिर यह चैट आगे बढ़ती है।"
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "{node} का पहला लोड, अभी मापा नहीं गया"

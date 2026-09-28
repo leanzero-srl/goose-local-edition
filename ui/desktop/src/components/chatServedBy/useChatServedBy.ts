@@ -15,7 +15,7 @@ import {
 } from '../../utils/mlxEngineMonitor';
 import { defineMessages, useIntl } from '../../i18n';
 import { MLX_STATUS_POLL_MS } from '../leanzero-swarm/mlxLiveStats';
-import { turnAwaitsItsNode } from '../../utils/nodeSwap';
+import { routeNodeIds, turnCanWaitInLoader } from '../../utils/nodeSwap';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmConfig } from '../settings/swarm/golden';
@@ -173,13 +173,20 @@ export function useChatServedBy(
   // goosed's nodes read — the loader's marks and the node names (Q-254, Q-255): the glance store's
   // one read per window, re-read on each engine change and while the loader is at work.
   const glanceNodes = useGlanceNodes();
-  // Q-430: a turn in flight whose node does not serve yet may be queued in the loader behind
-  // another chat's reply — keep reading the loader's marks until one of its nodes serves.
-  const awaitsItsNode =
+  // Q-430 / Q-442: a turn in flight on an MLX node may be queued in the loader — behind another
+  // chat's reply, or behind a switch asked before it while its own node serves — and nothing the
+  // glance keys on announces either: keep reading the loader's marks while the turn runs. An Auto
+  // chat's lease on a pool MLX device waits behind a queued switch the same way (Q-442).
+  const autoOnMlx =
+    isSwarm &&
+    lookup.state === 'ready' &&
+    lookup.devices.some((d) => d.enabled === true && d.engine === 'mlx-sidecar');
+  const canWaitInLoader =
     turnInFlight &&
     glanceNodes.kind === 'read' &&
-    turnAwaitsItsNode(glanceNodes.read, glanceNodes.residency, model);
-  useEffect(() => (awaitsItsNode ? watchGlanceNodes() : undefined), [awaitsItsNode]);
+    (turnCanWaitInLoader(glanceNodes.read, model) ||
+      (autoOnMlx && routeNodeIds(glanceNodes.read, model) === null));
+  useEffect(() => (canWaitInLoader ? watchGlanceNodes() : undefined), [canWaitInLoader]);
   const servedRecord = useServedLast(sessionId, model, turnInFlight);
   const nodes: ChatNodesFacts | null = useMemo(
     () =>

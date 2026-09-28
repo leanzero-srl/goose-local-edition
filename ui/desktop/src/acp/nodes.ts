@@ -9,6 +9,7 @@ import type {
   NodesResidencyResponse_unstable,
   NodesServedLastResponse_unstable,
   NodesSetChatNodesResponse_unstable,
+  NodesTakeOverNowResponse_unstable,
   NodesWriteResponse_unstable,
 } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
@@ -135,4 +136,17 @@ export async function nodesEnsureServing(node: string, sessionId?: string): Prom
     params
   );
   return response.answer;
+}
+
+/**
+ * Q-443: this chat's turn, waiting under its role's "Wait" for another node's chats, takes the Mac
+ * over for this turn only (a reply running there still finishes first). False when no turn of the
+ * chat waits for the node any more.
+ */
+export async function nodesTakeOverNow(node: string, sessionId: string): Promise<boolean> {
+  const response = await call<NodesTakeOverNowResponse_unstable>(
+    '_goose/unstable/nodes/takeOverNow',
+    { node, sessionId }
+  );
+  return response.taken;
 }

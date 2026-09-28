@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "Chiến lược"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "Tin nhắn của cuộc trò chuyện này không còn chờ {node}."
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "Tải {node} ngay (dừng {serving} cho {chats})"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "Phản hồi đang chạy trên {serving} sẽ hoàn tất trước; không có gì bị cắt ngang. Cài đặt của chiến lược giữ nguyên."
+  },
   "nodes.title": {
     "defaultMessage": "Nút"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "Đang chờ chuyển sang {node} cho {chats} ({duration}): yêu cầu này có trước tin nhắn này nên được thực hiện trước. Sau đó cuộc trò chuyện này tiếp tục."
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "Đang chờ chuyển sang {node} được bắt đầu từ thẻ của nó ({duration}): yêu cầu này có trước tin nhắn này nên được thực hiện trước. Sau đó cuộc trò chuyện này tiếp tục."
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "Lần tải đầu của {node}, chưa được đo"
