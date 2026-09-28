@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "O último turno falhou"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "O loop deste chat está executando a verificação após uma rodada"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "O loop deste chat está rodando em outra janela do goose"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "O loop deste chat aguarda até que sua resposta à rodada tenha sido executada"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "O loop deste chat faz a próxima rodada às {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "O loop deste chat está aguardando, mas o goose não enviou o horário da próxima rodada"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "O loop deste chat está aguardando; não foi possível ler o horário da próxima rodada: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "O loop deste chat está pausado; abra o chat para ver o motivo e retomá-lo"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "O loop deste chat está fazendo uma rodada"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Uma rodada do loop deste chat está pendente; ela começa quando o turno anterior terminar"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "A última rodada do loop deste chat não disse quando voltar"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Próxima {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "Pausado"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Loop ilegível"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Aguardando você"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "Em loop"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Precisa de você"
   },

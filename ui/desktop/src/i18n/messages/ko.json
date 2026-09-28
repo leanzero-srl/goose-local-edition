@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "마지막 턴이 실패했습니다"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "이 채팅의 루프가 틱 후 확인을 실행 중입니다"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "이 채팅의 루프는 다른 goose 창에서 실행 중입니다"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "이 채팅의 루프는 틱에 대한 답변이 실행될 때까지 기다립니다"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "이 채팅의 루프는 {time}에 다음 틱을 실행합니다"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "이 채팅의 루프가 대기 중이지만 goose가 다음 틱 시간을 보내지 않았습니다"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "이 채팅의 루프가 대기 중입니다. 다음 틱 시간을 읽을 수 없습니다: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "이 채팅의 루프가 일시중지되었습니다. 이유를 보고 다시 시작하려면 채팅을 여세요"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "이 채팅의 루프가 틱을 실행 중입니다"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "이 채팅 루프의 틱 시간이 되었습니다. 이전 턴이 끝나면 시작됩니다"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "이 채팅 루프의 마지막 틱이 언제 돌아올지 알려주지 않았습니다"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "다음 {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "일시중지됨"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "루프를 읽을 수 없음"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "답변 대기 중"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "루프 중"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "확인 필요"
   },
