@@ -7,6 +7,9 @@
 # An ORPHAN MCP (Q-138) is a bundled LeanZero MCP (bundled-mcps/leanzero-*) whose goose is gone (PPID 1): on
 # 2026-09-26 six of them spun at 100% CPU for up to 3.4 days, deaf to SIGTERM, so --kill escalates them to
 # SIGKILL per pid when they are still there after the TERM.
+# It runs FROM THE MACBOOK ONLY and reports both Macs itself (2026-09-28: run on the Studio by mistake, its inner
+# `ssh workhorse` failed to resolve and read as a network outage).
+[ -d /Users/mihaiperdum/Projects/goose ] || { echo "clean.sh runs on the MacBook; it reaches the Studio itself" >&2; exit 2; }
 mode=${1:-list}
 probe='
 me=$$

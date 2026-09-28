@@ -951,6 +951,43 @@ impl Agent {
         Some(parts.join("\n\n"))
     }
 
+    /// Q-342: the summary request a compaction of this session sends — the chat's own next request
+    /// with the system prompt and tools built exactly as `reply_internal` builds them for the
+    /// session's next reply (tools and prompt, the project's instructions, tool disclosure). The
+    /// swarm's workers keep the transcript request their golden run measured.
+    pub(crate) async fn summary_request_for_next_reply(
+        &self,
+        session: &Session,
+    ) -> Result<crate::context_mgmt::SummaryRequest> {
+        if self.is_swarm_worker() {
+            return Ok(crate::context_mgmt::SummaryRequest::Transcript);
+        }
+        let (tools, _, mut system_prompt, _) = self
+            .prepare_tools_and_prompt(&session.id, session.working_dir.as_path())
+            .await?;
+        if let Some(project_addendum) = self.load_project_instructions(session).await {
+            system_prompt = format!("{system_prompt}\n\n{project_addendum}");
+        }
+        Ok(self.summary_request_extending(&tools, &system_prompt).await)
+    }
+
+    /// The summary request that extends a call made with `tools` and `system_prompt` before tool
+    /// disclosure — what the reply loop holds — for the swarm's workers the transcript request.
+    pub(crate) async fn summary_request_extending(
+        &self,
+        tools: &[Tool],
+        system_prompt: &str,
+    ) -> crate::context_mgmt::SummaryRequest {
+        if self.is_swarm_worker() {
+            return crate::context_mgmt::SummaryRequest::Transcript;
+        }
+        let (tools, system_prompt) = self.disclose_tools(tools, system_prompt).await;
+        crate::context_mgmt::SummaryRequest::ExtendsChat(crate::context_mgmt::ChatRequestFrame {
+            system_prompt,
+            tools,
+        })
+    }
+
     async fn prepare_reply_context(
         &self,
         session_id: &str,
@@ -2019,12 +2056,14 @@ impl Agent {
                 );
 
                 let compact_model_config = self.model_config_for_session(&session_config.id).await?;
+                let summary_request = self.summary_request_for_next_reply(&session).await?;
                 match compact_messages(
                     self.provider().await?.as_ref(),
                     &compact_model_config,
                     &session_config.id,
                     &conversation_to_compact,
                     false,
+                    &summary_request,
                 )
                 .await
                 {
@@ -2837,12 +2876,15 @@ impl Agent {
                                 )
                             );
 
+                            // The chat's own request was just refused as too long, so a summary
+                            // request extending it cannot fit (Q-342): the transcript request.
                             match compact_messages(
                                 self.provider().await?.as_ref(),
                                 &model_config,
                                 &session_config.id,
                                 &conversation,
                                 false,
+                                &crate::context_mgmt::SummaryRequest::Transcript,
                             )
                             .await
                             {
@@ -3271,12 +3313,15 @@ impl Agent {
                                 SystemNotificationType::ThinkingMessage,
                                 COMPACTION_THINKING_TEXT,
                             ));
+                            let summary_request =
+                                self.summary_request_extending(&tools, &system_prompt).await;
                             match compact_messages(
                                 self.provider().await?.as_ref(),
                                 &model_config,
                                 &session_config.id,
                                 &conversation,
                                 false,
+                                &summary_request,
                             )
                             .await
                             {

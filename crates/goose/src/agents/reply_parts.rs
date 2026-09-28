@@ -143,6 +143,31 @@ async fn toolshim_postprocess(
     }
 }
 
+/// The messages a provider call is sent: the agent-visible part of each agent-visible message,
+/// converted to text when the model runs through the toolshim. One definition for the chat's calls
+/// and the compaction request that extends them (Q-342), so the two cannot render the same
+/// conversation differently.
+pub(crate) fn messages_for_provider(messages: &[Message], toolshim: bool) -> Conversation {
+    let filtered_messages: Vec<Message> = messages
+        .iter()
+        .filter(|m| m.is_agent_visible())
+        .map(|m| m.agent_visible_content())
+        .collect();
+    if toolshim {
+        convert_tool_messages_to_text(&filtered_messages)
+    } else {
+        Conversation::new_unvalidated(filtered_messages)
+    }
+}
+
+/// The model config a provider call is made with: the session's, with goose's configured thinking
+/// effort where the session sets none. Shared with the compaction request for the same reason as
+/// [`messages_for_provider`]: a chat template can render the SYSTEM block by the thinking switch
+/// (Qwen3.8 writes its reasoning-effort line there only while thinking is on).
+pub(crate) fn provider_call_model_config(model_config: ModelConfig) -> ModelConfig {
+    model_config.with_default_thinking_effort(Config::global().get_goose_thinking_effort())
+}
+
 impl Agent {
     pub async fn prepare_tools_and_prompt(
         &self,
@@ -285,18 +310,7 @@ impl Agent {
     ) -> Result<MessageStream, ProviderError> {
         let config = model_config.clone();
 
-        let filtered_messages: Vec<Message> = messages
-            .iter()
-            .filter(|m| m.is_agent_visible())
-            .map(|m| m.agent_visible_content())
-            .collect();
-
-        // Convert tool messages to text if toolshim is enabled
-        let messages_for_provider = if config.toolshim {
-            convert_tool_messages_to_text(&filtered_messages)
-        } else {
-            Conversation::new_unvalidated(filtered_messages)
-        };
+        let messages_for_provider = messages_for_provider(messages, config.toolshim);
 
         // Clone owned data to move into the async stream
         let system_prompt = system_prompt.to_owned();
@@ -307,8 +321,7 @@ impl Agent {
 
         // Capture errors during stream creation and return them as part of the stream
         // so they can be handled by the existing error handling logic in the agent
-        let model_config =
-            model_config.with_default_thinking_effort(Config::global().get_goose_thinking_effort());
+        let model_config = provider_call_model_config(model_config);
         debug!("WAITING_LLM_STREAM_START");
         let stream_result = crate::session_context::with_session_id(
             Some(session_id.clone()),

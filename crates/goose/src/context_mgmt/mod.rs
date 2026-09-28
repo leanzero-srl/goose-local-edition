@@ -2,7 +2,7 @@ use crate::conversation::message::{
     audience_includes, model_visible_content, model_visible_texts, Message, MessageContent,
 };
 use crate::conversation::message::{ActionRequiredData, MessageMetadata};
-use crate::conversation::{merge_consecutive_messages, Conversation};
+use crate::conversation::{fix_conversation, merge_consecutive_messages, Conversation};
 use crate::prompt_template::render_template;
 use crate::providers::base::Provider;
 #[cfg(test)]
@@ -13,7 +13,7 @@ use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
 use indoc::indoc;
-use rmcp::model::Role;
+use rmcp::model::{Role, Tool};
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -47,9 +47,36 @@ const MANUAL_COMPACT_CONTINUATION_TEXT: &str =
 Do not mention that you read a summary or that conversation summarization occurred.
 Just continue the conversation naturally based on the summarized context.";
 
+/// `compaction.md`'s context: the conversation as text for a [`SummaryRequest::Transcript`], `None`
+/// for a [`SummaryRequest::ExtendsChat`], whose conversation is the request's own messages.
 #[derive(Serialize)]
 struct SummarizeContext {
-    messages: String,
+    messages: Option<String>,
+}
+
+/// What the chat's provider calls carry besides the conversation: the system prompt and the tools
+/// exactly as the provider is sent them (after tool disclosure).
+#[derive(Debug, Clone)]
+pub struct ChatRequestFrame {
+    pub system_prompt: String,
+    pub tools: Vec<Tool>,
+}
+
+/// The shape of the request that asks a model for the summary.
+#[derive(Debug, Clone)]
+pub enum SummaryRequest {
+    /// Q-342: the chat's own next request — its system prompt, its tools, its messages as its
+    /// provider calls render them, its model config — with the summary instruction as the one
+    /// message after the conversation. A provider that caches prompt prefixes reads the whole
+    /// conversation from the entry the chat's last call left and prefills only the instruction.
+    /// E2E #3p (3.0.69, 27B split): the chat call before the compaction read 138,665 of 139,503
+    /// prompt tokens from cache; the transcript request after it prefilled 97,590 cold for 441 s
+    /// before its first token, 678 s in all.
+    ExtendsChat(ChatRequestFrame),
+    /// The conversation rendered as text inside the system prompt of a request with no tools, sent
+    /// with reasoning off. The swarm workers' golden-measured shape, and the shape a compaction
+    /// takes when the chat's own request was just refused as too long — extending it cannot fit.
+    Transcript,
 }
 
 /// Summarizer responses from reasoning models carry Thinking/RedactedThinking
@@ -87,6 +114,7 @@ pub async fn compact_messages(
     session_id: &str,
     conversation: &Conversation,
     manual_compact: bool,
+    request: &SummaryRequest,
 ) -> Result<(Conversation, ProviderUsage)> {
     let keep_tail = Config::global()
         .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
@@ -98,6 +126,7 @@ pub async fn compact_messages(
         conversation,
         manual_compact,
         keep_tail,
+        request,
     )
     .await
 }
@@ -111,6 +140,7 @@ pub async fn compact_messages_with_tail(
     conversation: &Conversation,
     manual_compact: bool,
     keep_tail: usize,
+    request: &SummaryRequest,
 ) -> Result<(Conversation, ProviderUsage)> {
     info!("Performing message compaction");
 
@@ -191,8 +221,14 @@ pub async fn compact_messages_with_tail(
     }
     let messages_to_compact = &messages[..cut];
 
-    let (summary_message, summarization_usage) =
-        do_compact(provider, model_config, session_id, messages_to_compact).await?;
+    let (summary_message, summarization_usage) = do_compact(
+        provider,
+        model_config,
+        session_id,
+        messages_to_compact,
+        request,
+    )
+    .await?;
 
     // Create the final message list with updated visibility metadata:
     // 1. Original messages become user_visible but not agent_visible
@@ -414,6 +450,111 @@ async fn do_compact(
     model_config: &ModelConfig,
     session_id: &str,
     messages: &[Message],
+    request: &SummaryRequest,
+) -> Result<(Message, ProviderUsage), anyhow::Error> {
+    if let SummaryRequest::ExtendsChat(frame) = request {
+        let summary_model =
+            crate::model_config::get_fast_model(provider.get_name(), model_config).await?;
+        if summary_model.model_name == model_config.model_name {
+            match summarize_as_the_chat(provider, model_config, session_id, messages, frame).await?
+            {
+                ChatSummary::Written(summary) => return Ok(*summary),
+                ChatSummary::NotWritten(why) => warn!(
+                    "compaction: the summary request that extends the chat {why}; summarizing \
+                     from a transcript of the conversation instead"
+                ),
+            }
+        } else {
+            tracing::debug!(
+                "compaction: the summary model {} is not the chat's {}, so nothing of the chat is \
+                 cached for it; summarizing from a transcript of the conversation",
+                summary_model.model_name,
+                model_config.model_name
+            );
+        }
+    }
+    summarize_a_transcript(provider, model_config, session_id, messages).await
+}
+
+enum ChatSummary {
+    Written(Box<(Message, ProviderUsage)>),
+    /// The provider refused the request as too long, or the model answered it with a tool call:
+    /// which, for the log.
+    NotWritten(String),
+}
+
+/// [`SummaryRequest::ExtendsChat`]: the conversation as the chat's next call would send it, then
+/// the instruction. The chat's messages are `fix_conversation`'s output (`inject_moim` fixes the
+/// conversation it extends), so these are too — which is also what places the instruction: it
+/// joins a trailing user message, as the turn-context block does, and follows tool results as a
+/// user message of its own (a strict chat template refuses two user turns in a row). The call is
+/// the chat's, not a helper's (`complete_as_the_chat`: the thinking switch can change the system
+/// block the cache holds).
+async fn summarize_as_the_chat(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    messages: &[Message],
+    frame: &ChatRequestFrame,
+) -> Result<ChatSummary> {
+    let instruction = render_template("compaction.md", &SummarizeContext { messages: None })?;
+    let mut conversation = messages.to_vec();
+    conversation.push(Message::user().with_text(instruction));
+    let (conversation, _) = fix_conversation(Conversation::new_unvalidated(conversation));
+    let sent = crate::agents::reply_parts::messages_for_provider(
+        conversation.messages(),
+        model_config.toolshim,
+    );
+    let answer = crate::model_config::complete_as_the_chat(
+        crate::background_work::BackgroundWorkKind::Compaction,
+        provider,
+        model_config,
+        session_id,
+        &frame.system_prompt,
+        sent.messages(),
+        &frame.tools,
+    )
+    .await;
+    let (mut response, mut provider_usage) = match answer {
+        Ok(answer) => answer,
+        Err(ProviderError::ContextLengthExceeded(detail)) => {
+            return Ok(ChatSummary::NotWritten(format!(
+                "was refused as too long ({detail})"
+            )))
+        }
+        Err(e) => return Err(e.into()),
+    };
+    if response.content.iter().any(|c| {
+        matches!(
+            c,
+            MessageContent::ToolRequest(_) | MessageContent::FrontendToolRequest(_)
+        )
+    }) {
+        return Ok(ChatSummary::NotWritten(
+            "was answered with a tool call instead of the summary".to_string(),
+        ));
+    }
+    response.role = Role::User;
+    strip_reasoning_content(&mut response);
+    crate::providers::usage_estimator::ensure_usage_tokens(
+        &mut provider_usage,
+        &frame.system_prompt,
+        sent.messages(),
+        &response,
+        &frame.tools,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to ensure usage tokens: {}", e))?;
+    Ok(ChatSummary::Written(Box::new((response, provider_usage))))
+}
+
+/// [`SummaryRequest::Transcript`], trying progressively more of the tool responses removed from
+/// the middle while the provider refuses the request as too long.
+async fn summarize_a_transcript(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    messages: &[Message],
 ) -> Result<(Message, ProviderUsage), anyhow::Error> {
     let agent_visible_messages: Vec<Message> = messages
         .iter()
@@ -434,7 +575,7 @@ async fn do_compact(
             .join("\n");
 
         let context = SummarizeContext {
-            messages: messages_text,
+            messages: Some(messages_text),
         };
 
         let system_prompt = render_template("compaction.md", &context)?;
@@ -941,6 +1082,7 @@ mod tests {
             &conversation,
             true,
             0,
+            &SummaryRequest::Transcript,
         )
         .await
         .unwrap();
@@ -1105,6 +1247,7 @@ mod tests {
             "test-session-id",
             &conversation,
             false,
+            &SummaryRequest::Transcript,
         )
         .await
         .unwrap();
@@ -1113,6 +1256,341 @@ mod tests {
 
         let _ = Conversation::new(agent_conversation)
             .expect("compaction should produce a valid conversation");
+    }
+
+    fn chat_tools() -> Vec<Tool> {
+        vec![Tool::new(
+            "developer__shell",
+            "Run a shell command",
+            rmcp::object!({"type": "object", "properties": {"command": {"type": "string"}}}),
+        )]
+    }
+
+    /// goose's turn-context block as `inject_moim` composes it (the chat's volatile tail).
+    fn turn_context_block() -> String {
+        "<turn-context>\n<current-time>2026-09-28 12:20:00</current-time>\n<working-directory>\
+         /Users/mihaiperdum</working-directory>\n</turn-context>"
+            .to_string()
+    }
+
+    /// The request body as the engine caches it: the turn-context block the next request drops
+    /// removed from the end of the last user or tool message, a user message that held nothing
+    /// else dropped whole — rank_boundary.py `stable_messages`, the key the conversation prefix
+    /// is cut at (less the replay margin).
+    fn stable_messages(body: &serde_json::Value, block: &str) -> Vec<serde_json::Value> {
+        let mut messages = body["messages"].as_array().unwrap().clone();
+        let at = messages
+            .iter()
+            .rposition(|m| m["role"] == "user" || m["role"] == "tool")
+            .unwrap();
+        let content = messages[at]["content"].as_str().unwrap().to_string();
+        let stable = content
+            .strip_suffix(&format!("\n{block}"))
+            .or_else(|| content.strip_suffix(block))
+            .unwrap_or_else(|| panic!("the chat request ends on its turn-context block: {content}"))
+            .to_string();
+        if stable.is_empty() && messages[at]["role"] == "user" {
+            messages.remove(at);
+        } else {
+            messages[at]["content"] = serde_json::Value::String(stable);
+        }
+        messages
+    }
+
+    /// Q-342 on the wire: the summary request a compaction sends starts with the whole request the
+    /// chat's last call sent — its system message, its tools, its messages up to the turn-context
+    /// block the next request drops, its template switches — and ends on ONE user message
+    /// carrying the instruction, so the engine reads the conversation from the entry that call
+    /// left. The chat call goes through the agent's own provider path. NEGATIVE CONTROL: the
+    /// transcript request (every compaction before Q-342; E2E #3p's) shares not even the system
+    /// message with it, carries no tools, and switches thinking off.
+    #[tokio::test]
+    async fn the_summary_request_extends_the_chats_last_request_on_the_wire() {
+        use crate::agents::Agent;
+        use crate::model_config::mlx_endpoint::{thinking_off, MlxEndpoint, SERVED};
+        use futures::StreamExt;
+
+        let session = ModelConfig::new(SERVED);
+        let system = "You are goose, a general-purpose agent.";
+        let tools = chat_tools();
+        let mut asked = vec![Message::user().with_text("list the notes")];
+        asked.extend(create_tool_pair(
+            "call1",
+            "resp1",
+            "developer__shell",
+            "notes/kickoff.md",
+        ));
+        // The chat's last call: the conversation with the turn-context block on the newest tool
+        // results (inject_moim's chat placement, then its fix_conversation).
+        let block = turn_context_block();
+        let mut with_block = asked.clone();
+        with_block
+            .last_mut()
+            .unwrap()
+            .content
+            .push(MessageContent::text(&block));
+        let (with_block, _) = fix_conversation(Conversation::new_unvalidated(with_block));
+
+        let engine = MlxEndpoint::start().await;
+        let mut stream = Agent::stream_response_from_provider(
+            engine.provider.clone(),
+            session.clone(),
+            "s",
+            system,
+            with_block.messages(),
+            &tools,
+            &[],
+        )
+        .await
+        .unwrap();
+        while stream.next().await.is_some() {}
+
+        // The turn ended on the model's answer and the person's next message arrived; the
+        // auto-compaction at that reply's start summarizes it all.
+        let mut conversation = asked.clone();
+        conversation.push(Message::assistant().with_text("one file: notes/kickoff.md"));
+        conversation.push(Message::user().with_text("now read it"));
+        let conversation = Conversation::new_unvalidated(conversation);
+        let frame = ChatRequestFrame {
+            system_prompt: system.to_string(),
+            tools: tools.clone(),
+        };
+        let (compacted, _) = compact_messages_with_tail(
+            engine.provider.as_ref(),
+            &session,
+            "s",
+            &conversation,
+            false,
+            0,
+            &SummaryRequest::ExtendsChat(frame),
+        )
+        .await
+        .unwrap();
+        compact_messages_with_tail(
+            engine.provider.as_ref(),
+            &session,
+            "s",
+            &conversation,
+            false,
+            0,
+            &SummaryRequest::Transcript,
+        )
+        .await
+        .unwrap();
+
+        let bodies = engine.bodies().await;
+        assert_eq!(bodies.len(), 3, "chat, summary, transcript: {bodies:?}");
+        let (chat, summary, transcript) = (&bodies[0], &bodies[1], &bodies[2]);
+        let cached = stable_messages(chat, &block);
+        let sent = summary["messages"].as_array().unwrap();
+        assert_eq!(
+            &sent[..cached.len()],
+            cached.as_slice(),
+            "the summary request starts with the chat's cached request, byte for byte"
+        );
+        assert_eq!(summary["tools"], chat["tools"], "the chat's tools, as sent");
+        assert_eq!(
+            summary.get("chat_template_kwargs"),
+            chat.get("chat_template_kwargs"),
+            "the chat's template switches: a thinking switch can change the system block"
+        );
+        assert_eq!(
+            sent[cached.len()],
+            serde_json::json!({"role": "assistant", "content": "one file: notes/kickoff.md"})
+        );
+        assert_eq!(sent.len(), cached.len() + 2, "{sent:?}");
+        let instruction = &sent[cached.len() + 1];
+        assert_eq!(instruction["role"], "user");
+        let instruction = instruction["content"].as_str().unwrap();
+        assert!(
+            instruction.starts_with("now read it\n## Task Context"),
+            "the instruction joins the person's trailing message (no two user turns in a row): \
+             {instruction}"
+        );
+        assert!(instruction.contains("Summarize now, as your reply: call no tool"));
+        assert!(!instruction.contains("Conversation History"));
+        assert!(!sent.iter().any(|m| m["content"]
+            .as_str()
+            .is_some_and(|c| c.contains("<turn-context>"))));
+
+        // The summary is read back as before: the answer, re-roled to the user, agent-only.
+        let summary_message = compacted
+            .messages()
+            .iter()
+            .find(|m| m.as_concat_text() == "reading project configuration")
+            .expect("the summary is in the compacted conversation");
+        assert_eq!(summary_message.role, Role::User);
+        assert!(summary_message.is_agent_visible() && !summary_message.is_user_visible());
+
+        assert_ne!(transcript["messages"][0], chat["messages"][0]);
+        assert!(transcript
+            .get("tools")
+            .is_none_or(|t| t.as_array().is_some_and(|t| t.is_empty())));
+        assert_eq!(transcript["chat_template_kwargs"], thinking_off());
+    }
+
+    /// A summary request that extends the chat and ends mid tool loop: the instruction follows the
+    /// tool results as a user message of its own (merged into them, the formatter would put it
+    /// before the results).
+    #[tokio::test]
+    async fn the_instruction_follows_tool_results_as_its_own_user_message() {
+        use crate::model_config::mlx_endpoint::{MlxEndpoint, SERVED};
+        let session = ModelConfig::new(SERVED);
+        let mut messages = vec![Message::user().with_text("list the notes")];
+        messages.extend(create_tool_pair(
+            "call1",
+            "resp1",
+            "developer__shell",
+            "notes/kickoff.md",
+        ));
+        let engine = MlxEndpoint::start().await;
+        compact_messages_with_tail(
+            engine.provider.as_ref(),
+            &session,
+            "s",
+            &Conversation::new_unvalidated(messages),
+            false,
+            0,
+            &SummaryRequest::ExtendsChat(ChatRequestFrame {
+                system_prompt: "You are goose.".to_string(),
+                tools: chat_tools(),
+            }),
+        )
+        .await
+        .unwrap();
+        let bodies = engine.bodies().await;
+        let sent = bodies[0]["messages"].as_array().unwrap();
+        let roles: Vec<&str> = sent.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["system", "user", "assistant", "tool", "user"]);
+        assert!(sent[4]["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("## Task Context"));
+    }
+
+    /// Records every request; refuses the ones carrying tools as too long, or answers them with a
+    /// tool call, as configured.
+    struct RecordingProvider {
+        calls: std::sync::Mutex<Vec<(String, Vec<Message>, usize)>>,
+        chat_shaped_answer: Option<Message>,
+    }
+
+    #[async_trait]
+    impl Provider for RecordingProvider {
+        fn get_name(&self) -> &str {
+            "recording"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            system: &str,
+            messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((system.to_string(), messages.to_vec(), tools.len()));
+            let usage = ProviderUsage::new("recording".to_string(), Usage::default());
+            if !tools.is_empty() {
+                return match &self.chat_shaped_answer {
+                    Some(answer) => Ok(stream_from_single_message(answer.clone(), usage)),
+                    None => Err(ProviderError::ContextLengthExceeded(
+                        "prompt of 180,000 tokens exceeds the 178,176 window".to_string(),
+                    )),
+                };
+            }
+            Ok(stream_from_single_message(
+                Message::assistant().with_text("<transcript summary>"),
+                usage,
+            ))
+        }
+    }
+
+    /// The chat-extending request is a first rung, never the only one: refused as too long, or
+    /// answered with a tool call instead of a summary, the summary is asked for as a transcript
+    /// (tools gone, the conversation inside the system prompt) — and the tool call never becomes
+    /// the summary.
+    #[tokio::test]
+    async fn a_chat_shaped_summary_that_cannot_be_used_is_asked_again_as_a_transcript() {
+        let conversation = Conversation::new_unvalidated(vec![
+            Message::user().with_text("list the notes"),
+            Message::assistant().with_text("one file: notes/kickoff.md"),
+        ]);
+        let frame = ChatRequestFrame {
+            system_prompt: "You are goose.".to_string(),
+            tools: chat_tools(),
+        };
+        for answer in [
+            None,
+            Some(
+                Message::assistant()
+                    .with_tool_request("t1", Ok(CallToolRequestParams::new("developer__shell"))),
+            ),
+        ] {
+            let provider = RecordingProvider {
+                calls: std::sync::Mutex::new(Vec::new()),
+                chat_shaped_answer: answer,
+            };
+            let (compacted, _) = compact_messages_with_tail(
+                &provider,
+                &ModelConfig::new("recording-model"),
+                "s",
+                &conversation,
+                false,
+                0,
+                &SummaryRequest::ExtendsChat(frame.clone()),
+            )
+            .await
+            .unwrap();
+            let calls = provider.calls.lock().unwrap();
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[0].0, "You are goose.");
+            assert_eq!(calls[0].2, 1, "the first request extends the chat");
+            assert_eq!(calls[1].2, 0, "the second is the transcript request");
+            assert!(calls[1].0.contains("**Conversation History:**"));
+            let visible: Vec<String> = compacted
+                .agent_visible_messages()
+                .iter()
+                .map(|m| m.as_concat_text())
+                .collect();
+            assert_eq!(visible[0], "<transcript summary>");
+            assert!(compacted.agent_visible_messages().iter().all(|m| !m
+                .content
+                .iter()
+                .any(|c| matches!(c, MessageContent::ToolRequest(_)))));
+        }
+    }
+
+    /// `compaction.md` before Q-342, verbatim: the transcript request — the swarm workers' golden
+    /// shape — must render byte-identically from the template that now also carries the
+    /// chat-extending instruction.
+    const COMPACTION_BEFORE_Q342: &str = "## Task Context\n- An llm context limit was reached when a user was in a working session with an agent (you)\n- Generate a version of the below messages with only the most verbose parts removed\n- Include user requests, your responses, all technical content, and as much of the original context as possible\n- This will be used to let the user continue the working session\n- Use framing and tone knowing the content will be read an agent (you) on a next exchange to allow for continuation of the session\n\n**Conversation History:**\n{{ messages }}\n\nWrap reasoning in `<analysis>` tags:  \n- Review conversation chronologically\n- For each part, log:  \n  - User goals and requests  \n  - Your method and solution  \n  - Key decisions and designs  \n  - File names, code, signatures, errors, fixes  \n- Highlight user feedback and revisions  \n- Confirm completeness and accuracy  \n- This summary will only be read by you so it is ok to make it much longer than a normal summary you would show to a human\n- Do not exclude any information that might be important to continuing a session working with you\n\n### Include the Following Sections:\n1. **User Intent** – All goals and requests  \n2. **Technical Concepts** – All discussed tools, methods  \n3. **Files + Code** – Viewed/edited files, full code, change justifications  \n4. **Errors + Fixes** – Bugs, resolutions, user-driven changes  \n5. **Problem Solving** – Issues solved or in progress  \n6. **User Messages** – All user messages including tool calls, but truncate long tool call arguments or results\n7. **Pending Tasks** – All unresolved user requests  \n8. **Current Work** – Active work at summary request time: filenames, code, alignment to latest instruction  \n9. **Next Step** – *Include only if* directly continues user instruction  \n\n> No new ideas unless user confirmed\n";
+
+    #[test]
+    fn the_transcript_prompt_is_unchanged_and_the_instruction_keeps_its_rules() {
+        let transcript = SummarizeContext {
+            messages: Some("[user]: list the notes\n[assistant]: one file".to_string()),
+        };
+        assert_eq!(
+            render_template("compaction.md", &transcript).unwrap(),
+            crate::prompt_template::render_string(COMPACTION_BEFORE_Q342, &transcript).unwrap()
+        );
+
+        let instruction =
+            render_template("compaction.md", &SummarizeContext { messages: None }).unwrap();
+        assert!(!instruction.contains("Conversation History"));
+        assert!(instruction.contains("Generate a version of the messages above"));
+        let rules = COMPACTION_BEFORE_Q342
+            .split_once("Wrap reasoning")
+            .unwrap()
+            .1
+            .trim_end();
+        assert!(
+            instruction.ends_with(rules),
+            "the content and format rules move into the instruction unchanged"
+        );
     }
 
     #[tokio::test]
@@ -1144,6 +1622,7 @@ mod tests {
             "test-session-id",
             &conversation,
             false,
+            &SummaryRequest::Transcript,
         )
         .await;
 
