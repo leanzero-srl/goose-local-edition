@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "Le dernier tour a échoué"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "La boucle de ce chat lance sa vérification après un passage"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "La boucle de ce chat s'exécute dans une autre fenêtre goose"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "La boucle de ce chat attend que votre réponse à son passage ait été traitée"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "La boucle de ce chat lance son prochain passage à {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "La boucle de ce chat attend, mais goose n'a envoyé aucune heure pour son prochain passage"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "La boucle de ce chat attend ; l'heure de son prochain passage n'a pas pu être lue : {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "La boucle de ce chat est en pause ; ouvrez le chat pour voir pourquoi et la reprendre"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "La boucle de ce chat effectue un passage"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Un passage de la boucle de ce chat est dû ; il démarre quand le tour précédent se termine"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "Le dernier passage de la boucle de ce chat n'a pas dit quand revenir"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Prochain {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "En pause"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Boucle illisible"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Vous attend"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "En boucle"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "A besoin de vous"
   },

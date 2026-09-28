@@ -3,6 +3,8 @@ import type {
   BackgroundSessionDto,
   BackgroundWorkKind,
   FailedSessionDto,
+  LoopStatus,
+  LoopSummaryDto,
   NeedsYouItemDto,
   RunningSessionDto,
   StoppedSessionDto,
@@ -40,6 +42,11 @@ export interface SessionActivitySnapshot {
    * A session shows it only while no turn runs: the quieter "still working for you" state.
    */
   background: BackgroundSessionDto[];
+  /**
+   * The chats whose loop has not ended (session loops, Q-228), each with its status as the engine
+   * reads it now; an unreadable loop record comes with its error instead of a status.
+   */
+  looping: LoopSummaryDto[];
   elicitations: AcpElicitationRequest[];
 }
 
@@ -47,6 +54,8 @@ export type {
   BackgroundSessionDto,
   BackgroundWorkKind,
   FailedSessionDto,
+  LoopStatus,
+  LoopSummaryDto,
   NeedsYouItemDto,
   RunningSessionDto,
   StoppedSessionDto,
@@ -61,6 +70,7 @@ const EMPTY: SessionActivitySnapshot = {
   failed: [],
   stopped: [],
   background: [],
+  looping: [],
   elicitations: [],
 };
 
@@ -91,6 +101,8 @@ export async function refreshSessionActivity(): Promise<void> {
     const stopped = activity.stopped ?? [];
     // An engine older than Q-185 lists no background work: it tagged none.
     const background = activity.background ?? [];
+    // An engine older than Q-228 runs no session loops.
+    const looping = activity.looping ?? [];
     if (generation !== refreshGeneration) return;
     // The poll re-reads every few seconds; an unchanged answer must not re-render every list.
     if (
@@ -98,11 +110,12 @@ export async function refreshSessionActivity(): Promise<void> {
       JSON.stringify(needsYou) === JSON.stringify(snapshot.needsYou) &&
       JSON.stringify(failed) === JSON.stringify(snapshot.failed) &&
       JSON.stringify(stopped) === JSON.stringify(snapshot.stopped) &&
-      JSON.stringify(background) === JSON.stringify(snapshot.background)
+      JSON.stringify(background) === JSON.stringify(snapshot.background) &&
+      JSON.stringify(looping) === JSON.stringify(snapshot.looping)
     ) {
       return;
     }
-    emit({ ...snapshot, running, needsYou, failed, stopped, background });
+    emit({ ...snapshot, running, needsYou, failed, stopped, background, looping });
   } catch (error) {
     console.warn('Failed to read session activity:', error);
   }
@@ -196,6 +209,12 @@ export interface SessionActivity {
   stoppedOutputTokens?: number;
   /** goose's oldest call in flight FOR the session besides its turn (Q-185); undefined = none. */
   background?: BackgroundWorkKind;
+  /** The chat's loop as read now (Q-228); undefined = no loop, or it ended. */
+  loopStatus?: LoopStatus;
+  /** When a waiting loop's next tick starts (RFC 3339). */
+  loopNextTickAt?: string;
+  /** The chat's loop record could not be read: the engine's words, never read as "no loop". */
+  loopError?: string;
 }
 
 export function activityOf(state: SessionActivitySnapshot, sessionId: string): SessionActivity {
@@ -203,6 +222,9 @@ export function activityOf(state: SessionActivitySnapshot, sessionId: string): S
   const failed = state.failed.find((row) => row.sessionId === sessionId);
   const stopped = state.stopped.find((row) => row.sessionId === sessionId);
   const background = state.background.find((row) => row.sessionId === sessionId);
+  const loop = state.looping.find((row) => row.sessionId === sessionId);
+  // `looping` lists no ended loop; an ended one that still arrives is not looping either.
+  const loopStatus = loop?.status && loop.status !== 'ended' ? loop.status : undefined;
   const needsYou =
     state.needsYou.filter((item) => item.sessionId === sessionId).length +
     state.elicitations.filter((request) => request.sessionId === sessionId).length;
@@ -215,22 +237,48 @@ export function activityOf(state: SessionActivitySnapshot, sessionId: string): S
     stoppedElapsedMs: stopped?.elapsedMs,
     stoppedOutputTokens: stopped?.outputTokens ?? undefined,
     background: background?.kind,
+    loopStatus,
+    loopNextTickAt: loopStatus ? (loop?.nextTickAt ?? undefined) : undefined,
+    loopError: loop?.error ?? undefined,
   };
 }
 
-export type SessionState = 'running' | 'needs-you' | 'background' | 'failed' | 'stopped' | 'idle';
+export type SessionState =
+  | 'running'
+  | 'needs-you'
+  | 'background'
+  | 'looping'
+  | 'failed'
+  | 'stopped'
+  | 'idle';
+
+/** The order a session's states are ranked in, most urgent first (session loops §8.6). */
+export const SESSION_STATE_ORDER: readonly SessionState[] = [
+  'needs-you',
+  'running',
+  'background',
+  'looping',
+  'failed',
+  'stopped',
+  'idle',
+];
 
 /**
- * Every state that holds, most urgent first. A new turn on a session whose last turn failed is
- * RUNNING (the failure is history once a turn starts); needs-you and running can hold together.
- * BACKGROUND (Q-185) is goose still working for the session with no turn running — the fact
- * check after the reply: quieter than running, never idle.
+ * Every state that holds, most urgent first (`SESSION_STATE_ORDER`). A new turn on a session whose
+ * last turn failed is RUNNING (the failure is history once a turn starts); needs-you and running
+ * can hold together. BACKGROUND (Q-185) is goose still working for the session with no turn
+ * running — the fact check after the reply: quieter than running, never idle. LOOPING (Q-228) is a
+ * chat whose loop has not ended, between its ticks: a tick in flight is a turn and reads RUNNING,
+ * its reviewers read BACKGROUND, and a tick that asked the person reads NEEDS-YOU. A loop outranks
+ * the last turn's failed or stopped mark: one failed tick is on its row in the rail, and a tick
+ * the person stopped pauses the loop, which the Looping pill says ("Paused").
  */
 export function sessionStates(activity: SessionActivity): SessionState[] {
   const states: SessionState[] = [];
   if (activity.needsYou > 0) states.push('needs-you');
   if (activity.runningSince) states.push('running');
   else if (activity.background) states.push('background');
+  else if (activity.loopStatus || activity.loopError !== undefined) states.push('looping');
   if (states.length === 0 && activity.failedAt) states.push('failed');
   if (states.length === 0 && activity.stoppedAt) states.push('stopped');
   return states.length > 0 ? states : ['idle'];
@@ -269,6 +317,18 @@ export function useActivityOf(sessionId: string): SessionActivity {
     subscribe,
     () => activityOf(snapshot, sessionId).background
   );
+  const loopStatus = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).loopStatus
+  );
+  const loopNextTickAt = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).loopNextTickAt
+  );
+  const loopError = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).loopError
+  );
   return {
     runningSince,
     needsYou,
@@ -278,6 +338,9 @@ export function useActivityOf(sessionId: string): SessionActivity {
     stoppedElapsedMs,
     stoppedOutputTokens,
     background,
+    loopStatus,
+    loopNextTickAt,
+    loopError,
   };
 }
 

@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "直前のターンが失敗しました"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "このチャットのループはティックの後のチェックを実行中です"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "このチャットのループは別の goose ウィンドウで実行中です"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "このチャットのループは、ティックへのあなたの回答が実行されるまで待機します"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "このチャットのループは {time} に次のティックを実行します"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "このチャットのループは待機中ですが、goose は次のティックの時刻を送っていません"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "このチャットのループは待機中です。次のティックの時刻を読み取れませんでした: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "このチャットのループは一時停止中です。理由を確認して再開するにはチャットを開いてください"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "このチャットのループはティックを実行中です"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "このチャットのループのティックが予定時刻です。前のターンが終わると始まります"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "このチャットのループの最後のティックは、いつ戻るかを示しませんでした"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "次回 {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "一時停止中"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "ループを読み取れません"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "あなたを待っています"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "ループ中"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "対応が必要"
   },

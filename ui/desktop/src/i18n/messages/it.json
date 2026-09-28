@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "L’ultimo turno non è riuscito"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "Il ciclo di questa chat sta eseguendo il suo controllo dopo un giro"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "Il ciclo di questa chat è in esecuzione in un'altra finestra di goose"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "Il ciclo di questa chat attende che la tua risposta al suo giro sia stata eseguita"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "Il ciclo di questa chat avvia il prossimo giro alle {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "Il ciclo di questa chat è in attesa, ma goose non ha inviato l'ora del prossimo giro"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "Il ciclo di questa chat è in attesa; non è stato possibile leggere l'ora del prossimo giro: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "Il ciclo di questa chat è in pausa; apri la chat per vedere il motivo e riprenderlo"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "Il ciclo di questa chat sta eseguendo un giro"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Un giro del ciclo di questa chat è previsto; parte quando finisce il turno precedente"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "L'ultimo giro del ciclo di questa chat non ha detto quando tornare"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Prossimo {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "In pausa"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Ciclo illeggibile"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "In attesa di te"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "In ciclo"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Ha bisogno di te"
   },

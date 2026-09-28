@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "El último turno falló"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "El bucle de este chat está ejecutando su comprobación tras una pasada"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "El bucle de este chat se ejecuta en otra ventana de goose"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "El bucle de este chat espera hasta que se haya ejecutado tu respuesta a su pasada"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "El bucle de este chat hará su próxima pasada a las {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "El bucle de este chat está esperando, pero goose no envió la hora de su próxima pasada"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "El bucle de este chat está esperando; no se pudo leer la hora de su próxima pasada: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "El bucle de este chat está en pausa; abre el chat para ver por qué y reanudarlo"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "El bucle de este chat está haciendo una pasada"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Toca una pasada del bucle de este chat; empieza cuando termine el turno anterior"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "La última pasada del bucle de este chat no dijo cuándo volver"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Siguiente {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "Pausado"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Bucle ilegible"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Esperándote"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "En bucle"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Te necesita"
   },
