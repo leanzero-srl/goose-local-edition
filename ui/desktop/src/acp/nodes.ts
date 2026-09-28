@@ -2,6 +2,7 @@ import type {
   NodeEnsureServing,
   NodesBuildEligibilityResponse_unstable,
   NodesConfig,
+  NodeStrategy,
   NodesEnsureServingResponse_unstable,
   NodesLoadHistoryResponse_unstable,
   NodesReadResponse_unstable,
@@ -73,9 +74,19 @@ export async function nodesRemoveStrategy(
   return call<NodesWrite>('_goose/unstable/nodes/removeStrategy', { id, ...options });
 }
 
-/** Whether a strategy can drive a swarm build, and every reason when it cannot. */
-export async function nodesBuildEligibility(strategy: string): Promise<BuildEligibility> {
-  return call<BuildEligibility>('_goose/unstable/nodes/buildEligibility', { strategy });
+/**
+ * Whether a strategy can drive a swarm build, and every reason when it cannot. With `draft`, goosed
+ * answers for the strategy as the editor holds it (in place of the stored one, or as a new one) —
+ * checked while it is edited, never written (Q-311).
+ */
+export async function nodesBuildEligibility(
+  strategy: string,
+  draft?: NodeStrategy
+): Promise<BuildEligibility> {
+  return call<BuildEligibility>(
+    '_goose/unstable/nodes/buildEligibility',
+    draft ? { strategy, draft } : { strategy }
+  );
 }
 
 /** Per node: serving / loading / waiting / not running / refused last time. */

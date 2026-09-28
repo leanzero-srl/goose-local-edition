@@ -190,16 +190,32 @@ function macNameOf(
   return macForPlacementNode(macs, mac)?.name ?? candidate?.nodeNames[index] ?? mac;
 }
 
+/**
+ * Where a node follows to now: a follows node runs wherever this Mac's engine serves — split across
+ * the split's Macs, on the peer of a remote single, else this Mac (Q-303: "This Mac" sat above
+ * "Split across 2 Macs").
+ */
+function followedWhere(serving: NodesServingWayDto | null): GlanceWhere {
+  const splitMacs =
+    serving?.kind === 'split' ? serving.macNames.length || (serving.macs?.length ?? 0) : 0;
+  if (splitMacs > 0) return { kind: 'split', count: splitMacs };
+  if (serving?.kind === 'remoteSingle' && serving.macNames[0]) {
+    return { kind: 'mac', name: serving.macNames[0] };
+  }
+  return { kind: 'thisMac' };
+}
+
 function whereOf(
   node: ResolvedNodeDef,
   macs: readonly Mac[],
   providerName: string | null,
-  candidate: PlacementCandidate | null
+  candidate: PlacementCandidate | null,
+  serving: NodesServingWayDto | null = null
 ): GlanceWhere | null {
   const def = node.def;
   if (def.kind !== 'mlx') return providerName ? { kind: 'provider', name: providerName } : null;
   const placement = def.placement;
-  if (!placement || placement.kind === 'follows') return { kind: 'thisMac' };
+  if (!placement || placement.kind === 'follows') return followedWhere(serving);
   if (placement.kind !== 'single') return { kind: 'split', count: placement.macs.length };
   const mac = placement.macs[0] ?? THIS_MAC;
   if (mac === THIS_MAC) return { kind: 'thisMac' };
@@ -385,7 +401,7 @@ export function nodeGlance(node: ResolvedNodeDef, facts: NodeFacts): NodeGlance 
   if (node.def.kind !== 'mlx') return providerGlance(node, facts);
 
   const candidate = candidateFor(node, facts.plans);
-  const where = whereOf(node, facts.macs, null, candidate);
+  const where = whereOf(node, facts.macs, null, candidate, facts.serving);
   const glance = (state: NodeState, line: GlanceLine, action: GlanceAction): NodeGlance => ({
     state,
     line,

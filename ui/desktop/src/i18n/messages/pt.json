@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Modelo: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Entrada do pool do enxame {device}, nome do modelo lá: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Não funcionou: {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "Memória em {mac} face ao orçamento"
   },
   "nodes.memNeed": {
-    "defaultMessage": "precisa de {need} de {budget} GB"
+    "defaultMessage": "precisa de {need} GB, {budget} GB livres"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "ainda sem pico"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "Filtrar modelos"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} de {budget} GB"
+    "defaultMessage": "{mac}: precisa de {need} GB, {budget} GB livres"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Obtenha um em Modelos"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Dê um nome"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Outro nó já se chama “{name}” — dê outro nome a este"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Escolha um modelo para continuar"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Configurar outro provedor"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Iniciá-lo interrompe {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Iniciá-lo interrompe {model} em {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Tipo"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "Aguardando outro carregamento terminar"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Fixar uma opção"
+    "defaultMessage": "Novo nó para este modelo"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Novo nó para um modelo"
   },
   "nodes.planFailed": {
     "defaultMessage": "Sem plano para esta opção: {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "Seu pool do enxame"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Seu pool do enxame · usado pelos builds do enxame enquanto “Os builds do enxame usam” for “Seu pool do enxame”"
+    "defaultMessage": "Seu pool do enxame · os builds do enxame e os chats em Qualquer nó (Auto) rodam nestes"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Seu pool do enxame · os chats em Qualquer nó (Auto) rodam nestes; os builds do enxame usam {strategy} agora"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {#º}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "Novos chats começam agora neste nó, então ele não pode ser removido sozinho."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Seu pool do enxame mantém o dispositivo; este nó não aparece mais aqui. Edite o próprio pool abaixo."
+    "defaultMessage": "Só este cartão some: o modelo continua no seu pool do enxame, então os chats em Qualquer nó (Auto) continuam rodando nele, assim como os builds do enxame que usam o pool. Para trazer o cartão de volta, escolha “Mostrar nós do pool removidos” nesta página."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Remover {node}?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, one {# nó que você removeu do seu pool do enxame não é mostrado} other {# nós que você removeu do seu pool do enxame não são mostrados}}"
   },
   "nodes.retry": {
     "defaultMessage": "Ler de novo"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Mostrar em Executar"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Mostrar nós do pool removidos"
   },
   "nodes.startAction": {
     "defaultMessage": "Iniciar {node}"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "Adicionar um nó"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Todos os seus nós já estão nesta lista"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Só existe um nó — crie outro em Nós para adicioná-lo aqui"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Os builds do enxame usam isto"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Novos chats começam aqui"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Se os builds do enxame podem usá-la é verificado ao salvar."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Os builds do enxame podem usar esta estratégia."
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Não foi possível ler se os builds do enxame podem usá-la: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Verificado enquanto você edita; nada foi salvo ainda."
   },
   "strategies.cancel": {
     "defaultMessage": "Cancelar"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "Ainda não há estratégias"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: serve o que o motor deste Mac estiver executando; nunca carrega"
+    "defaultMessage": "{node}: usa o que este Mac estiver executando; nunca inicia um modelo por conta própria"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Link"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "Nos seus Macs"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Uma opção de cada vez serve seus chats: {node}"
+    "defaultMessage": "Só {node} roda nos seus Macs para esta estratégia, então nada é trocado."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Uma única opção de MLX serve o goose neste Mac por vez, em todos os seus Macs. Duas opções diferentes numa estratégia precisam se revezar."
+    "defaultMessage": "Seus Macs executam um modelo por vez para o goose neste Mac — em um Mac ou dividido entre eles. Os nós desta estratégia que rodam de outra forma se revezam: cada troca interrompe um e inicia o outro."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: transbordar de {a} para {b} pararia um para carregar o outro sempre que {a} estiver ocupado"

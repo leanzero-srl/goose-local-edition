@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Modèle : {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Entrée du pool de l’essaim {device}, nom du modèle là-bas : {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Cela n’a pas fonctionné : {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "Mémoire sur {mac} face à son budget"
   },
   "nodes.memNeed": {
-    "defaultMessage": "a besoin de {need} sur {budget} Go"
+    "defaultMessage": "a besoin de {need} Go, {budget} Go libres"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "pas encore de pic"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "Filtrer les modèles"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} sur {budget} Go"
+    "defaultMessage": "{mac} : a besoin de {need} Go, {budget} Go libres"
   },
   "nodes.newGetModels": {
     "defaultMessage": "En obtenir un dans Modèles"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Nommez-le"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Un autre nœud s’appelle déjà « {name} » — donnez un autre nom à celui-ci"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Choisissez un modèle pour continuer"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Configurer un autre fournisseur"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Le démarrer arrête {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Le démarrer arrête {model} sur {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Type"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "En attente de la fin d’un autre chargement"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Épingler une option"
+    "defaultMessage": "Nouveau nœud pour ce modèle"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Nouveau nœud pour un modèle"
   },
   "nodes.planFailed": {
     "defaultMessage": "Aucun plan pour cette option : {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "Votre pool de l’essaim"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Votre pool de l’essaim · utilisé par les builds de l’essaim tant que « Les builds de l’essaim utilisent » est « Votre pool de l’essaim »"
+    "defaultMessage": "Votre pool de l’essaim · les builds de l’essaim et les discussions sur N’importe quel nœud (Auto) tournent sur ceux-ci"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Votre pool de l’essaim · les discussions sur N’importe quel nœud (Auto) tournent sur ceux-ci ; les builds de l’essaim utilisent {strategy} pour l’instant"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, one {#er} other {#e}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "Les nouvelles discussions démarrent actuellement sur ce nœud, il ne peut donc pas être supprimé seul."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Votre pool de l’essaim garde son appareil ; ce nœud n’est plus affiché ici. Modifiez le pool lui-même ci-dessous."
+    "defaultMessage": "Seule cette carte disparaît : son modèle reste dans votre pool de l’essaim, donc les discussions sur N’importe quel nœud (Auto) continuent d’y tourner, tout comme les builds de l’essaim qui utilisent le pool. Pour récupérer la carte, choisissez « Afficher les nœuds du pool retirés » sur cette page."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Supprimer {node} ?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, one {# nœud retiré de votre pool de l’essaim n’est pas affiché} other {# nœuds retirés de votre pool de l’essaim ne sont pas affichés}}"
   },
   "nodes.retry": {
     "defaultMessage": "Relire"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Afficher dans Exécuter"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Afficher les nœuds du pool retirés"
   },
   "nodes.startAction": {
     "defaultMessage": "Démarrer {node}"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "Ajouter un nœud"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Tous vos nœuds sont déjà dans cette liste"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Il n’existe qu’un seul nœud — créez-en un autre sous Nœuds pour l’ajouter ici"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Les builds de l’essaim utilisent ceci"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Les nouvelles discussions démarrent ici"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "La possibilité pour les builds de l’essaim de l’utiliser est vérifiée à l’enregistrement."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Les builds de l’essaim peuvent utiliser cette stratégie."
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Impossible de savoir si les builds de l’essaim peuvent l’utiliser : {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Vérifié pendant que vous modifiez ; rien n’est encore enregistré."
   },
   "strategies.cancel": {
     "defaultMessage": "Annuler"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "Pas encore de stratégies"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node} : sert ce que le moteur de ce Mac exécute ; ne charge jamais"
+    "defaultMessage": "{node} : utilise ce que ce Mac exécute ; ne démarre jamais un modèle lui-même"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Link"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "Sur vos Mac"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Une seule option sert vos discussions à la fois : {node}"
+    "defaultMessage": "Seul {node} tourne sur vos Mac pour cette stratégie, donc rien ne bascule."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Une seule option MLX sert goose sur ce Mac à la fois, sur tous vos Mac. Deux options différentes dans une stratégie doivent se relayer."
+    "defaultMessage": "Vos Mac exécutent un seul modèle à la fois pour goose sur ce Mac — sur un Mac ou réparti entre eux. Les nœuds de cette stratégie qui tournent différemment se relaient : chaque bascule arrête l’un et démarre l’autre."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role} : déborder de {a} vers {b} arrêterait l’un pour charger l’autre chaque fois que {a} est occupé"

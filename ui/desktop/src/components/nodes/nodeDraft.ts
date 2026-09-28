@@ -11,6 +11,7 @@ import {
   type NodesConfig,
   type ResolvedNodeDef,
 } from './model';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * Making a node definition — the one set of rules the New node dialog and Run it's "Save as node"
@@ -52,10 +53,8 @@ export function samePlacement(
   return a.kind === 'single' || (a.link ?? null) === (b.link ?? null);
 }
 
-/** A model id as a name reads it: its last path segment. */
-export function modelShortName(modelId: string): string {
-  return modelId.split('/').filter(Boolean).pop() ?? modelId;
-}
+/** A model id as a name reads it: its last path segment (Q-308's one rule). */
+export { modelShortName };
 
 /** Where a pinned way runs, as a node's default name says it. */
 export function whereWords(

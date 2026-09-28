@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Modello: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Voce del pool dello sciame {device}, nome del modello lì: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Non ha funzionato: {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "Memoria su {mac} rispetto al budget"
   },
   "nodes.memNeed": {
-    "defaultMessage": "servono {need} di {budget} GB"
+    "defaultMessage": "servono {need} GB, {budget} GB liberi"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "ancora nessun picco"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "Filtra i modelli"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} di {budget} GB"
+    "defaultMessage": "{mac}: servono {need} GB, {budget} GB liberi"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Scaricane uno in Modelli"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Dagli un nome"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Un altro nodo si chiama già «{name}» — dai a questo un altro nome"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Scegli un modello per continuare"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Configura un altro provider"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Avviarlo arresta {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Avviarlo arresta {model} su {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Tipo"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "In attesa che finisca un altro caricamento"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Fissa una via"
+    "defaultMessage": "Nuovo nodo per questo modello"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Nuovo nodo per un modello"
   },
   "nodes.planFailed": {
     "defaultMessage": "Nessun piano per questa via: {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "Il tuo pool dello sciame"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Il tuo pool dello sciame · usato dalle build dello sciame finché «Le build dello sciame usano» è «Il tuo pool dello sciame»"
+    "defaultMessage": "Il tuo pool dello sciame · le build dello sciame e le chat su Qualsiasi nodo (Auto) girano su questi"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Il tuo pool dello sciame · le chat su Qualsiasi nodo (Auto) girano su questi; ora le build dello sciame usano {strategy}"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {#º}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "Le nuove chat partono ora su questo nodo, quindi non può essere rimosso da solo."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Il tuo pool dello sciame mantiene il suo dispositivo; questo nodo non viene più mostrato qui. Modifica il pool stesso qui sotto."
+    "defaultMessage": "Sparisce solo questa scheda: il suo modello resta nel tuo pool dello sciame, quindi le chat su Qualsiasi nodo (Auto) continuano a girarci, come pure le build dello sciame che usano il pool. Per riavere la scheda, scegli «Mostra i nodi del pool rimossi» in questa pagina."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Rimuovere {node}?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, one {# nodo che hai rimosso dal tuo pool dello sciame non è mostrato} other {# nodi che hai rimosso dal tuo pool dello sciame non sono mostrati}}"
   },
   "nodes.retry": {
     "defaultMessage": "Rileggi"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Mostra in Esegui"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Mostra i nodi del pool rimossi"
   },
   "nodes.startAction": {
     "defaultMessage": "Avvia {node}"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "Aggiungi un nodo"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Tutti i tuoi nodi sono già in questo elenco"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Esiste un solo nodo — creane un altro in Nodi per aggiungerlo qui"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Le build dello sciame usano questa"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Le nuove chat iniziano qui"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Se le build dello sciame possono usarla viene verificato al salvataggio."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Le build dello sciame possono usare questa strategia."
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Impossibile leggere se le build dello sciame possono usarla: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Verificato mentre modifichi; non è ancora salvato nulla."
   },
   "strategies.cancel": {
     "defaultMessage": "Annulla"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "Ancora nessuna strategia"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: serve qualunque cosa esegua il motore di questo Mac; non si carica mai"
+    "defaultMessage": "{node}: usa ciò che questo Mac sta eseguendo; non avvia mai un modello da solo"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Link"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "Sui tuoi Mac"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Una sola via alla volta serve le tue chat: {node}"
+    "defaultMessage": "Solo {node} gira sui tuoi Mac per questa strategia, quindi non c’è nessun cambio."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Una sola via MLX serve goose su questo Mac alla volta, su tutti i tuoi Mac. Due vie diverse in una strategia devono alternarsi."
+    "defaultMessage": "I tuoi Mac eseguono un solo modello alla volta per goose su questo Mac — su un Mac o diviso tra loro. I nodi di questa strategia che girano in modo diverso si alternano: ogni cambio ne arresta uno e avvia l’altro."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: il debordamento da {a} a {b} fermerebbe uno per caricare l’altro ogni volta che {a} è occupato"

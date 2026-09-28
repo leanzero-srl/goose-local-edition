@@ -13,6 +13,7 @@ import {
 } from '../../acp/mlx-placement';
 import { distributedStateWord, linkText } from './mlxModeLabel';
 import { macForPlacementNode, peerRefuses, type Mac } from './macs';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * THE WAYS LIST — the placement planner's candidates as a person picks between them: the way's
@@ -111,10 +112,8 @@ export function tps(value: number): string {
   return value >= 100 ? value.toFixed(0) : value.toFixed(1);
 }
 
-/** A model as the card names it: its folder name, without the publisher. */
-export function shortModel(modelId: string): string {
-  return modelId.split('/').pop() || modelId;
-}
+/** A model as the card names it: its folder name, without the publisher (Q-308's one rule). */
+export const shortModel = modelShortName;
 
 function linkWord(candidate: PlacementCandidate): string {
   return candidate.key.link === 'jaccl' ? 'JACCL' : (candidate.key.link ?? '');
@@ -205,6 +204,11 @@ export function outcomeText(intl: IntlShape, candidate: PlacementCandidate): str
         need: o.need.toLocaleString(),
       });
   }
+}
+
+/** goose will not run this candidate at all: its memory does not fit, or the model cannot run so. */
+export function outcomeRefuses(candidate: PlacementCandidate): boolean {
+  return candidate.outcome.code === 'doesNotFit' || candidate.outcome.code === 'notSupported';
 }
 
 /** A single-Mac candidate goose's fit rule lets one engine hold. */
@@ -375,7 +379,14 @@ export function OtherSplits({ splits }: { splits: readonly PlacementCandidate[] 
                 link: linkWord(c),
               })}
             </span>
-            <span className={cx('break-words', TYPE.meta)} title={c.fit.detail}>
+            <span
+              className={cx(
+                'break-words',
+                TYPE.meta,
+                outcomeRefuses(c) && cx(WEIGHT.semibold, TONE_TEXT.err)
+              )}
+              title={c.fit.detail}
+            >
               {outcomeText(intl, c)}
             </span>
           </li>
@@ -428,6 +439,18 @@ export function wayWhy(intl: IntlShape, plan: PlacementPlan | null, way: Way): s
   // carries both writing figures, so goose's "Slower for this" would only repeat half of it.
   const tradeOff = way.kind === 'split' ? splitTradeOff(plan, c) : null;
   return tradeOff ? tradeOffText(intl, tradeOff) : outcomeText(intl, c);
+}
+
+/**
+ * Whether the row's why-line is a REFUSAL — goose will not run this way (it does not fit, or this
+ * model cannot run that way) — which is said in the error colour, never meta grey (Q-306: "Does not
+ * fit: short 51.1 GB" painted like a footnote). A way that is merely slower, or the split's cost
+ * line, stays plain.
+ */
+export function wayRefused(plan: PlacementPlan | null, way: Way): boolean {
+  const c = way.candidate;
+  if (!c || (way.kind === 'split' && splitTradeOff(plan, c))) return false;
+  return outcomeRefuses(c);
 }
 
 /**
@@ -564,7 +587,16 @@ export function PlacementCandidates({
             </div>
             {c && <CandidateFigures candidate={c} goal={goal} />}
             {why && (
-              <p className={cx('break-words', TYPE.meta)} title={c?.fit.detail}>
+              <p
+                className={cx(
+                  'break-words',
+                  TYPE.meta,
+                  wayRefused(plan, way) && cx(WEIGHT.semibold, TONE_TEXT.err)
+                )}
+                title={c?.fit.detail}
+                data-testid="placement-way-why"
+                data-refused={wayRefused(plan, way) || undefined}
+              >
                 {why}
               </p>
             )}

@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Model: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Sürü havuzu girdisi {device}, oradaki model adı: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Bu işe yaramadı: {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "{mac} üzerindeki bellek, bütçesine göre"
   },
   "nodes.memNeed": {
-    "defaultMessage": "{need} / {budget} GB gerekiyor"
+    "defaultMessage": "{need} GB gerekiyor, {budget} GB boş"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "henüz tepe yok"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "Modelleri filtrele"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} / {budget} GB"
+    "defaultMessage": "{mac}: {need} GB gerekiyor, {budget} GB boş"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Modeller’den bir tane edinin"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Adlandırın"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Başka bir düğümün adı zaten “{name}” — buna başka bir ad verin"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Devam etmek için bir model seçin"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Başka bir sağlayıcı kur"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Başlatınca {model} durur."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Başlatınca {macs} üzerindeki {model} durur."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Tür"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "Başka bir yüklemenin bitmesi bekleniyor"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Bir yolu sabitle"
+    "defaultMessage": "Bu model için yeni düğüm"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Bir model için yeni düğüm"
   },
   "nodes.planFailed": {
     "defaultMessage": "Bu yol için plan yok: {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "Sürü havuzunuz"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Sürü havuzunuz · “Swarm derlemeleri şunu kullanır” “Sürü havuzunuz” olduğu sürece swarm derlemeleri tarafından kullanılır"
+    "defaultMessage": "Sürü havuzunuz · swarm derlemeleri ve Herhangi bir düğüm (Otomatik) üzerindeki sohbetler bunlarda çalışır"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Sürü havuzunuz · Herhangi bir düğüm (Otomatik) üzerindeki sohbetler bunlarda çalışır; swarm derlemeleri şu anda {strategy} kullanıyor"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {#.}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "Yeni sohbetler şu anda bu düğümde başlıyor, bu yüzden tek başına kaldırılamaz."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Sürü havuzunuz cihazını korur; bu düğüm burada bir daha gösterilmez. Havuzun kendisini aşağıda düzenleyin."
+    "defaultMessage": "Yalnızca bu kart kaldırılır: modeli sürü havuzunuzda kalır, bu yüzden Herhangi bir düğüm (Otomatik) üzerindeki sohbetler onun üzerinde çalışmaya devam eder, havuzu kullanan swarm derlemeleri de öyle. Kartı geri getirmek için bu sayfada “Kaldırılan havuz düğümlerini göster”i seçin."
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node} kaldırılsın mı?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, other {Sürü havuzunuzdan kaldırdığınız # düğüm gösterilmiyor}}"
   },
   "nodes.retry": {
     "defaultMessage": "Yeniden oku"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Çalıştır’da göster"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Kaldırılan havuz düğümlerini göster"
   },
   "nodes.startAction": {
     "defaultMessage": "{node} düğümünü başlat"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "Bir düğüm ekle"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Tüm düğümleriniz zaten bu listede"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Yalnızca bir düğüm var — buraya eklemek için Düğümler altında bir tane daha oluşturun"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Swarm derlemeleri bunu kullanır"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Yeni sohbetler burada başlar"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Swarm derlemelerinin bunu kullanıp kullanamayacağı, kaydettiğinizde denetlenir."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Swarm derlemeleri bu stratejiyi kullanabilir."
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Swarm derlemelerinin bunu kullanıp kullanamayacağı okunamadı: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Siz düzenlerken denetlenir; henüz hiçbir şey kaydedilmedi."
   },
   "strategies.cancel": {
     "defaultMessage": "İptal"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "Henüz strateji yok"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: bu Mac'in motoru ne çalıştırıyorsa onu sunar; asla yüklenmez"
+    "defaultMessage": "{node}: bu Mac’in çalıştırdığı neyse onu kullanır; hiçbir zaman kendisi model başlatmaz"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Bağlantı"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "Mac'lerinizde"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Sohbetlerinize aynı anda tek bir yol hizmet verir: {node}"
+    "defaultMessage": "Bu strateji için Mac’lerinizde yalnızca {node} çalışır, bu yüzden hiçbir geçiş olmaz."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Tüm Mac'leriniz genelinde, bu Mac'in goose'unu aynı anda yalnızca bir MLX yolu besler. Bir stratejideki iki farklı yol sırayla çalışmak zorundadır."
+    "defaultMessage": "Mac’leriniz bu Mac’teki goose için aynı anda yalnızca bir model çalıştırır — tek bir Mac’te ya da aralarında bölünerek. Bu stratejide farklı çalışan düğümler sırayla çalışır: her geçiş birini durdurur ve diğerini başlatır."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: {a} her meşgul olduğunda fazla işi {b} düğümüne aktarmak, birini durdurup diğerini yükler"

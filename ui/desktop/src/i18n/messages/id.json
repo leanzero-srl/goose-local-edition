@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Model: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Entri pool swarm {device}, nama model di sana: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Itu tidak berhasil: {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "Memori di {mac} terhadap anggarannya"
   },
   "nodes.memNeed": {
-    "defaultMessage": "butuh {need} dari {budget} GB"
+    "defaultMessage": "butuh {need} GB, {budget} GB kosong"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "belum ada puncak"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "Saring model"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} dari {budget} GB"
+    "defaultMessage": "{mac}: butuh {need} GB, {budget} GB kosong"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Dapatkan satu di Model"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Beri nama"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Node lain sudah bernama “{name}” — beri node ini nama lain"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Pilih model untuk lanjut"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Siapkan penyedia lain"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Memulainya akan menghentikan {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Memulainya akan menghentikan {model} di {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Jenis"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "Menunggu pemuatan lain selesai"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Sematkan cara"
+    "defaultMessage": "Node baru untuk model ini"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Node baru untuk sebuah model"
   },
   "nodes.planFailed": {
     "defaultMessage": "Tidak ada rencana untuk cara ini: {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "Pool swarm Anda"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Pool swarm Anda · dipakai oleh build swarm selama “Build swarm memakai” adalah “Pool swarm Anda”"
+    "defaultMessage": "Pool swarm Anda · build swarm dan chat di Node mana pun (Otomatis) berjalan di sini"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Pool swarm Anda · chat di Node mana pun (Otomatis) berjalan di sini; build swarm saat ini memakai {strategy}"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {ke-#}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "Chat baru sekarang dimulai di node ini, jadi node ini tidak bisa dihapus sendiri."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Pool swarm Anda tetap menyimpan perangkatnya; node ini tidak ditampilkan lagi di sini. Edit pool itu sendiri di bawah."
+    "defaultMessage": "Hanya kartu ini yang hilang: modelnya tetap ada di pool swarm Anda, jadi chat di Node mana pun (Otomatis) tetap berjalan di sana, begitu pula build swarm yang memakai pool. Untuk mengembalikan kartunya, pilih “Tampilkan node pool yang dihapus” di halaman ini."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Hapus {node}?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, other {# node yang Anda hapus dari pool swarm tidak ditampilkan}}"
   },
   "nodes.retry": {
     "defaultMessage": "Baca lagi"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Tampilkan di Jalankan"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Tampilkan node pool yang dihapus"
   },
   "nodes.startAction": {
     "defaultMessage": "Mulai {node}"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "Tambahkan node"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Semua node Anda sudah ada di daftar ini"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Hanya ada satu node — buat satu lagi di Node untuk menambahkannya di sini"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Build swarm memakai ini"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Chat baru dimulai di sini"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Apakah build swarm bisa memakainya diperiksa saat Anda menyimpan."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Build swarm bisa memakai strategi ini."
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Apakah build swarm bisa memakainya tidak dapat dibaca: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Diperiksa saat Anda mengedit; belum ada yang disimpan."
   },
   "strategies.cancel": {
     "defaultMessage": "Batal"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "Belum ada strategi"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: melayani apa pun yang dijalankan mesin Mac ini; tidak pernah dimuat"
+    "defaultMessage": "{node}: memakai apa pun yang sedang dijalankan Mac ini; tidak pernah memulai model sendiri"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Tautan"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "Di Mac Anda"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Satu cara pada satu waktu melayani chat Anda: {node}"
+    "defaultMessage": "Hanya {node} yang berjalan di Mac Anda untuk strategi ini, jadi tidak ada peralihan."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Di semua Mac Anda, hanya satu cara MLX yang melayani goose Mac ini pada satu waktu. Dua cara berbeda dalam satu strategi harus bergiliran."
+    "defaultMessage": "Mac Anda menjalankan satu model pada satu waktu untuk goose di Mac ini — di satu Mac atau dibagi di antaranya. Node dalam strategi ini yang berjalan dengan cara berbeda bergiliran: setiap peralihan menghentikan satu dan memulai yang lain."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: melimpahkan dari {a} ke {b} akan menghentikan satu untuk memuat yang lain setiap kali {a} sibuk"

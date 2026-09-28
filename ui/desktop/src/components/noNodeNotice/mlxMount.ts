@@ -19,6 +19,7 @@ import type { IntlShape } from 'react-intl';
 import { defineMessages } from '../../i18n';
 import { distributedStateWord } from '../leanzero-swarm/mlxModeLabel';
 import { errorMessage } from '../../utils/conversionUtils';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * The device → model → mount resolution shared by the two surfaces that offer "Mount": the
@@ -133,11 +134,8 @@ export function nodeServedId(
   return chat?.nodeId === device.id ? served : device.model_id;
 }
 
-/** An HF repo id reads by its last path segment ("org/Qwen3.8-27B-mlx" → "Qwen3.8-27B-mlx"). */
-export function shortModelName(modelId: string): string {
-  const segment = modelId.split('/').filter(Boolean).pop();
-  return segment ?? modelId;
-}
+/** An HF repo id reads by its last path segment ("org/Qwen3.8-27B-mlx" → "Qwen3.8-27B-mlx"): Q-308's one rule. */
+export const shortModelName = modelShortName;
 
 export type EngineFact = 'up' | 'mounting' | 'failed' | 'down';
 

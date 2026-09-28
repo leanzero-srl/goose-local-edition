@@ -24,8 +24,12 @@ const i18n = defineMessages({
   tabStrategies: { id: 'nodes.tabStrategies', defaultMessage: 'Strategies' },
   poolSection: {
     id: 'nodes.poolSection',
+    defaultMessage: 'Your swarm pool · swarm builds and chats on Any node (Auto) run on these',
+  },
+  poolSectionStrategy: {
+    id: 'nodes.poolSectionStrategy',
     defaultMessage:
-      'Your swarm pool · used by swarm builds while “Swarm builds use” is “Your swarm pool”',
+      'Your swarm pool · chats on Any node (Auto) run on these; swarm builds use {strategy} now',
   },
 });
 
@@ -51,7 +55,17 @@ const NodesView: React.FC = () => {
   const config = read?.config ?? null;
   const eligibility = useBuildEligibility(config);
 
-  const buildsUsePool = (config?.forBuilds?.kind ?? 'pool') === 'pool';
+  const forBuilds = config?.forBuilds ?? { kind: 'pool' as const };
+  const buildsUsePool = forBuilds.kind === 'pool';
+  // What the pool is for, said from the two selectors' real values — never the selector restated
+  // (Q-317: 'used by swarm builds while “Swarm builds use” is “Your swarm pool”').
+  const poolTitle =
+    forBuilds.kind === 'strategy'
+      ? intl.formatMessage(i18n.poolSectionStrategy, {
+          strategy:
+            (config?.strategies ?? []).find((s) => s.id === forBuilds.id)?.name ?? forBuilds.id,
+        })
+      : intl.formatMessage(i18n.poolSection);
   const [poolOpen, setPoolOpen] = useState(false);
   const poolRef = useRef<HTMLDivElement>(null);
 
@@ -116,12 +130,14 @@ const NodesView: React.FC = () => {
                   <div ref={poolRef} data-testid="nodes-pool" data-open={buildsUsePool || poolOpen}>
                     {buildsUsePool ? (
                       <section className="flex flex-col gap-3">
-                        <span className={TYPE.zone}>{intl.formatMessage(i18n.poolSection)}</span>
+                        <span className={TYPE.zone} data-testid="nodes-pool-title">
+                          {poolTitle}
+                        </span>
                         {pool}
                       </section>
                     ) : (
                       <Disclosure
-                        title={intl.formatMessage(i18n.poolSection)}
+                        title={poolTitle}
                         open={poolOpen}
                         onOpenChange={setPoolOpen}
                         testId="nodes-pool-disclosure"

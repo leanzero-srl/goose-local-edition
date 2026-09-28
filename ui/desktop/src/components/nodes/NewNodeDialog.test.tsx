@@ -20,7 +20,9 @@ import {
   TWO_MACS,
   provider,
 } from './nodeGlance.fixtures';
-import type { NodesConfig } from './model';
+import type { NodesConfig, ResolvedNodeDef } from './model';
+import type { NodesServingWayDto } from '@aaif/goose-sdk';
+import { TONE_TEXT } from '../lz';
 
 const macsNow = vi.hoisted(() => ({ macs: [] as unknown[] }));
 vi.mock('../leanzero-swarm/useMacs', async (importOriginal) => ({
@@ -66,7 +68,23 @@ const NOT_SET_UP = provider('anthropic', 'Anthropic', {
   connection_checked: false,
 });
 
-function renderDialog(start: NewNodeStart = { kind: 'new' }) {
+/** The 27B split across both Macs, serving this Mac's goose (the critic's 3.0.68 state). */
+const SPLIT_27B_SERVING: NodesServingWayDto = {
+  kind: 'split',
+  macs: ['local', 'link:n-studio'],
+  link: 'jaccl',
+  modelId: MODEL_27B,
+  servedModelId: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+  macNames: ['Mihai Macbook', 'Work’s Mac Studio'],
+};
+
+function renderDialog(
+  start: NewNodeStart = { kind: 'new' },
+  {
+    serving = null,
+    nodes = [NODE_CLOUD],
+  }: { serving?: NodesServingWayDto | null; nodes?: ResolvedNodeDef[] } = {}
+) {
   const onSaved = vi.fn();
   const onClose = vi.fn();
   const onOpenCloudProviders = vi.fn();
@@ -76,7 +94,8 @@ function renderDialog(start: NewNodeStart = { kind: 'new' }) {
       <NewNodeDialog
         open
         start={start}
-        nodes={[NODE_CLOUD]}
+        nodes={nodes}
+        serving={serving}
         onClose={onClose}
         onSaved={onSaved}
         onOpenCloudProviders={onOpenCloudProviders}
@@ -177,8 +196,10 @@ describe('New node · on your Macs', () => {
     expect(screen.getByTestId('placement-way-local')).toHaveTextContent(
       'Does not fit: short 1.6 GB'
     );
+    // Q-306: the need first, then what is free — never "38.6 of 61.8 GB", which read backwards
+    // when the need was the larger number.
     expect(screen.getByTestId('placement-way-split')).toHaveTextContent(
-      'Mihai Macbook 38.6 of 61.8 GB · Work’s Mac Studio 38.6 of 66.2 GB'
+      'Mihai Macbook: needs 38.6 GB, 61.8 GB free · Work’s Mac Studio: needs 38.6 GB, 66.2 GB free'
     );
     await userEvent.click(screen.getByTestId('placement-pick-split'));
     expect(screen.getByTestId('placement-pick-split')).toHaveAttribute('aria-checked', 'true');
@@ -298,6 +319,70 @@ describe('New node · on your Macs', () => {
     );
     expect(onClose).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('Q-306: a way goose refuses says so in the error colour; a merely slower way stays plain', async () => {
+    renderDialog({ kind: 'pin', model: MODEL_27B });
+    await screen.findByTestId('placement-pick-split');
+    const refused = within(screen.getByTestId('placement-way-local')).getByTestId(
+      'placement-way-why'
+    );
+    expect(refused).toHaveTextContent('Does not fit: short 1.6 GB');
+    expect(refused).toHaveAttribute('data-refused', 'true');
+    for (const token of TONE_TEXT.err.split(' ')) expect(refused.className).toContain(token);
+    for (const why of screen.getAllByTestId('placement-way-why')) {
+      if (why === refused) continue;
+      expect(why).not.toHaveAttribute('data-refused');
+    }
+  });
+
+  it('Q-299: Create and start says beside it what starting stops, and Create node leads', async () => {
+    const { onSaved } = renderDialog(
+      { kind: 'pin', model: MODEL_27B },
+      { serving: SPLIT_27B_SERVING }
+    );
+    await userEvent.click(await screen.findByTestId('placement-pick-peer'));
+    await next();
+    const stops = screen.getByTestId('new-node-start-stops');
+    expect(stops).toHaveTextContent(
+      'Starting it stops Qwen3.8-27B-Atlassian-Q8-mlx on Mihai Macbook and Work’s Mac Studio.'
+    );
+    const start = screen.getByTestId('new-node-create-start');
+    expect(start).toHaveAttribute('aria-describedby', stops.id);
+    // The safe door is the primary one while starting would stop what serves.
+    expect(screen.getByTestId('new-node-create').className).not.toBe(start.className);
+    await userEvent.click(start);
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.anything(), true));
+  });
+
+  it('Q-299: nothing is claimed when the node IS the way serving now, or when nothing serves', async () => {
+    renderDialog({ kind: 'pin', model: MODEL_27B }, { serving: SPLIT_27B_SERVING });
+    await userEvent.click(await screen.findByTestId('placement-pick-split'));
+    await next();
+    expect(screen.queryByTestId('new-node-start-stops')).toBeNull();
+    cleanup();
+    renderDialog({ kind: 'pin', model: MODEL_27B });
+    await userEvent.click(await screen.findByTestId('placement-pick-split'));
+    await next();
+    expect(screen.queryByTestId('new-node-start-stops')).toBeNull();
+  });
+
+  it('Q-309: a name another node carries disables Create with the reason, before anything is sent', async () => {
+    renderDialog({ kind: 'pin', model: MODEL_27B }, { nodes: [NODE_CLOUD, NODE_FLASH] });
+    await userEvent.click(await screen.findByTestId('placement-pick-split'));
+    await next();
+    const name = screen.getByTestId('new-node-name-input');
+    await userEvent.clear(name);
+    await userEvent.type(name, NODE_FLASH.def.name);
+    expect(screen.getByTestId('new-node-blocked')).toHaveTextContent(
+      `Another node is already named “${NODE_FLASH.def.name}” — give this one another name`
+    );
+    expect(screen.getByTestId('new-node-create')).toBeDisabled();
+    expect(screen.getByTestId('new-node-create-start')).toBeDisabled();
+    await userEvent.type(name, ' 2');
+    expect(screen.queryByTestId('new-node-blocked')).toBeNull();
+    expect(screen.getByTestId('new-node-create')).toBeEnabled();
+    expect(mockWrite).not.toHaveBeenCalled();
   });
 
   it('Create and start hands the def back to start it', async () => {

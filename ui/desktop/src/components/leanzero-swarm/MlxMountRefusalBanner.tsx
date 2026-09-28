@@ -7,6 +7,7 @@ import { Button } from '../lz';
 import { ToneBanner } from './studio';
 import { RestoreActions, restoreRefusedByGate, useRestoreLine } from './MlxRestoreLine';
 import { gbOf } from './mlxRestore';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * THE memory refusal on the Engine tab, once, in plain words (Q-277). On 3.0.66 one refusal was
@@ -64,7 +65,7 @@ export function MlxMountRefusalBanner({ status }: { status: MlxEngineStatus }) {
   const refused = gateRefusalOf(status);
   if (refused == null) return null;
   const verdict = refusalVerdict(refused, status.mountFit ?? null);
-  const model = refused.modelId.split('/').pop() || refused.modelId;
+  const model = modelShortName(refused.modelId);
   const fitsNow = verdict.verdict !== 'block';
   const text = fitsNow
     ? intl.formatMessage(i18n.fitsNow, { model })

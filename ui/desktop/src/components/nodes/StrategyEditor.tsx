@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { ArrowUp, Plus, X } from 'lucide-react';
 import type { BuildEligibility } from '../../acp/nodes';
 import { defineMessages, useIntl } from '../../i18n';
@@ -32,6 +32,7 @@ import type { NodeGlance, Read } from './nodeGlance';
 import { sentenceFacts } from './resolve';
 import { sentenceFor } from './strategySentence';
 import { strategyFit, wayKeyOf, type MeasuredLoad, type StrategyFit } from './strategyFit';
+import { useDraftBuildEligibility } from './useBuildEligibility';
 import {
   BuildsLine,
   SameAs,
@@ -48,8 +49,9 @@ import {
  * derivation), when the next one takes work, what happens when an MLX node is not loaded, and the
  * rule read back as a sentence. Beside it, "On your Macs": what the strategy asks of your Macs under
  * the v1 rule (one MLX way serves this Mac's goose at a time, across all your Macs — strategyFit),
- * and whether swarm builds can use it (goosed's answer for the SAVED strategy; an unsaved change is
- * checked when it is saved, never guessed here).
+ * and whether swarm builds can use it — goosed's answer for the strategy as it is held NOW (the
+ * stored one's answer while nothing changed, a draft check while it is edited — Q-311), never guessed
+ * here.
  *
  * The editor validates nothing itself: Save goes through `nodes/write` and every refusal is shown
  * verbatim, the draft kept as it was.
@@ -72,6 +74,14 @@ const i18n = defineMessages({
   useSameAs: { id: 'strategies.useSameAs', defaultMessage: 'Same as {role} instead' },
   usedByBuilds: { id: 'strategies.usedByBuilds', defaultMessage: 'Used by swarm builds.' },
   addNode: { id: 'strategies.addNode', defaultMessage: 'Add a node' },
+  addNodeOnlyOne: {
+    id: 'strategies.addNodeOnlyOne',
+    defaultMessage: 'Only one node exists — make another under Nodes to add it here',
+  },
+  addNodeAllIn: {
+    id: 'strategies.addNodeAllIn',
+    defaultMessage: 'Every node you have is already in this list',
+  },
   pickNode: { id: 'strategies.pickNode', defaultMessage: 'Pick a node' },
   nodeAt: { id: 'strategies.nodeAt', defaultMessage: '{role}: node {rank}' },
   roleField: { id: 'strategies.roleField', defaultMessage: '{role}: {field}' },
@@ -86,11 +96,11 @@ const i18n = defineMessages({
   oneWayRule: {
     id: 'strategies.oneWayRule',
     defaultMessage:
-      'One MLX way serves this Mac’s goose at a time, across all your Macs. Two different ways in one strategy have to take turns.',
+      'Your Macs run one model at a time for goose on this Mac — on one Mac or split across them. Nodes in this strategy that run differently take turns: each switch stops one and starts the other.',
   },
   oneWay: {
     id: 'strategies.oneWay',
-    defaultMessage: 'One way at a time serves your chats: {node}',
+    defaultMessage: 'Only {node} runs on your Macs for this strategy, so nothing switches.',
   },
   noWaysPanel: {
     id: 'strategies.noWaysPanel',
@@ -104,12 +114,12 @@ const i18n = defineMessages({
   cloudRow: { id: 'strategies.cloudRow', defaultMessage: '{node}: always available' },
   followsRow: {
     id: 'strategies.followsRow',
-    defaultMessage: '{node}: serves whatever this Mac’s engine runs; never loads',
+    defaultMessage: '{node}: uses whatever this Mac is running; it never starts a model itself',
   },
   buildsTitle: { id: 'strategies.buildsTitle', defaultMessage: 'Swarm builds' },
-  buildsAfterSave: {
-    id: 'strategies.buildsAfterSave',
-    defaultMessage: 'Whether swarm builds can use it is checked when you save.',
+  buildsUnsaved: {
+    id: 'strategies.buildsUnsaved',
+    defaultMessage: 'Checked as you edit; nothing is saved yet.',
   },
   refused: { id: 'strategies.refused', defaultMessage: 'Not saved' },
   cancel: { id: 'strategies.cancel', defaultMessage: 'Cancel' },
@@ -227,6 +237,8 @@ export function StrategyEditor({
   const names = nodeNamesById(nodes);
   const fit = strategyFit(draft, nodes, measured);
   const dirty = stored === null || JSON.stringify(stored) !== JSON.stringify(draft);
+  const draftBuilds = useDraftBuildEligibility(draft, dirty);
+  const addWhyId = useId();
 
   const setRole = (role: NodeRole, entry: NodeRoleEntry | null) =>
     setDraft((d) => ({ ...d, roles: { ...(d.roles ?? {}), [role]: entry } }));
@@ -309,6 +321,11 @@ export function StrategyEditor({
     const anyMlx = entry.chain.some((l) => about(l.node).loads);
     const inChain = new Set(entry.chain.map((l) => l.node));
     const nextFree = nodes.find((n) => !inChain.has(n.def.id));
+    // A disabled "Add a node" says why beside it (Q-311); with no node at all, `noNodes` says it.
+    const addBlocked =
+      nextFree || nodes.length === 0
+        ? null
+        : intl.formatMessage(nodes.length === 1 ? i18n.addNodeOnlyOne : i18n.addNodeAllIn);
     const change = (next: Partial<NodeRoleEntry>) => setRole(role, { ...entry, ...next });
     const setChain = (chain: NodeRoleEntry['chain']) => change({ chain });
 
@@ -408,6 +425,7 @@ export function StrategyEditor({
                 size="sm"
                 icon={<Plus />}
                 disabled={!nextFree}
+                aria-describedby={addBlocked ? `${addWhyId}-${role}` : undefined}
                 onClick={() =>
                   nextFree && setChain([...entry.chain, { node: nextFree.def.id, weight: 1 }])
                 }
@@ -415,6 +433,15 @@ export function StrategyEditor({
               >
                 {intl.formatMessage(i18n.addNode)}
               </Button>
+              {addBlocked && (
+                <span
+                  id={`${addWhyId}-${role}`}
+                  className={cx('break-words', TYPE.meta, WEIGHT.semibold)}
+                  data-testid="strategy-add-node-why"
+                >
+                  {addBlocked}
+                </span>
+              )}
               {canUnset(roles, role) && (
                 <Button
                   variant="ghost"
@@ -527,7 +554,13 @@ export function StrategyEditor({
 
         <div className="grid grid-cols-1 gap-4 min-[1400px]:grid-cols-[minmax(0,1fr)_22rem]">
           <div className="flex min-w-0 flex-col gap-3">{ROLES.map(roleRow)}</div>
-          <FitPanel fit={fit} builds={builds} dirty={dirty} names={names} macs={macs} />
+          <FitPanel
+            fit={fit}
+            builds={dirty ? (draftBuilds ?? undefined) : builds}
+            dirty={dirty}
+            names={names}
+            macs={macs}
+          />
         </div>
 
         {refusals.length > 0 && (
@@ -643,12 +676,11 @@ function FitPanel({
         </p>
       ))}
       <span className={cx('mt-2', TYPE.zone)}>{intl.formatMessage(i18n.buildsTitle)}</span>
-      {dirty ? (
-        <p className={cx('break-words', TYPE.meta)} data-testid="strategy-builds-after-save">
-          {intl.formatMessage(i18n.buildsAfterSave)}
+      <BuildsLine answer={builds} names={names} macs={macs} />
+      {dirty && (
+        <p className={cx('break-words', TYPE.meta)} data-testid="strategy-builds-unsaved">
+          {intl.formatMessage(i18n.buildsUnsaved)}
         </p>
-      ) : (
-        <BuildsLine answer={builds} names={names} macs={macs} />
       )}
     </aside>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { nodesBuildEligibility, type BuildEligibility } from '../../acp/nodes';
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
-import type { NodesConfig } from './model';
+import type { NodeStrategy, NodesConfig } from './model';
 import type { Read } from './nodeGlance';
 
 /**
@@ -42,4 +42,36 @@ export function useBuildEligibility(
     // `key` carries every stored fact eligibility depends on; `idsKey` which strategies to ask.
   }, [key, idsKey]);
   return answers;
+}
+
+/**
+ * goosed's answer for the strategy as the editor holds it NOW, asked each time the draft changes
+ * (an event, never a clock) — so the editor says whether swarm builds can use it before Save, not
+ * after (Q-311). `null` while the draft IS the stored strategy (the stored answer speaks for it). An
+ * answer for an older draft never lands on a newer one.
+ */
+export function useDraftBuildEligibility(
+  draft: NodeStrategy,
+  dirty: boolean
+): Read<BuildEligibility> | null {
+  const [answer, setAnswer] = useState<Read<BuildEligibility> | null>(null);
+  const key = dirty ? JSON.stringify(draft) : null;
+  useEffect(() => {
+    if (key == null) {
+      setAnswer(null);
+      return;
+    }
+    let alive = true;
+    const asked = JSON.parse(key) as NodeStrategy;
+    setAnswer({ kind: 'reading' });
+    nodesBuildEligibility(asked.id, asked)
+      .then((value) => alive && setAnswer({ kind: 'read', value }))
+      .catch(
+        (e: unknown) => alive && setAnswer({ kind: 'failed', error: mlxErrorMessage(e, String(e)) })
+      );
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+  return answer;
 }

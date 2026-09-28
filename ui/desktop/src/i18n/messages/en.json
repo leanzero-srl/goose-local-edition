@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Model: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Swarm pool entry {device}, model name there: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "That did not work: {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "Memory on {mac} against its budget"
   },
   "nodes.memNeed": {
-    "defaultMessage": "needs {need} of {budget} GB"
+    "defaultMessage": "needs {need} GB, {budget} GB free"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "no peak yet"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "Filter models"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} of {budget} GB"
+    "defaultMessage": "{mac}: needs {need} GB, {budget} GB free"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Get one in Models"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Name it"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Another node is already named “{name}” — give this one another name"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Pick a model to go on"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Set up another provider"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Starting it stops {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Starting it stops {model} on {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Kind"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "Waiting for another load to finish"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Pin a way"
+    "defaultMessage": "New node for this model"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "New node for a model"
   },
   "nodes.planFailed": {
     "defaultMessage": "No plan for this way: {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "Your swarm pool"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Your swarm pool · used by swarm builds while “Swarm builds use” is “Your swarm pool”"
+    "defaultMessage": "Your swarm pool · swarm builds and chats on Any node (Auto) run on these"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Your swarm pool · chats on Any node (Auto) run on these; swarm builds use {strategy} now"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank,selectordinal,one{#st} two{#nd} few{#rd} other{#th}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "New chats start on this node now, so it can’t be removed on its own."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Your swarm pool keeps its device; this node is not shown here again. Edit the pool itself below."
+    "defaultMessage": "Only this card goes: its model stays in your swarm pool, so chats on Any node (Auto) keep running on it, and so do swarm builds that use the pool. To bring the card back, choose “Show removed pool nodes” on this page."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Remove {node}?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count,plural,one{# node you removed from your swarm pool is not shown} other{# nodes you removed from your swarm pool are not shown}}"
   },
   "nodes.retry": {
     "defaultMessage": "Read again"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Show in Run it"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Show removed pool nodes"
   },
   "nodes.startAction": {
     "defaultMessage": "Start {node}"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "Add a node"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Every node you have is already in this list"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Only one node exists — make another under Nodes to add it here"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Swarm builds use this"
   },
   "strategies.badgeChats": {
     "defaultMessage": "New chats start here"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Whether swarm builds can use it is checked when you save."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Swarm builds can use this strategy."
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Whether swarm builds can use it could not be read: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Checked as you edit; nothing is saved yet."
   },
   "strategies.cancel": {
     "defaultMessage": "Cancel"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "No strategies yet"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: serves whatever this Mac’s engine runs; never loads"
+    "defaultMessage": "{node}: uses whatever this Mac is running; it never starts a model itself"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Link"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "On your Macs"
   },
   "strategies.oneWay": {
-    "defaultMessage": "One way at a time serves your chats: {node}"
+    "defaultMessage": "Only {node} runs on your Macs for this strategy, so nothing switches."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "One MLX way serves this Mac’s goose at a time, across all your Macs. Two different ways in one strategy have to take turns."
+    "defaultMessage": "Your Macs run one model at a time for goose on this Mac — on one Mac or split across them. Nodes in this strategy that run differently take turns: each switch stops one and starts the other."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: overflowing from {a} to {b} would stop one to load the other whenever {a} is busy"

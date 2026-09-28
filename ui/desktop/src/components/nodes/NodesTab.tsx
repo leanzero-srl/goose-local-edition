@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Laptop, Plus, RefreshCw, Server } from 'lucide-react';
+import { ArrowRight, Eye, Laptop, Plus, RefreshCw, Server } from 'lucide-react';
 import type { NodesServingKind } from '@aaif/goose-sdk';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, EmptyState, RADIUS, SURFACE, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
@@ -11,7 +11,7 @@ import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
 import { dropRoute } from '../leanzero-swarm/routeSwitch';
 import { mlxEngineUnmount } from '../../acp/mlx-engine';
 import { mlxDistributedStop } from '../../acp/mlx-distributed';
-import { nodesEnsureServing, nodesRemoveNode } from '../../acp/nodes';
+import { nodesEnsureServing, nodesRemoveNode, nodesWrite } from '../../acp/nodes';
 import type { MlxEngineKind } from '../../utils/mlxInFlight';
 import { cloudHref, mlxHref, nodesHref } from '../../utils/navigationUtils';
 import { refreshGlanceNodes } from '../engineGlance/glanceStore';
@@ -77,7 +77,16 @@ const i18n = defineMessages({
   removePoolBody: {
     id: 'nodes.removePoolBody',
     defaultMessage:
-      'Your swarm pool keeps its device; this node is not shown here again. Edit the pool itself below.',
+      'Only this card goes: its model stays in your swarm pool, so chats on Any node (Auto) keep running on it, and so do swarm builds that use the pool. To bring the card back, choose “Show removed pool nodes” on this page.',
+  },
+  removedPoolNodes: {
+    id: 'nodes.removedPoolNodes',
+    defaultMessage:
+      '{count, plural, one {# node you removed from your swarm pool is not shown} other {# nodes you removed from your swarm pool are not shown}}',
+  },
+  showRemovedPoolNodes: {
+    id: 'nodes.showRemovedPoolNodes',
+    defaultMessage: 'Show removed pool nodes',
   },
   removeFromStrategies: {
     id: 'nodes.removeAlsoFromStrategies',
@@ -119,6 +128,9 @@ const ENGINE_OF: Record<NodesServingKind, MlxEngineKind> = {
 };
 
 type Notice = { tone: 'ok' | 'err'; text: string };
+
+/** The busy key of "Show removed pool nodes" (node ids never start with ':' — `valid_id`). */
+const RESTORE_BUSY = ':restore-pool';
 
 interface RemoveState {
   node: ResolvedNodeDef;
@@ -248,6 +260,8 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<NewNodeStart | null>(null);
   const [removing, setRemoving] = useState<RemoveState | null>(null);
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+  const declinedCount = read?.config.declined?.length ?? 0;
   const say = (id: string, notice: Notice) => setNotices((prev) => ({ ...prev, [id]: notice }));
 
   const highlighted = useRef<HTMLDivElement>(null);
@@ -328,6 +342,40 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
         refusals: [{ code: 'error', message: mlxErrorMessage(e, intl.formatMessage(i18n.failed)) }],
       });
     }
+  };
+
+  /** Every pool node the person removed comes back: adoption takes a device no longer declined. */
+  const showRemovedPoolNodes = async () => {
+    if (!read) return;
+    setBusy(RESTORE_BUSY);
+    try {
+      const response = await nodesWrite({ ...read.config, declined: [] });
+      if (!response.written) {
+        setRestoreNotice((response.refusals ?? []).map((r) => r.message).join('; '));
+      } else {
+        setRestoreNotice(null);
+      }
+    } catch (e) {
+      setRestoreNotice(mlxErrorMessage(e, intl.formatMessage(i18n.failed)));
+    } finally {
+      setBusy(null);
+      refreshGlanceNodes();
+    }
+  };
+
+  /** "Create and start": what it stops is said beside the button; the cut guard still asks when
+   * a reply is being written on the engine it stops (Q-148), exactly as a card's Start does. */
+  const startNew = (node: ResolvedNodeDef) => {
+    const way = residency?.serving;
+    if (!way) {
+      void startNode(node);
+      return;
+    }
+    void guard(
+      [ENGINE_OF[way.kind]],
+      intl.formatMessage(i18n.startAction, { node: node.def.name }),
+      () => void startNode(node)
+    );
   };
 
   const onAction = (node: ResolvedNodeDef, action: NodeCardAction) => {
@@ -548,6 +596,31 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
         </section>
       )}
 
+      {declinedCount > 0 && (
+        <div className="flex flex-wrap items-center gap-2" data-testid="nodes-removed-pool">
+          <span className={TYPE.meta}>
+            {intl.formatMessage(i18n.removedPoolNodes, { count: declinedCount })}
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Eye />}
+            disabled={busy === RESTORE_BUSY}
+            onClick={() => void showRemovedPoolNodes()}
+            data-testid="nodes-show-removed-pool"
+          >
+            {intl.formatMessage(i18n.showRemovedPoolNodes)}
+          </Button>
+          {restoreNotice && (
+            <span
+              className={cx('break-words text-lz-meta', WEIGHT.semibold, TONE_TEXT.err)}
+              data-testid="nodes-show-removed-pool-failed"
+            >
+              {restoreNotice}
+            </span>
+          )}
+        </div>
+      )}
       {read && read.lmStudioHidden > 0 && (
         <p className={TYPE.meta} data-testid="nodes-lmstudio-hidden">
           {intl.formatMessage(i18n.lmStudioHidden, { count: read.lmStudioHidden })}
@@ -564,6 +637,7 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
           open
           start={dialog}
           nodes={nodes}
+          serving={residency?.serving ?? null}
           onClose={() => setDialog(null)}
           onSaved={(def, startIt) => {
             refreshGlanceNodes();
@@ -574,7 +648,7 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
                 provider: def.provider,
                 modelFrom: { kind: 'own' as const },
               };
-              void startNode(saved);
+              startNew(saved);
             }
           }}
           onOpenCloudProviders={() => navigate(cloudHref())}

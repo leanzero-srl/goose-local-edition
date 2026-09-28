@@ -1237,11 +1237,12 @@ pub fn plan(input: &PlanInput) -> Plan {
     let chat_need = (input.context.is_none() && chat.turns > 0).then(|| chat.context_needed());
     if let Some(need) = chat_need {
         notes.push(format!(
-            "Your chats are about {} tokens long and their answers about {} ({} chats of that \
-             size measured), so a way that holds less than {} is not offered as Best",
+            "Your chats are about {} tokens long and their answers about {} tokens ({} {} of \
+             that size measured), so a way that holds less than {} tokens is not offered as Best",
             tokens_words(chat.prompt_tokens),
             tokens_words(chat.answer_tokens),
             chat.turns,
+            if chat.turns == 1 { "turn" } else { "turns" },
             tokens_words(need)
         ));
     }
@@ -2145,8 +2146,9 @@ mod tests {
         assert_eq!(sized.best_available.as_deref(), Some(best));
         assert!(
             sized.notes.iter().any(|n| n
-                == "Your chats are about 53k tokens long and their answers about 512 (9 chats of \
-                    that size measured), so a way that holds less than 53k is not offered as Best"),
+                == "Your chats are about 53k tokens long and their answers about 512 tokens (9 \
+                    turns of that size measured), so a way that holds less than 53k tokens is not \
+                    offered as Best"),
             "{:?}",
             sized.notes
         );

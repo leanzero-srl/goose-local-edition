@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Modell: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Schwarm-Pool-Eintrag {device}, Modellname dort: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Das hat nicht geklappt: {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "Speicher auf {mac} gegen sein Budget"
   },
   "nodes.memNeed": {
-    "defaultMessage": "braucht {need} von {budget} GB"
+    "defaultMessage": "braucht {need} GB, {budget} GB frei"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "noch keine Spitze"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "Modelle filtern"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} von {budget} GB"
+    "defaultMessage": "{mac}: braucht {need} GB, {budget} GB frei"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Hol dir eines unter Modelle"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Benenne ihn"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Ein anderer Node heißt schon „{name}“ – gib diesem einen anderen Namen"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Wähle ein Modell, um weiterzugehen"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Weiteren Anbieter einrichten"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Der Start stoppt {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Der Start stoppt {model} auf {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Art"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "Wartet, bis ein anderer Ladevorgang fertig ist"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Einen Weg festlegen"
+    "defaultMessage": "Neuer Node für dieses Modell"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Neuer Node für ein Modell"
   },
   "nodes.planFailed": {
     "defaultMessage": "Kein Plan für diesen Weg: {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "Dein Schwarm-Pool"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Dein Schwarm-Pool · wird von Schwarm-Builds genutzt, solange „Schwarm-Builds nutzen“ „Dein Schwarm-Pool“ ist"
+    "defaultMessage": "Dein Schwarm-Pool · Schwarm-Builds und Chats auf Beliebiger Node (Auto) laufen hierauf"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Dein Schwarm-Pool · Chats auf Beliebiger Node (Auto) laufen hierauf; Schwarm-Builds nutzen gerade {strategy}"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {#.}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "Neue Chats starten derzeit auf diesem Node, daher kann er nicht allein entfernt werden."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Dein Schwarm-Pool behält sein Gerät; dieser Node wird hier nicht mehr angezeigt. Bearbeite den Pool selbst unten."
+    "defaultMessage": "Nur diese Karte verschwindet: Ihr Modell bleibt in deinem Schwarm-Pool, also laufen Chats auf Beliebiger Node (Auto) weiter darauf, ebenso Schwarm-Builds, die den Pool nutzen. Um die Karte zurückzuholen, wähle auf dieser Seite „Entfernte Pool-Nodes anzeigen“."
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node} entfernen?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, one {# Node, den du aus deinem Schwarm-Pool entfernt hast, wird nicht angezeigt} other {# Nodes, die du aus deinem Schwarm-Pool entfernt hast, werden nicht angezeigt}}"
   },
   "nodes.retry": {
     "defaultMessage": "Erneut lesen"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "In „Ausführen“ zeigen"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Entfernte Pool-Nodes anzeigen"
   },
   "nodes.startAction": {
     "defaultMessage": "{node} starten"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "Node hinzufügen"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Alle deine Nodes stehen schon in dieser Liste"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Es gibt nur einen Node – lege unter Nodes einen weiteren an, um ihn hier hinzuzufügen"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Schwarm-Builds nutzen dies"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Neue Chats starten hier"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Ob Schwarm-Builds sie nutzen können, wird beim Speichern geprüft."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Schwarm-Builds können diese Strategie nutzen."
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Ob Schwarm-Builds sie nutzen können, konnte nicht gelesen werden: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Geprüft, während du bearbeitest; noch ist nichts gespeichert."
   },
   "strategies.cancel": {
     "defaultMessage": "Abbrechen"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "Noch keine Strategien"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: bedient, was auch immer die Engine dieses Macs gerade ausführt; lädt nie"
+    "defaultMessage": "{node}: nutzt, was dieser Mac gerade ausführt; startet nie selbst ein Modell"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Link"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "Auf deinen Macs"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Immer nur ein Weg bedient deine Chats: {node}"
+    "defaultMessage": "Nur {node} läuft für diese Strategie auf deinen Macs, also wird nichts gewechselt."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Immer nur ein MLX-Weg bedient goose auf diesem Mac, über alle deine Macs hinweg. Zwei verschiedene Wege in einer Strategie müssen sich abwechseln."
+    "defaultMessage": "Deine Macs führen für goose auf diesem Mac immer nur ein Modell aus – auf einem Mac oder aufgeteilt. Nodes dieser Strategie, die anders laufen, wechseln sich ab: Jeder Wechsel stoppt den einen und startet den anderen."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: Überlaufen von {a} zu {b} würde einen stoppen, um den anderen zu laden, sobald {a} ausgelastet ist"

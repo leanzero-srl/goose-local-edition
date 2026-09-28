@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "モデル: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "スウォームのプールの項目 {device}、そこでのモデル名: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "うまくいきませんでした: {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "{mac} のメモリ（予算比）"
   },
   "nodes.memNeed": {
-    "defaultMessage": "{need} / {budget} GB が必要"
+    "defaultMessage": "{need} GB 必要、空き {budget} GB"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "ピークはまだありません"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "モデルを絞り込む"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} / {budget} GB"
+    "defaultMessage": "{mac}: {need} GB 必要、空き {budget} GB"
   },
   "nodes.newGetModels": {
     "defaultMessage": "「モデル」で入手"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "名前を付ける"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "別のノードがすでに「{name}」という名前です — このノードには別の名前を付けてください"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "続けるにはモデルを選択してください"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "別のプロバイダーを設定"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "起動すると {model} が停止します。"
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "起動すると {macs} の {model} が停止します。"
   },
   "nodes.newStepKind": {
     "defaultMessage": "種類"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "別のロードの完了を待っています"
   },
   "nodes.pinWay": {
-    "defaultMessage": "方法を固定"
+    "defaultMessage": "このモデルの新しいノード"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "モデルの新しいノード"
   },
   "nodes.planFailed": {
     "defaultMessage": "この方法のプランがありません: {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "あなたのスウォームのプール"
   },
   "nodes.poolSection": {
-    "defaultMessage": "あなたのスウォームのプール · 「swarm のビルドの使用先」が「あなたのスウォームのプール」のとき、swarm のビルドが使用します"
+    "defaultMessage": "あなたのスウォームのプール · swarm のビルドと任意のノード (自動) のチャットがこれらで動きます"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "あなたのスウォームのプール · 任意のノード (自動) のチャットがこれらで動きます。swarm のビルドは現在 {strategy} を使用しています"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {#番目}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "現在、新しいチャットはこのノードで始まるため、単独では削除できません。"
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "スウォームのプールはデバイスを保持します。このノードは今後ここに表示されません。プール自体は下で編集してください。"
+    "defaultMessage": "このカードだけが消えます。モデルはスウォームのプールに残るため、任意のノード (自動) のチャットは引き続きそこで動き、プールを使う swarm のビルドも同様です。カードを戻すには、このページで「削除したプールのノードを表示」を選んでください。"
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node} を削除しますか？"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, other {スウォームのプールから削除した # 個のノードは表示されていません}}"
   },
   "nodes.retry": {
     "defaultMessage": "再読み込み"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "「実行」で表示"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "削除したプールのノードを表示"
   },
   "nodes.startAction": {
     "defaultMessage": "{node} を起動"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "ノードを追加"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "すべてのノードがすでにこのリストにあります"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "ノードが 1 つしかありません — ここに追加するには「ノード」でもう 1 つ作成してください"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "swarm のビルドがこれを使用"
   },
   "strategies.badgeChats": {
     "defaultMessage": "新しいチャットはここから開始"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "swarm のビルドで使用できるかどうかは、保存時に確認されます。"
   },
   "strategies.buildsCan": {
     "defaultMessage": "swarm のビルドはこのストラテジーを使用できます。"
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "swarm のビルドで使用できるかどうかを読み取れませんでした: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "編集中に確認しています。まだ何も保存されていません。"
   },
   "strategies.cancel": {
     "defaultMessage": "キャンセル"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "ストラテジーはまだありません"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: この Mac のエンジンで実行中のものを提供します。ロードすることはありません"
+    "defaultMessage": "{node}: この Mac が実行中のものを使います。自分でモデルを起動することはありません"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Link"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "あなたの Mac"
   },
   "strategies.oneWay": {
-    "defaultMessage": "あなたのチャットに使われる方法は常に 1 つです: {node}"
+    "defaultMessage": "このストラテジーであなたの Mac で動くのは {node} だけなので、切り替えは起きません。"
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "この Mac の goose には、すべての Mac を通じて一度に 1 つの MLX の方法だけが使われます。1 つのストラテジー内の異なる 2 つの方法は交代で動きます。"
+    "defaultMessage": "この Mac の goose のために、あなたの Mac は一度に 1 つのモデルだけを実行します — 1 台の Mac で、または複数の Mac に分割して。このストラテジー内で実行方法が異なるノードは交代で動き、切り替えのたびに一方が停止し、もう一方が起動します。"
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: {a} から {b} へあふれさせると、{a} がビジーになるたびに一方を停止してもう一方を読み込むことになります"

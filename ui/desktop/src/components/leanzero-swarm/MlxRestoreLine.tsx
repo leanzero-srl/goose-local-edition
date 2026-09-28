@@ -14,6 +14,7 @@ import {
   type RestoreReason,
   type RestoreWhat,
 } from './mlxRestore';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * The one line that says what a relaunch is bringing back (mlxRestore.ts) — the Engine tab shows it
@@ -101,7 +102,7 @@ function reasonText(intl: IntlShape, reason: RestoreReason): string {
 
 function whereValues(intl: IntlShape, what: RestoreWhat) {
   return {
-    model: what.modelId.split('/').pop() || what.modelId,
+    model: modelShortName(what.modelId),
     kind: what.kind,
     peer: what.peerName ?? intl.formatMessage(i18n.otherMac),
   };

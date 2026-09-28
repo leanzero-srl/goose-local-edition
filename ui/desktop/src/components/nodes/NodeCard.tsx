@@ -37,6 +37,7 @@ import { CandidateFigures, outcomeText } from '../leanzero-swarm/PlacementCandid
 import { KindChip, OtherWayChip, RoleChip, StateChip, WhereChip, ROLE_WORD } from './NodeChips';
 import type { GlanceLine, MemoryRow, NodeGlance, UsedBy } from './nodeGlance';
 import type { ResolvedNodeDef } from './model';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * ONE NODE AT A GLANCE (DESIGN-NODES-AND-STRATEGIES.md §8.2): its kind, where it runs, the model,
@@ -111,7 +112,7 @@ const i18n = defineMessages({
   },
   liveLine: { id: 'nodes.liveLine', defaultMessage: '{stage} · {chat}' },
   loadProgress: { id: 'nodes.loadProgress', defaultMessage: '{phase} · {done} of {total} GB' },
-  memNeed: { id: 'nodes.memNeed', defaultMessage: 'needs {need} of {budget} GB' },
+  memNeed: { id: 'nodes.memNeed', defaultMessage: 'needs {need} GB, {budget} GB free' },
   memPeak: { id: 'nodes.memPeak', defaultMessage: '{peak} of {budget} GB' },
   memPeakOnly: { id: 'nodes.memPeakOnly', defaultMessage: 'peak {peak} GB' },
   memNoPeak: { id: 'nodes.memNoPeak', defaultMessage: 'no peak yet' },
@@ -128,7 +129,13 @@ const i18n = defineMessages({
   actionDetails: { id: 'nodes.actionDetails', defaultMessage: 'Details' },
   actionSetUp: { id: 'nodes.actionSetUp', defaultMessage: 'Set up' },
   actionOpenRunIt: { id: 'nodes.actionOpenRunIt', defaultMessage: 'Open Run it' },
-  pinWay: { id: 'nodes.pinWay', defaultMessage: 'Pin a way' },
+  pinWay: { id: 'nodes.pinWay', defaultMessage: 'New node for this model' },
+  pinWayNothing: { id: 'nodes.pinWayNothing', defaultMessage: 'New node for a model' },
+  detailsModel: { id: 'nodes.detailsModel', defaultMessage: 'Model: {id}' },
+  detailsPool: {
+    id: 'nodes.detailsPool',
+    defaultMessage: 'Swarm pool entry {device}, model name there: {model}',
+  },
   more: { id: 'nodes.more', defaultMessage: 'More for {name}' },
   keepLoaded: { id: 'nodes.keepLoaded', defaultMessage: 'Keep loaded' },
   duplicate: { id: 'nodes.duplicate', defaultMessage: 'Duplicate' },
@@ -223,7 +230,7 @@ export function lineText(intl: IntlShape, line: GlanceLine): string {
     case 'follows': {
       const way = line.serving;
       if (!way) return intl.formatMessage(i18n.followsNothing);
-      const model = way.modelId.split('/').filter(Boolean).pop() ?? way.modelId;
+      const model = modelShortName(way.modelId);
       return way.kind === 'split'
         ? intl.formatMessage(i18n.followsSplit, { model, count: way.macNames.length })
         : intl.formatMessage(i18n.follows, { model });
@@ -438,6 +445,22 @@ export function NodeCard({
   const def = node.def;
   const fromPool = node.modelFrom.kind === 'pool';
   const spinner = <Loader2 className="animate-spin" />;
+  const followsPool = def.kind === 'mlx' && fromPool;
+  const modelWords = node.model && !followsPool ? modelShortName(node.model) : null;
+  // Details (MLX nodes): the model's full id, the pool entry a pool node reads through, and — for a
+  // node that cannot run — the planner's arithmetic.
+  const details: string[] =
+    def.kind !== 'mlx'
+      ? []
+      : [
+          ...(node.model && !followsPool
+            ? [intl.formatMessage(i18n.detailsModel, { id: node.model })]
+            : []),
+          ...(followsPool && node.model && def.poolDevice
+            ? [intl.formatMessage(i18n.detailsPool, { device: def.poolDevice, model: node.model })]
+            : []),
+          ...(glance.action === 'details' && glance.detail ? [glance.detail] : []),
+        ];
 
   const primary = (() => {
     switch (glance.action) {
@@ -500,7 +523,11 @@ export function NodeCard({
             onClick={() => onAction({ kind: 'pinWay' })}
             data-testid="node-pin-way"
           >
-            {intl.formatMessage(i18n.pinWay)}
+            {intl.formatMessage(
+              glance.line.kind === 'follows' && glance.line.serving
+                ? i18n.pinWay
+                : i18n.pinWayNothing
+            )}
           </Button>
         );
       case 'details':
@@ -545,11 +572,18 @@ export function NodeCard({
           <h3 className={cx('min-w-0 break-words', TYPE.h2, WEIGHT.semibold)}>{def.name}</h3>
           {glance.state === 'displaced' && <OtherWayChip />}
         </div>
-        {node.model && (
-          <p className={cx('min-w-0 break-all', TYPE.mono)} data-testid="node-model">
-            {node.model}
+        {/* The model by its short name, the one spelling every surface uses (Q-308); the repo id
+            and a pool entry's own model name live in Details. A pool node on your Macs names no
+            model here: it serves whatever this Mac's engine runs, and its line says which. */}
+        {(modelWords || fromPool) && (
+          <p
+            className={cx('min-w-0 break-words', TYPE.body)}
+            title={modelWords ? (node.model ?? undefined) : undefined}
+            data-testid="node-model"
+          >
+            {modelWords && <span className={WEIGHT.semibold}>{modelWords}</span>}
             {fromPool && (
-              <span className={cx('ml-2 font-sans', TYPE.meta)}>
+              <span className={cx(modelWords && 'ml-2', TYPE.meta)}>
                 {intl.formatMessage(i18n.fromPool)}
               </span>
             )}
@@ -607,7 +641,7 @@ export function NodeCard({
         </p>
       )}
 
-      {glance.action === 'details' && def.kind === 'mlx' && glance.detail && (
+      {details.length > 0 && (
         <Disclosure
           variant="plain"
           title={intl.formatMessage(i18n.actionDetails)}
@@ -615,7 +649,17 @@ export function NodeCard({
           onOpenChange={setDetailsOpen}
           testId="node-details"
         >
-          <p className={cx('whitespace-pre-wrap break-words', TYPE.meta)}>{glance.detail}</p>
+          <div className="flex flex-col gap-1">
+            {details.map((line) => (
+              <p
+                key={line}
+                className={cx('whitespace-pre-wrap break-words', TYPE.meta)}
+                data-testid="node-details-line"
+              >
+                {line}
+              </p>
+            ))}
+          </div>
         </Disclosure>
       )}
 

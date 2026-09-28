@@ -1,6 +1,7 @@
 import type { IntlShape } from 'react-intl';
 import { defineMessages } from '../../i18n';
 import type { MlxModeSummary } from './mlxDistributed';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * The one sentence that says which engine this Mac runs — on the state tile, the Engine tab's
@@ -79,7 +80,7 @@ export function formatMlxMode(
     const values = {
       rank: summary.rank,
       requester: summary.requester,
-      model: summary.modelId.split('/').pop() || summary.modelId,
+      model: modelShortName(summary.modelId),
     };
     return backend
       ? intl.formatMessage(i18n.hosting, { ...values, backend })

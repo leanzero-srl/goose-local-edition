@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight, Cloud, Cpu, ExternalLink, Loader2, Plug, RefreshCw, X } from 'lucide-react';
+import type { NodesServingWayDto } from '@aaif/goose-sdk';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   Button,
@@ -112,7 +113,7 @@ const i18n = defineMessages({
     id: 'nodes.newNoWays',
     defaultMessage: 'goose found no way to run this model on your Macs.',
   },
-  fitOn: { id: 'nodes.newFitOn', defaultMessage: '{mac} {need} of {budget} GB' },
+  fitOn: { id: 'nodes.newFitOn', defaultMessage: '{mac}: needs {need} GB, {budget} GB free' },
   whichProvider: { id: 'nodes.newWhichProvider', defaultMessage: 'Which provider?' },
   providerModels: { id: 'nodes.newProviderModels', defaultMessage: 'Model' },
   modelsReading: {
@@ -146,6 +147,15 @@ const i18n = defineMessages({
   needWay: { id: 'nodes.newNeedWay', defaultMessage: 'Pick a way to run it to go on' },
   needProvider: { id: 'nodes.newNeedProvider', defaultMessage: 'Pick a provider to go on' },
   needName: { id: 'nodes.newNeedName', defaultMessage: 'Give it a name to save it' },
+  nameTaken: {
+    id: 'nodes.newNameTaken',
+    defaultMessage: 'Another node is already named “{name}” — give this one another name',
+  },
+  startStopsOn: {
+    id: 'nodes.newStartStopsOn',
+    defaultMessage: 'Starting it stops {model} on {macs}.',
+  },
+  startStops: { id: 'nodes.newStartStops', defaultMessage: 'Starting it stops {model}.' },
 });
 
 type Kind = 'mlx' | 'cloud' | 'endpoint';
@@ -166,6 +176,11 @@ export interface NewNodeDialogProps {
   start: NewNodeStart;
   /** Every node now, for unique names and ids. */
   nodes: readonly ResolvedNodeDef[];
+  /**
+   * The way serving this Mac's goose now (null = nothing serves): one MLX way serves at a time, so
+   * "Create and start" says beside it what starting stops (Q-299).
+   */
+  serving: NodesServingWayDto | null;
   /** The def was written; `startIt` when the person chose "Create and start". */
   onSaved: (def: NodeDef, startIt: boolean) => void;
   /** Where "Set up another provider" and "Get one in Models" go; the host owns navigation. */
@@ -264,6 +279,29 @@ function PickRow({
   );
 }
 
+/**
+ * The way "Create and start" stops, or null: one MLX way serves this Mac's goose at a time, so
+ * starting a node stops whatever serves — unless it serves this very model on this very way.
+ * Where the record cannot tell the ways apart (no Macs in it) and the model is the same, nothing
+ * is claimed.
+ */
+export function stopsOnStart(
+  serving: NodesServingWayDto | null,
+  model: string | null,
+  placement: PinnedPlacement | null
+): { modelId: string; macs: string[] } | null {
+  if (!serving) return null;
+  const stops = { modelId: serving.modelId, macs: serving.macNames };
+  if (!model || serving.modelId !== model) return stops;
+  if (!placement || !serving.macs) return null;
+  const servingSplit = serving.kind === 'split';
+  const sameWay =
+    servingSplit === (placement.kind !== 'single') &&
+    serving.macs.length === placement.macs.length &&
+    serving.macs.every((mac, i) => mac === placement.macs[i]);
+  return sameWay ? null : stops;
+}
+
 export function NewNodeDialog(props: NewNodeDialogProps) {
   // Mounted fresh per open, so every open starts from its own `start`.
   return props.open ? <NewNodeDialogBody {...props} /> : null;
@@ -274,6 +312,7 @@ function NewNodeDialogBody({
   onClose,
   start,
   nodes,
+  serving,
   onSaved,
   onOpenCloudProviders,
   onOpenModels,
@@ -306,6 +345,7 @@ function NewNodeDialogBody({
   const [saving, setSaving] = useState(false);
   const [refusals, setRefusals] = useState<string[]>([]);
   const blockedId = useId();
+  const stopsId = useId();
 
   const [providers, setProviders] = useState<ProvidersRead>({ kind: 'reading' });
   useEffect(() => {
@@ -793,6 +833,22 @@ function NewNodeDialogBody({
     </div>
   );
 
+  // The server refuses two nodes with one name after the click (Q-309); the same exact-name rule
+  // is checked here, so Create is disabled with the reason before anything is sent.
+  const nameTaken = takenNames.includes(name.trim());
+  const canSave = !saving && name.trim() !== '' && !nameTaken;
+  // What "Create and start" stops (Q-299): the way serving now, unless it IS this node's way.
+  const startStops =
+    kind === 'mlx' && !editDef && step === 'name' ? stopsOnStart(serving, model, placement) : null;
+  const stopsText = startStops
+    ? startStops.macs.length > 0
+      ? intl.formatMessage(i18n.startStopsOn, {
+          model: modelShortName(startStops.modelId),
+          macs: intl.formatList(startStops.macs, { type: 'conjunction' }),
+        })
+      : intl.formatMessage(i18n.startStops, { model: modelShortName(startStops.modelId) })
+    : null;
+
   // A disabled Next/Create says why beside it (Q-259: never a button that silently does nothing).
   // Steps whose own body already says why (no models, no ways, reading, a failed read) add nothing.
   const blocked: string | null =
@@ -806,7 +862,9 @@ function NewNodeDialogBody({
             ? intl.formatMessage(i18n.needModel)
             : step === 'name' && name.trim() === ''
               ? intl.formatMessage(i18n.needName)
-              : null;
+              : step === 'name' && nameTaken
+                ? intl.formatMessage(i18n.nameTaken, { name: name.trim() })
+                : null;
 
   const body =
     step === 'kind'
@@ -899,6 +957,15 @@ function NewNodeDialogBody({
             {blocked}
           </span>
         )}
+        {!blocked && stopsText && (
+          <span
+            id={stopsId}
+            className={cx('mr-auto break-words text-lz-meta', WEIGHT.semibold, TONE_TEXT.warn)}
+            data-testid="new-node-start-stops"
+          >
+            {stopsText}
+          </span>
+        )}
         {at > 0 && !(editDef && step === 'name' && kind !== 'mlx') && (
           <Button variant="ghost" onClick={() => goTo(steps[at - 1])} data-testid="new-node-back">
             {intl.formatMessage(i18n.back)}
@@ -917,8 +984,8 @@ function NewNodeDialogBody({
         ) : (
           <>
             <Button
-              variant={kind === 'mlx' && !editDef ? 'secondary' : 'primary'}
-              disabled={saving || name.trim() === ''}
+              variant={kind === 'mlx' && !editDef && !stopsText ? 'secondary' : 'primary'}
+              disabled={!canSave}
               aria-describedby={blocked ? blockedId : undefined}
               icon={saving ? <Loader2 className="animate-spin" /> : undefined}
               onClick={() => void save(false)}
@@ -927,10 +994,12 @@ function NewNodeDialogBody({
               {intl.formatMessage(editDef ? i18n.save : i18n.create)}
             </Button>
             {kind === 'mlx' && !editDef && (
+              // When starting stops what serves, the safe door is the primary one and this one
+              // carries the words beside it (Q-299).
               <Button
-                variant="primary"
-                disabled={saving || name.trim() === ''}
-                aria-describedby={blocked ? blockedId : undefined}
+                variant={stopsText ? 'secondary' : 'primary'}
+                disabled={!canSave}
+                aria-describedby={blocked ? blockedId : stopsText ? stopsId : undefined}
                 onClick={() => void save(true)}
                 data-testid="new-node-create-start"
               >

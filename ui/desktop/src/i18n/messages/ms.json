@@ -6305,6 +6305,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Model: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Entri kumpulan swarm {device}, nama model di sana: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Itu tidak berjaya: {error}"
   },
@@ -6441,7 +6447,7 @@
     "defaultMessage": "Memori pada {mac} berbanding bajetnya"
   },
   "nodes.memNeed": {
-    "defaultMessage": "perlu {need} daripada {budget} GB"
+    "defaultMessage": "perlu {need} GB, {budget} GB kosong"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "belum ada puncak"
@@ -6507,7 +6513,7 @@
     "defaultMessage": "Tapis model"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} daripada {budget} GB"
+    "defaultMessage": "{mac}: perlu {need} GB, {budget} GB kosong"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Dapatkan satu dalam Model"
@@ -6538,6 +6544,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Namakannya"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Nod lain sudah bernama “{name}” — beri nod ini nama lain"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Pilih model untuk teruskan"
@@ -6592,6 +6601,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Sediakan penyedia lain"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Memulakannya akan menghentikan {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Memulakannya akan menghentikan {model} pada {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Jenis"
@@ -6657,7 +6672,10 @@
     "defaultMessage": "Menunggu pemuatan lain selesai"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Semat satu cara"
+    "defaultMessage": "Nod baharu untuk model ini"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Nod baharu untuk satu model"
   },
   "nodes.planFailed": {
     "defaultMessage": "Tiada pelan untuk cara ini: {error}"
@@ -6669,7 +6687,10 @@
     "defaultMessage": "Kumpulan swarm anda"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Kumpulan swarm anda · digunakan oleh binaan swarm semasa “Binaan swarm menggunakan” ialah “Kumpulan swarm anda”"
+    "defaultMessage": "Kumpulan swarm anda · binaan swarm dan sembang pada Mana-mana nod (Auto) berjalan pada ini"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Kumpulan swarm anda · sembang pada Mana-mana nod (Auto) berjalan pada ini; binaan swarm kini menggunakan {strategy}"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {ke-#}}"
@@ -6732,10 +6753,13 @@
     "defaultMessage": "Sembang baharu kini bermula pada nod ini, jadi ia tidak boleh dialih keluar sendirian."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Kumpulan swarm anda mengekalkan perantinya; nod ini tidak ditunjukkan di sini lagi. Edit kumpulan itu sendiri di bawah."
+    "defaultMessage": "Hanya kad ini yang hilang: modelnya kekal dalam kumpulan swarm anda, jadi sembang pada Mana-mana nod (Auto) terus berjalan padanya, begitu juga binaan swarm yang menggunakan kumpulan itu. Untuk mendapatkan semula kad itu, pilih “Tunjukkan nod kumpulan yang dibuang” pada halaman ini."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Alih keluar {node}?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, other {# nod yang anda buang daripada kumpulan swarm anda tidak ditunjukkan}}"
   },
   "nodes.retry": {
     "defaultMessage": "Baca semula"
@@ -6754,6 +6778,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Tunjukkan dalam Jalankan"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Tunjukkan nod kumpulan yang dibuang"
   },
   "nodes.startAction": {
     "defaultMessage": "Mulakan {node}"
@@ -9470,14 +9497,17 @@
   "strategies.addNode": {
     "defaultMessage": "Tambah nod"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Semua nod anda sudah ada dalam senarai ini"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Hanya ada satu nod — cipta satu lagi di bawah Nod untuk menambahnya di sini"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Binaan swarm menggunakan ini"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Sembang baharu bermula di sini"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Sama ada binaan swarm boleh menggunakannya disemak apabila anda menyimpan."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Binaan swarm boleh menggunakan strategi ini."
@@ -9508,6 +9538,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Sama ada binaan swarm boleh menggunakannya tidak dapat dibaca: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Disemak semasa anda mengedit; belum ada yang disimpan."
   },
   "strategies.cancel": {
     "defaultMessage": "Batal"
@@ -9552,7 +9585,7 @@
     "defaultMessage": "Belum ada strategi"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: melayan apa sahaja yang dijalankan enjin Mac ini; tidak pernah dimuatkan"
+    "defaultMessage": "{node}: menggunakan apa sahaja yang dijalankan oleh Mac ini; tidak pernah memulakan model sendiri"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Pautan"
@@ -9606,10 +9639,10 @@
     "defaultMessage": "Pada Mac anda"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Satu cara pada satu masa melayan sembang anda: {node}"
+    "defaultMessage": "Hanya {node} berjalan pada Mac anda untuk strategi ini, jadi tiada pertukaran."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Merentas semua Mac anda, hanya satu cara MLX melayan goose Mac ini pada satu masa. Dua cara berbeza dalam satu strategi perlu bergilir-gilir."
+    "defaultMessage": "Mac anda menjalankan satu model pada satu masa untuk goose pada Mac ini — pada satu Mac atau dibahagikan antara Mac. Nod dalam strategi ini yang berjalan secara berbeza bergilir-gilir: setiap pertukaran menghentikan satu dan memulakan yang lain."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: melimpahkan kerja dari {a} ke {b} akan menghentikan satu untuk memuatkan yang lain setiap kali {a} sibuk"

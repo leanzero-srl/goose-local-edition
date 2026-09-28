@@ -6142,6 +6142,12 @@ export type NodesRemoveStrategyRequest_unstable = {
  */
 export type NodesBuildEligibilityRequest_unstable = {
     strategy: string;
+    /**
+     * The strategy as the editor holds it now, unsaved: checked in place of the stored one (or as
+     * a new one), so the editor answers while the person edits instead of after Save (Q-311).
+     * Nothing is written.
+     */
+    draft?: NodeStrategy | null;
 };
 
 export type NodesBuildEligibilityResponse_unstable = {

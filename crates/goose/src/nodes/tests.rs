@@ -201,7 +201,7 @@ fn an_mlx_device_is_adopted_as_a_follows_node_that_reads_through() {
     let a = adopt(Some(&pool), empty_config(), "Mihai Macbook");
     assert_eq!(a.adopted, vec!["mihai-mlx"]);
     let def = &a.config.defs[0];
-    assert_eq!(def.name, "Mihai Macbook engine");
+    assert_eq!(def.name, "This Mac's engine");
     assert_eq!(def.placement, Some(NodePlacement::Follows));
     assert_eq!(def.pool_device.as_deref(), Some("mihai-mlx"));
     assert_eq!(def.model, None, "a pool node never copies its model");
@@ -227,12 +227,46 @@ fn two_mlx_devices_on_one_mac_get_distinct_names() {
     assert_eq!(
         names,
         vec![
-            "Mihai Macbook engine",
-            "Mihai Macbook engine · mihai-flash-qwen3.8-flash-next-4bit",
-            "Mihai Macbook engine · third-mlx",
+            "This Mac's engine",
+            "This Mac's engine · mihai-flash-qwen3.8-flash-next-4bit",
+            "This Mac's engine · third-mlx",
         ]
     );
     assert!(validate(&a.config).is_empty(), "{:?}", validate(&a.config));
+}
+
+/// Q-303: a pool node adopted under the old rule ("<Mac name> engine") is named after what it
+/// follows; a name the person typed, and a node that is not a follows pool node, keep theirs.
+#[test]
+fn a_pool_node_named_by_the_old_rule_takes_the_followed_name_and_a_typed_name_stays() {
+    let pool = pool(json!([
+        mlx_device("mihai-mlx", "mihai-qwen3.8-27b-atlassian-q8-mlx"),
+        mlx_device("mihai-flash-mlx", "mihai-flash-qwen3.8-flash-next-4bit-mlx"),
+        mlx_device("typed-mlx", "m"),
+    ]));
+    let first = adopt(Some(&pool), empty_config(), "Mihai Macbook");
+    let mut stored = first.config.clone();
+    stored.defs[0].name = "Mihai Macbook engine".into();
+    stored.defs[1].name = "Mihai Macbook engine · mihai-flash-qwen3.8-flash-next-4bit".into();
+    stored.defs[2].name = "Mihai Macbook engine room".into();
+    let mut own = flash_here("own");
+    own.name = "Mihai Macbook engine (2)".into();
+    stored.defs.push(own);
+
+    let a = adopt(Some(&pool), stored, "Mihai Macbook");
+    let names: Vec<&str> = a.config.defs.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "This Mac's engine",
+            "This Mac's engine · mihai-flash-qwen3.8-flash-next-4bit",
+            "Mihai Macbook engine room",
+            "Mihai Macbook engine (2)",
+        ]
+    );
+    assert!(a.adopted.is_empty(), "a rename is not an adoption");
+    let again = adopt(Some(&pool), a.config.clone(), "Mihai Macbook");
+    assert_eq!(again.config, a.config, "renaming is idempotent");
 }
 
 #[test]
@@ -1173,6 +1207,40 @@ fn every_tier_a_refusal_carries_its_reason() {
         reasons[0].message.contains("no model configured"),
         "{reasons:?}"
     );
+}
+
+/// Q-311: the editor asks about the strategy as it holds it, before Save — the draft replaces the
+/// stored strategy of that id (or joins as a new one), and the answer is the draft's.
+#[test]
+fn an_unsaved_draft_is_checked_in_place_of_the_stored_strategy() {
+    let mut nodes = golden_nodes();
+    nodes.defs.push(split_27b("split"));
+    let stored_ok = build_eligibility(&inputs(&nodes), "golden");
+    assert!(stored_ok.is_ok());
+
+    let mut draft = strategy(
+        "ignored-id",
+        None,
+        Some(entry(&[("split", 1)], NodeWhen::Failover)),
+    );
+    draft.roles.planning = Some(entry(&[("mihai-mlx", 1)], NodeWhen::Failover));
+    let mut edited = nodes.clone();
+    with_draft_strategy(&mut edited, "golden", draft.clone());
+    assert_eq!(edited.strategies.len(), nodes.strategies.len(), "replaced");
+    let reasons = build_eligibility(&inputs(&edited), "golden").unwrap_err();
+    assert!(
+        reasons.iter().any(|r| r.message.contains("is a split")),
+        "{reasons:?}"
+    );
+
+    let mut added = nodes.clone();
+    with_draft_strategy(&mut added, "brand-new", draft);
+    assert_eq!(
+        added.strategies.len(),
+        nodes.strategies.len() + 1,
+        "appended"
+    );
+    assert!(build_eligibility(&inputs(&added), "brand-new").is_err());
 }
 
 #[test]

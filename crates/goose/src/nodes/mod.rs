@@ -258,10 +258,46 @@ pub struct Adoption {
     pub lm_studio: u32,
 }
 
-/// Adopt every pool device that has no node and was not declined. Pure and idempotent: a second
-/// adoption of its own output adopts nothing. It never touches `swarm`.
+/// The name an adopted MLX pool node gets. It follows whatever THIS Mac's engine serves — on this
+/// Mac alone, on another Mac, or split across several — so it is named after what it follows,
+/// never after one Mac (Q-303: "Mihai Macbook engine" wore a "This Mac" chip above "Split across 2
+/// Macs"). The card shows where it runs now beside the name.
+pub const FOLLOWS_NODE_NAME: &str = "This Mac's engine";
+
+/// A pool node still carrying the name adoption used to give (`<Mac name> engine`, and its
+/// ` · <model>` / ` · <device>` / ` (n)` forms) gets the name adoption gives now, its suffix kept.
+/// Only that exact generated name moves; a name the person typed is theirs and is never touched.
+fn rename_followed_defaults(config: &mut NodesConfig, this_mac: &str) {
+    let old_base = format!("{this_mac} engine");
+    for index in 0..config.defs.len() {
+        let def = &config.defs[index];
+        let Some(device) = def.pool_device.clone() else {
+            continue;
+        };
+        if def.origin != NodeOrigin::Pool
+            || def.kind != NodeDefKind::Mlx
+            || def.placement != Some(NodePlacement::Follows)
+            || def.name.starts_with(FOLLOWS_NODE_NAME)
+        {
+            continue;
+        }
+        let Some(suffix) = def.name.strip_prefix(&old_base) else {
+            continue;
+        };
+        if !(suffix.is_empty() || suffix.starts_with(" · ") || suffix.starts_with(" (")) {
+            continue;
+        }
+        let wanted = format!("{FOLLOWS_NODE_NAME}{suffix}");
+        config.defs[index].name = free_name(&config.defs, vec![wanted], &device);
+    }
+}
+
+/// Adopt every pool device that has no node and was not declined, and move a pool node still named
+/// by the old rule to today's name (`rename_followed_defaults`). Pure and idempotent: a second
+/// adoption of its own output adopts and renames nothing. It never touches `swarm`.
 pub fn adopt(pool: Option<&PoolView>, config: NodesConfig, this_mac: &str) -> Adoption {
     let mut config = config;
+    rename_followed_defaults(&mut config, this_mac);
     let mut adopted = Vec::new();
     let mut lm_studio = 0;
     let Some(pool) = pool else {
@@ -288,7 +324,7 @@ pub fn adopt(pool: Option<&PoolView>, config: NodesConfig, this_mac: &str) -> Ad
         let id = free_id(&config.defs, &device.id);
         let (kind, placement, candidates) = match class {
             DeviceClass::Mlx => {
-                let base = format!("{this_mac} engine");
+                let base = FOLLOWS_NODE_NAME.to_string();
                 (
                     NodeDefKind::Mlx,
                     Some(NodePlacement::Follows),
@@ -1036,6 +1072,19 @@ pub fn remove_node(
     }
     let previous = current.config.for_new_chats.clone();
     store(config, next, &previous, facts, &mut refusals, current)
+}
+
+/// The config with `draft` in place of the strategy `id` (appended when none has it yet) — what the
+/// editor asks eligibility about before Save (Q-311). Never stored.
+pub fn with_draft_strategy(config: &mut NodesConfig, id: &str, draft: NodeStrategy) {
+    let draft = NodeStrategy {
+        id: id.to_string(),
+        ..draft
+    };
+    match config.strategies.iter_mut().find(|s| s.id == id) {
+        Some(stored) => *stored = draft,
+        None => config.strategies.push(draft),
+    }
 }
 
 pub struct RemoveStrategy<'a> {

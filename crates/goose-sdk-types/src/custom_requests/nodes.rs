@@ -511,6 +511,11 @@ pub struct NodesRemoveStrategyRequest {
 #[serde(rename_all = "camelCase")]
 pub struct NodesBuildEligibilityRequest {
     pub strategy: String,
+    /// The strategy as the editor holds it now, unsaved: checked in place of the stored one (or as
+    /// a new one), so the editor answers while the person edits instead of after Save (Q-311).
+    /// Nothing is written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<NodeStrategy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
