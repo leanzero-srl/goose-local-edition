@@ -22,7 +22,7 @@ mod imp {
     use goose_sidecar::distributed::{
         DistributedConfig, NodeExec, Runner, SystemExec, PIPELINE_DEFAULT_SLOTS,
     };
-    use goose_sidecar::engine::{expand_tilde, global_manager, EngineSettings};
+    use goose_sidecar::engine::{expand_tilde, global_manager, EngineSettings, StartFrees};
     use goose_sidecar::hf;
     use goose_sidecar::placement::bench::{self, Workload};
     use goose_sidecar::placement::chip::{self, ChipIdentity};
@@ -587,6 +587,11 @@ mod imp {
         pub running: Vec<(String, String, Option<u64>)>,
         /// The single engine's resident bytes when a model is mounted here, and whose.
         pub single_footprint: Option<(String, u64)>,
+        /// What a start of this Mac's single engine gets back — the tile's and the mount gate's
+        /// own credit (`MlxEngineManager::start_frees`, read once here). Its `Mounted` arm is
+        /// `single_footprint`; the planner reads its `Leftover` arm for this Mac's single row only
+        /// (Q-292).
+        pub this_mac_start: StartFrees,
         /// The Metal memory the engine on the linked Mac serving this Mac's chat holds:
         /// (its placement node id, model id, bytes, the Mac's name). Every other placement of that
         /// model on that Mac gets it back, because Run switches rather than adds a copy.
@@ -659,26 +664,31 @@ mod imp {
         }
     }
 
-    async fn serving(settings: &EngineSettings) -> Serving {
+    async fn serving() -> Serving {
+        let manager = global_manager();
+        let single = manager.status().await;
+        let this_mac_start = manager.start_frees().await;
         let mut out = Serving {
             running: Vec::new(),
             single_footprint: None,
+            this_mac_start: this_mac_start.clone(),
             peer_footprint: None,
             split_footprint: None,
             notes: Vec::new(),
         };
-        let single = global_manager().status().await;
         if let (true, Some(model)) = (single.state == "running", single.model_id.clone()) {
             out.running.push((
-                model.clone(),
+                model,
                 PlacementKey::single(LOCAL).id(),
                 single.context_window,
             ));
-            match goose_sidecar::placement::engine_resident_bytes(settings.port).await {
-                Ok(bytes) => out.single_footprint = Some((model, bytes)),
+        }
+        if let StartFrees::Mounted { model_id, bytes } = this_mac_start {
+            match bytes {
+                Ok(bytes) => out.single_footprint = Some((model_id, bytes)),
                 Err(e) => out.notes.push(format!(
-                    "{model} is mounted here but its memory could not be read ({e:#}); this Mac's \
-                     figures do not count it as free for other placements"
+                    "{model_id} is mounted here but its memory could not be read ({e}); this \
+                     Mac's figures do not count it as free for other placements"
                 )),
             }
         }
@@ -752,7 +762,7 @@ mod imp {
         let models_dir = expand_tilde(&settings.models_dir);
         let config = persisted_config()?;
         let ((mut measured, peer_gap), mut serving) =
-            tokio::join!(measure_nodes(config.as_ref()), serving(&settings));
+            tokio::join!(measure_nodes(config.as_ref()), serving());
         if let Some(why) = peer_gap {
             serving
                 .notes
@@ -862,6 +872,7 @@ mod imp {
                 .iter()
                 .find(|(model, _, _)| model == model_id)
                 .map(|(_, id, context)| (id.clone(), *context)),
+            this_mac_start: Some(&ctx.serving.this_mac_start),
         }))
     }
 
