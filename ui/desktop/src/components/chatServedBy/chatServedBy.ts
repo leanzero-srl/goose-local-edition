@@ -40,6 +40,7 @@ import type { ChatLoader } from './loaderText';
 import { effectiveEntry, nodeNameOfDevice, nodeNamesById } from '../nodes/model';
 import {
   displacedOf,
+  loadIsOthers,
   nodeRefusalOf,
   nodeSwapOf,
   nodeWaitOf,
@@ -1003,7 +1004,10 @@ function chatLoaderOf(
   const swap = nodeSwapOf(read, residency, routeIds ?? []);
   if (swap) {
     const forThisChat =
-      inputs.turnInFlight && routeIds != null && routeIds.includes(swap.target.id);
+      inputs.turnInFlight &&
+      routeIds != null &&
+      routeIds.includes(swap.target.id) &&
+      !loadIsOthers(swap, inputs.sessionId);
     if (forThisChat || engineStoppedBy(swap, inputs)) {
       return { kind: 'loading', swap, forThisChat };
     }

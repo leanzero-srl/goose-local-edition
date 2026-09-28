@@ -6,6 +6,7 @@ import {
   nodeRefusalOf,
   nodeWaitOf,
   isNodeSwap,
+  loadIsOthers,
   nodeSwapOf,
   routeNodeIds,
   swapOfReports,
@@ -35,7 +36,25 @@ describe('nodeSwapOf — the loader’s own mark, by the node’s name', () => {
       },
       phase: null,
       load: null,
+      demandedBy: [],
     });
+  });
+
+  it('Q-434: the swap carries whom the loader loads it for; a load is another’s only by that', () => {
+    const forDelegates = {
+      ...J3_SWAP_TO_SPLIT,
+      nodes: J3_SWAP_TO_SPLIT.nodes.map((r) =>
+        r.residency.kind === 'loading'
+          ? { ...r, residency: { ...r.residency, demandedBy: ['20260928_42'] } }
+          : r
+      ),
+    };
+    const swap = nodeSwapOf(J3_READ, forDelegates)!;
+    expect(swap.demandedBy).toEqual(['20260928_42']);
+    expect(loadIsOthers(swap, 'chat-1')).toBe(true);
+    expect(loadIsOthers(swap, '20260928_42')).toBe(false);
+    // No demand behind it (Run it, a restore): it is claimed for no one.
+    expect(loadIsOthers(nodeSwapOf(J3_READ, J3_SWAP_TO_SPLIT)!, 'chat-1')).toBe(false);
   });
 
   it('a way two nodes name: the pinned node leads the one that follows this Mac', () => {
@@ -79,6 +98,7 @@ describe('swapStopsEngine — the swap’s stop is not a failure; a real failure
       target: { ...toSingle!.target, modelId: null },
       phase: null,
       load: null,
+      demandedBy: [],
     };
     expect(swapStopsEngine(unknownModel, { way: 'single', modelId: J3_MODEL, failed: true })).toBe(
       false

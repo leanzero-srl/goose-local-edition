@@ -105,3 +105,51 @@ describe('the delegate card while its node loads for it (Q-382)', () => {
     expect(screen.queryByTestId('delegate-loading-line')).toBeNull();
   });
 });
+
+/**
+ * Q-434: two delegates run "at the same time" as background tasks; the parent waits on each with
+ * summon's `load(source: <task id>)` — the Working card the person watches. Its source is the
+ * delegate's session, so that card says the node loads for this delegate.
+ */
+describe('the Working load card of a background delegate (Q-434)', () => {
+  const load = (source: string): ToolRequestMessageContent => ({
+    type: 'toolRequest',
+    id: 'call_load',
+    toolCall: { status: 'success', value: { name: 'summon__load', arguments: { source } } },
+  });
+  const renderLoad = (source: string) =>
+    render(
+      <ToolCallWithResponse
+        isCancelledMessage={false}
+        toolRequest={load(source)}
+        notifications={[]}
+        isStreamingMessage
+        isPendingApproval={false}
+      />,
+      { wrapper: IntlTestWrapper }
+    );
+
+  it('says the node loads for this delegate while the loader loads it for that task', () => {
+    residency = [
+      {
+        node: 'studio',
+        residency: { kind: 'loading', phase: 'loading', demandedBy: ['20260928_42'] },
+      },
+    ];
+    renderLoad('20260928_42');
+    expect(screen.getByTestId('delegate-loading-line')).toHaveTextContent(
+      'Loading 27B · Work’s Mac Studio for this delegate: Loading weights'
+    );
+  });
+
+  it('a load of a skill or recipe names no delegate', () => {
+    residency = [
+      {
+        node: 'studio',
+        residency: { kind: 'loading', phase: 'loading', demandedBy: ['my-skill'] },
+      },
+    ];
+    renderLoad('my-skill');
+    expect(screen.queryByTestId('delegate-loading-line')).toBeNull();
+  });
+});

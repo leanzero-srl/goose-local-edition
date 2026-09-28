@@ -1770,11 +1770,11 @@ impl NodesSeam for LiveNodesSeam {
         if !self.records_served {
             return;
         }
-        crate::nodes::served::remember(session, turn.clone());
+        let turn = crate::nodes::served::remember(session, turn);
         let session = session.to_string();
         tokio::spawn(async move {
             let sessions = crate::session::SessionManager::instance();
-            if let Err(e) = crate::nodes::served::record(&sessions, &session, turn).await {
+            if let Err(e) = crate::nodes::served::persist(&sessions, &session, turn).await {
                 tracing::warn!(
                     target: "swarm_router",
                     session = %session,

@@ -1864,6 +1864,52 @@ fn a_starting_split_is_never_serving() {
     }
 }
 
+/// Q-434: a delegate's reply is many model calls, one served record each; only the call that
+/// demanded the load measured it. The reply's later calls on that node carry the load, so the last
+/// record — the one its card reads — still says "loaded for this delegate in …". Another node's
+/// record carries nothing, and a new reply starts clean.
+#[test]
+fn a_replys_load_rides_its_later_records_on_the_same_node() {
+    let call = |node: &str, loaded_ms: Option<u64>| NodeServedTurnDto {
+        node: node.into(),
+        role: Some(NodeRole::Build),
+        rank: 1,
+        reason: None,
+        tried: Vec::new(),
+        loaded_ms,
+        at_ms: 1,
+        asked_for_this_turn: false,
+    };
+    let delegate = "served-test-delegate-q434";
+    assert_eq!(
+        served::remember(delegate, call("split", Some(98_000))).loaded_ms,
+        Some(98_000)
+    );
+    assert_eq!(
+        served::remember(delegate, call("split", None)).loaded_ms,
+        Some(98_000),
+        "the reply's next call on the node it loaded"
+    );
+    assert_eq!(
+        served::remember(delegate, call("sonnet", None)).loaded_ms,
+        None,
+        "a call on another node loaded nothing"
+    );
+    assert_eq!(
+        served::remember(delegate, call("split", None)).loaded_ms,
+        Some(98_000),
+        "the reply still paid that load"
+    );
+    served::reply_began(delegate);
+    assert_eq!(
+        served::remember(delegate, call("split", None)).loaded_ms,
+        None,
+        "a new reply found the node loaded"
+    );
+    let other = "served-test-other-q434";
+    assert_eq!(served::remember(other, call("split", None)).loaded_ms, None);
+}
+
 #[tokio::test]
 async fn the_served_record_is_kept_in_memory_and_in_the_session() {
     let dir = tempfile::tempdir().unwrap();
