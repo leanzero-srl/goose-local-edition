@@ -106,8 +106,18 @@ export interface MlxEngineSnapshot {
    */
   engine: 'single' | 'distributed' | 'remote';
   mode: MlxEngineMode;
-  /** The id the engine serves (its own `/v1/status` model, else goose's served id, else the HF id). */
+  /**
+   * The model this engine serves, one derivation for every engine the loop reads (`servedModel`):
+   * the engine's own `/v1/status` model, else goose's word for it — the single engine's served id,
+   * else its HF id; a route's model; a split's model.
+   */
   modelId: string | null;
+  /**
+   * Why `modelId` is null on a read that ANSWERED: neither the engine's status nor goose names a
+   * model. Null whenever a model is named, and on a read that did not answer (`statusDetail` says
+   * why). Its own field: `statusDetail` beside fresh stats reads as "Stale" on the tray.
+   */
+  modelDetail: string | null;
   baseUrl: string | null;
   stats: MlxLiveStats | null;
   /** Why `stats` is absent or stale, in the read's own words — a relay's capability redacted. */
@@ -212,6 +222,7 @@ export const INITIAL_SNAPSHOT: MlxEngineSnapshot = {
   engine: 'single',
   mode: 'unknown',
   modelId: null,
+  modelDetail: null,
   baseUrl: null,
   stats: null,
   statusDetail: null,
@@ -271,6 +282,27 @@ function redactedSnapshot(snapshot: MlxEngineSnapshot): MlxEngineSnapshot {
 function bodyModel(body: unknown): string | null {
   const model = (body as { model?: unknown } | null)?.model;
   return typeof model === 'string' && model ? model : null;
+}
+
+/**
+ * The model an ANSWERING engine serves — the one derivation for the single engine, a split's rank 0
+ * and a linked Mac's engine through the relay (Q-417: the relay's read named the Studio's model in
+ * its body and the snapshot said null). The engine's own `/v1/status` word first (Rapid-MLX's
+ * `model`, the id its `/v1/models` lists), else goose's word for what that engine serves. Neither
+ * names one: null, and why — never a guessed name.
+ */
+function servedModel(
+  body: unknown,
+  goosesWord: string | null,
+  whose: string
+): Pick<MlxEngineSnapshot, 'modelId' | 'modelDetail'> {
+  const modelId = bodyModel(body) ?? goosesWord;
+  return {
+    modelId,
+    modelDetail: modelId
+      ? null
+      : `the engine's /v1/status names no model, and goose names none for ${whose}`,
+  };
 }
 
 export class MlxEngineMonitor {
@@ -411,7 +443,7 @@ export class MlxEngineMonitor {
       const base = remoteLiveBase(route);
       const read = base
         ? await this.readRouted('remote', base, route.peerName, route.modelId ?? null)
-        : this.routeUnread(route.state);
+        : this.routeUnread(route.state, route.modelId ?? null);
       const said = [route.lastError, read.statusDetail].filter((t): t is string => t != null);
       return { ...read, contact: this.trackContact(route.peerName, read.mode, said) };
     }
@@ -429,7 +461,7 @@ export class MlxEngineMonitor {
    */
   private async readSplit(run: MlxDistributedReport): Promise<MlxEngineSnapshot> {
     const up = distributedLiveBase(run);
-    if (up) return this.readRouted('distributed', up, '', null);
+    if (up) return this.readRouted('distributed', up, '', run.modelId);
     const phase = splitStartPhase(run);
     if (phase) {
       const ranks = run.nodes.map((n) => `${n.name} ${n.startWord}`).join(', ');
@@ -444,7 +476,7 @@ export class MlxEngineMonitor {
         measured: this.heldMeasured('distributed'),
       };
     }
-    if (run.baseUrl) return this.readRouted('distributed', run.baseUrl, '', null);
+    if (run.baseUrl) return this.readRouted('distributed', run.baseUrl, '', run.modelId);
     return {
       ...INITIAL_SNAPSHOT,
       engine: 'distributed',
@@ -456,13 +488,14 @@ export class MlxEngineMonitor {
   }
 
   /** A route with nothing to read yet (mounting there, failed there, or no relay handed over). */
-  private routeUnread(state: string): MlxEngineSnapshot {
+  private routeUnread(state: string, routeModel: string | null): MlxEngineSnapshot {
     const mode: MlxEngineMode =
       state === 'mounting' || state === 'failed' || state === 'reconnecting' ? state : 'unknown';
     return {
       ...INITIAL_SNAPSHOT,
       engine: 'remote',
       mode,
+      modelId: routeModel,
       statusDetail: mode === 'unknown' ? `the route is ${state} and names no relay to read` : null,
       measured: this.heldMeasured('remote'),
     };
@@ -496,6 +529,7 @@ export class MlxEngineMonitor {
             : result.error === 'timeout' && held
               ? held.mode
               : 'unknown',
+        modelId: routeModel,
         baseUrl,
         stats: hold ? (held?.stats ?? null) : null,
         statusDetail: `${result.error}: ${result.detail}`,
@@ -507,21 +541,26 @@ export class MlxEngineMonitor {
       return {
         ...INITIAL_SNAPSHOT,
         engine,
+        modelId: routeModel,
         baseUrl,
         statusDetail: parsed.detail,
         measured,
       };
     }
     const stats = parsed.stats;
-    const model = bodyModel(result.body) ?? routeModel ?? '';
+    const served = servedModel(
+      result.body,
+      routeModel,
+      engine === 'remote' ? 'the route' : 'the split'
+    );
     return {
       engine,
       mode: 'running',
-      modelId: null,
+      ...served,
       baseUrl,
       stats,
       statusDetail: null,
-      measured: await this.measure(`${engine}\n${mac}\n${model}`, engine, stats),
+      measured: await this.measure(`${engine}\n${mac}\n${served.modelId ?? ''}`, engine, stats),
       serving: await this.attribute(stats, engine === 'remote'),
       startPhase: null,
       failedError: null,
@@ -608,20 +647,16 @@ export class MlxEngineMonitor {
       };
     }
     const stats = parsed.stats;
-    const engineModel = bodyModel(result.body);
+    const served = servedModel(result.body, reportedModel, 'this engine');
     const serving = await this.attribute(stats, false);
     return {
       engine: 'single',
       mode: 'running',
-      modelId: engineModel ?? reportedModel,
+      ...served,
       baseUrl,
       stats,
       statusDetail: null,
-      measured: await this.measure(
-        `single\n\n${engineModel ?? reportedModel ?? ''}`,
-        'single',
-        stats
-      ),
+      measured: await this.measure(`single\n\n${served.modelId ?? ''}`, 'single', stats),
       serving,
       startPhase: null,
       failedError: null,
