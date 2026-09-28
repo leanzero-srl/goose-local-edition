@@ -242,9 +242,9 @@ export const FOCUS =
 export const MOTION = 'transition-colors duration-120 ease-lz';
 
 /**
- * Weights. MEASURED: `font-medium`, `font-semibold` and `font-bold` compile to NOTHING in this
- * app (the MCP theme registration sets their tokens to `initial`), so the Studio carries its own.
- * The type-scale steps already embed their weight; these are for emphasis inside a step.
+ * Weights, for classes joined with `cx`. The type-scale steps already embed their weight; these
+ * are for emphasis inside a step. Host code joined with `cn()` uses `font-medium` / `font-semibold`
+ * instead (re-registered in main.css by Q-325): tailwind-merge reads `font-lz-*` as a font family.
  */
 export const WEIGHT = { medium: 'font-lz-medium', semibold: 'font-lz-semibold' } as const;
 

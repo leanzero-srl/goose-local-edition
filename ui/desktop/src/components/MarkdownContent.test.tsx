@@ -459,9 +459,9 @@ Another very long URL: https://www.example.com/very/long/path/with/many/segments
   });
 
   describe('Heading weights (LeanZero Studio)', () => {
-    // MEASURED: `font-normal` (and every `prose-hN:font-normal`) compiles to NO rule in this app —
-    // the MCP theme registration sets --font-weight-normal to `initial` — so the old heading classes
-    // were silent no-ops and the headings rendered at the typography plugin's 800/700/600. The
+    // MEASURED (before Q-325 re-registered the host weights): `font-normal` (and every
+    // `prose-hN:font-normal`) compiled to NO rule — the MCP theme registration set
+    // --font-weight-normal to `initial` — so the old heading classes were silent no-ops and the headings rendered at the typography plugin's 800/700/600. The
     // Studio heading register is 600 (--font-weight-lz-semibold); the size step carries the
     // hierarchy. This pins the classes AND proves they produce a rule through the real pipeline.
     it('headings carry the Studio semibold weight through a token utility that compiles', async () => {
