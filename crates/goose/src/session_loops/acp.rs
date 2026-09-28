@@ -6,10 +6,10 @@
 
 use agent_client_protocol::Error as AcpError;
 use goose_sdk_types::custom_requests::{
-    LoopEdit, LoopRecord, LoopRefusal, LoopStatus, LoopSummaryDto, LoopsChangeResponse,
-    LoopsControlRequest, LoopsGetRequest, LoopsGetResponse, LoopsListResponse, LoopsReadyRequest,
-    LoopsReadyResponse, LoopsStartRequest, LoopsTemplatesResponse, LoopsTickRefusedRequest,
-    LoopsTickRefusedResponse, LoopsUpdateRequest, LoopsWakeResponse,
+    LoopEdit, LoopRecord, LoopRefusal, LoopStatus, LoopStatusReason, LoopSummaryDto,
+    LoopsChangeResponse, LoopsControlRequest, LoopsGetRequest, LoopsGetResponse, LoopsListResponse,
+    LoopsReadyRequest, LoopsReadyResponse, LoopsStartRequest, LoopsTemplatesResponse,
+    LoopsTickRefusedRequest, LoopsTickRefusedResponse, LoopsUpdateRequest, LoopsWakeResponse,
 };
 
 use super::rules::{self, ChatFacts, OwnerProof};
@@ -48,6 +48,26 @@ fn proof_of(record: &LoopRecord) -> Option<OwnerProof> {
     record.owner.as_ref().map(seam::prove_owner)
 }
 
+/// Q-279: a yield records the chat's name at that moment, and a new chat is "New Chat" until its
+/// first turn names it; a `user_turn` reason read now names the chat as it is now. A chat that can
+/// no longer be read keeps the recorded name, and the log says so.
+pub async fn turn_chat_named_now(
+    session_manager: &SessionManager,
+    mut reason: Option<LoopStatusReason>,
+) -> Option<LoopStatusReason> {
+    if let Some(LoopStatusReason::UserTurn { session_id, chat }) = &mut reason {
+        match session_manager.get_session(session_id, false).await {
+            Ok(turn_chat) => *chat = turn_chat.name,
+            Err(error) => tracing::warn!(
+                session_id = %session_id,
+                %error,
+                "loop: the chat of a user turn could not be read; its name is the one recorded"
+            ),
+        }
+    }
+    reason
+}
+
 pub async fn get(
     session_manager: &SessionManager,
     req: LoopsGetRequest,
@@ -62,6 +82,7 @@ pub async fn get(
         Ok(None) => LoopsGetResponse::default(),
         Ok(Some(record)) => {
             let (status, reason) = rules::effective_status(&record, proof_of(&record).as_ref());
+            let reason = turn_chat_named_now(session_manager, reason).await;
             LoopsGetResponse {
                 record: Some(record),
                 effective_status: Some(status),

@@ -515,6 +515,40 @@ fn a_record(status: LoopStatus) -> LoopRecord {
 }
 
 #[tokio::test]
+async fn a_user_turn_reason_names_the_chat_as_it_is_now() {
+    let (_dir, manager, id) = store().await;
+    let recorded = |session_id: &str| {
+        Some(LoopStatusReason::UserTurn {
+            session_id: session_id.to_string(),
+            chat: "New Chat".into(),
+        })
+    };
+    manager
+        .update(&id)
+        .system_generated_name("Simple pong reply")
+        .apply()
+        .await
+        .unwrap();
+    assert_eq!(
+        acp::turn_chat_named_now(&manager, recorded(&id)).await,
+        Some(LoopStatusReason::UserTurn {
+            session_id: id.clone(),
+            chat: "Simple pong reply".into(),
+        })
+    );
+    assert_eq!(
+        acp::turn_chat_named_now(&manager, recorded("no-such-chat")).await,
+        recorded("no-such-chat"),
+        "a chat that cannot be read keeps the recorded name"
+    );
+    let other = Some(LoopStatusReason::Reviewers { n: 2 });
+    assert_eq!(
+        acp::turn_chat_named_now(&manager, other.clone()).await,
+        other
+    );
+}
+
+#[tokio::test]
 async fn a_chat_without_a_loop_reads_none_and_nothing_is_written() {
     let (_dir, manager, id) = store().await;
     let got = acp::get(
