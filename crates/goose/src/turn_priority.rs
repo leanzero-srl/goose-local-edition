@@ -411,11 +411,11 @@ mod tests {
         let mut checks = Vec::new();
         for _ in 0..19 {
             drop(priority.user_turn_in("chat-a"));
-            let (p, running) = (priority.clone(), running.clone());
+            let (p, in_call) = (priority.clone(), running.clone());
             let mark = p.chat_mark("chat-a");
             checks.push(tokio::spawn(async move {
                 p.after_user_turns("answer check", &mark, || {
-                    let running = running.clone();
+                    let running = in_call.clone();
                     async move {
                         running.fetch_add(1, Ordering::SeqCst);
                         struct Ends(Arc<AtomicUsize>);
