@@ -10,7 +10,9 @@
 //! (it never adopts a daemon it did not spawn). The fix is for goosed to stop what it
 //! supervises, per-pid, on its way out — this module is the sequence.
 //!
-//! The order is fixed: the stdio extension children first (Q-138 — `std::process::exit` after
+//! The order is fixed: the developer shell tool's in-flight commands first (Q-406 — each leads a
+//! process group of its own now, so the desktop's signal to goosed's group no longer reaches
+//! them); then the stdio extension children (Q-138 — `std::process::exit` after
 //! this sequence runs no destructor, so rmcp's own child cleanup never fired and every bundled
 //! MCP outlived goosed; they are leaves nothing else depends on); then the peers are told this
 //! goose is leaving, so they see the node go before its engine disappears; then the engines; the
@@ -53,6 +55,19 @@ pub async fn teardown_in_order(resources: &[Arc<dyn SupervisedResource>]) -> Vec
         });
     }
     reports
+}
+
+struct ShellCommands;
+
+#[async_trait]
+impl SupervisedResource for ShellCommands {
+    fn name(&self) -> &'static str {
+        "shell commands"
+    }
+    async fn teardown(&self) -> String {
+        crate::agents::platform_extensions::developer::process_groups::terminate_live_commands()
+            .await
+    }
 }
 
 struct StdioExtensions;
@@ -124,6 +139,7 @@ pub async fn teardown_supervised() -> Vec<TeardownReport> {
 
 fn production_sequence() -> Vec<Arc<dyn SupervisedResource>> {
     vec![
+        Arc::new(ShellCommands),
         Arc::new(StdioExtensions),
         Arc::new(LinkPeers),
         Arc::new(MlxEngine),
@@ -190,7 +206,15 @@ mod tests {
     /// says so — the report never has a hole where a step was skipped.
     #[tokio::test]
     async fn production_sequence_reports_both_steps_when_nothing_is_supervised() {
-        let reports = teardown_supervised().await;
+        // The shell-commands step drains a process-wide registry: run here it would terminate
+        // whatever shell test is mid-command in this same test binary. It is pinned first by
+        // `in_flight_shell_commands_stop_first` and exercised on its own groups in
+        // process_groups' tests.
+        let sequence: Vec<_> = production_sequence()
+            .into_iter()
+            .filter(|r| r.name() != "shell commands")
+            .collect();
+        let reports = teardown_in_order(&sequence).await;
         let names: Vec<_> = reports.iter().map(|r| r.resource).collect();
         assert_eq!(
             names,
@@ -227,6 +251,14 @@ mod tests {
             "{}",
             reports[4].outcome
         );
+    }
+
+    /// Q-406: shell commands lead process groups of their own, so the desktop's signal to
+    /// goosed's group no longer reaches them — goosed stops them itself, before anything else.
+    #[test]
+    fn in_flight_shell_commands_stop_first() {
+        let names: Vec<_> = production_sequence().iter().map(|r| r.name()).collect();
+        assert_eq!(names[0], "shell commands", "{names:?}");
     }
 
     /// Q-242: the mesh daemon outlives every step that talks to a peer over it — the going-away
