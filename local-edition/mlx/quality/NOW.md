@@ -1,35 +1,33 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 05:0x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 06:27 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed: 3.0.65 on both Macs; split up. LIVE TESTER agent is the only GPU user (J3 strategy swap, J4 thrash
-  probe, Q-231 wait, Q-232 crop). E2E #3o waits for it.
-- Build 3.0.66 RUNNING from main 005e2b9fb (log ~/goose-builds/release-3.0.66.log; watcher in background).
-  Carries: Q-232, L10 wake, L2b on_prompt door, L4 start dialog + composer Loop slot, Q-233/234/235, Q-236/238
-  (turnWait words), Q-240/245 (port holders named/reaped per proof), Q-241/242/243 (quit waits at before-quit;
-  mesh stops last; fixtures die with their test).
-- INSTALL 3.0.66 only after the live tester reports (it drives the running app). Then prove live: quit with the
-  split up (main.log 'waiting for 1 attached backend(s)' → 'every goose serve backend has exited'; goosed stops on
-  SIGTERM; 'told 1 peer(s)'; rank 1 verified gone; no goosed after the app pid), Q-240 (kill -9 goosed while
-  mounted → relaunch → Mount reaps its own leftover), loop start dialog + one tick live (J1/J2).
+- Installed: 3.0.65 on both Macs. LIVE TESTER agent holds the app: J3 FAIL (words/records — Q-254..Q-258),
+  J4 no starvation / no swap mid-reply; finishing Q-231 + Q-232 (red control; Q-232 not in 3.0.65), then restore.
+- 3.0.66 BUILT + notarized (goose-rel/ui/desktop/out/make/Goose-Swarm-3.0.66.dmg, main 005e2b9fb) — INSTALL the
+  moment the tester reports. Then: quit prove (Q-241/242), Q-240 kill -9 prove, loop start + one tick (J1/J2),
+  rerun J4 → start E2E #3o.
+- On main after 3.0.66 (→ 3.0.67): L2c part 1 + Q-239 refuted, Q-248, Q-250, Q-249 banner, Q-237/246, Q-247.
 
 ## CI
-- GREEN through e71a16d2c; 005e2b9fb (L2b+L4+quit+Q-240 merges) pushed — check next tick.
+- 2b6441ccf RED: Q-248 + Q-249 merged green alone, did not compile together, projsync pushed before the gate.
+  Fixed e423143b8 (gated: sidecar, swarm_engine 52, mlx_engine 10, clippy, schema, wincheck) — CI running.
+- RULE NOW: merge agent batches in a scratch worktree, gate there, then fast-forward main (skill trap).
 
 ## Agents (worktrees)
-- L2c + Q-239 (loader priority, tick marker edges, kind header) · Q-237/246 (glance node name, leaving rows,
-  strip turnWait) · Q-247 (error text loses to ink — the mechanism) · Q-248 (swarm fast path adopts leftovers)
-  · live tester (no worktree).
-- Queued behind the Q-237/246 panel agent: Q-249 (stray listener line names its holder).
+- L2c rest: mac_wide.rs (same-way yield across processes, WayHeld) · Q-251/252/253 (restart-goose step, Unmount
+  refuses a foreign engine, holder cache) · Q-258/256 (silent single-engine death mid-prefill, load row) ·
+  Q-254/255 (swap words §8.7, chip node names) · Q-257 one goosed per app shared by all windows (design chosen, 75%).
+- Live tester (no worktree).
 
 ## Next actions (in order)
-1. Live tester report → rows + dispatch → install 3.0.66 → quit/Q-240 live proves → E2E #3o.
-2. Merge agents as they land (read log, gate crate-wide, wincheck, push).
-3. Live critic walk of Nodes, Strategies, loop dialog + rail on 3.0.66; then L9 (loop harness + ≥5-tick E2E).
+1. Tester report → rows → install 3.0.66 → live proves → E2E #3o.
+2. Merge agents as they land, batch-gated in a scratch worktree → build 3.0.67.
+3. Live critic walk: Nodes, Strategies, loop dialog + rail; then L9 (loop harness + ≥5-tick E2E).
 
 ## Standing rules for every tick
-- CI status, agent audit, disk ≥ 30 GB (42 GB after a target/debug sweep), clean.sh on both Macs.
+- CI status, agent audit, disk ≥ 30 GB (77 GB now), clean.sh on both Macs.
 - A DONE build is installed + split-start smoked in the same tick — unless a live tester holds the app.
 - Merged worktrees: `git worktree remove -f -f` (never rm under .claude/). Crate-wide lib tests before a push.
 - Before pushing a Rust merge: harness/wincheck.sh (serialized). One GPU user at a time. Nothing waits for the owner.
