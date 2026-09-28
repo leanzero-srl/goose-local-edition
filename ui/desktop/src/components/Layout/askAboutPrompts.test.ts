@@ -205,7 +205,7 @@ describe('the session prompt names the one way the chat can read the session', (
   it('with chatrecall in the profile it names the tool call', () => {
     const p = askAboutSessionPrompt(session, { chatRecall: true });
     expect(p).toContain('14 messages');
-    expect(p).toContain('chatrecall tool with session_id "s1"');
+    expect(p).toContain('read_chat tool with chat "s1"');
     expect(p).toContain('turn what it learned into a skill or memory');
     expect(p).toContain('Ask me what I want before you write anything');
   });
@@ -213,7 +213,7 @@ describe('the session prompt names the one way the chat can read the session', (
   it('without it the prompt says nothing is attached rather than "use the session tools if you have them"', () => {
     const p = askAboutSessionPrompt(session, { chatRecall: false });
     expect(p).toContain('None of its messages are attached here');
-    expect(p).not.toContain('chatrecall tool with');
+    expect(p).not.toContain('read_chat tool with');
     expect(p).not.toContain('if you have them');
   });
 });

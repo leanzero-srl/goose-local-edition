@@ -1,5 +1,13 @@
+//! The per-turn history search recall runs (Q-358: moved from a LIKE scan over
+//! `json_each(content_json)` — 0.2–0.45 s a turn on the 2026-09-25 history — to the transcript
+//! index). The ranking law is unchanged: the messages that carry the MOST of the request's terms
+//! survive the limit first, then the newest; a term matches a whole word, or a longer word it is a
+//! prefix of when the memory store's `term_occurrences` allows one, so "go" no longer matches
+//! "goose".
+
 use crate::conversation::message::MessageContent;
 use crate::session::session_manager::SessionType;
+use crate::session::transcript_index::{self, IndexCoverage, SearchFilter, Term};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -27,33 +35,32 @@ pub struct ChatRecallMessage {
 pub struct ChatRecallResults {
     pub results: Vec<ChatRecallResult>,
     pub total_matches: usize,
+    /// How much of the history the index held when this search ran — a partial index is a
+    /// partial answer, and the caller says so.
+    pub index: IndexCoverage,
 }
 
-type SqlQueryRow = (
-    String,
-    String,
-    String,
-    DateTime<Utc>,
-    String,
-    String,
-    DateTime<Utc>,
-);
+type MessageRow = (i64, String, String, String, String, String, DateTime<Utc>);
 
-type SessionMessageGroup = (
-    String,
-    String,
-    DateTime<Utc>,
-    Vec<(String, String, DateTime<Utc>)>,
-);
+type SessionMessageGroup = (String, String, Vec<(String, String, DateTime<Utc>)>);
 
 pub struct ChatHistorySearch<'a> {
     pool: &'a Pool<Sqlite>,
     query: &'a str,
     limit: usize,
-    after_date: Option<DateTime<Utc>>,
-    before_date: Option<DateTime<Utc>>,
-    exclude_session_id: Option<String>,
-    session_types: Vec<SessionType>,
+    filter: SearchFilter,
+}
+
+/// The index term for one request word: a prefix exactly when the memory store's matcher would
+/// let the word stand for a longer one — asked of `term_occurrences` itself, so the two never
+/// disagree about the length at which a prefix starts.
+fn recall_term(word: String) -> Term {
+    let longer = format!("{word}x");
+    let prefix = goose_memory_store::term_occurrences(&word, std::slice::from_ref(&longer)) > 0;
+    Term {
+        words: vec![word],
+        prefix,
+    }
 }
 
 impl<'a> ChatHistorySearch<'a> {
@@ -70,173 +77,112 @@ impl<'a> ChatHistorySearch<'a> {
             pool,
             query,
             limit: limit.unwrap_or(10),
-            after_date,
-            before_date,
-            exclude_session_id,
-            session_types,
+            filter: SearchFilter {
+                session_types,
+                exclude_session: exclude_session_id,
+                after: after_date,
+                before: before_date,
+                ..SearchFilter::default()
+            },
         }
     }
 
     pub async fn execute(self) -> Result<ChatRecallResults> {
-        let keywords = self.parse_keywords();
-        if keywords.is_empty() {
+        let index = transcript_index::coverage(self.pool).await?;
+        let mut words = transcript_index::words(self.query);
+        words.sort();
+        words.dedup();
+        if words.is_empty() {
             return Ok(ChatRecallResults {
                 results: vec![],
                 total_matches: 0,
+                index,
             });
         }
 
-        let rows = self.fetch_rows(&keywords).await?;
-        let session_messages = self.process_rows(rows);
+        let kept_out = transcript_index::kept_out_sessions(self.pool).await?;
+        let mut coverage: HashMap<i64, usize> = HashMap::new();
+        for word in words {
+            let term = recall_term(word);
+            for id in
+                transcript_index::matching_ids(self.pool, &term, &self.filter, &kept_out).await?
+            {
+                *coverage.entry(id).or_insert(0) += 1;
+            }
+        }
+        // Newest by id, not by timestamp: the id is the order messages were stored in, and a
+        // row's timestamp sits after its content, so reading it for every match doubled the
+        // search's time. A chat whose conversation was replaced (compaction) re-stores its
+        // messages under new ids and wins ties among equally covered rows; the past-session law
+        // that reads these rows then picks by timestamp.
+        let mut ranked: Vec<(i64, usize)> = coverage.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+        ranked.truncate(self.limit);
+
+        let rows = self.fetch_rows(&ranked).await?;
+        let session_messages = Self::process_rows(rows);
         let session_totals = self.get_session_totals(&session_messages).await?;
-        let results = self.convert_to_results(session_messages, session_totals);
-
-        Ok(results)
+        Ok(Self::convert_to_results(
+            session_messages,
+            session_totals,
+            index,
+        ))
     }
 
-    async fn fetch_rows(&self, keywords: &[String]) -> Result<Vec<SqlQueryRow>> {
-        let sql = self.build_sql(keywords);
-        let mut query_builder = sqlx::query_as::<_, SqlQueryRow>(&sql);
-
-        for keyword in keywords {
-            query_builder = query_builder.bind(keyword);
-        }
-
-        if let Some(exclude_id) = &self.exclude_session_id {
-            query_builder = query_builder.bind(exclude_id);
-        }
-
-        for t in &self.session_types {
-            query_builder = query_builder.bind(t.to_string());
-        }
-
-        if let Some(after) = self.after_date {
-            query_builder = query_builder.bind(after);
-        }
-        if let Some(before) = self.before_date {
-            query_builder = query_builder.bind(before);
-        }
-
-        for keyword in keywords {
-            query_builder = query_builder.bind(keyword);
-        }
-
-        query_builder = query_builder.bind(self.limit as i64);
-
-        Ok(query_builder.fetch_all(self.pool).await?)
-    }
-
-    fn parse_keywords(&self) -> Vec<String> {
-        self.query
-            .split_whitespace()
-            .map(|word| format!("%{}%", word.to_lowercase()))
-            .collect()
-    }
-
-    fn build_sql(&self, keywords: &[String]) -> String {
-        let mut sql = String::from(
-            r#"
-            SELECT 
-                s.id as session_id,
-                CASE WHEN s.name != '' THEN s.name ELSE s.description END as session_description,
-                s.working_dir as session_working_dir,
-                s.created_at as session_created_at,
-                m.role,
-                m.content_json,
-                m.timestamp
-            FROM messages m
-            INNER JOIN sessions s ON m.session_id = s.id
-            WHERE EXISTS (
-                SELECT 1 FROM json_each(m.content_json) 
-                WHERE json_extract(value, '$.type') = 'text' 
-                AND (
-        "#,
-        );
-
-        for (i, _) in keywords.iter().enumerate() {
-            if i > 0 {
-                sql.push_str(" OR ");
-            }
-            sql.push_str("LOWER(json_extract(value, '$.text')) LIKE ?");
-        }
-
-        sql.push_str(
-            r#"
-                )
+    async fn fetch_rows(&self, ranked: &[(i64, usize)]) -> Result<Vec<MessageRow>> {
+        let mut rows = Vec::with_capacity(ranked.len());
+        for (id, _) in ranked {
+            let row: MessageRow = sqlx::query_as(
+                r#"
+                SELECT m.id, s.id,
+                       CASE WHEN s.name != '' THEN s.name ELSE s.description END,
+                       s.working_dir, m.role, m.content_json, m.timestamp
+                FROM messages m JOIN sessions s ON s.id = m.session_id
+                WHERE m.id = ?
+                "#,
             )
-        "#,
-        );
-
-        if self.exclude_session_id.is_some() {
-            sql.push_str(" AND s.id != ?");
+            .bind(id)
+            .fetch_one(self.pool)
+            .await?;
+            rows.push(row);
         }
-
-        if !self.session_types.is_empty() {
-            let placeholders: String = self
-                .session_types
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(", ");
-            sql.push_str(&format!(" AND s.session_type IN ({})", placeholders));
-        }
-
-        // The column holds "YYYY-MM-DD HH:MM:SS" and a bound DateTime encodes as RFC 3339
-        // ("…T…+00:00"); compared as text, ' ' < 'T' let every same-day message past a date bound
-        // (measured 2026-09-25: a `before` of 12:20 kept rows from 15:36). datetime() reads both.
-        if self.after_date.is_some() {
-            sql.push_str(" AND datetime(m.timestamp) >= datetime(?)");
-        }
-        if self.before_date.is_some() {
-            sql.push_str(" AND datetime(m.timestamp) <= datetime(?)");
-        }
-
-        // The rows that share the MOST keywords survive the limit first, then the newest: an OR of
-        // LIKEs otherwise fills the limit with today's messages sharing one short word ("go" is in
-        // "goose") and never reaches the older message that carries all of them. SQLite's LIKE
-        // already folds ASCII case, so no LOWER() per keyword. Measured on the 374,293-message
-        // history of 2026-09-25 (sqlite3, best of three): 19 keywords 0.246 s → 0.449 s, 4 keywords
-        // 0.211 → 0.279 s, 3 keywords 0.393 → 0.392 s.
-        sql.push_str(" ORDER BY (");
-        for (i, _) in keywords.iter().enumerate() {
-            if i > 0 {
-                sql.push_str(" + ");
-            }
-            sql.push_str("(m.content_json LIKE ?)");
-        }
-        sql.push_str(") DESC, m.timestamp DESC LIMIT ?");
-
-        sql
+        Ok(rows)
     }
 
-    fn process_rows(&self, rows: Vec<SqlQueryRow>) -> HashMap<String, SessionMessageGroup> {
+    fn process_rows(rows: Vec<MessageRow>) -> HashMap<String, SessionMessageGroup> {
         let mut session_messages: HashMap<String, SessionMessageGroup> = HashMap::new();
 
         for (
+            id,
             session_id,
             session_description,
             session_working_dir,
-            session_created_at,
             role,
             content_json,
             timestamp,
         ) in rows
         {
-            if let Ok(content_vec) = serde_json::from_str::<Vec<MessageContent>>(&content_json) {
-                let text_parts = Self::extract_text_content(content_vec);
-
-                if !text_parts.is_empty() {
-                    let entry = session_messages.entry(session_id.clone()).or_insert((
-                        session_description.clone(),
-                        session_working_dir.clone(),
-                        session_created_at,
-                        Vec::new(),
-                    ));
-                    entry
-                        .3
-                        .push((role.clone(), text_parts.join("\n"), timestamp));
+            let content_vec = match serde_json::from_str::<Vec<MessageContent>>(&content_json) {
+                Ok(content_vec) => content_vec,
+                Err(err) => {
+                    tracing::warn!(
+                        message_id = id,
+                        %err,
+                        "chat_history_message_unreadable: an indexed message does not parse as message content; recall skips it"
+                    );
+                    continue;
                 }
+            };
+            let text_parts = Self::extract_text_content(content_vec);
+            if text_parts.is_empty() {
+                continue;
             }
+            let entry = session_messages.entry(session_id).or_insert((
+                session_description,
+                session_working_dir,
+                Vec::new(),
+            ));
+            entry.2.push((role, text_parts.join("\n"), timestamp));
         }
 
         session_messages
@@ -267,50 +213,39 @@ impl<'a> ChatHistorySearch<'a> {
                 sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE session_id = ?")
                     .bind(session_id)
                     .fetch_one(self.pool)
-                    .await
-                    .unwrap_or(0);
+                    .await?;
             session_totals.insert(session_id.clone(), count as usize);
         }
         Ok(session_totals)
     }
 
     fn convert_to_results(
-        &self,
         session_messages: HashMap<String, SessionMessageGroup>,
         session_totals: HashMap<String, usize>,
+        index: IndexCoverage,
     ) -> ChatRecallResults {
         let mut results: Vec<ChatRecallResult> = session_messages
             .into_iter()
-            .map(
-                |(session_id, (description, working_dir, _created_at, messages))| {
-                    let message_vec: Vec<ChatRecallMessage> = messages
-                        .into_iter()
-                        .map(|(role, content, timestamp)| ChatRecallMessage {
-                            role,
-                            content,
-                            timestamp,
-                        })
-                        .collect();
-
-                    let last_activity = message_vec
-                        .iter()
-                        .map(|m| m.timestamp)
-                        .max()
-                        .unwrap_or_else(chrono::Utc::now);
-
-                    let total_messages_in_session =
-                        session_totals.get(&session_id).copied().unwrap_or(0);
-
-                    ChatRecallResult {
-                        session_id,
-                        session_description: description,
-                        session_working_dir: working_dir,
-                        last_activity,
-                        total_messages_in_session,
-                        messages: message_vec,
-                    }
-                },
-            )
+            .filter_map(|(session_id, (description, working_dir, messages))| {
+                let message_vec: Vec<ChatRecallMessage> = messages
+                    .into_iter()
+                    .map(|(role, content, timestamp)| ChatRecallMessage {
+                        role,
+                        content,
+                        timestamp,
+                    })
+                    .collect();
+                let last_activity = message_vec.iter().map(|m| m.timestamp).max()?;
+                let total_messages_in_session = *session_totals.get(&session_id)?;
+                Some(ChatRecallResult {
+                    session_id,
+                    session_description: description,
+                    session_working_dir: working_dir,
+                    last_activity,
+                    total_messages_in_session,
+                    messages: message_vec,
+                })
+            })
             .collect();
 
         results.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
@@ -319,6 +254,7 @@ impl<'a> ChatHistorySearch<'a> {
         ChatRecallResults {
             results,
             total_matches,
+            index,
         }
     }
 }

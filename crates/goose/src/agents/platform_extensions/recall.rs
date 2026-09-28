@@ -65,7 +65,7 @@ const REACTION_WINDOW: usize = 12;
 // window — one extra page for a 262k model, nothing for a 32k one — and only on a name match.
 const AUTOLOAD_WINDOW_SHARE: f64 = 1.0 / 32.0;
 // measured: a token is about four characters of English or code across the providers goose runs.
-const CHARS_PER_TOKEN: f64 = 4.0;
+pub(crate) const CHARS_PER_TOKEN: f64 = 4.0;
 
 /// What the user is reacting to: everything the assistant did in its previous turn — the tool calls,
 /// in order, then its closing words — gathered back to the previous user request. None when an
@@ -253,6 +253,18 @@ impl RecallClient {
         history_tool(&manager, session_id).await
     }
 
+    /// The earlier-chat search is a knowledge source like memories and skills: a knowledge-blind
+    /// agent never reads the person's other chats (the same predicate, with no extension to ask).
+    fn history_open(&self) -> bool {
+        let blind = self
+            .context
+            .extension_manager
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .is_some_and(|manager| manager.knowledge_blind());
+        knowledge_source_open(blind, true)
+    }
+
     async fn extension_enabled(&self, name: &str) -> bool {
         match self
             .context
@@ -298,7 +310,7 @@ pub async fn history_tool(
             return None;
         }
     };
-    let own = super::chatrecall::TOOL_NAME;
+    let own = super::chatrecall::READ_TOOL;
     let prefixed = format!("{}__{own}", super::chatrecall::EXTENSION_NAME);
     let found = tools
         .iter()
@@ -767,8 +779,9 @@ pub struct PastSession {
     pub headline: String,
 }
 
-// ratio: the history search is an OR of LIKEs, so it returns every message sharing one word; twenty
-// rows is enough to find one that covers the request when one exists, and cheap when none does.
+// ratio: the history search ranks every message sharing a word by how many of the request's words it
+// carries; twenty rows is enough to find one that covers the request when one exists, and cheap when
+// none does.
 pub const PAST_SESSION_ROWS: usize = 20;
 
 /// How one earlier message stands against the request.
@@ -1042,7 +1055,7 @@ pub fn render_with(
     if let Some(past) = past {
         let how = match &extras.history_tool {
             Some(tool) => format!(
-                "{tool} with session_id \"{}\" loads it if the history matters.",
+                "{tool} with chat \"{}\" reads it if the history matters.",
                 past.session_id
             ),
             None => {
@@ -1214,24 +1227,40 @@ impl McpClientTrait for RecallClient {
             _ => vec![SessionType::User, SessionType::Scheduled],
         };
         let history_started = std::time::Instant::now();
-        let past = match self
-            .context
-            .session_manager
-            .search_chat_history(
-                &query,
-                Some(PAST_SESSION_ROWS),
-                None,
-                None,
-                Some(session_id.to_string()),
-                session_types,
-            )
-            .await
-        {
-            Ok(results) => select_past_session(&results.results, &terms),
-            Err(err) => {
-                tracing::warn!(%err, "recall: chat history unreadable, no past session named");
-                None
+        let mut history_index = None;
+        let past = if self.history_open() {
+            match self
+                .context
+                .session_manager
+                .search_chat_history(
+                    &query,
+                    Some(PAST_SESSION_ROWS),
+                    None,
+                    None,
+                    Some(session_id.to_string()),
+                    session_types,
+                )
+                .await
+            {
+                Ok(results) => {
+                    if results.index.missing() > 0 {
+                        tracing::warn!(
+                            indexed = results.index.indexed,
+                            indexable = results.index.indexable,
+                            backfilling = results.index.backfilling,
+                            "recall_history_partial: the transcript index is missing messages, so an earlier chat may go unnamed"
+                        );
+                    }
+                    history_index = Some(results.index);
+                    select_past_session(&results.results, &terms)
+                }
+                Err(err) => {
+                    tracing::warn!(%err, "recall: chat history unreadable, no past session named");
+                    None
+                }
             }
+        } else {
+            None
         };
 
         if past.is_some() {
@@ -1252,6 +1281,7 @@ impl McpClientTrait for RecallClient {
             suggested = ?suggested,
             past_session = past.as_ref().map(|p| p.session_id.as_str()),
             history_ms = history_started.elapsed().as_millis(),
+            history_missing = history_index.map(|index| index.missing()),
             autoloaded = extras.autoloaded.as_ref().map(|(n, _)| n.as_str()),
             correction = extras.correction_of.is_some(),
             answered = extras.answered.is_some(),
