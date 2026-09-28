@@ -31,6 +31,8 @@ import LoadingGoose from './LoadingGoose';
 import { ChatType } from '../types/chat';
 import { identifyConsecutiveToolCalls, isInChain } from '../utils/toolCallChaining';
 import { getModelDisplayName } from './settings/models/predefinedModelsUtils';
+import { CompactionCard } from './compaction/CompactionCard';
+import { compactionOf } from './compaction/compactionStatus';
 
 const i18n = defineMessages({
   loadingMessages: {
@@ -252,6 +254,25 @@ export default function ProgressiveMessageList({
             'ProgressiveMessageList: chat prop is required when not using custom renderMessage'
           );
           return null;
+        }
+
+        // Q-357: the compaction point — one card, live while it runs, then how it ended.
+        const compaction = compactionOf(message);
+        if (compaction) {
+          return (
+            <div
+              key={`compaction-${message.id ?? `msg-${index}-${message.created}`}`}
+              className={`relative ${index === 0 ? 'mt-0' : 'mt-4'} assistant`}
+              data-testid="message-container"
+            >
+              <CompactionCard
+                sessionId={chat.sessionId}
+                status={compaction}
+                live={message.id?.startsWith('acp_status_') ?? false}
+                onSend={append}
+              />
+            </div>
+          );
         }
 
         const notification = getSystemNotification(message);

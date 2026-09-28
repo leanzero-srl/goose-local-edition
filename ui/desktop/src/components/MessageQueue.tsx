@@ -87,6 +87,10 @@ const i18n = defineMessages({
     id: 'messageQueue.dragToReorder',
     defaultMessage: 'Drag messages to reorder priority',
   },
+  afterCompacting: {
+    id: 'messageQueue.afterCompacting',
+    defaultMessage: 'Sends right after compacting',
+  },
 });
 
 export interface QueuedMessage {
@@ -114,6 +118,28 @@ interface MessageQueueProps {
    * next one.
    */
   steersTick?: number | null;
+  /**
+   * The chat is compacting (Q-357): a message waits for the compacted conversation — the engine
+   * holds one conversation in memory, and a side request would evict it — so it cannot be sent
+   * now, only after.
+   */
+  afterCompaction?: boolean;
+}
+
+/** "Sends right after compacting" — why the message waits, in the row's own words. */
+function AfterCompactionChip() {
+  const intl = useIntl();
+  return (
+    <span
+      data-testid="queue-after-compaction"
+      className={cx(
+        'inline-block max-w-full break-words rounded-lz-control px-2 py-0.5 text-[11px] font-lz-semibold',
+        TONE_FILL.secondary
+      )}
+    >
+      {intl.formatMessage(i18n.afterCompacting)}
+    </span>
+  );
 }
 
 /**
@@ -148,8 +174,10 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
   className = '',
   isPaused = false,
   steersTick = null,
+  afterCompaction = false,
 }) => {
   const intl = useIntl();
+  const sendNow = afterCompaction ? undefined : onStopAndSend;
   const [isExpanded, setIsExpanded] = useState(true);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragOverItem, setDragOverItem] = useState<string | null>(null);
@@ -258,7 +286,11 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
               </p>
             </div>
 
-            {steersTick != null && <SteersTickChip n={steersTick} />}
+            {afterCompaction ? (
+              <AfterCompactionChip />
+            ) : (
+              steersTick != null && <SteersTickChip n={steersTick} />
+            )}
 
             {/* Queue count */}
             {remainingCount > 0 && (
@@ -270,14 +302,14 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
           <div className="flex items-center gap-2">
             {/* Quick Send Now button */}
-            {onStopAndSend && (
+            {sendNow && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
                   e.stopPropagation();
                   if (nextMessageIsSending) return;
-                  onStopAndSend(nextMessage.id);
+                  sendNow(nextMessage.id);
                 }}
                 disabled={nextMessageIsSending}
                 className="h-7 px-2 text-xs text-text-info hover:bg-background-secondary"
@@ -497,7 +529,9 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                   ) : (
                     <p
                       className={`text-sm text-text-primary leading-relaxed rounded px-1 py-0.5 transition-colors ${
-                        isSending ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-background-secondary'
+                        isSending
+                          ? 'cursor-not-allowed'
+                          : 'cursor-pointer hover:bg-background-secondary'
                       }`}
                       title={intl.formatMessage(i18n.clickToEdit, { content: message.content })}
                       onClick={() => {
@@ -512,9 +546,13 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                         : message.content}
                     </p>
                   )}
-                  {!isEditing && steersTick != null && (
+                  {!isEditing && (afterCompaction || steersTick != null) && (
                     <div className="mt-1">
-                      <SteersTickChip n={steersTick} />
+                      {afterCompaction ? (
+                        <AfterCompactionChip />
+                      ) : (
+                        steersTick != null && <SteersTickChip n={steersTick} />
+                      )}
                     </div>
                   )}
                 </div>
@@ -526,11 +564,11 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                   </span>
 
                   {/* Send Now button - inline */}
-                  {onStopAndSend && (
+                  {sendNow && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => onStopAndSend(message.id)}
+                      onClick={() => sendNow(message.id)}
                       disabled={isEditing || isSending}
                       className={`h-7 w-7 p-0 rounded-full transition-all duration-200 ${
                         isEditing || isSending

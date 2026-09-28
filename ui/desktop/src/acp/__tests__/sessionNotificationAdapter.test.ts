@@ -682,6 +682,76 @@ describe('createAcpSessionNotificationAdapter', () => {
     });
   });
 
+  describe('compaction (Q-357)', () => {
+    const status = (stage: string, extra: Record<string, unknown> = {}) => ({
+      stage,
+      trigger: 'auto',
+      tokensBefore: 142_100,
+      parts: [],
+      partsTotal: 3,
+      elapsedMs: 1_000,
+      ...extra,
+    });
+
+    it('keeps ONE card at the compaction point: reading, writing, then how it ended', () => {
+      const adapter = createAcpSessionNotificationAdapter();
+      adapter.apply(agentText('The plan is ready.'));
+      const progress = (stage: string, extra?: Record<string, unknown>) =>
+        adapter.applyGoose(
+          gooseUpdate({
+            sessionUpdate: 'status_message',
+            status: {
+              type: 'progress',
+              message: `Compacting the conversation · ${stage}`,
+              compaction: status(stage, extra),
+            },
+          })
+        );
+      progress('reading');
+      progress('writing', { parts: ['Where we are'], writtenTokens: 400 });
+      const messages = expectOnlyMessagesChange(
+        adapter.applyGoose(
+          gooseUpdate({
+            sessionUpdate: 'status_message',
+            status: {
+              type: 'notice',
+              message: 'Conversation compacted · 142.1k → 6.3k tokens · 3 min',
+              compaction: status('done', { tokensAfter: 6_300 }),
+            },
+          })
+        )
+      );
+
+      expect(messages).toHaveLength(2);
+      expect(firstContent(messages[1])).toMatchObject({
+        type: 'systemNotification',
+        notificationType: 'inlineMessage',
+        msg: 'Conversation compacted · 142.1k → 6.3k tokens · 3 min',
+        data: { kind: 'compaction', stage: 'done', tokensAfter: 6_300 },
+      });
+    });
+
+    it('a stored card replayed on load is its own message', () => {
+      const adapter = createAcpSessionNotificationAdapter();
+      const messages = expectOnlyMessagesChange(
+        adapter.applyGoose(
+          gooseUpdate({
+            sessionUpdate: 'status_message',
+            status: {
+              type: 'notice',
+              message: 'goose asks about your note: “12 or 24?”',
+              compaction: status('question', { said: '12 or 24?', trigger: 'manual' }),
+            },
+          })
+        )
+      );
+      expect(messages).toHaveLength(1);
+      expect(firstContent(messages[0])).toMatchObject({
+        data: { kind: 'compaction', stage: 'question', said: '12 or 24?' },
+      });
+    });
+  });
+
   describe('forming progress', () => {
     it('keeps one live progress line while a response forms tool calls', () => {
       const adapter = createAcpSessionNotificationAdapter();
