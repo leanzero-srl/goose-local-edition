@@ -35,7 +35,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
     - Turns 16–17: it rebuilt the docx with real tables and renamed the owners. Q-451-class self-contradiction
       again ("Zero occurrences of 'Mihai' is not what I asked for"), then it corrected itself. Context is
       173k/262k, so compaction is near: watch that Q-357 keeps the work folder. Turns 18–19: PDF made (3 pages); its own cross-check
-      caught a made-up number in the report (3,728 vs 4,328) and fixed both files. Turn 20 (the AUDIT phase) is running.
+      caught a made-up number in the report (3,728 vs 4,328) and fixed both files. Turn 20 (AUDIT): 1625 s, 24 tools, self-inflicted rewrites. Turn 21: the audit caught 6 of 7 planted defects
+      (its reply said "Four of the six"). Turn 22 (audit tests + runner) is running at 200k/262k.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -54,7 +55,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - Install on BOTH Macs AFTER #3u ends (10 turns left at 02:00, incl. the turn-28 recall check). Installing
   mid-run would kill the split's rank 1. Then split-start smoke → E2E #3v on 3.0.74.
 - CI Lint went RED after landing: a Linux-only string slice in Q-407's process_groups.rs:168 (the Mac gate
-  never lints Linux cfg). Fixed on main 7f3368173 for 3.0.75; the macOS build is unaffected.
+  never lints Linux cfg). Fixed on main 7f3368173 (CI green again) for 3.0.75; the macOS build is unaffected.
 - Contents:
   - Q-417, Q-407, Q-423 (BOTH Macs), Q-426;
   - Q-428/430/432 and Q-441/442/443 (don't-interrupt option + follow-ups);
