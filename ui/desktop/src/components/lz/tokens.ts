@@ -229,9 +229,14 @@ export const SPACE = {
   card: 'p-lz-card',
 } as const;
 
-/** The accent ring the app already owns (`--color-ring`), on :focus-visible only. */
+/**
+ * The accent ring the app already owns (`--color-ring`), on :focus-visible only. `outline-solid`
+ * is load-bearing (Q-325, measured in Chromium): `outline-none` sets `--tw-outline-style: none` on
+ * the element and `outline-2` draws `outline-style: var(--tw-outline-style)`, so without it the
+ * ring computed to `none 0px` on every control that used this token.
+ */
 export const FOCUS =
-  'outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring';
+  'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring';
 
 /** 120ms ease-out, colours only. */
 export const MOTION = 'transition-colors duration-120 ease-lz';

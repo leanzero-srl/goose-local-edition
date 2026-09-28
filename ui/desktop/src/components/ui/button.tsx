@@ -8,7 +8,7 @@ import { cn } from '../../utils';
 // Disabled is SOLID — surface-2 fill, ink-4 text, hairline border, not-allowed cursor — and focus
 // is the accent outline: the Studio tokens on every variant, never an opacity or a faded ring.
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-all cursor-pointer disabled:cursor-not-allowed disabled:border-lz-border disabled:bg-lz-surface-2 disabled:text-lz-ink-4 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring aria-invalid:border-destructive",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm transition-all cursor-pointer disabled:cursor-not-allowed disabled:border-lz-border disabled:bg-lz-surface-2 disabled:text-lz-ink-4 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring aria-invalid:border-border-danger",
   {
     variants: {
       variant: {
@@ -20,7 +20,7 @@ const buttonVariants = cva(
         link: 'text-text-inverse underline-offset-4 hover:underline',
       },
       size: {
-        xs: 'h-6 gap-1 ![&_svg:not([class*="size-"])]:size-3',
+        xs: "h-6 gap-1 [&_svg:not([class*='size-'])]:size-3!",
         default: 'h-9',
         sm: 'h-8 gap-1.5',
         lg: 'h-10',

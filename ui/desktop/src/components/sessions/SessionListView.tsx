@@ -56,6 +56,7 @@ import { acpChatSessionActions } from '../../acp/chatSessionStore';
 import { cancelAcpPermissionRequestsForSession } from '../../acp/permissionRequests';
 import { cancelAcpElicitationRequestsForSession } from '../../acp/elicitationRequests';
 import { getSearchShortcutText } from '../../utils/keyboardShortcuts';
+import { FOCUS, cx } from '../lz/tokens';
 
 const i18n = defineMessages({
   activeNow: { id: 'sessions.activeNow', defaultMessage: 'Active now' },
@@ -1055,7 +1056,10 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
               value={nostrImportLink}
               onChange={(event) => setNostrImportLink(event.target.value)}
               placeholder={intl.formatMessage(i18n.importNostrPlaceholder)}
-              className="min-h-28 w-full resize-none rounded-lg border border-border-primary bg-background-primary p-3 text-sm text-text-primary outline-none focus:ring-2 focus:ring-border-active"
+              className={cx(
+                'min-h-28 w-full resize-none rounded-lg border border-border-primary bg-background-primary p-3 text-sm text-text-primary',
+                FOCUS
+              )}
               disabled={isImportingNostr}
             />
 
