@@ -357,9 +357,11 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
 
 ## Scratchpad, ledger, reactions (2026-09-06)
 - `todo` IS the scratchpad: session extension_data, `<scratchpad>` moim part every turn, survives
-  compaction verbatim; moim adds `<scratchpad-notice>` in the last quarter before the compaction
-  threshold (`compaction_is_near`, SCRATCHPAD_NOTICE_SHARE), only when a scratchpad part is present —
-  swarm lanes (the `measured` arm) never see it.
+  compaction verbatim. The `<scratchpad-notice>` ("Compaction is near: refresh the scratchpad") is
+  DELETED (Q-455, 2026-09-29): zero todo_write calls in the whole sessions.db, never exercised live,
+  and "compaction is near" is the countdown framing chats read as a work budget. Chats now read
+  `context: N of M tokens used (P%)` (moim `ContextReport::Chat`); do not re-add a near-compaction
+  nudge without a measured refresh it bought.
 - `ledger` (`platform_extensions/ledger.rs`): `.goose/ledger.md`, one dated line per entry
   (`- <when> [kind] text`, kinds finding/decision/tried/fact); `ledger_append`, `ledger_read`;
   `<ledger>` moim part = newest TAIL_ENTRIES. It is chronology; memory is facts.
