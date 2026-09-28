@@ -2719,9 +2719,9 @@ mod tests {
             ),
             "got: {msg}"
         );
-        let list = msg.find("available tools, closest first").unwrap();
+        let (_, listed) = msg.split_once("available tools, closest first").unwrap();
         for name in ["ext_a__tool", "ext_a__available_tool", "ext_a__hidden_tool"] {
-            assert!(msg[list..].contains(name), "{name} missing from: {msg}");
+            assert!(listed.contains(name), "{name} missing from: {msg}");
         }
     }
 

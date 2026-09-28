@@ -392,20 +392,16 @@ mod tests {
         let mut args = JsonObject::new();
         args.insert("queries".into(), serde_json::json!("[\"x\"]"));
         let msg = not_found_message(&tools, "websearch", Some(&args));
-        let lead = msg.find("leanzerowebsearch__full-web-search").unwrap();
-        let list = msg.find("available tools, closest first").unwrap();
-        assert!(lead < list, "{msg}");
-        assert!(msg.starts_with("Tool 'websearch' not found."), "{msg}");
+        let (lead, listed) = msg.split_once("available tools, closest first").unwrap();
+        assert!(lead.starts_with("Tool 'websearch' not found."), "{msg}");
         assert!(
-            msg.contains("Search the web AND fetch full page content"),
+            lead.contains(
+                "- leanzerowebsearch__full-web-search: Search the web AND fetch full page content"
+            ),
             "{msg}"
         );
         for tool in &tools {
-            assert!(
-                msg[list..].contains(tool.name.as_ref()),
-                "{} missing",
-                tool.name
-            );
+            assert!(listed.contains(tool.name.as_ref()), "{} missing", tool.name);
         }
     }
 
