@@ -2216,6 +2216,41 @@ fn forming_progress_observer(
     })
 }
 
+/// Q-397: an engine's memory hold on the turn line — the engine's own words while goose waits for
+/// it to admit again, then the lift — as the same progress status the forming line uses. A client
+/// without goose's custom notifications gets none.
+fn engine_hold_observer(
+    cx: &ConnectionTo<Client>,
+    session_id: &str,
+    supports_goose_custom_notifications: bool,
+) -> goose_providers::engine_hold::EngineHoldObserver {
+    use goose_providers::engine_hold::EngineHoldEvent;
+    let cx = cx.clone();
+    let session_id = session_id.to_string();
+    std::sync::Arc::new(move |event| {
+        if !supports_goose_custom_notifications {
+            return;
+        }
+        let (EngineHoldEvent::Waiting { words } | EngineHoldEvent::Admitted { words }) = event;
+        let notification = GooseSessionNotification {
+            session_id: session_id.clone(),
+            update: GooseSessionUpdate::StatusMessage(StatusMessageUpdate {
+                status: StatusMessage::Progress {
+                    message: words,
+                    forming: None,
+                },
+            }),
+        };
+        if let Err(e) = cx.send_notification(notification) {
+            warn!(
+                session_id = %session_id,
+                error = ?e,
+                "the engine-hold status could not be sent to the client"
+            );
+        }
+    })
+}
+
 fn status_message_from_system_notification(
     notification: &SystemNotificationContent,
 ) -> Option<StatusMessage> {
@@ -3071,6 +3106,8 @@ impl GooseAcpAgent {
         let mut stream_error = None;
         let forming_observer =
             forming_progress_observer(cx, &session_id, self.supports_goose_custom_notifications());
+        let hold_observer =
+            engine_hold_observer(cx, &session_id, self.supports_goose_custom_notifications());
 
         loop {
             let event = tokio::select! {
@@ -3085,13 +3122,16 @@ impl GooseAcpAgent {
                     break;
                 }
                 // The provider stream is polled inside this future, so the scope reaches its
-                // decoder: a response still forming tool calls reports what it has received.
-                maybe_event = goose_providers::formats::openai::FORMING_PROGRESS_OBSERVER
-                    .scope(
+                // decoder: a response still forming tool calls reports what it has received, and
+                // a request an engine holds for memory says so while goose waits (Q-397).
+                maybe_event = goose_providers::engine_hold::ENGINE_HOLD_OBSERVER.scope(
+                    hold_observer.clone(),
+                    goose_providers::formats::openai::FORMING_PROGRESS_OBSERVER.scope(
                         forming_observer.clone(),
                         goose_providers::formats::openai::TOOL_FORMING_OBSERVER
                             .scope(args_observer.clone(), stream.next()),
-                    ) => match maybe_event {
+                    ),
+                ) => match maybe_event {
                     Some(event) => event,
                     None => break,
                 },

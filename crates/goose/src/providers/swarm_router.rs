@@ -1170,7 +1170,11 @@ static PROBE: LazyLock<LiveProbe> = LazyLock::new(|| LiveProbe {
 /// The sidecar's admission refusal as it reaches this layer: Rapid-MLX answers `503 "Server is
 /// busy (max concurrent requests reached)…"` past its cap (spelling from goose-cli's
 /// `provider_failures::sidecar_admission_cap_refusal`); LM Studio's queue-full answer is a 503 too.
+/// The distributed engine's memory hold is one by its type (Q-397).
 pub(crate) fn is_admission_refusal(err: &ProviderError) -> bool {
+    if matches!(err, ProviderError::EngineHold { .. }) {
+        return true;
+    }
     let text = err.to_string().to_lowercase();
     (text.contains("server is busy") && text.contains("max concurrent")) || text.contains("503")
 }
@@ -1178,7 +1182,8 @@ pub(crate) fn is_admission_refusal(err: &ProviderError) -> bool {
 /// Route one chat turn: pick a node, delegate to its provider, and hold the slot until the
 /// returned stream ends or is dropped. A node that refuses admission is set aside for this turn
 /// and the next free node is tried; when none is left the refusal is returned unchanged so the
-/// agent's own provider retry backs off. Content is never retried.
+/// agent's own provider retry backs off — except a memory hold, which the turn waits out on the
+/// held node's engine (Q-397). Content is never retried.
 /// One chat turn as the provider received it.
 pub(crate) struct Turn<'a> {
     pub model_config: &'a ModelConfig,
@@ -1359,10 +1364,16 @@ pub(crate) async fn route_stream(
     let key = Router::conversation_key(turn.system, turn.messages);
     let mut saturated = HashSet::new();
     let mut last_refusal: Option<ProviderError> = None;
+    let mut held: Option<(String, ProviderError)> = None;
     loop {
         let lease = match router.pick(nodes, probe, key, &saturated).await {
             Ok(lease) => lease,
             Err(no_node) => {
+                if let Some((node, hold)) = held.take() {
+                    wait_out_hold(&node, &hold, &mut saturated).await?;
+                    last_refusal = None;
+                    continue;
+                }
                 let routed_remote = nodes
                     .iter()
                     .any(|n| matches!(n.kind, NodeKind::MlxRemote(_)));
@@ -1393,11 +1404,38 @@ pub(crate) async fn route_stream(
                 return Ok(stream);
             }
             Streamed::Refused(node, e) => {
+                note_hold(&node, &e, &mut held);
                 saturated.insert(node);
                 last_refusal = Some(e);
             }
         }
     }
+}
+
+/// Q-397: a node that refused for a memory hold is set aside like any refusal while another node
+/// may serve; the hold is remembered so that, when none can, the turn waits for that node's engine
+/// to admit again instead of ending in the refusal.
+fn note_hold(node: &str, refusal: &ProviderError, held: &mut Option<(String, ProviderError)>) {
+    if matches!(refusal, ProviderError::EngineHold { .. }) {
+        *held = Some((node.to_string(), refusal.clone()));
+    }
+}
+
+/// Waits for the held node's engine to admit again (the engine's own event, no clock) and puts
+/// the node back among the candidates; the turn routes again from the start.
+async fn wait_out_hold(
+    node: &str,
+    hold: &ProviderError,
+    saturated: &mut HashSet<String>,
+) -> Result<(), ProviderError> {
+    tracing::info!(
+        target: "swarm_router",
+        node = %node,
+        "no other node can serve this turn; waiting for the held node's engine to admit again"
+    );
+    goose_providers::engine_hold::wait_for_admission(hold).await?;
+    saturated.remove(node);
+    Ok(())
 }
 
 /// The loader's step 1 for a lease (design §6.4): a switch queued before this turn's reply opened
@@ -1469,8 +1507,13 @@ async fn stream_on(
     if let Some(kwargs) = kwargs {
         add_template_kwargs(&mut node_cfg, kwargs)?;
     }
-    match provider
-        .stream(&node_cfg, turn.system, turn.messages, turn.tools)
+    // A node's memory hold comes back here at once (Q-397): the router tries the other nodes
+    // first and waits on the hold only when none can serve (`wait_out_hold`).
+    match goose_providers::engine_hold::HOLD_GOES_TO_CALLER
+        .scope(
+            (),
+            provider.stream(&node_cfg, turn.system, turn.messages, turn.tools),
+        )
         .await
     {
         Ok(inner) => {
@@ -2290,6 +2333,7 @@ pub(crate) async fn route_chain(
     let mut overrides: HashMap<String, EntryFact> = HashMap::new();
     let mut saturated = HashSet::new();
     let mut last_refusal: Option<ProviderError> = None;
+    let mut held: Option<(String, ProviderError)> = None;
     // Node → how long the loader took to answer Ready for this turn.
     let mut loaded: HashMap<String, u64> = HashMap::new();
     loop {
@@ -2378,6 +2422,11 @@ pub(crate) async fn route_chain(
                 continue;
             }
             Decision::Exhausted { tried } => {
+                if let Some((node, hold)) = held.take() {
+                    wait_out_hold(&node, &hold, &mut saturated).await?;
+                    last_refusal = None;
+                    continue;
+                }
                 if last_refusal.is_none() && current.routed_remote {
                     match route_load.settle().await {
                         Some(Ok(())) => continue,
@@ -2421,6 +2470,7 @@ pub(crate) async fn route_chain(
                 return Ok(stream);
             }
             Streamed::Refused(node, e) => {
+                note_hold(&node, &e, &mut held);
                 saturated.insert(node);
                 last_refusal = Some(e);
             }
@@ -3603,6 +3653,207 @@ devices:
         assert!(matches!(err, ProviderError::ServerError(_)));
         assert!(err.to_string().contains("max concurrent"));
         assert_eq!(router.semaphore(&nodes[0]).available_permits(), 1);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Q-397: a node whose engine holds new requests for memory.
+    // -----------------------------------------------------------------------------------------
+
+    /// An engine's `GET /goose/admission`: answers `{"admission_open": true}` once `admit` is
+    /// notified, counting the waits it received.
+    struct AdmissionStub {
+        url: String,
+        waits: Arc<AtomicUsize>,
+        admit: Arc<tokio::sync::Notify>,
+    }
+
+    impl AdmissionStub {
+        async fn start() -> Self {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/goose/admission", listener.local_addr().unwrap());
+            let waits = Arc::new(AtomicUsize::new(0));
+            let admit = Arc::new(tokio::sync::Notify::new());
+            let (counted, gate) = (waits.clone(), admit.clone());
+            tokio::spawn(async move {
+                while let Ok((mut socket, _)) = listener.accept().await {
+                    let mut buf = [0u8; 4096];
+                    let _ = socket.read(&mut buf).await;
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    gate.notified().await;
+                    let body = r#"{"admission_open": true}"#;
+                    let _ = socket
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await;
+                }
+            });
+            Self { url, waits, admit }
+        }
+    }
+
+    /// The provider of a node whose engine holds: its first call refuses with the hold (what the
+    /// openai provider returns when the router asked for holds back), every later call answers.
+    struct HoldingProvider {
+        calls: Arc<AtomicUsize>,
+        admission_url: String,
+        holds_came_back: Arc<StdMutex<Vec<bool>>>,
+    }
+
+    #[async_trait]
+    impl Provider for HoldingProvider {
+        fn get_name(&self) -> &str {
+            "holding"
+        }
+        async fn stream(
+            &self,
+            model_config: &ModelConfig,
+            _: &str,
+            _: &[Message],
+            _: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            self.holds_came_back
+                .lock()
+                .unwrap()
+                .push(goose_providers::engine_hold::hold_goes_to_caller());
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(ProviderError::EngineHold {
+                    details: "Server error (503 Service Unavailable) at a: held".to_string(),
+                    reason: Some("memory on a is low; quitting other apps frees it".to_string()),
+                    admission_url: Some(self.admission_url.clone()),
+                });
+            }
+            Ok(stream_from_single_message(
+                Message::assistant().with_text("hello from a"),
+                ProviderUsage::new(model_config.model_name.clone(), Usage::default()),
+            ))
+        }
+    }
+
+    struct HoldingProviders(Arc<HoldingProvider>);
+
+    #[async_trait]
+    impl ProviderSource for HoldingProviders {
+        async fn provider_for(&self, node: &Node) -> Result<Arc<dyn Provider>, String> {
+            Ok(match node.id.as_str() {
+                "a" => self.0.clone(),
+                _ => Arc::new(AnsweringProvider),
+            })
+        }
+    }
+
+    fn holding(stub: &AdmissionStub) -> Arc<HoldingProvider> {
+        Arc::new(HoldingProvider {
+            calls: Arc::new(AtomicUsize::new(0)),
+            admission_url: stub.url.clone(),
+            holds_came_back: Arc::default(),
+        })
+    }
+
+    async fn routed(
+        router: &Router,
+        nodes: &[Node],
+        providers: &HoldingProviders,
+    ) -> Result<MessageStream, ProviderError> {
+        let messages = vec![Message::user().with_text("hi")];
+        route_stream(
+            router,
+            nodes,
+            &FakeProbe::all_idle(nodes),
+            providers,
+            &NoKwargs,
+            &NoRouteLoad,
+            &RecordingSeam::default(),
+            Turn {
+                model_config: &ModelConfig::new("swarm"),
+                system: "sys",
+                messages: &messages,
+                tools: &[],
+                session: &SessionTemplateKwargs::default(),
+            },
+        )
+        .await
+    }
+
+    /// The watchdog closes admission with one code (goose-sidecar) and the provider recognises
+    /// the hold by one code (goose-provider-types): the two crates cannot see each other, so the
+    /// wire contract is pinned here, where both are in reach.
+    #[cfg(unix)]
+    #[test]
+    fn the_hold_is_recognised_by_the_code_the_watchdog_sends() {
+        assert_eq!(
+            goose_sidecar::distributed::MEMORY_HOLD_CODE,
+            goose_providers::engine_hold::MEMORY_HOLD_CODE
+        );
+    }
+
+    /// A held node is set aside like any refusal while another node serves: the turn goes to b
+    /// at once and nobody waits on a's engine.
+    #[tokio::test]
+    async fn a_held_node_fails_over_to_a_free_node_without_waiting() {
+        let stub = AdmissionStub::start().await;
+        let a = holding(&stub);
+        let router = Router::new();
+        let nodes = vec![node("a", 4, 1), node("b", 1, 1)];
+        let mut stream = routed(&router, &nodes, &HoldingProviders(a.clone()))
+            .await
+            .unwrap();
+        let (message, _) = stream.next().await.unwrap().unwrap();
+        assert_eq!(message.unwrap().as_concat_text(), "hello from b");
+        assert_eq!(a.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(*a.holds_came_back.lock().unwrap(), vec![true]);
+        assert_eq!(stub.waits.load(Ordering::SeqCst), 0, "nobody waited on a");
+    }
+
+    /// With nothing else to serve, the turn waits on the held engine's own admission (no clock)
+    /// and the turn line hears the engine's words, then the lift; a is asked again after it.
+    /// Before Q-397 the refusal ended the turn.
+    #[tokio::test]
+    async fn with_no_other_node_the_turn_waits_for_the_hold_to_lift() {
+        use goose_providers::engine_hold::{EngineHoldEvent, ENGINE_HOLD_OBSERVER};
+        let stub = AdmissionStub::start().await;
+        let a = holding(&stub);
+        let providers = HoldingProviders(a.clone());
+        let router = Router::new();
+        let nodes = vec![node("a", 1, 1)];
+        let heard = Arc::new(StdMutex::new(Vec::new()));
+        let observer: goose_providers::engine_hold::EngineHoldObserver = {
+            let heard = heard.clone();
+            Arc::new(move |event| heard.lock().unwrap().push(event))
+        };
+        let turn = ENGINE_HOLD_OBSERVER.scope(observer, routed(&router, &nodes, &providers));
+        tokio::pin!(turn);
+        let waiting = async {
+            while stub.waits.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        };
+        tokio::select! {
+            _ = &mut turn => panic!("the turn ended while the engine held"),
+            _ = waiting => {}
+        }
+        assert_eq!(a.calls.load(Ordering::SeqCst), 1, "no resend while held");
+        stub.admit.notify_one();
+        let mut stream = turn.await.unwrap();
+        let (message, _) = stream.next().await.unwrap().unwrap();
+        assert_eq!(message.unwrap().as_concat_text(), "hello from a");
+        assert_eq!(a.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *heard.lock().unwrap(),
+            vec![
+                EngineHoldEvent::Waiting {
+                    words: "Waiting: memory on a is low; quitting other apps frees it".to_string()
+                },
+                EngineHoldEvent::Admitted {
+                    words: goose_providers::engine_hold::ADMITTED_WORDS.to_string()
+                },
+            ]
+        );
     }
 
     // -----------------------------------------------------------------------------------------
