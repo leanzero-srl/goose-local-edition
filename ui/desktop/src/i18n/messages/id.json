@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "Giliran terakhir gagal"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "Loop chat ini sedang menjalankan pemeriksaannya setelah satu putaran"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "Loop chat ini berjalan di jendela goose lain"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "Loop chat ini menunggu sampai jawaban Anda atas putarannya selesai dijalankan"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "Loop chat ini menjalankan putaran berikutnya pada {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "Loop chat ini sedang menunggu, tetapi goose tidak mengirim waktu untuk putaran berikutnya"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "Loop chat ini sedang menunggu; waktu putaran berikutnya tidak dapat dibaca: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "Loop chat ini dijeda; buka chat untuk melihat alasannya dan melanjutkannya"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "Loop chat ini sedang menjalankan satu putaran"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Satu putaran loop chat ini sudah waktunya; dimulai saat giliran sebelumnya selesai"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "Putaran terakhir loop chat ini tidak menyebutkan kapan harus kembali"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Berikutnya {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "Dijeda"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Loop tidak terbaca"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Menunggu Anda"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "Berulang"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Membutuhkan Anda"
   },

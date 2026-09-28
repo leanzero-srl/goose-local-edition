@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "Der letzte Durchgang ist fehlgeschlagen"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "Die Schleife dieses Chats führt nach einem Durchlauf ihre Prüfung aus"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "Die Schleife dieses Chats läuft in einem anderen goose-Fenster"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "Die Schleife dieses Chats wartet, bis deine Antwort auf ihren Durchlauf gelaufen ist"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "Die Schleife dieses Chats startet ihren nächsten Durchlauf um {time}"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "Die Schleife dieses Chats wartet, aber goose hat keine Zeit für ihren nächsten Durchlauf gesendet"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "Die Schleife dieses Chats wartet; die Zeit ihres nächsten Durchlaufs konnte nicht gelesen werden: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "Die Schleife dieses Chats ist angehalten; öffne den Chat, um den Grund zu sehen und sie fortzusetzen"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "Die Schleife dieses Chats führt einen Durchlauf aus"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "Ein Durchlauf der Schleife dieses Chats ist fällig; er startet, wenn der Zug davor endet"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "Der letzte Durchlauf der Schleife dieses Chats hat nicht gesagt, wann er wiederkommt"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "Nächster {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "Angehalten"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "Schleife unlesbar"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "Wartet auf dich"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "Schleife aktiv"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "Braucht dich"
   },

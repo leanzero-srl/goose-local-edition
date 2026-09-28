@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "上一輪失敗"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "此聊天的循環正在一輪之後執行檢查"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "此聊天的循環正在另一個 goose 視窗中執行"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "此聊天的循環會等到你對其這一輪的回答執行完畢"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "此聊天的循環將在 {time} 執行下一輪"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "此聊天的循環正在等待，但 goose 沒有傳送下一輪的時間"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "此聊天的循環正在等待；無法讀取下一輪的時間：{error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "此聊天的循環已暫停；開啟聊天查看原因並繼續"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "此聊天的循環正在執行一輪"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "此聊天循環的一輪已到時間；它會在上一個回合結束後開始"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "此聊天循環的上一輪沒有說明何時回來"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "下一輪 {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "已暫停"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "循環無法讀取"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "等待你"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "循環中"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "需要你"
   },

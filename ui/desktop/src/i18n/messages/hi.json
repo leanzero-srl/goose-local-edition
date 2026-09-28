@@ -7907,6 +7907,51 @@
   "sessionActivity.failedLabelBare": {
     "defaultMessage": "पिछला चरण विफल हुआ"
   },
+  "sessionActivity.loopLabelChecking": {
+    "defaultMessage": "इस चैट का लूप एक टिक के बाद अपनी जाँच चला रहा है"
+  },
+  "sessionActivity.loopLabelElsewhere": {
+    "defaultMessage": "इस चैट का लूप goose की दूसरी विंडो में चल रहा है"
+  },
+  "sessionActivity.loopLabelNeedsYou": {
+    "defaultMessage": "इस चैट का लूप तब तक प्रतीक्षा करता है जब तक उसके टिक पर आपका उत्तर चल न जाए"
+  },
+  "sessionActivity.loopLabelNext": {
+    "defaultMessage": "इस चैट का लूप अपना अगला टिक {time} पर चलाएगा"
+  },
+  "sessionActivity.loopLabelNextMissing": {
+    "defaultMessage": "इस चैट का लूप प्रतीक्षा कर रहा है, पर goose ने इसके अगले टिक का समय नहीं भेजा"
+  },
+  "sessionActivity.loopLabelNextUnreadable": {
+    "defaultMessage": "इस चैट का लूप प्रतीक्षा कर रहा है; इसके अगले टिक का समय पढ़ा नहीं जा सका: {error}"
+  },
+  "sessionActivity.loopLabelPaused": {
+    "defaultMessage": "इस चैट का लूप रुका हुआ है; कारण देखने और इसे फिर शुरू करने के लिए चैट खोलें"
+  },
+  "sessionActivity.loopLabelRunning": {
+    "defaultMessage": "इस चैट का लूप एक टिक चला रहा है"
+  },
+  "sessionActivity.loopLabelWaitingTurn": {
+    "defaultMessage": "इस चैट के लूप का एक टिक बाकी है; यह पिछली बारी खत्म होने पर शुरू होगा"
+  },
+  "sessionActivity.loopLabelWaitingYou": {
+    "defaultMessage": "इस चैट के लूप के पिछले टिक ने नहीं बताया कि कब लौटना है"
+  },
+  "sessionActivity.loopNext": {
+    "defaultMessage": "अगला {time}"
+  },
+  "sessionActivity.loopPaused": {
+    "defaultMessage": "रुका हुआ"
+  },
+  "sessionActivity.loopUnreadable": {
+    "defaultMessage": "लूप पढ़ा नहीं जा सका"
+  },
+  "sessionActivity.loopWaitingYou": {
+    "defaultMessage": "आपकी प्रतीक्षा में"
+  },
+  "sessionActivity.looping": {
+    "defaultMessage": "लूप चालू"
+  },
   "sessionActivity.needsYou": {
     "defaultMessage": "आपकी ज़रूरत है"
   },
