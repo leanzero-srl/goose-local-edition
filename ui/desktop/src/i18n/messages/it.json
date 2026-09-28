@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Provider cloud"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, one {richiesta fermata che sta ancora lasciando il motore} other {richieste fermate che stanno ancora lasciando il motore}}{since, select, none {} other { · fermata {since} fa}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "Fermata · in uscita"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "fermata {since} fa"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "Dettagli"
   },

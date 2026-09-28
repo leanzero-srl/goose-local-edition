@@ -48,6 +48,7 @@ import {
 import type { EngineFigure } from '../leanzero-swarm/engineFigures';
 import { formatMlxMode, formatRemoteMode } from '../leanzero-swarm/mlxModeLabel';
 import { formatElapsed, formatRate } from '../leanzero-swarm/mlxLiveStats';
+import { leavingFigureText, leavingRowsMessages } from '../leanzero-swarm/leavingRowsText';
 import {
   DEFAULT_GLANCE_CORNER,
   type EngineGlance,
@@ -190,6 +191,7 @@ const STAGE_WORD: Record<GlanceStage, (typeof i18n)['idle']> = {
   generating: i18n.generating,
   prefill: i18n.prefill,
   queued: i18n.queued,
+  leaving: leavingRowsMessages.stage,
   idle: i18n.idle,
   not_loaded: i18n.notLoaded,
   running: i18n.running,
@@ -216,6 +218,7 @@ export function StageIcon({ stage }: { stage: GlanceStage }) {
       return <BookOpen />;
     case 'queued':
     case 'held':
+    case 'leaving':
       return <Hourglass />;
     case 'loading':
     case 'reconnecting':
@@ -269,6 +272,8 @@ export function figureText(intl: IntlShape, fig: EngineFigure): { value: string;
         value: intl.formatNumber(fig.count),
         label: intl.formatMessage(i18n.queuedCount, { count: fig.count }),
       };
+    case 'leaving':
+      return leavingFigureText(intl, fig);
     case 'reading':
       return { value: rate(fig.tps), label: intl.formatMessage(i18n.readRate) };
     case 'readingMedian':

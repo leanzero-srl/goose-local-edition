@@ -20,7 +20,12 @@ import {
   runningSnapshot,
 } from '../../utils/engineGlance.fixtures';
 import type { GlancePush } from '../../utils/engineGlance';
-import { GENERATING_STATUS, IDLE_STATUS } from '../leanzero-swarm/mlxLiveStatus.fixtures';
+import {
+  GENERATING_STATUS,
+  IDLE_STATUS,
+  SPLIT_ONLY_LEAVING_3M,
+  SPLIT_TURN_BEHIND_LEAVING_3M,
+} from '../leanzero-swarm/mlxLiveStatus.fixtures';
 import { FLASH_MODEL, FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
 
 const splitReading = glancePush(
@@ -439,6 +444,34 @@ describe('EngineGlanceCard — what the chat’s turn is forming (Q-215: the dis
   it('negative control: an engine serving no chat of this app offers nothing', () => {
     renderCard(writing, { forming });
     expect(screen.queryByTestId('engine-glance-forming-toggle')).toBeNull();
+  });
+});
+
+describe('EngineGlanceCard — stopped rows still leaving the engine (Q-246)', () => {
+  const split = (body: unknown, rows = [CHAT_ROW], answered = 1) =>
+    glancePush(
+      runningSnapshot(body, {
+        engine: 'distributed',
+        modelId: FLASH_MODEL,
+        serving: attributeServing(rows, answered, [], null),
+      }),
+      { distributed: { report: toMlxDistributedReport(FLASH_READY), ageMs: 0 } }
+    );
+
+  it('#3m: the turn is Queued, and the figure says what holds it — never "Reading prompt"', () => {
+    renderCard(split(SPLIT_TURN_BEHIND_LEAVING_3M));
+    expect(screen.getByTestId('engine-glance-stage').textContent).toBe('Queued');
+    expect(screen.getByTestId('engine-glance-hero').textContent).toBe('3');
+    const card = screen.getByTestId('engine-glance');
+    expect(card).toHaveTextContent('stopped requests still leaving the engine · stopped 3s ago');
+    expect(card).not.toHaveTextContent('Reading');
+  });
+
+  it('only leaving rows, no turn: the stage itself says "Stopped · leaving", the float alike', () => {
+    renderCard(split(SPLIT_ONLY_LEAVING_3M, [], 0), { variant: 'desktop' });
+    expect(screen.getByTestId('engine-glance-stage').textContent).toBe('Stopped · leaving');
+    expect(screen.getByTestId('engine-glance')).toHaveAttribute('data-stage', 'leaving');
+    assertStudioClean(screen.getByTestId('engine-glance'));
   });
 });
 

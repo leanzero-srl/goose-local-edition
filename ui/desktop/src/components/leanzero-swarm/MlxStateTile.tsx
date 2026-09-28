@@ -50,10 +50,13 @@ import { distributedStateWord } from './mlxModeLabel';
 import { engineWayOf, measuredRunsOf, type MeasuredRuns } from './measuredRuns';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
 import { engineFigures, type EngineFigure } from './engineFigures';
+import { leavingFigureText, leavingStageWord, stoppedAgoText } from './leavingRowsText';
 import {
+  engineHeadline,
   formatElapsed,
   formatRate,
   mlxActivity,
+  sinceStopOf,
   sparklinePoints,
   type MlxLiveRead,
   type MlxLiveRequest,
@@ -477,6 +480,7 @@ function Sparkline({ samples }: { samples: readonly TpsSample[] }) {
 
 function RequestRow({ request }: { request: MlxLiveRequest }) {
   const intl = useIntl();
+  if (request.leaving) return <LeavingRow request={request} />;
   const waiting = request.status === 'waiting' || request.phase === 'queued';
   if (waiting || request.phase === 'prefill') {
     // The long pre-fill: no token is out yet. The single engine reports no per-request progress,
@@ -533,6 +537,41 @@ function RequestRow({ request }: { request: MlxLiveRequest }) {
           {written}
         </span>
         {after.length > 0 && <span className="shrink-0">{after.join(' · ')}</span>}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * A row whose answer already ended but that still holds the batch (Q-231 `leaving`): said as that
+ * — never "Reading prompt" with a bar, which read as work beside the turn it holds up (Q-246). Its
+ * size stays (it is what the engine is still stepping through), and how long ago it was stopped.
+ */
+function LeavingRow({ request }: { request: MlxLiveRequest }) {
+  const intl = useIntl();
+  const since = sinceStopOf(request);
+  const parts = [
+    leavingStageWord(intl),
+    request.promptTokens != null
+      ? intl.formatMessage(i18n.rowTokens, { count: compact(intl, request.promptTokens) })
+      : null,
+  ].filter(Boolean);
+  const after =
+    since != null
+      ? stoppedAgoText(intl, since)
+      : request.elapsedS != null
+        ? formatElapsed(request.elapsedS)
+        : null;
+  return (
+    <li
+      data-testid="mlx-live-request"
+      data-phase={request.phase}
+      data-leaving="true"
+      className="flex flex-col gap-1"
+    >
+      <div className={cx('flex items-baseline justify-between gap-3', LINE)}>
+        <span className={cx('min-w-0 truncate', WEIGHT.semibold)}>{parts.join(' · ')}</span>
+        {after && <span className="shrink-0">{after}</span>}
       </div>
     </li>
   );
@@ -756,6 +795,8 @@ function figureOf(intl: IntlShape, fact: EngineFigure | null): Figure | null {
         value: intl.formatNumber(fact.count),
         label: intl.formatMessage(i18n.waiting, { count: fact.count }),
       };
+    case 'leaving':
+      return { testId: 'mlx-live-leaving', ...leavingFigureText(intl, fact) };
     case 'reading':
       return {
         testId: 'mlx-live-pps',
@@ -1320,6 +1361,8 @@ export function servingEngine(
       ? remote.state === 'ready'
       : !hosting && state === 'running';
   const activity = engineUp && live?.ok ? mlxActivity(live.stats) : null;
+  // Only stopped rows still leaving: the word says so, never "Queued" with nothing queued (Q-246).
+  const leavingOnly = engineUp && live?.ok ? engineHeadline(live.stats) === 'leaving' : false;
   const phase: EnginePhase = dist
     ? runPhase(dist.state, dist.admissionOpen, activity)
     : hosting
@@ -1342,18 +1385,20 @@ export function servingEngine(
       : (state ?? (unreachable ? 'unreachable' : 'checking'));
   // While the engine is up and read, the headline IS what it is doing — the tray's word
   // ("Remote · Idle"). "Running" beside a grey idle fill read as work (3.0.30, the owner).
-  const wordText = activity
-    ? intl.formatMessage(ACTIVITY_WORD[activity])
-    : dist
-      ? distributedStateWord(intl, dist.state)
-      : hosting
-        ? hosting.state === 'loading'
-          ? intl.formatMessage(i18n.hostingLoading, {
-              rank: hosting.rank,
-              requester: hosting.requesterName,
-            })
-          : distributedStateWord(intl, hosting.state)
-        : intl.formatMessage(STATE_WORD[word]);
+  const wordText = leavingOnly
+    ? leavingStageWord(intl)
+    : activity
+      ? intl.formatMessage(ACTIVITY_WORD[activity])
+      : dist
+        ? distributedStateWord(intl, dist.state)
+        : hosting
+          ? hosting.state === 'loading'
+            ? intl.formatMessage(i18n.hostingLoading, {
+                rank: hosting.rank,
+                requester: hosting.requesterName,
+              })
+            : distributedStateWord(intl, hosting.state)
+          : intl.formatMessage(STATE_WORD[word]);
   return {
     mode: dist ? 'distributed' : hosting ? 'hosting' : remote ? 'remote' : 'single',
     phase,

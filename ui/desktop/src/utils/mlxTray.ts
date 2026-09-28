@@ -1,12 +1,16 @@
 import {
   MLX_STATUS_POLL_MS,
+  answeredRequests,
   compactTokens,
+  engineHeadline,
   formatElapsed,
   formatRate,
+  leavingRowsOf,
   liveDecodeTps,
   measuredPrefillTps,
   mlxActivity,
   readingNowTps,
+  type LeavingRows,
 } from '../components/leanzero-swarm/mlxLiveStats';
 import { readingRequest } from '../components/leanzero-swarm/engineFigures';
 import { measuredFigure, type MeasuredFigure, type MlxMeasuredRead } from './mlxMeasuredRuns';
@@ -340,6 +344,16 @@ function plural(n: number, one: string, many: string): string {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`;
 }
 
+/**
+ * Rows whose answers already ended but still hold the batch (Q-231 `leaving`), in the tray's words —
+ * the Engine tile and the glance say the same fact (leavingRowsText.ts). Never "Reading" (Q-246).
+ */
+function leavingLine(leaving: LeavingRows): string {
+  const since =
+    leaving.sinceStopS != null ? ` · stopped ${formatElapsed(leaving.sinceStopS)} ago` : '';
+  return `${plural(leaving.rows, 'stopped request', 'stopped requests')} still leaving the engine${since}`;
+}
+
 export function mlxTrayTitle(snapshot: MlxEngineSnapshot): string {
   switch (snapshot.mode) {
     case 'off':
@@ -356,7 +370,7 @@ export function mlxTrayTitle(snapshot: MlxEngineSnapshot): string {
   }
   const stats = snapshot.stats;
   if (!stats) return 'MLX';
-  switch (mlxActivity(stats)) {
+  switch (engineHeadline(stats)) {
     case 'generating': {
       const rate = liveDecodeTps(stats);
       return rate > 0 ? `${formatRate(rate)} tok/s` : 'Writing';
@@ -366,7 +380,9 @@ export function mlxTrayTitle(snapshot: MlxEngineSnapshot): string {
       return r?.promptTokens != null ? `Reading ${compactTokens(r.promptTokens)}` : 'Reading';
     }
     case 'queued':
-      return `Queued ${stats.requests.length}`;
+      return `Queued ${answeredRequests(stats.requests).length}`;
+    case 'leaving':
+      return `${leavingRowsOf(stats.requests)?.rows ?? 0} stopped · leaving`;
     case 'not_loaded':
       return 'No model';
     case 'idle':
@@ -394,9 +410,10 @@ function headline(snapshot: MlxEngineSnapshot): string {
     generating: 'writing',
     prefill: 'reading a prompt',
     queued: 'requests queued',
+    leaving: 'stopped requests leaving',
     idle: 'idle',
     not_loaded: 'running, no model loaded',
-  }[mlxActivity(snapshot.stats)];
+  }[engineHeadline(snapshot.stats)];
   return `LeanZero MLX: ${word}`;
 }
 
@@ -487,6 +504,8 @@ function runningItems(snapshot: MlxEngineSnapshot): MlxTrayItem[] {
   if (activity === 'generating' && decode > 0) {
     items.push({ type: 'info', label: `Writing ${formatRate(decode)} tok/s` });
   }
+  const leaving = leavingRowsOf(stats.requests);
+  if (leaving) items.push({ type: 'info', label: clip(leavingLine(leaving)) });
   const reading = readingRequest(stats);
   if (reading?.promptTokens != null) {
     const cached = reading.cachedTokens ? `, ${compactTokens(reading.cachedTokens)} cached` : '';

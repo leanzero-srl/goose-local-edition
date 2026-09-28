@@ -317,3 +317,13 @@ export const SPLIT_TURN_BEHIND_LEAVING_3M = {
     },
   ],
 };
+
+/**
+ * The same three dropped fact checks with nothing behind them (Q-246): goose stopped them and sent
+ * nothing new, so rank 0 holds only rows whose answers already ended — nobody's work.
+ */
+export const SPLIT_ONLY_LEAVING_3M = {
+  ...SPLIT_TURN_BEHIND_LEAVING_3M,
+  num_waiting: 0,
+  requests: SPLIT_TURN_BEHIND_LEAVING_3M.requests.slice(0, 3),
+};

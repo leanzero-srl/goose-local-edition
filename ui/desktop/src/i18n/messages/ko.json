@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "클라우드 제공자"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, other {개의 중지된 요청이 아직 엔진에서 빠져나가는 중}}{since, select, none {} other { · {since} 전에 중지됨}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "중지됨 · 빠져나가는 중"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "{since} 전에 중지됨"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "세부 정보"
   },

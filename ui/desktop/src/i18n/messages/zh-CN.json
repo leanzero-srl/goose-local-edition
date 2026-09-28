@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "云端提供方"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, other {个已停止的请求仍在退出引擎}}{since, select, none {} other { · {since} 前已停止}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "已停止 · 正在退出"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "{since} 前已停止"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "详细信息"
   },

@@ -28,6 +28,8 @@ import {
   GENERATING_STATUS,
   IDLE_STATUS,
   PREFILL_STATUS,
+  SPLIT_ONLY_LEAVING_3M,
+  SPLIT_TURN_BEHIND_LEAVING_3M,
 } from '../components/leanzero-swarm/mlxLiveStatus.fixtures';
 
 const MODEL = 'mihai-qwen3.8-27b-atlassian-q8-mlx';
@@ -344,6 +346,29 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
     // And a rank 0 read never speaks for the single engine once the run is gone.
     const gone = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), OPTS);
     expect(gone.title).toBe('');
+  });
+
+  it('Q-246 #3m: rows leaving are said as stopped and leaving — the tray never says "Reading" for them', () => {
+    const serving = toMlxDistributedReport({ ...FLASH_SERVING, inflight: 4 });
+    const rank0 = (body: unknown) =>
+      running(body, { engine: 'distributed', modelId: null, baseUrl: 'http://127.0.0.1:8091' });
+    const behind = buildMlxTrayModel(rank0(SPLIT_TURN_BEHIND_LEAVING_3M), fresh(serving));
+    // Before: "Split · Reading 5.5k", phase reading, "Reading a 5.5k-token prompt, 380 read for 7s".
+    expect(behind.title).toBe('Split · Queued 1');
+    expect(behind.phase).toBe('held');
+    expect(labels(behind.items)).toContain(
+      '3 stopped requests still leaving the engine · stopped 3s ago'
+    );
+    expect(labels(behind.items).some((l) => l.startsWith('Reading'))).toBe(false);
+
+    const only = buildMlxTrayModel(rank0(SPLIT_ONLY_LEAVING_3M), fresh(serving));
+    expect(only.title).toBe('Split · 3 stopped · leaving');
+    expect(only.phase).toBe('held');
+
+    // The single engine's headline line says it too.
+    const single = buildMlxTrayModel(running(SPLIT_ONLY_LEAVING_3M), OPTS);
+    expect(single.title).toBe('3 stopped · leaving');
+    expect(labels(single.items)).toContain('LeanZero MLX: stopped requests leaving');
   });
 
   it('Q-148: while rank 0 writes, the Stop says what it cuts and asks (its "…"); idle, it is plain', () => {

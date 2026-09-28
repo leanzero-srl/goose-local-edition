@@ -1,5 +1,6 @@
 import type { BackgroundWorkKind } from '@aaif/goose-sdk';
 import {
+  engineHeadline,
   mlxActivity,
   requestActivity,
   type MlxActivity,
@@ -55,6 +56,11 @@ export const ENGINE_GLANCE_TURNED_OFF_CHANNEL = 'engine-glance-turned-off';
  */
 export type GlanceStage =
   | MlxActivity
+  /**
+   * The engine holds only rows whose answers already ended (Q-231 `leaving`): nobody's work, so not
+   * busy — said as that, never "Reading" (Q-246).
+   */
+  | 'leaving'
   /** Up, not read yet (or the read failed — `detail` says why). */
   | 'running'
   /** Weights going in, a split starting, a route mounting on its Mac. */
@@ -316,7 +322,7 @@ function liveParts(
   const read = activity === 'prefill' ? promptProgress(stats, lead) : null;
   return {
     activity,
-    stage: activity,
+    stage: lead ? activity : engineHeadline(stats),
     hero,
     second,
     progress: read ? { ...read, unit: 'tokens' } : null,
@@ -386,11 +392,35 @@ export function glanceServedBy(
   return failed != null ? { error: failed } : null;
 }
 
-/** Every window's serving report, in the order main holds the windows. */
-export function servingReportsOf(reports: Iterable<GlanceSessions>): GlanceServingReport[] {
+/**
+ * Every window's serving report, in the order main holds the windows, then `closed` — the last
+ * node read of a window that has since closed (`servingKeptOf`). Q-237: the floating window is the
+ * one surface left when every goose window is closed (the app lives on in the tray), and it is
+ * main's windows that read the nodes, so without it the float lost its node line exactly then. A
+ * live window's report always comes first; the kept one names a node only through
+ * `glanceServedBy`'s same-way-and-model match, so a switch made since it was read says nothing.
+ */
+export function servingReportsOf(
+  reports: Iterable<GlanceSessions>,
+  closed: GlanceServingReport | null = null
+): GlanceServingReport[] {
   const out: GlanceServingReport[] = [];
   for (const r of reports) if (r.serving) out.push(r.serving);
+  if (closed) out.push(closed);
   return out;
+}
+
+/**
+ * What main keeps when a window closes: its node read when it named a way (the node definitions
+ * change only in a goose window, which reports afresh), else what was kept before. A failed read is
+ * never kept — with no window left to read again it would stand as a stale failure.
+ */
+export function servingKeptOf(
+  closing: GlanceSessions | undefined,
+  kept: GlanceServingReport | null
+): GlanceServingReport | null {
+  const serving = closing?.serving;
+  return serving && !('error' in serving) ? serving : kept;
 }
 
 /**

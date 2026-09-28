@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "クラウドプロバイダー"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, other {件の停止済みリクエストがまだエンジンから抜けていません}}{since, select, none {} other { · {since} 前に停止}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "停止済み · 退出中"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "{since} 前に停止"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "詳細"
   },

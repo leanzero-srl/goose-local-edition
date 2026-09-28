@@ -1,5 +1,9 @@
 import type { BackgroundWorkKind } from '@aaif/goose-sdk';
-import { compactTokens, formatElapsed } from '../components/leanzero-swarm/mlxLiveStats';
+import {
+  answeredRequests,
+  compactTokens,
+  formatElapsed,
+} from '../components/leanzero-swarm/mlxLiveStats';
 import { largestPrompt } from '../components/leanzero-swarm/engineFigures';
 import type { MlxEngineSnapshot } from './mlxEngineMonitor';
 import type { MlxClient } from './mlxServing';
@@ -43,7 +47,8 @@ export interface InFlightWork {
 /** The work main's read shows in flight, or null when the engine holds none (or was not read). */
 export function inFlightWork(snapshot: MlxEngineSnapshot | null | undefined): InFlightWork | null {
   if (!snapshot || snapshot.mode !== 'running' || !snapshot.stats) return null;
-  const requests = snapshot.stats.requests;
+  // A `leaving` row's answer already ended (Q-231): stopping the engine cuts nobody's work there.
+  const requests = answeredRequests(snapshot.stats.requests);
   if (requests.length === 0) return null;
   const lead = largestPrompt(requests) ?? requests[0];
   const contexts = requests

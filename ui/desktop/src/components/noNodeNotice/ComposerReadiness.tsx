@@ -36,11 +36,13 @@ import {
   type ChatServedBy,
   type ComposerReadiness,
   type RunHere,
+  type TurnWait,
 } from '../chatServedBy/chatServedBy';
 import type { ChatServing } from '../chatServedBy/useChatServedBy';
 import { splitStopHeadline, splitStopMemory } from '../chatServedBy/splitStopText';
 import { peerGoneText } from '../chatServedBy/peerGoneText';
 import { busyInHeadline, busyInSendText } from '../chatServedBy/busyInText';
+import { turnWaitText } from '../chatServedBy/turnWaitText';
 import {
   distributedProblem,
   distributedServedId,
@@ -180,8 +182,8 @@ export const ENGINE_ROUTE = '/leanzero-swarm?tab=mlx';
 /**
  * The composer's readiness bar: a solid bar ABOVE the input ONLY when something needs the user —
  * a model loading or failed, nothing mounted, no node, a split not answering, a relaunch bringing
- * the engine back, or the engine busy with another client's request (a new turn would queue behind
- * it). While everything is ready it renders nothing: the model chip names what serves (Q-8, Q-17).
+ * the engine back, the engine busy with another client's request (a new turn would queue behind
+ * it), or this chat's own turn queued for a reason the engine names (`turnWait`). While everything is ready it renders nothing: the model chip names what serves (Q-8, Q-17).
  * It never blocks typing. Every fact comes from `serving` — the one derivation, never its own read.
  */
 export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
@@ -297,6 +299,9 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
     );
   }
   if (servedReady(served)) {
+    // This chat's own turn is queued, and the engine says why (Q-238's `turnWait`, Q-246): the
+    // same words as the chip's status line, from the same join.
+    if (served.turnWait) return <TurnWaitBar wait={served.turnWait} />;
     if (served.busyIn) return <BusyInBar busy={served.busyIn} />;
     return served.busyWithOthers ? <BusyBar served={served} busy={served.busyWithOthers} /> : null;
   }
@@ -400,6 +405,35 @@ function BusyBar({ served, busy }: { served: ChatServedBy; busy: ChatBusy }) {
       <Hourglass aria-hidden className="size-4 shrink-0" />
       <span className={cx('min-w-0 flex-1 break-words text-lz-body', WEIGHT.semibold)}>
         {headline}
+      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <OpenEngineButton />
+      </div>
+    </div>
+  );
+}
+
+/** This chat's turn waits on the engine, and why — stopped rows still leaving, or memory room. */
+function TurnWaitBar({ wait }: { wait: TurnWait }) {
+  const intl = useIntl();
+  return (
+    <div
+      role="status"
+      data-testid="composer-readiness"
+      data-readiness="turn-wait"
+      data-turn-wait={wait.kind}
+      className={cx(
+        'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
+        RADIUS.control,
+        PHASE_FILL.held
+      )}
+    >
+      <Hourglass aria-hidden className="size-4 shrink-0" />
+      <span
+        data-testid="composer-readiness-turn-wait"
+        className={cx('min-w-0 flex-1 break-words text-lz-body', WEIGHT.semibold)}
+      >
+        {turnWaitText(intl, wait)}
       </span>
       <div className="flex shrink-0 items-center gap-2">
         <OpenEngineButton />

@@ -13,7 +13,11 @@ import { useChatServedBy } from '../chatServedBy/useChatServedBy';
 import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
 import { parseMlxLiveStatus } from '../leanzero-swarm/mlxLiveStats';
 import { MEASURED_PENDING } from '../../utils/mlxMeasuredRuns';
-import { GENERATING_STATUS, PREFILL_STATUS } from '../leanzero-swarm/mlxLiveStatus.fixtures';
+import {
+  GENERATING_STATUS,
+  PREFILL_STATUS,
+  SPLIT_TURN_BEHIND_LEAVING_3M,
+} from '../leanzero-swarm/mlxLiveStatus.fixtures';
 import type { MountLookup } from './mlxMount';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
@@ -299,12 +303,20 @@ describe('mlxProviderReadiness', () => {
 });
 
 /** The composer's one read of where chat goes, handed to the bar — as ChatInput does. */
-function Composer({ provider, sessionId }: { provider: string; sessionId: string | null }) {
-  const serving = useChatServedBy(provider, sessionId, false);
+function Composer({
+  provider,
+  sessionId,
+  turnInFlight = false,
+}: {
+  provider: string;
+  sessionId: string | null;
+  turnInFlight?: boolean;
+}) {
+  const serving = useChatServedBy(provider, sessionId, turnInFlight);
   return <ComposerReadinessStrip serving={serving} />;
 }
 
-function wrap(provider: string, sessionId: string | null = null) {
+function wrap(provider: string, sessionId: string | null = null, turnInFlight = false) {
   return render(
     <IntlProvider locale="en" defaultLocale="en" messages={{}}>
       <MemoryRouter initialEntries={['/pair']}>
@@ -313,7 +325,7 @@ function wrap(provider: string, sessionId: string | null = null) {
             path="/pair"
             element={
               <div>
-                <Composer provider={provider} sessionId={sessionId} />
+                <Composer provider={provider} sessionId={sessionId} turnInFlight={turnInFlight} />
                 <textarea data-testid="composer" />
               </div>
             }
@@ -834,8 +846,11 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
     num_waiting: 1,
     requests: [GENERATING_STATUS.requests[0], ...PREFILL_STATUS.requests],
   };
-  function snapshot(serving: MlxEngineSnapshot['serving']): MlxEngineSnapshot {
-    const read = parseMlxLiveStatus(PREFILL_WITH_WAITING);
+  function snapshot(
+    serving: MlxEngineSnapshot['serving'],
+    body: unknown = PREFILL_WITH_WAITING
+  ): MlxEngineSnapshot {
+    const read = parseMlxLiveStatus(body);
     if (!read.ok) throw new Error(read.detail);
     return {
       engine: 'remote',
@@ -901,6 +916,73 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
     await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 10));
     expect(screen.queryByTestId('composer-readiness')).toBeNull();
+  });
+
+  const MINE = {
+    key: 'chat:s-mine',
+    kind: 'chat' as const,
+    sessionId: 's-mine',
+    sessionName: 'x',
+    work: null,
+    count: 1,
+  };
+
+  it('Q-246 #3m: this chat’s turn queued behind three stopped rows — the strip says why, in the chip’s words', async () => {
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async () =>
+        snapshot(
+          { clients: [MINE], unattributed: 0, swarmRuns: [], error: null },
+          SPLIT_TURN_BEHIND_LEAVING_3M
+        ),
+    };
+    mockExtMethod.mockResolvedValue({ status: ROUTE });
+    await mlxRemoteSingleStatus();
+    const { container } = wrap('swarm', 's-mine', true);
+    const strip = await screen.findByTestId('composer-readiness');
+    // Before: nothing under the composer — only the chip's line said it (Q-238).
+    await waitFor(() => expect(strip).toHaveAttribute('data-readiness', 'turn-wait'));
+    expect(strip).toHaveAttribute('data-turn-wait', 'leaving');
+    expect(screen.getByTestId('composer-readiness-turn-wait').textContent).toBe(
+      'Queued behind 3 stopped requests still leaving the engine · stopped 3s ago'
+    );
+    expect(strip.className).toContain('bg-lz-phase-held');
+    expect(screen.getByTestId('composer-readiness-open-engine')).toBeInTheDocument();
+    assertStudioClean(container);
+  });
+
+  it('Q-246: held for memory room — the strip says the room reason', async () => {
+    const heldForRoom = {
+      ...SPLIT_TURN_BEHIND_LEAVING_3M,
+      requests: [{ ...SPLIT_TURN_BEHIND_LEAVING_3M.requests[3], held_for_room: true }],
+    };
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async () =>
+        snapshot({ clients: [MINE], unattributed: 0, swarmRuns: [], error: null }, heldForRoom),
+    };
+    mockExtMethod.mockResolvedValue({ status: ROUTE });
+    await mlxRemoteSingleStatus();
+    wrap('swarm', 's-mine', true);
+    const strip = await screen.findByTestId('composer-readiness');
+    await waitFor(() => expect(strip).toHaveAttribute('data-turn-wait', 'room'));
+    expect(strip.textContent).toContain(
+      'Queued until the running requests finish — no memory room to join them'
+    );
+  });
+
+  it('NEGATIVE CONTROL — no turn in flight: the leaving rows alone put no bar under the composer', async () => {
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async () =>
+        snapshot(
+          { clients: [MINE], unattributed: 0, swarmRuns: [], error: null },
+          SPLIT_TURN_BEHIND_LEAVING_3M
+        ),
+    };
+    mockExtMethod.mockResolvedValue({ status: ROUTE });
+    await mlxRemoteSingleStatus();
+    wrap('swarm', 's-mine');
+    await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.queryByTestId('composer-readiness-turn-wait')).toBeNull();
   });
 });
 

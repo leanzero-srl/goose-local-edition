@@ -2708,6 +2708,15 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Nhà cung cấp đám mây"
   },
+  "leavingRows.figure": {
+    "defaultMessage": "{rows, plural, other {yêu cầu đã dừng vẫn đang rời khỏi engine}}{since, select, none {} other { · đã dừng {since} trước}}"
+  },
+  "leavingRows.stage": {
+    "defaultMessage": "Đã dừng · đang rời"
+  },
+  "leavingRows.stoppedAgo": {
+    "defaultMessage": "đã dừng {since} trước"
+  },
   "linkDropNotice.details": {
     "defaultMessage": "Chi tiết"
   },

@@ -14,6 +14,7 @@ import { activityPhase, remotePhase, runPhase, singlePhase } from '../leanzero-s
 import {
   MLX_STATUS_POLL_MS,
   answeredRequests,
+  leavingRowsOf,
   mlxActivity,
   requestActivity,
   type MlxActivity,
@@ -652,19 +653,9 @@ function busyInOf(
  */
 function turnWaitOf(stats: MlxLiveStats, turnRequest: MlxLiveRequest | null): TurnWait | null {
   if (!turnRequest || requestActivity(turnRequest) !== 'queued') return null;
-  const leaving = stats.requests.filter((r) => r.leaving);
-  if (leaving.length > 0) {
-    const sinceStop = leaving
-      .map((r) =>
-        r.elapsedS != null && r.stoppedAfterS != null ? r.elapsedS - r.stoppedAfterS : null
-      )
-      .filter((s): s is number => s != null && s >= 0);
-    return {
-      kind: 'leaving',
-      rows: leaving.length,
-      sinceStopS: sinceStop.length > 0 ? Math.max(...sinceStop) : null,
-    };
-  }
+  // The one leaving fact the tile, the tray and the glance say too (mlxLiveStats `leavingRowsOf`).
+  const leaving = leavingRowsOf(stats.requests);
+  if (leaving) return { kind: 'leaving', ...leaving };
   return turnRequest.heldForRoom === true ? { kind: 'room' } : null;
 }
 
