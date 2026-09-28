@@ -3,18 +3,19 @@ use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata};
 use super::retry::ProviderRetry;
 use crate::api_client::{AuthMethod, TlsConfig};
 use crate::conversation::message::Message;
+use crate::conversation::message::SystemNotificationType;
 use crate::conversation::token_usage::ProviderUsage;
 use crate::declarative::{DeclarativeProviderConfig, KeyResolver};
 use crate::errors::ProviderError;
 use crate::formats::openai::is_openai_responses_model;
 use crate::formats::openai::{
-    create_request_with_options, get_usage, response_to_message, turn_context_tail_suffix,
+    create_request_reporting_images, get_usage, response_to_message, turn_context_tail_suffix,
     OpenAiFormatOptions,
 };
 use crate::formats::openai_responses::{
     create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
 };
-use crate::images::ImageFormat;
+use crate::images::{withheld_images_notice, ImageFormat};
 use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
 };
@@ -519,6 +520,87 @@ impl OpenAiProvider {
         accepted
     }
 
+    /// Whether the engine serving `model_name` reads images, as its `/v1/models` entry declares it
+    /// in `capabilities` (the Rapid-MLX shape every goose MLX engine serves: the single engine,
+    /// the pipeline split, the tensor split's wrapper). Asked fresh on every request that carries
+    /// an image — never cached, because a remount can move the same id to another lane — and
+    /// never asked when the request carries none, so a text request is byte-identical.
+    async fn image_input(&self, model_name: &str) -> Result<ImageInput, ProviderError> {
+        let models_path =
+            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+        let json = self.fetch_models_json(&models_path).await?;
+        Ok(declared_image_input(&json, model_name))
+    }
+
+    /// Q-260: the request for this engine, with every image part withheld behind a named
+    /// placeholder when the engine declares it reads text only, and the chat's notice for the
+    /// images this request is the first to withhold. A request with no image, a provider that does
+    /// not front a goose MLX engine, an engine that reads images, and one that declares nothing
+    /// are all sent exactly as formatted.
+    async fn chat_request(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+        format_options: OpenAiFormatOptions,
+    ) -> Result<(serde_json::Value, Option<String>), ProviderError> {
+        let build = |options: OpenAiFormatOptions| -> Result<_, ProviderError> {
+            Ok(create_request_reporting_images(
+                model_config,
+                system,
+                messages,
+                tools,
+                &ImageFormat::OpenAi,
+                self.supports_streaming,
+                options,
+            )?)
+        };
+        let (payload, images) = build(format_options)?;
+        if images.sent == 0 || !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str()) {
+            return Ok((payload, None));
+        }
+        match self.image_input(&model_config.model_name).await {
+            Ok(ImageInput::TextOnly) => {
+                let (payload, images) = build(OpenAiFormatOptions {
+                    text_only_engine: true,
+                    ..format_options
+                })?;
+                tracing::info!(
+                    host = %self.api_client.host(),
+                    model = %model_config.model_name,
+                    withheld = images.withheld.len(),
+                    "images_withheld: the engine declares it reads text only; every image part \
+                     went as a named placeholder"
+                );
+                let notice = withheld_images_notice(&model_config.model_name, &images.withheld);
+                Ok((payload, notice))
+            }
+            Ok(ImageInput::Reads) => Ok((payload, None)),
+            Ok(ImageInput::Undeclared) => {
+                tracing::warn!(
+                    host = %self.api_client.host(),
+                    model = %model_config.model_name,
+                    images = images.sent,
+                    "image_input_undeclared: the engine's /v1/models names no capabilities, so \
+                     whether it reads images is unknown; the images are sent as they are"
+                );
+                Ok((payload, None))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    host = %self.api_client.host(),
+                    model = %model_config.model_name,
+                    images = images.sent,
+                    error = %e,
+                    "image_input_probe_failed: whether the engine reads images is unknown; the \
+                     images are sent as they are"
+                );
+                Ok((payload, None))
+            }
+        }
+    }
+
     fn should_use_responses_api_for_provider(&self, model_name: &str) -> bool {
         if Self::PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS.contains(&self.name.as_str()) {
             return false;
@@ -657,20 +739,48 @@ impl TransientTail {
 /// Whether `/v1/models` lists `extension` in the `request_extensions` of `model_name`'s entry (or of
 /// the sole entry, the single-model server serving under another id).
 fn declares_request_extension(json: &serde_json::Value, model_name: &str, extension: &str) -> bool {
-    let Some(data) = json.get("data").and_then(|v| v.as_array()) else {
-        return false;
-    };
-    let entry = data
-        .iter()
+    served_entry(json, model_name)
+        .and_then(|e| e.get("request_extensions"))
+        .and_then(|v| v.as_array())
+        .is_some_and(|list| list.iter().any(|v| v.as_str() == Some(extension)))
+}
+
+/// `model_name`'s entry in a `/v1/models` body, or the sole entry of a single-model server serving
+/// under another id.
+fn served_entry<'a>(
+    json: &'a serde_json::Value,
+    model_name: &str,
+) -> Option<&'a serde_json::Value> {
+    let data = json.get("data")?.as_array()?;
+    data.iter()
         .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(model_name))
         .or(match data.as_slice() {
             [only] => Some(only),
             _ => None,
-        });
-    entry
-        .and_then(|e| e.get("request_extensions"))
+        })
+}
+
+/// What an engine declares about image input (Q-260).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageInput {
+    /// `capabilities` lists `vision`.
+    Reads,
+    /// `capabilities` is listed without `vision`: the engine refuses image parts, and a refused
+    /// image left in history would fail every later turn of the session.
+    TextOnly,
+    /// No `capabilities` (or no entry for the model): the engine says nothing either way.
+    Undeclared,
+}
+
+fn declared_image_input(json: &serde_json::Value, model_name: &str) -> ImageInput {
+    match served_entry(json, model_name)
+        .and_then(|e| e.get("capabilities"))
         .and_then(|v| v.as_array())
-        .is_some_and(|list| list.iter().any(|v| v.as_str() == Some(extension)))
+    {
+        Some(caps) if caps.iter().any(|c| c.as_str() == Some("vision")) => ImageInput::Reads,
+        Some(_) => ImageInput::TextOnly,
+        None => ImageInput::Undeclared,
+    }
 }
 
 fn describe_listing(json: &serde_json::Value) -> String {
@@ -974,18 +1084,19 @@ impl Provider for OpenAiProvider {
             }
         } else {
             let transient_tail = self.transient_tail(&model_config.model_name).await;
-            let payload = create_request_with_options(
-                model_config,
-                system,
-                messages,
-                tools,
-                &ImageFormat::OpenAi,
-                self.supports_streaming,
-                OpenAiFormatOptions {
-                    preserve_thinking_context: self.preserve_thinking_context,
-                    turn_context_joins_tool_results: transient_tail.block_joins_tool_results(),
-                },
-            )?;
+            let (payload, images_notice) = self
+                .chat_request(
+                    model_config,
+                    system,
+                    messages,
+                    tools,
+                    OpenAiFormatOptions {
+                        preserve_thinking_context: self.preserve_thinking_context,
+                        turn_context_joins_tool_results: transient_tail.block_joins_tool_results(),
+                        text_only_engine: false,
+                    },
+                )
+                .await?;
             let mut payload = self.sanitize_request_for_compat(payload);
             self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
             if transient_tail.on_user {
@@ -1012,7 +1123,7 @@ impl Provider for OpenAiProvider {
                     let _ = log.error(e);
                 })?;
 
-            if self.supports_streaming {
+            let stream = if self.supports_streaming {
                 super::openai_compatible::stream_openai_compat_timed(
                     response,
                     log,
@@ -1045,9 +1156,34 @@ impl Provider for OpenAiProvider {
                     0,
                 );
                 Ok(super::base::stream_from_single_message(message, usage))
-            }
+            }?;
+            Ok(announced(stream, images_notice))
         }
     }
+}
+
+/// The engine's stream, led by the chat's notice when this request is the first to withhold an
+/// image (Q-260). The notice is a system notification — no formatter sends it to a model — so it
+/// is shown and kept in the session, never read back as something the model said. It rides in
+/// front of the engine's FIRST item and only when that item is not an error: a stream that fails
+/// before its first item stays retryable (`reply_parts`' retry-before-the-first-item contract),
+/// and the retried request carries the notice again.
+fn announced(stream: MessageStream, notice: Option<String>) -> MessageStream {
+    use futures::StreamExt;
+    let Some(notice) = notice else {
+        return stream;
+    };
+    let mut notice = Some(
+        Message::assistant()
+            .with_system_notification(SystemNotificationType::InlineMessage, notice),
+    );
+    Box::pin(stream.flat_map(move |item| {
+        let lead = notice
+            .take()
+            .filter(|_| item.is_ok())
+            .map(|message| Ok((Some(message), None)));
+        futures::stream::iter(lead.into_iter().chain(std::iter::once(item)))
+    }))
 }
 
 pub fn from_declarative_config(
@@ -1266,6 +1402,226 @@ mod tests {
             .map(|r| serde_json::from_slice(&r.body).unwrap())
             .collect();
         (bodies, probes)
+    }
+
+    /// What the engine answers and what goose sent it, per call: the POST bodies, how many
+    /// `/v1/models` probes it made, and the messages each call streamed back to the chat.
+    async fn image_calls_through(
+        models_entry: serde_json::Value,
+        conversations: &[Vec<Message>],
+    ) -> (Vec<serde_json::Value>, usize, Vec<Vec<Message>>) {
+        use futures::StreamExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"object": "list", "data": [models_entry]})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            })))
+            .mount(&server)
+            .await;
+
+        let mut provider = make_provider("omlx");
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        let mut streamed = Vec::new();
+        for messages in conversations {
+            let stream = provider
+                .stream(&ModelConfig::new("Org/Served-27B"), "system", messages, &[])
+                .await
+                .unwrap();
+            let items: Vec<_> = stream.collect().await;
+            streamed.push(
+                items
+                    .into_iter()
+                    .filter_map(|item| item.unwrap().0)
+                    .collect(),
+            );
+        }
+        let requests = server.received_requests().await.unwrap();
+        let probes = requests
+            .iter()
+            .filter(|r| r.method.as_str() == "GET")
+            .count();
+        let bodies = requests
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect();
+        (bodies, probes, streamed)
+    }
+
+    fn notices(messages: &[Message]) -> Vec<String> {
+        messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|c| match c {
+                crate::conversation::message::MessageContent::SystemNotification(n) => {
+                    Some(n.msg.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn image_parts(body: &serde_json::Value) -> usize {
+        body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m["content"].as_array())
+            .flatten()
+            .filter(|part| part["type"] == json!("image_url"))
+            .count()
+    }
+
+    /// Q-260's three conversations: a message naming a local .png (goose attaches the file), the
+    /// next turn with that message in history, and read_image's result carrying an image.
+    fn q260_conversations(png: &str) -> Vec<Vec<Message>> {
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+        let asked = Message::user().with_text(format!("What heading is in {png} ?"));
+        vec![
+            vec![asked.clone()],
+            vec![
+                asked,
+                Message::assistant().with_text("I could not read it."),
+                Message::user().with_text("In one sentence: what is a permission scheme?"),
+            ],
+            vec![
+                Message::user().with_text("Read the crop and tell me the heading."),
+                Message::assistant()
+                    .with_tool_request("call_img", Ok(CallToolRequestParams::new("read_image"))),
+                Message::user().with_tool_response(
+                    "call_img",
+                    Ok(CallToolResult::success(vec![
+                        Content::text("Loaded image (image/png, 4112x2578)."),
+                        Content::image("iVBORw0KGgo=", "image/png"),
+                    ])),
+                ),
+            ],
+        ]
+    }
+
+    fn q260_png() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("q232-src.png");
+        std::fs::write(&png, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0]).unwrap();
+        let png = png.to_string_lossy().into_owned();
+        (dir, png)
+    }
+
+    /// Q-260, live on 3.0.65 (sessions 20260928_11/_12, llm_request.0.jsonl): the 27B tensor split
+    /// answered 404 "Only 'text' content type is supported" to the attached .png and to
+    /// read_image's image, and the image stayed in history so every later turn failed the same
+    /// way. An engine that declares `capabilities` without `vision` is sent a named placeholder in
+    /// every image's place, and the chat is told once — on the request that first withholds it.
+    #[tokio::test]
+    async fn a_text_only_engine_is_never_sent_an_image_and_the_chat_is_told_once() {
+        let (_dir, png) = q260_png();
+        let (bodies, _, streamed) = image_calls_through(
+            json!({"id": "Org/Served-27B", "capabilities": ["text", "tools"]}),
+            &q260_conversations(&png),
+        )
+        .await;
+
+        for body in &bodies {
+            assert_eq!(image_parts(body), 0, "{body}");
+        }
+        let asked = bodies[0]["messages"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            asked["content"],
+            json!(format!(
+                "What heading is in {png} ?\n[image q232-src.png not sent: this model reads text only]"
+            )),
+        );
+        assert_eq!(
+            notices(&streamed[0]),
+            ["Served-27B reads text only — the image q232-src.png was not sent"],
+        );
+
+        let history = bodies[1]["messages"].as_array().unwrap();
+        assert!(history[1]["content"]
+            .as_str()
+            .unwrap()
+            .ends_with("[image q232-src.png not sent: this model reads text only]"));
+        assert!(
+            notices(&streamed[1]).is_empty(),
+            "a past image is withheld again, never announced again"
+        );
+
+        let tool = bodies[2]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == json!("tool"))
+            .unwrap()
+            .clone();
+        assert_eq!(
+            tool["content"],
+            json!(
+                "Loaded image (image/png, 4112x2578). \
+                 [image from read_image (image/png) not sent: this model reads text only]"
+            ),
+        );
+        assert_eq!(
+            notices(&streamed[2]),
+            ["Served-27B reads text only — the image from read_image (image/png) was not sent"],
+        );
+        assert!(streamed
+            .iter()
+            .all(|call| call.iter().any(|m| m.as_concat_text() == "ok")));
+    }
+
+    /// The negative control: an engine that declares `vision` gets every image exactly as before,
+    /// and one that declares nothing is sent them unchanged (its own answer decides) — neither
+    /// hears a notice. A request with no image never asks the engine anything new.
+    #[tokio::test]
+    async fn a_vision_engine_and_an_undeclared_one_are_sent_the_images_as_before() {
+        let (_dir, png) = q260_png();
+        let conversations = q260_conversations(&png);
+        for entry in [
+            json!({"id": "Org/Served-27B", "capabilities": ["text", "vision", "tools"]}),
+            json!({"id": "Org/Served-27B"}),
+        ] {
+            let (bodies, _, streamed) = image_calls_through(entry.clone(), &conversations).await;
+            assert_eq!(image_parts(&bodies[0]), 1, "{entry}");
+            assert_eq!(image_parts(&bodies[1]), 1, "{entry}");
+            assert_eq!(image_parts(&bodies[2]), 1, "{entry}");
+            assert!(
+                streamed.iter().all(|call| notices(call).is_empty()),
+                "{entry}"
+            );
+        }
+
+        let text_only = vec![vec![Message::user().with_text("no picture here")]; 2];
+        let (bodies, probes, _) = image_calls_through(
+            json!({"id": "Org/Served-27B", "capabilities": ["text"]}),
+            &text_only,
+        )
+        .await;
+        assert_eq!(bodies.len(), 2);
+        assert_eq!(
+            probes, 1,
+            "the one cached transient-tail probe; a request without an image asks nothing more"
+        );
     }
 
     /// Q-94, #1 turn 2 (sessions.db 764103/764105 → 764106): the request ends on two

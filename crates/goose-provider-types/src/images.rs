@@ -33,6 +33,70 @@ pub fn convert_image(image: &ImageContent, image_format: &ImageFormat) -> Value 
     }
 }
 
+/// An image part a request to a text-only engine did not carry (Q-260). `label` names it in the
+/// placeholder the model reads and in the chat's notice; `new` = no assistant message follows it
+/// in the request, so this is the first request that withholds it and the chat has not been told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WithheldImage {
+    pub label: String,
+    pub new: bool,
+}
+
+/// What formatting a request did with its image parts: how many went out as images, and which
+/// were withheld because the engine reads text only.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImageReport {
+    pub sent: usize,
+    pub withheld: Vec<WithheldImage>,
+}
+
+/// The label of an image a user message names by its path: the file's name.
+pub fn path_image_label(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// The label of an image attached to a message (a paste or a dropped file carries no name).
+pub fn attached_image_label(image: &ImageContent) -> String {
+    format!("attachment ({})", image.mime_type)
+}
+
+/// The label of an image a tool returned, by the tool that returned it when the request names it.
+pub fn tool_image_label(tool: Option<&str>, mime_type: &str) -> String {
+    match tool {
+        Some(tool) => format!("from {tool} ({mime_type})"),
+        None => format!("from a tool result ({mime_type})"),
+    }
+}
+
+/// The text a text-only engine reads where the image was.
+pub fn withheld_image_placeholder(label: &str) -> String {
+    format!("[image {label} not sent: this model reads text only]")
+}
+
+/// The chat's one notice for the images this request is the first to withhold; `None` when every
+/// withheld image was already announced by an earlier request (a past image in history).
+pub fn withheld_images_notice(model: &str, withheld: &[WithheldImage]) -> Option<String> {
+    let labels: Vec<&str> = withheld
+        .iter()
+        .filter(|image| image.new)
+        .map(|image| image.label.as_str())
+        .collect();
+    let model = model.rsplit('/').next().unwrap_or(model);
+    match labels.as_slice() {
+        [] => None,
+        [one] => Some(format!(
+            "{model} reads text only — the image {one} was not sent"
+        )),
+        many => Some(format!(
+            "{model} reads text only — the images {} were not sent",
+            many.join(", ")
+        )),
+    }
+}
+
 pub fn detect_image_path(text: &str) -> Option<Cow<'_, str>> {
     const EXTENSIONS: [&str; 3] = [".png", ".jpg", ".jpeg"];
     const MAX_PATH_LEN: usize = 4096;
@@ -245,6 +309,43 @@ pub fn load_image_file(path: &str) -> Result<ImageContent, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_notice_names_the_model_and_only_the_images_not_yet_announced() {
+        let image = |label: &str, new: bool| WithheldImage {
+            label: label.to_string(),
+            new,
+        };
+        let model = "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx";
+        assert_eq!(
+            withheld_images_notice(model, &[image("old.png", false)]),
+            None,
+            "a past image in history is never announced again"
+        );
+        assert_eq!(
+            withheld_images_notice(model, &[image("old.png", false), image("q232-src.png", true)])
+                .as_deref(),
+            Some("Qwen3.8-27B-Atlassian-Q8-mlx reads text only — the image q232-src.png was not sent")
+        );
+        assert_eq!(
+            withheld_images_notice(
+                "local-model",
+                &[
+                    image("a.png", true),
+                    image("from read_image (image/png)", true)
+                ]
+            )
+            .as_deref(),
+            Some(
+                "local-model reads text only — the images a.png, from read_image (image/png) \
+                 were not sent"
+            )
+        );
+        assert_eq!(
+            withheld_image_placeholder(&path_image_label("/Users/me/shots/q232-src.png")),
+            "[image q232-src.png not sent: this model reads text only]"
+        );
+    }
     use tempfile;
 
     #[test]
