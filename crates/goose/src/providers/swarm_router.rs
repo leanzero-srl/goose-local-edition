@@ -4081,7 +4081,7 @@ devices:
         assert!(
             matches!(
                 &first.content[..],
-                [MessageContent::SystemNotification(n)]
+                [crate::conversation::message::MessageContent::SystemNotification(n)]
                     if n.msg.ends_with("reads text only — the image attachment (image/png) was not sent")
             ),
             "{first:?}"
