@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { NodesResidencyResponse_unstable } from '@aaif/goose-sdk';
 import {
+  displacedOf,
+  measuredLoadOf,
+  nodeRefusalOf,
+  nodeWaitOf,
   isNodeSwap,
   nodeSwapOf,
   routeNodeIds,
@@ -103,5 +108,88 @@ describe('the IPC report', () => {
     );
     expect(swapOfReports([{ swap: null }, { swap }, {}])).toEqual(swap);
     expect(swapOfReports([{}, { swap: null }])).toBeNull();
+  });
+});
+
+describe('Q-272: the loader’s facts, as every surface reads them', () => {
+  const rows = (
+    r: Record<string, NodesResidencyResponse_unstable['nodes'][number]>,
+    extra: Partial<NodesResidencyResponse_unstable> = {}
+  ): NodesResidencyResponse_unstable => ({
+    ...J3_SERVING_SINGLE,
+    nodes: J3_SERVING_SINGLE.nodes.map((row) => r[row.node] ?? row),
+    ...extra,
+  });
+  const CHAT = J3_CHAT_NODE.def.id;
+  const SPLIT = J3_BUILD_NODE.def.id;
+
+  it('a wait for replies names the way by its node, else in the loader’s words', () => {
+    const waiting = (wayNodes: string[]) =>
+      rows({
+        [SPLIT]: {
+          node: SPLIT,
+          residency: {
+            kind: 'waiting',
+            reason: 'r',
+            replies: { way: "this Mac's engine", wayNodes, count: 2 },
+          },
+          load: { medianMs: 1000, count: 1 },
+        },
+      });
+    expect(nodeWaitOf(J3_READ, waiting([CHAT]), [SPLIT])).toEqual({
+      target: expect.objectContaining({ id: SPLIT }),
+      reason: 'r',
+      replies: { way: 'Qwen3.8-27B-Atlassian-Q8-mlx · this Mac', count: 2 },
+      load: { medianMs: 1000, count: 1 },
+    });
+    expect(nodeWaitOf(J3_READ, waiting(['gone']), [SPLIT])?.replies?.way).toBe("this Mac's engine");
+    // A wait for a node the chat does not run on is not this chat's.
+    expect(nodeWaitOf(J3_READ, waiting([CHAT]), [CHAT])).toBeNull();
+  });
+
+  it('a refusal carries its facts; a node that is not refused has none', () => {
+    const refused = rows({
+      [SPLIT]: {
+        node: SPLIT,
+        residency: {
+          kind: 'refusedLastTime',
+          reason: 'x',
+          facts: { kind: 'heldByBuild', way: "this Mac's engine" },
+        },
+      },
+    });
+    expect(nodeRefusalOf(J3_READ, refused, SPLIT)?.facts).toEqual({
+      kind: 'heldByBuild',
+      way: "this Mac's engine",
+    });
+    expect(nodeRefusalOf(J3_READ, refused, CHAT)).toBeNull();
+  });
+
+  it('a displaced node: told to every chat but the one that asked, and gone once it serves', () => {
+    const displaced = [{ node: CHAT, forNode: SPLIT, bySession: 'kickoff', byChat: 'K', atMs: 1 }];
+    const stopped = rows(
+      { [CHAT]: { node: CHAT, residency: { kind: 'notRunning' } } },
+      { displaced }
+    );
+    expect(displacedOf(J3_READ, stopped, CHAT, 'chat-1')).toMatchObject({
+      node: { id: CHAT },
+      other: { id: SPLIT, name: 'Qwen3.8-27B-Atlassian-Q8-mlx · both Macs' },
+      chat: 'K',
+      failed: null,
+    });
+    expect(displacedOf(J3_READ, stopped, CHAT, 'kickoff')).toBeNull();
+    // A read that raced its return: the node serves, nothing is said.
+    expect(displacedOf(J3_READ, { ...J3_SERVING_SINGLE, displaced }, CHAT, 'chat-1')).toBeNull();
+  });
+
+  it('the swap carries its measured load across the IPC boundary; a malformed load does not pass', () => {
+    const measured = rows({
+      [SPLIT]: { node: SPLIT, residency: { kind: 'loading' }, load: { medianMs: 5, count: 2 } },
+    });
+    const swap = nodeSwapOf(J3_READ, measured);
+    expect(swap?.load).toEqual({ medianMs: 5, count: 2 });
+    expect(isNodeSwap(swap)).toBe(true);
+    expect(isNodeSwap({ ...swap, load: { medianMs: '5' } })).toBe(false);
+    expect(measuredLoadOf(measured, CHAT)).toBeNull();
   });
 });

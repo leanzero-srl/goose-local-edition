@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "विभाजन {served} सर्व करता है; नोड {wanted} चाहता है।"
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "स्प्लिट {served} दे रहा है; {node} को {wanted} चाहिए।"
   },
   "composerReadiness.failed": {
     "defaultMessage": "पिछला माउंट विफल रहा: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "{model} यहाँ लोड करें{size, select, none {} other { ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "सहेजा गया MLX मॉडल {served} सर्व करता है; नोड को {wanted} चाहिए।"
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "सहेजा गया MLX मॉडल {served} दे रहा है; {node} को {wanted} चाहिए।"
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6266,11 +6266,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "यह नहीं हुआ: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} को {other} के लिए रोका गया, जो लोड नहीं हो सका: {words}। आपका अगला संदेश {node} को वापस लोड करेगा।"
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "{node} को लोड रखें"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "{node} को अभी वापस लोड करता है, और किसी दूसरे नोड के लिए इसे कभी नहीं रोकता"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} को चैट \"{chat}\" में {other} के लिए रोका गया। आपका अगला संदेश इसे वापस लोड करेगा ({duration})।"
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{other} शुरू करने के लिए {node} को रोका गया। आपका अगला संदेश इसे वापस लोड करेगा ({duration})।"
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "इसके बजाय {next} उपयोग करें"
+  },
   "nodes.displaces": {
     "defaultMessage": "इसे शुरू करने से {names} रुक जाएगा"
   },
   "nodes.duplicate": {
     "defaultMessage": "डुप्लिकेट करें"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "लगभग {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "पहला लोड अभी मापा नहीं गया"
   },
   "nodes.editInPool": {
     "defaultMessage": "अपने स्वार्म पूल में संपादित करें"
@@ -6283,6 +6310,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "हमेशा उपलब्ध · सेवा {provider} देता है"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} {node} ({rank}) पर है: {primary} नहीं चल सकता: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "{primary} फिर से आज़माएँ"
   },
   "nodes.firstStart": {
     "defaultMessage": "पहली शुरुआत अभी मापी नहीं गई"
@@ -6349,6 +6382,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{आपके swarm कॉन्फ़िग का {count, number} LM Studio डिवाइस यहाँ नहीं दिखाया गया है} other{आपके swarm कॉन्फ़िग के {count, number} LM Studio डिवाइस यहाँ नहीं दिखाए गए हैं}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} लोड नहीं हो सका: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} / {total} GB"
@@ -6596,6 +6632,9 @@
   "nodes.poolSection": {
     "defaultMessage": "आपका स्वार्म पूल · जब तक “Swarm बिल्ड इसका उपयोग करते हैं” “आपका स्वार्म पूल” है, तब तक swarm बिल्ड द्वारा उपयोग किया जाता है"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {#वां}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "आपके नोड पढ़े नहीं जा सके"
   },
@@ -6607,6 +6646,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "हटाया नहीं गया"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "{node} लोड नहीं हो सकता: एक swarm बिल्ड {way} का उपयोग कर रहा है। बिल्ड खत्म होने पर यह खाली होगा।"
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "{mac} पर {node} लोड नहीं हो सकता: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "{node} लोड नहीं हो सकता: {kept} को {mac} पर लोड रखा गया है।"
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "जगह बनाएँ"
   },
   "nodes.remove": {
     "defaultMessage": "हटाएँ"
@@ -6740,8 +6791,17 @@
   "nodes.title": {
     "defaultMessage": "नोड"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "{node} का पहला लोड, अभी मापा नहीं गया"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, one {लगभग {duration} में लोड होता है · # लोड मापा गया} other {लगभग {duration} में लोड होता है · # लोड का माध्य}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "इस चैट के लिए {node} लोड हो रहा है: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, one {{way} के # जवाब पूरा करने की प्रतीक्षा, फिर {node} लोड होगा ({duration})} other {{way} के # जवाब पूरे करने की प्रतीक्षा, फिर {node} लोड होगा ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "बदलाव सहेजा नहीं जा सका"
@@ -6760,6 +6820,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "यह Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "चैट → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "चैट → कोई नोड तय नहीं"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "LeanZero MLX इंजन…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "नोड प्रबंधित करें…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "नोड"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "अन्य मॉडल और प्रदाता…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "क्लाउड मॉडल और आपके एंडपॉइंट"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "लगभग {duration} में शुरू होता है"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "रणनीतियाँ"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "यह चैट यहाँ चलाएँ"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"

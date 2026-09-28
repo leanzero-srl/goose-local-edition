@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Pembagian menyajikan {served}; node menginginkan {wanted}."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "Split menyajikan {served}; {node} menginginkan {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "Muat {model} di sini{size, select, none {} other { ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "Model MLX tersimpan melayani {served}; node ini meminta {wanted}."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "Model MLX yang disimpan menyajikan {served}; {node} menginginkan {wanted}."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6266,11 +6266,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "Itu tidak berhasil: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} dihentikan untuk {other}, yang gagal dimuat: {words}. Pesan Anda berikutnya memuat {node} kembali."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "Tetap muat {node}"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "Memuat {node} kembali sekarang, dan tidak pernah menghentikannya untuk node lain"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} dihentikan untuk {other} di chat \"{chat}\". Pesan Anda berikutnya memuatnya kembali ({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{node} dihentikan untuk memulai {other}. Pesan Anda berikutnya memuatnya kembali ({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "Gunakan {next} saja"
+  },
   "nodes.displaces": {
     "defaultMessage": "Memulainya akan menghentikan {names}"
   },
   "nodes.duplicate": {
     "defaultMessage": "Duplikat"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "sekitar {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "pemuatan pertama belum diukur"
   },
   "nodes.editInPool": {
     "defaultMessage": "Edit di pool swarm Anda"
@@ -6283,6 +6310,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "Selalu tersedia · dilayani oleh {provider}"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} ada di {node} ({rank}): {primary} tidak dapat berjalan: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "Coba lagi {primary}"
   },
   "nodes.firstStart": {
     "defaultMessage": "Mulai pertama belum diukur"
@@ -6349,6 +6382,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{{count, number} perangkat LM Studio di konfigurasi swarm Anda tidak ditampilkan di sini} other{{count, number} perangkat LM Studio di konfigurasi swarm Anda tidak ditampilkan di sini}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} gagal dimuat: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} dari {total} GB"
@@ -6596,6 +6632,9 @@
   "nodes.poolSection": {
     "defaultMessage": "Pool swarm Anda · dipakai oleh build swarm selama “Build swarm memakai” adalah “Pool swarm Anda”"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {ke-#}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "Node Anda tidak dapat dibaca"
   },
@@ -6607,6 +6646,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "Tidak dihapus"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "Tidak dapat memuat {node}: build swarm sedang memakai {way}. Akan bebas saat build selesai."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "Tidak dapat memuat {node} di {mac}: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "Tidak dapat memuat {node}: {kept} tetap dimuat di {mac}."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "Kosongkan ruang"
   },
   "nodes.remove": {
     "defaultMessage": "Hapus"
@@ -6740,8 +6791,17 @@
   "nodes.title": {
     "defaultMessage": "Node"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "Pemuatan pertama {node}, belum diukur"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, other {Dimuat dalam sekitar {duration} · median dari # pemuatan}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "Memuat {node} untuk obrolan ini: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, other {Menunggu {way} menyelesaikan # balasan, lalu memuat {node} ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Perubahan tidak dapat disimpan"
@@ -6760,6 +6820,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "Mac ini"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "Chat → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "Chat → belum ada node"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "Mesin LeanZero MLX…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "Kelola node…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "Node"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "Model dan penyedia lain…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "Model cloud dan endpoint Anda"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "mulai dalam sekitar {duration}"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "Strategi"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "Jalankan chat ini di"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Server mungkin sedang dimulai atau tidak tersedia untuk sementara."

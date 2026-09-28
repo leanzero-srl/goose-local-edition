@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "La répartition sert {served} ; le nœud veut {wanted}."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "Le split sert {served} ; {node} veut {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Le dernier montage a échoué : {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "Charger {model} ici{size, select, none {} other { ({size} Go)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "Le modèle MLX enregistré sert {served} ; le nœud attend {wanted}."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "Le modèle MLX enregistré sert {served} ; {node} veut {wanted}."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6266,11 +6266,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "Cela n’a pas fonctionné : {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} a été arrêté pour {other}, qui n’a pas pu se charger : {words}. Votre prochain message recharge {node}."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "Garder {node} chargé"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "Recharge {node} maintenant, et ne l’arrête jamais pour un autre nœud"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} a été arrêté pour {other} dans la discussion « {chat} ». Votre prochain message le recharge ({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{node} a été arrêté pour démarrer {other}. Votre prochain message le recharge ({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "Utiliser {next} à la place"
+  },
   "nodes.displaces": {
     "defaultMessage": "Le démarrer arrête {names}"
   },
   "nodes.duplicate": {
     "defaultMessage": "Dupliquer"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "environ {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "premier chargement pas encore mesuré"
   },
   "nodes.editInPool": {
     "defaultMessage": "Modifier dans le pool de l’essaim"
@@ -6283,6 +6310,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "Toujours disponible · servi par {provider}"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} est sur {node} ({rank}) : {primary} ne peut pas tourner : {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "Réessayer {primary}"
   },
   "nodes.firstStart": {
     "defaultMessage": "Premier démarrage pas encore mesuré"
@@ -6349,6 +6382,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{{count, number} appareil LM Studio de votre configuration de l’essaim n’est pas affiché ici} other{{count, number} appareils LM Studio de votre configuration de l’essaim ne sont pas affichés ici}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} n’a pas pu se charger : {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} sur {total} Go"
@@ -6596,6 +6632,9 @@
   "nodes.poolSection": {
     "defaultMessage": "Votre pool de l’essaim · utilisé par les builds de l’essaim tant que « Les builds de l’essaim utilisent » est « Votre pool de l’essaim »"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, one {#er} other {#e}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "Impossible de lire vos nœuds"
   },
@@ -6607,6 +6646,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "Non supprimé"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "Impossible de charger {node} : un build swarm utilise {way}. Il se libère à la fin du build."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "Impossible de charger {node} sur {mac} : {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "Impossible de charger {node} : {kept} reste chargé sur {mac}."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "Libérer de la place"
   },
   "nodes.remove": {
     "defaultMessage": "Supprimer"
@@ -6740,8 +6791,17 @@
   "nodes.title": {
     "defaultMessage": "Nœuds"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "Premier chargement de {node}, pas encore mesuré"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, one {Se charge en environ {duration} · # chargement mesuré} other {Se charge en environ {duration} · médiane de # chargements}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "Chargement de {node} pour ce chat : {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, one {En attente que {way} termine # réponse, puis chargement de {node} ({duration})} other {En attente que {way} termine # réponses, puis chargement de {node} ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Impossible d’enregistrer la modification"
@@ -6760,6 +6820,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "Ce Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "Discussion → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "Discussion → aucun nœud"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "Moteur LeanZero MLX…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "Gérer les nœuds…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "Nœuds"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "Autres modèles et fournisseurs…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "Modèles cloud et vos endpoints"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "démarre en environ {duration}"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "Stratégies"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "Exécuter cette discussion sur"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."

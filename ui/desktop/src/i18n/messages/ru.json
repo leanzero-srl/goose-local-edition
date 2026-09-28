@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Разделение обслуживает {served}; узлу нужна {wanted}."
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "Сплит обслуживает {served}; {node} нужна {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Последнее монтирование не удалось: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "Загрузить {model} здесь{size, select, none {} other { ({size} ГБ)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "Сохранённая модель MLX обслуживает {served}; узлу нужна {wanted}."
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "Сохранённая модель MLX обслуживает {served}; {node} нужна {wanted}."
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6266,11 +6266,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "Не получилось: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} остановлена ради {other}, но {other} не загрузилась: {words}. Следующее сообщение снова загрузит {node}."
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "Держать {node} загруженной"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "Сейчас снова загружает {node} и никогда не останавливает её ради другого узла"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} остановлена ради {other} в чате «{chat}». Следующее сообщение снова её загрузит ({duration})."
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{node} остановлена, чтобы запустить {other}. Следующее сообщение снова её загрузит ({duration})."
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "Использовать {next}"
+  },
   "nodes.displaces": {
     "defaultMessage": "Запуск остановит {names}"
   },
   "nodes.duplicate": {
     "defaultMessage": "Дублировать"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "около {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "первая загрузка ещё не измерена"
   },
   "nodes.editInPool": {
     "defaultMessage": "Изменить в пуле роя"
@@ -6283,6 +6310,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "Всегда доступен · обслуживает {provider}"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} работает на {node} ({rank}): {primary} не может работать: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "Повторить {primary}"
   },
   "nodes.firstStart": {
     "defaultMessage": "Первый запуск ещё не измерен"
@@ -6349,6 +6382,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{{count, number} устройство LM Studio из вашей конфигурации роя здесь не показано} few{{count, number} устройства LM Studio из вашей конфигурации роя здесь не показаны} many{{count, number} устройств LM Studio из вашей конфигурации роя здесь не показаны} other{{count, number} устройства LM Studio из вашей конфигурации роя здесь не показаны}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} не удалось загрузить: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} из {total} ГБ"
@@ -6596,6 +6632,9 @@
   "nodes.poolSection": {
     "defaultMessage": "Ваш пул роя · используется сборками swarm, пока «Сборки swarm используют» — «Ваш пул роя»"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {#-й}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "Не удалось прочитать ваши узлы"
   },
@@ -6607,6 +6646,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "Не удалено"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "Не удаётся загрузить {node}: сборка swarm использует {way}. Освободится, когда сборка закончится."
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "Не удаётся загрузить {node} на {mac}: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "Не удаётся загрузить {node}: {kept} закреплена загруженной на {mac}."
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "Освободить место"
   },
   "nodes.remove": {
     "defaultMessage": "Удалить"
@@ -6740,8 +6791,17 @@
   "nodes.title": {
     "defaultMessage": "Узлы"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "Первая загрузка {node}, ещё не измерена"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, one {Загружается примерно за {duration} · медиана # загрузки} few {Загружается примерно за {duration} · медиана # загрузок} many {Загружается примерно за {duration} · медиана # загрузок} other {Загружается примерно за {duration} · медиана # загрузки}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "Загрузка {node} для этого чата: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, one {Ждём, пока {way} закончит # ответ, затем загрузим {node} ({duration})} few {Ждём, пока {way} закончит # ответа, затем загрузим {node} ({duration})} many {Ждём, пока {way} закончит # ответов, затем загрузим {node} ({duration})} other {Ждём, пока {way} закончит # ответа, затем загрузим {node} ({duration})}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Изменение не удалось сохранить"
@@ -6760,6 +6820,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "Этот Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "Чат → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "Чат → узел не задан"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "Движок LeanZero MLX…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "Управлять узлами…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "Узлы"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "Другие модели и провайдеры…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "Облачные модели и ваши эндпоинты"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "запускается примерно за {duration}"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "Стратегии"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "Где запускать этот чат"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."

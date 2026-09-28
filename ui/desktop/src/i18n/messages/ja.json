@@ -848,8 +848,8 @@
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
-  "composerReadiness.distributedMismatch": {
-    "defaultMessage": "分割は {served} を提供しています。ノードは {wanted} を求めています。"
+  "composerReadiness.distributedMismatchNode": {
+    "defaultMessage": "分割は {served} を提供中です。{node} は {wanted} を必要としています。"
   },
   "composerReadiness.failed": {
     "defaultMessage": "前回のマウントに失敗しました: {error}"
@@ -866,8 +866,8 @@
   "composerReadiness.loadHere": {
     "defaultMessage": "{model} をここで読み込む{size, select, none {} other { ({size} GB)}}"
   },
-  "composerReadiness.mismatch": {
-    "defaultMessage": "保存された MLX モデルは {served} を提供していますが、ノードは {wanted} を必要としています。"
+  "composerReadiness.mismatchNode": {
+    "defaultMessage": "保存済みの MLX モデルは {served} を提供します。{node} は {wanted} を必要としています。"
   },
   "composerReadiness.mlxEngine": {
     "defaultMessage": "LeanZero MLX"
@@ -6266,11 +6266,38 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.displacedActionFailed": {
+    "defaultMessage": "うまくいきませんでした: {error}"
+  },
+  "nodes.displacedFailed": {
+    "defaultMessage": "{node} は {other} のために停止されましたが、{other} の読み込みに失敗しました: {words}。次のメッセージで {node} を再度読み込みます。"
+  },
+  "nodes.displacedKeep": {
+    "defaultMessage": "{node} を読み込んだままにする"
+  },
+  "nodes.displacedKeepHint": {
+    "defaultMessage": "{node} を今すぐ再度読み込み、他のノードのために停止しないようにします"
+  },
+  "nodes.displacedNotice": {
+    "defaultMessage": "{node} はチャット「{chat}」の {other} のために停止されました。次のメッセージで再度読み込みます（{duration}）。"
+  },
+  "nodes.displacedNoticeStarted": {
+    "defaultMessage": "{other} を開始するために {node} が停止されました。次のメッセージで再度読み込みます（{duration}）。"
+  },
+  "nodes.displacedUse": {
+    "defaultMessage": "代わりに {next} を使う"
+  },
   "nodes.displaces": {
     "defaultMessage": "起動すると {names} が停止します"
   },
   "nodes.duplicate": {
     "defaultMessage": "複製"
+  },
+  "nodes.durationAbout": {
+    "defaultMessage": "約 {duration}"
+  },
+  "nodes.durationUnmeasured": {
+    "defaultMessage": "初回の読み込みはまだ計測されていません"
   },
   "nodes.editInPool": {
     "defaultMessage": "スウォームのプールで編集"
@@ -6283,6 +6310,12 @@
   },
   "nodes.endpointAlways": {
     "defaultMessage": "常に利用可能 · {provider} が提供"
+  },
+  "nodes.fellBack": {
+    "defaultMessage": "{role} は {node}（{rank}）で動作中: {primary} は実行できません: {reason}"
+  },
+  "nodes.fellBackRetry": {
+    "defaultMessage": "{primary} を再試行"
   },
   "nodes.firstStart": {
     "defaultMessage": "初回起動はまだ計測されていません"
@@ -6349,6 +6382,9 @@
   },
   "nodes.lmStudioHidden": {
     "defaultMessage": "{count,plural,one{swarm 設定内の LM Studio デバイス {count, number} 台はここに表示されません} other{swarm 設定内の LM Studio デバイス {count, number} 台はここに表示されません}}"
+  },
+  "nodes.loadFailed": {
+    "defaultMessage": "{node} の読み込みに失敗しました: {words}"
   },
   "nodes.loadProgress": {
     "defaultMessage": "{phase} · {done} / {total} GB"
@@ -6596,6 +6632,9 @@
   "nodes.poolSection": {
     "defaultMessage": "あなたのスウォームのプール · 「swarm のビルドの使用先」が「あなたのスウォームのプール」のとき、swarm のビルドが使用します"
   },
+  "nodes.rankOrdinal": {
+    "defaultMessage": "{rank, selectordinal, other {#番目}}"
+  },
   "nodes.readFailed": {
     "defaultMessage": "ノードを読み取れませんでした"
   },
@@ -6607,6 +6646,18 @@
   },
   "nodes.refused": {
     "defaultMessage": "削除されませんでした"
+  },
+  "nodes.refusedBuild": {
+    "defaultMessage": "{node} を読み込めません: swarm ビルドが {way} を使用中です。ビルドが終わると空きます。"
+  },
+  "nodes.refusedFit": {
+    "defaultMessage": "{mac} で {node} を読み込めません: {verdict}"
+  },
+  "nodes.refusedKept": {
+    "defaultMessage": "{node} を読み込めません: {kept} は {mac} で読み込んだままに設定されています。"
+  },
+  "nodes.refusedMakeRoom": {
+    "defaultMessage": "空きを作る"
   },
   "nodes.remove": {
     "defaultMessage": "削除"
@@ -6740,8 +6791,17 @@
   "nodes.title": {
     "defaultMessage": "ノード"
   },
+  "nodes.turnFirstLoad": {
+    "defaultMessage": "{node} の初回読み込み、まだ計測されていません"
+  },
+  "nodes.turnLoadMedian": {
+    "defaultMessage": "{count, plural, other {約 {duration} で読み込み · # 回の読み込みの中央値}}"
+  },
   "nodes.turnLoading": {
     "defaultMessage": "このチャットのために {node} を読み込み中: {phase}"
+  },
+  "nodes.turnWaiting": {
+    "defaultMessage": "{count, plural, other {{way} が # 件の返信を終えるのを待っています。その後 {node} を読み込みます（{duration}）}}"
   },
   "nodes.useFailed": {
     "defaultMessage": "変更を保存できませんでした"
@@ -6760,6 +6820,36 @@
   },
   "nodes.whereThisMac": {
     "defaultMessage": "この Mac"
+  },
+  "nodesChipMenu.chatOn": {
+    "defaultMessage": "チャット → {node}"
+  },
+  "nodesChipMenu.chatOnNone": {
+    "defaultMessage": "チャット → ノード未設定"
+  },
+  "nodesChipMenu.engine": {
+    "defaultMessage": "LeanZero MLX エンジン…"
+  },
+  "nodesChipMenu.manageNodes": {
+    "defaultMessage": "ノードを管理…"
+  },
+  "nodesChipMenu.nodes": {
+    "defaultMessage": "ノード"
+  },
+  "nodesChipMenu.otherModels": {
+    "defaultMessage": "他のモデルとプロバイダー…"
+  },
+  "nodesChipMenu.otherModelsHint": {
+    "defaultMessage": "クラウドモデルとあなたのエンドポイント"
+  },
+  "nodesChipMenu.startsIn": {
+    "defaultMessage": "約 {duration} で起動"
+  },
+  "nodesChipMenu.strategies": {
+    "defaultMessage": "戦略"
+  },
+  "nodesChipMenu.title": {
+    "defaultMessage": "このチャットの実行先"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"
