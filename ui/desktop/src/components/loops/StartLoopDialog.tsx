@@ -74,8 +74,8 @@ const FIELD = cx(
   RADIUS.control
 );
 
-// The meta SIZE with the err ink: TYPE.meta carries its own ink-3, and in the compiled CSS an ink
-// utility beats text-lz-err (measured: text-lz-err and text-lz-accent lose to every text-lz-ink*).
+// The meta SIZE with the err ink. Since Q-247 any tone beats a base ink in the compiled CSS, so
+// TYPE.meta would paint red too; this keeps the line's size and weight in one place.
 const ERROR_TEXT = cx('break-words text-lz-meta', WEIGHT.semibold, TONE_TEXT.err);
 
 export interface StartLoopFacts {
