@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 13:47 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 14:5x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -17,24 +17,31 @@ Updated: 2026-09-28 13:47 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 
 ## Agents
 - Q-344 (a card answer must not supersede its sibling; ON the Q-340/341 branch — they land together) ·
-  Q-350 + Q-343 (activity says single/off while the split restores; 2,684 unfinished request logs) ·
-  Q-346 (mid-turn prompt rebuild drops project instructions; ON Q-342) · Q-347 (post-compaction cold head).
-- Q-342 merged into scratch /tmp/merge-q342 (+ main), gate → /tmp/g342.out (relaunched 13:26; the first died).
-- #3r turn 2 (13:40): the 27B invented `websearch`/`fetch` 13× before the real web tool → Q-367 + Q-368
-  (facts paragraph restated 4×) CUTTING (wire read first). Turn 2 ended 761 s, 27 tools, a correct
-  sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turn 3 running. Studio-side: forge-tuner got a
+ 
+- Q-342 MERGED to main 757c3458a (gate green). Q-346 done → scratch /tmp/merge-q346, gate /tmp/g346.out (tracked task; the nohup waiter died) queued
+  behind g344's cargo (one main target). Q-350+343 done → /tmp/merge-q350, UI gate now,
+  cargo /tmp/g350.out behind g346. Q-347 (stable head kept
+  entry; wire tag → BOTH Macs need 3.0.71) → /tmp/merge-q347, gate /tmp/g347.out after g350. All gates run from
+  scratchpad/gates.sh + gate347.sh in their own session (five background gates were killed, cause unproven). Disk swept 16 → 75 GB (my old scratchpad held 56 GB).
+- Q-367 (tool-not-found error leads with the closest real tools) + Q-369 (load_tools' false message) DONE →
+  /tmp/merge-q367, gate /tmp/g367.out after g347. Q-368 = model behaviour (no goose cause; 4 restatements, turn 2). Turn 2 ended 761 s, 27 tools, a correct
+  sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turns 3–4 done (1106 s / 176 s);
+  turn 3's `write` lost every `=>` (SyntaxError, two rewrites) → Q-371 CUTTING. Turn 5 running. Studio-side: forge-tuner got a
   goose tool-call training proposal (docs/GOOSE-TOOLCALL-ROUND.md, 6631628) — owner picks public vs private data.
 - Owner features (designs DESIGN-Q357/358/359-*.md): Q-357 compaction revamp CUTTING (all slices, on merge-q342) ·
   Q-358 search S1+S2 CUTTING; notes S3–S5 QUEUED behind: merge-q344 · Q-359 C0/C1/C2/C4 CUTTING; C3 SCHEDULED
   waits on: relay decode tok/s + 4-delegates-on-2-Macs wall time.
-- Q-340/341+344 merged into scratch /tmp/merge-q344; gate → /tmp/g344.out (UI green: tsc, vitest 4180, eslint src 0, i18n; cargo after g342).
+- Q-340/341/344 ON MAIN 838b93b62 (gate green). Q-358 notes S3–S5 DISPATCHED (was queued behind it).
 - Queued: Q-334 (focus ring colour outside the local edition), Q-335 (~55 faded opacity uses), Q-336/261/281
   (model behaviour, measured on #3q).
 
 ## Next actions (in order)
 1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3r turn boundary.
 2. On 3.0.71: live critic walk (Q-325's visual change, Q-337's bar, needs-you fold/queue), then E2E #3s.
-2b. Q-344 lands → dispatch Q-358 S3–S5 (notes between chats).
+2a. Owner: the E2E must ANSWER needs-you cards → Q-376 CUTTING (r1.mjs answers via the UI from brief guidance,
+   records delivery/clear/siblings/next words). On 3.0.71, before #3s: answer #3p's 2 open cards (20260928_19) and
+   20260928_17's by hand over CDP as a first live prove.
+2b. Before 3.0.71: one FULL gate on merged main (lanes were gated on different bases).
 3. Live proves still open: Q-254/272 swap words, Q-257 two windows, Q-276 kill -9 → restore, Q-278 J2, J4.
 
 ## Standing rules for every tick

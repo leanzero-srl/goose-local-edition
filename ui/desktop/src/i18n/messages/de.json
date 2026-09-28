@@ -6116,8 +6116,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Antworten"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose arbeitet — du kannst antworten, wenn dieser Durchgang endet."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose arbeitet — eine Antwort, die du jetzt gibst, wartet und wird gesendet, wenn dieser Durchgang endet."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Abbrechen"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Hinweis schließen"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "In der Warteschlange · antwortet, wenn dieser Durchgang endet"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Wartet"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Deine Antwort wird gesendet…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Braucht dich · # Frage} other {Braucht dich · # Fragen}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} wartend"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Deine Antwort: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Nicht gesendet — diese Frage wurde geschlossen, bevor deine wartende Antwort gesendet werden konnte."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Nicht gesendet — deine wartende Antwort konnte nicht gespeichert werden: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Verwerfen"

@@ -37,6 +37,7 @@ import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
 import NeedsYouTray from './sessionActivity/NeedsYouCard';
+import { answersWaiting, useAnswerQueue } from './sessionActivity/needsYouAnswerQueue';
 import { BackgroundWorkLine } from './sessionActivity/BackgroundWorkLine';
 import { TurnWorkingRow } from './turnWorking/TurnWorkingRow';
 import { turnProducedNothing } from './turnWorking/turnProducedNothing';
@@ -283,6 +284,8 @@ export default function BaseChat({
     sessionId,
     onStreamFinish,
   });
+  // Q-341: answers queued on a needs-you card go before the composer's queued messages.
+  const answerQueue = useAnswerQueue(sessionId);
 
   const handleWorkingDirChange = useCallback(
     async (newDir: string) => {
@@ -722,7 +725,10 @@ export default function BaseChat({
         <NeedsYouTray
           sessionId={sessionId}
           chatState={chatState}
-          sendAnswer={(text) => chatInputSubmit({ msg: text, images: [] })}
+          sendBlocked={queueProcessingBlocked}
+          sendAnswer={(text, answered) =>
+            chatInputSubmit({ msg: text, images: [], needsYouAnswers: answered })
+          }
           submitElicitationResponse={submitElicitationResponse}
           className="relative z-10 mx-4 mb-2"
         />
@@ -745,6 +751,7 @@ export default function BaseChat({
             onSteerQueuedMessage={onSteerQueuedMessage}
             pauseQueueOnStop={pauseQueueOnStop}
             queueProcessingBlocked={queueProcessingBlocked}
+            queueHeld={answersWaiting(answerQueue)}
             commandHistory={commandHistory}
             initialValue={initialPrompt}
             setView={setView}

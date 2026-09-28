@@ -6116,8 +6116,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "回答"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose 正在工作——本轮结束后即可回答。"
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose 正在工作——现在给出的回答会先排队，本轮结束时发送。"
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "取消"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "关闭此提示"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "已排队 · 本轮结束时回答"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "已排队"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "正在发送你的回答…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {需要你 · # 个问题}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} 个已排队"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "你的回答：{answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "未发送——排队的回答发出之前，这个问题已关闭。"
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "未发送——无法保存你排队的回答：{error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "忽略"
