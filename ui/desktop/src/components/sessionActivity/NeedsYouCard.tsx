@@ -6,6 +6,7 @@ import { Button, FOCUS, MOTION, RADIUS, TNUM, TONE_FILL, TYPE, WEIGHT, cx } from
 import { ChatState } from '../../types/chatState';
 import {
   answerMessage,
+  pickOptions,
   resolveNeedsYou,
   useSessionActivity,
   type NeedsYouItemDto,
@@ -52,6 +53,7 @@ export function QuestionCard({ item, index, total, busy, onAnswer, onDismiss }: 
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const locked = busy || sending;
+  const options = pickOptions(item);
 
   const act = async (run: () => Promise<void>) => {
     setSending(true);
@@ -78,7 +80,9 @@ export function QuestionCard({ item, index, total, busy, onAnswer, onDismiss }: 
     >
       <div className={BAND}>
         <Hand aria-hidden />
-        <span className={cx('text-lz-body', WEIGHT.semibold)}>{intl.formatMessage(i18n.title)}</span>
+        <span className={cx('text-lz-body', WEIGHT.semibold)}>
+          {intl.formatMessage(i18n.title)}
+        </span>
         {total > 1 && (
           <span className={cx('ml-auto text-lz-meta', TNUM)}>
             {intl.formatMessage(i18n.position, { index, total })}
@@ -117,11 +121,11 @@ export function QuestionCard({ item, index, total, busy, onAnswer, onDismiss }: 
           </button>
         </div>
 
-        {item.options.length > 0 && (
+        {options.length > 0 && (
           <div className="flex flex-col gap-1">
             <span className={TYPE.zone}>{intl.formatMessage(i18n.options)}</span>
             <div className="flex flex-wrap gap-1.5">
-              {item.options.map((option) => (
+              {options.map((option) => (
                 <button
                   key={option}
                   type="button"

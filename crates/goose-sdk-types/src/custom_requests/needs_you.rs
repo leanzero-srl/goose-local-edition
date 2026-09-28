@@ -12,6 +12,8 @@ pub enum NeedsYouStatus {
     Open,
     Answered,
     Dismissed,
+    // The person sent a chat message while the question was open instead of answering it (Q-298).
+    Superseded,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -30,6 +32,10 @@ pub struct NeedsYouItemDto {
     pub status: NeedsYouStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// The message that superseded the question, verbatim; set exactly when `status` is
+    /// `superseded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

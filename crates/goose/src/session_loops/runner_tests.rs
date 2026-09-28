@@ -955,6 +955,39 @@ async fn an_answered_question_holds_the_loop_until_the_answers_turn_ends() {
     );
 }
 
+/// Q-298: the person wrote instead of answering. Their message runs as their turn, the loop holds
+/// until it ends, and the next tick is told the question was not answered, with their words.
+#[tokio::test]
+async fn a_superseded_question_holds_the_loop_like_an_answer_and_quotes_the_message() {
+    let bed = bed().await;
+    let item = a_tick_that_asks(&bed).await;
+    let superseded = needs_you::supersede_open(
+        &bed.sessions,
+        &bed.session,
+        "Use tabs, and stop after the next file.",
+    )
+    .await
+    .unwrap();
+    assert_eq!(superseded.len(), 1);
+    assert_eq!(superseded[0].id, item);
+    bed.runner.needs_you_resolved(&bed.session, &item);
+    bed.until("the person's turn runs", |r| {
+        r.status_reason == Some(LoopStatusReason::AnswerRunning { n: 1 })
+    })
+    .await;
+    settle().await;
+    assert_eq!(bed.door.dues().len(), 1);
+    bed.runner.user_turn_ended(&bed.session);
+    let due = bed.due(2).await;
+    assert!(
+        due.prompt.contains(
+            "they did not answer it and wrote instead: \"Use tabs, and stop after the next file.\""
+        ),
+        "{}",
+        due.prompt
+    );
+}
+
 #[tokio::test]
 async fn a_dismissed_question_lets_the_next_tick_come_at_once() {
     let bed = bed().await;

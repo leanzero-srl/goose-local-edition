@@ -5771,7 +5771,8 @@ export const zRunningSessionDto = z.object({
 export const zNeedsYouStatus = z.enum([
     'open',
     'answered',
-    'dismissed'
+    'dismissed',
+    'superseded'
 ]);
 
 export const zNeedsYouItemDto = z.object({
@@ -5786,6 +5787,10 @@ export const zNeedsYouItemDto = z.object({
     createdAt: z.string(),
     status: zNeedsYouStatus,
     answer: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    supersededBy: z.union([
         z.string(),
         z.null()
     ]).optional()

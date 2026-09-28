@@ -414,6 +414,29 @@ export function answerMessage(question: string, answer: string): string {
   return `Answer to your question "${question.trim()}": ${answer.trim()}`;
 }
 
+const normalized = (text: string) => text.trim().toLowerCase();
+
+/** What may follow an option inside the recommendation when the rest is only its reason. */
+const REASON_BREAK = /^\s*(?:[.;:,!?]|[—–]\s|\()/;
+
+/**
+ * Q-319: the "Or pick" chips are the alternatives to the recommendation. An option the
+ * recommendation already IS — the same words, or the same words followed by its reason ("migrate —
+ * apply the lead override in every case. The rule is satisfied…") — would repeat the recommended
+ * button as the first chip, so it is left out. An option that is only a shared first word ("migrate"
+ * beside "migrate + a marker") stays: the recommendation goes on with more choice, not a reason.
+ */
+export function pickOptions(
+  item: Pick<NeedsYouItemDto, 'recommendedAnswer' | 'options'>
+): string[] {
+  const recommended = normalized(item.recommendedAnswer);
+  return item.options.filter((option) => {
+    const choice = normalized(option);
+    if (choice.length === 0 || choice === recommended) return false;
+    return !(recommended.startsWith(choice) && REASON_BREAK.test(recommended.slice(choice.length)));
+  });
+}
+
 /** "27m", "1h 05m", "40s" — the live elapsed of a running turn. */
 export function elapsedLabel(sinceIso: string, now: number): string {
   const seconds = Math.max(0, Math.floor((now - Date.parse(sinceIso)) / 1000));

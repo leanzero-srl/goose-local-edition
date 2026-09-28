@@ -48,9 +48,18 @@ function folderOf(path: string): string {
   return parts[parts.length - 1] ?? '';
 }
 
+/**
+ * Q-324: at a narrow window (460 px measured) the pill's words took the top bar and left the chat
+ * title "J…". Below the app's narrow-layout width (the one TickRow and SessionRail fold at) the pill
+ * keeps its icon and the count only; the words stay its accessible name.
+ */
+const WORDS = 'max-[560px]:hidden';
+const COUNT_ONLY = 'hidden max-[560px]:inline';
+
 interface GroupProps {
   testId: string;
   label: string;
+  count: number;
   menuLabel: string;
   fill: string;
   icon: React.ReactNode;
@@ -59,11 +68,32 @@ interface GroupProps {
 }
 
 /** One solid pill per state. One session: the pill jumps straight there. More: it lists them. */
-function ActivityGroup({ testId, label, menuLabel, fill, icon, sessions, detail }: GroupProps) {
+function ActivityGroup({
+  testId,
+  label,
+  count,
+  menuLabel,
+  fill,
+  icon,
+  sessions,
+  detail,
+}: GroupProps) {
   const intl = useIntl();
   const navigate = useNavigate();
   const nameOf = (s: ActiveSession) =>
     s.sessionName ? displaySessionListName(s.sessionName) : intl.formatMessage(i18n.unnamed);
+
+  const face = (
+    <>
+      {icon}
+      <span data-testid={`${testId}-words`} className={WORDS}>
+        {label}
+      </span>
+      <span data-testid={`${testId}-count`} aria-hidden className={COUNT_ONLY}>
+        {count}
+      </span>
+    </>
+  );
 
   if (sessions.length === 1) {
     const only = sessions[0];
@@ -72,20 +102,24 @@ function ActivityGroup({ testId, label, menuLabel, fill, icon, sessions, detail 
         type="button"
         data-testid={testId}
         title={`${nameOf(only)} — ${detail(only)}`}
+        aria-label={label}
         onClick={() => navigate(sessionHref(only.sessionId))}
         className={cx(PILL_BUTTON, fill)}
       >
-        {icon}
-        {label}
+        {face}
       </button>
     );
   }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" data-testid={testId} className={cx(PILL_BUTTON, fill)}>
-          {icon}
-          {label}
+        <button
+          type="button"
+          data-testid={testId}
+          aria-label={label}
+          className={cx(PILL_BUTTON, fill)}
+        >
+          {face}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-80" data-testid={`${testId}-menu`}>
@@ -121,15 +155,15 @@ export default function SessionActivityIndicator() {
   const waiting = active.filter((s) => s.needsYou > 0);
   const running = active.filter((s) => s.runningSince);
   if (waiting.length === 0 && running.length === 0) return null;
+  const waitingCount = waiting.reduce((n, s) => n + s.needsYou, 0);
 
   return (
     <div data-testid="session-activity-indicator" className="flex items-center gap-1.5">
       {waiting.length > 0 && (
         <ActivityGroup
           testId="indicator-needs-you"
-          label={intl.formatMessage(i18n.needsYou, {
-            count: waiting.reduce((n, s) => n + s.needsYou, 0),
-          })}
+          label={intl.formatMessage(i18n.needsYou, { count: waitingCount })}
+          count={waitingCount}
           menuLabel={intl.formatMessage(i18n.needsYouMenu)}
           fill={TONE_FILL.warn}
           icon={<Hand aria-hidden />}
@@ -141,6 +175,7 @@ export default function SessionActivityIndicator() {
         <ActivityGroup
           testId="indicator-running"
           label={intl.formatMessage(i18n.running, { count: running.length })}
+          count={running.length}
           menuLabel={intl.formatMessage(i18n.runningMenu)}
           fill={PHASE_FILL.writing}
           icon={<span aria-hidden className="size-2 animate-lz-live rounded-full bg-current" />}

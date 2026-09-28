@@ -3,7 +3,8 @@ import { CircleStop, Hand, Repeat, TriangleAlert } from 'lucide-react';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
 import { PHASE_FILL, RADIUS, TNUM, TONE_FILL, cx, type Tone } from '../lz';
-import { clockTime, parseTime } from '../loops/model';
+import { parseTime } from '../loops/model';
+import { chatClockTime, viewerOffsetMinutes } from '../loops/loopView';
 import { backgroundWorkLabel, backgroundWorkShort } from './backgroundWorkText';
 import {
   elapsedLabel,
@@ -179,11 +180,6 @@ interface LoopPillFace {
   tone: Tone;
 }
 
-/** The viewer's own UTC offset at that moment, so "Next 22:40" is the time on their clock. */
-function localClock(ms: number): ReturnType<typeof clockTime> {
-  return clockTime(ms, -new Date(ms).getTimezoneOffset());
-}
-
 function loopPillFace(
   intl: IntlShape,
   status: LoopStatus | undefined,
@@ -212,7 +208,11 @@ function loopPillFace(
         return looping(intl.formatMessage(i18n.loopLabelNextMissing));
       }
       const parsed = parseTime(nextTickAt);
-      const time = parsed.ok ? localClock(parsed.value) : parsed;
+      // The chat's own clock at the viewer's offset ("Next 10:40 PM" beside a transcript's
+      // "10:38 PM"), the one every other loop time uses since Q-316.
+      const time = parsed.ok
+        ? chatClockTime(parsed.value, viewerOffsetMinutes(parsed.value))
+        : parsed;
       if (!time.ok) {
         return looping(intl.formatMessage(i18n.loopLabelNextUnreadable, { error: time.error }));
       }
