@@ -113,6 +113,9 @@ pub trait NodeLoader: Send + Sync {
     /// A SYNCHRONOUS delegate session runs inside its parent's reply (the parent is blocked in the
     /// tool call): its demand is the parent's own.
     fn note_child(&self, child_session: &str, parent_session: &str);
+    /// That synchronous delegate's run ended: the way it leased is no longer held for it, so a
+    /// sibling delegate of the same turn waiting on it may switch.
+    fn child_ended(&self, child_session: &str);
     /// A reply of `session` for as long as the hold lives — a BACKGROUND delegate's, which runs
     /// beside its parent's turn and can outlive it: its demand is its own (it waits for the
     /// parent's reply like any other's), and it keeps its way after the parent's reply ends. It is
@@ -184,6 +187,25 @@ pub fn note_lease(session: &str, way: &MlxPlacementKeyDto) {
 pub fn note_child(child_session: &str, parent_session: &str) {
     if let Some(loader) = LOADER.get() {
         loader.note_child(child_session, parent_session);
+    }
+}
+
+/// A synchronous delegate's run: its parent's child from `begin` until it drops — however the run
+/// ends (answered, failed, cancelled with the parent's turn).
+pub struct SyncDelegate(String);
+
+impl SyncDelegate {
+    pub fn begin(child_session: &str, parent_session: &str) -> Self {
+        note_child(child_session, parent_session);
+        SyncDelegate(child_session.to_string())
+    }
+}
+
+impl Drop for SyncDelegate {
+    fn drop(&mut self) {
+        if let Some(loader) = LOADER.get() {
+            loader.child_ended(&self.0);
+        }
     }
 }
 

@@ -416,6 +416,9 @@ async fn a_delegates_demand_is_its_parents_own_and_does_not_deadlock() {
         goose_sidecar::placement::store::PlacementKind::Pipeline,
         "the delegate's lease is held by its parent's reply"
     );
+    // The parent's next call comes only once the delegate's tool call returned (summon's
+    // `SyncDelegate` ends it).
+    core.holds().child_ended("delegate");
     let back = tokio::time::timeout(
         SETTLE,
         core.ensure_serving(demand(&fake, "flash", Some("parent"))),
@@ -429,6 +432,70 @@ async fn a_delegates_demand_is_its_parents_own_and_does_not_deadlock() {
         "two swaps per delegate call: {:?}",
         fake.log()
     );
+}
+
+/// Q-359 C4: two synchronous delegates of ONE turn run together (tool calls of one message) and
+/// share the turn's root. A sibling's switch must not stop the way the other streams on: it waits
+/// for that delegate's run to end, then switches — and the parent, blocked on both, holds nothing.
+#[tokio::test]
+async fn a_delegates_switch_waits_for_its_sibling_delegate_on_the_way_it_would_stop() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let _parent = core.holds().open_reply("parent");
+    lease(&core, "parent", &fake, "flash");
+    core.holds().note_child("delegate-1", "parent");
+    core.holds().note_child("delegate-2", "parent");
+    // Delegate 1 streams on Flash.
+    assert_eq!(
+        core.ensure_serving(demand(&fake, "flash", Some("delegate-1")))
+            .await,
+        NodeEnsureServing::Ready
+    );
+    lease(&core, "delegate-1", &fake, "flash");
+    // Delegate 2 wants the split, which would stop Flash under delegate 1.
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("delegate-2"));
+    let second = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("delegate 2 waits for its sibling", || {
+        waiting(&core, "split").is_some_and(|w| w.contains("is answering 1 reply"))
+    })
+    .await;
+    assert!(
+        fake.log().is_empty(),
+        "nothing stopped under delegate 1: {:?}",
+        fake.log()
+    );
+    // Delegate 1's run ends: delegate 2 switches.
+    core.holds().child_ended("delegate-1");
+    assert_eq!(answer(second).await, NodeEnsureServing::Ready);
+    assert_eq!(
+        fake.log(),
+        vec![
+            "stop Local rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string(),
+            "start split".to_string()
+        ]
+    );
+}
+
+/// A delegate waiting in the loader holds nothing against its siblings: while delegate 1 waits for
+/// a switch queued ahead of it, delegate 2's switch is not blocked by delegate 1's earlier lease.
+#[tokio::test]
+async fn a_waiting_sibling_delegate_holds_nothing() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let _parent = core.holds().open_reply("parent");
+    core.holds().note_child("delegate-1", "parent");
+    core.holds().note_child("delegate-2", "parent");
+    lease(&core, "delegate-1", &fake, "flash");
+    core.holds().set_waiting("parent", "delegate-1", true);
+    let got = tokio::time::timeout(
+        SETTLE,
+        core.ensure_serving(demand(&fake, "split", Some("delegate-2"))),
+    )
+    .await
+    .expect("a waiting sibling never blocks");
+    assert_eq!(got, NodeEnsureServing::Ready);
+    core.holds().set_waiting("parent", "delegate-1", false);
 }
 
 /// A reply that opens after a queued switch and wants the running way waits behind the switch —
@@ -1495,6 +1562,10 @@ struct StandInWindow {
 
 impl StandInWindow {
     fn open(dir: &std::path::Path) -> Self {
+        // Q-365: the stand-in takes its lock at once, and this process makes the directory only at
+        // its first publish — under a loaded test run the stand-in got there first and died
+        // (FileNotFoundError, then a broken pipe on the first `holds`).
+        std::fs::create_dir_all(dir).unwrap();
         let mut child = tokio::process::Command::new("/usr/bin/python3")
             .args(["-c", STAND_IN_WINDOW, dir.to_str().unwrap()])
             .stdin(std::process::Stdio::piped())

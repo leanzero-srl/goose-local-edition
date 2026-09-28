@@ -30,6 +30,17 @@ pub(crate) struct Reply {
     /// flight (a delegate's demand counts for its parent's reply).
     pub waiting: u32,
     pub kind: ReplyKind,
+    /// Every session whose leases this reply carries — its own and its SYNCHRONOUS delegates',
+    /// which share its root — with the way each last leased and its own waits in the loader. The
+    /// reply-wide `way` and `waiting` are what other processes see; these are what tells the
+    /// reply's own sessions apart (Q-359 C4: two delegates of one turn run together).
+    members: HashMap<String, Member>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Member {
+    way: Option<PlacementKey>,
+    waiting: u32,
 }
 
 #[derive(Default)]
@@ -37,8 +48,25 @@ struct State {
     replies: HashMap<u64, Reply>,
     /// The open reply of each session.
     open: HashMap<String, u64>,
-    /// A delegate session's parent (summon's `note_child`).
+    /// A delegate session's root (summon's `note_child`).
     parents: HashMap<String, String>,
+    /// A synchronous delegate session's own parent: the sessions blocked in a tool call on it.
+    summoned_by: HashMap<String, String>,
+}
+
+/// Whose replies a look at the open replies leaves out.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Own<'a> {
+    Nobody,
+    /// Every reply at this root (the whole chat's turn).
+    Root(&'a str),
+    /// A demand of `session`, whose chat's turn is `root`: that turn's reply is left out only for
+    /// `session` itself and the sessions blocked in a tool call on it. A sibling delegate of the
+    /// same turn, streaming beside it, still holds its way.
+    Demand {
+        root: &'a str,
+        session: &'a str,
+    },
 }
 
 /// What must end before a switch may stop a way.
@@ -179,6 +207,7 @@ impl Holds {
                     opened: id,
                     waiting: 0,
                     kind,
+                    members: HashMap::new(),
                 },
             );
             state.open.insert(session.to_string(), id);
@@ -199,7 +228,16 @@ impl Holds {
                 state.open.remove(&reply.session);
             }
             // A delegate runs inside its parent's reply: when the reply ends, so do they.
-            state.parents.retain(|_, root| *root != reply.session);
+            let ended: Vec<String> = state
+                .parents
+                .iter()
+                .filter(|(_, root)| **root == reply.session)
+                .map(|(child, _)| child.clone())
+                .collect();
+            for child in ended {
+                state.parents.remove(&child);
+                state.summoned_by.remove(&child);
+            }
             reply.way.is_some()
         };
         if published {
@@ -254,7 +292,14 @@ impl Holds {
                 .replies
                 .get_mut(&id)
                 .expect("an open reply is registered");
+            let member = reply.members.entry(session.to_string()).or_default();
+            let member_moved = member.way.as_ref() != Some(&way);
+            member.way = Some(way.clone());
             if reply.way.as_ref() == Some(&way) {
+                if member_moved {
+                    drop(state);
+                    self.bump();
+                }
                 return;
             }
             let newly = reply.way.is_none();
@@ -282,11 +327,34 @@ impl Holds {
         let root = root_in(&state, parent);
         if root != child {
             state.parents.insert(child.to_string(), root);
+            state
+                .summoned_by
+                .insert(child.to_string(), parent.to_string());
         }
     }
 
-    /// The reply at `root` waits in the loader (or runs again): while it waits it holds nothing.
-    pub fn set_waiting(&self, root: &str, waiting: bool) {
+    /// A synchronous delegate's run ended: the way it leased is no longer held for it, so a
+    /// sibling waiting on it may switch. Its parent's reply keeps holding its own way.
+    pub fn child_ended(&self, child: &str) {
+        {
+            let mut state = self.state.lock().unwrap();
+            let Some(root) = state.parents.remove(child) else {
+                return;
+            };
+            state.summoned_by.remove(child);
+            if let Some(&id) = state.open.get(&root) {
+                if let Some(reply) = state.replies.get_mut(&id) {
+                    reply.members.remove(child);
+                }
+            }
+        }
+        self.bump();
+    }
+
+    /// The reply at `root` waits in the loader (or runs again) for `session`'s demand: while it
+    /// waits it holds nothing — the whole reply to other chats, and `session`'s lease to its own
+    /// turn's other delegates.
+    pub fn set_waiting(&self, root: &str, session: &str, waiting: bool) {
         let target = {
             let mut state = self.state.lock().unwrap();
             let Some(&id) = state.open.get(root) else {
@@ -296,6 +364,12 @@ impl Holds {
                 .replies
                 .get_mut(&id)
                 .expect("an open reply is registered");
+            let member = reply.members.entry(session.to_string()).or_default();
+            member.waiting = if waiting {
+                member.waiting + 1
+            } else {
+                member.waiting.saturating_sub(1)
+            };
             let before = reply.waiting;
             reply.waiting = if waiting {
                 before + 1
@@ -317,11 +391,11 @@ impl Holds {
     }
 
     /// Open replies — in this process and every other goose process on this Mac — that hold a way
-    /// in `stops`, except the demand's own root and replies waiting in a loader.
-    pub fn blockers(&self, stops: &[Stop], own_root: Option<&str>) -> Result<Vec<Blocker>, String> {
+    /// in `stops`, except the demand's own (see [`Own::Demand`]) and replies waiting in a loader.
+    pub fn blockers(&self, stops: &[Stop], own: Own<'_>) -> Result<Vec<Blocker>, String> {
         self.open_replies(
             |way| stops.iter().find(|s| s.held_by(way)).map(|s| s.way.words()),
-            own_root,
+            own,
         )
     }
 
@@ -346,7 +420,7 @@ impl Holds {
                 Some(way) => way.held_by(held).then(|| way.words()),
                 None => WayRef::of_key(held).map(|way| way.words()),
             },
-            own_root,
+            own_root.map_or(Own::Nobody, Own::Root),
         )?;
         Ok(replies
             .into_iter()
@@ -355,11 +429,11 @@ impl Holds {
     }
 
     /// Open replies whose way `words` names, in words — in this process and every other goose
-    /// process on this Mac — except `own_root`'s and replies waiting in a loader.
+    /// process on this Mac — except `own`'s and replies waiting in a loader.
     fn open_replies(
         &self,
         words: impl Fn(&PlacementKey) -> Option<String>,
-        own_root: Option<&str>,
+        own: Own<'_>,
     ) -> Result<Vec<Blocker>, String> {
         let mut out = Vec::new();
         {
@@ -367,7 +441,30 @@ impl Holds {
             let mut here: Vec<&Reply> = state.replies.values().collect();
             here.sort_by_key(|r| r.opened);
             for reply in here {
-                if reply.waiting > 0 || Some(reply.root.as_str()) == own_root {
+                match own {
+                    Own::Demand { root, session } if reply.root == root => {
+                        let mine = summoned_chain(&state, session);
+                        let mut siblings: Vec<(&String, &Member)> = reply
+                            .members
+                            .iter()
+                            .filter(|(s, m)| m.waiting == 0 && !mine.contains(s))
+                            .collect();
+                        siblings.sort_by(|a, b| a.0.cmp(b.0));
+                        for (sibling, member) in siblings {
+                            if let Some(way) = member.way.as_ref().and_then(&words) {
+                                out.push(Blocker::Here {
+                                    session: sibling.clone(),
+                                    way,
+                                    kind: reply.kind,
+                                });
+                            }
+                        }
+                        continue;
+                    }
+                    Own::Root(root) if reply.root == root => continue,
+                    _ => {}
+                }
+                if reply.waiting > 0 {
                     continue;
                 }
                 if let Some(way) = reply.way.as_ref().and_then(&words) {
@@ -494,6 +591,24 @@ impl Holds {
             .and_then(|id| state.replies.get(id))
             .cloned()
     }
+}
+
+/// `session` and every session blocked in a tool call on it, up to its turn's own session: a
+/// synchronous delegate's parent waits for its answer, so none of them has a model call in flight.
+fn summoned_chain(state: &State, session: &str) -> Vec<String> {
+    let mut chain = vec![session.to_string()];
+    let mut at = session;
+    // The same bound as `root_in`: the map's own size, which a cycle could not outrun.
+    for _ in 0..=state.summoned_by.len() {
+        match state.summoned_by.get(at) {
+            Some(parent) => {
+                chain.push(parent.clone());
+                at = parent;
+            }
+            None => break,
+        }
+    }
+    chain
 }
 
 fn root_in(state: &State, session: &str) -> String {

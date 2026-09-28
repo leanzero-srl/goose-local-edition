@@ -1282,8 +1282,8 @@ impl SummonClient {
 
         let subagent_session_id = subagent_session.id.clone();
         // The parent is blocked in this call for the delegate's whole run: its demand is the
-        // parent's own.
-        crate::nodes::seam::note_child(&subagent_session_id, session_id);
+        // parent's own — and it runs beside the turn's other delegates until it ends.
+        let _delegate = crate::nodes::seam::SyncDelegate::begin(&subagent_session_id, session_id);
 
         let result = run_subagent_task(SubagentRunParams {
             config: agent_config,
