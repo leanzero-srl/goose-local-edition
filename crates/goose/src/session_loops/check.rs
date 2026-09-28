@@ -32,8 +32,12 @@ pub struct CheckSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckEnd {
     /// The check exited; `code` is absent when a signal ended it.
-    Exited { code: Option<i32> },
-    CouldNotRun { error: String },
+    Exited {
+        code: Option<i32>,
+    },
+    CouldNotRun {
+        error: String,
+    },
     /// The user stopped it.
     Stopped,
 }
@@ -64,15 +68,24 @@ fn shell(command: &str) -> Command {
 
 fn open_log(path: &Path) -> Result<std::fs::File, String> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("the check's log folder {} could not be made: {e}", dir.display()))?;
+        std::fs::create_dir_all(dir).map_err(|e| {
+            format!(
+                "the check's log folder {} could not be made: {e}",
+                dir.display()
+            )
+        })?;
     }
     std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(path)
-        .map_err(|e| format!("the check's log {} could not be opened: {e}", path.display()))
+        .map_err(|e| {
+            format!(
+                "the check's log {} could not be opened: {e}",
+                path.display()
+            )
+        })
 }
 
 /// The SIGKILL of Stop check: the check's own process group when the proof holds, else its pid.

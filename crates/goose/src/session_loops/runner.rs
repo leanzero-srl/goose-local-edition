@@ -31,10 +31,10 @@ use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use goose_sdk_types::custom_notifications::{LoopsChangedNotification, LoopsTickDueNotification};
 use goose_sdk_types::custom_requests::{
-    LoopCheckRun, LoopControlAction, LoopEdit, LoopNextReason, LoopNextTick, LoopOffer,
-    LoopOwner, LoopRecord, LoopRefusal, LoopRefusalCode, LoopRefuseReason, LoopStatus,
-    LoopStatusReason, LoopTickOrigin, LoopTickOutcome, LoopTickRecord, LoopTokenDelta,
-    LoopsTickRefusedRequest, NodeServedTurnDto,
+    LoopCheckRun, LoopControlAction, LoopEdit, LoopNextReason, LoopNextTick, LoopOffer, LoopOwner,
+    LoopRecord, LoopRefusal, LoopRefusalCode, LoopRefuseReason, LoopStatus, LoopStatusReason,
+    LoopTickOrigin, LoopTickOutcome, LoopTickRecord, LoopTokenDelta, LoopsTickRefusedRequest,
+    NodeServedTurnDto,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -45,7 +45,9 @@ use super::check::{self, CheckEnd, CheckSpec, STOPPED_BY_YOU};
 use super::owner::{self, ProcessTable, SystemProcesses};
 use super::prompt::{self, AskedResolution, PromptFacts};
 use super::record::{self, fmt_time, parse_time};
-use super::rules::{self, AskedItem, CancelCause, NextTickDecision, OwnerProof, TickEnd, TickFacts};
+use super::rules::{
+    self, AskedItem, CancelCause, NextTickDecision, OwnerProof, TickEnd, TickFacts,
+};
 use super::seam::{self, LoopRunner};
 use crate::conversation::message::Message;
 use crate::needs_you::{NeedsYouItem, NeedsYouState, NeedsYouStatus};
@@ -224,6 +226,8 @@ enum Skip {
     NoLoop,
     NotOurs,
     Idle,
+    /// Nothing to write; the loop next needs looking at at this time.
+    Unchanged(DateTime<Utc>),
     Refused(LoopRefusal),
     Store(String),
 }
@@ -246,7 +250,7 @@ fn refused(reason: impl Into<String>) -> Skip {
 fn to_refusal(skip: Skip) -> LoopRefusal {
     match skip {
         Skip::Refused(refusal) => refusal,
-        Skip::NoLoop | Skip::NotOurs | Skip::Idle => LoopRefusal {
+        Skip::NoLoop | Skip::NotOurs | Skip::Idle | Skip::Unchanged(_) => LoopRefusal {
             code: LoopRefusalCode::NoLoop,
             reason: "No loop in this chat.".to_string(),
         },
@@ -354,13 +358,7 @@ impl OfferReservation {
         self.armed = false;
         let (runner, session) = (self.runner.clone(), self.session.clone());
         runner
-            .tick_started(
-                &session,
-                &self.loop_id,
-                self.n,
-                &self.message_id,
-                ticket,
-            )
+            .tick_started(&session, &self.loop_id, self.n, &self.message_id, ticket)
             .await
     }
 }
@@ -547,16 +545,17 @@ impl Runner {
     fn claim_check(&self, rec: &LoopRecord) -> Result<(), Skip> {
         match &rec.owner {
             None => Ok(()),
-            Some(owner) => match owner::prove(owner, &self.me(), self.inner.deps.processes.as_ref())
-            {
-                OwnerProof::ThisProcess | OwnerProof::Gone { .. } => Ok(()),
-                OwnerProof::Live => Err(refused(
-                    "This loop runs in another goose window — use the controls there.",
-                )),
-                OwnerProof::Unproven { why } => Err(refused(format!(
+            Some(owner) => {
+                match owner::prove(owner, &self.me(), self.inner.deps.processes.as_ref()) {
+                    OwnerProof::ThisProcess | OwnerProof::Gone { .. } => Ok(()),
+                    OwnerProof::Live => Err(refused(
+                        "This loop runs in another goose window — use the controls there.",
+                    )),
+                    OwnerProof::Unproven { why } => Err(refused(format!(
                     "Another goose window may run this loop ({why}); goose will not take it over."
                 ))),
-            },
+                }
+            }
         }
     }
 
@@ -627,9 +626,18 @@ impl Runner {
         }
     }
 
-    async fn holder_reason(&self, running: &turn_priority::RunningTurns) -> Option<LoopStatusReason> {
+    async fn holder_reason(
+        &self,
+        running: &turn_priority::RunningTurns,
+    ) -> Option<LoopStatusReason> {
         let session_id = running.sessions.first()?.clone();
-        let chat = match self.inner.deps.sessions.get_session(&session_id, false).await {
+        let chat = match self
+            .inner
+            .deps
+            .sessions
+            .get_session(&session_id, false)
+            .await
+        {
             Ok(session) => session.name,
             Err(error) => {
                 tracing::warn!(session_id, %error, "loop: the chat of a user turn could not be read");
@@ -701,7 +709,7 @@ impl Runner {
                 let at = parse_time(&next.at).map_err(Skip::Store)?;
                 if at > now {
                     if rec.status == LoopStatus::Waiting && rec.next_tick.as_ref() == Some(&next) {
-                        return Err(Skip::Idle);
+                        return Err(Skip::Unchanged(at));
                     }
                     rec.status = LoopStatus::Waiting;
                     rec.status_reason = None;
@@ -756,6 +764,7 @@ impl Runner {
                     }
                 }
             }
+            Err(Skip::Unchanged(at)) => Some(at),
             Err(Skip::NoLoop) | Err(Skip::NotOurs) => {
                 self.state().loops.remove(session_id);
                 None
@@ -783,7 +792,13 @@ impl Runner {
     /// Send the record's open offer on every door (§5.1).
     async fn send_offer(&self, session_id: &str, rec: &LoopRecord) {
         let Some(offer) = &rec.offer else { return };
-        let session = match self.inner.deps.sessions.get_session(session_id, false).await {
+        let session = match self
+            .inner
+            .deps
+            .sessions
+            .get_session(session_id, false)
+            .await
+        {
             Ok(session) => session,
             Err(error) => {
                 tracing::error!(session_id, %error, "loop: the chat of an offer could not be read");
@@ -866,7 +881,11 @@ impl Runner {
 
     /// `on_prompt`'s match (§5.2): `Some` only when the prompt's `loopTick` is this chat's open
     /// offer, not yet taken. A forged or stale meta gets `None` — an ordinary user prompt.
-    pub async fn accept_offer(&self, session_id: &str, meta: &TickMeta) -> Option<OfferReservation> {
+    pub async fn accept_offer(
+        &self,
+        session_id: &str,
+        meta: &TickMeta,
+    ) -> Option<OfferReservation> {
         let _op = self.inner.op.lock().await;
         {
             let state = self.state();
@@ -919,7 +938,13 @@ impl Runner {
             }
         };
         let now = self.now();
-        let tokens_before = match self.inner.deps.sessions.get_session(session_id, false).await {
+        let tokens_before = match self
+            .inner
+            .deps
+            .sessions
+            .get_session(session_id, false)
+            .await
+        {
             Ok(session) => usage_totals(&session),
             Err(error) => {
                 clear_reservation(self);
@@ -1010,7 +1035,10 @@ impl Runner {
             let to = if snapshot.running > 0 {
                 snapshot.sessions.first().cloned()
             } else {
-                turns.user_turn_started_since(snapshot.started).await.session
+                turns
+                    .user_turn_started_since(snapshot.started)
+                    .await
+                    .session
             };
             if let Some(inner) = runner.upgrade() {
                 Runner { inner }.yield_tick(&session, n, to).await;
@@ -1137,7 +1165,10 @@ impl Runner {
     ) -> Result<(), String> {
         let now = self.now();
         let sessions = &self.inner.deps.sessions;
-        let rec = match record::read(sessions, session_id).await.map_err(|e| e.to_string())? {
+        let rec = match record::read(sessions, session_id)
+            .await
+            .map_err(|e| e.to_string())?
+        {
             Ok(Some(rec)) if rec.id == running.loop_id => rec,
             // The loop was replaced or removed while its tick ran: nothing of it is left to record.
             Ok(_) => return Ok(()),
@@ -1187,16 +1218,19 @@ impl Runner {
                 None
             }
         };
-        let served: Option<NodeServedTurnDto> =
-            match crate::nodes::served::last(sessions, session_id).await {
-                Ok(turn) => turn.filter(|t| {
-                    i64::try_from(t.at_ms).is_ok_and(|at| at >= started_at.timestamp_millis())
-                }),
-                Err(error) => {
-                    tracing::warn!(session_id, %error, "loop: the served-turn record could not be read");
-                    None
-                }
-            };
+        let served: Option<NodeServedTurnDto> = match crate::nodes::served::last(
+            sessions, session_id,
+        )
+        .await
+        {
+            Ok(turn) => turn.filter(|t| {
+                i64::try_from(t.at_ms).is_ok_and(|at| at >= started_at.timestamp_millis())
+            }),
+            Err(error) => {
+                tracing::warn!(session_id, %error, "loop: the served-turn record could not be read");
+                None
+            }
+        };
         let tokens = match (running.tokens_before, usage_totals(&session)) {
             (Some((i0, o0, t0)), Some((i1, o1, t1))) => Some(LoopTokenDelta {
                 input: i1.saturating_sub(i0),
@@ -1370,8 +1404,7 @@ impl Runner {
                             if let Some(LoopStatusReason::FinishingElsewhere { n }) =
                                 rec.status_reason
                             {
-                                rec.status_reason =
-                                    Some(LoopStatusReason::ByYou { after_tick: n });
+                                rec.status_reason = Some(LoopStatusReason::ByYou { after_tick: n });
                             }
                         } else {
                             rec.status = decision.status;
@@ -1502,7 +1535,8 @@ impl Runner {
                     let mut rec = current.ok_or(Skip::NoLoop)?;
                     let untouched = rec.id == loop_id
                         && rec.owner.is_none()
-                        && if matches!(saved.status, LoopStatus::Waiting | LoopStatus::WaitingTurn) {
+                        && if matches!(saved.status, LoopStatus::Waiting | LoopStatus::WaitingTurn)
+                        {
                             rec.status == LoopStatus::Paused
                                 && rec.status_reason
                                     == Some(LoopStatusReason::Closed {
@@ -1541,7 +1575,13 @@ impl Runner {
 
     async fn needs_you_answered_or_dismissed(&self, session_id: &str, item_id: &str) {
         let _op = self.inner.op.lock().await;
-        let session = match self.inner.deps.sessions.get_session(session_id, false).await {
+        let session = match self
+            .inner
+            .deps
+            .sessions
+            .get_session(session_id, false)
+            .await
+        {
             Ok(session) => session,
             Err(error) => {
                 tracing::warn!(session_id, %error, "loop: the chat of a resolved question could not be read");
@@ -1549,7 +1589,10 @@ impl Runner {
             }
         };
         let status = match needs_you_items(&session) {
-            Ok(items) => items.into_iter().find(|i| i.id == item_id).map(|i| i.status),
+            Ok(items) => items
+                .into_iter()
+                .find(|i| i.id == item_id)
+                .map(|i| i.status),
             Err(error) => {
                 tracing::warn!(session_id, %error, "loop: the needs-you store could not be read");
                 return;
@@ -1561,11 +1604,12 @@ impl Runner {
             .write(session_id, |current| {
                 let mut rec = current.ok_or(Skip::NoLoop)?;
                 let n = match (&rec.status, &rec.status_reason) {
-                    (LoopStatus::NeedsYou, Some(LoopStatusReason::Asked { n, item_id: asked, .. }))
-                        if asked == item_id =>
-                    {
-                        *n
-                    }
+                    (
+                        LoopStatus::NeedsYou,
+                        Some(LoopStatusReason::Asked {
+                            n, item_id: asked, ..
+                        }),
+                    ) if asked == item_id => *n,
                     _ => return Err(Skip::Idle),
                 };
                 match status {
@@ -1595,7 +1639,10 @@ impl Runner {
                 let mut rec = current.ok_or(Skip::NoLoop)?;
                 if !matches!(
                     (&rec.status, &rec.status_reason),
-                    (LoopStatus::NeedsYou, Some(LoopStatusReason::AnswerRunning { .. }))
+                    (
+                        LoopStatus::NeedsYou,
+                        Some(LoopStatusReason::AnswerRunning { .. })
+                    )
                 ) {
                     return Err(Skip::Idle);
                 }
@@ -1635,7 +1682,10 @@ impl Runner {
                 offer.refused = None;
                 if matches!(
                     (&rec.status, &rec.status_reason),
-                    (LoopStatus::WaitingTurn, Some(LoopStatusReason::Refused { .. }))
+                    (
+                        LoopStatus::WaitingTurn,
+                        Some(LoopStatusReason::Refused { .. })
+                    )
                 ) {
                     rec.status = LoopStatus::Waiting;
                     rec.status_reason = None;
@@ -1673,7 +1723,9 @@ async fn handle(runner: &Runner, event: Event) {
             tokio::spawn(async move { runner.finish_tick(session, running, end).await });
         }
         Event::NeedsYouResolved { session, item } => {
-            runner.needs_you_answered_or_dismissed(&session, &item).await
+            runner
+                .needs_you_answered_or_dismissed(&session, &item)
+                .await
         }
         Event::UserTurnEnded { session } => runner.answer_turn_ended(&session).await,
     }
@@ -1683,7 +1735,9 @@ async fn handle(runner: &Runner, event: Event) {
 /// next event — whichever comes first. Nothing polls.
 async fn drive(inner: Weak<Inner>, mut events: mpsc::UnboundedReceiver<Event>) {
     loop {
-        let Some(strong) = inner.upgrade() else { return };
+        let Some(strong) = inner.upgrade() else {
+            return;
+        };
         let runner = Runner { inner: strong };
         let deadline = runner.evaluate_all().await;
         let sleep = deadline.map(|at| runner.inner.deps.clock.sleep_until(at));
@@ -1696,7 +1750,9 @@ async fn drive(inner: Weak<Inner>, mut events: mpsc::UnboundedReceiver<Event>) {
             None => events.recv().await,
         };
         let Some(event) = event else { return };
-        let Some(strong) = inner.upgrade() else { return };
+        let Some(strong) = inner.upgrade() else {
+            return;
+        };
         handle(&Runner { inner: strong }, event).await;
     }
 }
@@ -1712,7 +1768,9 @@ async fn login_shell_path() -> Option<String> {
         .ok()
         .flatten();
         if resolved.is_none() {
-            tracing::warn!("loop: the login shell's PATH could not be read; checks run with goose's own PATH");
+            tracing::warn!(
+                "loop: the login shell's PATH could not be read; checks run with goose's own PATH"
+            );
         }
         resolved
     })
