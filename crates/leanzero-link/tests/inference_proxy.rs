@@ -59,6 +59,9 @@ enum Script {
     /// a slow, HEALTHY generation: no response head for `head_after`, one chunk, then
     /// `gap` of silence, then the rest — the case the in-flight watch must never cut
     SlowAlive { head_after: Duration, gap: Duration },
+    /// a split's rank 0 (goose-sidecar rank_admission.py): while `Engine::admission` is closed
+    /// every chat is refused with the memory hold's `503`; once open it answers like `Complete`
+    HoldsForMemory,
 }
 
 struct Engine {
@@ -68,6 +71,57 @@ struct Engine {
     /// Set when the streamed body is dropped by the server — the client left.
     stream_dropped: Arc<AtomicBool>,
     chunks_sent: Arc<AtomicUsize>,
+    /// rank 0's admission: `true` = open. Closing and reopening it is the watchdog's hold/lift.
+    admission: tokio::sync::watch::Sender<bool>,
+    /// `GET /goose/admission` waits the engine has started.
+    admission_waits: AtomicUsize,
+    /// Set when a started admission wait is dropped before it answered — its client left.
+    admission_wait_abandoned: Arc<AtomicBool>,
+}
+
+/// rank_admission.py `Admission.refusal()` with the watchdog's `code`, as rank 0 sends it.
+const HOLD_REASON: &str = "memory on Work's Mac Studio is low (other apps and the system use \
+                           87.3 GiB); the engine is holding new requests until memory recovers \
+                           — quitting other apps frees it";
+
+fn hold_refusal() -> serde_json::Value {
+    serde_json::json!({"error": {
+        "message": format!("goose distributed engine is not admitting new requests: {HOLD_REASON}"),
+        "type": "server_busy",
+        "reason": HOLD_REASON,
+        "admission": "/goose/admission",
+        "code": "memory_hold",
+    }})
+}
+
+/// Marks an admission wait abandoned unless it answered.
+struct AdmissionWait {
+    abandoned: Arc<AtomicBool>,
+    answered: bool,
+}
+impl Drop for AdmissionWait {
+    fn drop(&mut self) {
+        if !self.answered {
+            self.abandoned.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+/// rank_admission.py `Admission.wait_open()`: no response head until admission is open.
+async fn engine_admission(axum::extract::State(engine): axum::extract::State<Arc<Engine>>) -> Response {
+    engine.admission_waits.fetch_add(1, Ordering::SeqCst);
+    let mut wait = AdmissionWait {
+        abandoned: engine.admission_wait_abandoned.clone(),
+        answered: false,
+    };
+    let mut open = engine.admission.subscribe();
+    open.wait_for(|open| *open).await.expect("the engine outlives its handlers");
+    wait.answered = true;
+    Response::builder()
+        .status(200)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"admission_open": true}"#))
+        .unwrap()
 }
 
 struct DropFlag(Arc<AtomicBool>);
@@ -97,7 +151,12 @@ async fn engine_chat(
         .map(|v| v.to_str().unwrap().to_string());
     let ok = |s: &'static str| Ok::<Bytes, std::io::Error>(Bytes::from_static(s.as_bytes()));
     match engine.script {
-        Script::Complete => {
+        Script::HoldsForMemory if !*engine.admission.borrow() => Response::builder()
+            .status(503)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(hold_refusal().to_string()))
+            .unwrap(),
+        Script::Complete | Script::HoldsForMemory => {
             sse(
                 futures::stream::iter(vec![ok(CHUNK_1), ok(CHUNK_2), ok(CHUNK_END), ok(DONE)])
                     .boxed(),
@@ -154,9 +213,13 @@ async fn start_engine(script: Script) -> (Arc<Engine>, String) {
         received_content_type: StdMutex::new(None),
         stream_dropped: Arc::new(AtomicBool::new(false)),
         chunks_sent: Arc::new(AtomicUsize::new(0)),
+        admission: tokio::sync::watch::Sender::new(true),
+        admission_waits: AtomicUsize::new(0),
+        admission_wait_abandoned: Arc::new(AtomicBool::new(false)),
     });
     let router = Router::new()
         .route("/v1/chat/completions", post(engine_chat))
+        .route("/goose/admission", get(engine_admission))
         .route(
             "/v1/models",
             get(|| async { ([(header::CONTENT_TYPE, "application/json")], MODELS) }),
@@ -969,4 +1032,189 @@ async fn a_request_in_flight_to_a_peer_that_says_it_is_leaving_ends_at_once_with
         response.text().await.unwrap(),
         format!("{RELAY_FAILED}: Link peer 'node-b' lost this request in flight: {WORDS}")
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Q-399: a peer's split holding for memory is waited out through the relay like a local one
+// ---------------------------------------------------------------------------------------------
+
+async fn until(what: &str, done: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + DEADLINE;
+    while !done() {
+        assert!(tokio::time::Instant::now() < deadline, "never: {what}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// The refused chat, classified by goose's own code (what `handle_status` does with it).
+async fn refused_hold(relay_base: &str) -> goose_provider_types::errors::ProviderError {
+    let response = post_chat(relay_base).await;
+    let status = response.status();
+    let url = response.url().to_string();
+    let body: serde_json::Value = response.json().await.expect("the refusal is JSON");
+    goose_provider_types::engine_hold::hold_of_refusal(status, Some(&body), &url, || {
+        format!("Server error ({status}) at {url}")
+    })
+    .unwrap_or_else(|| panic!("goose does not see a hold in {status} {body}"))
+}
+
+#[tokio::test]
+async fn a_peers_memory_hold_is_waited_out_through_the_relay_until_the_lift() {
+    let rig = rig(Script::HoldsForMemory).await;
+    rig.engine.admission.send_replace(false);
+
+    let hold = refused_hold(rig.relay.base_url()).await;
+    let goose_provider_types::errors::ProviderError::EngineHold {
+        reason,
+        admission_url,
+        ..
+    } = &hold
+    else {
+        panic!("not the hold: {hold:?}");
+    };
+    assert_eq!(reason.as_deref(), Some(HOLD_REASON), "the watchdog's words cross");
+    assert_eq!(
+        admission_url.as_deref(),
+        Some(format!("{}/goose/admission", rig.relay.base_url()).as_str()),
+        "the wait is resolved inside the relay's capability, not at its bare origin"
+    );
+
+    let waiting = tokio::spawn(async move {
+        goose_provider_types::engine_hold::wait_for_admission(&hold).await
+    });
+    until("the peer's engine is asked to wait", || {
+        rig.engine.admission_waits.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    // Many in-flight looks pass while the engine holds: the relay never ends a held wait.
+    tokio::time::sleep(LOOK_INTERVAL * 10).await;
+    assert!(!waiting.is_finished(), "the wait ended while the engine still held");
+
+    rig.engine.admission.send_replace(true);
+    tokio::time::timeout(DEADLINE, waiting)
+        .await
+        .expect("the lift ends the relayed wait")
+        .unwrap()
+        .expect("admitted");
+    assert!(!rig.engine.admission_wait_abandoned.load(Ordering::SeqCst));
+
+    let (body, outcome) = drain(post_chat(rig.relay.base_url()).await).await;
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(body, format!("{CHUNK_1}{CHUNK_2}{CHUNK_END}{DONE}"), "then the chat is answered");
+}
+
+#[tokio::test]
+async fn a_requester_that_hangs_up_ends_the_peers_admission_wait() {
+    let rig = rig(Script::HoldsForMemory).await;
+    rig.engine.admission.send_replace(false);
+
+    let url = format!("{}/goose/admission", rig.relay.base_url());
+    let waiting = tokio::spawn(async move { client().get(url).send().await });
+    until("the peer's engine is asked to wait", || {
+        rig.engine.admission_waits.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    assert!(!rig.engine.admission_wait_abandoned.load(Ordering::SeqCst));
+
+    waiting.abort();
+    until("the hang-up reaches the peer's engine", || {
+        rig.engine.admission_wait_abandoned.load(Ordering::SeqCst)
+    })
+    .await;
+    assert_eq!(rig.engine.admission_waits.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn the_admission_route_is_bearer_gated_and_refuses_browsers() {
+    let rig = rig(Script::HoldsForMemory).await;
+    let direct = |token: Option<&str>, origin: bool| {
+        let mut req = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all(support::fake_tailnet().proxy().proxy_url()).unwrap())
+            .build()
+            .unwrap()
+            .get(format!("{}/v1/swarm/inference/goose/admission", rig.b_base));
+        if let Some(token) = token {
+            req = req.bearer_auth(token);
+        }
+        if origin {
+            req = req.header(header::ORIGIN, "https://evil.example");
+        }
+        req.send()
+    };
+    assert_eq!(direct(None, false).await.unwrap().status(), 401);
+    assert_eq!(
+        direct(Some("not-the-token"), false).await.unwrap().status(),
+        401
+    );
+    assert_eq!(direct(Some(TOKEN), true).await.unwrap().status(), 403);
+    assert_eq!(
+        rig.engine.admission_waits.load(Ordering::SeqCst),
+        0,
+        "a refused caller never reaches the engine"
+    );
+    let admitted = direct(Some(TOKEN), false).await.unwrap();
+    assert_eq!(admitted.status(), 200);
+    assert_eq!(
+        admitted.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({"admission_open": true})
+    );
+
+    let base = rig.relay.base_url();
+    let wrong = format!("{}0000/goose/admission", base.rsplit_once('/').unwrap().0);
+    assert_eq!(client().get(wrong).send().await.unwrap().status(), 404);
+    let bare_origin = format!("http://{}/goose/admission", rig.relay.local_addr());
+    assert_eq!(client().get(bare_origin).send().await.unwrap().status(), 404);
+    let browser = client()
+        .get(format!("{base}/goose/admission"))
+        .header(header::ORIGIN, "http://localhost:3000")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(browser.status(), 403);
+    assert_eq!(rig.engine.admission_waits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        client().get(format!("{base}/goose/admission")).send().await.unwrap().status(),
+        200
+    );
+    assert_eq!(rig.engine.admission_waits.load(Ordering::SeqCst), 2);
+}
+
+/// Q-401: a peer that leaves during its hold ends the relayed wait at once, and goose says the
+/// relay's words instead of "no readable body".
+#[tokio::test]
+async fn a_peer_that_leaves_during_its_hold_ends_the_wait_with_its_words() {
+    let (engine, engine_base) = start_engine(Script::HoldsForMemory).await;
+    engine.admission.send_replace(false);
+    let (_b, b_base) = start_node_b(Some(serving(engine_base).await)).await;
+    let (say, said) = tokio::sync::watch::channel(None);
+    let relay = InferenceRelay::start(
+        "node-b".into(),
+        Arc::new(LeavingResolver {
+            call: call_to(&b_base),
+            said,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let hold = refused_hold(relay.base_url()).await;
+    let waiting = tokio::spawn(async move {
+        goose_provider_types::engine_hold::wait_for_admission(&hold).await
+    });
+    until("the peer's engine is asked to wait", || {
+        engine.admission_waits.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    say.send_replace(Some("Work's Mac Studio quit goose".to_string()));
+    let ended = tokio::time::timeout(DEADLINE, waiting)
+        .await
+        .expect("the peer's leaving ends the wait")
+        .unwrap()
+        .unwrap_err();
+    let text = ended.to_string();
+    assert!(
+        text.contains(RELAY_FAILED) && text.contains("Work's Mac Studio quit goose"),
+        "{text}"
+    );
+    assert!(!text.contains("no readable body"), "{text}");
 }
