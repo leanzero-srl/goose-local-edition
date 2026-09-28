@@ -92,7 +92,7 @@ import { SELF_KEY, macTarget, peerRefuses, routePeerName, type Mac } from './mac
 import { WithMacs, useMacs } from './useMacs';
 import { MlxStateTile, servingEngine } from './MlxStateTile';
 import { MlxRestoreBanner } from './MlxRestoreLine';
-import { MlxMountRefusalBanner, gateRefusalOf } from './MlxMountRefusalBanner';
+import { MlxMountRefusalBanner, gateNow, gateRefusalOf } from './MlxMountRefusalBanner';
 import { portHeldBy } from './mlxPortHeld';
 import { settleRestoreLine } from './mlxRestore';
 import type { MlxServing } from '../../utils/mlxServing';
@@ -790,6 +790,13 @@ const GATE_TONE: Record<NonNullable<MlxEngineStatus['gateVerdict']>, Tone> = {
   block: 'err',
 };
 
+/** A verdict word the wire carries as a string; one outside the three draws untoned, as said. */
+function gateTone(verdict: string): Tone | undefined {
+  return verdict === 'allow' || verdict === 'warn' || verdict === 'block'
+    ? GATE_TONE[verdict]
+    : undefined;
+}
+
 interface EngineSectionProps {
   status: MlxEngineStatus | null;
   statusError: string | null;
@@ -917,6 +924,8 @@ function EngineSection(props: EngineSectionProps) {
     memStatus.totalMemoryGb > 0 &&
     memStatus.availableMemoryGb / memStatus.totalMemoryGb < 0.15;
 
+  const gate = gateNow(status);
+
   // Every row is backend truth or an honest "—"; nothing here is fabricated. The state, the served
   // model and the memory headroom live in the hero above — these are the running engine's facts.
   const facts: KeyValueItem[] = [
@@ -952,10 +961,12 @@ function EngineSection(props: EngineSectionProps) {
     {
       key: 'gate',
       label: 'Mount gate',
-      value: status?.gateVerdict ? (
-        <Chip tone={GATE_TONE[status.gateVerdict]} title={status.gateMessage}>
-          {status.gateVerdict}
-        </Chip>
+      value: gate ? (
+        <span data-testid="mlx-gate-chip" data-verdict={gate.verdict}>
+          <Chip tone={gateTone(gate.verdict)} title={gate.message}>
+            {gate.verdict}
+          </Chip>
+        </span>
       ) : (
         <Absent />
       ),
@@ -1032,8 +1043,13 @@ function EngineSection(props: EngineSectionProps) {
           testId="mlx-mount-blocked"
         />
       )}
-      {status?.gateMessage && status.gateVerdict === 'warn' && (
-        <ToneBanner tone="warn" label="Memory pressure" text={status.gateMessage} />
+      {gate?.message && gate.verdict === 'warn' && (
+        <ToneBanner
+          tone="warn"
+          label="Memory pressure"
+          text={gate.message}
+          testId="mlx-memory-pressure"
+        />
       )}
       {strayPort != null && status && <StrayListenerBanner port={strayPort} status={status} />}
       {banners.mountError && (
