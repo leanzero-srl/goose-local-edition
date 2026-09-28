@@ -258,6 +258,8 @@ import type {
   NodesServedLastResponse_unstable,
   NodesSetChatNodesRequest_unstable,
   NodesSetChatNodesResponse_unstable,
+  NodesTakeOverNowRequest_unstable,
+  NodesTakeOverNowResponse_unstable,
   NodesWriteRequest_unstable,
   NodesWriteResponse_unstable,
   NotesChangedNotification_unstable,
@@ -457,6 +459,7 @@ import {
   zNodesResidencyResponse_unstable,
   zNodesServedLastResponse_unstable,
   zNodesSetChatNodesResponse_unstable,
+  zNodesTakeOverNowResponse_unstable,
   zNodesWriteResponse_unstable,
   zNotesChangedNotification_unstable,
   zNotesDeliverDueNotification_unstable,
@@ -2456,6 +2459,18 @@ export class GooseExtClient {
     return zNodesEnsureServingResponse_unstable.parse(
       raw,
     ) as NodesEnsureServingResponse_unstable;
+  }
+
+  async nodesTakeOverNow_unstable(
+    params: NodesTakeOverNowRequest_unstable,
+  ): Promise<NodesTakeOverNowResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/takeOverNow",
+      params,
+    );
+    return zNodesTakeOverNowResponse_unstable.parse(
+      raw,
+    ) as NodesTakeOverNowResponse_unstable;
   }
 
   async sessionCompactionPreview_unstable(

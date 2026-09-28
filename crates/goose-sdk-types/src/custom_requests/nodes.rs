@@ -856,6 +856,28 @@ pub struct NodesResidencyResponse {
     /// Why no node carries a measured load: the load store could not be read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loads_error: Option<String>,
+    /// Replies of this process waiting behind a switch queued before they began (Q-442). Their
+    /// own node still serves, so no node's residency can say it: each names its chat.
+    #[serde(default)]
+    pub behind_switches: Vec<NodeBehindSwitchDto>,
+}
+
+/// A chat's reply waits behind a switch to another node that was asked for before the reply
+/// began (design §6.4 step 1: new replies never starve a queued switch). The reply holds nothing
+/// meanwhile; when the switch leaves the queue the turn routes again on what serves then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeBehindSwitchDto {
+    /// The chat whose reply waits (a delegate's reply is its chat's).
+    pub session: String,
+    /// The node the reply was going to use.
+    pub node: String,
+    /// The node the queued switch loads, by id and by the name the Nodes page shows.
+    pub switch_to: String,
+    pub switch_to_name: String,
+    /// The chat the switch is for, by name; empty for a Start on a node's card.
+    #[serde(default)]
+    pub chats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1041,4 +1063,26 @@ pub struct NodesEnsureServingRequest {
 #[serde(rename_all = "camelCase")]
 pub struct NodesEnsureServingResponse {
     pub answer: NodeEnsureServing,
+}
+
+/// Q-443: take the Mac over for ONE turn. The demand `sessionId`'s chat has queued for `node`
+/// under the role's `wait` stops waiting for the other node's chats and loads (a reply running
+/// there still finishes first). The strategy's setting is not changed.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/nodes/takeOverNow",
+    response = NodesTakeOverNowResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct NodesTakeOverNowRequest {
+    pub node: String,
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct NodesTakeOverNowResponse {
+    /// False when no turn of that chat waits for the node under `wait` any more (it loaded,
+    /// moved on or ended).
+    pub taken: bool,
 }

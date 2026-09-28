@@ -2360,3 +2360,151 @@ async fn use_next_never_passes_over_its_own_nodes_load() {
     assert_eq!(answer(b2).await, NodeEnsureServing::Ready);
     assert!(switched(&fake), "one switch: {:?}", fake.log());
 }
+
+fn behind_of(core: &Core, session: &str) -> Option<NodeBehindSwitchDto> {
+    core.behind_switches()
+        .into_iter()
+        .find(|b| b.session == session)
+}
+
+/// Q-442: a reply that opened after a switch was queued waits behind it — its own node still
+/// serves, so no node's residency can say so. The chat's record names the switch and whose it
+/// is, through the router's lease wait AND a demand's step 1, and goes with the wait however it
+/// ends (served, or the turn dropped).
+#[tokio::test]
+async fn a_reply_waiting_behind_a_queued_switch_names_it_for_its_chat() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let _reply_2 = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-2"));
+    let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the switch is queued", || waiting(&core, "split").is_some()).await;
+
+    // The router's lease wait (clear_of_queued_switches → wait_behind_queued_switches).
+    let _reply_3 = core.holds().open_reply("chat-3");
+    let c = Arc::clone(&core);
+    let chat_3 =
+        tokio::spawn(async move { c.wait_behind_queued_switches("chat-3", "flash").await });
+    until("chat 3's wait is named", || {
+        behind_of(&core, "chat-3").is_some()
+    })
+    .await;
+    assert_eq!(
+        behind_of(&core, "chat-3"),
+        Some(NodeBehindSwitchDto {
+            session: "chat-3".into(),
+            node: "flash".into(),
+            switch_to: "split".into(),
+            switch_to_name: "split node".into(),
+            chats: vec!["Chat chat-2".into()],
+        })
+    );
+    assert!(
+        behind_of(&core, "chat-1").is_none(),
+        "a reply opened before the switch does not wait"
+    );
+
+    // A demand's step 1 (its node serves, the switch was asked first).
+    let _reply_4 = core.holds().open_reply("chat-4");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "flash", Some("chat-4"));
+    let chat_4 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("chat 4's demand wait is named", || {
+        behind_of(&core, "chat-4").is_some_and(|b| b.switch_to == "split")
+    })
+    .await;
+
+    // A turn dropped while it waits takes its record with it.
+    let _reply_5 = core.holds().open_reply("chat-5");
+    let c = Arc::clone(&core);
+    let chat_5 =
+        tokio::spawn(async move { c.wait_behind_queued_switches("chat-5", "flash").await });
+    until("chat 5's wait is named", || {
+        behind_of(&core, "chat-5").is_some()
+    })
+    .await;
+    chat_5.abort();
+    until("chat 5's record went with its turn", || {
+        behind_of(&core, "chat-5").is_none()
+    })
+    .await;
+
+    drop(reply_1);
+    assert_eq!(answer(chat_2).await, NodeEnsureServing::Ready);
+    tokio::time::timeout(SETTLE, chat_3)
+        .await
+        .expect("chat 3 goes on once the switch left the queue")
+        .unwrap();
+    assert!(behind_of(&core, "chat-3").is_none());
+    until("chat 4 no longer waits behind the switch", || {
+        behind_of(&core, "chat-4").is_none()
+    })
+    .await;
+    chat_4.abort();
+}
+
+/// Q-443: under `wait` a demand behind an IDLE chat ends only when that chat closes or moves,
+/// and the desktop never closes a chat's session. "Take it over now" loads for THIS turn: only
+/// this chat's demand, a running reply still never cut.
+#[tokio::test]
+async fn taking_the_mac_over_now_loads_for_this_turn_only() {
+    // A is idle between turns on the split: B waits for A to close — until B takes it over.
+    let fake = serving_split();
+    let core = Core::new(fake.clone(), None);
+    let a = core.holds().open_reply("chat-a");
+    lease(&core, "chat-a", &fake, "split");
+    drop(a);
+    let _b = core.holds().open_reply("chat-b");
+    let c = Arc::clone(&core);
+    let d = demand_as(&fake, "studio", "chat-b", NodeIfServingOther::Wait);
+    let b = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("B waits while A is open", || {
+        serving_other_of(&core, "studio") == Some(split_for_a(0))
+    })
+    .await;
+    assert!(
+        !core.take_over_now("chat-c", "studio"),
+        "another chat's click takes nothing over"
+    );
+    assert!(
+        !core.take_over_now("chat-b", "flash"),
+        "nor a click for another node"
+    );
+    assert!(core.take_over_now("chat-b", "studio"));
+    assert_eq!(answer(b).await, NodeEnsureServing::Ready);
+    assert!(switched(&fake), "{:?}", fake.log());
+    assert!(
+        !core.take_over_now("chat-b", "studio"),
+        "the turn's demand is over: nothing is left to take over"
+    );
+
+    // A's reply RUNS: B's line says what `wait` waits for, and taking over still waits for the
+    // reply (never cut) — then loads without waiting for A to close.
+    let fake = serving_split();
+    let core = Core::new(fake.clone(), None);
+    let a = core.holds().open_reply("chat-a");
+    lease(&core, "chat-a", &fake, "split");
+    let _b = core.holds().open_reply("chat-b");
+    let c = Arc::clone(&core);
+    let d = demand_as(&fake, "studio", "chat-b", NodeIfServingOther::Wait);
+    let b = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("B waits for A's reply, under wait", || {
+        replies_of(&core, "studio").is_some()
+            && serving_other_of(&core, "studio") == Some(split_for_a(1))
+    })
+    .await;
+    assert!(core.take_over_now("chat-b", "studio"));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!b.is_finished(), "a running reply is never cut");
+    assert!(fake.log().is_empty(), "{:?}", fake.log());
+    drop(a);
+    assert_eq!(
+        answer(b).await,
+        NodeEnsureServing::Ready,
+        "A is still open, and B loads anyway"
+    );
+    assert!(switched(&fake), "{:?}", fake.log());
+}

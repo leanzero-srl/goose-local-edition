@@ -8,7 +8,8 @@ use goose_sdk_types::custom_requests::{
     NodesEnsureServingResponse, NodesLoadHistoryRequest, NodesLoadHistoryResponse,
     NodesReadRequest, NodesRemoveNodeRequest, NodesRemoveStrategyRequest, NodesResidencyRequest,
     NodesResidencyResponse, NodesServedLastRequest, NodesServedLastResponse,
-    NodesSetChatNodesRequest, NodesSetChatNodesResponse, NodesWriteRequest,
+    NodesSetChatNodesRequest, NodesSetChatNodesResponse, NodesTakeOverNowRequest,
+    NodesTakeOverNowResponse, NodesWriteRequest,
 };
 use goose_sidecar::engine::EngineSettings;
 
@@ -245,6 +246,16 @@ pub async fn residency(_req: NodesResidencyRequest) -> Result<NodesResidencyResp
         loader_installed: seam::loader_installed(),
         displaced: seam::displaced(),
         loads_error,
+        behind_switches: seam::behind_switches(),
+    })
+}
+
+/// Q-443: the person takes the Mac over for this chat's waiting turn only.
+pub async fn take_over_now(
+    req: NodesTakeOverNowRequest,
+) -> Result<NodesTakeOverNowResponse, AcpError> {
+    Ok(NodesTakeOverNowResponse {
+        taken: seam::take_over_now(&req.session_id, &req.node),
     })
 }
 

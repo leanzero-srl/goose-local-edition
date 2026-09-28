@@ -9,8 +9,9 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use goose_sdk_types::custom_requests::{
-    MlxPlacementKeyDto, NodeDisplacedDto, NodeEnsureServing, NodeIfServingOther,
-    NodeLoadRefusalCode, NodeRefusalFactsDto, NodeRepliesWaitDto, NodeServingOtherDto,
+    MlxPlacementKeyDto, NodeBehindSwitchDto, NodeDisplacedDto, NodeEnsureServing,
+    NodeIfServingOther, NodeLoadRefusalCode, NodeRefusalFactsDto, NodeRepliesWaitDto,
+    NodeServingOtherDto,
 };
 
 use super::{NodeDef, NodeRole};
@@ -146,6 +147,12 @@ pub trait NodeLoader: Send + Sync {
     fn displaced(&self) -> Vec<NodeDisplacedDto>;
     /// `node` serves again: its displaced notice is over.
     fn forget_displaced(&self, node: &str);
+    /// Replies waiting behind a switch queued before they began (Q-442): their node serves, so
+    /// only these records say that a chat waits, and on which switch.
+    fn behind_switches(&self) -> Vec<NodeBehindSwitchDto>;
+    /// Q-443: `session`'s chat's demand for `node` waiting under `wait` takes the Mac over for
+    /// this turn; false when none waits.
+    fn take_over_now(&self, session: &str, node: &str) -> bool;
     /// The way `session`'s own reply holds, and the person's replies — in this process and every
     /// other goose process on this Mac, none waiting in a loader — on that same way. `Err` when a
     /// holder record cannot be read: whose replies use the way is then unknown.
@@ -265,6 +272,22 @@ pub fn forget_displaced(node: &str) {
     if let Some(loader) = LOADER.get() {
         loader.forget_displaced(node);
     }
+}
+
+/// With no loader installed no switch is ever queued, so no reply waits behind one: empty means
+/// empty.
+pub fn behind_switches() -> Vec<NodeBehindSwitchDto> {
+    LOADER
+        .get()
+        .map(|l| l.behind_switches())
+        .unwrap_or_default()
+}
+
+/// With no loader installed no demand is ever queued: nothing to take over.
+pub fn take_over_now(session: &str, node: &str) -> bool {
+    LOADER
+        .get()
+        .is_some_and(|loader| loader.take_over_now(session, node))
 }
 
 /// The installed loader, or the named absence: with no loader nothing records which replies hold

@@ -6830,6 +6830,19 @@ export const zNodeDisplacedDto = z.object({
     atMs: z.number().int().gte(0)
 });
 
+/**
+ * A chat's reply waits behind a switch to another node that was asked for before the reply
+ * began (design §6.4 step 1: new replies never starve a queued switch). The reply holds nothing
+ * meanwhile; when the switch leaves the queue the turn routes again on what serves then.
+ */
+export const zNodeBehindSwitchDto = z.object({
+    session: z.string(),
+    node: z.string(),
+    switchTo: z.string(),
+    switchToName: z.string(),
+    chats: z.array(z.string()).optional().default([])
+});
+
 export const zNodesResidencyResponse_unstable = z.object({
     nodes: z.array(zNodeResidencyDto),
     serving: z.union([
@@ -6845,7 +6858,8 @@ export const zNodesResidencyResponse_unstable = z.object({
     loadsError: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    behindSwitches: z.array(zNodeBehindSwitchDto).optional().default([])
 });
 
 /**
@@ -7017,6 +7031,20 @@ export const zNodeEnsureServing = z.union([
 
 export const zNodesEnsureServingResponse_unstable = z.object({
     answer: zNodeEnsureServing
+});
+
+/**
+ * Q-443: take the Mac over for ONE turn. The demand `sessionId`'s chat has queued for `node`
+ * under the role's `wait` stops waiting for the other node's chats and loads (a reply running
+ * there still finishes first). The strategy's setting is not changed.
+ */
+export const zNodesTakeOverNowRequest_unstable = z.object({
+    node: z.string(),
+    sessionId: z.string()
+});
+
+export const zNodesTakeOverNowResponse_unstable = z.object({
+    taken: z.boolean()
 });
 
 /**
@@ -8192,6 +8220,7 @@ export const zExtRequest = z.object({
             zNodesLoadHistoryRequest_unstable,
             zNodesServedLastRequest_unstable,
             zNodesEnsureServingRequest_unstable,
+            zNodesTakeOverNowRequest_unstable,
             zCompactionPreviewRequest_unstable,
             zCompactionSteerRequest_unstable,
             zLoopsGetRequest_unstable,
@@ -8346,6 +8375,7 @@ export const zExtResponse = z.union([
                 zNodesLoadHistoryResponse_unstable,
                 zNodesServedLastResponse_unstable,
                 zNodesEnsureServingResponse_unstable,
+                zNodesTakeOverNowResponse_unstable,
                 zCompactionPreviewResponse_unstable,
                 zCompactionSteerResponse_unstable,
                 zLoopsGetResponse_unstable,
