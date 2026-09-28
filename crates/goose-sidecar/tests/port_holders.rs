@@ -294,7 +294,11 @@ fn older_goose_engine(port: u16) -> (u32, u32) {
         own.to_str(),
         "the stand-in starter runs as this program"
     );
-    assert_eq!(engine_read.parent, Some(starter), "the starter is its parent");
+    assert_eq!(
+        engine_read.parent,
+        Some(starter),
+        "the starter is its parent"
+    );
     assert_ne!(
         engine_read.group, starter_read.group,
         "the engine leads a group of its own, as `uv` does"
@@ -320,7 +324,10 @@ async fn unmount_leaves_another_gooses_live_engine_serving_and_names_its_starter
         };
         eprintln!("the refusal: {refused}");
         assert!(untouched, "the engine or its starter was signalled");
-        assert!(refused.starts_with("Unmount stopped nothing: "), "{refused}");
+        assert!(
+            refused.starts_with("Unmount stopped nothing: "),
+            "{refused}"
+        );
         assert!(refused.contains(&format!("pid {engine}")), "{refused}");
         assert!(refused.contains("nothing was signalled"), "{refused}");
         assert!(
@@ -378,13 +385,17 @@ async fn an_older_gooses_engine_is_told_to_restart_that_goose_everywhere() {
             };
             eprintln!("{surface}: {said}");
             assert!(said.contains(&format!("pid {engine}")), "{said}");
-            assert!(said.contains(&format!("carries no {SIDECAR_MARKER_ENV}")), "{said}");
+            assert!(
+                said.contains(&format!("carries no {SIDECAR_MARKER_ENV}")),
+                "{said}"
+            );
             assert!(said.contains(&step), "{surface}'s step: {said}");
             assert!(!said.contains("kill"), "{surface}: {said}");
         }
-        let status_step = status.stray_listener_step.as_ref().unwrap_or_else(|| {
-            panic!("no step: {:?}", status.stray_listener_holders_error)
-        });
+        let status_step = status
+            .stray_listener_step
+            .as_ref()
+            .unwrap_or_else(|| panic!("no step: {:?}", status.stray_listener_holders_error));
         assert_eq!(status_step.kind, "restartGoose");
         assert_eq!(status_step.pid, Some(starter));
         assert!(status_step.text.contains(&step), "{}", status_step.text);
@@ -438,9 +449,18 @@ async fn cached_holders_are_read_again_when_what_they_named_is_gone() {
 
     stop_after(&[starter, engine, replacement_pid], || {
         assert_eq!(first, second, "an unchanged port serves the same facts");
-        assert_eq!(reads_while_unchanged, 1, "the second read was served cached");
         assert_eq!(
-            first[0].verdict.as_ref().unwrap_err().live_starter.as_ref().map(|s| s.pid),
+            reads_while_unchanged, 1,
+            "the second read was served cached"
+        );
+        assert_eq!(
+            first[0]
+                .verdict
+                .as_ref()
+                .unwrap_err()
+                .live_starter
+                .as_ref()
+                .map(|s| s.pid),
             Some(starter)
         );
         assert_eq!(reads_after_starter, 2, "the starter's exit read them again");
@@ -451,7 +471,10 @@ async fn cached_holders_are_read_again_when_what_they_named_is_gone() {
         );
         assert_eq!(reads_after_replace, 3, "a new listener read them again");
         assert_eq!(after_replace.len(), 1);
-        assert_eq!(after_replace[0].pid, replacement_pid, "never the gone {engine}");
+        assert_eq!(
+            after_replace[0].pid, replacement_pid,
+            "never the gone {engine}"
+        );
     });
     replacement.wait().unwrap();
 }
@@ -488,7 +511,10 @@ async fn listener_pids_agree_with_lsof() {
             .stdout,
     )
     .unwrap();
-    let lsof: Vec<u32> = lsof.split_whitespace().map(|p| p.parse().unwrap()).collect();
+    let lsof: Vec<u32> = lsof
+        .split_whitespace()
+        .map(|p| p.parse().unwrap())
+        .collect();
     drop(listener);
     let closed = listener_pids(port).unwrap();
     stop_after(&[client_pid], || {

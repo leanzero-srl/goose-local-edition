@@ -186,7 +186,9 @@ impl NextStep {
 impl fmt::Display for NextStep {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NextStep::Start => f.write_str("start the engine again — the start stops this leftover first"),
+            NextStep::Start => {
+                f.write_str("start the engine again — the start stops this leftover first")
+            }
             NextStep::QuitStarter { pid } => {
                 write!(f, "quit what started it (pid {pid}), then start again")
             }
@@ -665,7 +667,8 @@ mod read {
             );
         }
         // Room for processes started between the sizing call and the read.
-        let mut pids = vec![0 as libc::c_int; wanted as usize / std::mem::size_of::<libc::c_int>() * 2];
+        let mut pids =
+            vec![0 as libc::c_int; wanted as usize / std::mem::size_of::<libc::c_int>() * 2];
         let got = unsafe {
             libc::proc_listpids(
                 PROC_UID_ONLY,
@@ -1091,8 +1094,14 @@ mod tests {
 
     #[test]
     fn a_live_goosed_above_it_makes_it_another_gooses() {
-        let kept =
-            ownership_proof(&[engine(), uv(GOOSED), goosed(GOOSED)], MARKER, UID, 999, PROGRAM).unwrap_err();
+        let kept = ownership_proof(
+            &[engine(), uv(GOOSED), goosed(GOOSED)],
+            MARKER,
+            UID,
+            999,
+            PROGRAM,
+        )
+        .unwrap_err();
         assert_eq!(kept.rule, NotOursRule::LiveStarter);
         assert_eq!(
             kept.live_starter,
@@ -1136,7 +1145,8 @@ mod tests {
             marker: None,
             ..uv(1)
         };
-        let kept = ownership_proof(&[engine(), unmarked_launcher], MARKER, UID, 999, PROGRAM).unwrap_err();
+        let kept =
+            ownership_proof(&[engine(), unmarked_launcher], MARKER, UID, 999, PROGRAM).unwrap_err();
         assert!(
             kept.reason.contains("pid 35242 carries no"),
             "{}",
@@ -1165,7 +1175,8 @@ mod tests {
             parent: None,
             ..uv(1)
         };
-        let kept = ownership_proof(&[engine(), unknown_parent], MARKER, UID, 999, PROGRAM).unwrap_err();
+        let kept =
+            ownership_proof(&[engine(), unknown_parent], MARKER, UID, 999, PROGRAM).unwrap_err();
         assert!(kept.reason.contains("could not be read"), "{}", kept.reason);
         assert_eq!(kept.rule, NotOursRule::Unreadable);
 
@@ -1195,7 +1206,13 @@ mod tests {
             holders: vec![PortHolder {
                 pid: 35319,
                 argv: engine().argv,
-                verdict: ownership_proof(&[engine(), uv(GOOSED), goosed(GOOSED)], MARKER, UID, 1, PROGRAM),
+                verdict: ownership_proof(
+                    &[engine(), uv(GOOSED), goosed(GOOSED)],
+                    MARKER,
+                    UID,
+                    1,
+                    PROGRAM,
+                ),
             }],
             survived_the_stop: false,
         };
@@ -1339,14 +1356,16 @@ mod tests {
         ] {
             let held = vec![holder(&lineage, 999)];
             assert_eq!(held[0].verdict.as_ref().unwrap_err().live_starter, None);
-            assert_eq!(
-                next_step(&held),
-                Some(NextStep::Kill { pids: vec![35319] })
-            );
+            assert_eq!(next_step(&held), Some(NextStep::Kill { pids: vec![35319] }));
         }
-        let goose_program_elsewhere =
-            ownership_proof(&[unmarked(engine()), unmarked(uv(GOOSED)), goosed(GOOSED)], MARKER, UID, 999, "goose-cli")
-                .unwrap_err();
+        let goose_program_elsewhere = ownership_proof(
+            &[unmarked(engine()), unmarked(uv(GOOSED)), goosed(GOOSED)],
+            MARKER,
+            UID,
+            999,
+            "goose-cli",
+        )
+        .unwrap_err();
         assert_eq!(
             goose_program_elsewhere.live_starter, None,
             "a starter is a goose only when it runs this process's own program"
@@ -1365,11 +1384,26 @@ mod tests {
             next_step(&[holder(&[engine(), uv(GOOSED), goosed(GOOSED)], 999)]),
             Some(NextStep::QuitStarter { pid: GOOSED })
         );
-        let itself = holder(&[HolderProcess { pid: 999, ..engine() }], 999);
+        let itself = holder(
+            &[HolderProcess {
+                pid: 999,
+                ..engine()
+            }],
+            999,
+        );
         assert_eq!(next_step(&[itself]), Some(NextStep::OtherPort));
         let two = [
             holder(&[engine(), uv(1)], 999),
-            holder(&[HolderProcess { pid: 35320, ..unmarked(engine()) }, uv(1)], 999),
+            holder(
+                &[
+                    HolderProcess {
+                        pid: 35320,
+                        ..unmarked(engine())
+                    },
+                    uv(1),
+                ],
+                999,
+            ),
         ];
         assert_eq!(
             next_step(&two),

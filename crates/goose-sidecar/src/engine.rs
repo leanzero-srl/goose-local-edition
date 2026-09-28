@@ -3113,6 +3113,18 @@ mod tests {
                 .is_some_and(|r| r.contains("this goosed itself")),
             "{holder:?}"
         );
+        assert_eq!(
+            status.stray_listener_step.as_ref().map(|s| s.kind.as_str()),
+            Some("otherPort"),
+            "this process holds its own engine port: never `kill` itself"
+        );
+        let again = manager.status().await;
+        assert_eq!(again.stray_listener_holders, Some(holders));
+        assert_eq!(
+            manager.stray_holder_full_reads(),
+            1,
+            "Q-253: an unchanged port is served from the cache"
+        );
         drop(listener);
         let status = manager.status().await;
         assert_eq!(status.stray_listener_port, None);
