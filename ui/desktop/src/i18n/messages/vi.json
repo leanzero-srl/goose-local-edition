@@ -9650,6 +9650,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "Có thứ gì đó trả lời trên cổng {port}, nhưng giờ không có tiến trình nào lắng nghe ở đó — có thể nó vừa thoát."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Không phải của goose này — một goose cũ hơn, pid {pid} ({command}), đã khởi động và vẫn đang chạy nó; goose đó không đánh dấu engine nào của mình"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Không phải của goose này — một engine goose được khởi động cho engine hoặc cổng khác"
   },
@@ -9668,17 +9671,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Tiếp theo: khởi động lại trong Chạy — lần khởi động sẽ dừng phần còn sót này trước."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Tiếp theo: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Tiếp theo: đặt cho engine một cổng khác trong phần cài đặt của nó."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Tiếp theo: thoát thứ đã khởi động nó (pid {pid}), rồi khởi động lại trong Chạy."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "Một tiến trình mà goose này không chạy đang lắng nghe trên cổng {port} — Unmount sẽ dừng nó."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Tiếp theo: khởi động lại goose đã khởi động nó (pid {pid}) — khi khởi động lại, nó gắn lại engine của mình, có dấu của chính nó."
   },
-  "strayListener.unread": {
-    "defaultMessage": "Không đọc được ai đang giữ cổng {port} ({error}). Unmount dừng mọi thứ đang lắng nghe ở đó."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "Một tiến trình mà goose này không chạy đang lắng nghe trên cổng {port}."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "Không đọc được ai đang giữ cổng {port} ({error}) — goose này không dừng thứ gì ở đó mà nó không chứng minh được là của mình."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Chưa chứng minh được là của goose này — không đọc được ai đã khởi động nó"

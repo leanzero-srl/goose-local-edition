@@ -456,16 +456,34 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   start time + argv + marker re-read before each signal; SIGTERM, GRACE, SIGKILL). Anything else is `PortHeld` /
   `UnsupervisedListenerError` naming pid, full argv, the failed rule, the live starter ("quit what started it (pid
   N)") or `kill <pid>` — nothing signalled, no other port tried. TRAP: an engine started by a goose OLDER than
-  984b74763 carries no marker and is refused, named — never reaped; Unmount still reclaims the port from ANY listener
-  (`reclaim_port`, unproven — the owner's explicit command). Tests: tests/port_holders.rs (real orphans via a
+  984b74763 carries no marker and is refused, named — never reaped. Tests: tests/port_holders.rs (real orphans via a
   process-group `sh` that exits), engine `a_mount_stops_its_own_leftover_engine_and_names_one_it_may_not_stop`.
   THE PANEL READS THE SAME HOLDERS (Q-249, 2026-09-28): `status()` fills `stray_listener_holders` (pid, argv, ours,
   `not_ours_rule` = `NotOursRule::as_str` unreadable|initOrSelf|otherUser|otherEngine|noMarker|liveStarter, the
-  reason, live starter pid+argv) through the mount's own `engine_marker(port)` + `read_port_holders` — only while no
-  mount is in flight (lsof per poll of a start would read the start's own child) — or `stray_listener_holders_error`.
-  The desktop's `StrayListenerBanner` says whose and ONE step in Q-240's order (`strayStep`: live starter → quit it,
-  never a kill; goosed itself → another port; all ours → start again in Run it; else `kill <not-ours pids>` + Copy).
-  A new `NotOurs` arm needs a `NotOursRule` AND a catalog phrase, or the panel falls back to the raw reason.
+  reason, live starter pid+argv) — only while no mount is in flight (a start's own child is not a stray) — or
+  `stray_listener_holders_error`. A new `NotOurs` arm needs a `NotOursRule` AND a catalog phrase, or the panel falls
+  back to the raw reason.
+- UNMOUNT STOPS ONLY WHAT THE PROOF CALLS OURS; ONE STEP FOR EVERY SURFACE; HOLDERS CACHED (Q-252/Q-251/Q-253,
+  2026-09-28, bf7ef944f + 63a8d72b3). Before: Unmount's `reclaim_port` SIGTERMed EVERY LISTEN pid on the port (another
+  goose's live engine, a terminal's server — red with real stand-ins) and the panel offered Unmount beside "Not this
+  goose's". Now the reclaim IS `port_holder::claim_port`; `unmount() -> Result<(), UnmountRefused>` ("Unmount stopped
+  nothing: port N is held by … ; <step>"), core_unmount → invalid_params_err; the desktop renders Unmount only when
+  `strayListenerStep.kind == "start"`. Q-258's cfg(test) assert (no unit test may reach the reclaim on 8090) stays in
+  front of it. THE STEP lives in ONE place, `port_holder::next_step` → `NextStep` (`start | quitStarter{pid} |
+  restartGoose{pid} | otherPort | kill{pids}`, words in Display): PortHeld, UnsupervisedListenerError, UnmountRefused,
+  the swarm's events (via reuse_port) and status `stray_listener_step` (wire `strayListenerStep {kind, pid?, pids?,
+  text}`) read it; the banner's `strayStep` only MAPS the wire kind — never re-derive it in TS. An unmarked holder
+  whose first ancestor outside its group runs THIS process's own program (`own_program()`; goosed is `goose serve`)
+  gets `live_starter` under NoMarker → "restart the goose that started it" (Q-251: a goose older than the marker,
+  alive); `reuse_verdict` still shares only rule LiveStarter, so an unmarked engine is never reused. InitOrSelf's step
+  is "give the engine another port" (it used to say `kill <goosed pid>`). STATUS COST: lsof is 60 ms median on a
+  1,000-process Mac (`-nP`, `-a -u` no faster); the status's `HoldersCache` reads the LISTEN set in-process via
+  libproc (`port_holder::listener_pids`, 2.9 ms, identical to lsof Mac-wide incl. the client-connection negative
+  control; socket_fdinfo offsets are from <sys/proc_info.h>, checked by `listener_pids_agree_with_lsof`) and re-judges
+  only when that set or any judged process's start time/parent changes → polls 97–107 ms → ~2.3 ms. TRAPS: the hermit
+  `python3` shim re-execs under its own argv[0] (a python `arg0` stand-in keeps the shim's path) — the Q-251 test's
+  "goose" starter is `/bin/sh` with `arg0(current_exe)` and `set -m` so its background engine leads its own group;
+  `git checkout <sha> -- file` after a merge commit silently drops later uncommitted edits (redo them).
 - A SWARM BUILD REUSES AN ALREADY-SERVING ENGINE ONLY ON THE SAME PROOF (Q-248, 2026-09-28). Before: goose-cli's
   `SidecarEngine::ensure_loaded` returned Ok whenever `/v1/models` on `mlx_engine.port` served the pool id — any
   listener (unmarked stand-in, a dead goose's leftover, an engine marked for another port) was adopted (measured red,

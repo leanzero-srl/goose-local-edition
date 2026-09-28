@@ -131,7 +131,7 @@ import {
 } from '../../acp/mlx-remote-single';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PeerHeldLine } from './PeerHeldLine';
-import { StrayListenerBanner } from './StrayListenerBanner';
+import { StrayListenerBanner, unmountReclaims } from './StrayListenerBanner';
 import { dropRoute } from './routeSwitch';
 import { useCutGuard } from './cutGuard';
 import { macLine, macStateWord, type MacSummary } from './macSummary';
@@ -882,8 +882,9 @@ function EngineSection(props: EngineSectionProps) {
   const mountedModelId = status?.modelId ?? null;
   const strayPort = state === 'stopped' ? status?.strayListenerPort : undefined;
   // Starting and stopping belong to Run it; the one thing left here is reclaiming an engine a
-  // previous goose left listening on the port.
-  const offerReclaim = strayPort != null;
+  // previous goose left listening on the port — offered only when every holder is this goose's own
+  // leftover (Q-252): for anyone else's the backend refuses Unmount, and the banner names the step.
+  const offerReclaim = strayPort != null && unmountReclaims(status);
   // What Run it is about: the PICKED model, always. The picker defaults to what serves (the split's
   // model, the route's, the mounted one) until the person picks another; then Run it plans that
   // one and each way says what Run stops first. Q-119 (3.0.47): with Flash picked while the Studio

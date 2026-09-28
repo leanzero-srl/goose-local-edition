@@ -9650,6 +9650,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "連接埠 {port} 上有東西在回應，但現在沒有程序在那裡監聽 — 它可能剛剛結束。"
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "不是這個 goose 的 — 一個較舊的 goose，pid {pid}（{command}），啟動了它並仍在執行它；它不替自己的引擎加上標記"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "不是這個 goose 的 — 這是為其他引擎或連接埠啟動的 goose 引擎"
   },
@@ -9668,17 +9671,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "下一步：在「執行」中重新啟動 — 啟動時會先停止這個遺留引擎。"
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "下一步：{text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "下一步：在引擎設定中給它換一個連接埠。"
   },
   "strayListener.stepQuit": {
     "defaultMessage": "下一步：結束啟動它的程式（pid {pid}），然後在「執行」中重新啟動。"
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "一個不由這個 goose 執行的程序正在監聽連接埠 {port} — Unmount 會停止它。"
+  "strayListener.stepRestart": {
+    "defaultMessage": "下一步：重新啟動啟動它的 goose（pid {pid}）— 重新啟動後，它會再次掛載自己的引擎，並帶上自己的標記。"
   },
-  "strayListener.unread": {
-    "defaultMessage": "無法讀取是誰佔用了連接埠 {port}（{error}）。Unmount 會停止在那裡監聽的任何程序。"
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "一個不由這個 goose 執行的程序正在監聽連接埠 {port}。"
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "無法讀取是誰佔用了連接埠 {port}（{error}）— 這個 goose 不會停止它無法證明屬於自己的任何程序。"
   },
   "strayListener.unreadable": {
     "defaultMessage": "無法證明屬於這個 goose — 無法讀取是誰啟動了它"

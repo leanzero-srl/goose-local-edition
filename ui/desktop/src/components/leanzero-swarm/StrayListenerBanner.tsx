@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import type { IntlShape } from 'react-intl';
-import type { MlxEngineStatus, MlxStrayListenerHolder } from '../../acp/mlx-engine';
+import type {
+  MlxEngineStatus,
+  MlxStrayListenerHolder,
+  MlxStrayListenerStep,
+} from '../../acp/mlx-engine';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, RADIUS, SURFACE, StatusDot, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 
@@ -25,6 +29,11 @@ const i18n = defineMessages({
     id: 'strayListener.noMarker',
     defaultMessage:
       "Not this goose's — it carries no goose engine mark (an older goose, or another program, started it)",
+  },
+  olderGoose: {
+    id: 'strayListener.olderGoose',
+    defaultMessage:
+      "Not this goose's — an older goose, pid {pid} ({command}), started it and still runs it; it marks none of its engines",
   },
   otherEngine: {
     id: 'strayListener.otherEngine',
@@ -51,6 +60,12 @@ const i18n = defineMessages({
     id: 'strayListener.stepQuit',
     defaultMessage: 'Next: quit what started it (pid {pid}), then start again in Run it.',
   },
+  stepRestart: {
+    id: 'strayListener.stepRestart',
+    defaultMessage:
+      'Next: restart the goose that started it (pid {pid}) — restarted, it mounts its engine again, marked as its own.',
+  },
+  stepOther: { id: 'strayListener.stepOther', defaultMessage: 'Next: {text}' },
   stepOtherPort: {
     id: 'strayListener.stepOtherPort',
     defaultMessage: 'Next: give the engine another port in its settings.',
@@ -64,14 +79,14 @@ const i18n = defineMessages({
     defaultMessage:
       'Something answers on port {port}, but no process listens there now — it may have just exited.',
   },
-  unread: {
-    id: 'strayListener.unread',
+  unreadHeld: {
+    id: 'strayListener.unreadHeld',
     defaultMessage:
-      'Who holds port {port} could not be read ({error}). Unmount stops whatever listens on it.',
+      'Who holds port {port} could not be read ({error}) — this goose stops nothing there it cannot prove its own.',
   },
-  unnamed: {
-    id: 'strayListener.unnamed',
-    defaultMessage: 'A process this goose does not run listens on port {port} — Unmount stops it.',
+  unnamedHolder: {
+    id: 'strayListener.unnamedHolder',
+    defaultMessage: 'A process this goose does not run listens on port {port}.',
   },
   copy: { id: 'strayListener.copy', defaultMessage: 'Copy' },
   copied: { id: 'strayListener.copied', defaultMessage: 'Copied' },
@@ -91,22 +106,50 @@ export function shortCommand(argv: readonly string[]): string {
   return line.length > COMMAND_CHARS ? `${line.slice(0, COMMAND_CHARS - 1).trimEnd()}…` : line;
 }
 
-/** The one next step for a port's holders — the same order Q-240's refused Mount names it in. */
+/**
+ * The one next step for a port's holders, as the backend derived it (goose-sidecar
+ * `port_holder::next_step`, Q-251) — the step a refused Mount, a refused Unmount and the swarm's
+ * events say. Nothing here re-derives it from the holders.
+ */
 export type StrayStep =
-  | { kind: 'mount' }
-  | { kind: 'quit'; pid: number }
+  | { kind: 'start' }
+  | { kind: 'quitStarter'; pid: number }
+  | { kind: 'restartGoose'; pid: number }
   | { kind: 'otherPort' }
-  | { kind: 'kill'; command: string };
+  | { kind: 'kill'; command: string }
+  /** A step kind this build does not know: the backend's own words. */
+  | { kind: 'other'; text: string };
 
-export function strayStep(holders: readonly MlxStrayListenerHolder[]): StrayStep | null {
-  if (holders.length === 0) return null;
-  if (holders.every((h) => h.ours)) return { kind: 'mount' };
-  const starter = holders.find((h) => !h.ours && h.liveStarterPid != null)?.liveStarterPid;
-  if (starter != null) return { kind: 'quit', pid: starter };
-  if (holders.some((h) => h.notOursRule === 'initOrSelf')) return { kind: 'otherPort' };
-  // What a Mount would stop itself (ours) is left to it; the rest is named for the person.
-  const pids = holders.filter((h) => !h.ours).map((h) => h.pid);
-  return { kind: 'kill', command: `kill ${pids.join(' ')}` };
+export function strayStep(step: MlxStrayListenerStep | null | undefined): StrayStep | null {
+  if (!step) return null;
+  switch (step.kind) {
+    case 'start':
+      return { kind: 'start' };
+    case 'quitStarter':
+      if (step.pid != null) return { kind: 'quitStarter', pid: step.pid };
+      break;
+    case 'restartGoose':
+      if (step.pid != null) return { kind: 'restartGoose', pid: step.pid };
+      break;
+    case 'otherPort':
+      return { kind: 'otherPort' };
+    case 'kill':
+      if (step.pids && step.pids.length > 0) {
+        return { kind: 'kill', command: `kill ${step.pids.join(' ')}` };
+      }
+      break;
+  }
+  return { kind: 'other', text: step.text };
+}
+
+/**
+ * Whether Unmount frees the port: only when every holder is this goose's own leftover (Q-252) —
+ * for any other holder the backend refuses it by name and signals nothing, so it is not offered.
+ */
+export function unmountReclaims(
+  status: Pick<MlxEngineStatus, 'strayListenerStep'> | null
+): boolean {
+  return status?.strayListenerStep?.kind === 'start';
 }
 
 /** Whether the holder is this goose's, in words; its full finding rides the title. */
@@ -125,6 +168,17 @@ export function whoseWords(intl: IntlShape, holder: MlxStrayListenerHolder): str
       }
       break;
     case 'noMarker':
+      // A live starter on an unmarked engine is an older goose (Q-251): the backend attaches one
+      // only when the starter runs goose's own program.
+      if (holder.liveStarterPid != null) {
+        return intl.formatMessage(i18n.olderGoose, {
+          pid: holder.liveStarterPid,
+          command:
+            holder.liveStarterArgv && holder.liveStarterArgv.length > 0
+              ? shortCommand(holder.liveStarterArgv)
+              : intl.formatMessage(i18n.unreadableCommand),
+        });
+      }
       return intl.formatMessage(i18n.noMarker);
     case 'otherEngine':
       return intl.formatMessage(i18n.otherEngine);
@@ -140,14 +194,18 @@ export function whoseWords(intl: IntlShape, holder: MlxStrayListenerHolder): str
 
 function stepWords(intl: IntlShape, step: StrayStep): string {
   switch (step.kind) {
-    case 'mount':
+    case 'start':
       return intl.formatMessage(i18n.stepMount);
-    case 'quit':
+    case 'quitStarter':
       return intl.formatMessage(i18n.stepQuit, { pid: step.pid });
+    case 'restartGoose':
+      return intl.formatMessage(i18n.stepRestart, { pid: step.pid });
     case 'otherPort':
       return intl.formatMessage(i18n.stepOtherPort);
     case 'kill':
       return intl.formatMessage(i18n.stepKill);
+    case 'other':
+      return intl.formatMessage(i18n.stepOther, { text: step.text });
   }
 }
 
@@ -195,18 +253,21 @@ export function StrayListenerBanner({
   status,
 }: {
   port: number;
-  status: Pick<MlxEngineStatus, 'strayListenerHolders' | 'strayListenerHoldersError'>;
+  status: Pick<
+    MlxEngineStatus,
+    'strayListenerHolders' | 'strayListenerHoldersError' | 'strayListenerStep'
+  >;
 }) {
   const intl = useIntl();
   const holders = status.strayListenerHolders;
-  const step = holders ? strayStep(holders) : null;
+  const step = holders ? strayStep(status.strayListenerStep) : null;
   const message = holders
     ? holders.length === 0
       ? intl.formatMessage(i18n.noneNamed, { port })
       : null
     : status.strayListenerHoldersError
-      ? intl.formatMessage(i18n.unread, { port, error: status.strayListenerHoldersError })
-      : intl.formatMessage(i18n.unnamed, { port });
+      ? intl.formatMessage(i18n.unreadHeld, { port, error: status.strayListenerHoldersError })
+      : intl.formatMessage(i18n.unnamedHolder, { port });
   const label = intl.formatMessage(i18n.label, { port });
   return (
     <div

@@ -9650,6 +9650,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "Sesuatu menjawab pada port {port}, tetapi tiada proses yang mendengar di situ sekarang — mungkin ia baru sahaja tamat."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Bukan milik goose ini — goose versi lama, pid {pid} ({command}), memulakannya dan masih menjalankannya; ia tidak menandakan mana-mana enjinnya"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Bukan milik goose ini — enjin goose yang dimulakan untuk enjin atau port lain"
   },
@@ -9668,17 +9671,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Seterusnya: mula semula di Jalankan — permulaan menghentikan baki ini dahulu."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Seterusnya: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Seterusnya: beri enjin port lain dalam tetapannya."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Seterusnya: tutup apa yang memulakannya (pid {pid}), kemudian mula semula di Jalankan."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "Satu proses yang tidak dijalankan oleh goose ini mendengar pada port {port} — Unmount menghentikannya."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Seterusnya: mula semula goose yang memulakannya (pid {pid}) — selepas dimulakan semula, ia memasang enjinnya lagi dengan tanda miliknya."
   },
-  "strayListener.unread": {
-    "defaultMessage": "Siapa yang memegang port {port} tidak dapat dibaca ({error}). Unmount menghentikan apa sahaja yang mendengar di situ."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "Satu proses yang tidak dijalankan oleh goose ini mendengar pada port {port}."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "Siapa yang memegang port {port} tidak dapat dibaca ({error}) — goose ini tidak menghentikan apa-apa di situ yang tidak dapat dibuktikan miliknya."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Tidak terbukti milik goose ini — siapa yang memulakannya tidak dapat dibaca"

@@ -9650,6 +9650,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "端口 {port} 上有东西在应答，但现在没有进程在那里监听 — 它可能刚刚退出。"
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "不是这个 goose 的 — 一个较旧的 goose，pid {pid}（{command}），启动了它并仍在运行它；它不给自己的引擎加标记"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "不是这个 goose 的 — 这是为其他引擎或端口启动的 goose 引擎"
   },
@@ -9668,17 +9671,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "下一步：在“运行”中重新启动 — 启动时会先停止这个遗留引擎。"
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "下一步：{text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "下一步：在引擎设置中给它换一个端口。"
   },
   "strayListener.stepQuit": {
     "defaultMessage": "下一步：退出启动它的程序（pid {pid}），然后在“运行”中重新启动。"
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "一个不由这个 goose 运行的进程正在监听端口 {port} — Unmount 会停止它。"
+  "strayListener.stepRestart": {
+    "defaultMessage": "下一步：重启启动它的 goose（pid {pid}）— 重启后，它会重新挂载自己的引擎，并带上自己的标记。"
   },
-  "strayListener.unread": {
-    "defaultMessage": "无法读取是谁占用了端口 {port}（{error}）。Unmount 会停止在那里监听的任何进程。"
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "一个不由这个 goose 运行的进程正在监听端口 {port}。"
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "无法读取是谁占用了端口 {port}（{error}）— 这个 goose 不会停止它无法证明属于自己的任何进程。"
   },
   "strayListener.unreadable": {
     "defaultMessage": "无法证明属于这个 goose — 无法读取是谁启动了它"

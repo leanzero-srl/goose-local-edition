@@ -9650,6 +9650,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "Auf Port {port} antwortet etwas, aber dort lauscht jetzt kein Prozess — er wurde vielleicht gerade beendet."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Nicht von diesem goose — ein älteres goose, PID {pid} ({command}), hat ihn gestartet und betreibt ihn noch; es markiert keine seiner Engines"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Nicht von diesem goose — eine goose-Engine, gestartet für eine andere Engine oder einen anderen Port"
   },
@@ -9668,17 +9671,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Weiter: in Ausführen erneut starten — der Start beendet diesen Rest zuerst."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Weiter: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Weiter: der Engine in ihren Einstellungen einen anderen Port geben."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Weiter: beenden, was ihn gestartet hat (PID {pid}), dann in Ausführen erneut starten."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "Ein Prozess, den dieses goose nicht betreibt, lauscht auf Port {port} — Unmount beendet ihn."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Weiter: das goose neu starten, das ihn gestartet hat (PID {pid}) — neu gestartet, startet es seine Engine wieder, als seine eigene markiert."
   },
-  "strayListener.unread": {
-    "defaultMessage": "Wer Port {port} belegt, konnte nicht gelesen werden ({error}). Unmount beendet, was dort lauscht."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "Ein Prozess, den dieses goose nicht betreibt, lauscht auf Port {port}."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "Wer Port {port} belegt, konnte nicht gelesen werden ({error}) — dieses goose beendet dort nichts, was es nicht als sein eigenes nachweisen kann."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Nicht als dieses goose nachgewiesen — wer ihn gestartet hat, konnte nicht gelesen werden"

@@ -41,9 +41,26 @@ export interface MlxStrayListenerHolder {
    */
   notOursRule?: string | null;
   notOursReason?: string | null;
-  /** When what started it is alive (another goose, or a shell): that process — the one to quit. */
+  /**
+   * When what started it is alive and names the step: under `liveStarter` the goose (or shell) to
+   * quit; under `noMarker` an older goose to restart (Q-251).
+   */
   liveStarterPid?: number | null;
   liveStarterArgv?: string[] | null;
+}
+
+/**
+ * The one next step for a stray port's holders (Q-251), derived by goose-sidecar
+ * `port_holder::next_step` — the same step a refused Mount, a refused Unmount and the swarm's events
+ * say. `kind`: `start` (every holder is this goose's own leftover: Run it, or Unmount, stops it) |
+ * `quitStarter` (quit `pid`) | `restartGoose` (restart the older goose `pid`) | `otherPort` |
+ * `kill` (stop `pids`). `text` is the backend's own words for it.
+ */
+export interface MlxStrayListenerStep {
+  kind: string;
+  pid?: number | null;
+  pids?: number[];
+  text: string;
 }
 
 export interface MlxEngineStatus {
@@ -75,8 +92,9 @@ export interface MlxEngineStatus {
   restartRequired: boolean;
   /**
    * Set while the manager is NOT running yet something already listens on the configured
-   * port — an unsupervised engine orphaned by a previous session. Unmount reclaims it.
-   * Optional defensively: older agents do not send it.
+   * port — an unsupervised engine orphaned by a previous session, or anyone else's. Unmount
+   * reclaims it only when `strayListenerStep.kind` is `start` (Q-252); otherwise the backend
+   * refuses by name and signals nothing. Optional defensively: older agents do not send it.
    */
   strayListenerPort?: number;
   /**
@@ -87,6 +105,8 @@ export interface MlxEngineStatus {
    */
   strayListenerHolders?: MlxStrayListenerHolder[] | null;
   strayListenerHoldersError?: string | null;
+  /** The one next step for `strayListenerHolders`; absent exactly when they are absent or empty. */
+  strayListenerStep?: MlxStrayListenerStep | null;
   /**
    * Memory a mount can take: free pages plus the file cache the OS reclaims on demand (on macOS,
    * Activity Monitor's physical minus used). 0 exactly when `memoryError` is set.

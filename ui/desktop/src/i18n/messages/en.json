@@ -9650,6 +9650,9 @@
   "strayListener.noneNamed": {
     "defaultMessage": "Something answers on port {port}, but no process listens there now — it may have just exited."
   },
+  "strayListener.olderGoose": {
+    "defaultMessage": "Not this goose's — an older goose, pid {pid} ({command}), started it and still runs it; it marks none of its engines"
+  },
   "strayListener.otherEngine": {
     "defaultMessage": "Not this goose's — a goose engine started for another engine or port"
   },
@@ -9668,17 +9671,23 @@
   "strayListener.stepMount": {
     "defaultMessage": "Next: start it again in Run it — the start stops this leftover first."
   },
+  "strayListener.stepOther": {
+    "defaultMessage": "Next: {text}"
+  },
   "strayListener.stepOtherPort": {
     "defaultMessage": "Next: give the engine another port in its settings."
   },
   "strayListener.stepQuit": {
     "defaultMessage": "Next: quit what started it (pid {pid}), then start again in Run it."
   },
-  "strayListener.unnamed": {
-    "defaultMessage": "A process this goose does not run listens on port {port} — Unmount stops it."
+  "strayListener.stepRestart": {
+    "defaultMessage": "Next: restart the goose that started it (pid {pid}) — restarted, it mounts its engine again, marked as its own."
   },
-  "strayListener.unread": {
-    "defaultMessage": "Who holds port {port} could not be read ({error}). Unmount stops whatever listens on it."
+  "strayListener.unnamedHolder": {
+    "defaultMessage": "A process this goose does not run listens on port {port}."
+  },
+  "strayListener.unreadHeld": {
+    "defaultMessage": "Who holds port {port} could not be read ({error}) — this goose stops nothing there it cannot prove its own."
   },
   "strayListener.unreadable": {
     "defaultMessage": "Not proven this goose's — who started it could not be read"

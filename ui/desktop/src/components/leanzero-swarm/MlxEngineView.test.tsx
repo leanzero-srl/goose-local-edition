@@ -705,12 +705,22 @@ describe('MlxEngineView engine tab', () => {
     unmount();
   });
 
-  it('a stray listener while stopped shows the amber banner and an enabled Unmount that reclaims it', async () => {
-    mockStatus.mockResolvedValue(statusOf({ state: 'stopped', strayListenerPort: 9600 }));
+  it('this goose’s own leftover on the port: the banner says so and Unmount is offered and reclaims it', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({
+        state: 'stopped',
+        strayListenerPort: 9600,
+        strayListenerHolders: [{ pid: 35319, argv: ['python', 'rapid-mlx', 'serve'], ours: true }],
+        strayListenerStep: {
+          kind: 'start',
+          text: 'start the engine again — the start stops this leftover first',
+        },
+      })
+    );
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getByTestId('stray-listener')).toHaveTextContent(
-        'A process this goose does not run listens on port 9600 — Unmount stops it.'
+        "This goose's own engine, left from an earlier run — nothing runs it now"
       );
     });
     const unmountBtn = screen.getByRole('button', { name: /Unmount/ });
@@ -719,6 +729,52 @@ describe('MlxEngineView engine tab', () => {
     await waitFor(() => {
       expect(mockUnmount).toHaveBeenCalledTimes(1);
     });
+    unmount();
+  });
+
+  it('Q-252: another goose’s live engine on the port — the banner names the step and Unmount is not offered', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({
+        state: 'stopped',
+        strayListenerPort: 8090,
+        strayListenerHolders: [
+          {
+            pid: 35319,
+            argv: ['python', 'rapid-mlx', 'serve'],
+            ours: false,
+            notOursRule: 'liveStarter',
+            notOursReason: 'the process that started it, pid 73403 (`goose serve`), is alive',
+            liveStarterPid: 73403,
+            liveStarterArgv: ['goose', 'serve'],
+          },
+        ],
+        strayListenerStep: {
+          kind: 'quitStarter',
+          pid: 73403,
+          text: 'quit what started it (pid 73403), then start again',
+        },
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByTestId('stray-listener-step')).toHaveTextContent(
+        'Next: quit what started it (pid 73403), then start again in Run it.'
+      );
+    });
+    expect(screen.queryByRole('button', { name: /Unmount/ })).toBeNull();
+    expect(mockUnmount).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('holders not read (a goose before Q-249): the port is named, and Unmount is not offered on a guess', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped', strayListenerPort: 9600 }));
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByTestId('stray-listener')).toHaveTextContent(
+        'A process this goose does not run listens on port 9600.'
+      );
+    });
+    expect(screen.queryByRole('button', { name: /Unmount/ })).toBeNull();
     unmount();
   });
 
@@ -736,6 +792,11 @@ describe('MlxEngineView engine tab', () => {
             notOursReason: 'pid 35319 carries no GOOSE_SIDECAR in its environment',
           },
         ],
+        strayListenerStep: {
+          kind: 'kill',
+          pids: [35319],
+          text: 'stop it per pid (`kill 35319`), then start again',
+        },
       })
     );
     const { unmount } = render(<MlxEngineView />);
@@ -744,6 +805,7 @@ describe('MlxEngineView engine tab', () => {
     expect(card).toHaveTextContent('pid 35319 · python rapid-mlx serve');
     expect(card).toHaveTextContent("Not this goose's — it carries no goose engine mark");
     expect(screen.getByTestId('stray-listener-command')).toHaveTextContent('kill 35319');
+    expect(screen.queryByRole('button', { name: /Unmount/ })).toBeNull();
     unmount();
   });
 

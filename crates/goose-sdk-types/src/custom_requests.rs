@@ -2489,7 +2489,9 @@ pub struct MlxEngineStatusDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_verdict: Option<String>,
     /// Something already listens on the configured port while the manager supervises
-    /// nothing — an engine orphaned by a previous goosed. Unmount reclaims it.
+    /// nothing — an engine orphaned by a previous goosed, or anyone else's. Unmount reclaims it
+    /// only when `strayListenerStep.kind` is "start" (every holder is this goose's own leftover);
+    /// otherwise it refuses by name and signals nothing (Q-252).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stray_listener_port: Option<u16>,
     /// Who holds `strayListenerPort`, read while no mount is in flight: every process listening
@@ -2500,6 +2502,11 @@ pub struct MlxEngineStatusDto {
     pub stray_listener_holders: Option<Vec<MlxStrayListenerHolderDto>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stray_listener_holders_error: Option<String>,
+    /// The one next step for `strayListenerHolders` — the same derivation a refused Mount, a
+    /// refused Unmount and the swarm's events word it from (Q-251). Absent exactly when the
+    /// holders are absent or name no process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stray_listener_step: Option<MlxStrayListenerStepDto>,
     /// Memory a mount can take: free pages plus the file cache the OS reclaims on demand
     /// (on macOS, Activity Monitor's physical-minus-used). 0 exactly when `memory_error`
     /// is set.
@@ -2694,12 +2701,32 @@ pub struct MlxStrayListenerHolderDto {
     /// The same finding in full, with its pids and values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_ours_reason: Option<String>,
-    /// When the process that started it is alive (another goose, or a shell): that process —
-    /// the one to quit.
+    /// When the process that started it is alive and names the step: under "liveStarter" the
+    /// goose (or shell) to quit; under "noMarker" the older goose to restart (Q-251).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_starter_pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_starter_argv: Option<Vec<String>>,
+}
+
+/// The one next step for a stray port's holders (Q-251).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxStrayListenerStepDto {
+    /// "start" (every holder is this goose's own leftover: Run it, or Unmount, stops it first) |
+    /// "quitStarter" (a live process runs this goose-marked engine: quit `pid`) |
+    /// "restartGoose" (a goose older than the engine mark runs it: restart `pid`, it mounts its
+    /// engine again marked) | "otherPort" (this goose itself listens there) | "kill" (nothing
+    /// alive a restart would help runs it: stop `pids`).
+    pub kind: String,
+    /// The starter to quit or restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    /// For "kill": the pids to stop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pids: Vec<u32>,
+    /// The step in the backend's words, as its refusals say it.
+    pub text: String,
 }
 
 /// A mount in flight. `phase`: "makingRoom" (macOS reclaims memory before the gate judges again)

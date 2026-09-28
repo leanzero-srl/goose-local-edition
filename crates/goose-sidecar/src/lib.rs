@@ -919,7 +919,8 @@ impl Sidecar {
     /// still listens afterwards is either RESIDUE of the engine's own process group — the
     /// wrapper died without forwarding, its engine kept the socket — which is terminated
     /// per-pid, or a listener outside that group, which is NOT ours and is left alone and
-    /// logged (the manager refuses to mount over it; an explicit unmount reclaims it).
+    /// logged (the manager refuses to mount over it; an explicit unmount reclaims it only when
+    /// `port_holder`'s proof calls it this goose's own leftover — Q-252).
     async fn release_port(&self, owned_group: Option<u32>) {
         let Some(port) = self.listen_port() else {
             tracing::warn!(
@@ -1372,7 +1373,10 @@ pub(crate) async fn listening_pids(port: u16) -> Result<Vec<u32>> {
 /// Measured on macOS 26.6 (lsof 4.91): no listener → exit 1 with empty stdout AND stderr; a
 /// failed lsof (an illegal option) → exit 1 WITH stderr. `-t` implies `-w`, so a warning never
 /// lands on stderr of an answered run.
-fn listening_pids_of(lsof: &std::path::Path, output: &std::process::Output) -> Result<Vec<u32>> {
+pub(crate) fn listening_pids_of(
+    lsof: &std::path::Path,
+    output: &std::process::Output,
+) -> Result<Vec<u32>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     match output.status.code() {
