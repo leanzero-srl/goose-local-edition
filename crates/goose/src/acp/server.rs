@@ -125,6 +125,7 @@ mod needs_you;
 mod new_session;
 #[cfg(unix)]
 mod nodes_loader;
+mod notes;
 mod onboarding;
 mod prompts;
 mod proposals;
@@ -227,6 +228,7 @@ struct ActivePromptRun {
 struct RunRegistration {
     runs: Arc<Mutex<HashMap<String, ActivePromptRun>>>,
     agent_manager: Arc<AgentManager>,
+    session_manager: Arc<SessionManager>,
     session_id: String,
     run_id: String,
     cleared: bool,
@@ -238,6 +240,7 @@ impl Drop for RunRegistration {
             return;
         }
         let (runs, agent_manager) = (self.runs.clone(), self.agent_manager.clone());
+        let session_manager = self.session_manager.clone();
         let (session_id, run_id) = (self.session_id.clone(), self.run_id.clone());
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
@@ -248,6 +251,10 @@ impl Drop for RunRegistration {
                         agent_manager.unregister_cancel_token(&session_id).await;
                         warn!(session_id, run_id, "a prompt dropped before it ended (its connection closed, or it panicked); its run is cleared");
                     }
+                    drop(runs);
+                    crate::chat_notes::hub()
+                        .run_ended(&session_manager, &session_id, &run_id)
+                        .await;
                 });
             }
             Err(error) => {
@@ -306,6 +313,8 @@ pub struct GooseAcpAgent {
     loops: Option<crate::session_loops::runner::Runner>,
     /// This connection's tick door (L2b), open from `initialize` until the connection ends.
     loop_door: loop_door::DoorSlot,
+    /// This connection's notes door (Q-358), open from `initialize` until the connection ends.
+    notes_door: notes::NoteDoorSlot,
 }
 
 /// Shorten a session/thread id for perf log correlation.
@@ -1060,6 +1069,7 @@ impl GooseAcpAgent {
             recipe_path_cache: Arc::new(Mutex::new(HashMap::new())),
             loops,
             loop_door: loop_door::DoorSlot::default(),
+            notes_door: notes::NoteDoorSlot::default(),
         })
     }
 
@@ -2202,6 +2212,7 @@ fn forming_progress_observer(
                 status: StatusMessage::Progress {
                     message: message.clone(),
                     forming: Some(forming_status(&progress)),
+                    compaction: None,
                 },
             }),
         };
@@ -2228,10 +2239,12 @@ fn status_message_from_system_notification(
                     output_tokens: stopped.output_tokens,
                 }
             }),
+            compaction: crate::agents::compaction_run::compaction_of(notification).map(Box::new),
         }),
         SystemNotificationType::ThinkingMessage => Some(StatusMessage::Progress {
             message: notification.msg.clone(),
             forming: None,
+            compaction: crate::agents::compaction_run::compaction_of(notification).map(Box::new),
         }),
         SystemNotificationType::CreditsExhausted => None,
     }
@@ -2592,6 +2605,7 @@ impl GooseAcpAgent {
         RunRegistration {
             runs: self.active_prompt_runs.clone(),
             agent_manager: self.agent_manager.clone(),
+            session_manager: self.session_manager.clone(),
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
             cleared: false,
@@ -2630,6 +2644,11 @@ impl GooseAcpAgent {
         if let Some(agent) = agent {
             agent.discard_pending_steers(session_id).await;
         }
+        // Q-358: after the discard, so a note steered into this run that never drained waits again
+        // (and cannot also drain into the next turn), and the chat — idle now — is offered it.
+        crate::chat_notes::hub()
+            .run_ended(&self.session_manager, session_id, run_id)
+            .await;
 
         if self.closed_session_ids.lock().await.contains(session_id) {
             self.sessions.lock().await.remove(session_id);
@@ -2853,6 +2872,20 @@ impl GooseAcpAgent {
         let offer = self
             .accept_tick_offer(&session_id, args.meta.as_ref())
             .await;
+        // Q-358: a note's own turn, when the prompt's `crossNote` mark names this chat's waiting
+        // note and carries its words. A mark that is not honoured refuses the prompt here, before
+        // anything starts: the words are goose's framing, never sent on as if the person typed them.
+        let cross_note = match offer {
+            Some(_) => None,
+            None => {
+                self.cross_note_of_prompt(
+                    &session_id,
+                    args.meta.as_ref(),
+                    &Self::convert_acp_prompt_to_message(&args.prompt).as_concat_text(),
+                )
+                .await?
+            }
+        };
 
         let run_id = format!("run_{}", Uuid::new_v4());
         let cancel_token = CancellationToken::new();
@@ -2880,6 +2913,27 @@ impl GooseAcpAgent {
                 return Err(error);
             }
         };
+        // Q-358: a note sent from any window can be steered into this run while it lasts.
+        {
+            let (announce_cx, announce_session) = (cx.clone(), args.session_id.clone());
+            crate::chat_notes::hub()
+                .run_started(
+                    &session_id,
+                    &run_id,
+                    &agent,
+                    Arc::new(move |message_id: &str, run_id: &str| {
+                        if let Err(error) = Self::send_queued_steer_update(
+                            &announce_cx,
+                            &announce_session,
+                            message_id,
+                            run_id,
+                        ) {
+                            warn!(?error, "notes: the steered note's queued mark did not reach the window running the turn");
+                        }
+                    }),
+                )
+                .await;
+        }
 
         let mut tick = None;
         let mut tick_message_id = None;
@@ -2921,12 +2975,25 @@ impl GooseAcpAgent {
                 (Some(_), Some(id)) => {
                     Some(Self::convert_acp_prompt_to_message(&args.prompt).with_id(id.clone()))
                 }
-                _ => {
-                    let message = Self::convert_acp_prompt_to_message(&args.prompt);
-                    crate::agents::execute_commands::parse_slash_command(&message.as_concat_text())
+                _ => match &cross_note {
+                    Some(note) => {
+                        if let Err(error) = self.take_cross_note(&session_id, note).await {
+                            warn!(session_id, ?error, "notes: the note's turn was stopped before it ran and the note could not be marked read; it is stored in the chat");
+                        }
+                        Some(
+                            Self::convert_acp_prompt_to_message(&args.prompt)
+                                .with_id(note.message_id()),
+                        )
+                    }
+                    None => {
+                        let message = Self::convert_acp_prompt_to_message(&args.prompt);
+                        crate::agents::execute_commands::parse_slash_command(
+                            &message.as_concat_text(),
+                        )
                         .is_none()
                         .then_some(message)
-                }
+                    }
+                },
             };
             if let Some(message) = stopped {
                 match self
@@ -2974,9 +3041,10 @@ impl GooseAcpAgent {
         let user_message = Self::convert_acp_prompt_to_message(&args.prompt);
         // A tick's message takes the id the runner minted with the offer (§5.2 step 2): the
         // window's marker and the stored message are the same message.
-        let user_message = match tick_message_id {
-            Some(id) => user_message.with_id(id),
-            None => user_message,
+        let user_message = match (tick_message_id, &cross_note) {
+            (Some(id), _) => user_message.with_id(id),
+            (None, Some(note)) => user_message.with_id(note.message_id()),
+            (None, None) => user_message,
         };
 
         let message_text = user_message.as_concat_text();
@@ -3012,15 +3080,33 @@ impl GooseAcpAgent {
         }
 
         // Q-298: the person wrote instead of answering, so their message supersedes the chat's
-        // open questions. A loop tick is not the person, a slash command is not a reply, and the
-        // card's own answer (Q-344, marked in `_meta`) answers one question, not all of them.
+        // open questions. A loop tick is not the person, a slash command is not a reply, the
+        // card's own answer (Q-344, marked in `_meta`) answers one question, not all of them, and
+        // a note from another chat (Q-358) answers none: it is information, not approval.
         if tick.is_none()
+            && cross_note.is_none()
             && crate::agents::execute_commands::parse_slash_command(&message_text).is_none()
             && !self
                 .is_card_answer(&session_id, args.meta.as_ref(), &message_text)
                 .await
         {
             self.supersede_open_questions(&session_id, &message_text)
+                .await;
+        }
+        // Q-358: the note's own turn takes it, once — another window that took it first refuses
+        // this one. Then, for any turn a person or a note starts: the notes the person added to
+        // this message go first, and what became of this chat's own sent notes is told.
+        if let Some(note) = &cross_note {
+            if let Err(error) = self.take_cross_note(&session_id, note).await {
+                self.end_run(&mut run).await;
+                let _ = Self::send_active_run_update(cx, &args.session_id, None);
+                return Err(error);
+            }
+        }
+        if tick.is_none()
+            && crate::agents::execute_commands::parse_slash_command(&message_text).is_none()
+        {
+            self.notes_before_message(cx, &args.session_id, cross_note.is_none())
                 .await;
         }
 
@@ -3115,6 +3201,10 @@ impl GooseAcpAgent {
                 Ok(crate::agents::AgentEvent::Message(message)) => {
                     // Agent persists messages via session_manager.add_message() internally.
                     let stored_message_id = message.id.clone();
+                    if message.role == rmcp::model::Role::User && message.metadata.steer {
+                        self.note_drained(&session_id, stored_message_id.as_deref())
+                            .await;
+                    }
                     if message.role == rmcp::model::Role::Assistant && message.is_agent_visible() {
                         for content in &message.content {
                             match content {
@@ -3659,6 +3749,7 @@ struct LoopDoorClose(Arc<GooseAcpAgent>);
 impl Drop for LoopDoorClose {
     fn drop(&mut self) {
         self.0.loop_door.close();
+        self.0.notes_door.close();
     }
 }
 
@@ -3948,6 +4039,7 @@ mod tests {
         let wire = serde_json::to_value(StatusMessage::Progress {
             message: forming_progress_text(&progress).unwrap(),
             forming: Some(status),
+            compaction: None,
         })
         .unwrap();
         assert_eq!(wire["type"], "progress");
@@ -3969,12 +4061,92 @@ mod tests {
         let plain = serde_json::to_value(StatusMessage::Progress {
             message: "Compacting".to_string(),
             forming: None,
+            compaction: None,
         })
         .unwrap();
         assert!(
-            plain.get("forming").is_none(),
+            plain.get("forming").is_none() && plain.get("compaction").is_none(),
             "every other progress status keeps its old shape: {plain}"
         );
+    }
+
+    /// Q-357: a compaction's status rides the progress line while it runs and the notice once it
+    /// ends; a notice that is not a compaction's carries none.
+    #[test]
+    fn a_compaction_status_reaches_the_client_on_its_progress_and_its_notice() {
+        use goose_sdk_types::custom_notifications::{
+            CompactionStage, CompactionStatus, CompactionTriggerKind,
+        };
+        let mut status = CompactionStatus {
+            stage: CompactionStage::Writing,
+            trigger: CompactionTriggerKind::Auto,
+            tokens_before: Some(142_100),
+            tokens_after: None,
+            written_tokens: Some(1_200),
+            parts: vec!["Where we are".to_string(), "Next step".to_string()],
+            parts_total: 3,
+            elapsed_ms: 60_000,
+            writing_ms: Some(20_000),
+            note: None,
+            note_verdict: None,
+            said: None,
+            error: None,
+            warning: None,
+        };
+        let notification = |status: &CompactionStatus, kind| {
+            let mut data = serde_json::to_value(status).unwrap();
+            data["kind"] = "compaction".into();
+            SystemNotificationContent {
+                notification_type: kind,
+                msg: crate::agents::compaction_run::status_line(status),
+                data: Some(data),
+            }
+        };
+        let progress = status_message_from_system_notification(&notification(
+            &status,
+            SystemNotificationType::ThinkingMessage,
+        ));
+        let Some(StatusMessage::Progress {
+            message,
+            compaction: Some(sent),
+            ..
+        }) = progress
+        else {
+            panic!("a progress status with the compaction");
+        };
+        assert_eq!(*sent, status);
+        assert_eq!(
+            message,
+            "Compacting the conversation · writing the summary · 1.2k tokens written · part 2 of 3"
+        );
+
+        status.stage = CompactionStage::Done;
+        status.tokens_after = Some(6_300);
+        let Some(StatusMessage::Notice {
+            compaction: Some(sent),
+            stopped: None,
+            ..
+        }) = status_message_from_system_notification(&notification(
+            &status,
+            SystemNotificationType::InlineMessage,
+        ))
+        else {
+            panic!("a notice with the compaction");
+        };
+        assert_eq!(sent.stage, CompactionStage::Done);
+
+        let plain = SystemNotificationContent {
+            notification_type: SystemNotificationType::InlineMessage,
+            msg: "goose check: something".to_string(),
+            data: None,
+        };
+        assert!(matches!(
+            status_message_from_system_notification(&plain),
+            Some(StatusMessage::Notice {
+                compaction: None,
+                ..
+            })
+        ));
     }
 
     #[test_case(
@@ -5019,10 +5191,11 @@ print(\"hello, world\")
     #[tokio::test]
     async fn a_dropped_prompts_run_leaves_the_busy_set_and_never_touches_a_later_run() {
         let temp = tempfile::tempdir().unwrap();
+        let sessions = Arc::new(SessionManager::new(temp.path().to_path_buf()));
         let manager = Arc::new(
             AgentManager::new(
                 AgentConfig::new(
-                    Arc::new(SessionManager::new(temp.path().to_path_buf())),
+                    sessions.clone(),
                     PermissionManager::instance(),
                     None,
                     GooseMode::Auto,
@@ -5037,6 +5210,7 @@ print(\"hello, world\")
         let runs: Arc<Mutex<HashMap<String, ActivePromptRun>>> = Arc::default();
         let register = |run_id: &str| {
             let (runs, manager, run_id) = (runs.clone(), manager.clone(), run_id.to_string());
+            let sessions = sessions.clone();
             async move {
                 let token = CancellationToken::new();
                 manager
@@ -5053,6 +5227,7 @@ print(\"hello, world\")
                 RunRegistration {
                     runs,
                     agent_manager: manager,
+                    session_manager: sessions,
                     session_id: "chat".to_string(),
                     run_id,
                     cleared: false,
@@ -5080,6 +5255,7 @@ print(\"hello, world\")
         drop(RunRegistration {
             runs: runs.clone(),
             agent_manager: manager.clone(),
+            session_manager: sessions.clone(),
             session_id: "chat".to_string(),
             run_id: "run_1".to_string(),
             cleared: false,

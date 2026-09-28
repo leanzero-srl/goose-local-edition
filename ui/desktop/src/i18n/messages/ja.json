@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "今すぐ圧縮"
   },
+  "alertBox.context": {
+    "defaultMessage": "コンテキスト · {total} トークン中 {current} · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "コンテキスト · {current} トークン"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "goose が圧縮するタイミングを変更"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "しきい値の保存に失敗しました: {error}"
+    "defaultMessage": "保存できませんでした: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "保存"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "了解しました"
@@ -827,6 +839,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "設定"
   },
+  "compaction.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "書いたとおりに圧縮"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "自動"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} トークン"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "圧縮しませんでした — 会話はそのままです。"
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "会話を圧縮しています"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "メモに従って圧縮しました。goose からの指摘: 「{concern}」"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "会話を圧縮しました"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "メモを編集"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "この圧縮のためのメモ"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "圧縮に失敗しました"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}。会話は変更されていません。"
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "あなたの指示"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose はメモが明確かどうかを答えませんでした — メモは書かれたとおりに従われました。"
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "会話が長すぎてメモを一緒に送れませんでした — goose はメモを一字一句保持しました。"
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "メモに従って圧縮しました。"
+  },
+  "compaction.card.part": {
+    "defaultMessage": "パート {total} 中 {done}"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "要約のパート"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose からメモについての質問"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "「{question}」"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} トークン/秒"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "会話を読み込み中"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} トークン"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "チャットが長すぎました"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "保存して圧縮"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "再試行"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "保持された内容"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "要約を書いています"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} トークン書き込み済み"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "あなたのメモ: 「{note}」"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "今すぐ圧縮"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "次の圧縮へのメモ"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "残すべきこと — ルール、数値、決定事項"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "このチャットに保存されたメモを読み込めませんでした: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "メモを保存できませんでした: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "保持される内容を見る"
+  },
+  "compaction.standing": {
+    "defaultMessage": "このチャットのすべての圧縮にこのメモを使う"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "ヘッダーを追加"
   },
@@ -1150,6 +1276,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "処理中..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "ピン留め"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "常に含まれるもの"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "圧縮の有無にかかわらず、すでに毎ターンに含まれています。"
+  },
+  "contextRail.asked": {
+    "defaultMessage": "あなたの依頼"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "{tokens} トークン以内で保持 — ウィンドウの 16 分の 1"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "ウィンドウが不明なため、何も削られません"
+  },
+  "contextRail.close": {
+    "defaultMessage": "コンテキストを閉じる"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# 件} other{# 件}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# 件は収めるために冒頭だけに短縮されています} other{# 件は収めるために冒頭だけに短縮されています}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "失敗したツール呼び出し"
+  },
+  "contextRail.files": {
+    "defaultMessage": "書き込まれたファイル"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "goose が一字一句保持するもの"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "圧縮ではこれらがそのまま保持されます — goose がチャット全体から作り、モデルが書き換えることはありません。"
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "前回の圧縮: {before} → {after} トークン · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "前回の圧縮: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "このチャットではまだ圧縮が実行されていません。"
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "前回の圧縮で保持された内容"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "レジャー"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "レジャーの最新の記録"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{収めるために古い # 件はここに保持されていません} other{収めるために古い # 件はここに保持されていません}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "圧縮で保持される内容を読み込めませんでした: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "このチャットを読み込み中…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "このチャットはまだ圧縮されていません。"
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "レジャーに記録はありません。"
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "ピン留めはありません。"
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "スクラッチパッドは空です。"
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "あなたのメモ"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "メモとピン留め"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "まだありません"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "常に残すべき一行"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "ピン留め"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "このチャットのすべての圧縮で一字一句保持されます。"
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "「{pin}」のピン留めを外す"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "メモを保存"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "スクラッチパッド"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "コンテキスト"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "ループ、変更、コンテキスト"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} トークン"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "読み込めませんでした: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose が書くもの"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "モデルだけが知っていること。圧縮のたびに会話そのものから書かれます:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "コンテキスト {context} トークン + 現在書き込み中 {live}、ウィンドウ {limit} トークン中"
@@ -4012,6 +4261,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "コピー"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "圧縮の直後に送信されます"
   },
   "messageQueue.cancel": {
     "defaultMessage": "キャンセル"
@@ -7102,6 +7354,129 @@
   },
   "nodesChipMenu.title": {
     "defaultMessage": "このチャットの実行先"
+  },
+  "notes.chip": {
+    "defaultMessage": "メモ"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {「{from}」からのメモがこのチャットで待っています} other {# 件のメモがこのチャットで待っています}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "「{query}」に一致するチャットが複数あります。どれですか？"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "別のチャットへのメモ"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "そこに置いておく"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "{time} から待機中"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "どのウィンドウでも開かれていません"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose がそこで作業中です"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "「{query}」に一致するチャットがありません。このメモの宛先のチャットを選んでください。"
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "このチャットではない"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "戻る"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "タイトルかフォルダーでチャットを探す"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "チャットを読み込んでいます…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "この言葉に一致するチャットはありません。"
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "チャットを選ぶ"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "今すぐ差し込む"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "メモ"
+  },
+  "notes.failed": {
+    "defaultMessage": "できませんでした: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "次のメッセージに添える"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "このターンの後で"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "このターンが終わると goose が読みます。"
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "「{name}」からのメモ"
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "今すぐ goose に渡す"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "このターンに差し込む"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "このターンに差し込みました: goose はツール呼び出しの合間に読みます。"
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "別のチャットから送られました。goose はまだ読んでいません。"
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "次のメッセージと一緒に送られます。"
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "メモを隠す"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "メモを表示"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "「{name}」からのメモ · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "この行を閉じる"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "「{name}」にメモを送信 · 向こうで閉じられました"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "「{name}」にメモを送信 · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "「{name}」にメモを送信 · {time} にそのターンで読まれました"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "「{name}」にメモを送信 · 向こうで待機中"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "このチャットのメモを読み込めませんでした: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# 件のメモが待機中} other {# 件のメモが待機中}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "「{from}」から"
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "あなたを待っているメモ"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"

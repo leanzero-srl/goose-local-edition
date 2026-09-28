@@ -37,6 +37,7 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                         // notifications — until its serving future ends.
                         if open_door {
                             agent.open_loop_door(&cx);
+                            agent.open_notes_door(&cx);
                         }
                         Ok(())
                     },

@@ -14,8 +14,10 @@ import type { ControlResult } from '../loops/useSessionLoop';
 import type { LoopControlAction } from '../loops/model';
 import { markEndedSeen, onOpenLoopRailRequest, useEndedSeen } from '../loops/loopRailRequest';
 import { useNow } from '../loops/useNow';
+import { ContextPanel, contextRailWords } from '../contextRail/ContextPanel';
+import { onOpenContextRailRequest } from '../contextRail/contextRailRequest';
 
-export type RailTab = 'loop' | 'changes';
+export type RailTab = 'loop' | 'changes' | 'context';
 
 interface RailMemory {
   open: boolean;
@@ -30,7 +32,10 @@ export function readRailMemory(sessionId: string): RailMemory | null {
     const raw = window.localStorage.getItem(memoryKey(sessionId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<RailMemory>;
-    const tab = parsed.tab === 'loop' || parsed.tab === 'changes' ? parsed.tab : null;
+    const tab =
+      parsed.tab === 'loop' || parsed.tab === 'changes' || parsed.tab === 'context'
+        ? parsed.tab
+        : null;
     return tab ? { open: parsed.open === true, tab } : null;
   } catch {
     return null;
@@ -60,6 +65,7 @@ export default function SessionRail({
   control,
   workingDir,
   onPillsHeight,
+  onSend,
   className,
 }: {
   sessionId: string;
@@ -72,6 +78,8 @@ export default function SessionRail({
    * below them, so they never sit on its first message (Q-315).
    */
   onPillsHeight: (px: number) => void;
+  /** Sends a message in this chat (the Context tab's Compact now). */
+  onSend?: (text: string) => void;
   className?: string;
 }) {
   const intl = useIntl();
@@ -120,6 +128,20 @@ export default function SessionRail({
     [sessionId]
   );
 
+  // Q-357: the meter menu's "See what it keeps" and the compaction card's "What was kept" open
+  // the rail on Context.
+  useEffect(
+    () =>
+      onOpenContextRailRequest((requested) => {
+        if (requested !== sessionId) return false;
+        const next: RailMemory = { open: true, tab: 'context' };
+        setMemory(next);
+        writeRailMemory(sessionId, next);
+        return true;
+      }),
+    [sessionId]
+  );
+
   const refocus = useRef(false);
   useEffect(() => {
     if (memory.open) {
@@ -155,7 +177,7 @@ export default function SessionRail({
     return () => observer.disconnect();
   }, [pillsRow, onPillsHeight]);
 
-  if (!pill && !hasChanges && !(memory.open && hasLoop)) return null;
+  if (!pill && !hasChanges && !(memory.open && (hasLoop || memory.tab === 'context'))) return null;
 
   const open = (tab: RailTab) => {
     openedFrom.current = tab;
@@ -176,6 +198,11 @@ export default function SessionRail({
       value: 'changes' as const,
       label: intl.formatMessage(loopWords.tabChanges, { count: changes.files.length }),
       testId: 'rail-tab-changes',
+    },
+    {
+      value: 'context' as const,
+      label: intl.formatMessage(contextRailWords.tab),
+      testId: 'rail-tab-context',
     },
   ];
 
@@ -217,7 +244,9 @@ export default function SessionRail({
           aria-label={
             memory.tab === 'loop'
               ? intl.formatMessage(loopWords.tabLoop)
-              : intl.formatMessage(changesRailMessages.title)
+              : memory.tab === 'context'
+                ? intl.formatMessage(contextRailWords.tab)
+                : intl.formatMessage(changesRailMessages.title)
           }
           data-testid="session-rail-panel"
           data-tab={memory.tab}
@@ -237,7 +266,7 @@ export default function SessionRail({
             <Segmented
               as="tabs"
               size="sm"
-              aria-label={intl.formatMessage(loopWords.tabsLabel)}
+              aria-label={intl.formatMessage(contextRailWords.tabsLabel)}
               options={tabOptions}
               value={memory.tab}
               onChange={(tab) => update({ open: true, tab })}
@@ -246,7 +275,11 @@ export default function SessionRail({
               type="button"
               data-testid="session-rail-close"
               aria-label={intl.formatMessage(
-                memory.tab === 'loop' ? loopWords.closeLoop : changesRailMessages.close
+                memory.tab === 'loop'
+                  ? loopWords.closeLoop
+                  : memory.tab === 'context'
+                    ? contextRailWords.close
+                    : changesRailMessages.close
               )}
               onClick={close}
               className={cx(
@@ -267,6 +300,12 @@ export default function SessionRail({
                 workingDir={workingDir}
                 nowMs={nowMs}
                 control={control}
+              />
+            ) : memory.tab === 'context' ? (
+              <ContextPanel
+                sessionId={sessionId}
+                refreshKey={String(messages.length)}
+                onSend={onSend}
               />
             ) : (
               <div data-testid="changes-rail-panel" className="flex min-h-0 flex-1 flex-col">

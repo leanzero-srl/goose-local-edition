@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type ReactNode } from 'react';
-import { CircleStop, Hand, Repeat, TriangleAlert } from 'lucide-react';
+import { CircleStop, Hand, Mail, Repeat, TriangleAlert } from 'lucide-react';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
 import { PHASE_FILL, RADIUS, TNUM, TONE_FILL, cx, type Tone } from '../lz';
@@ -14,6 +14,7 @@ import {
   type LoopStatus,
 } from './sessionActivityStore';
 import { stoppedTurnText } from './stoppedTurnText';
+import { noteWords } from '../notes/noteWords';
 
 const i18n = defineMessages({
   running: { id: 'sessionActivity.running', defaultMessage: 'Running · {elapsed}' },
@@ -299,6 +300,31 @@ export function NeedsYouPill({ count, className }: { count: number; className?: 
   );
 }
 
+/** Solid violet: notes from the person's other chats wait in this chat (Q-358). */
+export function NotePill({
+  count,
+  from,
+  className,
+}: {
+  count: number;
+  from?: string;
+  className?: string;
+}) {
+  const intl = useIntl();
+  const label = intl.formatMessage(noteWords.chipLabel, { count, from: from ?? '' });
+  return (
+    <span
+      data-testid="session-note-pill"
+      title={label}
+      aria-label={label}
+      className={cx(PILL, RADIUS.pill, TONE_FILL.secondary, TNUM, '[&_svg]:size-3', className)}
+    >
+      <Mail aria-hidden />
+      {intl.formatMessage(noteWords.chip)}
+    </span>
+  );
+}
+
 /** Solid red: the session's last turn failed and nothing has run since. */
 export function FailedPill({ reason, className }: { reason?: string; className?: string }) {
   const intl = useIntl();
@@ -376,12 +402,17 @@ export function SessionActivityMarker({
 }) {
   const activity = useActivityOf(sessionId);
   const states = sessionStates(activity);
-  if (states[0] === 'idle') return <>{idle ?? null}</>;
+  const note =
+    activity.notesWaiting > 0 ? (
+      <NotePill count={activity.notesWaiting} from={activity.noteFrom} />
+    ) : null;
+  if (states[0] === 'idle' && !note) return <>{idle ?? null}</>;
   return (
     <span
       data-testid="session-activity-marker"
       className={cx('inline-flex shrink-0 items-center gap-1', className)}
     >
+      {note}
       {states.includes('needs-you') && <NeedsYouPill count={activity.needsYou} />}
       {activity.runningSince && <RunningPill since={activity.runningSince} />}
       {states.includes('background') && activity.background && (

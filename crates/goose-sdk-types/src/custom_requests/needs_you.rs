@@ -106,6 +106,9 @@ pub struct SessionActivityResponse {
     /// read now; an unreadable loop record is listed with its error.
     #[serde(default)]
     pub looping: Vec<super::LoopSummaryDto>,
+    /// Chats with notes from the person's other chats waiting there (Q-358), oldest note first.
+    #[serde(default)]
+    pub notes_waiting: Vec<super::NotesWaitingDto>,
 }
 
 /// What goose asks the model FOR a session besides the answer being written (Q-185): the call's

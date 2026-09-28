@@ -1,5 +1,6 @@
 import type { GooseSessionNotification_unstable } from '@aaif/goose-sdk';
 import type { Message } from '../../types/message';
+import { COMPACTION_KIND, isCompactionData } from '../../components/compaction/compactionStatus';
 import { type AcpChatStateChange, type AdapterState, messagesChange } from './shared';
 
 export function applyGooseSessionNotification(
@@ -53,14 +54,31 @@ function applyStatusMessage(
         }
       : undefined;
 
+  // Q-357: a compaction's stages ride its status; the card reads them from `data`.
+  const compaction = update.status.compaction
+    ? { kind: COMPACTION_KIND, ...update.status.compaction }
+    : undefined;
+
   // A progress status replaces the one directly before it: the loading line reads only the last
   // message, and a live counter (a response forming tool calls) would otherwise add a message per tick.
   const last = state.messages[state.messages.length - 1];
   const lastProgress = notificationType === 'thinkingMessage' ? progressContentOf(last) : undefined;
   if (lastProgress) {
     lastProgress.msg = update.status.message;
-    lastProgress.data = forming;
+    lastProgress.data = compaction ?? forming;
     return messagesChange(state);
+  }
+
+  // How a compaction ended takes the place of its live card, so the chat shows ONE card at the
+  // compaction point that turns from "Compacting" into "Compacted" (or its question, or its failure).
+  if (compaction && notificationType === 'inlineMessage') {
+    const live = liveCompactionContentOf(state.messages);
+    if (live) {
+      live.notificationType = 'inlineMessage';
+      live.msg = update.status.message;
+      live.data = compaction;
+      return messagesChange(state);
+    }
   }
 
   state.messages.push({
@@ -74,6 +92,7 @@ function applyStatusMessage(
         msg: update.status.message,
         ...(forming ? { data: forming } : {}),
         ...(stopped ? { data: stopped } : {}),
+        ...(compaction ? { data: compaction } : {}),
       },
     ],
     metadata: {
@@ -93,4 +112,22 @@ function progressContentOf(message: Message | undefined) {
   return content.type === 'systemNotification' && content.notificationType === 'thinkingMessage'
     ? content
     : undefined;
+}
+
+/** The newest live compaction card (still reading or writing) this prompt's statuses put up. */
+function liveCompactionContentOf(messages: Message[]) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message.id?.startsWith('acp_status_')) continue;
+    for (const content of message.content) {
+      if (
+        content.type === 'systemNotification' &&
+        isCompactionData(content.data) &&
+        (content.data.stage === 'reading' || content.data.stage === 'writing')
+      ) {
+        return content;
+      }
+    }
+  }
+  return undefined;
 }

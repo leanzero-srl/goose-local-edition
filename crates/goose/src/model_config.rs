@@ -166,7 +166,13 @@ pub async fn complete_helper(
 /// transcript-shaped compaction prefilled 97,590 tokens cold for 441 s beside a conversation
 /// prefix of ~142k tokens the chat's previous call had read from the cache (138,665 of 139,503).
 /// Tagged with the chat's session and `kind` like every helper.
-pub async fn complete_as_the_chat(
+///
+/// Q-357: the call streams, as the chat's own calls do. `watch` sees each chunk's new text and
+/// reasoning, and the answer's text so far — the chat's compaction card counts what is written, and
+/// a question about the person's note stops the call at its first line. `watch` returning false
+/// stops the stream: the answer so far is returned, with `true` beside it.
+#[allow(clippy::too_many_arguments)]
+pub async fn stream_as_the_chat(
     kind: BackgroundWorkKind,
     provider: &dyn Provider,
     model_config: &ModelConfig,
@@ -174,13 +180,42 @@ pub async fn complete_as_the_chat(
     system: &str,
     messages: &[Message],
     tools: &[Tool],
-) -> Result<(Message, ProviderUsage), ProviderError> {
+    mut watch: impl FnMut(&str, &str) -> bool + Send,
+) -> Result<((Message, ProviderUsage), bool), ProviderError> {
+    use crate::conversation::message::MessageContent;
+    use futures::StreamExt;
+
     let chat = crate::agents::reply_parts::provider_call_model_config(model_config.clone());
-    crate::background_work::run(
-        kind,
-        session_id,
-        provider.complete(&chat, system, messages, tools),
-    )
+    crate::background_work::run(kind, session_id, async {
+        let mut stream = provider.stream(&chat, system, messages, tools).await?;
+        let mut items = Vec::new();
+        let mut text = String::new();
+        let mut stopped = false;
+        while let Some(item) = stream.next().await {
+            let (message, usage) = item?;
+            let mut delta = String::new();
+            if let Some(message) = &message {
+                for content in &message.content {
+                    match content {
+                        MessageContent::Text(t) => {
+                            text.push_str(&t.text);
+                            delta.push_str(&t.text);
+                        }
+                        MessageContent::Thinking(t) => delta.push_str(&t.thinking),
+                        _ => {}
+                    }
+                }
+            }
+            items.push(Ok((message, usage)));
+            if !watch(&delta, &text) {
+                stopped = true;
+                break;
+            }
+        }
+        let collected =
+            crate::providers::base::collect_stream(Box::pin(futures::stream::iter(items))).await?;
+        Ok((collected, stopped))
+    })
     .await
 }
 
@@ -484,10 +519,14 @@ mod one_helper_path {
                 "{file} is listed as a helper but calls neither complete_helper nor complete_fast"
             );
             assert_eq!(
-                run_path.contains("complete_as_the_chat("),
+                run_path.contains("stream_as_the_chat("),
                 file == "context_mgmt/mod.rs",
-                "{file}: complete_as_the_chat keeps the chat's thinking switch, and only the \
+                "{file}: stream_as_the_chat keeps the chat's thinking switch, and only the \
                  compaction that extends the chat's request carries the measurement for it (Q-342)"
+            );
+            assert!(
+                !run_path.contains(".stream("),
+                "{file} streams from a provider directly; route it through stream_as_the_chat"
             );
         }
     }

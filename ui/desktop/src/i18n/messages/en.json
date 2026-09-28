@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "Compact now"
   },
+  "alertBox.context": {
+    "defaultMessage": "Context · {current} of {total} tokens · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "Context · {current} tokens"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "Change when goose compacts"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "Failed to save threshold: {error}"
+    "defaultMessage": "Couldn’t save: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "Save"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "Got it!"
@@ -827,6 +839,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Set up"
   },
+  "compaction.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "Compact as written"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "Automatic"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} tokens"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "Not compacted — the conversation is as it was."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "Compacting the conversation"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "Compacted following your note. goose noted: “{concern}”"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "Conversation compacted"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "Edit note"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "Your note for this compaction"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "Compaction failed"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. Your conversation is unchanged."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "You asked"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose didn’t say whether your note was clear — it was followed as written."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "The conversation was too long to send your note with it — goose kept your note word for word."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "Compacted following your note."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "part {done} of {total}"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "Parts of the summary"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose asks about your note"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "“{question}”"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "Reading the conversation"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "The chat was too long"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "Save and compact"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "Try again"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "What was kept"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "Writing the summary"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} tokens written"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "Your note: “{note}”"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "Compact now"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "Note for the next compaction"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "What must survive — a rule, a number, a decision"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "Couldn’t read the note saved for this chat: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "Couldn’t save the note: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "See what it keeps"
+  },
+  "compaction.standing": {
+    "defaultMessage": "Use this note for every compaction in this chat"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "Add header"
   },
@@ -1150,6 +1276,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Processing..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "Pin"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "Always here"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "In every turn already, compacted or not."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "What you asked"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "Kept within {tokens} tokens — a sixteenth of the window"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "The window is unknown, so nothing is cut"
+  },
+  "contextRail.close": {
+    "defaultMessage": "Close context"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# item} other{# items}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# is cut to their start to fit} other{# are cut to their start to fit}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "Tool calls that failed"
+  },
+  "contextRail.files": {
+    "defaultMessage": "Files written"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "Kept word for word by goose"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "A compaction keeps these exactly as they are — built by goose from the whole chat, never rewritten by the model."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "Last compaction: {before} → {after} tokens · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "Last compaction: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "No compaction has run in this chat."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "Last compaction kept"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "Ledger"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "Newest ledger entries"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{# older one is not kept here to fit} other{# older ones are not kept here to fit}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "Couldn’t read what a compaction would keep: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "Reading this chat…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "This chat has not been compacted yet."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "The ledger has no entries."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "Nothing pinned."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "The scratchpad is empty."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "Your note"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "Your note and pins"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "Nothing yet"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "A line that must always survive"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "Pinned"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "Kept word for word in every compaction of this chat."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "Unpin “{pin}”"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "Save note"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "Scratchpad"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "Context"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "Loop, changes and context"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "Could not be read: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose writes"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "What only the model knows, written at each compaction from the conversation itself:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} tokens of context + {live} being written now, of a {limit}-token window"
@@ -4012,6 +4261,9 @@
   },
   "messageCopyLink.copy": {
     "defaultMessage": "Copy"
+  },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "Sends right after compacting"
   },
   "messageQueue.cancel": {
     "defaultMessage": "Cancel"
@@ -7102,6 +7354,129 @@
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Run this chat on"
+  },
+  "notes.chip": {
+    "defaultMessage": "Note"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count,plural,one{A note from \"{from}\" is waiting in this chat} other{# notes are waiting in this chat}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Several chats match \"{query}\". Which one?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Note to another chat"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "Leave it there"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "idle since {time}"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "not open in any window"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose is working there"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "No chat matches \"{query}\". Pick the chat this note is for."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Not this chat"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Back"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Find a chat by its title or folder"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Reading your chats…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "No chat matches these words."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Pick the chat"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "Steer it now"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "The note"
+  },
+  "notes.failed": {
+    "defaultMessage": "Could not do that: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Add to my next message"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "After this turn"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose reads it when this turn ends."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "Note from \"{name}\""
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "Give it to goose now"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "Steer this turn"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Steered into this turn: goose reads it between tool calls."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Sent from your other chat. goose has not read it yet."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Goes with your next message."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Hide note"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Show note"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "Note from \"{name}\" · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Close this line"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "Note sent to \"{name}\" · dismissed there"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "Note sent to \"{name}\" · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "Note sent to \"{name}\" · read in its turn at {time}"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "Note sent to \"{name}\" · waiting there"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "This chat's notes could not be read: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count,plural,one{# note waiting} other{# notes waiting}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "from \"{from}\""
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Notes waiting for you"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."

@@ -18,6 +18,7 @@ import SessionActivityIndicator from '../sessionActivity/SessionActivityIndicato
 import { useReportGlanceSessions } from '../engineGlance/glanceStore';
 import { useGlanceTurnedOffNotice } from '../engineGlance/useGlanceTurnedOffNotice';
 import { LoopDriver } from '../loops/LoopDriver';
+import { NotesDriver } from '../notes/NotesDriver';
 import { useHeaderObstacle } from './headerChrome';
 
 const i18n = defineMessages({
@@ -109,6 +110,7 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
     <div className="flex flex-1 w-full h-full relative bg-background-primary flex-row">
       {/* Session loops: goosed offers each tick; this window fires it through the chat's own door. */}
       <LoopDriver />
+      <NotesDriver />
       <div
         ref={setLeftChrome}
         style={{ zIndex: Z_INDEX.HEADER }}
