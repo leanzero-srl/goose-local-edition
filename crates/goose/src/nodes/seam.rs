@@ -46,6 +46,32 @@ impl Demand {
 /// A reply, or a pause of one, that the loader tracks until it is dropped.
 pub type Hold = Box<dyn Send + Sync>;
 
+/// A PERSON's reply holding a way of this Mac's goose (session loops §5.3, the Mac-wide half):
+/// the chat it answers, the way in the loader's words, and how its end is waited for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonHold {
+    pub session: String,
+    pub way: String,
+    pub ends: HoldEnds,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HoldEnds {
+    /// A reply of this process: it ends as a change of this loader's replies.
+    Here,
+    /// A reply of another goose process: the kernel releases this flock when it ends (or when
+    /// its process dies).
+    Elsewhere(std::path::PathBuf),
+}
+
+/// The way a session's own reply holds (in words; `None` before its first MLX lease), and the
+/// person's replies on that same way.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WayShare {
+    pub way: Option<String>,
+    pub persons: Vec<PersonHold>,
+}
+
 /// What the loader is doing for one node right now (read by `nodes/residency`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoaderActivity {
@@ -89,6 +115,21 @@ pub trait NodeLoader: Send + Sync {
     /// `queued_switch_ahead`) — woken by the queue changing, never by a clock.
     async fn wait_behind_queued_switches(&self, session: &str, node: &str);
     fn in_progress(&self) -> Vec<LoaderActivity>;
+    /// The way `session`'s own reply holds, and the person's replies — in this process and every
+    /// other goose process on this Mac, none waiting in a loader — on that same way. `Err` when a
+    /// holder record cannot be read: whose replies use the way is then unknown.
+    fn persons_on_way_of(&self, session: &str) -> Result<WayShare, String>;
+    /// The person's replies holding any way this Mac's goose serves, in any goose process.
+    fn persons_on_any_way(&self) -> Result<Vec<PersonHold>, String>;
+    /// This process's replies' version: pass it to `holds_changed` / `person_ended` after looking.
+    fn holds_version(&self) -> u64;
+    /// Resolves once this process's replies changed after `since` — or, with `elsewhere`, at the
+    /// next look at the other processes' records, whose changes announce nothing here (the
+    /// loader's own observation cadence; what the look reads decides, never the cadence).
+    async fn holds_changed(&self, since: u64, elsewhere: bool);
+    /// Resolves once `person`'s reply may have ended: another process's by the kernel releasing
+    /// its flock, this process's by any change of its replies after `since`.
+    async fn person_ended(&self, person: &PersonHold, since: u64);
 }
 
 static LOADER: OnceLock<Arc<dyn NodeLoader>> = OnceLock::new();
@@ -156,4 +197,13 @@ pub async fn wait_behind_queued_switches(session: &str, node: &str) {
 
 pub fn in_progress() -> Vec<LoaderActivity> {
     LOADER.get().map(|l| l.in_progress()).unwrap_or_default()
+}
+
+/// The installed loader, or the named absence: with no loader nothing records which replies hold
+/// which way, so whose replies use the engine is unknown — never "nobody's".
+pub fn installed_loader() -> Result<Arc<dyn NodeLoader>, String> {
+    LOADER.get().cloned().ok_or_else(|| {
+        "no node loader runs in this goose process, so which replies hold this Mac's engine is unknown"
+            .to_string()
+    })
 }

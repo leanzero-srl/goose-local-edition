@@ -813,6 +813,29 @@ impl Core {
         }
     }
 
+    /// Session loops §5.3 (the Mac-wide half): the way `session`'s reply holds, and the person's
+    /// replies on it — the loader's own reader of the replies ([`Holds::persons_on`]).
+    pub(crate) fn persons_on_way_of(&self, session: &str) -> Result<seam::WayShare, String> {
+        let root = self.holds.root_of(session);
+        let Some(way) = self.holds.way_of(&root) else {
+            return Ok(seam::WayShare::default());
+        };
+        let persons = self.holds.persons_on(Some(&way), Some(&root))?;
+        Ok(seam::WayShare {
+            way: switch::WayRef::of_key(&way).map(|w| w.words()),
+            persons: persons.into_iter().map(person_hold).collect(),
+        })
+    }
+
+    pub(crate) fn persons_on_any_way(&self) -> Result<Vec<seam::PersonHold>, String> {
+        Ok(self
+            .holds
+            .persons_on(None, None)?
+            .into_iter()
+            .map(person_hold)
+            .collect())
+    }
+
     /// The reply at `root` holds nothing until the pause is dropped (a count: pauses nest).
     fn pause(self: &Arc<Self>, root: &str) -> Paused {
         self.holds.set_waiting(root, true);
@@ -865,6 +888,23 @@ impl Core {
         };
         self.changed.notify_waiters();
         answer
+    }
+}
+
+fn person_hold(reply: Blocker) -> seam::PersonHold {
+    match reply {
+        Blocker::Here { session, way, .. } => seam::PersonHold {
+            session,
+            way,
+            ends: seam::HoldEnds::Here,
+        },
+        Blocker::Elsewhere {
+            session, way, lock, ..
+        } => seam::PersonHold {
+            session,
+            way,
+            ends: seam::HoldEnds::Elsewhere(lock),
+        },
     }
 }
 
@@ -928,6 +968,46 @@ impl NodeLoader for Seam {
 
     fn in_progress(&self) -> Vec<LoaderActivity> {
         self.0.in_progress()
+    }
+
+    fn persons_on_way_of(&self, session: &str) -> Result<seam::WayShare, String> {
+        self.0.persons_on_way_of(session)
+    }
+
+    fn persons_on_any_way(&self) -> Result<Vec<seam::PersonHold>, String> {
+        self.0.persons_on_any_way()
+    }
+
+    fn holds_version(&self) -> u64 {
+        self.0.holds.version()
+    }
+
+    async fn holds_changed(&self, since: u64, elsewhere: bool) {
+        if elsewhere {
+            tokio::select! {
+                _ = self.0.holds.changed_since(since) => {}
+                _ = tokio::time::sleep(LOOK_AGAIN) => {}
+            }
+        } else {
+            self.0.holds.changed_since(since).await;
+        }
+    }
+
+    async fn person_ended(&self, person: &seam::PersonHold, since: u64) {
+        match &person.ends {
+            seam::HoldEnds::Here => self.0.holds.changed_since(since).await,
+            seam::HoldEnds::Elsewhere(lock) => {
+                let lock = lock.clone();
+                let ended = tokio::task::spawn_blocking(move || {
+                    goose_sidecar::holders::wait_for_reply_end(&lock)
+                })
+                .await;
+                if let Ok(Err(e)) = ended {
+                    tracing::warn!(error = %format!("{e:#}"), "nodes loader: waiting on another window's reply failed; looking again at the next look");
+                    self.holds_changed(since, true).await;
+                }
+            }
+        }
     }
 }
 

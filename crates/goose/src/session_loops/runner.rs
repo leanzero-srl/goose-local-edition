@@ -11,12 +11,16 @@
 //!    events: a record change, a tick ending, its reviewers ending, a user turn ending, a door
 //!    opening, `loops/ready`, a needs-you resolution, `loops/wake`.
 //! 3. **Hold** a due tick while a user turn runs in this process (`waiting_turn`, the turn's chat
-//!    named) or while the previous tick's end-of-turn reviewers still run.
+//!    named), while the previous tick's end-of-turn reviewers still run, or — Mac-wide
+//!    (`mac_wide.rs`) — while a person's reply in any goose window holds the way the tick would use
+//!    or stop (`WayHeld`), or holds the way the previous tick yielded to it on.
 //! 4. **Offer** it: mint the message id, write `offer`, send `loops/tickDue` on every door. The
 //!    offer stands until `on_prompt` accepts it (`accept_offer` → `OfferReservation::started`); a
 //!    refusal is recorded and re-sent on `loops/ready` — never on a timer.
-//! 5. **Run**: while the tick's turn runs, a user turn that starts in this process yields it (v1a):
-//!    the runner sets the cause cell to `yield` and cancels the run's own token.
+//! 5. **Run**: while the tick's turn runs, a person's reply on the tick's OWN way — in this window
+//!    or any other goose process on this Mac — yields it (v1b, `mac_wide.rs`): the runner sets the
+//!    cause cell to `yield` and cancels the run's own token. The check before the offer runs again
+//!    as the tick starts, so a hold that began between the offer and the start yields it there.
 //! 6. **End**: record `ended_at`, `wrote`, `served`, `tokens`, and a question the tick left open;
 //!    run the check when the verdict asks for one (`check.rs`); then `rules::decide_after_tick`.
 //! 7. **Release**: when this process's last door closes, every loop it owns reads "goose was
@@ -42,6 +46,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::check::{self, CheckEnd, CheckSpec, STOPPED_BY_YOU};
+use super::mac_wide::{self, Held, MacWide};
 use super::owner::{self, ProcessTable, SystemProcesses};
 use super::prompt::{self, AskedResolution, PromptFacts};
 use super::record::{self, fmt_time, parse_time};
@@ -51,6 +56,7 @@ use super::rules::{
 use super::seam::{self, LoopRunner};
 use crate::conversation::message::Message;
 use crate::needs_you::{NeedsYouItem, NeedsYouState, NeedsYouStatus};
+use crate::nodes::seam::PersonHold;
 use crate::session::extension_data::ExtensionState;
 use crate::session::SessionManager;
 use crate::token_counter::TokenCounter;
@@ -106,6 +112,8 @@ pub struct RunnerDeps {
     /// This process as an owner.
     pub me: LoopOwner,
     pub turns: &'static TurnPriority,
+    /// This Mac's replies, as the node loader records them (the Mac-wide half, §5.3 v1b).
+    pub mac: Arc<dyn MacWide>,
     /// `<data_dir>/loops`: each check's full output lands in `<loopId>/check-<n>.log`.
     pub logs_dir: PathBuf,
     pub check_path: CheckPath,
@@ -185,6 +193,8 @@ struct State {
     doors: Vec<(u64, Arc<dyn TickDoor>)>,
     next_door: u64,
     idle_waiter: bool,
+    /// The person's replies a held tick waits on, one waiter each.
+    mac_waiters: std::collections::HashSet<String>,
 }
 
 enum Event {
@@ -631,20 +641,78 @@ impl Runner {
         running: &turn_priority::RunningTurns,
     ) -> Option<LoopStatusReason> {
         let session_id = running.sessions.first()?.clone();
-        let chat = match self
-            .inner
-            .deps
-            .sessions
-            .get_session(&session_id, false)
-            .await
-        {
-            Ok(session) => session.name,
-            Err(error) => {
-                tracing::warn!(session_id, %error, "loop: the chat of a user turn could not be read");
-                session_id.clone()
-            }
-        };
+        let chat = mac_wide::chat_name(&self.inner.deps.sessions, &session_id).await;
         Some(LoopStatusReason::UserTurn { session_id, chat })
+    }
+
+    /// The Mac-wide check before an offer (§5.3 v1b, `mac_wide::offer_check`), read only for a
+    /// loop that is due or held now. A check that cannot read whose replies hold the engine is
+    /// named loudly and holds nothing: the tick's own lease then meets the loader, which refuses
+    /// a load on the same unreadable record by name.
+    async fn held_before_offer(
+        &self,
+        session_id: &str,
+        loop_id: &str,
+        now: DateTime<Utc>,
+    ) -> Option<Held> {
+        let rec = match record::read(&self.inner.deps.sessions, session_id).await {
+            Ok(Ok(Some(rec))) if rec.id == loop_id => rec,
+            _ => return None,
+        };
+        let due = match rec.status {
+            LoopStatus::Waiting => {
+                rec.offer.is_none()
+                    && rec
+                        .next_tick
+                        .as_ref()
+                        .and_then(|next| parse_time(&next.at).ok())
+                        .is_some_and(|at| at <= now)
+            }
+            LoopStatus::WaitingTurn => rec.offer.is_none(),
+            _ => false,
+        };
+        if !due {
+            return None;
+        }
+        self.check_mac_wide(session_id, &rec).await
+    }
+
+    async fn check_mac_wide(&self, session_id: &str, rec: &LoopRecord) -> Option<Held> {
+        let deps = &self.inner.deps;
+        match mac_wide::offer_check(deps.mac.as_ref(), &deps.sessions, session_id, rec).await {
+            Ok(held) => held,
+            Err(error) => {
+                tracing::error!(session_id, %error, "loop: whether a person's reply holds this Mac's engine is unknown; the tick is not held for it");
+                None
+            }
+        }
+    }
+
+    /// Look again when the person's reply a held tick waits on ends — one waiter per reply.
+    fn ensure_mac_waiter(&self, person: PersonHold, since: u64) {
+        let key = format!("{}|{:?}", person.session, person.ends);
+        if !self.state().mac_waiters.insert(key.clone()) {
+            return;
+        }
+        let ended = self.inner.deps.mac.person_ended(&person, since);
+        let runner = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            ended.await;
+            if let Some(inner) = runner.upgrade() {
+                let runner = Runner { inner };
+                runner.state().mac_waiters.remove(&key);
+                runner.poke();
+            }
+        });
+    }
+
+    /// The yield's cause for a person's reply: its chat, and the way the two shared.
+    async fn yield_to_person(&self, person: &PersonHold) -> CancelCause {
+        CancelCause::Yield {
+            to_session: person.session.clone(),
+            to_chat: mac_wide::chat_name(&self.inner.deps.sessions, &person.session).await,
+            way: Some(person.way.clone()),
+        }
     }
 
     /// Decide what one owned loop does now; the time it next needs looking at, if any.
@@ -670,6 +738,11 @@ impl Runner {
             self.holder_reason(&turns).await
         } else {
             None
+        };
+        let held = if turn_runs {
+            None
+        } else {
+            self.held_before_offer(session_id, &loop_id, now).await
         };
         let me = self.me();
 
@@ -704,6 +777,9 @@ impl Runner {
                     {
                         next_now(now, LoopNextReason::AfterYourTurn)
                     }
+                    (LoopStatus::WaitingTurn, Some(LoopStatusReason::WayHeld { .. })) => {
+                        next_now(now, LoopNextReason::AfterYourTurn)
+                    }
                     _ => return Err(Skip::Idle),
                 };
                 let at = parse_time(&next.at).map_err(Skip::Store)?;
@@ -736,6 +812,18 @@ impl Runner {
                     rec.next_tick = None;
                     return Ok((rec, Step::Hold));
                 }
+                if let Some(held) = &held {
+                    if rec.status == LoopStatus::WaitingTurn
+                        && rec.status_reason.as_ref() == Some(&held.reason)
+                        && rec.next_tick.is_none()
+                    {
+                        return Err(Skip::Idle);
+                    }
+                    rec.status = LoopStatus::WaitingTurn;
+                    rec.status_reason = Some(held.reason.clone());
+                    rec.next_tick = None;
+                    return Ok((rec, Step::Hold));
+                }
                 rec.status = LoopStatus::Waiting;
                 rec.status_reason = None;
                 rec.next_tick = Some(next);
@@ -752,6 +840,9 @@ impl Runner {
                 Ok((rec, Step::Offer))
             })
             .await;
+        if let Some(held) = held {
+            self.ensure_mac_waiter(held.person, held.since);
+        }
         match written {
             Ok((rec, step)) => {
                 self.emit(session_id, &rec);
@@ -951,6 +1042,12 @@ impl Runner {
                 return Err(format!("the chat could not be read: {error}"));
             }
         };
+        // The check before the offer, again (§5.3): a person's reply that took the way between the
+        // offer and this start yields the tick below, before it reaches the model.
+        let held_at_start = match record::read(&self.inner.deps.sessions, session_id).await {
+            Ok(Ok(Some(rec))) if rec.id == loop_id => self.check_mac_wide(session_id, &rec).await,
+            _ => None,
+        };
         let me = self.me();
         let written = self
             .write(session_id, |current| {
@@ -999,12 +1096,14 @@ impl Runner {
                 });
             }
         };
-        // v1a (§5.3): a user turn that began between the offer and this start yields the tick
-        // here, before the prompt goes on — decided now, not by a task racing `on_prompt`, so the
-        // tick never reaches the model and `on_prompt` settles it on its way in.
+        // What held the offer, holding again between the offer and this start — a user turn in
+        // this process, or a person's reply the Mac-wide check reads — yields the tick here,
+        // before the prompt goes on: decided now, not by a task racing `on_prompt`, so the tick
+        // never reaches the model and `on_prompt` settles it on its way in.
         let turns = self.inner.deps.turns.running();
-        let yield_now = match turns.running {
-            0 => None,
+        let yield_now = match (turns.running, held_at_start) {
+            (0, None) => None,
+            (0, Some(held)) => Some(self.yield_to_person(&held.person).await),
             _ => Some(
                 self.yield_cause(session_id, n, turns.sessions.first().cloned())
                     .await,
@@ -1014,7 +1113,7 @@ impl Runner {
             let _ = ticket.cause.set(cause);
             ticket.cancel.cancel();
         }
-        let watcher = self.spawn_yield_watcher(session_id, n, turns.started);
+        let watcher = self.spawn_yield_watcher(session_id, n);
         {
             let mut state = self.state();
             let mem = state.loops.entry(session_id.to_string()).or_default();
@@ -1039,40 +1138,29 @@ impl Runner {
         })
     }
 
-    /// v1a (§5.3): any user turn that starts in this process while the tick runs — counted from
-    /// `started`, the turns started when the tick began — yields the tick. A turn already running
-    /// then is `tick_started`'s own yield. L2c narrows this to the tick's own way.
-    fn spawn_yield_watcher(
-        &self,
-        session_id: &str,
-        n: u32,
-        started: u64,
-    ) -> tokio::task::AbortHandle {
-        let turns = self.inner.deps.turns;
+    /// v1b (§5.3, L2c): while the tick runs, only a person's reply on the tick's OWN way — in this
+    /// window or any other goose process on this Mac — yields it (`mac_wide::person_on_tick_way`).
+    /// A user turn on a cloud node, on another way, or a loop's tick never does.
+    fn spawn_yield_watcher(&self, session_id: &str, n: u32) -> tokio::task::AbortHandle {
+        let mac = self.inner.deps.mac.clone();
         let runner = Arc::downgrade(&self.inner);
         let session = session_id.to_string();
         tokio::spawn(async move {
-            let to = turns.user_turn_started_since(started).await.session;
+            let person = mac_wide::person_on_tick_way(mac, session.clone()).await;
             if let Some(inner) = runner.upgrade() {
                 let runner = Runner { inner };
-                let cause = runner.yield_cause(&session, n, to).await;
+                let cause = runner.yield_to_person(&person).await;
                 runner.yield_tick(&session, n, cause);
             }
         })
         .abort_handle()
     }
 
-    /// The yield's cause: the chat whose user turn the tick yields to, by id and name.
+    /// The yield's cause for a user turn of this process: its chat, by id and name.
     async fn yield_cause(&self, session_id: &str, n: u32, to: Option<String>) -> CancelCause {
         let (to_session, to_chat) = match to {
             Some(to) => {
-                let chat = match self.inner.deps.sessions.get_session(&to, false).await {
-                    Ok(session) => session.name,
-                    Err(error) => {
-                        tracing::warn!(to, %error, "loop: the chat a tick yielded to could not be read");
-                        to.clone()
-                    }
-                };
+                let chat = mac_wide::chat_name(&self.inner.deps.sessions, &to).await;
                 (to, chat)
             }
             None => {
@@ -2160,12 +2248,14 @@ pub fn install() -> Result<Runner, String> {
     let me = owner::this_process(processes.as_ref())?;
     let runner = RUNNER
         .get_or_init(|| {
+            let sessions = Arc::new(SessionManager::instance());
             Runner::new(RunnerDeps {
-                sessions: Arc::new(SessionManager::instance()),
+                sessions: sessions.clone(),
                 clock: Arc::new(SystemClock),
                 processes,
                 me,
                 turns: turn_priority::global(),
+                mac: Arc::new(mac_wide::Holders::installed(sessions)),
                 logs_dir: crate::config::paths::Paths::in_data_dir("loops"),
                 check_path: CheckPath::LoginShell,
             })

@@ -71,8 +71,9 @@ impl DoorSlot {
 }
 
 /// A user's prompt (§5.2 steps 1 and 8): a named user turn for the prompt's life — the runner
-/// holds a due tick behind it and a running tick yields to it (v1a) — and, when the prompt ends,
-/// however it ends, the turn released and THEN the runner told.
+/// holds a due tick behind it (a running tick yields only once the prompt's reply leases the
+/// tick's own way, `session_loops::mac_wide`) — and, when the prompt ends, however it ends, the
+/// turn released and THEN the runner told.
 pub(super) struct UserPrompt {
     turn: Option<UserTurn<'static>>,
     runner: Option<Runner>,
@@ -189,6 +190,9 @@ mod tests {
             processes: Arc::new(SystemProcesses),
             me: owner::this_process(&SystemProcesses).unwrap(),
             turns: Box::leak(Box::new(TurnPriority::new())),
+            mac: Arc::new(crate::session_loops::mac_wide::Holders::installed(
+                sessions.clone(),
+            )),
             logs_dir: dir.path().join("logs"),
             check_path: CheckPath::Inherited,
         });

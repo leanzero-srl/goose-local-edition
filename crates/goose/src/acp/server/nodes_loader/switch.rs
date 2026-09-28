@@ -105,6 +105,16 @@ impl WayRef {
         }
     }
 
+    /// Whether a reply whose last model call used `key` holds this way. A split is one way whatever
+    /// its Macs (the split's owner record carries no Mac ids): any split key holds it.
+    pub fn held_by(&self, key: &PlacementKey) -> bool {
+        match (&self.kind, WayRef::of_key(key)) {
+            (_, None) => false,
+            (WayKind::Split, Some(held)) => held.kind == WayKind::Split,
+            (_, Some(held)) => held == *self,
+        }
+    }
+
     /// Words for the way ("this Mac", "the Mac <peer>", "the split").
     pub fn words(&self) -> String {
         match self.kind {
@@ -132,14 +142,9 @@ pub struct Stop {
 }
 
 impl Stop {
-    /// Whether a reply whose last model call used `way` holds this stop's way. A split is one way
-    /// whatever its Macs (the split's owner record carries no Mac ids): any split key holds it.
+    /// Whether a reply whose last model call used `way` holds this stop's way.
     pub fn held_by(&self, way: &PlacementKey) -> bool {
-        match (&self.way.kind, WayRef::of_key(way)) {
-            (_, None) => false,
-            (WayKind::Split, Some(held)) => held.kind == WayKind::Split,
-            (_, Some(held)) => held == self.way,
-        }
+        self.way.held_by(way)
     }
 }
 

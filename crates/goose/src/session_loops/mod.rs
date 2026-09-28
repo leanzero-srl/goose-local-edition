@@ -14,6 +14,7 @@
 pub mod acp;
 pub mod agent_sync;
 pub mod check;
+pub mod mac_wide;
 pub mod owner;
 pub mod prompt;
 pub mod record;
