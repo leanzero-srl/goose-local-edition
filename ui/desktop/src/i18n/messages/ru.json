@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Ответить"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose работает — ответить можно, когда этот ход закончится."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose работает — ответ, данный сейчас, подождёт и отправится, когда этот ход закончится."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Отменить"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Закрыть уведомление"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "В очереди · ответ уйдёт, когда этот ход закончится"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "В очереди"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Отправка вашего ответа…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Нужен ваш ответ · # вопрос} few {Нужен ваш ответ · # вопроса} many {Нужен ваш ответ · # вопросов} other {Нужен ваш ответ · # вопроса}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "В очереди: {count}"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Ваш ответ: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Не отправлено — вопрос закрыли раньше, чем ушёл ваш ответ из очереди."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Не отправлено — не удалось сохранить ваш ответ из очереди: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Закрыть"

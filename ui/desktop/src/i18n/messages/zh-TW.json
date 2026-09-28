@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "回答"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose 正在工作——本輪結束後即可回答。"
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose 正在工作——現在給出的回答會先排入佇列，本輪結束時傳送。"
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "取消"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "關閉此提示"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "已排入佇列 · 本輪結束時回答"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "已排入佇列"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "正在傳送你的回答…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {需要你 · # 個問題}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} 個已排入佇列"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "你的回答：{answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "未傳送——排入佇列的回答送出之前，這個問題已關閉。"
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "未傳送——無法儲存你排入佇列的回答：{error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "略過"

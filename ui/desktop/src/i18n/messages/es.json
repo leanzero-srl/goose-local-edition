@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Responder"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose está trabajando: podrás responder cuando termine este turno."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose está trabajando: la respuesta que des ahora espera y se envía cuando termine este turno."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Cancelar"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Cerrar este aviso"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "En cola · se responde cuando termine este turno"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "En cola"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Enviando tu respuesta…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Te necesita · # pregunta} other {Te necesita · # preguntas}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} en cola"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Tu respuesta: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "No enviada: esta pregunta se cerró antes de que tu respuesta en cola pudiera enviarse."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "No enviada: no se pudo guardar tu respuesta en cola: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Descartar"

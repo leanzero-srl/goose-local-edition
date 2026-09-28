@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Jawab"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose sedang bekerja — Anda bisa menjawab setelah giliran ini selesai."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose sedang bekerja — jawaban yang Anda berikan sekarang menunggu dan dikirim setelah giliran ini selesai."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Batal"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Tutup pemberitahuan ini"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "Diantrekan · dijawab setelah giliran ini selesai"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Diantrekan"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Mengirim jawaban Anda…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {Membutuhkan Anda · # pertanyaan}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} diantrekan"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Jawaban Anda: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Tidak terkirim — pertanyaan ini ditutup sebelum jawaban Anda yang diantrekan sempat dikirim."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Tidak terkirim — jawaban Anda yang diantrekan tidak dapat disimpan: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Abaikan"

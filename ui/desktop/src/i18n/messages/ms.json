@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Jawab"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose sedang bekerja — anda boleh menjawab apabila giliran ini tamat."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose sedang bekerja — jawapan yang anda beri sekarang menunggu dan dihantar apabila giliran ini tamat."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Batal"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Tutup notis ini"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "Dalam baris gilir · dijawab apabila giliran ini tamat"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Dalam baris gilir"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Menghantar jawapan anda…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {Memerlukan anda · # soalan}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} dalam baris gilir"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Jawapan anda: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Tidak dihantar — soalan ini ditutup sebelum jawapan anda dalam baris gilir sempat dihantar."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Tidak dihantar — jawapan anda dalam baris gilir tidak dapat disimpan: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Abaikan"

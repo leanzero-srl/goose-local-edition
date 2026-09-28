@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Yanıtla"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose çalışıyor — bu tur bitince yanıtlayabilirsin."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose çalışıyor — şimdi verdiğin yanıt bekler ve bu tur bitince gönderilir."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "İptal"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Bu bildirimi kapat"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "Sırada · bu tur bitince yanıtlar"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Sırada"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Yanıtın gönderiliyor…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Sana ihtiyaç var · # soru} other {Sana ihtiyaç var · # soru}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} sırada"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Yanıtın: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Gönderilmedi — sıradaki yanıtın gidemeden bu soru kapatıldı."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Gönderilmedi — sıradaki yanıtın kaydedilemedi: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Kapat"

@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "उत्तर दें"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose काम कर रहा है — यह चरण पूरा होने पर आप उत्तर दे सकेंगे।"
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose काम कर रहा है — अभी दिया गया उत्तर इंतज़ार करेगा और यह चरण पूरा होने पर भेजा जाएगा।"
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "रद्द करें"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "यह सूचना बंद करें"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "कतार में · यह चरण पूरा होने पर उत्तर जाएगा"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "कतार में"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "आपका उत्तर भेजा जा रहा है…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {आपकी ज़रूरत है · # प्रश्न} other {आपकी ज़रूरत है · # प्रश्न}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} कतार में"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "आपका उत्तर: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "नहीं भेजा गया — कतार में रखा आपका उत्तर जाने से पहले यह प्रश्न बंद हो गया।"
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "नहीं भेजा गया — कतार में रखा आपका उत्तर सहेजा नहीं जा सका: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "ख़ारिज करें"

@@ -6104,8 +6104,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "回答"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose が作業中です。このターンが終わったら回答できます。"
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose が作業中です。今回答すると待機し、このターンが終わったときに送信されます。"
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "キャンセル"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "この通知を閉じる"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "キュー内 · このターンが終わったら回答します"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "キュー内"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "回答を送信しています…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {あなたの対応が必要 · 質問 # 件}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} 件がキュー内"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "あなたの回答: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "未送信 — キュー内の回答が送られる前に、この質問は閉じられました。"
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "未送信 — キュー内の回答を保存できませんでした: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "閉じる"
