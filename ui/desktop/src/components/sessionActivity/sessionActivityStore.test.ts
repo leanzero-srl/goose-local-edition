@@ -73,6 +73,7 @@ function snapshotWith(partial: Partial<SessionActivitySnapshot>): SessionActivit
     stopped: [],
     background: [],
     looping: [],
+    notesWaiting: [],
     elicitations: [],
     ...partial,
   };

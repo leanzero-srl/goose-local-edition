@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { testClock } from '../../test/testClock';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import type { MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
@@ -404,7 +405,7 @@ describe('the restore’s one line, and what main is told', () => {
     await runRestore(d);
     expect(d.readIntent).toHaveBeenCalledTimes(1);
     retryRestore();
-    await vi.waitFor(() => expect(d.readIntent).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(d.readIntent).toHaveBeenCalledTimes(2), { timeout: testClock() });
   });
 
   it('the report and the tray line: where, and why not', () => {
@@ -547,7 +548,9 @@ describe('settleRestoreLine — a failed line clears once an engine serves after
     const failed = latestRestoreLine();
     expect(failed).toMatchObject({ phase: 'failed', servingAtFailure: [] });
     expect(report.mock.lastCall?.[0]).toMatchObject({ phase: 'failed', servingAtFailure: [] });
-    await vi.waitFor(() => expect(latestRestoreLine()).toEqual({ phase: 'idle' }));
+    await vi.waitFor(() => expect(latestRestoreLine()).toEqual({ phase: 'idle' }), {
+      timeout: testClock(),
+    });
     expect(report.mock.lastCall?.[0]).toBeNull();
   });
 

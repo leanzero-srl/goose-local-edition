@@ -29,7 +29,20 @@ pub enum Answer {
     Unfinished(&'static str),
     /// Answers nothing until [`Model::release_held`] closes the socket (the call then errors).
     Hold,
+    /// Asks for one tool call — `(tool, JSON arguments)` — and finishes the answer.
+    ToolCall(&'static str, &'static str),
+    /// 503 as goose's distributed engine answers while its watchdog holds admission for memory
+    /// (Q-397): the `memory_hold` code, the watchdog's words and the path to wait on. A
+    /// `GET /goose/admission` then waits until [`Model::admit`].
+    MemoryHold(&'static str),
+    /// 503 with no code — any other busy engine.
+    Busy(&'static str),
 }
+
+/// The words goose's side requests open with: the tool-call label (acp/server/tool_labels.rs) and
+/// the end-of-turn fact checker (turn_assessment.rs).
+const TOOL_LABEL_REQUEST: &str = "Summarize this tool call in a short lowercase phrase";
+const FACT_CHECK_REQUEST: &str = "You are goose's end-of-turn fact checker";
 
 /// A scripted OpenAI-compatible endpoint: each completion request takes the next [`Answer`];
 /// with none left it answers [`Answer::Hold`].
@@ -39,6 +52,18 @@ pub struct Model {
     script: Arc<Mutex<VecDeque<Answer>>>,
     held: Arc<Mutex<Vec<TcpStream>>>,
     pub requests: Arc<Mutex<Vec<String>>>,
+    /// Set by [`Model::keep_side_requests_off_the_script`].
+    side_requests_apart: Arc<std::sync::atomic::AtomicBool>,
+    /// Every `GET /goose/admission` received, and the ones still waiting for [`Model::admit`].
+    admission_waits: Arc<Mutex<usize>>,
+    waiting_for_admission: Arc<Mutex<Vec<TcpStream>>>,
+}
+
+fn json_response(status: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 fn chunk(delta: Value, finish: Option<&str>) -> String {
@@ -86,6 +111,9 @@ impl Model {
             script: Arc::new(Mutex::new(script.into())),
             held: Arc::default(),
             requests: Arc::default(),
+            side_requests_apart: Arc::default(),
+            admission_waits: Arc::default(),
+            waiting_for_admission: Arc::default(),
         };
         let serving = model.clone();
         tokio::spawn(async move {
@@ -95,6 +123,11 @@ impl Model {
                     return;
                 };
                 let request = read_request(&mut socket).await;
+                if request.starts_with("GET /goose/admission ") {
+                    *serving.admission_waits.lock().unwrap() += 1;
+                    serving.waiting_for_admission.lock().unwrap().push(socket);
+                    continue;
+                }
                 if request.starts_with("GET") {
                     let body = include_str!("../acp_test_data/openai_models.json");
                     let response = format!(
@@ -104,13 +137,22 @@ impl Model {
                     let _ = socket.write_all(response.as_bytes()).await;
                     continue;
                 }
-                serving.requests.lock().unwrap().push(request);
-                let answer = serving
-                    .script
-                    .lock()
-                    .unwrap()
-                    .pop_front()
-                    .unwrap_or(Answer::Hold);
+                let apart = serving
+                    .side_requests_apart
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                let answer = if apart && request.contains(TOOL_LABEL_REQUEST) {
+                    Answer::Finish("running a tool")
+                } else if apart && request.contains(FACT_CHECK_REQUEST) {
+                    Answer::Hold
+                } else {
+                    serving.requests.lock().unwrap().push(request);
+                    serving
+                        .script
+                        .lock()
+                        .unwrap()
+                        .pop_front()
+                        .unwrap_or(Answer::Hold)
+                };
                 let head =
                     "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
                 match answer {
@@ -140,11 +182,72 @@ impl Model {
                         let _ = socket.flush().await;
                         unfinished.push(socket);
                     }
+                    Answer::ToolCall(tool, arguments) => {
+                        let _ = socket.write_all(head.as_bytes()).await;
+                        let call = json!({"role": "assistant", "tool_calls": [{
+                            "index": 0,
+                            "id": format!("call_{}", serving.requests.lock().unwrap().len()),
+                            "type": "function",
+                            "function": {"name": tool, "arguments": arguments},
+                        }]});
+                        let body = [
+                            chunk(call, None),
+                            chunk(json!({}), Some("tool_calls")),
+                            format!(
+                                "data: {}\n\n",
+                                json!({"id": "scripted-1", "object": "chat.completion.chunk", "created": 1, "model": "gpt-4o", "choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}})
+                            ),
+                            "data: [DONE]\n\n".to_string(),
+                        ]
+                        .concat();
+                        let _ = socket.write_all(body.as_bytes()).await;
+                        let _ = socket.flush().await;
+                    }
                     Answer::Hold => serving.held.lock().unwrap().push(socket),
+                    Answer::MemoryHold(reason) => {
+                        let body = json!({"error": {
+                            "message": format!("goose distributed engine is not admitting new requests: {reason}"),
+                            "type": "server_busy",
+                            "code": "memory_hold",
+                            "reason": reason,
+                            "admission": "/goose/admission",
+                        }});
+                        let response = json_response("503 Service Unavailable", &body.to_string());
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    }
+                    Answer::Busy(message) => {
+                        let body = json!({"error": {"message": message, "type": "server_busy"}});
+                        let response = json_response("503 Service Unavailable", &body.to_string());
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    }
                 }
             }
         });
         model
+    }
+
+    /// goose's side requests — a tool call's label, the end-of-turn fact check — are answered
+    /// apart (a label, a hold) and never take, or count as, one of the script's turns.
+    pub fn keep_side_requests_off_the_script(&self) {
+        self.side_requests_apart
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The engine admits again: every waiting `GET /goose/admission` is answered.
+    pub async fn admit(&self) {
+        let waiting = std::mem::take(&mut *self.waiting_for_admission.lock().unwrap());
+        let response = json_response("200 OK", r#"{"admission_open": true}"#);
+        for mut socket in waiting {
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    }
+
+    pub fn admission_waits(&self) -> usize {
+        *self.admission_waits.lock().unwrap()
+    }
+
+    pub fn completion_requests(&self) -> usize {
+        self.requests.lock().unwrap().len()
     }
 
     /// Replace what the next completion requests get.

@@ -8,6 +8,7 @@ pub mod agents;
 pub mod api;
 pub mod background_work;
 pub mod builtin_extension;
+pub mod chat_notes;
 pub mod checks;
 pub mod claim_check;
 pub mod config;

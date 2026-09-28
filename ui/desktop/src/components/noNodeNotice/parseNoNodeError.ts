@@ -14,6 +14,17 @@ import { AGENT_ERROR_WRAP } from '../linkDropNotice/parseLinkDrop';
  */
 export const NO_NODE_MARKER = 'no node can serve this turn — ';
 
+/**
+ * The router names a chat's own node set's Chat chain "this chat's nodes (chat)" (swarm_router.rs
+ * `chain_plan`), so its refusal reads `… this chat's nodes (chat): no node can serve this turn — …`
+ * — a chat on its own nodes whose answering chain ran out (Q-381).
+ */
+export const OWN_NODES_CHAT_REFUSAL = `this chat's nodes (chat): ${NO_NODE_MARKER}`;
+
+export function isOwnNodesChatRefusal(text: string): boolean {
+  return text.includes(OWN_NODES_CHAT_REFUSAL);
+}
+
 export type NodeReason =
   | { kind: 'mlx-down'; base: string }
   | { kind: 'mlx-wrong-model'; served: string; wanted: string }

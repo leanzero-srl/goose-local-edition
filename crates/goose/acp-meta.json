@@ -826,6 +826,36 @@
       "responseType": "ResolveNeedsYouResponse_unstable"
     },
     {
+      "method": "_goose/unstable/notes/list",
+      "requestType": "NotesListRequest_unstable",
+      "responseType": "NotesListResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/notes/targets",
+      "requestType": "NotesTargetsRequest_unstable",
+      "responseType": "NotesTargetsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/notes/send",
+      "requestType": "NotesSendRequest_unstable",
+      "responseType": "NotesSendResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/notes/draft",
+      "requestType": "NotesDraftRequest_unstable",
+      "responseType": "NotesDraftResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/notes/inbox",
+      "requestType": "NotesInboxRequest_unstable",
+      "responseType": "NotesInboxResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/notes/showing",
+      "requestType": "NotesShowingRequest_unstable",
+      "responseType": "NotesShowingResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/leanzeroLink/remoteExecute",
       "requestType": "LeanzeroLinkRemoteExecuteRequest_unstable",
       "responseType": "LeanzeroLinkRemoteExecuteResponse_unstable"
@@ -879,6 +909,16 @@
       "method": "_goose/unstable/nodes/ensureServing",
       "requestType": "NodesEnsureServingRequest_unstable",
       "responseType": "NodesEnsureServingResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/session/compaction/preview",
+      "requestType": "CompactionPreviewRequest_unstable",
+      "responseType": "CompactionPreviewResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/session/compaction/steer",
+      "requestType": "CompactionSteerRequest_unstable",
+      "responseType": "CompactionSteerResponse_unstable"
     },
     {
       "method": "_goose/unstable/loops/get",
@@ -938,6 +978,14 @@
     {
       "method": "_goose/unstable/loops/changed",
       "paramsType": "LoopsChangedNotification_unstable"
+    },
+    {
+      "method": "_goose/unstable/notes/deliverDue",
+      "paramsType": "NotesDeliverDueNotification_unstable"
+    },
+    {
+      "method": "_goose/unstable/notes/changed",
+      "paramsType": "NotesChangedNotification_unstable"
     }
   ],
   "agentRequests": [

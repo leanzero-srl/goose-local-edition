@@ -112,6 +112,80 @@ pub fn with_file_diff(
     result
 }
 
+/// One file a conversation's `write`/`edit` calls changed, summed over its calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrittenFile {
+    pub path: String,
+    /// The first call that wrote it found no file there.
+    pub created: bool,
+    pub added: u64,
+    pub removed: u64,
+    pub edits: usize,
+}
+
+/// Every file the conversation's `write`/`edit` calls changed, in first-touched order, from the diff
+/// each result carries in `_meta` — the Rust half of the desktop's `sessionChanges`
+/// (changes/fileDiff.ts). A shell command that changed files leaves no diff and is not listed.
+pub fn written_files(messages: &[crate::conversation::message::Message]) -> Vec<WrittenFile> {
+    use crate::conversation::message::MessageContent;
+
+    let writers: Vec<&str> = messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|content| match content {
+            MessageContent::ToolRequest(request)
+                if request
+                    .tool_call
+                    .as_ref()
+                    .is_ok_and(|call| matches!(call.name.as_ref(), "write" | "edit")) =>
+            {
+                Some(request.id.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut files: Vec<WrittenFile> = Vec::new();
+    for content in messages.iter().flat_map(|message| message.content.iter()) {
+        let MessageContent::ToolResponse(response) = content else {
+            continue;
+        };
+        if !writers.contains(&response.id.as_str()) {
+            continue;
+        }
+        let Some(diff) = response
+            .tool_result
+            .as_ref()
+            .ok()
+            .and_then(|result| result.meta.as_ref())
+            .and_then(|meta| meta.0.get(FILE_DIFF_META_KEY))
+        else {
+            continue;
+        };
+        let Some(path) = diff.get("path").and_then(|path| path.as_str()) else {
+            continue;
+        };
+        let count = |key: &str| diff.get(key).and_then(serde_json::Value::as_u64);
+        let (Some(added), Some(removed)) = (count("added"), count("removed")) else {
+            continue;
+        };
+        match files.iter_mut().find(|file| file.path == path) {
+            Some(file) => {
+                file.added += added;
+                file.removed += removed;
+                file.edits += 1;
+            }
+            None => files.push(WrittenFile {
+                path: path.to_string(),
+                created: diff.get("before").and_then(|b| b.as_str()) == Some(Before::None.as_str()),
+                added,
+                removed,
+                edits: 1,
+            }),
+        }
+    }
+    files
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

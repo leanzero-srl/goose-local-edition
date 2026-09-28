@@ -210,6 +210,7 @@ impl GooseAcpAgent {
             .collect();
         let background = self.background_sessions().await;
         let looping = crate::session_loops::acp::looping(&self.session_manager).await?;
+        let notes_waiting = self.notes_waiting().await?;
         Ok(SessionActivityResponse {
             running,
             needs_you,
@@ -217,6 +218,7 @@ impl GooseAcpAgent {
             stopped,
             background,
             looping,
+            notes_waiting,
         })
     }
 

@@ -271,6 +271,11 @@ fn same_entry(entry: &str, kind: &str, text: &str) -> bool {
         .is_some_and(|words| words == normalized_text(text))
 }
 
+/// The entries every turn's context shows, newest first.
+pub fn tail(entries: &[String]) -> Vec<String> {
+    select_entries(entries, None, TAIL_ENTRIES)
+}
+
 /// Newest first, at most `limit`; with a query, only entries sharing at least half its terms.
 pub fn select_entries(entries: &[String], query: Option<&str>, limit: usize) -> Vec<String> {
     let terms = query.map(search_terms).unwrap_or_default();

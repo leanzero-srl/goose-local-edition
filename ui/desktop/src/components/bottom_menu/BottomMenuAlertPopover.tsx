@@ -87,6 +87,7 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
     }
     // Start new timer
     hideTimerRef.current = setTimeout(() => {
+      if (popoverRef.current?.contains(document.activeElement)) return;
       setIsOpen(false);
       setWasAutoShown(false);
     }, duration);
@@ -223,6 +224,7 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
           onMouseLeave={() => {
             // Start a short timer to allow moving to content
             hideTimerRef.current = setTimeout(() => {
+              if (popoverRef.current?.contains(document.activeElement)) return;
               if (!isHovered) {
                 setIsHovered(false);
                 setIsOpen(false);
@@ -257,6 +259,8 @@ export default function BottomMenuAlertPopover({ alerts, children }: AlertPopove
           }}
           onMouseLeave={() => {
             setIsHovered(false);
+            // A note being typed (Q-357) keeps the menu open; a click outside still closes it.
+            if (popoverRef.current?.contains(document.activeElement)) return;
             setIsOpen(false);
           }}
         >

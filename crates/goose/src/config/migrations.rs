@@ -1,4 +1,5 @@
 use crate::agents::extension::PLATFORM_EXTENSIONS;
+use crate::agents::platform_extensions::chatrecall;
 use crate::agents::ExtensionConfig;
 use crate::config::extensions::ExtensionEntry;
 use crate::config::providers::ProviderEntry;
@@ -7,9 +8,18 @@ use serde_yaml::Mapping;
 const EXTENSIONS_CONFIG_KEY: &str = "extensions";
 const PROVIDERS_CONFIG_KEY: &str = "providers";
 const ACTIVE_PROVIDER_KEY: &str = "active_provider";
+/// Top-level list of the one-time migrations this config has been through. A migration that
+/// changes a stored value runs once, so what the person sets afterwards stands.
+const APPLIED_MIGRATIONS_KEY: &str = "applied_migrations";
+const CHATRECALL_DEFAULT_ON: &str = "chatrecall_default_on";
+/// What goose wrote for `chatrecall` while it was the off-by-default LIKE scan.
+const CHATRECALL_OLD_DESCRIPTION: &str =
+    "Search past conversations and load session summaries for contextual memory";
+const CHATRECALL_OLD_DISPLAY_NAME: &str = "Chat Recall";
 
 pub fn run_migrations(config: &mut Mapping) -> bool {
     let mut changed = false;
+    changed |= migrate_chatrecall_default_on(config);
     changed |= migrate_platform_extensions(config);
     changed |= migrate_provider_config(config);
     changed
@@ -17,9 +27,100 @@ pub fn run_migrations(config: &mut Mapping) -> bool {
 
 /// Run only non-destructive migrations suitable for in-memory read paths.
 /// Provider migration is excluded because it removes flat keys that
-/// `get_param()` callers may still look up directly.
+/// `get_param()` callers may still look up directly. The chatrecall flip is included so a
+/// config nobody has written to since the upgrade reads the same as it will once written.
 pub fn run_read_migrations(config: &mut Mapping) {
+    migrate_chatrecall_default_on(config);
     migrate_platform_extensions(config);
+}
+
+fn yaml_key(key: &str) -> serde_yaml::Value {
+    serde_yaml::Value::String(key.to_string())
+}
+
+/// `None` when the marker holds something other than a list: no one-time migration can record
+/// itself there, so none runs, rather than running again on every load.
+fn applied_migrations(config: &Mapping) -> Option<Vec<serde_yaml::Value>> {
+    match config.get(yaml_key(APPLIED_MIGRATIONS_KEY)) {
+        None | Some(serde_yaml::Value::Null) => Some(Vec::new()),
+        Some(serde_yaml::Value::Sequence(ids)) => Some(ids.clone()),
+        Some(other) => {
+            tracing::warn!(
+                ?other,
+                "config: `{APPLIED_MIGRATIONS_KEY}` is not a list; one-time migrations are skipped"
+            );
+            None
+        }
+    }
+}
+
+/// The stored `chatrecall` entry is exactly the old off-by-default platform entry, so its
+/// `enabled: false` was goose's default and never the person's choice. `display_name`,
+/// `bundled` and `available_tools` may be absent (older writers omitted them) or carry goose's
+/// own values; any other key or value means the person edited the entry.
+fn is_old_default_off_chatrecall(entry: &Mapping) -> bool {
+    let known_keys = [
+        "enabled",
+        "type",
+        "name",
+        "description",
+        "display_name",
+        "bundled",
+        "available_tools",
+    ];
+    let field = |key: &str| entry.get(yaml_key(key));
+    let absent = |key: &str| matches!(field(key), None | Some(serde_yaml::Value::Null));
+    let text = |key: &str| field(key).and_then(|value| value.as_str());
+
+    entry
+        .keys()
+        .all(|key| key.as_str().is_some_and(|key| known_keys.contains(&key)))
+        && field("enabled") == Some(&serde_yaml::Value::Bool(false))
+        && text("type") == Some("platform")
+        && text("name") == Some(chatrecall::EXTENSION_NAME)
+        && text("description") == Some(CHATRECALL_OLD_DESCRIPTION)
+        && (absent("display_name") || text("display_name") == Some(CHATRECALL_OLD_DISPLAY_NAME))
+        && (absent("bundled") || field("bundled") == Some(&serde_yaml::Value::Bool(true)))
+        && (absent("available_tools")
+            || field("available_tools")
+                .and_then(|value| value.as_sequence())
+                .is_some_and(|tools| tools.is_empty()))
+}
+
+/// Q-364: chat search is on by default since it became the indexed transcript search, but the
+/// old LIKE-scan `chatrecall` was off by default, every install stored `enabled: false`, and
+/// `migrate_platform_extensions` keeps a stored `enabled`. Once per config the untouched old
+/// default is flipped on. The marker is recorded whatever was found — no entry, an edited
+/// entry, an enabled one — so the person turning chat search off afterwards stays off. Runs
+/// before `migrate_platform_extensions`, which rewrites the old description it recognises.
+fn migrate_chatrecall_default_on(config: &mut Mapping) -> bool {
+    let Some(mut applied) = applied_migrations(config) else {
+        return false;
+    };
+    if applied
+        .iter()
+        .any(|id| id.as_str() == Some(CHATRECALL_DEFAULT_ON))
+    {
+        return false;
+    }
+
+    if let Some(entry) = config
+        .get_mut(yaml_key(EXTENSIONS_CONFIG_KEY))
+        .and_then(|extensions| extensions.as_mapping_mut())
+        .and_then(|extensions| extensions.get_mut(yaml_key(chatrecall::EXTENSION_NAME)))
+        .and_then(|entry| entry.as_mapping_mut())
+    {
+        if is_old_default_off_chatrecall(entry) {
+            entry.insert(yaml_key("enabled"), serde_yaml::Value::Bool(true));
+        }
+    }
+
+    applied.push(yaml_key(CHATRECALL_DEFAULT_ON));
+    config.insert(
+        yaml_key(APPLIED_MIGRATIONS_KEY),
+        serde_yaml::Value::Sequence(applied),
+    );
+    true
 }
 
 fn migrate_platform_extensions(config: &mut Mapping) -> bool {
@@ -316,6 +417,154 @@ mod tests {
 
         let changed = run_migrations(&mut config);
         assert!(!changed);
+    }
+
+    /// The `chatrecall` block as it stands in the owner's ~/.config/goose/config.yaml today.
+    const OLD_DEFAULT_OFF_CHATRECALL: &str = r#"
+extensions:
+  chatrecall:
+    enabled: false
+    type: platform
+    name: chatrecall
+    description: Search past conversations and load session summaries for contextual memory
+    display_name: Chat Recall
+    bundled: true
+    available_tools: []
+"#;
+
+    fn chatrecall_entry(config: &Mapping) -> ExtensionEntry {
+        let extensions = config
+            .get(yaml_key(EXTENSIONS_CONFIG_KEY))
+            .and_then(|v| v.as_mapping())
+            .expect("extensions block");
+        serde_yaml::from_value(
+            extensions
+                .get(yaml_key(chatrecall::EXTENSION_NAME))
+                .expect("chatrecall entry")
+                .clone(),
+        )
+        .expect("chatrecall entry parses")
+    }
+
+    fn set_chatrecall_enabled(config: &mut Mapping, enabled: bool) {
+        config
+            .get_mut(yaml_key(EXTENSIONS_CONFIG_KEY))
+            .and_then(|v| v.as_mapping_mut())
+            .and_then(|m| m.get_mut(yaml_key(chatrecall::EXTENSION_NAME)))
+            .and_then(|v| v.as_mapping_mut())
+            .expect("chatrecall entry")
+            .insert(yaml_key("enabled"), serde_yaml::Value::Bool(enabled));
+    }
+
+    fn marker_recorded(config: &Mapping) -> bool {
+        config
+            .get(yaml_key(APPLIED_MIGRATIONS_KEY))
+            .and_then(|v| v.as_sequence())
+            .is_some_and(|ids| {
+                ids.iter()
+                    .any(|id| id.as_str() == Some(CHATRECALL_DEFAULT_ON))
+            })
+    }
+
+    #[test]
+    fn the_old_default_off_chatrecall_is_turned_on_once() {
+        let mut config: Mapping = serde_yaml::from_str(OLD_DEFAULT_OFF_CHATRECALL).unwrap();
+
+        assert!(run_migrations(&mut config));
+
+        let entry = chatrecall_entry(&config);
+        assert!(entry.enabled, "the stored old default must be flipped on");
+        assert!(matches!(
+            &entry.config,
+            ExtensionConfig::Platform { description, display_name, .. }
+                if description == PLATFORM_EXTENSIONS[chatrecall::EXTENSION_NAME].description
+                    && display_name.as_deref() == Some("Chat Search")
+        ));
+        assert!(marker_recorded(&config));
+    }
+
+    #[test]
+    fn chatrecall_turned_off_after_the_migration_stays_off() {
+        let mut config: Mapping = serde_yaml::from_str(OLD_DEFAULT_OFF_CHATRECALL).unwrap();
+        run_migrations(&mut config);
+        assert!(chatrecall_entry(&config).enabled);
+
+        set_chatrecall_enabled(&mut config, false);
+        run_migrations(&mut config);
+        run_read_migrations(&mut config);
+
+        assert!(
+            !chatrecall_entry(&config).enabled,
+            "the person's own off must survive every later load"
+        );
+    }
+
+    #[test]
+    fn a_config_without_chatrecall_gets_the_default_and_the_marker() {
+        let mut config = Mapping::new();
+        run_migrations(&mut config);
+
+        assert_eq!(
+            chatrecall_entry(&config).enabled,
+            PLATFORM_EXTENSIONS[chatrecall::EXTENSION_NAME].default_enabled
+        );
+        assert!(chatrecall_entry(&config).enabled);
+        assert!(marker_recorded(&config));
+    }
+
+    #[test]
+    fn an_edited_chatrecall_entry_is_never_flipped() {
+        let edited = [
+            OLD_DEFAULT_OFF_CHATRECALL.replace("available_tools: []", "available_tools: [x]"),
+            OLD_DEFAULT_OFF_CHATRECALL.replace("display_name: Chat Recall", "display_name: Mine"),
+            OLD_DEFAULT_OFF_CHATRECALL.replace("bundled: true", "bundled: false"),
+            OLD_DEFAULT_OFF_CHATRECALL.replace("type: platform", "type: builtin"),
+            format!("{OLD_DEFAULT_OFF_CHATRECALL}    timeout: 30\n"),
+            OLD_DEFAULT_OFF_CHATRECALL.replace(
+                "Search past conversations and load session summaries for contextual memory",
+                "my own words",
+            ),
+        ];
+        for yaml in edited {
+            let mut config: Mapping = serde_yaml::from_str(&yaml).unwrap();
+            run_migrations(&mut config);
+            assert!(!chatrecall_entry(&config).enabled, "flipped: {yaml}");
+            assert!(marker_recorded(&config), "no marker: {yaml}");
+        }
+    }
+
+    #[test]
+    fn the_read_path_sees_the_old_default_turned_on_before_any_write() {
+        let mut config: Mapping = serde_yaml::from_str(OLD_DEFAULT_OFF_CHATRECALL).unwrap();
+        run_read_migrations(&mut config);
+        assert!(chatrecall_entry(&config).enabled);
+    }
+
+    #[test]
+    fn a_non_list_marker_skips_the_flip_instead_of_repeating_it() {
+        let mut config: Mapping = serde_yaml::from_str(OLD_DEFAULT_OFF_CHATRECALL).unwrap();
+        config.insert(
+            yaml_key(APPLIED_MIGRATIONS_KEY),
+            serde_yaml::Value::String("garbage".to_string()),
+        );
+        run_migrations(&mut config);
+        assert!(!chatrecall_entry(&config).enabled);
+        assert_eq!(
+            config.get(yaml_key(APPLIED_MIGRATIONS_KEY)),
+            Some(&serde_yaml::Value::String("garbage".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_chatrecall_migration_is_idempotent() {
+        let mut config: Mapping = serde_yaml::from_str(OLD_DEFAULT_OFF_CHATRECALL).unwrap();
+        run_migrations(&mut config);
+        assert!(!run_migrations(&mut config), "second run must not save");
+        let markers = config
+            .get(yaml_key(APPLIED_MIGRATIONS_KEY))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        assert_eq!(markers.len(), 1);
     }
 
     // -----------------------------------------------------------------------

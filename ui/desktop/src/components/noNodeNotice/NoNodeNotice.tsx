@@ -1,6 +1,6 @@
-import { useCallback, useState, useSyncExternalStore } from 'react';
+import { useCallback, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeftRight, Loader2, RotateCcw, ServerOff, Settings2 } from 'lucide-react';
+import { ArrowLeftRight, ArrowRight, Loader2, RotateCcw, ServerOff, Settings2 } from 'lucide-react';
 import { useConfig } from '../ConfigContext';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import type { SwarmConfig } from '../settings/swarm/golden';
@@ -23,6 +23,15 @@ import { routeServesChat } from '../chatServedBy/chatServedBy';
 import { splitStopReason } from '../chatServedBy/splitStopText';
 import { ENGINE_ROUTE } from './ComposerReadiness';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
+import { answerOnNextOf } from './answerOnNext';
+import { useGlanceNodesWhen } from '../engineGlance/glanceStore';
+import { nodeNamesById } from '../nodes/model';
+
+/** A chat's own nodes' refusal (Q-381): the chat, and how its text is sent again on a node. */
+export interface AnswerOnDoor {
+  sessionId: string;
+  onAnswer: (text: string, node: string) => void;
+}
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { setNodeModel } from '../leanzero-swarm/nodes';
@@ -119,6 +128,12 @@ const i18n = defineMessages({
     defaultMessage: 'Could not point this node at {model}: {error}',
   },
   retry: { id: 'noNodeNotice.retry', defaultMessage: 'Retry' },
+  answerOnNext: { id: 'noNodeNotice.answerOnNext', defaultMessage: 'Answer on {next} for now' },
+  answerOnNextHint: {
+    id: 'noNodeNotice.answerOnNextHint',
+    defaultMessage:
+      'Sends your message again to {next} for this turn only. This chat’s nodes stay as they are, and the next message goes to {lead} again.',
+  },
   ready: {
     id: 'noNodeNotice.ready',
     defaultMessage: 'The node is up — retry to send your message again.',
@@ -166,6 +181,8 @@ export function SplitStoppedNotice({
   back,
   retryText,
   onRetry,
+  offerHint = null,
+  offerButton = null,
 }: {
   stop: SplitStop;
   rows: NoNodeRow[];
@@ -178,6 +195,9 @@ export function SplitStoppedNotice({
   back: boolean;
   retryText: string | null;
   onRetry: (text: string) => void;
+  /** Q-381: a chat on its own nodes may answer this turn on its next node (NoNodeNotice builds it). */
+  offerHint?: ReactNode;
+  offerButton?: ReactNode;
 }) {
   const intl = useIntl();
   const navigate = useNavigate();
@@ -207,10 +227,12 @@ export function SplitStoppedNotice({
       {live && back && (
         <p className={cx(TYPE.body, TONE_TEXT.ok)}>{intl.formatMessage(i18n.splitBack)}</p>
       )}
+      {offerHint}
       <div className="flex flex-wrap items-center gap-2">
+        {offerButton}
         {live && retryText != null && (
           <Button
-            variant={back ? 'primary' : 'secondary'}
+            variant={back && !offerButton ? 'primary' : 'secondary'}
             size="sm"
             icon={<RotateCcw />}
             data-testid="no-node-retry"
@@ -320,9 +342,15 @@ export default function NoNodeNotice({
   createdMs = null,
   hasAnswer = false,
   splitRecord = null,
+  answerOn = null,
 }: {
   rows: NoNodeRow[];
   live: boolean;
+  /**
+   * The refusal is a chat's own nodes' (Q-381): the chat and the door that sends the refused text
+   * again for one turn on a node of its set. null = not such a refusal.
+   */
+  answerOn?: AnswerOnDoor | null;
   /**
    * When the turn's message was written (ms); null = unknown, and no split stop is claimed. With
    * `hasAnswer` it is when the CUT answer began.
@@ -399,7 +427,38 @@ export default function NoNodeNotice({
   // A node set to another model than the engine serves refuses a plain retry the same way: its
   // "Chat with …" is the move until it is taken.
   const wrongModel = rows.some((r) => r.reason.kind === 'mlx-wrong-model' && r.nodeId != null);
-  const retryPrimary = (!mlxDown && !wrongModel) || allUp || routeReady || anyRepointed;
+  // Q-381: the chat's own nodes, read only for its own live refusal (every other message stays
+  // unsubscribed). The offer is the move: Retry goes back to the lead that just refused.
+  const ownNodes = useGlanceNodesWhen(live && answerOn != null && retryText != null);
+  const offer =
+    answerOn && ownNodes.kind === 'read'
+      ? answerOnNextOf(ownNodes.read.config, answerOn.sessionId, rows)
+      : null;
+  const nodeNames = ownNodes.kind === 'read' ? nodeNamesById(ownNodes.read.nodes) : {};
+  const nameOf = (id: string) => nodeNames[id] ?? id;
+  const retryPrimary =
+    offer == null && ((!mlxDown && !wrongModel) || allUp || routeReady || anyRepointed);
+  const offerNow = live && retryText != null && answerOn != null ? offer : null;
+  const offerHint = offerNow && answerOn && (
+    <p data-testid="no-node-answer-on-next-hint" className={cx(TYPE.body, 'break-words')}>
+      {intl.formatMessage(i18n.answerOnNextHint, {
+        next: nameOf(offerNow.next),
+        lead: nameOf(offerNow.lead),
+      })}
+    </p>
+  );
+  const offerButton = offerNow && answerOn && retryText != null && (
+    <Button
+      variant="primary"
+      size="sm"
+      icon={<ArrowRight />}
+      data-testid="no-node-answer-on-next"
+      data-node={offerNow.next}
+      onClick={() => answerOn.onAnswer(retryText, offerNow.next)}
+    >
+      {intl.formatMessage(i18n.answerOnNext, { next: nameOf(offerNow.next) })}
+    </Button>
+  );
 
   // Chat was on the split and the split had stopped (or stopped under this very answer): that is
   // the fact, not "no model is mounted" (Q-81). The message's time is floored to the second. The
@@ -424,6 +483,8 @@ export default function NoNodeNotice({
         back={allUp}
         retryText={retryText}
         onRetry={onRetry}
+        offerHint={offerHint || null}
+        offerButton={offerButton || null}
       />
     );
   }
@@ -641,7 +702,10 @@ export default function NoNodeNotice({
         <p className={cx(TYPE.body, TONE_TEXT.ok)}>{intl.formatMessage(i18n.ready)}</p>
       )}
 
+      {offerHint}
+
       <div className="flex flex-wrap items-center gap-2">
+        {offerButton}
         {live && retryText != null && (
           <Button
             variant={retryPrimary ? 'primary' : 'secondary'}

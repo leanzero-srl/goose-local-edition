@@ -1,22 +1,53 @@
+{% if messages is none %}
+## Summarize this conversation for yourself
+{% if chat.trigger %}
+{{ chat.trigger }}
+{% endif %}
+Everything above this message will be replaced by what you write now and, after it, what goose keeps itself word for word.
+{% if chat.kept %}
+goose keeps these — do not repeat them:
+{% for line in chat.kept %}
+- {{ line }}
+{% endfor %}
+{% endif %}
+{% if chat.earlier_summary %}
+The conversation above opens with an earlier summary. Update it: keep what still holds, drop what later turns undid.
+{% endif %}
+{% if chat.goal %}
+The goal the person set with /goal: {{ chat.goal }}
+{% endif %}
+{% if chat.note %}
+
+The person's note for this compaction: "{{ chat.note }}"
+Follow it. Your first line says how you read it:
+- `NOTE OK` when the note is clear against this conversation;
+{% if chat.may_ask %}
+- `NOTE QUESTION: <one question>` when it contradicts the conversation or is unclear — then stop. The person answers before goose compacts.
+{% else %}
+- `NOTE CONCERN: <one sentence>` when it contradicts the conversation or is unclear — then write the summary, following the note as written. This compaction cannot wait for an answer.
+{% endif %}
+{% endif %}
+
+Name every file by its absolute path: a path the conversation used relative to the folder a command worked in (`cd <folder> && …`) is that folder joined with the path.
+
+Write only these sections, in this order, taken from the conversation above — the exact commands, numbers and values as they appear there:
+{% for part in chat.parts %}
+## {{ part.heading }}
+{{ part.ask }}
+{% endfor %}
+
+Call no tool. Write no `<analysis>` section and nothing before {% if chat.note %}the NOTE line{% else %}the first heading{% endif %}.
+{% else %}
 ## Task Context
 - An llm context limit was reached when a user was in a working session with an agent (you)
-{% if messages is none %}
-- Generate a version of the messages above with only the most verbose parts removed
-{% else %}
 - Generate a version of the below messages with only the most verbose parts removed
-{% endif %}
 - Include user requests, your responses, all technical content, and as much of the original context as possible
 - This will be used to let the user continue the working session
 - Use framing and tone knowing the content will be read an agent (you) on a next exchange to allow for continuation of the session
-{% if messages is none %}
-- Summarize now, as your reply: call no tool, and keep any thinking before it brief — the `<analysis>` section below is where the review of the conversation goes
-{% endif %}
 
-{% if messages is not none %}
 **Conversation History:**
 {{ messages }}
 
-{% endif %}
 Wrap reasoning in `<analysis>` tags:  
 - Review conversation chronologically
 - For each part, log:  
@@ -41,3 +72,4 @@ Wrap reasoning in `<analysis>` tags:
 9. **Next Step** – *Include only if* directly continues user instruction  
 
 > No new ideas unless user confirmed
+{% endif %}

@@ -662,6 +662,45 @@ extensions:
         }
     }
 
+    /// Q-364 end to end through the config file: the owner's stored old default reads as on,
+    /// and once the person turns it off, a fresh load of the same file keeps it off.
+    #[test]
+    fn stored_default_off_chat_search_turns_on_once_and_the_persons_off_sticks() {
+        let (config, config_file, secrets_file) = test_config(
+            r#"
+extensions:
+  chatrecall:
+    enabled: false
+    type: platform
+    name: chatrecall
+    description: Search past conversations and load session summaries for contextual memory
+    display_name: Chat Recall
+    bundled: true
+    available_tools: []
+"#,
+        );
+
+        assert!(
+            get_extensions_map_with_config(&config)["chatrecall"].enabled,
+            "read before any write"
+        );
+
+        assert!(set_extension_enabled_with_config(
+            &config,
+            "chatrecall",
+            false
+        ));
+
+        let reloaded =
+            Config::new_with_file_secrets(config_file.path(), secrets_file.path()).unwrap();
+        assert!(!get_extensions_map_with_config(&reloaded)["chatrecall"].enabled);
+        set_extension_enabled_with_config(&reloaded, "todo", false);
+        assert!(!get_extensions_map_with_config(&reloaded)["chatrecall"].enabled);
+        assert!(read_extensions(&reloaded).contains_key("chatrecall"));
+        let on_disk = std::fs::read_to_string(config_file.path()).unwrap();
+        assert!(on_disk.contains("chatrecall_default_on"), "{on_disk}");
+    }
+
     #[test]
     fn test_stdio_env_alias_without_name_uses_map_key() {
         let (config, _config_file, _secrets_file) = test_config(

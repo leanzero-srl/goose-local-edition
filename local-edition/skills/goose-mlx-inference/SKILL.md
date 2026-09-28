@@ -73,6 +73,15 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 - Liveness = rank-0 step counter OR every rank's CPU time advancing; hang = silent > 10 × running median (≥3 samples);
   ps stat `T` = frozen at once. Watchdog per poll: kernel pressure WARN or available < 5% RAM → admission 503; CRITICAL →
   verified stop, never restarted. Restart breaker = the single Sidecar's (3 per 600 s, backoff 1 s → 30 s).
+- THE MEMORY HOLD IS WAITED OUT, NOT RETRIED (Q-397, 1d97681d2): the watchdog's close sends `code: "memory_hold"`
+  (`distributed::MEMORY_HOLD_CODE`); rank 0's 503 carries `error.code`/`reason`/`admission: "/goose/admission"`, and
+  `GET /goose/admission` parks until the reopen (rank_admission.py). goose keys on the CODE (never the prose) →
+  `ProviderError::EngineHold` → `engine_hold::wait_for_admission` (no clock; Stop drops it; engine gone = loud error);
+  the router fails a held node over first (`HOLD_GOES_TO_CALLER`) and waits only when nothing else serves; the turn line
+  reads "Waiting: <watchdog reason>". Any other 503 keeps the 3 retries. Probe: `curl -s 127.0.0.1:<port>/goose/admission`
+  answers `{"admission_open": true}` at once when open (it BLOCKS while held — never run it without `-m` on a held split
+  unless you mean to wait). Gaps: the pipeline runner's fork 503 has no code (Q-398); a peer's split over the Link relay
+  cannot be waited on (relay routes chat/models/status only, Q-399).
 - Live tests + measured numbers: mlx-jaccl-cluster skill, section "goose's DISTRIBUTED engine".
 - SERVED ID (2026-09-24, 3.0.26 defect): `engine::served_model_id(settings, model_id)` applies
   `mlx_engine.served_model_name` ONLY when `model_id == mlx_engine.model_id` (the alias names ONE model;

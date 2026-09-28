@@ -34,9 +34,9 @@ describe('SkillsView deletes a skill under the projectDir it listed', () => {
         <SkillsView />
       </IntlTestWrapper>
     );
-    const row = (
-      await screen.findByText('panel-surgeon', { selector: 'button *' }, { timeout: 3000 })
-    ).closest('button') as HTMLElement;
+    const row = (await screen.findByText('panel-surgeon', { selector: 'button *' })).closest(
+      'button'
+    ) as HTMLElement;
     fireEvent.contextMenu(row);
     fireEvent.click(within(await screen.findByTestId('skill-context-menu')).getByText('Delete'));
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }));

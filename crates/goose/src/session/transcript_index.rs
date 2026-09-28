@@ -244,8 +244,9 @@ pub(crate) async fn backfill_below(pool: &Pool<Sqlite>) -> Result<i64> {
 /// One committed backfill step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillStep {
-    /// Rows `[from, below)` of the readable history were indexed; the watermark is now `from`.
-    Indexed { rows: u64, from: i64 },
+    /// Rows `[from, below)` of the readable history were indexed; the watermark was `below` and is
+    /// now `from`.
+    Indexed { rows: u64, from: i64, below: i64 },
     /// Nothing is left below the watermark; it is now zero.
     Done,
 }
@@ -293,7 +294,7 @@ pub(crate) async fn backfill_step(pool: &Pool<Sqlite>, batch: i64) -> Result<Bac
             .bind(from)
             .execute(&mut *tx)
             .await?;
-            BackfillStep::Indexed { rows, from }
+            BackfillStep::Indexed { rows, from, below }
         }
         None => {
             sqlx::query(&format!(
@@ -310,15 +311,21 @@ pub(crate) async fn backfill_step(pool: &Pool<Sqlite>, batch: i64) -> Result<Bac
 
 /// Run `backfill_step` until the watermark reaches zero. A failed step is logged loudly and ends
 /// this run; the watermark keeps the last committed batch, the next start resumes from it, and
-/// every search footer meanwhile says how much is missing.
-pub(crate) async fn backfill(pool: Pool<Sqlite>) {
+/// every search footer meanwhile says how much is missing. Returns the steps it committed, in the
+/// order it committed them — the last is `Done` unless a failed step ended the run.
+pub(crate) async fn backfill(pool: Pool<Sqlite>) -> Vec<BackfillStep> {
     let started = std::time::Instant::now();
+    let mut steps = Vec::new();
     let mut indexed = 0u64;
     let mut batches = 0u64;
     let mut slowest_batch = std::time::Duration::ZERO;
     loop {
         let step_started = std::time::Instant::now();
-        match backfill_step(&pool, BACKFILL_BATCH_ROWS).await {
+        let step = backfill_step(&pool, BACKFILL_BATCH_ROWS).await;
+        if let Ok(committed) = &step {
+            steps.push(*committed);
+        }
+        match step {
             Ok(BackfillStep::Indexed { rows, .. }) => {
                 indexed += rows;
                 batches += 1;
@@ -333,7 +340,7 @@ pub(crate) async fn backfill(pool: Pool<Sqlite>) {
                     elapsed_ms = started.elapsed().as_millis(),
                     "transcript_index_backfilled"
                 );
-                return;
+                return steps;
             }
             Err(err) => {
                 tracing::error!(
@@ -341,7 +348,7 @@ pub(crate) async fn backfill(pool: Pool<Sqlite>) {
                     indexed,
                     "transcript_index_backfill_failed: older messages stay out of chat search until the next start resumes the backfill"
                 );
-                return;
+                return steps;
             }
         }
     }
@@ -1356,9 +1363,10 @@ mod tests {
 
     /// The backfill indexes the newest rows first, a batch per transaction, and a later run picks
     /// up exactly at the watermark the last committed batch left — hidden rows are stepped over.
+    /// The later run is the one production has: the backfill a second process's first open starts.
     #[tokio::test]
     async fn the_backfill_resumes_from_its_watermark() {
-        let (_dir, sm) = store().await;
+        let (dir, sm) = store().await;
         let person = chat(&sm, "Person", SessionType::User).await;
         let worker = chat(&sm, "Worker", SessionType::Hidden).await;
         for i in 0..5 {
@@ -1376,6 +1384,10 @@ mod tests {
             .unwrap();
         }
         let rows = ids_of(&sm, &person).await;
+        let top = ids_of(&sm, &worker).await.last().unwrap() + 1;
+        // This store's first open found an empty history, so no backfill of its own runs beside
+        // the steps below.
+        assert_eq!(sm.storage().startup_backfill().await, None);
         unindex(&sm).await;
         let pool = sm.storage().pool().await.unwrap();
         let before = coverage(pool).await.unwrap();
@@ -1387,7 +1399,8 @@ mod tests {
             step,
             BackfillStep::Indexed {
                 rows: 2,
-                from: rows[3]
+                from: rows[3],
+                below: top
             }
         );
         assert_eq!(
@@ -1397,20 +1410,39 @@ mod tests {
         );
         assert_eq!(backfill_below(pool).await.unwrap(), rows[3]);
 
-        // A second process (or this one after a restart) reads the watermark and continues below it.
-        let reopened = SessionManager::new(_dir.path().to_path_buf());
-        let pool2 = reopened.storage().pool().await.unwrap();
-        let step = backfill_step(pool2, 2).await.unwrap();
+        let step = backfill_step(pool, 2).await.unwrap();
         assert_eq!(
             step,
             BackfillStep::Indexed {
                 rows: 2,
-                from: rows[1]
+                from: rows[1],
+                below: rows[3]
             }
         );
         assert_eq!(matching(&sm, "mesh").await, rows[1..].to_vec());
 
-        while backfill_step(pool, 2).await.unwrap() != BackfillStep::Done {}
+        // A second process (or this one after a restart) opens the store, finds the watermark above
+        // zero and starts the backfill, which continues exactly below it: one batch, the one row
+        // left, then done — nothing the first process indexed is indexed again.
+        let reopened = SessionManager::new(dir.path().to_path_buf());
+        reopened.storage().pool().await.unwrap();
+        let run = reopened
+            .storage()
+            .startup_backfill()
+            .await
+            .expect("a watermark above zero starts the backfill on open");
+        assert_eq!(
+            run,
+            vec![
+                BackfillStep::Indexed {
+                    rows: 1,
+                    from: rows[0],
+                    below: rows[1]
+                },
+                BackfillStep::Done
+            ]
+        );
+
         let after = coverage(pool).await.unwrap();
         assert_eq!(
             (after.indexed, after.indexable, after.backfilling),
@@ -1425,7 +1457,7 @@ mod tests {
     #[tokio::test]
     async fn a_v14_store_is_indexed_by_the_startup_backfill() {
         let dir = TempDir::new().unwrap();
-        {
+        let (rows, top) = {
             let sm = SessionManager::new(dir.path().to_path_buf());
             let id = chat(&sm, "Old", SessionType::User).await;
             for i in 0..3 {
@@ -1433,6 +1465,8 @@ mod tests {
                     .await
                     .unwrap();
             }
+            let rows = ids_of(&sm, &id).await;
+            let top = rows.last().unwrap() + 1;
             let pool = sm.storage().pool().await.unwrap();
             for statement in [
                 "DROP TRIGGER messages_fts_insert",
@@ -1447,19 +1481,27 @@ mod tests {
                 sqlx::query(statement).execute(pool).await.unwrap();
             }
             pool.close().await;
-        }
+            (rows, top)
+        };
         let sm = SessionManager::new(dir.path().to_path_buf());
         let pool = sm.storage().pool().await.unwrap();
-        let mut cov = coverage(pool).await.unwrap();
-        for _ in 0..200 {
-            if cov.missing() == 0 && !cov.backfilling {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            cov = coverage(pool).await.unwrap();
-        }
+        let run = sm.storage().startup_backfill().await.expect(
+            "migration v15 leaves the watermark above zero, so the open starts the backfill",
+        );
+        assert_eq!(
+            run,
+            vec![
+                BackfillStep::Indexed {
+                    rows: 3,
+                    from: rows[0],
+                    below: top
+                },
+                BackfillStep::Done
+            ]
+        );
+        let cov = coverage(pool).await.unwrap();
         assert_eq!((cov.indexed, cov.indexable, cov.backfilling), (3, 3, false));
-        assert_eq!(matching(&sm, "mesh").await.len(), 3);
+        assert_eq!(matching(&sm, "mesh").await, rows);
     }
 
     /// Recall's per-turn search reads the index: the message carrying every term wins the limit,

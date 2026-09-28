@@ -1470,14 +1470,26 @@ fn clear_server_load(status: &mut DistributedStatus) {
     }
 }
 
+/// The code rank 0's 503 carries while this watchdog holds admission for memory (the tensor
+/// wrapper's `rank_admission.py`): what a client recognises the hold by — never the reason's
+/// words — before it waits for the lift on the same endpoint (Q-397).
+pub const MEMORY_HOLD_CODE: &str = "memory_hold";
+
+/// The watchdog's only admission call: closed is always a memory hold, so the close names it.
+pub(crate) fn admission_body(open: bool, reason: &str) -> serde_json::Value {
+    if open {
+        serde_json::json!({"open": true, "reason": reason})
+    } else {
+        serde_json::json!({"open": false, "reason": reason, "code": MEMORY_HOLD_CODE})
+    }
+}
+
 async fn set_admission(ctx: &RunContext, open: bool, reason: &str) -> Result<()> {
     let resp = ctx
         .http
         .post(format!("{}/goose/admission", ctx.config.base_url()))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(serde_json::to_vec(
-            &serde_json::json!({"open": open, "reason": reason}),
-        )?)
+        .body(serde_json::to_vec(&admission_body(open, reason))?)
         .send()
         .await?;
     anyhow::ensure!(

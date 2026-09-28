@@ -43,6 +43,20 @@ pub enum ProviderError {
     #[error("Endpoint not found (404): {0}")]
     EndpointNotFound(String),
 
+    /// The serving engine holds new requests until its memory recovers — goose's distributed
+    /// engine answers 503 with `code: "memory_hold"` (Q-397). A known engine state with its own
+    /// end, so it is waited out on `admission_url` (`engine_hold::wait_for_admission`), never
+    /// retried on a clock and never counted against the retries.
+    #[error("Server error: {details}")]
+    EngineHold {
+        details: String,
+        /// The engine's own words for why it holds; `None` when its refusal carried none.
+        reason: Option<String>,
+        /// Where the lift is awaited: the refusal's `admission` path on the refusing origin.
+        /// `None` when the engine named no path — the hold cannot be waited out, and says so.
+        admission_url: Option<String>,
+    },
+
     #[error("Credits exhausted: {details}")]
     CreditsExhausted {
         details: String,
@@ -87,6 +101,7 @@ impl ProviderError {
             ProviderError::UsageError(_) => "usage",
             ProviderError::NotImplemented(_) => "not_implemented",
             ProviderError::EndpointNotFound(_) => "endpoint_not_found",
+            ProviderError::EngineHold { .. } => "engine_hold",
             ProviderError::CreditsExhausted { .. } => "credits_exhausted",
             ProviderError::Refusal { .. } => "refusal",
         }
@@ -130,6 +145,7 @@ impl ProviderError {
             | ProviderError::NotImplemented(s)
             | ProviderError::EndpointNotFound(s) => s,
             ProviderError::RateLimitExceeded { details, .. }
+            | ProviderError::EngineHold { details, .. }
             | ProviderError::CreditsExhausted { details, .. }
             | ProviderError::Refusal { details, .. } => details,
         }
@@ -223,6 +239,25 @@ impl From<reqwest::Error> for ProviderError {
     }
 }
 
+/// A failed read of a streamed response body, as the `io::Error` a line reader carries, its words
+/// the WHOLE cause chain. reqwest names every cut body "error decoding response body" and keeps
+/// why (a reset connection, an early EOF) only in `source()`, and the line codec wrapping the read
+/// drops `source()` — so a connection reset mid-answer reached the chat as a decoding problem
+/// (Q-392: "Stream decode error: error decoding response body" for an engine's RST).
+pub fn body_read_error(error: reqwest::Error) -> std::io::Error {
+    let mut said = error.to_string();
+    let mut cause = std::error::Error::source(&error);
+    while let Some(reason) = cause {
+        let words = reason.to_string();
+        if !said.contains(&words) {
+            said.push_str(": ");
+            said.push_str(&words);
+        }
+        cause = reason.source();
+    }
+    std::io::Error::other(said)
+}
+
 impl From<LogError> for ProviderError {
     fn from(value: LogError) -> Self {
         ProviderError::ExecutionError(value.to_string())
@@ -269,6 +304,7 @@ impl GoogleErrorCode {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]

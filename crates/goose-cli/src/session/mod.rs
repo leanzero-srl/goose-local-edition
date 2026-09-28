@@ -23,7 +23,7 @@ pub use self::export::message_to_markdown;
 pub use builder::{build_session, SessionBuilderConfig};
 use console::Color;
 use goose::agents::AgentEvent;
-use goose::agents::SUBAGENT_TOOL_REQUEST_TYPE;
+use goose::agents::{SUBAGENT_STARTED_TYPE, SUBAGENT_TOOL_REQUEST_TYPE};
 use goose::permission::permission_confirmation::PrincipalType;
 use goose::permission::Permission;
 use goose::permission::PermissionConfirmation;
@@ -1963,6 +1963,10 @@ fn handle_mcp_notification(
     match notification {
         ServerNotification::LoggingMessageNotification(log_notif) => {
             if let Some(obj) = log_notif.params.data.as_object() {
+                // A delegate's start names its session for the desktop's card: no line to print.
+                if obj.get("type").and_then(|v| v.as_str()) == Some(SUBAGENT_STARTED_TYPE) {
+                    return;
+                }
                 if obj.get("type").and_then(|v| v.as_str()) == Some(SUBAGENT_TOOL_REQUEST_TYPE) {
                     if let (Some(subagent_id), Some(tool_call)) = (
                         obj.get("subagent_id").and_then(|v| v.as_str()),

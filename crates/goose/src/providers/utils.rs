@@ -213,6 +213,10 @@ impl RequestLogHandle for FileLogHandle {
             .as_mut()
             .ok_or_else(|| anyhow!("logger is finished"))?;
         writeln!(writer, "{}", s)?;
+        // Each line reaches the in-flight file as it is written: it is what an operator reads of a
+        // request still running. Buffered, the file showed the request and no answer while up to
+        // 8 KiB of streamed lines sat in memory (Q-393: #3r turn 18's reply had arrived).
+        writer.flush()?;
         Ok(())
     }
 }
@@ -575,6 +579,23 @@ mod tests {
             let text = fs_err::read_to_string(tmp.path().join("llm_request.0.jsonl")).unwrap();
             assert_eq!(
                 text,
+                "{\"input\":\"the request\"}\n{\"data\":\"first chunk\"}\n"
+            );
+        }
+
+        /// Q-393: the in-flight file is what an operator reads of a request still running, so
+        /// every line is on disk the moment it is written — #3r turn 18's file showed the request
+        /// without its trailing newline and no answer while the answer sat in the write buffer.
+        #[test]
+        fn an_in_flight_log_holds_every_line_as_it_is_written() {
+            let tmp = tempfile::tempdir().unwrap();
+            let log = RequestLog::in_dir(tmp.path().to_path_buf(), LOGS_TO_KEEP).unwrap();
+            let mut handle = log.start().unwrap();
+            let file = tmp.path().join(&in_flight(tmp.path())[0]);
+            handle.write(r#"{"input":"the request"}"#).unwrap();
+            handle.write(r#"{"data":"first chunk"}"#).unwrap();
+            assert_eq!(
+                fs_err::read_to_string(&file).unwrap(),
                 "{\"input\":\"the request\"}\n{\"data\":\"first chunk\"}\n"
             );
         }

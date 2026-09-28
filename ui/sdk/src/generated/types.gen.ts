@@ -5706,6 +5706,10 @@ export type SessionActivityResponse_unstable = {
      * read now; an unreadable loop record is listed with its error.
      */
     looping?: Array<LoopSummaryDto>;
+    /**
+     * Chats with notes from the person's other chats waiting there (Q-358), oldest note first.
+     */
+    notesWaiting?: Array<NotesWaitingDto>;
 };
 
 export type RunningSessionDto = {
@@ -5818,6 +5822,20 @@ export type LoopSummaryDto = {
 export type LoopStatus = 'running' | 'checking' | 'waiting' | 'waiting_turn' | 'waiting_you' | 'needs_you' | 'paused' | 'ended' | 'elsewhere';
 
 /**
+ * A chat with notes waiting for the person: the sidebar's Note chip and "1 note waiting".
+ */
+export type NotesWaitingDto = {
+    sessionId: string;
+    sessionName: string;
+    workingDir: string;
+    count: number;
+    /**
+     * The chat the oldest waiting note came from.
+     */
+    fromName: string;
+};
+
+/**
  * Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.
  * The answer itself reaches the model as the person's next chat message, sent by the client with
  * `_meta.goose.needsYouAnswers = [itemId, …]` on the prompt: without that mark the message reads as
@@ -5834,6 +5852,200 @@ export type NeedsYouAction = 'answer' | 'dismiss';
 
 export type ResolveNeedsYouResponse_unstable = {
     item: NeedsYouItemDto;
+};
+
+/**
+ * A chat's notes: the drafts written in it and the notes sent to it.
+ */
+export type NotesListRequest_unstable = {
+    sessionId: string;
+};
+
+export type NotesListResponse_unstable = {
+    drafts: Array<NoteDraftDto>;
+    inbox: Array<InboxNoteDto>;
+};
+
+/**
+ * A note in the chat that wrote it.
+ */
+export type NoteDraftDto = {
+    id: string;
+    /**
+     * The words the model used for the other chat.
+     */
+    toQuery: string;
+    text: string;
+    /**
+     * RFC 3339.
+     */
+    createdAt: string;
+    resolution: NoteResolution;
+    target?: NoteChatDto | null;
+    /**
+     * The equally matching chats when `resolution` is `ambiguous`, most recent first.
+     */
+    candidates?: Array<NoteChatDto>;
+    status: NoteDraftStatus;
+    delivery?: NoteDelivery | null;
+    sentAt?: string | null;
+    /**
+     * Set for a sent note.
+     */
+    outcome?: NoteOutcomeDto | null;
+};
+
+export type NoteResolution = 'picked_by_person' | 'title_words' | 'live_state' | 'ambiguous' | 'no_match';
+
+export type NoteChatDto = {
+    sessionId: string;
+    name: string;
+    workingDir: string;
+    /**
+     * The folder as the card shows it: `~/billing` under the home folder.
+     */
+    folder: string;
+    live: NoteLiveState;
+    /**
+     * RFC 3339: the chat's last message.
+     */
+    lastActiveAt: string;
+};
+
+/**
+ * Where a chat stands right now, as the draft card says it.
+ */
+export type NoteLiveState = 'working' | 'idle' | 'not_open';
+
+export type NoteDraftStatus = 'draft' | 'sent' | 'cancelled';
+
+export type NoteDelivery = 'steer_now' | 'leave_there';
+
+export type NoteOutcomeDto = {
+    state: NoteOutcomeState;
+    /**
+     * RFC 3339: when it was delivered or dismissed.
+     */
+    at?: string | null;
+    how?: NoteDeliveredHow | null;
+    reason?: string | null;
+};
+
+/**
+ * What became of a sent note, read from the target chat.
+ */
+export type NoteOutcomeState = 'waiting' | 'steering' | 'with_next_message' | 'delivered' | 'dismissed' | 'gone';
+
+export type NoteDeliveredHow = 'steered' | 'own_turn' | 'with_your_message';
+
+/**
+ * A note in the chat it was sent to.
+ */
+export type InboxNoteDto = {
+    id: string;
+    fromSessionId: string;
+    fromName: string;
+    fromWorkingDir: string;
+    /**
+     * The sending chat's folder as the tray shows it: `~/p` under the home folder.
+     */
+    fromFolder: string;
+    text: string;
+    /**
+     * RFC 3339.
+     */
+    sentAt: string;
+    delivery: NoteDelivery;
+    status: InboxNoteStatus;
+    /**
+     * Offered as a turn of its own as soon as the chat is idle in a window.
+     */
+    offerWhenIdle: boolean;
+    deliveredAt?: string | null;
+    deliveredHow?: NoteDeliveredHow | null;
+    dismissedAt?: string | null;
+    /**
+     * The id its message takes in this chat.
+     */
+    messageId: string;
+    /**
+     * Exactly what goose reads: submit it with `_meta.goose.crossNote = {noteId, messageId}`.
+     */
+    prompt: string;
+};
+
+export type InboxNoteStatus = 'waiting' | 'delivered' | 'dismissed' | 'steering' | 'with_next_message';
+
+/**
+ * The chats a note written in `sessionId` could go to, most recently active first.
+ */
+export type NotesTargetsRequest_unstable = {
+    sessionId: string;
+};
+
+export type NotesTargetsResponse_unstable = {
+    chats: Array<NoteChatDto>;
+};
+
+/**
+ * THE PERSON'S CLICK on a draft: the only request that sends a note. `text` is the draft as the
+ * person left it.
+ */
+export type NotesSendRequest_unstable = {
+    sessionId: string;
+    noteId: string;
+    text: string;
+    delivery: NoteDelivery;
+};
+
+export type NotesSendResponse_unstable = {
+    draft: NoteDraftDto;
+};
+
+export type NotesDraftRequest_unstable = {
+    sessionId: string;
+    noteId: string;
+    action: NoteDraftAction;
+};
+
+export type NoteDraftAction = {
+    toSessionId: string;
+    kind: 'retarget';
+} | {
+    kind: 'cancel';
+};
+
+export type NotesDraftResponse_unstable = {
+    draft: NoteDraftDto;
+};
+
+export type NotesInboxRequest_unstable = {
+    sessionId: string;
+    noteId: string;
+    action: NoteInboxAction;
+};
+
+/**
+ * What the person in the target chat does with a note. "Give it to goose now" is not one: the
+ * window submits the note's `prompt` with `_meta.goose.crossNote`.
+ */
+export type NoteInboxAction = 'dismiss' | 'steer_this_turn' | 'after_this_turn' | 'add_to_next_message';
+
+export type NotesInboxResponse_unstable = {
+    note: InboxNoteDto;
+};
+
+/**
+ * This window shows (or stopped showing) `sessionId`. goosed offers a chat's due note only to the
+ * windows that show it, and a draft card says "not open in any window" from these.
+ */
+export type NotesShowingRequest_unstable = {
+    sessionId: string;
+    showing: boolean;
+};
+
+export type NotesShowingResponse_unstable = {
+    [key: string]: unknown;
 };
 
 /**
@@ -6305,6 +6517,12 @@ export type NodeResidency = {
     kind: 'serving';
 } | {
     phase?: string | null;
+    /**
+     * The sessions whose demands the installed loader loads it for (Q-382: a delegate's
+     * card says "Loading {node} for this delegate"). Empty when no loader demand is behind
+     * the load (Run it, a restore, a card's Start).
+     */
+    demandedBy?: Array<string>;
     kind: 'loading';
 } | {
     reason: string;
@@ -6547,6 +6765,11 @@ export type NodeServedTurnDto = {
      */
     loadedMs?: number | null;
     atMs: number;
+    /**
+     * The person asked this one turn to answer past the chain's 1st ("Answer on {next} for now",
+     * Q-381): the 1st was passed over by that ask, and the next turn goes back to it.
+     */
+    askedForThisTurn?: boolean;
 };
 
 /**
@@ -6588,6 +6811,139 @@ export type NodeEnsureServing = {
 };
 
 export type NodeLoadRefusalCode = 'unknownNode' | 'heldByBuild' | 'keptLoaded' | 'needsStep' | 'fit' | 'loadFailed' | 'loaderAbsent' | 'unknown';
+
+/**
+ * What the next compaction of this chat would keep, computed by code alone — no model call.
+ */
+export type CompactionPreviewRequest_unstable = {
+    sessionId: string;
+};
+
+export type CompactionPreviewResponse_unstable = {
+    kept: Array<KeptPillarDto>;
+    writtenParts: Array<WrittenPartDto>;
+    alwaysHere: AlwaysHereDto;
+    steer: CompactionSteerDto;
+    last?: LastCompactionDto | null;
+    /**
+     * The latest compaction's stored summary: what the model wrote, then what goose kept.
+     */
+    lastKept?: string | null;
+    /**
+     * The kept block's share of the window, in tokens; absent when the window is unknown.
+     */
+    keptBudgetTokens?: number | null;
+    /**
+     * The note saved for this chat could not be read; the steer shown is empty because of it.
+     */
+    steerError?: string | null;
+};
+
+/**
+ * One part goose keeps word for word, as the next compaction would keep it now.
+ */
+export type KeptPillarDto = {
+    id: KeptPillarId;
+    /**
+     * Each item as the block carries it (a message, a file line, a failed call, an entry).
+     */
+    items: Array<string>;
+    /**
+     * Older items the block's share of the window left out.
+     */
+    leftOut?: number;
+    /**
+     * Items cut to their start to fit.
+     */
+    cut?: number;
+    /**
+     * The part's size by goose's tokenizer; absent when it could not be built.
+     */
+    tokens?: number | null;
+    /**
+     * The part could not be read (the ledger), said instead of an empty list.
+     */
+    error?: string | null;
+};
+
+export type KeptPillarId = 'asked' | 'files' | 'failed' | 'notes' | 'ledger';
+
+/**
+ * A section the model writes.
+ */
+export type WrittenPartDto = {
+    heading: string;
+    ask: string;
+};
+
+/**
+ * What rides every turn already, beside the conversation.
+ */
+export type AlwaysHereDto = {
+    scratchpad?: string | null;
+    /**
+     * The ledger's newest entries, newest first.
+     */
+    ledgerTail?: Array<string>;
+};
+
+/**
+ * What the person set for this chat's compactions (`compaction.v0` in the session).
+ */
+export type CompactionSteerDto = {
+    /**
+     * The note for the next compaction.
+     */
+    note?: string | null;
+    /**
+     * The note is used for every compaction of this chat, not only the next.
+     */
+    standing?: boolean;
+    /**
+     * Lines kept word for word in every compaction of this chat.
+     */
+    pins?: Array<string>;
+    /**
+     * The next manual compaction follows the note as written instead of asking about it (the
+     * person answered "Compact as written").
+     */
+    followAsWritten?: boolean;
+};
+
+/**
+ * The chat's latest compaction.
+ */
+export type LastCompactionDto = {
+    /**
+     * RFC 3339.
+     */
+    at: string;
+    trigger: CompactionTriggerKind;
+    tokensBefore?: number | null;
+    tokensAfter?: number | null;
+    elapsedMs: number;
+    noteVerdict?: CompactionNoteVerdict | null;
+    said?: string | null;
+};
+
+export type CompactionTriggerKind = 'manual' | 'auto' | 'recovery';
+
+/**
+ * How the model read the person's note (its NOTE line).
+ */
+export type CompactionNoteVerdict = 'ok' | 'question' | 'concern' | 'missing' | 'notSent';
+
+/**
+ * Replaces what the person set for this chat's compactions.
+ */
+export type CompactionSteerRequest_unstable = {
+    sessionId: string;
+    steer: CompactionSteerDto;
+};
+
+export type CompactionSteerResponse_unstable = {
+    steer: CompactionSteerDto;
+};
 
 /**
  * The loop of one chat. A PURE read: never claims the clock, never writes.
@@ -7131,6 +7487,12 @@ export type StatusMessage = {
      * line from these numbers. Absent for every other notice.
      */
     stopped?: StoppedTurnStatus | null;
+    /**
+     * How a compaction of this chat ended (Q-357): compacted, stopped at a question about the
+     * person's note, or failed — the card at the compaction point. Absent for every other
+     * notice.
+     */
+    compaction?: CompactionStatus | null;
     type: 'notice';
 } | {
     message: string;
@@ -7139,6 +7501,11 @@ export type StatusMessage = {
      * its status line. Absent for every other progress status.
      */
     forming?: FormingStatus | null;
+    /**
+     * A compaction of this chat under way (Q-357): reading the conversation, then writing the
+     * summary. Absent for every other progress status.
+     */
+    compaction?: CompactionStatus | null;
     type: 'progress';
 };
 
@@ -7152,6 +7519,63 @@ export type StoppedTurnStatus = {
      */
     outputTokens?: number | null;
 };
+
+/**
+ * One compaction of a chat as its card shows it. Every figure is goose's own measurement; a figure
+ * goose could not take is absent, never zero.
+ */
+export type CompactionStatus = {
+    stage: CompactionStage;
+    trigger: CompactionTriggerKind;
+    /**
+     * Context tokens when the compaction began, as the chat counts them.
+     */
+    tokensBefore?: number | null;
+    /**
+     * Context tokens once compacted (Done).
+     */
+    tokensAfter?: number | null;
+    /**
+     * Output tokens the summary has streamed, by goose's tokenizer.
+     */
+    writtenTokens?: number | null;
+    /**
+     * The section headings the summary has written, in order.
+     */
+    parts?: Array<string>;
+    /**
+     * The sections the summary is asked for.
+     */
+    partsTotal: number;
+    /**
+     * Since the compaction began.
+     */
+    elapsedMs: number;
+    /**
+     * Since the summary's first output (Writing, Done).
+     */
+    writingMs?: number | null;
+    /**
+     * The person's note this compaction ran under.
+     */
+    note?: string | null;
+    noteVerdict?: CompactionNoteVerdict | null;
+    /**
+     * The model's question or concern about the note, word for word.
+     */
+    said?: string | null;
+    /**
+     * Failed: why.
+     */
+    error?: string | null;
+    /**
+     * Something goose could not read and did without, said plainly (a note saved for the chat
+     * that could not be read).
+     */
+    warning?: string | null;
+};
+
+export type CompactionStage = 'done' | 'reading' | 'writing' | 'question' | 'failed';
 
 /**
  * What the decoder has received of a response whose tool calls are still forming (Q-151): each
@@ -7217,6 +7641,28 @@ export type LoopsChangedNotification_unstable = {
     loop: LoopRecord;
 };
 
+/**
+ * A note is due as its own turn in `sessionId` (Q-358): sent only to the windows that show the chat
+ * (`notes/showing`). The window, if the chat is idle there, submits `prompt` as a user message with
+ * id `messageId` carrying `_meta.goose.crossNote = {noteId, messageId}`, so the reply streams where
+ * the person sees it; otherwise it ignores the offer and goosed offers it again when the chat's turn
+ * ends or a window shows it.
+ */
+export type NotesDeliverDueNotification_unstable = {
+    sessionId: string;
+    noteId: string;
+    messageId: string;
+    prompt: string;
+};
+
+/**
+ * These chats' notes changed (a draft pinned, sent, delivered, dismissed): the cards, trays and
+ * lists showing them re-read `notes/list`.
+ */
+export type NotesChangedNotification_unstable = {
+    sessionIds: Array<string>;
+};
+
 export type RequestRecipeParams_unstable = {
     sessionId: string;
     parameters: Array<RecipeParameterDto>;
@@ -7234,14 +7680,14 @@ export type RecipeParamsAction = 'submit' | 'cancel';
 export type ExtRequest = {
     id: string;
     method: string;
-    params?: AddSessionExtensionRequest_unstable | RemoveSessionExtensionRequest_unstable | GetToolsRequest_unstable | SetToolPermissionsRequest_unstable | GooseToolCallRequest_unstable | ReadResourceRequest_unstable | AppsListRequest_unstable | AppsExportRequest_unstable | AppsImportRequest_unstable | UpdateWorkingDirRequest_unstable | SetSessionSystemPromptRequest_unstable | SteerSessionRequest_unstable | DiagnosticsGetRequest_unstable | ListPromptsRequest_unstable | GetPromptRequest_unstable | SavePromptRequest_unstable | ResetPromptRequest_unstable | DeleteSessionRequest | InspectConfigExtensionRequest_unstable | GetConfigExtensionsRequest_unstable | GetAvailableExtensionsRequest_unstable | AddConfigExtensionRequest_unstable | RemoveConfigExtensionRequest_unstable | SetConfigExtensionEnabledRequest_unstable | GetSessionExtensionsRequest_unstable | ListProvidersRequest_unstable | ProviderSupportedModelsListRequest_unstable | ProviderCatalogListRequest_unstable | ProviderSetupCatalogListRequest_unstable | ProviderCatalogTemplateRequest_unstable | CustomProviderCreateRequest_unstable | CustomProviderReadRequest_unstable | CustomProviderUpdateRequest_unstable | CustomProviderDeleteRequest_unstable | RefreshProviderInventoryRequest_unstable | ProviderConfigReadRequest_unstable | ProviderConfigStatusRequest_unstable | ProviderConfigSaveRequest_unstable | ProviderConfigDeleteRequest_unstable | ProviderConfigAuthenticateRequest_unstable | ProviderSecretsListRequest_unstable | ProviderSecretDeleteRequest_unstable | CanonicalModelInfoRequest_unstable | PreferencesReadRequest_unstable | PreferencesSaveRequest_unstable | PreferencesRemoveRequest_unstable | ConfigReadRequest_unstable | ConfigUpsertRequest_unstable | ConfigRemoveRequest_unstable | ConfigReadAllRequest_unstable | DefaultsReadRequest_unstable | DefaultsSaveRequest_unstable | DefaultsClearRequest_unstable | OnboardingImportScanRequest_unstable | OnboardingImportApplyRequest_unstable | ExportSessionRequest_unstable | ImportSessionRequest_unstable | ShareSessionNostrRequest_unstable | EncodeRecipeRequest_unstable | DecodeRecipeRequest_unstable | ScanRecipeRequest_unstable | ListRecipesRequest_unstable | DeleteRecipeRequest_unstable | ScheduleRecipeRequest_unstable | SetRecipeSlashCommandRequest_unstable | SaveRecipeRequest_unstable | CreateRecipeRequest_unstable | ParseRecipeRequest_unstable | RecipeToYamlRequest_unstable | ListSchedulesRequest_unstable | ListScheduleSessionsRequest_unstable | CreateScheduleRequest_unstable | DeleteScheduleRequest_unstable | PauseScheduleRequest_unstable | UnpauseScheduleRequest_unstable | UpdateScheduleRequest_unstable | RunScheduleNowRequest_unstable | KillRunningJobRequest_unstable | InspectRunningJobRequest_unstable | GetSessionInfoRequest_unstable | TruncateSessionConversationRequest_unstable | UpdateSessionProjectRequest_unstable | RenameSessionRequest_unstable | ArchiveSessionRequest_unstable | UnarchiveSessionRequest_unstable | CreateSourceRequest_unstable | ListSourcesRequest_unstable | ListAgentMentionsRequest_unstable | ListSlashCommandsRequest_unstable | UpdateSourceRequest_unstable | DeleteSourceRequest_unstable | ExportSourceRequest_unstable | ImportSourcesRequest_unstable | DictationTranscribeRequest_unstable | DictationConfigRequest_unstable | DictationSecretSaveRequest_unstable | DictationSecretDeleteRequest_unstable | DictationModelsListRequest_unstable | DictationModelDownloadRequest_unstable | DictationModelDownloadProgressRequest_unstable | DictationModelCancelRequest_unstable | DictationModelDeleteRequest_unstable | DictationModelSelectRequest_unstable | LocalInferenceModelsListRequest_unstable | LocalInferenceModelDownloadRequest_unstable | LocalInferenceModelDownloadProgressRequest_unstable | LocalInferenceModelDownloadCancelRequest_unstable | LocalInferenceModelDeleteRequest_unstable | LocalInferenceModelSettingsReadRequest_unstable | LocalInferenceModelSettingsUpdateRequest_unstable | LocalInferenceHuggingFaceSearchRequest_unstable | LocalInferenceHuggingFaceRepoVariantsRequest_unstable | LocalInferenceBuiltinChatTemplatesListRequest_unstable | MlxEngineStatusRequest_unstable | MlxEngineMountRequest_unstable | MlxEngineMountAfterLoadRequest_unstable | MlxEngineStopOtherEngineRequest_unstable | MlxEngineUnmountRequest_unstable | MlxEngineSettingsReadRequest_unstable | MlxEngineSettingsUpdateRequest_unstable | MlxEngineModelsListRequest_unstable | MlxEngineModelDeleteRequest_unstable | MlxEngineHfSearchRequest_unstable | MlxEngineBrowseRequest_unstable | MlxEngineDownloadRequest_unstable | MlxEngineDownloadProgressRequest_unstable | MlxEngineBrowseFiltersRequest_unstable | MlxEngineModelCardRequest_unstable | MlxEngineDownloadPauseRequest_unstable | MlxEngineDownloadResumeRequest_unstable | MlxEngineDistributedStatusRequest_unstable | MlxEngineDistributedPreflightRequest_unstable | MlxEngineDistributedStartRequest_unstable | MlxEngineDistributedStopRequest_unstable | MlxEngineRemoteSingleStartRequest_unstable | MlxEngineRemoteSingleStopRequest_unstable | MlxEngineRemoteSingleStatusRequest_unstable | MlxEngineServingIntentRequest_unstable | MlxEngineDistributedMakeRoomRequest_unstable | MlxEngineDistributedPeerCandidatesRequest_unstable | MlxEngineDistributedDiscoverRequest_unstable | MlxEngineDistributedProvisionRequest_unstable | MlxEngineDistributedConfigUpdateRequest_unstable | MlxEngineDownloadCancelRequest_unstable | MlxEngineLinkFactsRequest_unstable | MlxEngineReplicaTargetsRequest_unstable | MlxEngineReplicateRequest_unstable | MlxEngineReplicaPullRequest_unstable | MlxEnginePlacementPlanRequest_unstable | MlxEngineMeasureSpeedRequest_unstable | MlxEngineSpeedHistoryRequest_unstable | MlxEngineReplicaProgressRequest_unstable | MlxEngineReplicaCancelRequest_unstable | LeanzeroLinkHealthRequest_unstable | LeanzeroLinkRequestCodeRequest_unstable | LeanzeroLinkVerifyRequest_unstable | LeanzeroLinkConnectRequest_unstable | LeanzeroLinkStatusRequest_unstable | LeanzeroLinkLogoutRequest_unstable | LeanzeroLinkDisconnectRequest_unstable | LeanzeroLinkNodesRequest_unstable | ListMemoryProposalsRequest_unstable | AnswerMemoryProposalRequest_unstable | SessionActivityRequest_unstable | ResolveNeedsYouRequest_unstable | LeanzeroLinkRemoteExecuteRequest_unstable | NodesReadRequest_unstable | NodesWriteRequest_unstable | NodesRemoveNodeRequest_unstable | NodesRemoveStrategyRequest_unstable | NodesSetChatNodesRequest_unstable | NodesBuildEligibilityRequest_unstable | NodesResidencyRequest_unstable | NodesLoadHistoryRequest_unstable | NodesServedLastRequest_unstable | NodesEnsureServingRequest_unstable | LoopsGetRequest_unstable | LoopsStartRequest_unstable | LoopsUpdateRequest_unstable | LoopsControlRequest_unstable | LoopsTickRefusedRequest_unstable | LoopsReadyRequest_unstable | LoopsWakeRequest_unstable | LoopsTemplatesRequest_unstable | LoopsListRequest_unstable | {
+    params?: AddSessionExtensionRequest_unstable | RemoveSessionExtensionRequest_unstable | GetToolsRequest_unstable | SetToolPermissionsRequest_unstable | GooseToolCallRequest_unstable | ReadResourceRequest_unstable | AppsListRequest_unstable | AppsExportRequest_unstable | AppsImportRequest_unstable | UpdateWorkingDirRequest_unstable | SetSessionSystemPromptRequest_unstable | SteerSessionRequest_unstable | DiagnosticsGetRequest_unstable | ListPromptsRequest_unstable | GetPromptRequest_unstable | SavePromptRequest_unstable | ResetPromptRequest_unstable | DeleteSessionRequest | InspectConfigExtensionRequest_unstable | GetConfigExtensionsRequest_unstable | GetAvailableExtensionsRequest_unstable | AddConfigExtensionRequest_unstable | RemoveConfigExtensionRequest_unstable | SetConfigExtensionEnabledRequest_unstable | GetSessionExtensionsRequest_unstable | ListProvidersRequest_unstable | ProviderSupportedModelsListRequest_unstable | ProviderCatalogListRequest_unstable | ProviderSetupCatalogListRequest_unstable | ProviderCatalogTemplateRequest_unstable | CustomProviderCreateRequest_unstable | CustomProviderReadRequest_unstable | CustomProviderUpdateRequest_unstable | CustomProviderDeleteRequest_unstable | RefreshProviderInventoryRequest_unstable | ProviderConfigReadRequest_unstable | ProviderConfigStatusRequest_unstable | ProviderConfigSaveRequest_unstable | ProviderConfigDeleteRequest_unstable | ProviderConfigAuthenticateRequest_unstable | ProviderSecretsListRequest_unstable | ProviderSecretDeleteRequest_unstable | CanonicalModelInfoRequest_unstable | PreferencesReadRequest_unstable | PreferencesSaveRequest_unstable | PreferencesRemoveRequest_unstable | ConfigReadRequest_unstable | ConfigUpsertRequest_unstable | ConfigRemoveRequest_unstable | ConfigReadAllRequest_unstable | DefaultsReadRequest_unstable | DefaultsSaveRequest_unstable | DefaultsClearRequest_unstable | OnboardingImportScanRequest_unstable | OnboardingImportApplyRequest_unstable | ExportSessionRequest_unstable | ImportSessionRequest_unstable | ShareSessionNostrRequest_unstable | EncodeRecipeRequest_unstable | DecodeRecipeRequest_unstable | ScanRecipeRequest_unstable | ListRecipesRequest_unstable | DeleteRecipeRequest_unstable | ScheduleRecipeRequest_unstable | SetRecipeSlashCommandRequest_unstable | SaveRecipeRequest_unstable | CreateRecipeRequest_unstable | ParseRecipeRequest_unstable | RecipeToYamlRequest_unstable | ListSchedulesRequest_unstable | ListScheduleSessionsRequest_unstable | CreateScheduleRequest_unstable | DeleteScheduleRequest_unstable | PauseScheduleRequest_unstable | UnpauseScheduleRequest_unstable | UpdateScheduleRequest_unstable | RunScheduleNowRequest_unstable | KillRunningJobRequest_unstable | InspectRunningJobRequest_unstable | GetSessionInfoRequest_unstable | TruncateSessionConversationRequest_unstable | UpdateSessionProjectRequest_unstable | RenameSessionRequest_unstable | ArchiveSessionRequest_unstable | UnarchiveSessionRequest_unstable | CreateSourceRequest_unstable | ListSourcesRequest_unstable | ListAgentMentionsRequest_unstable | ListSlashCommandsRequest_unstable | UpdateSourceRequest_unstable | DeleteSourceRequest_unstable | ExportSourceRequest_unstable | ImportSourcesRequest_unstable | DictationTranscribeRequest_unstable | DictationConfigRequest_unstable | DictationSecretSaveRequest_unstable | DictationSecretDeleteRequest_unstable | DictationModelsListRequest_unstable | DictationModelDownloadRequest_unstable | DictationModelDownloadProgressRequest_unstable | DictationModelCancelRequest_unstable | DictationModelDeleteRequest_unstable | DictationModelSelectRequest_unstable | LocalInferenceModelsListRequest_unstable | LocalInferenceModelDownloadRequest_unstable | LocalInferenceModelDownloadProgressRequest_unstable | LocalInferenceModelDownloadCancelRequest_unstable | LocalInferenceModelDeleteRequest_unstable | LocalInferenceModelSettingsReadRequest_unstable | LocalInferenceModelSettingsUpdateRequest_unstable | LocalInferenceHuggingFaceSearchRequest_unstable | LocalInferenceHuggingFaceRepoVariantsRequest_unstable | LocalInferenceBuiltinChatTemplatesListRequest_unstable | MlxEngineStatusRequest_unstable | MlxEngineMountRequest_unstable | MlxEngineMountAfterLoadRequest_unstable | MlxEngineStopOtherEngineRequest_unstable | MlxEngineUnmountRequest_unstable | MlxEngineSettingsReadRequest_unstable | MlxEngineSettingsUpdateRequest_unstable | MlxEngineModelsListRequest_unstable | MlxEngineModelDeleteRequest_unstable | MlxEngineHfSearchRequest_unstable | MlxEngineBrowseRequest_unstable | MlxEngineDownloadRequest_unstable | MlxEngineDownloadProgressRequest_unstable | MlxEngineBrowseFiltersRequest_unstable | MlxEngineModelCardRequest_unstable | MlxEngineDownloadPauseRequest_unstable | MlxEngineDownloadResumeRequest_unstable | MlxEngineDistributedStatusRequest_unstable | MlxEngineDistributedPreflightRequest_unstable | MlxEngineDistributedStartRequest_unstable | MlxEngineDistributedStopRequest_unstable | MlxEngineRemoteSingleStartRequest_unstable | MlxEngineRemoteSingleStopRequest_unstable | MlxEngineRemoteSingleStatusRequest_unstable | MlxEngineServingIntentRequest_unstable | MlxEngineDistributedMakeRoomRequest_unstable | MlxEngineDistributedPeerCandidatesRequest_unstable | MlxEngineDistributedDiscoverRequest_unstable | MlxEngineDistributedProvisionRequest_unstable | MlxEngineDistributedConfigUpdateRequest_unstable | MlxEngineDownloadCancelRequest_unstable | MlxEngineLinkFactsRequest_unstable | MlxEngineReplicaTargetsRequest_unstable | MlxEngineReplicateRequest_unstable | MlxEngineReplicaPullRequest_unstable | MlxEnginePlacementPlanRequest_unstable | MlxEngineMeasureSpeedRequest_unstable | MlxEngineSpeedHistoryRequest_unstable | MlxEngineReplicaProgressRequest_unstable | MlxEngineReplicaCancelRequest_unstable | LeanzeroLinkHealthRequest_unstable | LeanzeroLinkRequestCodeRequest_unstable | LeanzeroLinkVerifyRequest_unstable | LeanzeroLinkConnectRequest_unstable | LeanzeroLinkStatusRequest_unstable | LeanzeroLinkLogoutRequest_unstable | LeanzeroLinkDisconnectRequest_unstable | LeanzeroLinkNodesRequest_unstable | ListMemoryProposalsRequest_unstable | AnswerMemoryProposalRequest_unstable | SessionActivityRequest_unstable | ResolveNeedsYouRequest_unstable | NotesListRequest_unstable | NotesTargetsRequest_unstable | NotesSendRequest_unstable | NotesDraftRequest_unstable | NotesInboxRequest_unstable | NotesShowingRequest_unstable | LeanzeroLinkRemoteExecuteRequest_unstable | NodesReadRequest_unstable | NodesWriteRequest_unstable | NodesRemoveNodeRequest_unstable | NodesRemoveStrategyRequest_unstable | NodesSetChatNodesRequest_unstable | NodesBuildEligibilityRequest_unstable | NodesResidencyRequest_unstable | NodesLoadHistoryRequest_unstable | NodesServedLastRequest_unstable | NodesEnsureServingRequest_unstable | CompactionPreviewRequest_unstable | CompactionSteerRequest_unstable | LoopsGetRequest_unstable | LoopsStartRequest_unstable | LoopsUpdateRequest_unstable | LoopsControlRequest_unstable | LoopsTickRefusedRequest_unstable | LoopsReadyRequest_unstable | LoopsWakeRequest_unstable | LoopsTemplatesRequest_unstable | LoopsListRequest_unstable | {
         [key: string]: unknown;
     } | null;
 };
 
 export type ExtResponse = {
     id: string;
-    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineMountResponse_unstable | MlxEngineStopOtherEngineResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | MlxEngineDistributedStatusResponse_unstable | MlxEngineDistributedPreflightResponse_unstable | MlxEngineDistributedStartResponse_unstable | MlxEngineDistributedStopResponse_unstable | MlxEngineRemoteSingleStartResponse_unstable | MlxEngineRemoteSingleStopResponse_unstable | MlxEngineRemoteSingleStatusResponse_unstable | MlxEngineServingIntentResponse_unstable | MlxEngineDistributedMakeRoomResponse_unstable | MlxEngineDistributedPeerCandidatesResponse_unstable | MlxEngineDistributedDiscoverResponse_unstable | MlxEngineDistributedProvisionResponse_unstable | MlxEngineDistributedConfigResponse_unstable | MlxEngineLinkFactsResponse_unstable | MlxEngineReplicaTargetsResponse_unstable | MlxEngineReplicateResponse_unstable | MlxEnginePlacementPlanResponse_unstable | MlxEngineMeasureSpeedResponse_unstable | MlxEngineSpeedHistoryResponse_unstable | MlxEngineReplicaProgressResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | ListMemoryProposalsResponse_unstable | AnswerMemoryProposalResponse_unstable | SessionActivityResponse_unstable | ResolveNeedsYouResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | NodesReadResponse_unstable | NodesWriteResponse_unstable | NodesSetChatNodesResponse_unstable | NodesBuildEligibilityResponse_unstable | NodesResidencyResponse_unstable | NodesLoadHistoryResponse_unstable | NodesServedLastResponse_unstable | NodesEnsureServingResponse_unstable | LoopsGetResponse_unstable | LoopsChangeResponse_unstable | LoopsTickRefusedResponse_unstable | LoopsReadyResponse_unstable | LoopsWakeResponse_unstable | LoopsTemplatesResponse_unstable | LoopsListResponse_unstable | unknown;
+    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineMountResponse_unstable | MlxEngineStopOtherEngineResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | MlxEngineDistributedStatusResponse_unstable | MlxEngineDistributedPreflightResponse_unstable | MlxEngineDistributedStartResponse_unstable | MlxEngineDistributedStopResponse_unstable | MlxEngineRemoteSingleStartResponse_unstable | MlxEngineRemoteSingleStopResponse_unstable | MlxEngineRemoteSingleStatusResponse_unstable | MlxEngineServingIntentResponse_unstable | MlxEngineDistributedMakeRoomResponse_unstable | MlxEngineDistributedPeerCandidatesResponse_unstable | MlxEngineDistributedDiscoverResponse_unstable | MlxEngineDistributedProvisionResponse_unstable | MlxEngineDistributedConfigResponse_unstable | MlxEngineLinkFactsResponse_unstable | MlxEngineReplicaTargetsResponse_unstable | MlxEngineReplicateResponse_unstable | MlxEnginePlacementPlanResponse_unstable | MlxEngineMeasureSpeedResponse_unstable | MlxEngineSpeedHistoryResponse_unstable | MlxEngineReplicaProgressResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | ListMemoryProposalsResponse_unstable | AnswerMemoryProposalResponse_unstable | SessionActivityResponse_unstable | ResolveNeedsYouResponse_unstable | NotesListResponse_unstable | NotesTargetsResponse_unstable | NotesSendResponse_unstable | NotesDraftResponse_unstable | NotesInboxResponse_unstable | NotesShowingResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | NodesReadResponse_unstable | NodesWriteResponse_unstable | NodesSetChatNodesResponse_unstable | NodesBuildEligibilityResponse_unstable | NodesResidencyResponse_unstable | NodesLoadHistoryResponse_unstable | NodesServedLastResponse_unstable | NodesEnsureServingResponse_unstable | CompactionPreviewResponse_unstable | CompactionSteerResponse_unstable | LoopsGetResponse_unstable | LoopsChangeResponse_unstable | LoopsTickRefusedResponse_unstable | LoopsReadyResponse_unstable | LoopsWakeResponse_unstable | LoopsTemplatesResponse_unstable | LoopsListResponse_unstable | unknown;
 } | {
     error: {
         code: number;
@@ -7253,7 +7699,7 @@ export type ExtResponse = {
 
 export type ExtNotification = {
     method: string;
-    params?: GooseSessionNotification_unstable | LoopsTickDueNotification_unstable | LoopsChangedNotification_unstable | {
+    params?: GooseSessionNotification_unstable | LoopsTickDueNotification_unstable | LoopsChangedNotification_unstable | NotesDeliverDueNotification_unstable | NotesChangedNotification_unstable | {
         [key: string]: unknown;
     } | null;
 };

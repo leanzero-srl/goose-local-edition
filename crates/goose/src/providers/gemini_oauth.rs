@@ -26,7 +26,6 @@ use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Digest;
-use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
@@ -991,7 +990,9 @@ impl Provider for GeminiOAuthProvider {
                 let _ = log.error(e);
             })?;
 
-        let stream = response.bytes_stream().map_err(io::Error::other);
+        let stream = response
+            .bytes_stream()
+            .map_err(goose_providers::errors::body_read_error);
 
         Ok(Box::pin(try_stream! {
             let stream_reader = StreamReader::new(stream);

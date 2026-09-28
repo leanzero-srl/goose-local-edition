@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "지금 압축"
   },
+  "alertBox.context": {
+    "defaultMessage": "컨텍스트 · {total} 토큰 중 {current} · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "컨텍스트 · {current} 토큰"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "goose가 압축하는 시점 변경"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "임계값 저장 실패: {error}"
+    "defaultMessage": "저장하지 못했습니다: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "저장"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "알았어요!"
@@ -827,6 +839,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "설정"
   },
+  "compaction.cancel": {
+    "defaultMessage": "취소"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "적힌 그대로 압축"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "자동"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} 토큰"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "취소"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "압축하지 않았습니다 — 대화는 그대로입니다."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "대화를 압축하는 중"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "메모에 따라 압축했습니다. goose의 지적: “{concern}”"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "대화를 압축했습니다"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "메모 편집"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "이번 압축을 위한 메모"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "압축 실패"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. 대화는 바뀌지 않았습니다."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "직접 요청"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose가 메모가 명확했는지 말하지 않았습니다 — 메모는 적힌 그대로 따랐습니다."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "대화가 너무 길어 메모를 함께 보내지 못했습니다 — goose가 메모를 한 글자도 빠짐없이 보관했습니다."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "메모에 따라 압축했습니다."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "{total}개 중 {done}번째 부분"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "요약의 부분"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose가 메모에 대해 질문합니다"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "“{question}”"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} 토큰/초"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "대화를 읽는 중"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} 토큰"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "채팅이 너무 길었습니다"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "저장하고 압축"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "다시 시도"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "보관된 내용"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "요약을 작성하는 중"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} 토큰 작성됨"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "내 메모: “{note}”"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "지금 압축"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "다음 압축을 위한 메모"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "남아야 할 것 — 규칙, 숫자, 결정"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "이 채팅에 저장된 메모를 읽지 못했습니다: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "메모를 저장하지 못했습니다: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "보관되는 내용 보기"
+  },
+  "compaction.standing": {
+    "defaultMessage": "이 채팅의 모든 압축에 이 메모 사용"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "헤더 추가"
   },
@@ -1150,6 +1276,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "처리 중..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "고정"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "항상 포함"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "압축 여부와 관계없이 이미 매 턴에 포함됩니다."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "요청한 내용"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "{tokens} 토큰 이내로 보관 — 창의 16분의 1"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "창 크기를 알 수 없어 아무것도 자르지 않습니다"
+  },
+  "contextRail.close": {
+    "defaultMessage": "컨텍스트 닫기"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{항목 #개} other{항목 #개}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{#개는 들어가도록 앞부분만 남겼습니다} other{#개는 들어가도록 앞부분만 남겼습니다}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "실패한 도구 호출"
+  },
+  "contextRail.files": {
+    "defaultMessage": "작성된 파일"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "goose가 원문 그대로 보관"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "압축은 이것들을 있는 그대로 보관합니다 — goose가 전체 채팅에서 만들며, 모델이 다시 쓰지 않습니다."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "지난 압축: {before} → {after} 토큰 · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "지난 압축: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "이 채팅에서는 아직 압축이 실행되지 않았습니다."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "지난 압축이 보관한 내용"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "원장"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "원장의 최신 항목"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{들어가도록 오래된 #개는 여기에 보관하지 않았습니다} other{들어가도록 오래된 #개는 여기에 보관하지 않았습니다}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "압축이 보관할 내용을 읽지 못했습니다: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "이 채팅을 읽는 중…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "이 채팅은 아직 압축되지 않았습니다."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "원장에 항목이 없습니다."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "고정된 항목이 없습니다."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "스크래치패드가 비어 있습니다."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "내 메모"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "메모와 고정 항목"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "아직 없음"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "항상 남아야 하는 한 줄"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "고정됨"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "이 채팅의 모든 압축에서 원문 그대로 보관됩니다."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "“{pin}” 고정 해제"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "메모 저장"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "스크래치패드"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "컨텍스트"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "루프, 변경 사항, 컨텍스트"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} 토큰"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "읽을 수 없습니다: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose가 쓰는 것"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "모델만 아는 내용으로, 압축할 때마다 대화 자체에서 작성됩니다:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "컨텍스트 {context} 토큰 + 지금 작성 중 {live}, 창 {limit} 토큰 중"
@@ -1687,6 +1936,9 @@
   },
   "delegateServed.loaded": {
     "defaultMessage": "{node}에서 · 이 위임을 위해 {duration}에 로드됨"
+  },
+  "delegateServed.loading": {
+    "defaultMessage": "이 위임을 위해 {node} 로드 중: {phase}"
   },
   "delegateServed.on": {
     "defaultMessage": "{node}에서"
@@ -4013,6 +4265,9 @@
   "messageCopyLink.copy": {
     "defaultMessage": "복사"
   },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "압축 직후 전송됩니다"
+  },
   "messageQueue.cancel": {
     "defaultMessage": "취소"
   },
@@ -5987,6 +6242,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "모델이나 실행할 Mac 변경"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "이 채팅의 노드"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "실패"
   },
@@ -6281,6 +6539,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 엔진에 저장된 모델은 {served}를 제공합니다. 이 노드는 {wanted}를 원합니다. Providers에서 모델을 선택하세요."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "이번에는 {next}에서 응답"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "이번 차례에만 메시지를 {next}(으)로 다시 보냅니다. 이 채팅의 노드는 그대로이며, 다음 메시지는 다시 {lead}(으)로 갑니다."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "이 노드의 모든 슬롯이 사용 중입니다."
   },
@@ -6505,6 +6769,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role}은(는) {node}({rank})에서 실행 중: {primary}을(를) 실행할 수 없음: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "요청하신 대로 이번 차례의 {role}은(는) {node}({rank})에서 실행 중입니다. 다음 메시지는 다시 {primary}(으)로 갑니다."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "{primary} 다시 시도"
@@ -7102,6 +7369,129 @@
   },
   "nodesChipMenu.title": {
     "defaultMessage": "이 채팅을 실행할 곳"
+  },
+  "notes.chip": {
+    "defaultMessage": "메모"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {\"{from}\"에서 온 메모가 이 채팅에서 기다리고 있습니다} other {메모 #개가 이 채팅에서 기다리고 있습니다}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "\"{query}\"와 일치하는 채팅이 여러 개입니다. 어느 것인가요?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "다른 채팅에 보내는 메모"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "취소"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "거기에 두기"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "{time}부터 유휴 상태"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "어떤 창에서도 열려 있지 않음"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose가 그곳에서 작업 중입니다"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "\"{query}\"와 일치하는 채팅이 없습니다. 이 메모를 받을 채팅을 고르세요."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "이 채팅이 아님"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "뒤로"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "제목이나 폴더로 채팅 찾기"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "채팅을 읽는 중…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "이 단어와 일치하는 채팅이 없습니다."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "채팅 고르기"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "지금 끼워 넣기"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "메모"
+  },
+  "notes.failed": {
+    "defaultMessage": "할 수 없었습니다: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "다음 메시지에 추가"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "이번 턴이 끝난 뒤"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "이번 턴이 끝나면 goose가 읽습니다."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "\"{name}\"에서 온 메모"
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "닫기"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "지금 goose에게 주기"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "이번 턴에 끼워 넣기"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "이번 턴에 끼워 넣었습니다: goose가 도구 호출 사이에 읽습니다."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "다른 채팅에서 보냈습니다. goose가 아직 읽지 않았습니다."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "다음 메시지와 함께 갑니다."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "메모 숨기기"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "메모 보기"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "\"{name}\"에서 온 메모 · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "이 줄 닫기"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "\"{name}\"에 메모 보냄 · 그곳에서 닫힘"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "\"{name}\"에 메모 보냄 · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "\"{name}\"에 메모 보냄 · {time}에 그 턴에서 읽음"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "\"{name}\"에 메모 보냄 · 그곳에서 대기 중"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "이 채팅의 메모를 읽을 수 없습니다: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {메모 #개 대기 중} other {메모 #개 대기 중}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "\"{from}\"에서"
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "기다리고 있는 메모"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."

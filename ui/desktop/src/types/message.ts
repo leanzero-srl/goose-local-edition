@@ -272,7 +272,15 @@ export interface UserInput {
    * message (Q-298).
    */
   needsYouAnswers?: readonly string[];
+  /**
+   * Q-381: this message's turn answers on this node of the chat's own set ("Answer on {next} for
+   * now"), the set unchanged; the next message goes back to the set's lead.
+   */
+  answerOn?: string;
 }
+
+/** How a message sent from a notice (Retry and its kin) rides its prompt. */
+export type AppendOptions = Pick<UserInput, 'answerOn'>;
 
 /** Whether a content item is meant for the person (Q-212): an MCP server may mark an item for the
  *  assistant alone (`audience: ['assistant']`) — context the model reads that the tool card must

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { spawn, execFileSync } from 'node:child_process';
+import { pollUntil } from '../../test/testClock';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { benchmarkCancellationPids } from '../benchReap';
 
@@ -37,6 +38,14 @@ const alive = (pid: number): boolean => {
   }
 };
 
+// One pid's state, not the full table: `ps -axo` overflowed execFileSync's buffer on a busy Mac (Q-290).
+const goneOrZombie = (pid: number): boolean => {
+  const stat = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+    encoding: 'utf8',
+  }).stdout.trim();
+  return stat === '' || stat.includes('Z');
+};
+
 it('captures and reaps a real cloud child in a separate session before its runner', async () => {
   const runner = startRunner();
   let childPid: number | undefined;
@@ -58,13 +67,16 @@ it('captures and reaps a real cloud child in a separate session before its runne
       .trim()
       .split(/\s+/);
     expect(new Set(groups).size).toBe(2);
+    // The child first, while its runner still holds the child's stdin open: its end can then only
+    // be the reap's SIGKILL, never the stdin lifeline. The kernel ends a SIGKILLed process when it
+    // next runs, which on a loaded Mac is not "by the next line" (Q-383) — so poll its state.
+    for (const pid of pids.slice(0, -1)) process.kill(pid, 'SIGKILL');
+    await pollUntil(() => goneOrZombie(childPid!), `the reaped child ${childPid} to end`);
+    expect(alive(runner.pid!)).toBe(true);
     const closed = once(runner, 'close');
-    for (const pid of pids) process.kill(pid, 'SIGKILL');
+    process.kill(runner.pid!, 'SIGKILL');
     await closed;
-    const remaining = execFileSync('ps', ['-axo', 'pid=,stat='], { encoding: 'utf8' })
-      .split('\n')
-      .find((line) => Number(line.trim().split(/\s+/)[0]) === childPid);
-    expect(!remaining || /Z/.test(remaining)).toBe(true);
+    expect(goneOrZombie(childPid!)).toBe(true);
   } finally {
     killEach([childPid, runner.pid]);
   }
@@ -81,8 +93,7 @@ it('Q-243: an interrupted run leaves neither the runner nor its detached child b
     const exited = once(runner, 'exit');
     runner.stdin!.end();
     await exited;
-    for (let i = 0; i < 250 && alive(childPid); i += 1)
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    await pollUntil(() => !alive(childPid!), `the detached child ${childPid} to follow its runner`);
     expect(alive(childPid)).toBe(false);
   } finally {
     killEach([childPid, runner.pid]);

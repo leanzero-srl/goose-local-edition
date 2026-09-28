@@ -12,6 +12,7 @@
 //!   stays byte-identical until the user chooses otherwise.
 
 pub mod acp;
+pub mod answer_on;
 pub mod project;
 pub mod residency;
 pub mod resolve;
@@ -1215,9 +1216,9 @@ pub fn chat_set_for<'a>(config: &'a NodesConfig, session: &str) -> Option<&'a No
         .find(|s| s.chat.as_deref() == Some(session))
 }
 
-/// The id a new chat set gets: `chat-<session>` with the grammar's delimiters made plain,
-/// numbered until no strategy holds it.
-fn chat_set_id(strategies: &[NodeStrategy], session: &str) -> String {
+/// `chat-<session>` with the grammar's delimiters made plain: the id every chat set of `session`
+/// starts from.
+fn chat_set_base(session: &str) -> String {
     let plain: String = session
         .trim()
         .chars()
@@ -1229,7 +1230,26 @@ fn chat_set_id(strategies: &[NodeStrategy], session: &str) -> String {
             }
         })
         .collect();
-    let base = format!("chat-{plain}");
+    format!("chat-{plain}")
+}
+
+/// Whether `id` is one `chat_set_id` mints for `session` (its base, or the base numbered): how a
+/// route to a set that is gone is still known as that chat's own — the set, and the `chat` field
+/// that said so, went with it (Q-379).
+pub fn is_chat_set_id_of(id: &str, session: &str) -> bool {
+    match id.strip_prefix(chat_set_base(session).as_str()) {
+        Some("") => true,
+        Some(rest) => rest
+            .strip_prefix('-')
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+        None => false,
+    }
+}
+
+/// The id a new chat set gets: `chat-<session>` with the grammar's delimiters made plain,
+/// numbered until no strategy holds it.
+fn chat_set_id(strategies: &[NodeStrategy], session: &str) -> String {
+    let base = chat_set_base(session);
     let taken = |id: &str| strategies.iter().any(|s| s.id == id);
     let mut id = base.clone();
     let mut n = 1;

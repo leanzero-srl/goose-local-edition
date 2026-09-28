@@ -173,8 +173,20 @@
   "alertBox.compactNow": {
     "defaultMessage": "Compactar ahora"
   },
+  "alertBox.context": {
+    "defaultMessage": "Contexto · {current} de {total} tokens · {percent}%"
+  },
+  "alertBox.contextUnknown": {
+    "defaultMessage": "Contexto · {current} tokens"
+  },
+  "alertBox.editThreshold": {
+    "defaultMessage": "Cambiar cuándo compacta goose"
+  },
   "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "No se pudo guardar el umbral: {error}"
+    "defaultMessage": "No se pudo guardar: {error}"
+  },
+  "alertBox.saveThreshold": {
+    "defaultMessage": "Guardar"
   },
   "announcementModal.gotIt": {
     "defaultMessage": "¡Entendido!"
@@ -827,6 +839,120 @@
   "cloudProviders.setUp": {
     "defaultMessage": "Configurar"
   },
+  "compaction.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "compaction.card.asWritten": {
+    "defaultMessage": "Compactar tal como está"
+  },
+  "compaction.card.auto": {
+    "defaultMessage": "Automática"
+  },
+  "compaction.card.beforeAfter": {
+    "defaultMessage": "{before} → {after} tokens"
+  },
+  "compaction.card.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "compaction.card.cancelled": {
+    "defaultMessage": "Sin compactar — la conversación sigue como estaba."
+  },
+  "compaction.card.compacting": {
+    "defaultMessage": "Compactando la conversación"
+  },
+  "compaction.card.concern": {
+    "defaultMessage": "Compactada siguiendo tu nota. goose señaló: «{concern}»"
+  },
+  "compaction.card.done": {
+    "defaultMessage": "Conversación compactada"
+  },
+  "compaction.card.editNote": {
+    "defaultMessage": "Editar nota"
+  },
+  "compaction.card.editTitle": {
+    "defaultMessage": "Tu nota para esta compactación"
+  },
+  "compaction.card.failed": {
+    "defaultMessage": "La compactación falló"
+  },
+  "compaction.card.failedSaid": {
+    "defaultMessage": "{error}. Tu conversación no ha cambiado."
+  },
+  "compaction.card.manual": {
+    "defaultMessage": "La pediste tú"
+  },
+  "compaction.card.missing": {
+    "defaultMessage": "goose no dijo si tu nota estaba clara — se siguió tal como está escrita."
+  },
+  "compaction.card.notSent": {
+    "defaultMessage": "La conversación era demasiado larga para enviar tu nota con ella — goose guardó tu nota palabra por palabra."
+  },
+  "compaction.card.noteFollowed": {
+    "defaultMessage": "Compactada siguiendo tu nota."
+  },
+  "compaction.card.part": {
+    "defaultMessage": "parte {done} de {total}"
+  },
+  "compaction.card.parts": {
+    "defaultMessage": "Partes del resumen"
+  },
+  "compaction.card.question": {
+    "defaultMessage": "goose pregunta sobre tu nota"
+  },
+  "compaction.card.questionSaid": {
+    "defaultMessage": "«{question}»"
+  },
+  "compaction.card.rate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "compaction.card.reading": {
+    "defaultMessage": "Leyendo la conversación"
+  },
+  "compaction.card.readingTokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "compaction.card.recovery": {
+    "defaultMessage": "El chat era demasiado largo"
+  },
+  "compaction.card.saveAndCompact": {
+    "defaultMessage": "Guardar y compactar"
+  },
+  "compaction.card.tryAgain": {
+    "defaultMessage": "Reintentar"
+  },
+  "compaction.card.whatWasKept": {
+    "defaultMessage": "Qué se conservó"
+  },
+  "compaction.card.writing": {
+    "defaultMessage": "Escribiendo el resumen"
+  },
+  "compaction.card.written": {
+    "defaultMessage": "{tokens} tokens escritos"
+  },
+  "compaction.card.yourNote": {
+    "defaultMessage": "Tu nota: «{note}»"
+  },
+  "compaction.compactNow": {
+    "defaultMessage": "Compactar ahora"
+  },
+  "compaction.noteLabel": {
+    "defaultMessage": "Nota para la próxima compactación"
+  },
+  "compaction.notePlaceholder": {
+    "defaultMessage": "Lo que debe sobrevivir — una regla, un número, una decisión"
+  },
+  "compaction.noteReadFailed": {
+    "defaultMessage": "No se pudo leer la nota guardada para este chat: {error}"
+  },
+  "compaction.noteSaveFailed": {
+    "defaultMessage": "No se pudo guardar la nota: {error}"
+  },
+  "compaction.seeWhatItKeeps": {
+    "defaultMessage": "Ver qué conserva"
+  },
+  "compaction.standing": {
+    "defaultMessage": "Usar esta nota en cada compactación de este chat"
+  },
   "compatibleEndpoint.addHeader": {
     "defaultMessage": "Añadir cabecera"
   },
@@ -1150,6 +1276,129 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Procesando..."
+  },
+  "contextRail.addPin": {
+    "defaultMessage": "Fijar"
+  },
+  "contextRail.alwaysTitle": {
+    "defaultMessage": "Siempre presente"
+  },
+  "contextRail.alwaysWhy": {
+    "defaultMessage": "Ya está en cada turno, compactado o no."
+  },
+  "contextRail.asked": {
+    "defaultMessage": "Lo que pediste"
+  },
+  "contextRail.budget": {
+    "defaultMessage": "Conservado dentro de {tokens} tokens — un dieciseisavo de la ventana"
+  },
+  "contextRail.budgetUnknown": {
+    "defaultMessage": "La ventana es desconocida, así que no se recorta nada"
+  },
+  "contextRail.close": {
+    "defaultMessage": "Cerrar contexto"
+  },
+  "contextRail.count": {
+    "defaultMessage": "{count,plural,one{# elemento} other{# elementos}}"
+  },
+  "contextRail.cut": {
+    "defaultMessage": "{count,plural,one{# se recortó a su inicio para que quepa} other{# se recortaron a su inicio para que quepan}}"
+  },
+  "contextRail.failed": {
+    "defaultMessage": "Llamadas a herramientas que fallaron"
+  },
+  "contextRail.files": {
+    "defaultMessage": "Archivos escritos"
+  },
+  "contextRail.keptTitle": {
+    "defaultMessage": "Conservado palabra por palabra por goose"
+  },
+  "contextRail.keptWhy": {
+    "defaultMessage": "Una compactación conserva esto tal cual — goose lo construye a partir de todo el chat y el modelo nunca lo reescribe."
+  },
+  "contextRail.lastCompaction": {
+    "defaultMessage": "Última compactación: {before} → {after} tokens · {elapsed} · {when}"
+  },
+  "contextRail.lastCompactionNoSize": {
+    "defaultMessage": "Última compactación: {elapsed} · {when}"
+  },
+  "contextRail.lastKeptNone": {
+    "defaultMessage": "Todavía no se ha compactado este chat."
+  },
+  "contextRail.lastKeptTitle": {
+    "defaultMessage": "Lo que conservó la última compactación"
+  },
+  "contextRail.ledger": {
+    "defaultMessage": "Registro"
+  },
+  "contextRail.ledgerTail": {
+    "defaultMessage": "Entradas más recientes del registro"
+  },
+  "contextRail.leftOut": {
+    "defaultMessage": "{count,plural,one{# más antiguo no se conserva aquí para que quepa} other{# más antiguos no se conservan aquí para que quepan}}"
+  },
+  "contextRail.loadFailed": {
+    "defaultMessage": "No se pudo leer qué conservaría una compactación: {error}"
+  },
+  "contextRail.loading": {
+    "defaultMessage": "Leyendo este chat…"
+  },
+  "contextRail.neverCompacted": {
+    "defaultMessage": "Este chat aún no se ha compactado."
+  },
+  "contextRail.noLedger": {
+    "defaultMessage": "El registro no tiene entradas."
+  },
+  "contextRail.noPins": {
+    "defaultMessage": "Nada fijado."
+  },
+  "contextRail.noScratchpad": {
+    "defaultMessage": "El bloc de notas está vacío."
+  },
+  "contextRail.noteTitle": {
+    "defaultMessage": "Tu nota"
+  },
+  "contextRail.notes": {
+    "defaultMessage": "Tu nota y lo fijado"
+  },
+  "contextRail.nothing": {
+    "defaultMessage": "Nada todavía"
+  },
+  "contextRail.pinPlaceholder": {
+    "defaultMessage": "Una línea que siempre debe sobrevivir"
+  },
+  "contextRail.pinnedTitle": {
+    "defaultMessage": "Fijado"
+  },
+  "contextRail.pinnedWhy": {
+    "defaultMessage": "Se conserva palabra por palabra en cada compactación de este chat."
+  },
+  "contextRail.removePin": {
+    "defaultMessage": "Desfijar «{pin}»"
+  },
+  "contextRail.saveNote": {
+    "defaultMessage": "Guardar nota"
+  },
+  "contextRail.scratchpad": {
+    "defaultMessage": "Bloc de notas"
+  },
+  "contextRail.tab": {
+    "defaultMessage": "Contexto"
+  },
+  "contextRail.tabsLabel": {
+    "defaultMessage": "Bucle, cambios y contexto"
+  },
+  "contextRail.tokens": {
+    "defaultMessage": "{tokens} tokens"
+  },
+  "contextRail.unreadable": {
+    "defaultMessage": "No se pudo leer: {error}"
+  },
+  "contextRail.writesTitle": {
+    "defaultMessage": "goose escribe"
+  },
+  "contextRail.writesWhy": {
+    "defaultMessage": "Lo que solo sabe el modelo, escrito en cada compactación a partir de la propia conversación:"
   },
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} tokens de contexto + {live} escribiéndose ahora, de una ventana de {limit} tokens"
@@ -1687,6 +1936,9 @@
   },
   "delegateServed.loaded": {
     "defaultMessage": "en {node} · cargado para esta delegación en {duration}"
+  },
+  "delegateServed.loading": {
+    "defaultMessage": "Cargando {node} para esta delegación: {phase}"
   },
   "delegateServed.on": {
     "defaultMessage": "en {node}"
@@ -4013,6 +4265,9 @@
   "messageCopyLink.copy": {
     "defaultMessage": "Copiar"
   },
+  "messageQueue.afterCompacting": {
+    "defaultMessage": "Se envía justo después de compactar"
+  },
   "messageQueue.cancel": {
     "defaultMessage": "Cancelar"
   },
@@ -5987,6 +6242,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Cambia el modelo o el Mac donde se ejecuta"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Los nodos de este chat"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Falló"
   },
@@ -6281,6 +6539,12 @@
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "El modelo guardado del motor MLX sirve {served}; este nodo quiere {wanted}. Elige el modelo en Providers."
   },
+  "noNodeNotice.answerOnNext": {
+    "defaultMessage": "Responder en {next} por ahora"
+  },
+  "noNodeNotice.answerOnNextHint": {
+    "defaultMessage": "Vuelve a enviar tu mensaje a {next} solo para este turno. Los nodos de este chat se quedan como están y el siguiente mensaje vuelve a ir a {lead}."
+  },
   "noNodeNotice.busy": {
     "defaultMessage": "Todas las plazas de este nodo están ocupadas."
   },
@@ -6505,6 +6769,9 @@
   },
   "nodes.fellBack": {
     "defaultMessage": "{role} está en {node} ({rank}): {primary} no puede ejecutarse: {reason}"
+  },
+  "nodes.fellBackAsked": {
+    "defaultMessage": "{role} está en {node} ({rank}) en este turno, como pediste. El siguiente mensaje vuelve a ir a {primary}."
   },
   "nodes.fellBackRetry": {
     "defaultMessage": "Reintentar {primary}"
@@ -7102,6 +7369,129 @@
   },
   "nodesChipMenu.title": {
     "defaultMessage": "Ejecutar este chat en"
+  },
+  "notes.chip": {
+    "defaultMessage": "Nota"
+  },
+  "notes.chipLabel": {
+    "defaultMessage": "{count, plural, one {Una nota de \"{from}\" espera en este chat} other {# notas esperan en este chat}}"
+  },
+  "notes.draft.ambiguous": {
+    "defaultMessage": "Varios chats coinciden con \"{query}\". ¿Cuál?"
+  },
+  "notes.draft.band": {
+    "defaultMessage": "Nota para otro chat"
+  },
+  "notes.draft.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "notes.draft.leaveThere": {
+    "defaultMessage": "Dejarla ahí"
+  },
+  "notes.draft.liveIdle": {
+    "defaultMessage": "inactivo desde las {time}"
+  },
+  "notes.draft.liveNotOpen": {
+    "defaultMessage": "no está abierto en ninguna ventana"
+  },
+  "notes.draft.liveWorking": {
+    "defaultMessage": "goose está trabajando allí"
+  },
+  "notes.draft.noMatch": {
+    "defaultMessage": "Ningún chat coincide con \"{query}\". Elige el chat al que va esta nota."
+  },
+  "notes.draft.notThisChat": {
+    "defaultMessage": "Este chat no"
+  },
+  "notes.draft.pickBack": {
+    "defaultMessage": "Atrás"
+  },
+  "notes.draft.pickFilter": {
+    "defaultMessage": "Busca un chat por su título o carpeta"
+  },
+  "notes.draft.pickLoading": {
+    "defaultMessage": "Leyendo tus chats…"
+  },
+  "notes.draft.pickNone": {
+    "defaultMessage": "Ningún chat coincide con estas palabras."
+  },
+  "notes.draft.pickTitle": {
+    "defaultMessage": "Elige el chat"
+  },
+  "notes.draft.steerNow": {
+    "defaultMessage": "Guiarlo ahora"
+  },
+  "notes.draft.textLabel": {
+    "defaultMessage": "La nota"
+  },
+  "notes.failed": {
+    "defaultMessage": "No se pudo hacer: {error}"
+  },
+  "notes.inbox.addToNext": {
+    "defaultMessage": "Añadir a mi próximo mensaje"
+  },
+  "notes.inbox.afterThisTurn": {
+    "defaultMessage": "Después de este turno"
+  },
+  "notes.inbox.afterTurnWaiting": {
+    "defaultMessage": "goose la lee cuando termine este turno."
+  },
+  "notes.inbox.band": {
+    "defaultMessage": "Nota de \"{name}\""
+  },
+  "notes.inbox.dismiss": {
+    "defaultMessage": "Descartar"
+  },
+  "notes.inbox.giveNow": {
+    "defaultMessage": "Dársela a goose ahora"
+  },
+  "notes.inbox.steerThisTurn": {
+    "defaultMessage": "Guiar este turno"
+  },
+  "notes.inbox.steering": {
+    "defaultMessage": "Guiada en este turno: goose la lee entre llamadas a herramientas."
+  },
+  "notes.inbox.unread": {
+    "defaultMessage": "Enviada desde tu otro chat. goose aún no la ha leído."
+  },
+  "notes.inbox.withNextMessage": {
+    "defaultMessage": "Va con tu próximo mensaje."
+  },
+  "notes.marker.hide": {
+    "defaultMessage": "Ocultar nota"
+  },
+  "notes.marker.show": {
+    "defaultMessage": "Mostrar nota"
+  },
+  "notes.marker.title": {
+    "defaultMessage": "Nota de \"{name}\" · {time}"
+  },
+  "notes.sent.close": {
+    "defaultMessage": "Cerrar esta línea"
+  },
+  "notes.sent.dismissed": {
+    "defaultMessage": "Nota enviada a \"{name}\" · descartada allí"
+  },
+  "notes.sent.gone": {
+    "defaultMessage": "Nota enviada a \"{name}\" · {reason}"
+  },
+  "notes.sent.read": {
+    "defaultMessage": "Nota enviada a \"{name}\" · leída en su turno a las {time}"
+  },
+  "notes.sent.waiting": {
+    "defaultMessage": "Nota enviada a \"{name}\" · esperando allí"
+  },
+  "notes.unreadable": {
+    "defaultMessage": "No se pudieron leer las notas de este chat: {error}"
+  },
+  "notes.waiting": {
+    "defaultMessage": "{count, plural, one {# nota esperando} other {# notas esperando}}"
+  },
+  "notes.waitingFrom": {
+    "defaultMessage": "de \"{from}\""
+  },
+  "notes.waitingMenu": {
+    "defaultMessage": "Notas que te esperan"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Puede que el servidor se esté iniciando o no esté disponible temporalmente."

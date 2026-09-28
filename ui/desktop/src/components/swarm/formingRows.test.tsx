@@ -36,7 +36,7 @@ describe('forming flows through the shared digest join and never survives its si
     expect(out.forming?.[0].args_preview).toContain('ledger.append(payment)');
   });
 
-  it('does NOT carry a previous poll\'s forming when the sidecar is gone', () => {
+  it("does NOT carry a previous poll's forming when the sidecar is gone", () => {
     const prev: Partial<TurnLane> = { forming: FORMING, toolCalls: 3 };
     const out = digestStreamFields('lane-a', { tool_calls: 4 }, prev);
     expect(out.forming).toBeUndefined();
@@ -60,7 +60,9 @@ describe('the forming live line — one honest LINE for the cell', () => {
     expect(
       laneLiveLine({
         forming: FORMING,
-        inflight: [{ id: 'call-1', tool: 'shell', args: 'shell: pytest -q', since: '2026-08-30T10:00:00Z' }],
+        inflight: [
+          { id: 'call-1', tool: 'shell', args: 'shell: pytest -q', since: '2026-08-30T10:00:00Z' },
+        ],
         liveChannel: 'thinking',
         fullThinking: 'I should write the ledger core now',
       })
@@ -69,9 +71,9 @@ describe('the forming live line — one honest LINE for the cell', () => {
 
   it('a zero-byte forming call yields no line — the caller falls through as today', () => {
     expect(formingLiveLine(ZERO_BYTE)).toBe('');
-    expect(
-      laneLiveLine({ forming: ZERO_BYTE, fullTranscript: 'wrote the cli entry point' })
-    ).toBe('wrote the cli entry point');
+    expect(laneLiveLine({ forming: ZERO_BYTE, fullTranscript: 'wrote the cli entry point' })).toBe(
+      'wrote the cli entry point'
+    );
   });
 
   it('no forming rows means no forming line', () => {
@@ -170,9 +172,7 @@ describe('the WORK pane while a call forms', () => {
     expect(dialog.textContent).toContain('1 forming');
     // The fleet cell's live line is the forming call, not the stale thought. The cell types its
     // text out (nextRevealedText), so wait for the reveal to reach the name.
-    await waitFor(() => expect(cell.textContent).toContain('forming write_file'), {
-      timeout: 4000,
-    });
+    await waitFor(() => expect(cell.textContent).toContain('forming write_file'));
   });
 
   it('a zero-byte forming call renders name, spinner and clock — no pretended progress', async () => {
@@ -192,9 +192,9 @@ describe('the WORK pane while a call forms', () => {
     // The empty pane used to render stacked with the "Still thinking" placeholder. It renders
     // NOTHING now — the Thinking pane gets the whole modal until the first call/narration byte.
     expect(dialog.textContent).not.toContain('Still thinking');
-    const paneTitles = Array.from(
-      dialog.querySelectorAll('[data-testid="pane-title"]')
-    ).map((el) => el.textContent);
+    const paneTitles = Array.from(dialog.querySelectorAll('[data-testid="pane-title"]')).map(
+      (el) => el.textContent
+    );
     expect(paneTitles).toContain('Thinking');
     expect(paneTitles).not.toContain('Work');
   });

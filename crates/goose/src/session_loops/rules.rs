@@ -1483,49 +1483,10 @@ pub fn wrote(
     state_file: &str,
     working_dir: &str,
 ) -> Vec<String> {
-    use crate::agents::platform_extensions::developer::file_diff::FILE_DIFF_META_KEY;
-    use crate::conversation::message::MessageContent;
-
-    let mut writers: Vec<&str> = Vec::new();
-    for message in messages {
-        for content in &message.content {
-            if let MessageContent::ToolRequest(request) = content {
-                if request
-                    .tool_call
-                    .as_ref()
-                    .is_ok_and(|call| matches!(call.name.as_ref(), "write" | "edit"))
-                {
-                    writers.push(request.id.as_str());
-                }
-            }
-        }
-    }
     let state_file = lexical_absolute(state_file, working_dir);
-    let mut paths: Vec<String> = Vec::new();
-    for message in messages {
-        for content in &message.content {
-            let MessageContent::ToolResponse(response) = content else {
-                continue;
-            };
-            if !writers.contains(&response.id.as_str()) {
-                continue;
-            }
-            let path = response
-                .tool_result
-                .as_ref()
-                .ok()
-                .and_then(|result| result.meta.as_ref())
-                .and_then(|meta| meta.0.get(FILE_DIFF_META_KEY))
-                .and_then(|diff| diff.get("path"))
-                .and_then(|path| path.as_str());
-            let Some(path) = path else { continue };
-            if lexical_absolute(path, working_dir) == state_file {
-                continue;
-            }
-            if !paths.iter().any(|p| p == path) {
-                paths.push(path.to_string());
-            }
-        }
-    }
-    paths
+    crate::agents::platform_extensions::developer::file_diff::written_files(messages)
+        .into_iter()
+        .map(|file| file.path)
+        .filter(|path| lexical_absolute(path, working_dir) != state_file)
+        .collect()
 }

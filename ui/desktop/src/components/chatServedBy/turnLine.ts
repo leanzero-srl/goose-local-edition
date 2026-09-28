@@ -15,6 +15,12 @@ const i18n = defineMessages({
     defaultMessage: '{rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}',
   },
   retry: { id: 'nodes.fellBackRetry', defaultMessage: 'Retry {primary}' },
+  // Q-381: the person asked this one turn onto a later node ("Answer on {next} for now").
+  fellBackAsked: {
+    id: 'nodes.fellBackAsked',
+    defaultMessage:
+      '{role} is on {node} ({rank}) for this turn, as you asked. The next message goes to {primary} again.',
+  },
 });
 
 /**
@@ -28,6 +34,8 @@ export interface ChatFellBack {
   primary: string;
   primaryId: string;
   reason: string;
+  /** The person asked this turn past the 1st ("Answer on {next} for now", Q-381). */
+  asked: boolean;
 }
 
 /**
@@ -50,10 +58,19 @@ export function fellBackOf(
     primary: names[primary.node] ?? primary.node,
     primaryId: primary.node,
     reason: record.reason,
+    asked: record.askedForThisTurn === true,
   };
 }
 
 export function fellBackText(intl: IntlShape, fell: ChatFellBack): string {
+  if (fell.asked) {
+    return intl.formatMessage(i18n.fellBackAsked, {
+      role: intl.formatMessage(ROLE_WORD[fell.role]),
+      node: fell.node,
+      rank: intl.formatMessage(i18n.rank, { rank: fell.rank }),
+      primary: fell.primary,
+    });
+  }
   return intl.formatMessage(i18n.fellBack, {
     role: intl.formatMessage(ROLE_WORD[fell.role]),
     node: fell.node,

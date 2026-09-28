@@ -2477,9 +2477,7 @@ describe('MlxEngineView download lifecycle', () => {
       expect(screen.queryByTestId(`mlx-download-${HIT_A.id}`)).not.toBeInTheDocument();
     });
     mockDownloadProgress.mockClear();
-    await waitFor(() => expect(mockDownloadProgress).toHaveBeenCalledWith(HIT_A.id, undefined), {
-      timeout: 3000,
-    });
+    await waitFor(() => expect(mockDownloadProgress).toHaveBeenCalledWith(HIT_A.id, undefined));
 
     // Back on the Models tab the download is still there with the last REAL bytes.
     await userEvent.click(screen.getByRole('radio', { name: /^Models/ }));
@@ -2763,23 +2761,19 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
 
     await userEvent.click(within(gap).getByRole('button', { name: /^Copy from / }));
     expect(mockReplicate).toHaveBeenCalledWith(QWEN, PEER, undefined);
-    await waitFor(
-      () =>
-        expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveTextContent('Copying 24%'),
-      { timeout: 3000 }
+    await waitFor(() =>
+      expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveTextContent('Copying 24%')
     );
     expect(mockReplicaProgress).toHaveBeenCalledWith(QWEN, PEER);
     const detail = screen.getByTestId(`mlx-replica-${QWEN}`);
     expect(detail).toHaveTextContent(`Copying to ${STUDIO} over Thunderbolt`);
     expect(detail).toHaveTextContent('1 of 4 files');
     expect(detail).toHaveTextContent('2.00 GB/s');
-    await waitFor(
-      () =>
-        expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveAttribute(
-          'data-cell',
-          'present'
-        ),
-      { timeout: 4000 }
+    await waitFor(() =>
+      expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveAttribute(
+        'data-cell',
+        'present'
+      )
     );
     expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveTextContent('On disk');
     studioCleanNow();

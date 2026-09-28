@@ -79,6 +79,10 @@ pub enum LoaderActivity {
     Loading {
         node: String,
         phase: Option<String>,
+        /// The sessions whose demands this load serves — the one it runs for and every demand
+        /// for the same node queued behind it (Q-382: a delegate's card says its node is loading
+        /// FOR it). Empty for a card's Start, which belongs to no session.
+        demanded_by: Vec<String>,
     },
     /// `replies`: the wait is for replies on a way the switch would stop.
     Waiting {

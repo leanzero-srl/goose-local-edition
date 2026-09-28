@@ -6,6 +6,7 @@ import { errorMessage } from '../../utils/conversionUtils';
 import { Alert, AlertType } from './types';
 import { useConfig } from '../ConfigContext';
 import { defineMessages, useIntl } from '../../i18n';
+import { CompactionMenu } from '../compaction/CompactionMenu';
 
 const alertIcons: Record<AlertType, React.ReactNode> = {
   [AlertType.Error]: <IoIosCloseCircle className="h-5 w-5" />,
@@ -30,7 +31,23 @@ const i18n = defineMessages({
   },
   failedToSaveThreshold: {
     id: 'alertBox.failedToSaveThreshold',
-    defaultMessage: 'Failed to save threshold: {error}',
+    defaultMessage: 'Couldn’t save: {error}',
+  },
+  context: {
+    id: 'alertBox.context',
+    defaultMessage: 'Context · {current} of {total} tokens · {percent}%',
+  },
+  contextUnknown: {
+    id: 'alertBox.contextUnknown',
+    defaultMessage: 'Context · {current} tokens',
+  },
+  editThreshold: {
+    id: 'alertBox.editThreshold',
+    defaultMessage: 'Change when goose compacts',
+  },
+  saveThreshold: {
+    id: 'alertBox.saveThreshold',
+    defaultMessage: 'Save',
   },
 });
 
@@ -47,6 +64,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
   const [loadedThreshold, setLoadedThreshold] = useState<number>(0.8);
   const [thresholdValue, setThresholdValue] = useState(80);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadThreshold = async () => {
@@ -82,20 +100,21 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
 
       setIsEditingThreshold(false);
       setLoadedThreshold(newThreshold);
+      setSaveError(null);
 
       // Notify parent component of the threshold change
       if (alert.onThresholdChange) {
         alert.onThresholdChange(newThreshold);
       }
     } catch (error) {
-      console.error('Error saving threshold:', error);
-      window.alert(intl.formatMessage(i18n.failedToSaveThreshold, { error: errorMessage(error, 'Unknown error') }));
+      // Said where the person is looking, never in a native alert (Q-357 W6).
+      setSaveError(errorMessage(error, 'Unknown error'));
     } finally {
       setIsSaving(false);
     }
   };
 
-  return (
+  const box = (
     <div
       className={cn('flex flex-col gap-2 px-3 py-3', alertStyles[alert.type], className)}
       onMouseDown={(e) => {
@@ -107,11 +126,33 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
     >
       {alert.progress ? (
         <div className="flex flex-col gap-2">
+          <span data-testid="alert-context-line" className="text-[12px] font-semibold tnum">
+            {alert.progress.total > 0
+              ? intl.formatMessage(i18n.context, {
+                  current: intl.formatNumber(alert.progress.current, {
+                    notation: 'compact',
+                    maximumFractionDigits: 1,
+                  }),
+                  total: intl.formatNumber(alert.progress.total, {
+                    notation: 'compact',
+                    maximumFractionDigits: 1,
+                  }),
+                  percent: Math.round((alert.progress.current / alert.progress.total) * 100),
+                })
+              : intl.formatMessage(i18n.contextUnknown, {
+                  current: intl.formatNumber(alert.progress.current, {
+                    notation: 'compact',
+                    maximumFractionDigits: 1,
+                  }),
+                })}
+          </span>
           {/* Auto-compact threshold indicator with edit */}
           <div className="flex items-center justify-center gap-1 min-h-[20px]">
             {isEditingThreshold ? (
               <>
-                <span className="text-[10px] opacity-70">{intl.formatMessage(i18n.autoCompactAt)}</span>
+                <span className="text-[10px] opacity-70">
+                  {intl.formatMessage(i18n.autoCompactAt)}
+                </span>
                 <input
                   type="number"
                   min="1"
@@ -156,6 +197,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
                 <span className="text-[10px] opacity-70">%</span>
                 <button
                   type="button"
+                  aria-label={intl.formatMessage(i18n.saveThreshold)}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -175,6 +217,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
                 </span>
                 <button
                   type="button"
+                  aria-label={intl.formatMessage(i18n.editThreshold)}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -188,7 +231,16 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
               </>
             )}
           </div>
-          {alert.showCompactButton && alert.onCompact && (
+          {saveError && (
+            <span
+              role="alert"
+              data-testid="alert-threshold-error"
+              className="text-center text-[11px] font-semibold"
+            >
+              {intl.formatMessage(i18n.failedToSaveThreshold, { error: saveError })}
+            </span>
+          )}
+          {alert.showCompactButton && alert.onCompact && !alert.sessionId && (
             <button
               onClick={(e) => {
                 e.preventDefault();
@@ -233,4 +285,20 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
       )}
     </div>
   );
+
+  // Q-357: the context meter's menu goes on to the chat's compaction — the note, Compact now, and
+  // what a compaction keeps — on the surface under the coloured header.
+  if (alert.progress && alert.sessionId) {
+    return (
+      <div className="flex flex-col">
+        {box}
+        <CompactionMenu
+          sessionId={alert.sessionId}
+          compactDisabled={alert.compactButtonDisabled === true || !alert.onCompact}
+          onCompact={() => alert.onCompact?.()}
+        />
+      </div>
+    );
+  }
+  return box;
 };

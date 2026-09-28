@@ -52,7 +52,7 @@ describe('SkillsView — a SKILL.md goose cannot read', () => {
         <SkillsView />
       </IntlTestWrapper>
     );
-    const row = await screen.findByTestId('skill-unreadable-row', {}, { timeout: 3000 });
+    const row = await screen.findByTestId('skill-unreadable-row');
     expect(row.textContent).toContain('broken-skill');
     expect(row.textContent).toContain(
       "couldn't read /home/.agents/skills/broken-skill/SKILL.md: its frontmatter is not valid YAML"

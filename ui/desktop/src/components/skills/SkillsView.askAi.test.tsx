@@ -48,9 +48,7 @@ const mount = () =>
   );
 
 const rowOf = async (name: string) =>
-  (await screen.findByText(name, { selector: 'button *' }, { timeout: 3000 })).closest(
-    'button'
-  ) as HTMLElement;
+  (await screen.findByText(name, { selector: 'button *' })).closest('button') as HTMLElement;
 
 describe('Skills detail — Ask AI about it', () => {
   it('starts the session about the selected skill with its factual prompt', async () => {

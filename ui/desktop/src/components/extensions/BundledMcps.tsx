@@ -208,7 +208,7 @@ function ServerSetup({ entry, saved }: { entry: BundledMcp; saved?: FixedExtensi
               web ? 'Research corpus folder' : 'Document output folder',
               web
                 ? 'Sources are saved under docs/research-output with provenance, and are available through the server’s list/read cached document tools. Use Choose or enter a full absolute path.'
-                : 'New documents are written here. Existing documents are read from paths supplied in chat.'
+                : 'New documents are written here when the chat names no path. A relative path named in chat is resolved in the chat’s folder; a full path is used as given.'
             )}
           </div>
           <Button
