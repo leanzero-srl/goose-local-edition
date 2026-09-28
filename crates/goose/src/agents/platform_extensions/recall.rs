@@ -65,7 +65,7 @@ const REACTION_WINDOW: usize = 12;
 // window — one extra page for a 262k model, nothing for a 32k one — and only on a name match.
 const AUTOLOAD_WINDOW_SHARE: f64 = 1.0 / 32.0;
 // measured: a token is about four characters of English or code across the providers goose runs.
-const CHARS_PER_TOKEN: f64 = 4.0;
+pub(crate) const CHARS_PER_TOKEN: f64 = 4.0;
 
 /// What the user is reacting to: everything the assistant did in its previous turn — the tool calls,
 /// in order, then its closing words — gathered back to the previous user request. None when an

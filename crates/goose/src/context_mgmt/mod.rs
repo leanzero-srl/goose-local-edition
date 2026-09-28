@@ -21,6 +21,9 @@ use tracing::info;
 use tracing::log::warn;
 
 pub mod context_line;
+pub mod pillars;
+
+use pillars::{KeptSources, LedgerRead, NoteVerdict, Pillars};
 
 pub const DEFAULT_COMPACTION_THRESHOLD: f64 = 0.8;
 
@@ -48,10 +51,132 @@ Do not mention that you read a summary or that conversation summarization occurr
 Just continue the conversation naturally based on the summarized context.";
 
 /// `compaction.md`'s context: the conversation as text for a [`SummaryRequest::Transcript`], `None`
-/// for a [`SummaryRequest::ExtendsChat`], whose conversation is the request's own messages.
+/// for a [`SummaryRequest::ExtendsChat`], whose conversation is the request's own messages — and
+/// then `chat`, the instruction's facts about THIS chat.
 #[derive(Serialize)]
 struct SummarizeContext {
     messages: Option<String>,
+    chat: Option<ChatInstruction>,
+}
+
+/// The sections the model writes (Q-357: P6 and P7 — what code cannot know). The card counts them as
+/// the summary's parts while it streams.
+pub const WRITTEN_PARTS: [(&str, &str); 3] = [
+    (
+        "Where we are",
+        "What is done and what is in progress at this moment — the files, commands and results \
+         (counts, test outcomes) as they now stand.",
+    ),
+    (
+        "Next step",
+        "The one next step, as the person's latest request asks for it.",
+    ),
+    (
+        "Decisions and reasons",
+        "Each decision this conversation made that the ledger does not already hold — the value \
+         chosen (a seed, a threshold, a rule, an exception) and why — one line each.",
+    ),
+];
+
+#[derive(Serialize)]
+struct WrittenPart {
+    heading: &'static str,
+    ask: &'static str,
+}
+
+/// What the summary instruction says about this chat: why it is compacted now, what goose keeps
+/// itself, the goal, the person's note and how to answer it.
+#[derive(Serialize)]
+struct ChatInstruction {
+    trigger: Option<String>,
+    kept: Vec<String>,
+    earlier_summary: bool,
+    goal: Option<String>,
+    note: Option<String>,
+    may_ask: bool,
+    parts: Vec<WrittenPart>,
+}
+
+/// Why a chat is compacted now.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompactionTrigger {
+    /// The person asked (`/compact`, the meter menu, the Context tab).
+    Manual,
+    /// The conversation passed the chat's compaction point: `used` of `limit` tokens.
+    Auto {
+        used: usize,
+        limit: usize,
+        threshold: f64,
+    },
+    /// The chat's own request was refused as too long.
+    Recovery,
+}
+
+/// What the summary has written so far, for the chat's compaction card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WritingProgress {
+    /// Output tokens streamed so far, reasoning included, by goose's tokenizer; `None` when the
+    /// tokenizer could not be built.
+    pub written_tokens: Option<u64>,
+    /// The section headings written so far.
+    pub parts: Vec<String>,
+}
+
+pub type CompactionObserver = Arc<dyn Fn(WritingProgress) + Send + Sync>;
+
+/// Q-357: a CHAT's compaction inputs beyond its conversation. The swarm's workers pass none and
+/// keep their golden-measured compaction byte for byte.
+#[derive(Clone)]
+pub struct ChatCompaction {
+    pub trigger: CompactionTrigger,
+    /// The person's note for this compaction.
+    pub note: Option<String>,
+    /// The model may stop at a question about the note instead of summarizing: only when the
+    /// person is there to answer (a manual compaction not already told to follow the note as
+    /// written).
+    pub may_ask: bool,
+    pub pins: Vec<String>,
+    pub goal: Option<String>,
+    pub ledger: LedgerRead,
+    /// The kept block's share of the window, in chars; `None` when the window is unknown.
+    pub kept_budget_chars: Option<usize>,
+    pub progress: Option<CompactionObserver>,
+}
+
+// ratio: the kept block may take a sixteenth of the window — E2E #3p's model-written summary was
+// 8,821 chars (~2.2k tokens) on a 178,176-token window; a sixteenth (11.1k tokens) leaves the
+// person's words, the files, errors and ledger five times that room before anything is cut.
+const KEPT_WINDOW_SHARE: f64 = 1.0 / 16.0;
+
+/// The kept block's budget in chars for a window of `context_limit` tokens.
+pub fn kept_budget_chars(context_limit: Option<usize>) -> Option<usize> {
+    context_limit.map(|limit| {
+        (limit as f64
+            * crate::agents::platform_extensions::recall::CHARS_PER_TOKEN
+            * KEPT_WINDOW_SHARE) as usize
+    })
+}
+
+/// How the person's note fared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteOutcome {
+    NoNote,
+    Read(NoteVerdict),
+    /// The summary was asked for as a transcript (the chat's own request was refused as too long),
+    /// whose request carries no note; the note is in the kept block word for word.
+    NotSent,
+}
+
+pub enum ChatCompacted {
+    Compacted {
+        conversation: Conversation,
+        usage: ProviderUsage,
+        note: NoteOutcome,
+        /// What goose kept word for word; `None` for a caller with no chat inputs.
+        kept: Option<Pillars>,
+    },
+    /// The model asked about the note instead of summarizing; the conversation is unchanged.
+    Asked { question: String },
 }
 
 /// What the chat's provider calls carry besides the conversation: the system prompt and the tools
@@ -116,23 +241,27 @@ pub async fn compact_messages(
     manual_compact: bool,
     request: &SummaryRequest,
 ) -> Result<(Conversation, ProviderUsage)> {
-    let keep_tail = Config::global()
-        .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
-        .unwrap_or(0);
     compact_messages_with_tail(
         provider,
         model_config,
         session_id,
         conversation,
         manual_compact,
-        keep_tail,
+        keep_tail_from_config(),
         request,
     )
     .await
 }
 
-/// `compact_messages` with the keep-tail injected — the testable form (no env/config read), and
-/// the single implementation both entry points share.
+fn keep_tail_from_config() -> usize {
+    Config::global()
+        .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
+        .unwrap_or(0)
+}
+
+/// `compact_messages` with the keep-tail injected — the testable form (no env/config read). The
+/// compaction of a caller with no chat inputs (the swarm's workers): a summary request that extends
+/// the chat is a chat's (`compact_chat`) and is refused here.
 pub async fn compact_messages_with_tail(
     provider: &dyn Provider,
     model_config: &ModelConfig,
@@ -142,6 +271,71 @@ pub async fn compact_messages_with_tail(
     keep_tail: usize,
     request: &SummaryRequest,
 ) -> Result<(Conversation, ProviderUsage)> {
+    if matches!(request, SummaryRequest::ExtendsChat(_)) {
+        return Err(anyhow::anyhow!(
+            "a summary request that extends the chat is a chat's compaction (compact_chat), \
+             which carries the chat's inputs"
+        ));
+    }
+    match compact_core(
+        provider,
+        model_config,
+        session_id,
+        conversation,
+        manual_compact,
+        keep_tail,
+        request,
+        None,
+    )
+    .await?
+    {
+        ChatCompacted::Compacted {
+            conversation,
+            usage,
+            ..
+        } => Ok((conversation, usage)),
+        ChatCompacted::Asked { question } => Err(anyhow::anyhow!(
+            "a compaction without a note was answered with a question about one: {question}"
+        )),
+    }
+}
+
+/// Q-357: a chat's compaction — the summary request `request`, the note and the kept block from
+/// `chat`. The stored summary is the model's text with its scratch stripped, then what goose kept
+/// word for word (`pillars`).
+pub async fn compact_chat(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    conversation: &Conversation,
+    manual_compact: bool,
+    request: &SummaryRequest,
+    chat: &ChatCompaction,
+) -> Result<ChatCompacted> {
+    compact_core(
+        provider,
+        model_config,
+        session_id,
+        conversation,
+        manual_compact,
+        keep_tail_from_config(),
+        request,
+        Some(chat),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn compact_core(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    conversation: &Conversation,
+    manual_compact: bool,
+    keep_tail: usize,
+    request: &SummaryRequest,
+    chat: Option<&ChatCompaction>,
+) -> Result<ChatCompacted> {
     info!("Performing message compaction");
 
     let messages = conversation.messages();
@@ -221,14 +415,59 @@ pub async fn compact_messages_with_tail(
     }
     let messages_to_compact = &messages[..cut];
 
-    let (summary_message, summarization_usage) = do_compact(
+    // With a kept tail, the most recent user text is usually INSIDE it already — appending the
+    // preserved copy too would duplicate the instruction the model most attends to.
+    let preserved_in_tail = keep_tail > 0
+        && messages[cut..]
+            .iter()
+            .any(|m| matches!(m.role, rmcp::model::Role::User) && has_text_only(m));
+    let preserved_text = preserved_user_message
+        .as_ref()
+        .filter(|_| !preserved_in_tail)
+        .and_then(extract_text);
+
+    let kept = chat.map(|chat| {
+        Pillars::build(
+            messages,
+            &KeptSources {
+                note: chat.note.as_deref(),
+                pins: &chat.pins,
+                preserved: preserved_text.as_deref(),
+            },
+            chat.ledger.clone(),
+        )
+        .fit(chat.kept_budget_chars)
+    });
+
+    let (summary_message, summarization_usage, note) = match do_compact(
         provider,
         model_config,
         session_id,
         messages_to_compact,
         request,
+        chat.zip(kept.as_ref()),
     )
-    .await?;
+    .await?
+    {
+        Summary::Written {
+            message,
+            usage,
+            note,
+        } => (message, usage, note),
+        Summary::Asked { question } => return Ok(ChatCompacted::Asked { question }),
+    };
+    let summary_message = match &kept {
+        Some(kept) => {
+            let stored = pillars::stored_summary(&summary_message.as_concat_text(), kept);
+            let mut message = summary_message;
+            message
+                .content
+                .retain(|c| !matches!(c, MessageContent::Text(_)));
+            message.content.insert(0, MessageContent::text(stored));
+            message
+        }
+        None => summary_message,
+    };
 
     // Create the final message list with updated visibility metadata:
     // 1. Original messages become user_visible but not agent_visible
@@ -278,24 +517,16 @@ pub async fn compact_messages_with_tail(
         final_messages.push(msg.clone().with_metadata(MessageMetadata::agent_only()));
     }
 
-    // With a kept tail, the most recent user text is usually INSIDE it already — appending the
-    // preserved copy too would duplicate the instruction the model most attends to.
-    let preserved_in_tail = keep_tail > 0
-        && messages[cut..]
-            .iter()
-            .any(|m| matches!(m.role, rmcp::model::Role::User) && has_text_only(m));
-    if let Some(user_msg) = preserved_user_message {
-        if !preserved_in_tail {
-            if let Some(text) = extract_text(&user_msg) {
-                final_messages.push(Message::user().with_text(&text));
-            }
-        }
+    if let Some(text) = preserved_text {
+        final_messages.push(Message::user().with_text(&text));
     }
 
-    Ok((
-        Conversation::new_unvalidated(final_messages),
-        summarization_usage,
-    ))
+    Ok(ChatCompacted::Compacted {
+        conversation: Conversation::new_unvalidated(final_messages),
+        usage: summarization_usage,
+        note,
+        kept,
+    })
 }
 
 /// Check if messages exceed the auto-compaction threshold
@@ -445,20 +676,47 @@ fn filter_tool_responses(messages: &[Message], remove_percent: u32) -> Vec<&Mess
         .collect()
 }
 
+/// What the summary call produced.
+enum Summary {
+    Written {
+        message: Message,
+        usage: ProviderUsage,
+        note: NoteOutcome,
+    },
+    /// The model asked about the person's note (`NOTE QUESTION: …`) and was stopped there.
+    Asked { question: String },
+}
+
 async fn do_compact(
     provider: &dyn Provider,
     model_config: &ModelConfig,
     session_id: &str,
     messages: &[Message],
     request: &SummaryRequest,
-) -> Result<(Message, ProviderUsage), anyhow::Error> {
+    chat: Option<(&ChatCompaction, &Pillars)>,
+) -> Result<Summary, anyhow::Error> {
     if let SummaryRequest::ExtendsChat(frame) = request {
+        let Some((chat, kept)) = chat else {
+            return Err(anyhow::anyhow!(
+                "a summary request that extends the chat needs the chat's compaction inputs"
+            ));
+        };
         let summary_model =
             crate::model_config::get_fast_model(provider.get_name(), model_config).await?;
         if summary_model.model_name == model_config.model_name {
-            match summarize_as_the_chat(provider, model_config, session_id, messages, frame).await?
+            match summarize_as_the_chat(
+                provider,
+                model_config,
+                session_id,
+                messages,
+                frame,
+                chat,
+                kept,
+            )
+            .await?
             {
                 ChatSummary::Written(summary) => return Ok(*summary),
+                ChatSummary::Asked(question) => return Ok(Summary::Asked { question }),
                 ChatSummary::NotWritten(why) => warn!(
                     "compaction: the summary request that extends the chat {why}; summarizing \
                      from a transcript of the conversation instead"
@@ -473,14 +731,85 @@ async fn do_compact(
             );
         }
     }
-    summarize_a_transcript(provider, model_config, session_id, messages).await
+    let (message, usage) =
+        summarize_a_transcript(provider, model_config, session_id, messages).await?;
+    let note = match chat {
+        Some((chat, _)) if chat.note.is_some() => NoteOutcome::NotSent,
+        _ => NoteOutcome::NoNote,
+    };
+    Ok(Summary::Written {
+        message,
+        usage,
+        note,
+    })
 }
 
 enum ChatSummary {
-    Written(Box<(Message, ProviderUsage)>),
+    Written(Box<Summary>),
+    /// The model asked about the person's note instead of summarizing.
+    Asked(String),
     /// The provider refused the request as too long, or the model answered it with a tool call:
     /// which, for the log.
     NotWritten(String),
+}
+
+/// The continuation text every compaction leaves after its summary begins with this.
+const COMPACTED_PREFIX: &str = "Your context was compacted";
+
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The instruction's facts about this chat.
+fn chat_instruction(
+    chat: &ChatCompaction,
+    kept: &Pillars,
+    messages: &[Message],
+) -> ChatInstruction {
+    let trigger = match &chat.trigger {
+        CompactionTrigger::Manual => {
+            Some("The person asked goose to compact this conversation now.".to_string())
+        }
+        CompactionTrigger::Auto {
+            used,
+            limit,
+            threshold,
+        } => Some(format!(
+            "The conversation reached {} of {} tokens ({}%), past this chat's compaction point \
+             of {}%.",
+            thousands(*used),
+            thousands(*limit),
+            (*used as f64 * 100.0 / (*limit).max(1) as f64).round() as u32,
+            (threshold * 100.0).round() as u32
+        )),
+        CompactionTrigger::Recovery => None,
+    };
+    let earlier_summary = messages.iter().any(|m| {
+        m.role == Role::Assistant
+            && m.is_agent_visible()
+            && !m.is_user_visible()
+            && m.as_concat_text().starts_with(COMPACTED_PREFIX)
+    });
+    ChatInstruction {
+        trigger,
+        kept: kept.kept_lines(),
+        earlier_summary,
+        goal: chat.goal.clone(),
+        note: kept.note.clone(),
+        may_ask: chat.may_ask,
+        parts: WRITTEN_PARTS
+            .iter()
+            .map(|(heading, ask)| WrittenPart { heading, ask })
+            .collect(),
+    }
 }
 
 /// [`SummaryRequest::ExtendsChat`]: the conversation as the chat's next call would send it, then
@@ -489,15 +818,27 @@ enum ChatSummary {
 /// joins a trailing user message, as the turn-context block does, and follows tool results as a
 /// user message of its own (a strict chat template refuses two user turns in a row). The call is
 /// the chat's, not a helper's (`complete_as_the_chat`: the thinking switch can change the system
-/// block the cache holds).
+/// block the cache holds). Q-357: the call streams, so the chat's card counts what is written and
+/// the note's verdict is read from the first line as it arrives — a question stops the call there.
+/// The person's note, like every fact about this chat, is in the instruction alone: the messages
+/// before it are the chat's own, byte for byte, and stay the cached prefix.
+#[allow(clippy::too_many_arguments)]
 async fn summarize_as_the_chat(
     provider: &dyn Provider,
     model_config: &ModelConfig,
     session_id: &str,
     messages: &[Message],
     frame: &ChatRequestFrame,
+    chat: &ChatCompaction,
+    kept: &Pillars,
 ) -> Result<ChatSummary> {
-    let instruction = render_template("compaction.md", &SummarizeContext { messages: None })?;
+    let instruction = render_template(
+        "compaction.md",
+        &SummarizeContext {
+            messages: None,
+            chat: Some(chat_instruction(chat, kept, messages)),
+        },
+    )?;
     let mut conversation = messages.to_vec();
     conversation.push(Message::user().with_text(instruction));
     let (conversation, _) = fix_conversation(Conversation::new_unvalidated(conversation));
@@ -505,7 +846,36 @@ async fn summarize_as_the_chat(
         conversation.messages(),
         model_config.toolshim,
     );
-    let answer = crate::model_config::complete_as_the_chat(
+
+    let counter = match create_token_counter().await {
+        Ok(counter) => Some(counter),
+        Err(e) => {
+            warn!("compaction: the tokenizer could not be built ({e}); the card counts no tokens");
+            None
+        }
+    };
+    let watch_note = kept.note.is_some() && chat.may_ask;
+    let mut written_tokens = 0u64;
+    let mut asked: Option<String> = None;
+    let watch = |delta: &str, text: &str| {
+        if let Some(counter) = &counter {
+            written_tokens += counter.count_tokens(delta) as u64;
+        }
+        if let Some(observe) = &chat.progress {
+            observe(WritingProgress {
+                written_tokens: counter.as_ref().map(|_| written_tokens),
+                parts: pillars::written_parts(text),
+            });
+        }
+        if watch_note {
+            if let Some(NoteVerdict::Question(question)) = pillars::streaming_note_verdict(text) {
+                asked = Some(question);
+                return false;
+            }
+        }
+        true
+    };
+    let answer = crate::model_config::stream_as_the_chat(
         crate::background_work::BackgroundWorkKind::Compaction,
         provider,
         model_config,
@@ -513,10 +883,11 @@ async fn summarize_as_the_chat(
         &frame.system_prompt,
         sent.messages(),
         &frame.tools,
+        watch,
     )
     .await;
     let (mut response, mut provider_usage) = match answer {
-        Ok(answer) => answer,
+        Ok((answer, _)) => answer,
         Err(ProviderError::ContextLengthExceeded(detail)) => {
             return Ok(ChatSummary::NotWritten(format!(
                 "was refused as too long ({detail})"
@@ -524,6 +895,9 @@ async fn summarize_as_the_chat(
         }
         Err(e) => return Err(e.into()),
     };
+    if let Some(question) = asked {
+        return Ok(ChatSummary::Asked(question));
+    }
     if response.content.iter().any(|c| {
         matches!(
             c,
@@ -534,6 +908,18 @@ async fn summarize_as_the_chat(
             "was answered with a tool call instead of the summary".to_string(),
         ));
     }
+    let note = match &kept.note {
+        None => NoteOutcome::NoNote,
+        Some(_) => match pillars::note_verdict(&response.as_concat_text()) {
+            NoteVerdict::Question(question) if chat.may_ask => {
+                return Ok(ChatSummary::Asked(question))
+            }
+            // Told a turn cannot wait for an answer, the model asked anyway: its words stand as
+            // the concern the summary was written under.
+            NoteVerdict::Question(question) => NoteOutcome::Read(NoteVerdict::Concern(question)),
+            verdict => NoteOutcome::Read(verdict),
+        },
+    };
     response.role = Role::User;
     strip_reasoning_content(&mut response);
     crate::providers::usage_estimator::ensure_usage_tokens(
@@ -545,7 +931,11 @@ async fn summarize_as_the_chat(
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to ensure usage tokens: {}", e))?;
-    Ok(ChatSummary::Written(Box::new((response, provider_usage))))
+    Ok(ChatSummary::Written(Box::new(Summary::Written {
+        message: response,
+        usage: provider_usage,
+        note,
+    })))
 }
 
 /// [`SummaryRequest::Transcript`], trying progressively more of the tool responses removed from
@@ -576,6 +966,7 @@ async fn summarize_a_transcript(
 
         let context = SummarizeContext {
             messages: Some(messages_text),
+            chat: None,
         };
 
         let system_prompt = render_template("compaction.md", &context)?;
@@ -1355,17 +1746,27 @@ mod tests {
             system_prompt: system.to_string(),
             tools: tools.clone(),
         };
-        let (compacted, _) = compact_messages_with_tail(
+        // Q-357: the person's note rides the instruction and nothing else.
+        let note = "keep the 24-month cutoff exactly";
+        let mut inputs = chat_inputs(Some(note), false);
+        inputs.pins = vec!["seed 20260928".to_string()];
+        let ChatCompacted::Compacted {
+            conversation: compacted,
+            ..
+        } = compact_chat(
             engine.provider.as_ref(),
             &session,
             "s",
             &conversation,
             false,
-            0,
             &SummaryRequest::ExtendsChat(frame),
+            &inputs,
         )
         .await
-        .unwrap();
+        .unwrap()
+        else {
+            panic!("an automatic compaction never stops at a question");
+        };
         compact_messages_with_tail(
             engine.provider.as_ref(),
             &session,
@@ -1403,24 +1804,51 @@ mod tests {
         assert_eq!(instruction["role"], "user");
         let instruction = instruction["content"].as_str().unwrap();
         assert!(
-            instruction.starts_with("now read it\n## Task Context"),
+            instruction.starts_with("now read it\n## Summarize this conversation for yourself"),
             "the instruction joins the person's trailing message (no two user turns in a row): \
              {instruction}"
         );
-        assert!(instruction.contains("Summarize now, as your reply: call no tool"));
+        assert!(instruction.contains("Call no tool."));
         assert!(!instruction.contains("Conversation History"));
         assert!(!sent.iter().any(|m| m["content"]
             .as_str()
             .is_some_and(|c| c.contains("<turn-context>"))));
+        // The note and the pins are in the final instruction message alone: every message before
+        // it — the cached prefix — is the chat's own.
+        assert!(instruction.contains(&format!(
+            "The person's note for this compaction: \"{note}\""
+        )));
+        assert!(instruction.contains("`NOTE CONCERN: <one sentence>`"));
+        assert!(
+            !instruction.contains("NOTE QUESTION"),
+            "a turn cannot wait for an answer"
+        );
+        for earlier in &sent[..cached.len() + 1] {
+            let text = earlier.to_string();
+            assert!(!text.contains(note) && !text.contains("20260928"), "{text}");
+        }
+        assert!(
+            !summary.to_string().contains("seed 20260928"),
+            "pins are kept, never sent"
+        );
 
-        // The summary is read back as before: the answer, re-roled to the user, agent-only.
+        // The summary is read back as before — the answer, re-roled to the user, agent-only — and
+        // what goose kept follows it.
         let summary_message = compacted
             .messages()
             .iter()
-            .find(|m| m.as_concat_text() == "reading project configuration")
+            .find(|m| {
+                m.as_concat_text()
+                    .starts_with("reading project configuration")
+            })
             .expect("the summary is in the compacted conversation");
         assert_eq!(summary_message.role, Role::User);
         assert!(summary_message.is_agent_visible() && !summary_message.is_user_visible());
+        let stored = summary_message.as_concat_text();
+        assert!(stored.contains("<kept-by-goose>"), "{stored}");
+        assert!(stored.contains("[1] list the notes"), "{stored}");
+        assert!(stored.contains(&format!("- Note for this compaction: {note}")));
+        assert!(stored.contains("- Pinned: seed 20260928"));
 
         assert_ne!(transcript["messages"][0], chat["messages"][0]);
         assert!(transcript
@@ -1444,17 +1872,17 @@ mod tests {
             "notes/kickoff.md",
         ));
         let engine = MlxEndpoint::start().await;
-        compact_messages_with_tail(
+        compact_chat(
             engine.provider.as_ref(),
             &session,
             "s",
             &Conversation::new_unvalidated(messages),
             false,
-            0,
             &SummaryRequest::ExtendsChat(ChatRequestFrame {
                 system_prompt: "You are goose.".to_string(),
                 tools: chat_tools(),
             }),
+            &chat_inputs(None, false),
         )
         .await
         .unwrap();
@@ -1465,7 +1893,253 @@ mod tests {
         assert!(sent[4]["content"]
             .as_str()
             .unwrap()
-            .starts_with("## Task Context"));
+            .starts_with("## Summarize this conversation for yourself"));
+    }
+
+    /// A chat's compaction inputs with nothing of the chat's own but the note.
+    fn chat_inputs(note: Option<&str>, may_ask: bool) -> ChatCompaction {
+        ChatCompaction {
+            trigger: if may_ask {
+                CompactionTrigger::Manual
+            } else {
+                CompactionTrigger::Auto {
+                    used: 143_000,
+                    limit: 178_176,
+                    threshold: 0.8,
+                }
+            },
+            note: note.map(str::to_string),
+            may_ask,
+            pins: Vec::new(),
+            goal: None,
+            ledger: LedgerRead::Entries(Vec::new()),
+            kept_budget_chars: None,
+            progress: None,
+        }
+    }
+
+    /// Answers every request with `answer`, streamed a few characters at a time, and records how
+    /// many chunks the reader took before it stopped reading.
+    struct ScriptedProvider {
+        answer: String,
+        taken: Arc<std::sync::atomic::AtomicUsize>,
+        requests: std::sync::Mutex<Vec<Vec<Message>>>,
+    }
+
+    impl ScriptedProvider {
+        fn new(answer: &str) -> Self {
+            Self {
+                answer: answer.to_string(),
+                taken: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                requests: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ScriptedProvider {
+        fn get_name(&self) -> &str {
+            "scripted"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            use futures::StreamExt;
+            self.requests.lock().unwrap().push(messages.to_vec());
+            let chars: Vec<char> = self.answer.chars().collect();
+            let chunks: Vec<String> = chars.chunks(4).map(|c| c.iter().collect()).collect();
+            let last = chunks.len() - 1;
+            let taken = self.taken.clone();
+            let usage = ProviderUsage::new(
+                "scripted".to_string(),
+                Usage::new(Some(90), Some(10), Some(100)),
+            );
+            Ok(Box::pin(
+                futures::stream::iter(chunks.into_iter().enumerate()).map(move |(i, chunk)| {
+                    taken.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok((
+                        Some(Message::assistant().with_text(chunk)),
+                        (i == last).then(|| usage.clone()),
+                    ))
+                }),
+            ))
+        }
+    }
+
+    fn two_turn_chat() -> Conversation {
+        Conversation::new_unvalidated(vec![
+            Message::user().with_text("inactive means no login in 24 months"),
+            Message::assistant().with_text("noted: 24 months"),
+            Message::user().with_text("now plan the users"),
+        ])
+    }
+
+    fn frame() -> SummaryRequest {
+        SummaryRequest::ExtendsChat(ChatRequestFrame {
+            system_prompt: "You are goose.".to_string(),
+            tools: chat_tools(),
+        })
+    }
+
+    /// Q-357 STEER: a manual compaction under a note the conversation contradicts stops at the
+    /// model's question — the stream is dropped at the first line, nothing is replaced, and the
+    /// question comes back word for word for the person to answer.
+    #[tokio::test]
+    async fn a_question_about_the_note_stops_the_compaction_at_its_first_line() {
+        let provider = ScriptedProvider::new(
+            "NOTE QUESTION: The chat says 24 months; do you mean to change it to 12?\n## Where we are\nplanning the users, a long summary that must never be read",
+        );
+        let outcome = compact_chat(
+            &provider,
+            &ModelConfig::new("scripted"),
+            "s",
+            &two_turn_chat(),
+            true,
+            &frame(),
+            &chat_inputs(Some("use the 12-month cutoff"), true),
+        )
+        .await
+        .unwrap();
+        let ChatCompacted::Asked { question } = outcome else {
+            panic!("the question stops the compaction");
+        };
+        assert_eq!(
+            question,
+            "The chat says 24 months; do you mean to change it to 12?"
+        );
+        let taken = provider.taken.load(std::sync::atomic::Ordering::SeqCst);
+        let chunks = provider.answer.chars().count().div_ceil(4);
+        assert!(
+            taken < chunks,
+            "the stream is dropped once the first line is whole: {taken} of {chunks} chunks read"
+        );
+    }
+
+    /// Q-357: an automatic compaction cannot wait for an answer — its note is read as OK or a
+    /// concern and the summary is written under it; a summary with no NOTE line says so plainly
+    /// (Missing), never passes as OK; and the stored summary keeps neither the NOTE line nor any
+    /// `<analysis>` scratch.
+    #[tokio::test]
+    async fn the_notes_verdict_is_read_and_the_stored_summary_drops_its_scratch() {
+        for (answer, expected) in [
+            (
+                "NOTE CONCERN: the chat says 24, the note says 12.\n## Where we are\nplanning",
+                NoteOutcome::Read(NoteVerdict::Concern(
+                    "the chat says 24, the note says 12.".to_string(),
+                )),
+            ),
+            (
+                "NOTE OK\n## Where we are\nplanning",
+                NoteOutcome::Read(NoteVerdict::Ok),
+            ),
+            (
+                "<analysis>long scratch</analysis>\n## Where we are\nplanning",
+                NoteOutcome::Read(NoteVerdict::Missing),
+            ),
+        ] {
+            let provider = ScriptedProvider::new(answer);
+            let ChatCompacted::Compacted {
+                conversation, note, ..
+            } = compact_chat(
+                &provider,
+                &ModelConfig::new("scripted"),
+                "s",
+                &two_turn_chat(),
+                false,
+                &frame(),
+                &chat_inputs(Some("use the 12-month cutoff"), false),
+            )
+            .await
+            .unwrap()
+            else {
+                panic!("an automatic compaction is never asked");
+            };
+            assert_eq!(note, expected, "{answer}");
+            let stored = conversation.agent_visible_messages()[0].as_concat_text();
+            assert!(
+                stored.starts_with("## Where we are\nplanning\n\n<kept-by-goose>"),
+                "{stored}"
+            );
+            assert!(
+                !stored.contains("NOTE ") && !stored.contains("<analysis>"),
+                "{stored}"
+            );
+        }
+    }
+
+    /// Q-357: the card reads what is written while it streams — the tokens and the section
+    /// headings, in order.
+    #[tokio::test]
+    async fn the_summary_reports_its_parts_while_it_streams() {
+        let provider = ScriptedProvider::new(
+            "## Where we are\nplanning\n## Next step\nrun it\n## Decisions and reasons\n24 months",
+        );
+        let seen: Arc<std::sync::Mutex<Vec<WritingProgress>>> = Arc::default();
+        let mut inputs = chat_inputs(None, false);
+        let sink = seen.clone();
+        inputs.progress = Some(Arc::new(move |p| sink.lock().unwrap().push(p)));
+        compact_chat(
+            &provider,
+            &ModelConfig::new("scripted"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &inputs,
+        )
+        .await
+        .unwrap();
+        let seen = seen.lock().unwrap();
+        let last = seen.last().unwrap();
+        assert_eq!(
+            last.parts,
+            ["Where we are", "Next step", "Decisions and reasons"]
+        );
+        assert!(last.written_tokens.is_some_and(|t| t > 0));
+        let counts: Vec<usize> = seen.iter().map(|p| p.parts.len()).collect();
+        assert!(
+            counts.windows(2).all(|w| w[0] <= w[1]) && counts[0] < 3,
+            "{counts:?}"
+        );
+    }
+
+    /// Q-357: a chat whose own request was refused as too long is summarized from a transcript,
+    /// whose request carries no note — said as NotSent, with the note kept word for word.
+    #[tokio::test]
+    async fn a_note_the_transcript_request_cannot_carry_is_said_not_sent() {
+        let provider = RecordingProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+            chat_shaped_answer: None,
+        };
+        let ChatCompacted::Compacted {
+            conversation, note, ..
+        } = compact_chat(
+            &provider,
+            &ModelConfig::new("recording-model"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(Some("use the 12-month cutoff"), false),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        assert_eq!(note, NoteOutcome::NotSent);
+        let calls = provider.calls.lock().unwrap();
+        assert!(
+            !calls[1].0.contains("12-month"),
+            "the transcript request is byte-identical"
+        );
+        let stored = conversation.agent_visible_messages()[0].as_concat_text();
+        assert!(stored.contains("- Note for this compaction: use the 12-month cutoff"));
     }
 
     /// Records every request; refuses the ones carrying tools as too long, or answers them with a
@@ -1533,17 +2207,23 @@ mod tests {
                 calls: std::sync::Mutex::new(Vec::new()),
                 chat_shaped_answer: answer,
             };
-            let (compacted, _) = compact_messages_with_tail(
+            let ChatCompacted::Compacted {
+                conversation: compacted,
+                ..
+            } = compact_chat(
                 &provider,
                 &ModelConfig::new("recording-model"),
                 "s",
                 &conversation,
                 false,
-                0,
                 &SummaryRequest::ExtendsChat(frame.clone()),
+                &chat_inputs(None, false),
             )
             .await
-            .unwrap();
+            .unwrap()
+            else {
+                panic!("compacted");
+            };
             let calls = provider.calls.lock().unwrap();
             assert_eq!(calls.len(), 2);
             assert_eq!(calls[0].0, "You are goose.");
@@ -1555,7 +2235,11 @@ mod tests {
                 .iter()
                 .map(|m| m.as_concat_text())
                 .collect();
-            assert_eq!(visible[0], "<transcript summary>");
+            assert!(
+                visible[0].starts_with("<transcript summary>\n\n<kept-by-goose>"),
+                "{}",
+                visible[0]
+            );
             assert!(compacted.agent_visible_messages().iter().all(|m| !m
                 .content
                 .iter()
@@ -1568,29 +2252,103 @@ mod tests {
     /// chat-extending instruction.
     const COMPACTION_BEFORE_Q342: &str = "## Task Context\n- An llm context limit was reached when a user was in a working session with an agent (you)\n- Generate a version of the below messages with only the most verbose parts removed\n- Include user requests, your responses, all technical content, and as much of the original context as possible\n- This will be used to let the user continue the working session\n- Use framing and tone knowing the content will be read an agent (you) on a next exchange to allow for continuation of the session\n\n**Conversation History:**\n{{ messages }}\n\nWrap reasoning in `<analysis>` tags:  \n- Review conversation chronologically\n- For each part, log:  \n  - User goals and requests  \n  - Your method and solution  \n  - Key decisions and designs  \n  - File names, code, signatures, errors, fixes  \n- Highlight user feedback and revisions  \n- Confirm completeness and accuracy  \n- This summary will only be read by you so it is ok to make it much longer than a normal summary you would show to a human\n- Do not exclude any information that might be important to continuing a session working with you\n\n### Include the Following Sections:\n1. **User Intent** – All goals and requests  \n2. **Technical Concepts** – All discussed tools, methods  \n3. **Files + Code** – Viewed/edited files, full code, change justifications  \n4. **Errors + Fixes** – Bugs, resolutions, user-driven changes  \n5. **Problem Solving** – Issues solved or in progress  \n6. **User Messages** – All user messages including tool calls, but truncate long tool call arguments or results\n7. **Pending Tasks** – All unresolved user requests  \n8. **Current Work** – Active work at summary request time: filenames, code, alignment to latest instruction  \n9. **Next Step** – *Include only if* directly continues user instruction  \n\n> No new ideas unless user confirmed\n";
 
+    /// The transcript request — the swarm workers' golden shape — renders byte-identically from the
+    /// template that now also carries the chat's instruction. Q-357 replaced that instruction
+    /// deliberately: it asks for the model's part alone (no `<analysis>` scratch, no nine
+    /// sections), names what goose keeps from THIS chat's facts, and carries the note.
     #[test]
-    fn the_transcript_prompt_is_unchanged_and_the_instruction_keeps_its_rules() {
+    fn the_transcript_prompt_is_unchanged_and_the_chat_instruction_is_built_from_its_facts() {
         let transcript = SummarizeContext {
             messages: Some("[user]: list the notes\n[assistant]: one file".to_string()),
+            chat: None,
         };
         assert_eq!(
             render_template("compaction.md", &transcript).unwrap(),
             crate::prompt_template::render_string(COMPACTION_BEFORE_Q342, &transcript).unwrap()
         );
 
-        let instruction =
-            render_template("compaction.md", &SummarizeContext { messages: None }).unwrap();
-        assert!(!instruction.contains("Conversation History"));
-        assert!(instruction.contains("Generate a version of the messages above"));
-        let rules = COMPACTION_BEFORE_Q342
-            .split_once("Wrap reasoning")
-            .unwrap()
-            .1
-            .trim_end();
-        assert!(
-            instruction.ends_with(rules),
-            "the content and format rules move into the instruction unchanged"
+        let conversation = two_turn_chat();
+        let mut inputs = chat_inputs(Some("use the 12-month cutoff"), true);
+        inputs.goal = Some("a readiness report Aoife can sign off".to_string());
+        let kept = Pillars::build(
+            conversation.messages(),
+            &KeptSources {
+                note: inputs.note.as_deref(),
+                pins: &[],
+                preserved: None,
+            },
+            LedgerRead::Entries(vec!["2026-09-28 12:20 [fact] 10 pass / 0 fail".to_string()]),
         );
+        let instruction = render_template(
+            "compaction.md",
+            &SummarizeContext {
+                messages: None,
+                chat: Some(chat_instruction(&inputs, &kept, conversation.messages())),
+            },
+        )
+        .unwrap();
+        assert!(!instruction.contains("Conversation History"));
+        assert!(!instruction.contains("Wrap reasoning"));
+        assert!(instruction.contains("The person asked goose to compact this conversation now."));
+        assert!(instruction.contains("- the person's 2 messages, word for word"));
+        assert!(instruction.contains("- the 1 ledger entry"));
+        assert!(instruction.contains("The goal the person set with /goal: a readiness report"));
+        assert!(instruction.contains("\"use the 12-month cutoff\""));
+        assert!(instruction.contains("`NOTE QUESTION: <one question>`"));
+        for (heading, _) in WRITTEN_PARTS {
+            assert!(
+                instruction.contains(&format!("## {heading}\n")),
+                "{instruction}"
+            );
+        }
+        assert!(
+            instruction.ends_with("nothing before the NOTE line."),
+            "{instruction}"
+        );
+        assert!(!instruction.contains("earlier summary"));
+
+        let auto = chat_instruction(&chat_inputs(None, false), &kept, conversation.messages());
+        assert_eq!(
+            auto.trigger.as_deref(),
+            Some(
+                "The conversation reached 143,000 of 178,176 tokens (80%), past this chat's \
+                 compaction point of 80%."
+            )
+        );
+    }
+
+    /// The swarm workers' compaction (no chat inputs): the request is the transcript shape and the
+    /// stored summary is the model's answer as written — no kept block, nothing stripped.
+    #[tokio::test]
+    async fn a_compaction_without_chat_inputs_stores_the_answer_as_written() {
+        let answer = "<analysis>scratch</analysis>\nNOTE OK\nthe summary";
+        let provider = MockProvider::new(Message::assistant().with_text(answer), 1000);
+        let (compacted, _) = compact_messages_with_tail(
+            &provider,
+            &provider.config.clone(),
+            "s",
+            &two_turn_chat(),
+            false,
+            0,
+            &SummaryRequest::Transcript,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            compacted.agent_visible_messages()[0].as_concat_text(),
+            answer
+        );
+        assert!(compact_messages_with_tail(
+            &provider,
+            &provider.config.clone(),
+            "s",
+            &two_turn_chat(),
+            false,
+            0,
+            &frame(),
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]
