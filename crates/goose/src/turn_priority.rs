@@ -15,12 +15,16 @@ use std::sync::LazyLock;
 
 use tokio::sync::watch;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct Turns {
     running: usize,
     /// Bumped by every turn that starts, so a check can tell "a turn began while I ran" from
     /// "the same turns are still running".
     started: u64,
+    /// The chats of the running turns that named theirs (`user_turn_in`), one entry per turn.
+    sessions: Vec<String>,
+    /// The chat of the turn that started last, when it named one.
+    last_started: Option<String>,
 }
 
 pub struct TurnPriority {
@@ -30,12 +34,37 @@ pub struct TurnPriority {
 /// A user turn in progress; the checks wait while any exists.
 pub struct UserTurn<'a> {
     priority: &'a TurnPriority,
+    session: Option<String>,
 }
 
 impl Drop for UserTurn<'_> {
     fn drop(&mut self) {
-        self.priority.turns.send_modify(|t| t.running -= 1);
+        let session = self.session.take();
+        self.priority.turns.send_modify(|t| {
+            t.running -= 1;
+            if let Some(at) = session
+                .as_ref()
+                .and_then(|session| t.sessions.iter().position(|s| s == session))
+            {
+                t.sessions.remove(at);
+            }
+        });
     }
+}
+
+/// The user turns running now: how many, the start count, and the chats of those that named
+/// theirs (a turn opened with `user_turn` is counted but not named).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningTurns {
+    pub running: usize,
+    pub started: u64,
+    pub sessions: Vec<String>,
+}
+
+/// A user turn that started after a mark: its chat, when it named one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartedTurn {
+    pub session: Option<String>,
 }
 
 impl TurnPriority {
@@ -45,12 +74,61 @@ impl TurnPriority {
         }
     }
 
-    pub fn user_turn(&self) -> UserTurn<'_> {
+    fn begin(&self, session: Option<String>) -> UserTurn<'_> {
         self.turns.send_modify(|t| {
             t.running += 1;
             t.started += 1;
+            t.last_started = session.clone();
+            if let Some(session) = &session {
+                t.sessions.push(session.clone());
+            }
         });
-        UserTurn { priority: self }
+        UserTurn {
+            priority: self,
+            session,
+        }
+    }
+
+    pub fn user_turn(&self) -> UserTurn<'_> {
+        self.begin(None)
+    }
+
+    /// A user turn in the chat `session_id`, so the loop runner can say whose turn a due tick
+    /// waits for, or a running tick yielded to.
+    pub fn user_turn_in(&self, session_id: &str) -> UserTurn<'_> {
+        self.begin(Some(session_id.to_string()))
+    }
+
+    pub fn running(&self) -> RunningTurns {
+        let t = self.turns.borrow();
+        RunningTurns {
+            running: t.running,
+            started: t.started,
+            sessions: t.sessions.clone(),
+        }
+    }
+
+    /// Returns once no user turn runs, with the start count at that moment: the mark
+    /// `user_turn_started_since` compares against.
+    pub async fn wait_no_user_turn(&self) -> u64 {
+        self.turns
+            .subscribe()
+            .wait_for(|t| t.running == 0)
+            .await
+            .map(|t| t.started)
+            .expect("the sender lives as long as self")
+    }
+
+    /// Returns once a user turn has started after the mark `started`.
+    pub async fn user_turn_started_since(&self, started: u64) -> StartedTurn {
+        self.turns
+            .subscribe()
+            .wait_for(|t| t.started != started)
+            .await
+            .map(|t| StartedTurn {
+                session: t.last_started.clone(),
+            })
+            .expect("the sender lives as long as self")
     }
 
     /// Runs `call` when no user turn runs; a user turn that starts while it runs drops it, and it
@@ -59,16 +137,11 @@ impl TurnPriority {
     where
         Fut: Future<Output = T>,
     {
-        let mut turns = self.turns.subscribe();
         loop {
-            let started = turns
-                .wait_for(|t| t.running == 0)
-                .await
-                .map(|t| t.started)
-                .expect("the sender lives as long as self");
+            let started = self.wait_no_user_turn().await;
             tokio::select! {
                 out = call() => return out,
-                _ = turns.wait_for(|t| t.started != started) => {
+                _ = self.user_turn_started_since(started) => {
                     tracing::info!(what, "yielded to a user turn; asked again once no turn runs");
                 }
             }
@@ -84,9 +157,27 @@ impl Default for TurnPriority {
 
 static PRIORITY: LazyLock<TurnPriority> = LazyLock::new(TurnPriority::new);
 
+/// This process's turn priority, the one `on_prompt`, the reviewers and the loop runner share.
+pub fn global() -> &'static TurnPriority {
+    &PRIORITY
+}
+
 /// Held by the ACP prompt handler for the life of a user's turn.
 pub fn user_turn() -> UserTurn<'static> {
     PRIORITY.user_turn()
+}
+
+/// Held by the ACP prompt handler for the life of a user's turn in `session_id`.
+pub fn user_turn_in(session_id: &str) -> UserTurn<'static> {
+    PRIORITY.user_turn_in(session_id)
+}
+
+pub async fn wait_no_user_turn() -> u64 {
+    PRIORITY.wait_no_user_turn().await
+}
+
+pub async fn user_turn_started_since(started: u64) -> StartedTurn {
+    PRIORITY.user_turn_started_since(started).await
 }
 
 pub async fn after_user_turns<T, Fut>(what: &str, call: impl FnMut() -> Fut) -> T
@@ -189,5 +280,57 @@ mod tests {
         drop(turn);
         check.await;
         assert_eq!(asked.load(Ordering::SeqCst), 1);
+    }
+
+    /// The two halves the loop runner uses (Q-228 L2a): "wait until no user turn runs", then "a
+    /// user turn started since that mark" — naming the chat when the turn named it.
+    #[tokio::test]
+    async fn the_halves_name_the_chat_of_a_turn_that_names_it() {
+        let priority = TurnPriority::new();
+        let unnamed = priority.user_turn();
+        let named = priority.user_turn_in("chat-b");
+        assert_eq!(
+            priority.running(),
+            RunningTurns {
+                running: 2,
+                started: 2,
+                sessions: vec!["chat-b".to_string()],
+            }
+        );
+        let idle = priority.wait_no_user_turn();
+        tokio::pin!(idle);
+        for _ in 0..50 {
+            tokio::select! {
+                _ = &mut idle => panic!("no-turn returned while two turns run"),
+                _ = tokio::task::yield_now() => {}
+            }
+        }
+        drop(named);
+        assert_eq!(priority.running().sessions, Vec::<String>::new());
+        drop(unnamed);
+        let mark = idle.await;
+        assert_eq!(mark, 2);
+
+        let since = priority.user_turn_started_since(mark);
+        tokio::pin!(since);
+        for _ in 0..50 {
+            tokio::select! {
+                _ = &mut since => panic!("started-since returned with no new turn"),
+                _ = tokio::task::yield_now() => {}
+            }
+        }
+        let _turn = priority.user_turn_in("chat-c");
+        assert_eq!(
+            since.await,
+            StartedTurn {
+                session: Some("chat-c".to_string())
+            }
+        );
+        let _unnamed = priority.user_turn();
+        assert_eq!(
+            priority.user_turn_started_since(mark + 1).await,
+            StartedTurn { session: None },
+            "an unnamed turn is never reported as the named one before it"
+        );
     }
 }
