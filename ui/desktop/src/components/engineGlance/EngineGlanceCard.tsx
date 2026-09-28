@@ -164,7 +164,7 @@ const i18n = defineMessages({
   },
   readRange: {
     id: 'engineGlance.readRange',
-    defaultMessage: 'Reading {low}–{high} tok/s, middle half of runs',
+    defaultMessage: 'Reading {low}–{high} tok/s, middle half of prompts',
   },
   nodePeak: { id: 'engineGlance.nodePeak', defaultMessage: 'peak {peak} of {budget} GB' },
   nodePeakOnly: { id: 'engineGlance.nodePeakOnly', defaultMessage: 'peak {peak} GB' },

@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, one {tok/s чтения, # промпт} few {tok/s чтения, медиана # промптов} many {tok/s чтения, медиана # промптов} other {tok/s чтения, медиана # промпта}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "Чтение {low}–{high} tok/s, средняя половина запусков"
+    "defaultMessage": "Чтение {low}–{high} tok/s, средняя половина промптов"
   },
   "engineGlance.readRate": {
     "defaultMessage": "tok/s при чтении этого промпта"

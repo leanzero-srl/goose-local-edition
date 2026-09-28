@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, other {tok/s 读取，# 个提示词的中位数}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "读取 {low}–{high} tok/s，运行的中间一半"
+    "defaultMessage": "读取 {low}–{high} tok/s，提示词的中间一半"
   },
   "engineGlance.readRate": {
     "defaultMessage": "读取此提示词的 tok/s"

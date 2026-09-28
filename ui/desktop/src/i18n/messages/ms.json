@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, one {tok/s membaca, # prompt} other {tok/s membaca, median # prompt}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "Membaca {low}–{high} tok/s, separuh tengah larian"
+    "defaultMessage": "Membaca {low}–{high} tok/s, separuh tengah prompt"
   },
   "engineGlance.readRate": {
     "defaultMessage": "tok/s membaca prompt ini"

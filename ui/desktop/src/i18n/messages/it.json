@@ -1791,7 +1791,7 @@
     "defaultMessage": "{count, plural, one {tok/s in lettura, # prompt} other {tok/s in lettura, mediana di # prompt}}"
   },
   "engineGlance.readRange": {
-    "defaultMessage": "Lettura {low}–{high} tok/s, metà centrale delle esecuzioni"
+    "defaultMessage": "Lettura {low}–{high} tok/s, metà centrale dei prompt"
   },
   "engineGlance.readRate": {
     "defaultMessage": "tok/s leggendo questo prompt"
