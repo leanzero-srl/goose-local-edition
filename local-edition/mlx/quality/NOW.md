@@ -34,8 +34,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
       dispatched. The model caught it itself by unzipping the file.
     - Turns 16–17: it rebuilt the docx with real tables and renamed the owners. Q-451-class self-contradiction
       again ("Zero occurrences of 'Mihai' is not what I asked for"), then it corrected itself. Context is
-      173k/262k, so compaction is near: watch that Q-357 keeps the work folder. Turn 18 (PDF via LibreOffice)
-      is running.
+      173k/262k, so compaction is near: watch that Q-357 keeps the work folder. Turns 18–19: PDF made (3 pages); its own cross-check
+      caught a made-up number in the report (3,728 vs 4,328) and fixed both files. Turn 20 (the AUDIT phase) is running.
 - Q-447 ROOT-CAUSED + FIXED (b49982c26, merged into merge-074):
   - mlx_lm's BatchKVCache.extend fills a KV-less row with a float32 array. A cold helper joining the chat's row
     mid-prefill turned the batch KV float32, and every cache entry restored from it too: decode ran at 4 instead
@@ -50,7 +50,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 ## Agents (worktrees)
 - none running.
 
-## 3.0.74 = main edd009c6b — RELEASE BUILDING (~/goose-builds/release-3.0.74.log, goose-rel, own session)
+## 3.0.74 = main edd009c6b — RELEASE PACKAGING (01:46) (~/goose-builds/release-3.0.74.log, goose-rel, own session)
 - Contents:
   - Q-417, Q-407, Q-423 (BOTH Macs), Q-426;
   - Q-428/430/432 and Q-441/442/443 (don't-interrupt option + follow-ups);
