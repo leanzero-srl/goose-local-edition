@@ -23,8 +23,8 @@ Updated: 2026-09-28 14:3x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   cargo /tmp/g350.out behind g346. Q-347 (stable head kept
   entry; wire tag → BOTH Macs need 3.0.71) → /tmp/merge-q347, gate /tmp/g347.out after g350. All gates run from
   scratchpad/gates.sh + gate347.sh in their own session (five background gates were killed, cause unproven). Disk swept 16 → 75 GB (my old scratchpad held 56 GB).
-- #3r turn 2 (13:40): the 27B invented `websearch`/`fetch` 13× before the real web tool → Q-367 + Q-368
-  (facts paragraph restated 4×) CUTTING (wire read first). Turn 2 ended 761 s, 27 tools, a correct
+- Q-367 (tool-not-found error leads with the closest real tools) + Q-369 (load_tools' false message) DONE →
+  /tmp/merge-q367, gate /tmp/g367.out after g347. Q-368 = model behaviour (no goose cause; 4 restatements, turn 2). Turn 2 ended 761 s, 27 tools, a correct
   sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turns 3–4 done (1106 s / 176 s);
   turn 3's `write` lost every `=>` (SyntaxError, two rewrites) → Q-371 CUTTING. Turn 5 running. Studio-side: forge-tuner got a
   goose tool-call training proposal (docs/GOOSE-TOOLCALL-ROUND.md, 6631628) — owner picks public vs private data.
