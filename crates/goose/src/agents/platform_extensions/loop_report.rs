@@ -288,3 +288,456 @@ impl McpClientTrait for LoopReportClient {
         Some(&self.info)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use futures::StreamExt;
+    use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
+    use goose_providers::errors::ProviderError;
+    use goose_providers::model::ModelConfig;
+    use goose_sdk_types::custom_requests::{LoopCadence, LoopRecord};
+    use rmcp::model::{CallToolRequestParams, RawContent};
+    use rmcp::object;
+    use serde_json::Value;
+
+    use super::*;
+    use crate::agents::SessionConfig;
+    use crate::conversation::message::Message;
+    use crate::providers::base::{stream_from_single_message, MessageStream, Provider};
+    use crate::session_loops::agent_sync::{sync_on, testing::*};
+
+    fn every_10m() -> LoopCadence {
+        LoopCadence::Every {
+            every: "10m".into(),
+        }
+    }
+
+    fn args(value: Value) -> Option<JsonObject> {
+        match value {
+            Value::Object(object) => Some(object),
+            _ => panic!("arguments are an object"),
+        }
+    }
+
+    fn client(manager: &Arc<SessionManager>) -> LoopReportClient {
+        LoopReportClient::new(PlatformExtensionContext {
+            extension_manager: None,
+            session_manager: Arc::clone(manager),
+            session: None,
+            use_login_shell_path: false,
+        })
+        .unwrap()
+    }
+
+    async fn call(
+        manager: &Arc<SessionManager>,
+        session_id: &str,
+        arguments: Option<JsonObject>,
+    ) -> CallToolResult {
+        client(manager)
+            .call_tool(
+                &ToolCallContext::new(session_id.to_string(), None, None),
+                LOOP_REPORT_TOOL_NAME,
+                arguments,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+    }
+
+    fn text(result: &CallToolResult) -> String {
+        result
+            .content
+            .iter()
+            .filter_map(|c| match &c.raw {
+                RawContent::Text(t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn ends_turn(result: &CallToolResult) -> bool {
+        result
+            .meta
+            .as_ref()
+            .and_then(|m| m.0.get(END_TURN_META_KEY))
+            == Some(&Value::Bool(true))
+    }
+
+    async fn in_flight(cadence: LoopCadence) -> (tempfile::TempDir, Arc<SessionManager>, String) {
+        let (dir, manager, id) = a_chat().await;
+        store(&manager, &id, a_loop(cadence, 1, true)).await;
+        (dir, manager, id)
+    }
+
+    fn last_report(record: &LoopRecord) -> Option<LoopReport> {
+        record.ticks.last().and_then(|t| t.report.clone())
+    }
+
+    /// The local engines' qwen3_coder parser keeps a parameter's value as text only when its
+    /// schema type is a plain string; any other type is `ast.literal_eval`ed and a word refuses.
+    #[test]
+    fn the_schema_is_flat_and_every_argument_a_plain_string() {
+        let schema = report_schema();
+        assert_eq!(schema["type"], "object");
+        let properties = schema["properties"].as_object().unwrap();
+        let names: Vec<&str> = properties.keys().map(String::as_str).collect();
+        for name in [
+            "verdict",
+            "summary",
+            "next_step",
+            "next_in",
+            "next_reason",
+            "blocked_on",
+        ] {
+            assert!(names.contains(&name), "{name} is in the schema: {names:?}");
+        }
+        assert_eq!(properties.len(), 6);
+        for (name, property) in properties {
+            assert_eq!(
+                property["type"],
+                Value::String("string".into()),
+                "{name} is a plain string"
+            );
+            assert!(property.get("properties").is_none() && property.get("items").is_none());
+        }
+        assert_eq!(
+            properties["verdict"]["enum"],
+            serde_json::json!(["progress", "done", "blocked"])
+        );
+        assert_eq!(
+            schema["required"],
+            serde_json::json!(["verdict", "summary", "next_step"])
+        );
+        let tool = &LoopReportClient::tools()[0];
+        assert_eq!(tool.name, LOOP_REPORT_TOOL_NAME);
+        assert_eq!(
+            tool.annotations.as_ref().and_then(|a| a.read_only_hint),
+            Some(true),
+            "read-only, so an approve mode never asks the person to approve a tick's report"
+        );
+    }
+
+    #[tokio::test]
+    async fn each_verdict_is_recorded_on_the_tick_in_flight_and_ends_the_turn() {
+        for (verdict, blocked_on) in [
+            ("progress", None),
+            ("done", None),
+            (" Blocked ", Some("which CSV delimiter the owner wants")),
+        ] {
+            let (_dir, manager, id) = in_flight(every_10m()).await;
+            let mut call_args = serde_json::json!({
+                "verdict": verdict,
+                "summary": "  Added svc- accounts; node scripts/validate_users.js exited 0  ",
+                "next_step": "cover case-only duplicate emails in generate_users.js",
+            });
+            if let Some(b) = blocked_on {
+                call_args["blocked_on"] = b.into();
+            }
+            let result = call(&manager, &id, args(call_args)).await;
+            assert_eq!(text(&result), RECORDED, "{verdict}");
+            assert_ne!(result.is_error, Some(true));
+            assert!(ends_turn(&result), "{verdict}: a valid report ends the turn");
+
+            let report = last_report(&stored(&manager, &id).await.unwrap()).unwrap();
+            assert_eq!(
+                report.verdict,
+                match verdict.trim().to_lowercase().as_str() {
+                    "progress" => LoopVerdict::Progress,
+                    "done" => LoopVerdict::Done,
+                    _ => LoopVerdict::Blocked,
+                }
+            );
+            assert_eq!(
+                report.summary,
+                "Added svc- accounts; node scripts/validate_users.js exited 0"
+            );
+            assert_eq!(
+                report.next_step,
+                "cover case-only duplicate emails in generate_users.js"
+            );
+            assert_eq!(report.blocked_on.as_deref(), blocked_on);
+            let record = stored(&manager, &id).await.unwrap();
+            assert!(
+                record.ticks[0].report.is_none(),
+                "only the tick in flight is written"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_report_writes_nothing_and_does_not_end_the_turn() {
+        let cases = [
+            (
+                serde_json::json!({"summary": "s", "next_step": "n"}),
+                LoopCadence::SelfPaced,
+                "verdict is missing",
+            ),
+            (
+                serde_json::json!({"verdict": "maybe", "summary": "s", "next_step": "n"}),
+                LoopCadence::SelfPaced,
+                "verdict \"maybe\" is not progress, done or blocked.",
+            ),
+            (
+                serde_json::json!({"verdict": "progress", "summary": "   ", "next_step": "n"}),
+                LoopCadence::SelfPaced,
+                "summary is empty",
+            ),
+            (
+                serde_json::json!({"verdict": "progress", "summary": "s"}),
+                LoopCadence::SelfPaced,
+                "next_step is empty",
+            ),
+            (
+                serde_json::json!({"verdict": "blocked", "summary": "s", "next_step": "n"}),
+                LoopCadence::SelfPaced,
+                "verdict is blocked but blocked_on is empty",
+            ),
+            (
+                serde_json::json!({"verdict": "progress", "summary": "s", "next_step": "n", "next_in": "soon"}),
+                LoopCadence::SelfPaced,
+                "next_in \"soon\" is not a number and s, m or h",
+            ),
+            (
+                serde_json::json!({"verdict": "progress", "summary": 42, "next_step": "n"}),
+                LoopCadence::SelfPaced,
+                "The arguments could not be read",
+            ),
+        ];
+        for (call_args, cadence, words) in cases {
+            let (_dir, manager, id) = in_flight(cadence).await;
+            let before = stored(&manager, &id).await;
+            let result = call(&manager, &id, args(call_args.clone())).await;
+            assert_eq!(result.is_error, Some(true), "{call_args}");
+            assert!(
+                text(&result).contains(words),
+                "{call_args}: {}",
+                text(&result)
+            );
+            assert!(
+                !ends_turn(&result),
+                "{call_args}: a refusal lets the model call again"
+            );
+            assert_eq!(stored(&manager, &id).await, before, "{call_args}");
+        }
+
+        let (_dir, manager, id) = in_flight(LoopCadence::SelfPaced).await;
+        let result = call(&manager, &id, None).await;
+        assert!(text(&result).contains("needs its arguments") && !ends_turn(&result));
+    }
+
+    #[tokio::test]
+    async fn outside_a_tick_the_report_is_refused_by_name() {
+        let (_dir, manager, no_loop) = a_chat().await;
+        let good = || {
+            args(serde_json::json!({"verdict": "progress", "summary": "s", "next_step": "n"}))
+        };
+        let result = call(&manager, &no_loop, good()).await;
+        assert_eq!(text(&result), format!("Error: {NO_TICK}"));
+        assert!(!ends_turn(&result));
+        assert!(stored(&manager, &no_loop).await.is_none(), "nothing written");
+
+        for between_ticks in [a_loop(every_10m(), 2, false), a_loop(every_10m(), 0, false)] {
+            let (_dir, manager, id) = a_chat().await;
+            store(&manager, &id, between_ticks.clone()).await;
+            let result = call(&manager, &id, good()).await;
+            assert_eq!(text(&result), format!("Error: {NO_TICK}"));
+            assert!(!ends_turn(&result));
+            assert_eq!(stored(&manager, &id).await, Some(between_ticks));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_delay_is_checked_only_where_goose_decides_when() {
+        let (_dir, manager, id) = in_flight(LoopCadence::SelfPaced).await;
+        let result = call(
+            &manager,
+            &id,
+            args(serde_json::json!({
+                "verdict": "progress", "summary": "s", "next_step": "n",
+                "next_in": "90m", "next_reason": "the nightly build lands at 01:00"
+            })),
+        )
+        .await;
+        assert!(ends_turn(&result));
+        let report = last_report(&stored(&manager, &id).await.unwrap()).unwrap();
+        assert_eq!(report.next_in.as_deref(), Some("90m"));
+        assert_eq!(
+            report.next_reason.as_deref(),
+            Some("the nightly build lands at 01:00")
+        );
+
+        // No delay named: recorded as absent, and the loop then waits for the person by name
+        // (rules::next_tick → waiting_you); a JSON null (the model's literal `null`) is the same.
+        let (_dir, manager, id) = in_flight(LoopCadence::SelfPaced).await;
+        let result = call(
+            &manager,
+            &id,
+            args(serde_json::json!({
+                "verdict": "progress", "summary": "s", "next_step": "n", "next_in": null
+            })),
+        )
+        .await;
+        assert!(ends_turn(&result));
+        let report = last_report(&stored(&manager, &id).await.unwrap()).unwrap();
+        assert!(report.next_in.is_none() && report.next_reason.is_none());
+
+        // A fixed cadence never reads next_in; it is kept as the model wrote it.
+        let (_dir, manager, id) = in_flight(every_10m()).await;
+        let result = call(
+            &manager,
+            &id,
+            args(serde_json::json!({
+                "verdict": "progress", "summary": "s", "next_step": "n", "next_in": "soon"
+            })),
+        )
+        .await;
+        assert!(ends_turn(&result));
+        let report = last_report(&stored(&manager, &id).await.unwrap()).unwrap();
+        assert_eq!(report.next_in.as_deref(), Some("soon"));
+    }
+
+    #[tokio::test]
+    async fn a_second_report_in_the_same_tick_replaces_the_first() {
+        let (_dir, manager, id) = in_flight(every_10m()).await;
+        for step in ["first next step", "second next step"] {
+            let result = call(
+                &manager,
+                &id,
+                args(serde_json::json!({"verdict": "progress", "summary": "s", "next_step": step})),
+            )
+            .await;
+            assert!(ends_turn(&result));
+        }
+        let record = stored(&manager, &id).await.unwrap();
+        assert_eq!(
+            last_report(&record).unwrap().next_step,
+            "second next step"
+        );
+        assert_eq!(record.ticks.len(), 2);
+    }
+
+    /// Each stream call answers with the next scripted assistant message.
+    struct ScriptedProvider {
+        script: Vec<Message>,
+        calls: AtomicUsize,
+        offered: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl Provider for ScriptedProvider {
+        fn get_name(&self) -> &str {
+            "scripted"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            *self.offered.lock().unwrap() = tools.iter().map(|t| t.name.to_string()).collect();
+            let message = self.script.get(call).cloned().unwrap_or_else(|| {
+                Message::assistant().with_text("the turn went on after the last scripted call")
+            });
+            Ok(stream_from_single_message(
+                message,
+                ProviderUsage::new("scripted".into(), Usage::new(Some(10), Some(5), Some(15))),
+            ))
+        }
+    }
+
+    fn report_call(id: &str, verdict: &str, next_step: &str) -> Message {
+        Message::assistant().with_tool_request(
+            id,
+            Ok(
+                CallToolRequestParams::new(LOOP_REPORT_TOOL_NAME).with_arguments(object!({
+                    "verdict": verdict,
+                    "summary": "ran the tests: 3 failed",
+                    "next_step": next_step,
+                })),
+            ),
+        )
+    }
+
+    async fn run_tick(script: Vec<Message>) -> (Arc<ScriptedProvider>, Option<LoopReport>) {
+        let (_dir, manager, id) = in_flight(every_10m()).await;
+        let agent = an_agent(&manager);
+        sync_on(&agent, &id, &stored(&manager, &id).await.unwrap())
+            .await
+            .unwrap();
+        let provider = Arc::new(ScriptedProvider {
+            script,
+            calls: AtomicUsize::new(0),
+            offered: Mutex::new(Vec::new()),
+        });
+        agent
+            .update_provider(provider.clone(), ModelConfig::new("scripted-model"), &id)
+            .await
+            .unwrap();
+        let reply = agent
+            .reply(
+                Message::user().with_text("Loop tick 2 — \"Make every test pass\""),
+                SessionConfig {
+                    id: id.clone(),
+                    schedule_id: None,
+                    max_turns: None,
+                    retry_config: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        tokio::pin!(reply);
+        while let Some(event) = reply.next().await {
+            event.unwrap();
+        }
+        let report = last_report(&stored(&manager, &id).await.unwrap());
+        (provider, report)
+    }
+
+    #[tokio::test]
+    async fn a_valid_report_ends_the_turn_in_the_agent_loop() {
+        let (provider, report) = run_tick(vec![report_call(
+            "call_report",
+            "progress",
+            "fix the parser",
+        )])
+        .await;
+        assert!(
+            provider
+                .offered
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| n == LOOP_REPORT_TOOL_NAME),
+            "a loop chat's model is offered loop_report"
+        );
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            1,
+            "the turn ends at the report; the model is not called again"
+        );
+        assert_eq!(report.unwrap().next_step, "fix the parser");
+    }
+
+    #[tokio::test]
+    async fn an_invalid_report_keeps_the_turn_open_so_the_model_can_retry() {
+        let (provider, report) = run_tick(vec![
+            report_call("call_bad", "maybe", "fix the parser"),
+            report_call("call_good", "progress", "fix the parser properly"),
+        ])
+        .await;
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            2,
+            "the refusal went back to the model, its retry ended the turn"
+        );
+        assert_eq!(report.unwrap().next_step, "fix the parser properly");
+    }
+}

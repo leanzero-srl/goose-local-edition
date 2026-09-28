@@ -780,4 +780,220 @@ mod tests {
             .iter()
             .any(|command| command.name == "status"));
     }
+
+    mod loop_command {
+        use goose_sdk_types::custom_requests::{
+            LoopCadence, LoopNextReason, LoopNextTick, LoopOffer, LoopStatus,
+        };
+
+        use super::super::*;
+        use crate::session_loops::agent_sync::testing::*;
+        use crate::session_loops::seam;
+
+        fn now() -> DateTime<Utc> {
+            loop_record::parse_time("2026-09-27T22:04:00Z").unwrap()
+        }
+
+        fn every_10m() -> LoopCadence {
+            LoopCadence::Every {
+                every: "10m".into(),
+            }
+        }
+
+        fn command(line: &str) -> LoopCommand {
+            loop_rules::parse_loop_command(line).unwrap()
+        }
+
+        fn waiting_at(mut record: LoopRecord, at: &str) -> LoopRecord {
+            record.status = LoopStatus::Waiting;
+            record.next_tick = Some(LoopNextTick {
+                at: at.into(),
+                reason: LoopNextReason::Cadence,
+            });
+            record
+        }
+
+        async fn reply(agent: &Agent, session_id: &str, line: &str) -> Message {
+            agent
+                .execute_command(line, session_id)
+                .await
+                .unwrap()
+                .expect("/loop always answers")
+        }
+
+        fn words(message: &Message) -> String {
+            message.as_concat_text()
+        }
+
+        #[test]
+        fn loop_is_a_builtin_that_never_starts_a_turn() {
+            assert!(list_commands().iter().any(|c| c.name == "loop"));
+            for line in [
+                "/loop",
+                "/loop fix the failing tests",
+                "/loop every 10m fix the failing tests",
+                "/loop now",
+                "/loop pause",
+                "/loop resume",
+                "/loop stop",
+                "/loop stop the flaky retries",
+            ] {
+                assert!(!command_starts_turn(line), "{line}");
+            }
+        }
+
+        #[test]
+        fn the_control_forms_are_the_ones_sent_straight_through() {
+            for (line, action) in [
+                ("/loop now", Some(LoopControlAction::TickNow)),
+                ("/loop pause", Some(LoopControlAction::Pause)),
+                ("/loop RESUME", Some(LoopControlAction::Resume)),
+                ("/loop stop", Some(LoopControlAction::Stop)),
+                ("/loop", None),
+                ("/loop fix the tests", None),
+            ] {
+                assert_eq!(loop_control_action(&command(line)), action, "{line}");
+            }
+        }
+
+        #[test]
+        fn each_accepted_line_answers_with_the_records_facts() {
+            let at = |line: &str, record: &LoopRecord| {
+                loop_change_reply(&command(line), record, now(), 0)
+            };
+            let fresh = a_loop(every_10m(), 0, false);
+            assert_eq!(
+                at("/loop every 10m Make every test pass", &fresh),
+                "Loop started: Make every test pass · every 10 min. The first tick runs now."
+            );
+            assert_eq!(
+                at("/loop Make every test pass", &a_loop(LoopCadence::SelfPaced, 0, false)),
+                "Loop started: Make every test pass · goose decides when. The first tick runs now."
+            );
+
+            let two = a_loop(every_10m(), 2, false);
+            assert_eq!(at("/loop pause", &two), "Loop paused after tick 2.");
+            assert_eq!(at("/loop stop", &two), "Loop stopped after tick 2.");
+            assert_eq!(at("/loop pause", &fresh), "Loop paused before its first tick.");
+            assert_eq!(at("/loop stop", &fresh), "Loop stopped before its first tick.");
+
+            let waiting = waiting_at(two.clone(), "2026-09-27T22:10:00Z");
+            assert_eq!(
+                at("/loop resume", &waiting),
+                "Loop resumed — next tick 22:10."
+            );
+
+            let mut offered = waiting.clone();
+            offered.offer = Some(LoopOffer {
+                n: 3,
+                message_id: "looptick_lp_0a1b2c3d_3_0000".into(),
+                offered_at: "2026-09-27T22:04:00Z".into(),
+                refused: None,
+            });
+            assert_eq!(at("/loop now", &offered), "Tick 3 starts now.");
+            assert_eq!(
+                at("/loop now", &waiting),
+                "Next tick 22:10 · in 6m",
+                "no offer yet: the reply is the status, not a claim that the tick started"
+            );
+        }
+
+        #[test]
+        fn status_names_the_loop_or_its_absence_never_a_default() {
+            assert_eq!(
+                loop_status_reply(&LoopsGetResponse::default(), now(), 0),
+                NO_LOOP
+            );
+            let unreadable = LoopsGetResponse {
+                error: Some("The loop record could not be read: missing field `goal`".into()),
+                ..LoopsGetResponse::default()
+            };
+            assert_eq!(
+                loop_status_reply(&unreadable, now(), 0),
+                "The loop record could not be read: missing field `goal`"
+            );
+            let waiting = waiting_at(a_loop(every_10m(), 2, false), "2026-09-27T22:10:00Z");
+            let got = LoopsGetResponse {
+                effective_status: Some(waiting.status),
+                effective_reason: None,
+                record: Some(waiting),
+                error: None,
+            };
+            assert_eq!(
+                loop_status_reply(&got, now(), 0),
+                "Loop: Make every test pass · Next tick 22:10 · in 6m · tick 2"
+            );
+        }
+
+        #[tokio::test]
+        async fn without_a_runner_every_change_answers_its_refusal_and_writes_nothing() {
+            assert!(!seam::runner_installed());
+            let (_dir, manager, id) = a_chat().await;
+            let agent = an_agent(&manager);
+
+            let status = reply(&agent, &id, "/loop").await;
+            assert_eq!(words(&status), NO_LOOP);
+            assert!(status.metadata.user_visible && !status.metadata.agent_visible);
+
+            for line in [
+                "/loop fix the failing tests",
+                "/loop every 10m fix the failing tests",
+                "/loop now",
+                "/loop pause",
+                "/loop resume",
+                "/loop stop",
+            ] {
+                assert_eq!(words(&reply(&agent, &id, line).await), seam::RUNNER_ABSENT, "{line}");
+            }
+            assert!(stored(&manager, &id).await.is_none());
+            assert!(
+                !tool_names(&agent, &id)
+                    .await
+                    .iter()
+                    .any(|n| n == "loop_report"),
+                "a refused start adds no tool"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_malformed_line_is_refused_with_its_own_words() {
+            let (_dir, manager, id) = a_chat().await;
+            let agent = an_agent(&manager);
+            let stop = words(&reply(&agent, &id, "/loop stop the flaky retries").await);
+            assert!(
+                stop.starts_with("/loop stop takes nothing after it"),
+                "\"stop\" is never read as a goal: {stop}"
+            );
+            assert_eq!(
+                words(&reply(&agent, &id, "/loop every 10m").await),
+                "Say what the loop should do: /loop every 10m <goal>."
+            );
+            assert_eq!(
+                words(&reply(&agent, &id, "/loop every").await),
+                "Say how often and what: /loop every 10m <goal>."
+            );
+            assert_eq!(
+                words(&reply(&agent, &id, "/loop every soon fix it").await),
+                "Use a number and s, m or h — 90m, 2h"
+            );
+            assert!(stored(&manager, &id).await.is_none());
+        }
+
+        #[tokio::test]
+        async fn status_reads_the_stored_loop() {
+            let (_dir, manager, id) = a_chat().await;
+            store(
+                &manager,
+                &id,
+                waiting_at(a_loop(every_10m(), 1, false), "2026-09-27T22:10:00Z"),
+            )
+            .await;
+            let agent = an_agent(&manager);
+            let status = words(&reply(&agent, &id, "/loop").await);
+            assert!(
+                status.starts_with(&format!("Loop: {GOAL} · ")) && status.ends_with(" · tick 1"),
+                "{status}"
+            );
+        }
+    }
 }
