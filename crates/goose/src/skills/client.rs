@@ -375,4 +375,33 @@ mod tests {
 
         assert!(result.is_error.unwrap_or(false));
     }
+
+    /// Q-267: the skills client reads the folder the extension manager started it for — a chat's
+    /// project skills — and with no folder at all it refuses instead of reading goosed's cwd.
+    #[tokio::test]
+    async fn the_skills_client_reads_the_folder_it_was_started_for() {
+        let temp_dir = TempDir::new().unwrap();
+        let skill_dir = temp_dir.path().join(".agents/skills/project-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: project-skill\ndescription: The project's own skill\n---\nDo it.",
+        )
+        .unwrap();
+        let context = |working_dir: Option<std::path::PathBuf>| PlatformExtensionContext {
+            extension_manager: None,
+            session_manager: Arc::new(crate::session::SessionManager::instance()),
+            session: None,
+            use_login_shell_path: false,
+            working_dir,
+        };
+
+        let client = SkillsClient::new(context(Some(temp_dir.path().to_path_buf()))).unwrap();
+        assert!(client
+            .discover_skills()
+            .iter()
+            .any(|skill| skill.name == "project-skill"));
+
+        assert!(SkillsClient::new(context(None)).is_err());
+    }
 }

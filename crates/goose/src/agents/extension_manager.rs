@@ -3329,4 +3329,90 @@ mod tests {
             "custom header x-api-key was not forwarded through the OAuth connection path"
         );
     }
+
+    /// Q-264: the memory builtin runs inside goosed; since Q-257 goosed's cwd is $HOME for every
+    /// window. A session in a project gets that project's local memories in its instructions and
+    /// its home-folder note only when its own folder is the home folder.
+    #[tokio::test]
+    async fn the_memory_builtin_indexes_its_sessions_folder_not_the_process_cwd() {
+        crate::builtin_extension::register_builtin_extensions(
+            crate::builtin_extension::builtin_extensions(),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(project.join(".goose").join("memory")).unwrap();
+        std::fs::write(
+            project
+                .join(".goose")
+                .join("memory")
+                .join("deploy-commands.txt"),
+            "# project\nThis project deploys with make ship-it.\n\n",
+        )
+        .unwrap();
+        assert_ne!(
+            std::env::current_dir().unwrap().canonicalize().unwrap(),
+            project.canonicalize().unwrap()
+        );
+
+        let em = Arc::new(ExtensionManager::new_without_provider(
+            temp.path().join("data"),
+        ));
+        em.add_extension(
+            ExtensionConfig::Builtin {
+                name: "memory".to_string(),
+                display_name: None,
+                description: "memory".to_string(),
+                timeout: None,
+                bundled: None,
+                available_tools: vec![],
+            },
+            project.clone(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let info = em.get_extensions_info(&project).await;
+        let memory = info.iter().find(|i| i.name == "memory").unwrap();
+        assert!(
+            memory
+                .instructions
+                .contains("deploy-commands [project]: This project deploys with make ship-it."),
+            "{}",
+            memory.instructions
+        );
+        assert!(!memory.instructions.contains("user's HOME folder"));
+    }
+
+    /// Q-267: a child MCP server whose session folder is gone is refused, never started in
+    /// goosed's own cwd.
+    #[tokio::test]
+    async fn a_stdio_extension_whose_folder_is_missing_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let em = Arc::new(ExtensionManager::new_without_provider(
+            temp.path().join("data"),
+        ));
+        let err = em
+            .add_extension(
+                ExtensionConfig::Stdio {
+                    name: "echo".to_string(),
+                    description: "echo".to_string(),
+                    cmd: "cat".to_string(),
+                    args: vec![],
+                    envs: Default::default(),
+                    env_keys: vec![],
+                    timeout: None,
+                    cwd: None,
+                    bundled: None,
+                    available_tools: vec![],
+                },
+                temp.path().join("gone"),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("does not exist"), "{err}");
+    }
 }
