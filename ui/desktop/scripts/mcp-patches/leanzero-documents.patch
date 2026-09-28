@@ -1119,7 +1119,7 @@
      // Optional upload bridge (same contract as create-*).
 --- /dev/null
 +++ b/src/utils/chat-folder.js
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,70 @@
 +/**
 + * The folder the calling chat works in (goose Q-388).
 + *
@@ -1132,6 +1132,7 @@
 + */
 +import { AsyncLocalStorage } from "node:async_hooks";
 +import path from "node:path";
++import { requestContext } from "./request-context.js";
 +
 +export const WORKING_DIR_META_KEY = "agent-working-dir";
 +
@@ -1175,8 +1176,12 @@
 +  return store.getStore()?.resolutions ?? [];
 +}
 +
-+/** An existing-file path the caller named: absolute as given, relative → the chat's folder. */
++/**
++ * A path the caller named for an existing file (or an edit's output): absolute as given,
++ * relative → the chat's folder. A hosted (HTTP) request keeps upstream's resolution.
++ */
 +export function resolveInChatFolder(p, what) {
++  if (requestContext.getStore()) return path.resolve(p);
 +  refuseTilde(p, what);
 +  if (path.isAbsolute(p)) return path.normalize(p);
 +  const folder = chatFolder();
