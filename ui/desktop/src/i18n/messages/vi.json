@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, other {yêu cầu đã dừng vẫn đang rời khỏi engine}}{since, select, none {} other { · đã dừng {since} trước}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "Bị bên gọi hủy"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "Đã dừng: {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "Engine đã dừng: câu trả lời cứ đi vòng quanh"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "Engine đã dừng: lặp lại cùng một lệnh gọi công cụ"
+  },
   "leavingRows.stage": {
     "defaultMessage": "Đã dừng · đang rời"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "chia sẻ"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "Đã sao chép"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "Sao chép"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "Sao chép lệnh {command}"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "Chính ứng dụng goose này đang lắng nghe trên cổng engine"
+  },
+  "strayListener.label": {
+    "defaultMessage": "Cổng {port} đang bị chiếm"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "Không phải của goose này — pid {pid} ({command}) đã khởi động và vẫn đang chạy nó: một goose khác trên Mac này, hoặc một terminal"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "Không phải của goose này — nó không mang dấu engine của goose (một goose cũ hơn, hoặc chương trình khác, đã khởi động nó)"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "Có thứ gì đó trả lời trên cổng {port}, nhưng giờ không có tiến trình nào lắng nghe ở đó — có thể nó vừa thoát."
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "Không phải của goose này — một engine goose được khởi động cho engine hoặc cổng khác"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "Không phải của goose này — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "Không phải của goose này — nó chạy dưới người dùng khác trên Mac này"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "Engine của chính goose này, còn sót lại từ lần chạy trước — giờ không có gì chạy nó"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "Tiếp theo: dừng nó bằng lệnh này, rồi khởi động lại trong Chạy."
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "Tiếp theo: khởi động lại trong Chạy — lần khởi động sẽ dừng phần còn sót này trước."
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "Tiếp theo: đặt cho engine một cổng khác trong phần cài đặt của nó."
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "Tiếp theo: thoát thứ đã khởi động nó (pid {pid}), rồi khởi động lại trong Chạy."
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "Một tiến trình mà goose này không chạy đang lắng nghe trên cổng {port} — Unmount sẽ dừng nó."
+  },
+  "strayListener.unread": {
+    "defaultMessage": "Không đọc được ai đang giữ cổng {port} ({error}). Unmount dừng mọi thứ đang lắng nghe ở đó."
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "Chưa chứng minh được là của goose này — không đọc được ai đã khởi động nó"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "không đọc được dòng lệnh"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Nhà cung cấp {name} đã được định cấu hình"

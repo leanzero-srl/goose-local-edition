@@ -26950,13 +26950,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // The probes' own named absences (`lm-probe-unauthorized`: LM Studio refused the catalog
     // probe for want of a token, so its partition is unproven) ride to run.jsonl with the rest.
     pool_absences.extend(engines.take_probe_absences());
-    // A declared sidecar device that nobody can mount this run — its engine serves nothing, or
-    // serves ANOTHER alias, while loading is OFF (the pre-warm is the only mount path and
-    // allow_model_load gates it) — leaves the pool by name, before the planner-keep guard can pin
-    // an unmountable planner. Each exclusion is a stderr line + a run.jsonl event
-    // (`sidecar_exclusion_events`). Mild — the run goes on.
     pool_absences.extend(sidecar_exclusion_events(
-        &exclude_unmountable_sidecar_devices(&mut fleet_pool, &served, cfg.allow_model_load),
+        &exclude_unmountable_sidecar_devices(
+            &mut fleet_pool,
+            &served, // loading OFF: an unmountable sidecar device, or one whose server is not
+            cfg.allow_model_load, // proven this goose's or a live goose's (Q-250), leaves the
+            &engines, // pool by name before the planner-keep guard can pin it. Mild.
+        ),
     ));
     // #128 no-start guard: if the endpoint proves it can serve models (non-empty /v1/models) but NONE of them
     // are our resident pool's — every alias withdrawn — refuse now instead of dispatching the whole run into

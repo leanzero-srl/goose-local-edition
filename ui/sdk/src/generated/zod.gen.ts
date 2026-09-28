@@ -2740,6 +2740,32 @@ export const zMlxEngineStatusRequest_unstable = z.object({
 });
 
 /**
+ * One process listening on the engine port while this goose supervises no engine there (Q-249):
+ * the same facts a refused Mount names — pid, command line, and whether it is this goose's.
+ */
+export const zMlxStrayListenerHolderDto = z.object({
+    pid: z.number().int().gte(0),
+    argv: z.array(z.string()),
+    ours: z.boolean(),
+    notOursRule: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    notOursReason: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    liveStarterPid: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    liveStarterArgv: z.union([
+        z.array(z.string()),
+        z.null()
+    ]).optional()
+});
+
+/**
  * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
  */
 export const zMlxChipDto = z.object({
@@ -2928,6 +2954,14 @@ export const zMlxEngineStatusDto = z.object({
     ]).optional(),
     strayListenerPort: z.union([
         z.number().int().gte(0).lte(65535),
+        z.null()
+    ]).optional(),
+    strayListenerHolders: z.union([
+        z.array(zMlxStrayListenerHolderDto),
+        z.null()
+    ]).optional(),
+    strayListenerHoldersError: z.union([
+        z.string(),
         z.null()
     ]).optional(),
     availableMemoryGb: z.number(),

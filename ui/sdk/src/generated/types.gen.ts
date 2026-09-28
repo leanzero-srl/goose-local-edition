@@ -2633,6 +2633,14 @@ export type MlxEngineStatusDto = {
      */
     strayListenerPort?: number | null;
     /**
+     * Who holds `strayListenerPort`, read while no mount is in flight: every process listening
+     * on it, with whether it is this goose's own leftover engine and why not. Absent when the
+     * port is not stray, while a mount is in flight (and from a goose before it), or exactly
+     * when `strayListenerHoldersError` says why they could not be read.
+     */
+    strayListenerHolders?: Array<MlxStrayListenerHolderDto> | null;
+    strayListenerHoldersError?: string | null;
+    /**
      * Memory a mount can take: free pages plus the file cache the OS reclaims on demand
      * (on macOS, Activity Monitor's physical-minus-used). 0 exactly when `memory_error`
      * is set.
@@ -2709,6 +2717,38 @@ export type MlxEngineStatusDto = {
      */
     machineLoad?: MlxMachineLoadDto | null;
     machineLoadError?: string | null;
+};
+
+/**
+ * One process listening on the engine port while this goose supervises no engine there (Q-249):
+ * the same facts a refused Mount names — pid, command line, and whether it is this goose's.
+ */
+export type MlxStrayListenerHolderDto = {
+    pid: number;
+    /**
+     * Its command line; empty when it could not be read.
+     */
+    argv: Array<string>;
+    /**
+     * Proven an engine this goose's sidecar started on this port whose goose is gone: a Mount
+     * stops it and starts the engine.
+     */
+    ours: boolean;
+    /**
+     * When not ours, the rule it failed: "unreadable" | "initOrSelf" | "otherUser" |
+     * "otherEngine" | "noMarker" | "liveStarter".
+     */
+    notOursRule?: string | null;
+    /**
+     * The same finding in full, with its pids and values.
+     */
+    notOursReason?: string | null;
+    /**
+     * When the process that started it is alive (another goose, or a shell): that process —
+     * the one to quit.
+     */
+    liveStarterPid?: number | null;
+    liveStarterArgv?: Array<string> | null;
 };
 
 /**

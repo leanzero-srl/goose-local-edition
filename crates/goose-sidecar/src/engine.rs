@@ -23,8 +23,8 @@ use crate::machine::{
 };
 use crate::model_identity::{NodeModel, ServedNames};
 use crate::{
-    listening_pids, measure, port_has_listener, sidecar_marker, MemoryReading, PortHolder, Sidecar,
-    SidecarConfig, StartCancel, StartCancelled, StartupWatch, GIB,
+    listening_pids, measure, port_has_listener, sidecar_marker, Ensured, MemoryReading, PortHolder,
+    RestartLoadFailed, Sidecar, SidecarConfig, StartCancel, StartCancelled, StartupWatch, GIB,
 };
 
 /// Milliseconds a load spent in each phase the engine showed. A phase it never showed is absent.
@@ -804,21 +804,67 @@ impl std::fmt::Display for UnsupervisedListenerError {
 
 impl std::error::Error for UnsupervisedListenerError {}
 
+/// Every LISTEN pid on `port`, judged against `marker`; `Err` says why they could not be read.
+async fn read_port_holders(
+    port: u16,
+    marker: &str,
+) -> std::result::Result<Vec<PortHolder>, String> {
+    #[cfg(unix)]
+    {
+        crate::port_holder::inspect_port(port, marker)
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (port, marker);
+        Err("this platform cannot read a port's listeners".to_string())
+    }
+}
+
+/// One LISTEN pid on the engine port while this manager supervises nothing (Q-249): what the
+/// Engine panel names beside `stray_listener_port` — the same facts [`UnsupervisedListenerError`]
+/// refuses a mount with, so the panel and the refusal can never disagree about who holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrayListenerHolder {
+    pub pid: u32,
+    /// Its command line; empty when it could not be read.
+    pub argv: Vec<String>,
+    /// Proven an engine this goose's sidecar started on this port whose goosed is gone
+    /// (`port_holder::ownership_proof`): a Mount stops it per pid and starts the engine.
+    pub ours: bool,
+    /// When not ours: the rule it failed (`port_holder::NotOursRule::as_str`) and the finding in
+    /// full, with its pids and values.
+    pub not_ours_rule: Option<String>,
+    pub not_ours_reason: Option<String>,
+    /// When the reason is that what started it is alive: that process — the one to quit.
+    pub live_starter_pid: Option<u32>,
+    pub live_starter_argv: Option<Vec<String>>,
+}
+
+impl From<&PortHolder> for StrayListenerHolder {
+    fn from(holder: &PortHolder) -> Self {
+        let not_ours = holder.verdict.as_ref().err();
+        let starter = not_ours.and_then(|n| n.live_starter.as_ref());
+        Self {
+            pid: holder.pid,
+            argv: holder.argv.clone(),
+            ours: holder.verdict.is_ok(),
+            not_ours_rule: not_ours.map(|n| n.rule.as_str().to_string()),
+            not_ours_reason: not_ours.map(|n| n.reason.clone()),
+            live_starter_pid: starter.map(|s| s.pid),
+            live_starter_argv: starter.map(|s| s.argv.clone()),
+        }
+    }
+}
+
 /// The refusal a mount owes when something it does not supervise listens on `port`: `None` when
 /// nothing does, or when every holder is proven this sidecar's own leftover (the start stops it).
 async fn unsupervised_listener(port: u16, marker: &str) -> Option<UnsupervisedListenerError> {
     if !port_has_listener(port) {
         return None;
     }
-    #[cfg(unix)]
-    let holders = crate::port_holder::inspect_port(port, marker)
-        .await
-        .map_err(|e| format!("{e:#}"));
-    #[cfg(not(unix))]
-    let holders: std::result::Result<Vec<PortHolder>, String> = {
-        let _ = marker;
-        Err("this platform cannot read a port's listeners".to_string())
-    };
+    let holders = read_port_holders(port, marker).await;
     if let Ok(holders) = &holders {
         if !holders.is_empty() && holders.iter().all(|h| h.verdict.is_ok()) {
             tracing::warn!(
@@ -904,6 +950,11 @@ pub struct EngineStatus {
     /// Set when the manager supervises nothing but SOMETHING already listens on the
     /// configured port — an engine orphaned by a previous goosed. `unmount` reclaims it.
     pub stray_listener_port: Option<u16>,
+    /// Who holds `stray_listener_port`, read while no mount is in flight (Q-249): every LISTEN
+    /// pid with its verdict. `None` when the port is not stray, while a mount is in flight, or
+    /// exactly when `stray_listener_holders_error` says why they could not be read.
+    pub stray_listener_holders: Option<Vec<StrayListenerHolder>>,
+    pub stray_listener_holders_error: Option<String>,
     /// Free pages plus reclaimable file cache (`memory::measure`); 0 exactly when
     /// `memory_error` says the measurement failed.
     pub available_memory_gb: f64,
@@ -953,6 +1004,15 @@ pub fn start_phase(stderr_tail: &[String]) -> &'static str {
         }
     }
     "starting"
+}
+
+/// Rapid-MLX's own words when it begins shutting down (v0.14.3-lz.4, stderr, measured on the four
+/// Q-258 engines of 2026-09-28): its signal observability line "rapid-mlx received signal SIGTERM;
+/// thread stacks follow", then uvicorn's "INFO:     Shutting down" — from which its listener is
+/// closed while in-flight requests drain.
+pub fn shutdown_began(line: &str) -> bool {
+    line.contains("rapid-mlx received signal")
+        || line.strip_prefix("INFO:").map(str::trim) == Some("Shutting down")
 }
 
 /// The mount gate refused: the one fit rule's verdict on this Mac, typed so the ACP layer can hand
@@ -1105,14 +1165,24 @@ async fn reclaim_port(port: u16) {
 /// policy, stated (the single engine's is the distributed engine's with `restartOnFailure` off:
 /// no silent restart; a Mount restarts it, behind the same crash breaker).
 fn engine_exit_message(exit: &crate::SidecarExit) -> String {
-    let pid = exit
-        .pid
-        .map(|pid| format!(" (pid {pid})"))
-        .unwrap_or_default();
+    let account = match &exit.exit_report {
+        Some(report) => report.clone(),
+        None => {
+            let pid = exit
+                .pid
+                .map(|pid| format!(" (pid {pid})"))
+                .unwrap_or_default();
+            let who = exit
+                .stopped_by
+                .as_deref()
+                .unwrap_or("no goose path stopped it");
+            format!("the engine process{pid} exited: {} — {who}", exit.status)
+        }
+    };
     format!(
-        "the engine process{pid} exited: {} — not restarted automatically; Mount restarts it \
-         (the crash breaker applies). Last log lines:\n{}",
-        exit.status, exit.stderr_tail
+        "{account} — not restarted automatically; Mount restarts it (the crash breaker applies). \
+         Last log lines:\n{}",
+        exit.stderr_tail
     )
 }
 
@@ -1559,10 +1629,13 @@ impl MlxEngineManager {
         let expected_model_id = served_model_id(&settings, model_id);
         let state_arc = Arc::clone(&self.state);
         let model_id = model_id.to_string();
-        // A fresh start is a load; keeping an identical supervised engine is not.
+        // A fresh start is a load, and so is the supervised engine's restart (Q-256: the single
+        // engine reloaded through this path wrote no row); keeping a healthy engine is not. Which
+        // one happened is known only once it has, so the warmth is read before either — it is the
+        // cache the load would begin from — and the row is written where the load finishes.
         let observer = self.load_observer.lock().unwrap().clone();
-        let measure = match (&supervised, observer) {
-            (None, Some(observer)) => {
+        let measure = match observer {
+            Some(observer) => {
                 let dir = expand_tilde(&settings.models_dir).join(&model_id);
                 let warm = tokio::task::spawn_blocking(move || weights_cache_warm(&dir))
                     .await
@@ -1570,16 +1643,17 @@ impl MlxEngineManager {
                     .and_then(|read| read.map_err(|e| format!("{e:#}")));
                 Some((observer, warm, Arc::clone(&watch)))
             }
-            _ => None,
+            None => None,
         };
+        let fresh = supervised.is_none();
         tokio::spawn(async move {
             let the_mac = lock;
             let spawned = Instant::now();
             let started = match supervised {
                 Some(sidecar) => sidecar
-                    .ensure_running_unless(&cancel)
+                    .ensure_running_unless(&cancel, Some(watch))
                     .await
-                    .map(|()| sidecar),
+                    .map(|ensured| (sidecar, ensured == Ensured::Restarted)),
                 None => {
                     let mut config = SidecarConfig::new(
                         ENGINE_SIDECAR_NAME,
@@ -1589,8 +1663,11 @@ impl MlxEngineManager {
                     );
                     config.env = sidecar_spawn_env();
                     config.startup_watch = Some(watch);
+                    config.shutdown_line = Some(shutdown_began);
                     config.start_cancel = Some(cancel);
-                    Sidecar::start(config).await.map(Box::new)
+                    Sidecar::start(config)
+                        .await
+                        .map(|sidecar| (Box::new(sidecar), true))
                 }
             };
             let answered_at = Instant::now();
@@ -1607,14 +1684,16 @@ impl MlxEngineManager {
                 }
             };
             match started {
-                Ok(sidecar) => {
+                Ok((sidecar, loaded)) => {
                     let mut state = state_arc.lock().await;
                     let still_mounting = matches!(
                         &*state,
                         ManagerState::Mounting { model_id: current, .. } if *current == model_id
                     );
                     if still_mounting {
-                        report(Ok(()));
+                        if loaded {
+                            report(Ok(()));
+                        }
                         *state = ManagerState::Running {
                             model_id,
                             sidecar,
@@ -1631,7 +1710,8 @@ impl MlxEngineManager {
                         &*state,
                         ManagerState::Mounting { model_id: current, .. } if *current == model_id
                     );
-                    if still_mounting && e.downcast_ref::<StartCancelled>().is_none() {
+                    let loaded = fresh || e.downcast_ref::<RestartLoadFailed>().is_some();
+                    if still_mounting && loaded && e.downcast_ref::<StartCancelled>().is_none() {
                         report(Err(format!("{e:#}")));
                     }
                     if still_mounting {
@@ -1727,6 +1807,15 @@ impl MlxEngineManager {
         drop(self.judging.write().await);
         if !supervised {
             let port = self.settings().port;
+            // Q-258: two unit tests reached this reclaim on the default port and SIGTERMed the
+            // owner's live engine four times on 2026-09-28, mid-prefill, with no goosed log line.
+            #[cfg(test)]
+            assert_ne!(
+                port,
+                EngineSettings::default().port,
+                "a unit test reached Unmount's reclaim on the default engine port — the owner's \
+                 real engine listens there; configure a free port"
+            );
             if port_has_listener(port) {
                 reclaim_port(port).await;
             }
@@ -1758,6 +1847,8 @@ impl MlxEngineManager {
             gate_message,
             gate_verdict,
             stray_listener_port: None,
+            stray_listener_holders: None,
+            stray_listener_holders_error: None,
             available_memory_gb: reading.map_or(0.0, |r| gib_of(r.available_bytes)),
             total_memory_gb: reading.map_or(0.0, |r| gib_of(r.total_bytes)),
             reclaimable_cache_gb: reading.and_then(|r| r.reclaimable_cache_bytes.map(gib_of)),
@@ -1823,6 +1914,7 @@ impl MlxEngineManager {
                             status.state = "running".to_string();
                             status.base_url = Some(sidecar.base_url().to_string());
                             status.pid = sidecar.pid().await;
+                            status.last_error = sidecar.shutting_down().await;
                             Some((model_id.clone(), argv.clone()))
                         }
                         Err(e) => {
@@ -1856,6 +1948,17 @@ impl MlxEngineManager {
         }
         if running.is_none() && port_has_listener(settings.port) {
             status.stray_listener_port = Some(settings.port);
+            // While a mount is in flight the listener is the start's own child; the holders are
+            // read only when no start runs, which is when the Engine panel names them.
+            if status.state != "mounting" {
+                match read_port_holders(settings.port, &engine_marker(settings.port)).await {
+                    Ok(holders) => {
+                        status.stray_listener_holders =
+                            Some(holders.iter().map(StrayListenerHolder::from).collect())
+                    }
+                    Err(why) => status.stray_listener_holders_error = Some(why),
+                }
+            }
         }
         if let Some((running_model, running_argv)) = running {
             let desired_model = settings.model_id.as_deref().unwrap_or(&running_model);
@@ -2050,6 +2153,27 @@ mod tests {
         let manager = MlxEngineManager::new();
         *manager.test_memory.lock().unwrap() = Some(memory);
         manager
+    }
+
+    /// The four Q-258 engines' own lines (goosed's log, 2026-09-28): the shutdown begins at the
+    /// signal line and uvicorn's "Shutting down"; the drain's lines and the exit banner are not it.
+    #[test]
+    fn the_shutdown_is_the_engines_own_words() {
+        for line in [
+            "WARNING:rapid_mlx._signal_observability:rapid-mlx received signal SIGTERM; thread stacks follow (faulthandler)",
+            "INFO:     Shutting down",
+        ] {
+            assert!(shutdown_began(line), "{line}");
+        }
+        for line in [
+            "INFO:     Waiting for connections to close. (CTRL+C to force quit)",
+            "INFO:rapid_mlx.service.helpers:[disconnect_guard] poll #80 disconnected=False elapsed=40.2s",
+            "INFO:     Waiting for application shutdown.",
+            "INFO:     Application shutdown complete.",
+            "INFO:     Finished server process [1893]",
+        ] {
+            assert!(!shutdown_began(line), "{line}");
+        }
     }
 
     /// Rapid-MLX v0.14.3-lz.4's own stderr on a 27B mount (2026-09-24), in order.
@@ -2890,9 +3014,31 @@ mod tests {
         let status = manager.status().await;
         assert_eq!(status.state, "stopped");
         assert_eq!(status.stray_listener_port, Some(port));
+        let own = std::process::id();
+        let holders = status
+            .stray_listener_holders
+            .unwrap_or_else(|| panic!("holders unread: {:?}", status.stray_listener_holders_error));
+        assert_eq!(holders.len(), 1, "{holders:?}");
+        let holder = &holders[0];
+        assert_eq!(
+            holder.pid, own,
+            "Q-249: the status names who holds the port"
+        );
+        assert!(!holder.argv.is_empty(), "its command line: {holder:?}");
+        assert!(!holder.ours);
+        assert_eq!(holder.not_ours_rule.as_deref(), Some("initOrSelf"));
+        assert!(
+            holder
+                .not_ours_reason
+                .as_deref()
+                .is_some_and(|r| r.contains("this goosed itself")),
+            "{holder:?}"
+        );
         drop(listener);
         let status = manager.status().await;
         assert_eq!(status.stray_listener_port, None);
+        assert_eq!(status.stray_listener_holders, None);
+        assert_eq!(status.stray_listener_holders_error, None);
     }
 
     #[tokio::test]
@@ -3228,6 +3374,87 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert!(words.contains("ValueError: no weights"), "{words}");
     }
 
+    /// Q-256: a Mount that finds its supervised engine dead restarts it through the supervisor —
+    /// a LOAD, measured at the same place a fresh start's is: ready with the restart's own phases,
+    /// failed with the engine's words. Live J3 (2026-09-28): four such reloads, zero rows. The
+    /// death itself reads as one no goose path caused (Q-258).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_restart_through_the_supervisor_is_measured_like_a_fresh_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let fail_next = tmp.path().join("fail-next-start");
+        let manager = test_manager();
+        let seen: Arc<StdMutex<Vec<EngineLoadMeasured>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        manager.set_load_observer(Arc::new(move |m| sink.lock().unwrap().push(m)));
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port: free_port(),
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                format!(
+                    "import os, sys, time\nprint('Loading model with BatchedEngine', file=sys.stderr, flush=True)\n\
+                     if os.path.exists({fail:?}):\n    print('ValueError: no weights', file=sys.stderr, flush=True)\n    sys.exit(3)\n\
+                     time.sleep(0.4)\nprint('Warming up (compiling Metal shaders)', file=sys.stderr, flush=True)\n\
+                     time.sleep(0.4)\n{ARGV_FAKE_ENGINE}",
+                    fail = fail_next.to_string_lossy()
+                ),
+            ],
+            ..Default::default()
+        });
+        manager.mount("pub/small").await.unwrap();
+        assert_eq!(settle(&manager).await.state, "running");
+        assert_eq!(seen.lock().unwrap().len(), 1, "the fresh start");
+
+        let pid = manager.status().await.pid.unwrap();
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        wait_exited(pid).await;
+        let died = manager.status().await;
+        assert_eq!(died.state, "failed");
+        let words = died.last_error.unwrap();
+        assert!(words.contains("no goose path stopped it"), "{words}");
+
+        manager.mount("pub/small").await.unwrap();
+        let restarted = settle(&manager).await;
+        assert_eq!(restarted.state, "running", "{:?}", restarted.last_error);
+        assert_ne!(restarted.pid, Some(pid));
+        {
+            let seen = seen.lock().unwrap();
+            assert_eq!(
+                seen.len(),
+                2,
+                "the supervisor's restart is a load, and is measured"
+            );
+            let load = &seen[1];
+            assert_eq!(load.outcome, Ok(()));
+            assert!(
+                load.phases.loading.is_some() && load.phases.warming.is_some(),
+                "the restart's OWN phases, not the first start's: {:?}",
+                load.phases
+            );
+        }
+
+        let pid = restarted.pid.unwrap();
+        std::fs::write(&fail_next, "").unwrap();
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        wait_exited(pid).await;
+        manager.mount("pub/small").await.unwrap();
+        assert_eq!(settle(&manager).await.state, "failed");
+        {
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 3, "a restart whose load failed is measured too");
+            let words = seen[2].outcome.clone().unwrap_err();
+            assert!(words.contains("ValueError: no weights"), "{words}");
+            assert!(
+                words.starts_with("the engine's restart failed to load"),
+                "{words}"
+            );
+        }
+        manager.unmount().await;
+    }
+
     #[test]
     fn phase_times_run_from_each_sighting_to_the_next() {
         let t0 = Instant::now();
@@ -3528,6 +3755,13 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(manager.status().await.state, "stopped");
     }
 
+    /// A port nothing on this Mac listens on. A test that can reach [`MlxEngineManager::unmount`]'s
+    /// reclaim must use one: the default (8090) is where the owner's real engine serves (Q-258).
+    fn free_port() -> u16 {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        probe.local_addr().unwrap().port()
+    }
+
     fn complete_small_model(models_dir: &std::path::Path, id: &str) {
         let model_dir = models_dir.join(id);
         std::fs::create_dir_all(&model_dir).unwrap();
@@ -3671,7 +3905,9 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         });
 
         let foreign = leftover_engine(port, None);
+        let before = manager.status().await;
         let refused = manager.mount("pub/small").await;
+        let after = manager.status().await;
         let foreign_alive = alive(foreign) && port_has_listener(port);
         // SAFETY: the test's own stand-in, signalled by its pid alone.
         unsafe { libc::kill(foreign as libc::pid_t, libc::SIGKILL) };
@@ -3684,10 +3920,31 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert!(text.contains("serve /leftover --port"), "{text}");
         assert!(text.contains("carries no GOOSE_SIDECAR"), "{text}");
         assert!(foreign_alive, "the unmarked leftover was touched: {text}");
-        assert_eq!(manager.status().await.state, "stopped");
+        assert_eq!(after.state, "stopped");
+        // Q-249: the status the Engine panel reads names the same holder the refusal did, before
+        // the Mount and after it.
+        for status in [&before, &after] {
+            let holders = status.stray_listener_holders.as_ref().unwrap_or_else(|| {
+                panic!("holders unread: {:?}", status.stray_listener_holders_error)
+            });
+            assert_eq!(
+                holders.iter().map(|h| h.pid).collect::<Vec<_>>(),
+                [foreign],
+                "{holders:?}"
+            );
+            let holder = &holders[0];
+            assert!(
+                holder.argv.join(" ").contains("serve /leftover --port"),
+                "{holder:?}"
+            );
+            assert!(!holder.ours);
+            assert_eq!(holder.not_ours_rule.as_deref(), Some("noMarker"));
+            assert_eq!(holder.live_starter_pid, None, "sh exited: init adopted it");
+        }
 
-        let marker = sidecar_marker(ENGINE_SIDECAR_NAME, &format!("http://127.0.0.1:{port}"));
+        let marker = engine_marker(port);
         let ours = leftover_engine(port, Some(&marker));
+        let seen = manager.status().await;
         let mounted = manager.mount("pub/small").await;
         let status = settle(&manager).await;
         let ours_alive = alive(ours);
@@ -3697,6 +3954,17 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             unsafe { libc::kill(ours as libc::pid_t, libc::SIGKILL) };
         }
         mounted.unwrap();
+        let seen_holders = seen
+            .stray_listener_holders
+            .unwrap_or_else(|| panic!("holders unread: {:?}", seen.stray_listener_holders_error));
+        assert_eq!(
+            seen_holders
+                .iter()
+                .map(|h| (h.pid, h.ours, h.not_ours_rule.clone()))
+                .collect::<Vec<_>>(),
+            [(ours, true, None)],
+            "the marked leftover reads as this goose's own before the Mount stops it"
+        );
         assert_eq!(status.state, "running", "{:?}", status.last_error);
         assert!(!ours_alive, "the marked leftover {ours} still runs");
         assert_ne!(status.pid, Some(ours));
@@ -3929,6 +4197,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let manager: &'static MlxEngineManager = Box::leak(Box::new(test_manager()));
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
+            port: free_port(),
             ..Default::default()
         });
         let lock = manager.load_lock_path().unwrap();
@@ -4087,6 +4356,7 @@ while True:
         let manager = test_manager();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
+            port: free_port(),
             ..Default::default()
         });
         let before = manager.unmounts_seen();

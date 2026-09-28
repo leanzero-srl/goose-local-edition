@@ -98,6 +98,11 @@ pub struct SidecarConfig {
     pub startup_watch: Option<Arc<StartupWatch>>,
     /// How the owner ends this start before it serves (an Unmount while the model loads).
     pub start_cancel: Option<Arc<StartCancel>>,
+    /// Recognizes the engine's OWN line saying it began shutting down — the moment its listener
+    /// closes while in-flight requests drain (Q-258: uvicorn closed the port at a SIGTERM and the
+    /// process lived 6 more minutes finishing a prefill, with no line in goosed's log). `None`: the
+    /// engine's shutdown is seen only at its exit.
+    pub shutdown_line: Option<fn(&str) -> bool>,
 }
 
 /// Ends a start in flight — [`Sidecar::start`], or a supervised restart through
@@ -239,6 +244,7 @@ impl SidecarConfig {
             backoff_cap: Duration::from_secs(30),
             startup_watch: None,
             start_cancel: None,
+            shutdown_line: None,
         }
     }
 }
@@ -253,9 +259,22 @@ struct ChildHandle {
     /// The task filling `stderr_tail`; it ends at the pipe's EOF, which the kernel delivers once
     /// every process holding the write end has exited. `None` once it has been awaited.
     stderr_reader: Option<tokio::task::JoinHandle<()>>,
+    /// Which goose path signalled this child, written BEFORE the signal; `None` while no goose
+    /// path has. The shutdown and exit reports read it, so an engine that ends with `None` here
+    /// was ended by something outside this goosed (Q-258).
+    stopped_by: Arc<StdMutex<Option<String>>>,
+    /// The engine's own shutdown announcement (`SidecarConfig::shutdown_line`), once seen.
+    shutting_down: Arc<StdMutex<Option<String>>>,
+    /// The exit watch's account of how the engine ended, once it has (`exit_report`).
+    exit_report: Arc<StdMutex<Option<String>>>,
 }
 
 impl ChildHandle {
+    /// Names the goose path about to signal this child; call it before the signal.
+    fn stopping(&self, by: impl Into<String>) {
+        *self.stopped_by.lock().unwrap() = Some(by.into());
+    }
+
     /// The stderr tail of a child that has EXITED (the caller reaped it), with every line it
     /// wrote. A child that prints its error and exits at once can be reaped before the reader
     /// task has taken those lines off the pipe (CI, 2026-09-28: "exited during startup (exit
@@ -328,6 +347,32 @@ pub struct SidecarExit {
     /// `exit status: N` or `signal: 9 (SIGKILL)` — the OS's own words.
     pub status: String,
     pub stderr_tail: String,
+    /// The goose path that stopped it; `None`: no goose path did — it ended on its own or by a
+    /// signal from outside this goosed.
+    pub stopped_by: Option<String>,
+    /// The exit watch's account, written the moment the process ended (with this Mac's memory
+    /// then); `None` when the watch did not see the exit (see `watch_exit`).
+    pub exit_report: Option<String>,
+}
+
+/// What [`Sidecar::ensure_running_unless`] did: the engine answered and was kept, or it was
+/// restarted — a load, which the caller measures like a fresh start (Q-256).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ensured {
+    Healthy,
+    Restarted,
+}
+
+/// A supervised restart's LOAD failed — its port claim, spawn or readiness — as opposed to a
+/// refusal before any load began (the circuit breaker, a cancel during the backoff). Carried as
+/// context on the error, so the engine's own words stay underneath.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestartLoadFailed;
+
+impl std::fmt::Display for RestartLoadFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the engine's restart failed to load")
+    }
 }
 
 pub struct Sidecar {
@@ -336,6 +381,9 @@ pub struct Sidecar {
     state: Mutex<State>,
     /// The cancel the start or restart in flight answers to; `None` while none is.
     cancel: StdMutex<Option<Arc<StartCancel>>>,
+    /// Where the restart in flight publishes its start, in place of `config.startup_watch` — the
+    /// mount that asked for it shows and measures ITS load, not the first start's (Q-256).
+    watch: StdMutex<Option<Arc<StartupWatch>>>,
 }
 
 impl Sidecar {
@@ -357,6 +405,7 @@ impl Sidecar {
                 backoff,
             }),
             cancel: StdMutex::new(cancel),
+            watch: StdMutex::new(None),
         };
         {
             let mut state = sidecar.state.lock().await;
@@ -393,11 +442,32 @@ impl Sidecar {
         let Some(status) = handle.child.try_wait().context("try_wait on sidecar")? else {
             return Ok(None);
         };
+        let stopped_by = handle.stopped_by.lock().unwrap().clone();
+        let exit_report = handle.exit_report.lock().unwrap().clone();
         Ok(Some(SidecarExit {
             pid: handle.pid,
             status: status.to_string(),
             stderr_tail: handle.last_words().await,
+            stopped_by,
+            exit_report,
         }))
+    }
+
+    /// The engine's own announcement that it began shutting down, while it still runs: its port
+    /// no longer accepts and in-flight requests drain. `None` when it has not announced one.
+    pub async fn shutting_down(&self) -> Option<String> {
+        let state = self.state.lock().await;
+        let handle = state.handle.as_ref()?;
+        let line = handle.shutting_down.lock().unwrap().clone()?;
+        let stopped_by = handle.stopped_by.lock().unwrap().clone();
+        Some(match stopped_by {
+            Some(by) => format!("the engine is shutting down ({by}): {line}"),
+            None => format!(
+                "the engine is shutting down and no goose path signalled it — the signal came from \
+                 outside this goosed; its port no longer accepts while in-flight requests drain. \
+                 Its own words: {line}"
+            ),
+        })
     }
 
     pub async fn healthy(&self) -> bool {
@@ -405,16 +475,31 @@ impl Sidecar {
     }
 
     /// [`Self::ensure_running`], ended by `cancel` if it has to restart the engine and the owner
-    /// stops it before the restart serves.
-    pub async fn ensure_running_unless(&self, cancel: &Arc<StartCancel>) -> Result<()> {
+    /// stops it before the restart serves; a restart publishes its start to `watch`. Says whether
+    /// the engine was kept or restarted; a restart whose load failed carries [`RestartLoadFailed`].
+    pub async fn ensure_running_unless(
+        &self,
+        cancel: &Arc<StartCancel>,
+        watch: Option<Arc<StartupWatch>>,
+    ) -> Result<Ensured> {
         *self.cancel.lock().unwrap() = Some(Arc::clone(cancel));
-        let outcome = self.ensure_running().await;
+        *self.watch.lock().unwrap() = watch;
+        let outcome = self.restart_unless_healthy().await;
         *self.cancel.lock().unwrap() = None;
+        *self.watch.lock().unwrap() = None;
         outcome
     }
 
     fn current_cancel(&self) -> Option<Arc<StartCancel>> {
         self.cancel.lock().unwrap().clone()
+    }
+
+    fn current_watch(&self) -> Option<Arc<StartupWatch>> {
+        self.watch
+            .lock()
+            .unwrap()
+            .clone()
+            .or_else(|| self.config.startup_watch.clone())
     }
 
     fn refuse_if_cancelled(&self) -> Result<()> {
@@ -431,22 +516,40 @@ impl Sidecar {
     /// Restart the engine if its process died or it stops answering. Errors once the
     /// circuit breaker trips (too many restarts inside the window), carrying stderr.
     pub async fn ensure_running(&self) -> Result<()> {
+        self.restart_unless_healthy().await.map(|_| ())
+    }
+
+    async fn restart_unless_healthy(&self) -> Result<Ensured> {
         let mut state = self.state.lock().await;
 
-        let process_dead = match state.handle.as_mut() {
-            None => true,
-            Some(h) => h.child.try_wait().context("try_wait on sidecar")?.is_some(),
+        let exit = match state.handle.as_mut() {
+            None => {
+                Some("no engine process is supervised (the last start did not serve)".to_string())
+            }
+            Some(h) => h
+                .child
+                .try_wait()
+                .context("try_wait on sidecar")?
+                .map(|status| {
+                    let by = h
+                        .stopped_by
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .unwrap_or_else(|| "no goose path stopped it".to_string());
+                    format!("process exited: {status} — {by}")
+                }),
         };
-        let unhealthy = if process_dead {
-            "process exited".to_string()
-        } else {
-            match self.probe().await {
+        let process_dead = exit.is_some();
+        let unhealthy = match exit {
+            Some(exit) => exit,
+            None => match self.probe().await {
                 Ok(()) => {
                     state.backoff = self.config.backoff_initial;
-                    return Ok(());
+                    return Ok(Ensured::Healthy);
                 }
                 Err(reason) => reason.to_string(),
-            }
+            },
         };
 
         let tail = match state.handle.as_mut() {
@@ -461,6 +564,11 @@ impl Sidecar {
         );
 
         if let Some(mut h) = state.handle.take() {
+            if !process_dead {
+                h.stopping(format!(
+                    "stopped by goose: its supervisor restarts an engine that stopped answering ({unhealthy})"
+                ));
+            }
             let owned_group = terminate(&mut h.child).await;
             self.release_port(owned_group).await;
         }
@@ -497,9 +605,14 @@ impl Sidecar {
         }
         self.refuse_if_cancelled()?;
 
-        self.claim_port().await?;
-        let handle = self.spawn_child()?;
-        self.await_ready(&mut state, handle).await
+        let load = async {
+            self.claim_port().await?;
+            let handle = self.spawn_child()?;
+            self.await_ready(&mut state, handle).await
+        };
+        load.await
+            .map(|()| Ensured::Restarted)
+            .map_err(|e| e.context(RestartLoadFailed))
     }
 
     /// What this sidecar stamps on every process it spawns (see [`port_holder`]).
@@ -543,6 +656,10 @@ impl Sidecar {
     pub async fn shutdown(&self) {
         let mut state = self.state.lock().await;
         if let Some(mut h) = state.handle.take() {
+            h.stopping(
+                "stopped by goose: its owner shut the sidecar down (an Unmount, a remount with \
+                 another model or argv, or goosed exiting)",
+            );
             let owned_group = terminate(&mut h.child).await;
             self.release_port(owned_group).await;
         }
@@ -567,12 +684,20 @@ impl Sidecar {
             )
         })?;
 
+        let pid = child.id();
         let stderr_tail = Arc::new(StdMutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
         let stderr_lines = Arc::new(AtomicU64::new(0));
+        let stopped_by = Arc::new(StdMutex::new(None));
+        let shutting_down = Arc::new(StdMutex::new(None));
+        let exit_report = Arc::new(StdMutex::new(None));
+        let (stderr_closed, stderr_closed_rx) = tokio::sync::watch::channel(false);
         let stderr_reader = child.stderr.take().map(|stderr| {
             let tail = Arc::clone(&stderr_tail);
             let count = Arc::clone(&stderr_lines);
             let name = self.config.name.clone();
+            let shutdown_line = self.config.shutdown_line;
+            let stopped_by = Arc::clone(&stopped_by);
+            let shutting_down = Arc::clone(&shutting_down);
             tokio::spawn(async move {
                 let push = |line: String| {
                     let mut tail = tail.lock().unwrap();
@@ -594,6 +719,9 @@ impl Sidecar {
                             let line = line.trim_end_matches(['\n', '\r']).to_string();
                             tracing::debug!(sidecar = %name, "{line}");
                             count.fetch_add(1, Ordering::Relaxed);
+                            if shutdown_line.is_some_and(|is_shutdown| is_shutdown(&line)) {
+                                announce_shutdown(&name, pid, &line, &stopped_by, &shutting_down);
+                            }
                             push(line);
                         }
                         Err(e) => {
@@ -602,14 +730,28 @@ impl Sidecar {
                         }
                     }
                 }
+                stderr_closed.send_replace(true);
             })
         });
+        if let Some(pid) = pid {
+            watch_exit(
+                pid,
+                self.config.name.clone(),
+                Arc::clone(&stderr_tail),
+                Arc::clone(&stopped_by),
+                Arc::clone(&exit_report),
+                stderr_closed_rx,
+            );
+        }
         Ok(ChildHandle {
-            pid: child.id(),
+            pid,
             child,
             stderr_tail,
             stderr_lines,
             stderr_reader,
+            stopped_by,
+            shutting_down,
+            exit_report,
         })
     }
 
@@ -620,12 +762,14 @@ impl Sidecar {
     /// the stderr tail. A slow load that is working is never declared failed by a clock.
     async fn await_ready(&self, state: &mut State, mut handle: ChildHandle) -> Result<()> {
         let cancel = self.current_cancel();
+        let watch = self.current_watch();
         let mut sys = System::new();
         let mut last_mark = progress_mark(&mut sys, &handle);
         let mut last_progress = Instant::now();
         loop {
             if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
                 let pid = handle.pid;
+                handle.stopping("stopped by goose: its start was cancelled before it served");
                 let owned_group = terminate(&mut handle.child).await;
                 self.release_port(owned_group).await;
                 return Err(StartCancelled {
@@ -642,7 +786,7 @@ impl Sidecar {
                 );
             }
             let mark = progress_mark(&mut sys, &handle);
-            if let Some(watch) = &self.config.startup_watch {
+            if let Some(watch) = &watch {
                 watch.publish(&mark, &handle);
             }
             let not_ready = match self.probe().await {
@@ -658,6 +802,9 @@ impl Sidecar {
                     // our child then dies on its bind and the exit above reports it.
                     if self.port_served_by_tree(&mark).await {
                         let tail = stderr_tail_string(&handle.stderr_tail);
+                        handle.stopping(format!(
+                            "stopped by goose: it served '{served}', not the expected model id"
+                        ));
                         let owned_group = terminate(&mut handle.child).await;
                         self.release_port(owned_group).await;
                         bail!(
@@ -681,6 +828,9 @@ impl Sidecar {
             } else if last_progress.elapsed() >= self.config.startup_stall_window {
                 let stalled_for = last_progress.elapsed();
                 let tail = stderr_tail_string(&handle.stderr_tail);
+                handle.stopping(format!(
+                    "stopped by goose: its start made no progress for {stalled_for:?}"
+                ));
                 let owned_group = terminate(&mut handle.child).await;
                 self.release_port(owned_group).await;
                 bail!(
@@ -805,11 +955,203 @@ impl Drop for Sidecar {
     fn drop(&mut self) {
         if let Ok(mut state) = self.state.try_lock() {
             if let Some(h) = state.handle.as_mut() {
+                h.stopping("stopped by goose: its supervisor was dropped");
                 sigkill_tree_or_pid(&mut h.child);
             }
         }
         // kill_on_drop(true) covers the path where the lock is held elsewhere; that leg
         // reaches the pid alone.
+    }
+}
+
+/// The engine said it began shutting down: its port stops accepting now and in-flight requests
+/// drain before it exits. Said once per child, loud when no goose path signalled it — Q-258's four
+/// engines closed their port mid-prefill on a SIGTERM from outside goosed and drained for up to 6
+/// minutes with no line in goosed's log.
+fn announce_shutdown(
+    name: &str,
+    pid: Option<u32>,
+    line: &str,
+    stopped_by: &StdMutex<Option<String>>,
+    shutting_down: &StdMutex<Option<String>>,
+) {
+    {
+        let mut seen = shutting_down.lock().unwrap();
+        if seen.is_some() {
+            return;
+        }
+        *seen = Some(line.to_string());
+    }
+    match stopped_by.lock().unwrap().clone() {
+        Some(by) => tracing::info!(
+            event = "sidecar_engine_shutting_down",
+            sidecar = %name,
+            pid,
+            stopped_by = %by,
+            "the engine began shutting down ({by}): {line}"
+        ),
+        None => tracing::error!(
+            event = "sidecar_engine_shutting_down",
+            sidecar = %name,
+            pid,
+            "the engine began shutting down and no goose path signalled it — the signal came \
+             from outside this goosed; its port stops accepting now while in-flight requests \
+             drain, then it exits. Its own words: {line}"
+        ),
+    }
+}
+
+/// Reports the engine's exit the moment it happens — not when goose next looks (Q-258: a death
+/// at 04:17 was first logged at 04:19, by the swap that found it gone). A thread waits on the
+/// child WITHOUT reaping it (`waitid` with `WNOWAIT`), so the supervisor's own `try_wait` still
+/// reaps and reports as before; the report adds who stopped it, this Mac's memory at that moment
+/// and the engine's last words (read to the pipe's EOF, bounded by the crate's grace window since
+/// an orphan may hold the pipe). A child reaped by goose before the thread looked (`ECHILD`) was
+/// seen by the path that reaped it, and is not reported twice.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn watch_exit(
+    pid: u32,
+    name: String,
+    tail: Arc<StdMutex<VecDeque<String>>>,
+    stopped_by: Arc<StdMutex<Option<String>>>,
+    report: Arc<StdMutex<Option<String>>>,
+    mut stderr_closed: tokio::sync::watch::Receiver<bool>,
+) {
+    let (ended, ended_rx) = tokio::sync::oneshot::channel();
+    let watcher = std::thread::Builder::new()
+        .name(format!("{name}-exit-watch"))
+        .spawn(move || {
+            let _ = ended.send(exit_status_unreaped(pid));
+        });
+    if let Err(e) = watcher {
+        tracing::warn!(sidecar = %name, pid, error = %e, "the engine's exit watch could not start; its exit is reported only when goose next looks at it");
+        return;
+    }
+    tokio::spawn(async move {
+        let status = match ended_rx.await {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) if e.raw_os_error() == Some(libc::ECHILD) => return,
+            Ok(Err(e)) => {
+                tracing::warn!(sidecar = %name, pid, error = %e, "the engine's exit could not be observed; it is reported when goose next looks at it");
+                return;
+            }
+            Err(_) => return,
+        };
+        for _ in 0..GRACE_TICKS {
+            if *stderr_closed.borrow_and_update() {
+                break;
+            }
+            let _ = tokio::time::timeout(GRACE_TICK, stderr_closed.changed()).await;
+        }
+        let words_complete = *stderr_closed.borrow();
+        let memory = match crate::memory::measure() {
+            Ok(reading) => format!(
+                "this Mac then had {:.1} GiB available of {:.1} GiB",
+                reading.available_bytes as f64 / GIB as f64,
+                reading.total_bytes as f64 / GIB as f64
+            ),
+            Err(e) => format!("this Mac's memory could not be read then: {e:#}"),
+        };
+        let by = stopped_by.lock().unwrap().clone();
+        let account = exit_account(pid, &status, by.as_deref(), &memory);
+        *report.lock().unwrap() = Some(account.clone());
+        let mut words = stderr_tail_string(&tail);
+        if !words_complete {
+            words.push_str("\n(the stderr pipe was still open after the grace window — something the engine started still holds it — so its last lines may be missing)");
+        }
+        match by {
+            Some(_) => {
+                tracing::info!(event = "sidecar_engine_exited", sidecar = %name, pid, status = %status, "{account}. Last words:\n{words}")
+            }
+            None => {
+                tracing::error!(event = "sidecar_engine_exited", sidecar = %name, pid, status = %status, "{account}. Last words:\n{words}")
+            }
+        }
+    });
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn watch_exit(
+    pid: u32,
+    name: String,
+    _tail: Arc<StdMutex<VecDeque<String>>>,
+    _stopped_by: Arc<StdMutex<Option<String>>>,
+    _report: Arc<StdMutex<Option<String>>>,
+    _stderr_closed: tokio::sync::watch::Receiver<bool>,
+) {
+    tracing::debug!(sidecar = %name, pid, "no unreaped exit wait on this platform; the engine's exit is reported when goose next looks at it");
+}
+
+/// How the engine ended, in one sentence: the OS's status, who stopped it, and memory then. An
+/// exit no goose path caused says where such a signal comes from — a SIGKILL goose did not send
+/// is how macOS's memory killer (jetsam) ends a process.
+fn exit_account(
+    pid: u32,
+    status: &std::process::ExitStatus,
+    stopped_by: Option<&str>,
+    memory: &str,
+) -> String {
+    #[cfg(unix)]
+    let signal = std::os::unix::process::ExitStatusExt::signal(status);
+    #[cfg(not(unix))]
+    let signal: Option<i32> = None;
+    #[cfg(unix)]
+    let sigkill = signal == Some(libc::SIGKILL);
+    #[cfg(not(unix))]
+    let sigkill = false;
+    let who = match stopped_by {
+        Some(by) => by.to_string(),
+        None if sigkill => {
+            "no goose path stopped it: a SIGKILL goose did not send — on macOS that \
+                            is how the memory killer (jetsam) ends a process"
+                .to_string()
+        }
+        None if signal.is_some() => "no goose path stopped it: the signal came from outside this \
+                                     goosed (its last words name it)"
+            .to_string(),
+        None => "no goose path stopped it".to_string(),
+    };
+    format!("the engine process (pid {pid}) exited: {status} — {who}; {memory}")
+}
+
+/// Waits for `pid` (our child) to end and returns its status, leaving it waitable (`WNOWAIT`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn exit_status_unreaped(pid: u32) -> std::io::Result<std::process::ExitStatus> {
+    use std::os::unix::process::ExitStatusExt;
+    loop {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let rc = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if rc != 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        #[cfg(target_os = "macos")]
+        let status = info.si_status;
+        #[cfg(target_os = "linux")]
+        let status = unsafe { info.si_status() };
+        // The raw wait status `ExitStatus` decodes: the code in the second byte, or the signal in
+        // the low 7 bits with 0x80 for a core dump.
+        let raw = match info.si_code {
+            libc::CLD_EXITED => (status & 0xff) << 8,
+            libc::CLD_KILLED => status & 0x7f,
+            libc::CLD_DUMPED => (status & 0x7f) | 0x80,
+            code => {
+                return Err(std::io::Error::other(format!(
+                    "waitid reported si_code {code}, not an exit"
+                )))
+            }
+        };
+        return Ok(std::process::ExitStatus::from_raw(raw));
     }
 }
 
@@ -1236,6 +1578,7 @@ mod tests {
                 backoff: Duration::ZERO,
             }),
             cancel: StdMutex::new(None),
+            watch: StdMutex::new(None),
         }
     }
 
@@ -1291,5 +1634,90 @@ mod tests {
                 && words.contains("its last ones may be missing"),
             "{words}"
         );
+    }
+
+    /// The exit watch's report, once written — awaited on the report itself, bounded by the
+    /// crate's grace window twice over (the watch itself waits up to one for the pipe's EOF).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn exit_report_of(handle: &ChildHandle) -> String {
+        for _ in 0..2 * GRACE_TICKS {
+            if let Some(report) = handle.exit_report.lock().unwrap().clone() {
+                return report;
+            }
+            tokio::time::sleep(GRACE_TICK).await;
+        }
+        panic!("the exit watch wrote no report")
+    }
+
+    /// Q-258's shape, reproduced with a stand-in: a SIGTERM from OUTSIDE goose (here, the test)
+    /// makes the engine announce its shutdown — named loudly, with no goose stopper — and drain
+    /// before it exits; the exit is reported the moment it happens, still with no goose stopper,
+    /// and the child stays reapable by the supervisor's own `try_wait` (`WNOWAIT`).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[tokio::test]
+    async fn an_outside_sigterm_is_announced_at_the_shutdown_and_reported_at_the_exit() {
+        let mut sidecar = sidecar_running(
+            "trap 'echo \"INFO:     Shutting down\" >&2; sleep 0.3; echo \"INFO:     Finished server process\" >&2; exit 0' TERM; \
+             echo 'INFO:     Uvicorn running' >&2; while :; do sleep 0.05; done",
+        );
+        sidecar.config.shutdown_line = Some(|line: &str| line.ends_with("Shutting down"));
+        let mut handle = sidecar.spawn_child().unwrap();
+        let pid = handle.pid.unwrap();
+        while handle.stderr_lines.load(Ordering::Relaxed) == 0 {
+            tokio::time::sleep(GRACE_TICK).await;
+        }
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        while handle.shutting_down.lock().unwrap().is_none() {
+            tokio::time::sleep(GRACE_TICK).await;
+        }
+        assert_eq!(
+            handle.shutting_down.lock().unwrap().as_deref(),
+            Some("INFO:     Shutting down")
+        );
+        assert_eq!(*handle.stopped_by.lock().unwrap(), None);
+
+        let report = exit_report_of(&handle).await;
+        assert!(
+            report.starts_with(&format!(
+                "the engine process (pid {pid}) exited: exit status: 0 — no goose path stopped it;"
+            )),
+            "{report}"
+        );
+        assert!(report.contains("GiB available of"), "{report}");
+        let reaped = handle.child.try_wait().unwrap();
+        assert_eq!(
+            reaped.and_then(|s| s.code()),
+            Some(0),
+            "the watch left the child for the supervisor to reap"
+        );
+    }
+
+    /// A SIGKILL no goose path sent is named as what macOS's memory killer does, with the memory then.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[tokio::test]
+    async fn a_sigkill_goose_did_not_send_names_the_memory_killer() {
+        let sidecar = sidecar_running("echo 'loading' >&2; while :; do sleep 0.05; done");
+        let handle = sidecar.spawn_child().unwrap();
+        let pid = handle.pid.unwrap();
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        let report = exit_report_of(&handle).await;
+        assert!(report.contains("exited: signal: 9 (SIGKILL)"), "{report}");
+        assert!(report.contains("jetsam"), "{report}");
+    }
+
+    /// A stop goose made is attributed to the path that made it, set before the signal.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[tokio::test]
+    async fn a_goose_stop_is_reported_with_the_path_that_stopped_it() {
+        let sidecar = sidecar_running("while :; do sleep 0.05; done");
+        let mut handle = sidecar.spawn_child().unwrap();
+        handle.stopping("stopped by goose: the test's Unmount");
+        terminate(&mut handle.child).await;
+        let report = exit_report_of(&handle).await;
+        assert!(
+            report.contains("— stopped by goose: the test's Unmount;"),
+            "{report}"
+        );
+        assert!(!report.contains("no goose path"), "{report}");
     }
 }

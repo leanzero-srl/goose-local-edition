@@ -605,6 +605,50 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     expect(screen.getByTestId('mlx-live-leaving')).toHaveTextContent('3');
   });
 
+  it('Q-249 #3m: a leaving row says why it was stopped — "Cancelled by its caller", from rank 0\'s stop', () => {
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: { ...FLASH_SERVING, inflight: 4, slotsInUse: 4 },
+      live: parseMlxLiveStatus(SPLIT_TURN_BEHIND_LEAVING_3M),
+    });
+    const rows = screen.getAllByTestId('mlx-live-request');
+    const leaving = rows.filter((r) => r.getAttribute('data-leaving') === 'true');
+    expect(leaving).toHaveLength(3);
+    for (const row of leaving) {
+      expect(within(row).getByTestId('mlx-leaving-reason')).toHaveTextContent(
+        'Cancelled by its caller'
+      );
+      expect(row).not.toHaveTextContent('cancelled_by_client');
+    }
+    // The queued turn was stopped by nobody: no reason line.
+    expect(within(rows[3]).queryByTestId('mlx-leaving-reason')).toBeNull();
+  });
+
+  it("Q-249: the engine's own stops read in words, and a stop this build does not know by its name", () => {
+    const withReason = (reason: string) => ({
+      ...SPLIT_ONLY_LEAVING_3M,
+      requests: SPLIT_ONLY_LEAVING_3M.requests.slice(0, 1).map((r) => ({
+        ...r,
+        stopped: { reason },
+      })),
+    });
+    for (const [reason, words] of [
+      ['tool_call_repeated', 'Stopped by the engine: it repeated the same tool call'],
+      ['text_cycle', 'Stopped by the engine: its answer went in circles'],
+      ['memory_pressure', 'Stopped: memory_pressure'],
+    ] as const) {
+      const { unmount } = tile({
+        state: 'stopped',
+        modeLabel: 'x',
+        distributed: { ...FLASH_SERVING, inflight: 1, slotsInUse: 1 },
+        live: parseMlxLiveStatus(withReason(reason)),
+      });
+      expect(screen.getByTestId('mlx-leaving-reason')).toHaveTextContent(words);
+      unmount();
+    }
+  });
+
   it('Q-150: the live split’s answer reads tokens · elapsed · tok/s — never “of 222,148 tokens · 9%”', () => {
     // The 3.0.52 live round: 19,951 of a 222,148 max_tokens ceiling drew "9%" and a bar that read
     // as ~6 h left on an answer that had no such target.

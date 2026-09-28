@@ -124,6 +124,10 @@ pub trait SwarmEngine: Send + Sync {
     /// another node; `loaded_instance_count` is fleet-wide) — it is a named absence
     /// (`lms-load-failed`) and `Ok`.
     fn ensure_loaded(&self, model_id: &str, instances: u32) -> Result<()>;
+    /// Whether a device whose id this engine ALREADY serves may be dispatched to with no mount of
+    /// this run's (Q-250: loading off, where `ensure_loaded` never runs). `Err` names who serves
+    /// it, the rule it failed and the one next step — the device leaves the pool by that name.
+    fn prove_served(&self, model_id: &str) -> std::result::Result<(), String>;
     /// Resident-model state through the engine's own probe chain (for LM Studio: `lms ps`
     /// primary — richest, carries DEVICE + PARALLEL — with the native HTTP catalog as fallback).
     fn resident_processes(&self) -> Result<Vec<LmsProcess>>;
@@ -599,6 +603,11 @@ impl SwarmEngine for LmStudioEngine {
     }
     fn ensure_loaded(&self, model_id: &str, instances: u32) -> Result<()> {
         self.ensure_loaded_lms(model_id, instances);
+        Ok(())
+    }
+    /// LM Studio is its own server: goose starts no process behind it, so no holder exists to
+    /// prove — the catalog that served the id is the whole proof.
+    fn prove_served(&self, _model_id: &str) -> std::result::Result<(), String> {
         Ok(())
     }
     fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
@@ -1498,54 +1507,14 @@ impl SidecarEngine {
     #[cfg(unix)]
     fn reuse_served(&self, model_id: &str) -> Result<bool> {
         let port = self.manager.settings().port;
-        let refuse = |why: String| {
-            eprintln!("{}", style(&why).yellow().bold());
-            anyhow!(why)
-        };
-        let reuse = match block_on_engine(port_holder::reuse_port(port, &engine_marker(port))) {
-            Ok(Ok(reuse)) => reuse,
-            Ok(Err(e)) => {
-                return Err(refuse(format!(
-                "engine-port-held: '{model_id}' is served on this Mac's engine port, but not by \
-                     this goose's engine nor by one a live goose supervises — not adopted, and \
-                     nothing is mounted over it: {e:#}"
-            )))
+        match self.served_by(model_id) {
+            Err(why) => {
+                eprintln!("{}", style(&why).yellow().bold());
+                Err(anyhow!(why))
             }
-            Err(e) => {
-                return Err(refuse(format!(
-                    "engine-call-unavailable: who serves '{model_id}' on port {port} could not be \
-                     read — {e}"
-                )))
-            }
-        };
-        match reuse {
-            Reuse::Own => Ok(true),
-            Reuse::Supervised { holder, starter } => {
-                if self.shared_said.lock().unwrap().insert(holder.pid) {
-                    eprintln!(
-                        "  · sidecar-engine-shared: '{model_id}' is served on port {port} by pid \
-                         {} (`{}`), a goose engine for this port that pid {starter}, which \
-                         started it, supervises — this build uses it and mounts none of its own",
-                        holder.pid,
-                        holder.argv.join(" ")
-                    );
-                    self.absences.lock().unwrap().push(serde_json::json!({
-                        "event": "sidecar-engine-shared",
-                        "port": port,
-                        "model_id": model_id,
-                        "pid": holder.pid,
-                        "starter": starter,
-                        "argv": holder.argv.join(" "),
-                    }));
-                }
-                Ok(true)
-            }
-            Reuse::Leftover { holders } => {
-                let named = holders
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; ");
+            Ok(Reuse::Own | Reuse::Supervised { .. }) => Ok(true),
+            Ok(Reuse::Leftover { holders }) => {
+                let named = named_holders(&holders);
                 eprintln!(
                     "{}",
                     style(format!(
@@ -1567,17 +1536,71 @@ impl SidecarEngine {
         }
     }
 
+    /// Who serves `model_id` on this Mac's engine port — `port_holder::reuse_port`'s verdict, the
+    /// one read both consumers act on: `reuse_served` (loading on, Q-248) and `prove_served`
+    /// (loading off, Q-250). A share with a live goose's engine is said here, once per pid, as
+    /// `sidecar-engine-shared{port, model_id, pid, starter, argv}`. `Err` is the named refusal
+    /// (`engine-port-held` / `engine-call-unavailable`); nothing is signalled on any arm.
+    #[cfg(unix)]
+    fn served_by(&self, model_id: &str) -> std::result::Result<Reuse, String> {
+        let port = self.manager.settings().port;
+        let reuse = match block_on_engine(port_holder::reuse_port(port, &engine_marker(port))) {
+            Ok(Ok(reuse)) => reuse,
+            Ok(Err(e)) => {
+                return Err(format!(
+                    "engine-port-held: '{model_id}' is served on this Mac's engine port, but not \
+                     by this goose's engine nor by one a live goose supervises — not adopted, and \
+                     nothing is mounted over it: {e:#}"
+                ))
+            }
+            Err(e) => {
+                return Err(format!(
+                    "engine-call-unavailable: who serves '{model_id}' on port {port} could not be \
+                     read — {e}"
+                ))
+            }
+        };
+        match reuse {
+            Reuse::Supervised { holder, starter } => {
+                if self.shared_said.lock().unwrap().insert(holder.pid) {
+                    eprintln!(
+                        "  · sidecar-engine-shared: '{model_id}' is served on port {port} by pid \
+                         {} (`{}`), a goose engine for this port that pid {starter}, which \
+                         started it, supervises — this build uses it and mounts none of its own",
+                        holder.pid,
+                        holder.argv.join(" ")
+                    );
+                    self.absences.lock().unwrap().push(serde_json::json!({
+                        "event": "sidecar-engine-shared",
+                        "port": port,
+                        "model_id": model_id,
+                        "pid": holder.pid,
+                        "starter": starter,
+                        "argv": holder.argv.join(" "),
+                    }));
+                }
+                Ok(Reuse::Supervised { holder, starter })
+            }
+            reuse => Ok(reuse),
+        }
+    }
+
     /// Off unix no port's holders can be read (goose-sidecar's `port_holder` reads are unix), so
     /// what serves `model_id` is never proven a goose engine and is never adopted.
     #[cfg(not(unix))]
     fn reuse_served(&self, model_id: &str) -> Result<bool> {
-        let why = format!(
+        let why = self.holders_unreadable(model_id);
+        eprintln!("{}", style(&why).yellow().bold());
+        bail!(why)
+    }
+
+    #[cfg(not(unix))]
+    fn holders_unreadable(&self, model_id: &str) -> String {
+        format!(
             "engine-port-held: '{model_id}' is served at {}, and this platform cannot read who \
              holds a port — not adopted",
             self.base_url
-        );
-        eprintln!("{}", style(&why).yellow().bold());
-        bail!(why)
+        )
     }
 
     /// The named absence for a catalog probe that could not answer, said ONCE per engine object:
@@ -1606,6 +1629,16 @@ impl SidecarEngine {
             "error": format!("{e:#}"),
         }));
     }
+}
+
+/// Each holder as `port_holder` names it (pid, command line, verdict), joined for one line.
+#[cfg(unix)]
+fn named_holders(holders: &[port_holder::PortHolder]) -> String {
+    holders
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 impl SwarmEngine for SidecarEngine {
@@ -1735,6 +1768,31 @@ impl SwarmEngine for SidecarEngine {
                 ))
             }
         }
+    }
+    /// Loading off (Q-250): the same verdict `ensure_loaded`'s fast path reuses on (`served_by`).
+    /// This process's own engine, or one a live goose supervises for this port (the desktop
+    /// window's, said once per pid), is dispatched to. A leftover whose goose is gone is not: with
+    /// loading off nothing of this run's mounts, so nothing would stop it and supervise its
+    /// successor — the step names the start that does. Anything else is `engine-port-held`.
+    #[cfg(unix)]
+    fn prove_served(&self, model_id: &str) -> std::result::Result<(), String> {
+        match self.served_by(model_id)? {
+            Reuse::Own | Reuse::Supervised { .. } => Ok(()),
+            Reuse::Leftover { holders } => Err(format!(
+                "sidecar-leftover-not-adopted: '{model_id}' is served on port {} by an engine whose \
+                 goose is gone ({}) — nobody supervises it, and with loading off this build mounts \
+                 none of its own; next step: mount the engine from a goose window or enable \
+                 loading via `goose swarm pool` — that start stops this leftover per pid",
+                self.manager.settings().port,
+                named_holders(&holders)
+            )),
+        }
+    }
+    /// Off unix who holds the port cannot be read, so — as `reuse_served` decides there — what
+    /// serves `model_id` is never proven and never dispatched to.
+    #[cfg(not(unix))]
+    fn prove_served(&self, model_id: &str) -> std::result::Result<(), String> {
+        Err(self.holders_unreadable(model_id))
     }
     fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
         self.catalog_probe()
@@ -2218,14 +2276,18 @@ pub(super) enum SidecarExclusion {
         wanted: String,
         serving: Vec<String>,
     },
+    /// The engine serves this device's alias, but what serves it is neither this process's
+    /// engine nor one a live goose supervises (`SwarmEngine::prove_served`, Q-250), and loading
+    /// is off: `why` names the holder (pid, command line, the rule it failed) and the next step.
+    UnprovenServer { id: String, why: String },
 }
 
 impl SidecarExclusion {
     fn id(&self) -> &str {
         match self {
-            SidecarExclusion::Unmounted { id } | SidecarExclusion::ServesOtherAlias { id, .. } => {
-                id
-            }
+            SidecarExclusion::Unmounted { id }
+            | SidecarExclusion::ServesOtherAlias { id, .. }
+            | SidecarExclusion::UnprovenServer { id, .. } => id,
         }
     }
 }
@@ -2240,7 +2302,11 @@ impl SidecarExclusion {
 ///   `ServesOtherAlias` — the pool half of S-H3: `drop_unservable_devices` would KEEP such a
 ///   device when it is its partition's only member (the never-empties-the-pool rule reads an
 ///   all-unservable partition as a broken probe), so a wrong-alias sidecar stayed in the pool
-///   with no event and every dispatch to it failed.
+///   with no event and every dispatch to it failed;
+/// - the engine serves this device's alias, but WHO serves it is not proven (Q-250) →
+///   `UnprovenServer`: the device's engine's `prove_served` — the verdict `ensure_loaded`'s fast
+///   path reuses on with loading ON (Q-248) — keeps it only for this process's own engine or one a
+///   live goose supervises; a leftover nobody supervises, or a listener no goose started, goes.
 ///
 /// With loading ON the partition is untouched — the pre-warm mounts/remounts it. Mild: never a
 /// refusal of the run; `sidecar_exclusion_events` turns each exclusion into its stderr line and
@@ -2249,6 +2315,7 @@ pub(super) fn exclude_unmountable_sidecar_devices(
     pool: &mut Vec<SwarmDevice>,
     served: &HashMap<EngineKind, Option<HashSet<String>>>,
     allow_model_load: bool,
+    engines: &Engines,
 ) -> Vec<SidecarExclusion> {
     if allow_model_load {
         return Vec::new();
@@ -2264,7 +2331,20 @@ pub(super) fn exclude_unmountable_sidecar_devices(
             continue;
         }
         match partition {
-            Some(set) if set.contains(&d.model_id) => keep.push(d),
+            Some(set) if set.contains(&d.model_id) => {
+                let proof = match engines.engine_for_device(&d) {
+                    Some(engine) => engine.prove_served(&d.model_id),
+                    None => Err(format!(
+                        "engine-absent: '{}' is served on the mlx-sidecar port but no sidecar \
+                         engine is registered to prove who serves it",
+                        d.model_id
+                    )),
+                };
+                match proof {
+                    Ok(()) => keep.push(d),
+                    Err(why) => gone.push(SidecarExclusion::UnprovenServer { id: d.id, why }),
+                }
+            }
             Some(set) if !set.is_empty() => {
                 let mut serving: Vec<String> = set.iter().cloned().collect();
                 serving.sort();
@@ -2283,8 +2363,9 @@ pub(super) fn exclude_unmountable_sidecar_devices(
 
 /// The stderr line and the run.jsonl event for each sidecar exclusion: one grouped
 /// `sidecar-unmounted-and-load-disabled{devices}` (byte-identical to the S-M7 shape) and one
-/// `sidecar-device-serves-other-alias{id, serving, wanted}` per wrong-alias device. The caller
-/// writes the events right after `run_started`.
+/// `sidecar-device-serves-other-alias{id, serving, wanted}` per wrong-alias device, and the
+/// existing `sidecar-device-excluded{id, reason}` per unproven server (Q-250). The caller writes
+/// the events right after `run_started`.
 pub(super) fn sidecar_exclusion_events(exclusions: &[SidecarExclusion]) -> Vec<serde_json::Value> {
     let mut events = Vec::new();
     let unmounted: Vec<String> = exclusions
@@ -2310,13 +2391,29 @@ pub(super) fn sidecar_exclusion_events(exclusions: &[SidecarExclusion]) -> Vec<s
         }));
     }
     for x in exclusions {
-        let SidecarExclusion::ServesOtherAlias {
-            id,
-            wanted,
-            serving,
-        } = x
-        else {
-            continue;
+        let (id, wanted, serving) = match x {
+            SidecarExclusion::ServesOtherAlias {
+                id,
+                wanted,
+                serving,
+            } => (id, wanted, serving),
+            SidecarExclusion::UnprovenServer { id, why } => {
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "sidecar-device-excluded: '{id}' — {why}; out of this run's pool"
+                    ))
+                    .yellow()
+                    .bold()
+                );
+                events.push(serde_json::json!({
+                    "event": "sidecar-device-excluded",
+                    "id": id,
+                    "reason": why,
+                }));
+                continue;
+            }
+            SidecarExclusion::Unmounted { .. } => continue,
         };
         eprintln!(
             "{}",
@@ -2407,6 +2504,14 @@ mod tests {
             supervision: None,
             engine,
         }
+    }
+
+    /// A registry whose sidecar is a recording double: `prove_served` keeps what it serves, so a
+    /// test of the catalog rules reads them alone (the real proof: `fast_path_ownership`).
+    fn recording_sidecar() -> Engines {
+        let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+        engines.register_sidecar("mlx-sidecar", RecordingEngine::new("omlx"));
+        engines
     }
 
     fn served(
@@ -2987,6 +3092,9 @@ mod tests {
             }
             Ok(())
         }
+        fn prove_served(&self, _model_id: &str) -> std::result::Result<(), String> {
+            Ok(())
+        }
         fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
             Ok(self
                 .resident
@@ -3147,6 +3255,9 @@ mod tests {
             0
         }
         fn ensure_loaded(&self, _model_id: &str, _instances: u32) -> Result<()> {
+            Ok(())
+        }
+        fn prove_served(&self, _model_id: &str) -> std::result::Result<(), String> {
             Ok(())
         }
         fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
@@ -3769,6 +3880,7 @@ mod tests {
     /// moves.
     #[test]
     fn an_unmounted_sidecar_under_load_off_leaves_the_pool_by_name() {
+        let proving = recording_sidecar();
         let alias = "workhorse-qwen3.5-9b-4bit-mlx";
         let pool = vec![
             dev("mac-gabee", "gabee-qwen3.8-27b", None),
@@ -3782,7 +3894,7 @@ mod tests {
         ]);
         let mut p = pool.clone();
         assert_eq!(
-            exclude_unmountable_sidecar_devices(&mut p, &unmounted, false),
+            exclude_unmountable_sidecar_devices(&mut p, &unmounted, false, &proving),
             vec![SidecarExclusion::Unmounted {
                 id: "workhorse-mlx".to_string()
             }]
@@ -3793,7 +3905,7 @@ mod tests {
         );
         let mut p = pool.clone();
         assert!(
-            exclude_unmountable_sidecar_devices(&mut p, &unmounted, true).is_empty(),
+            exclude_unmountable_sidecar_devices(&mut p, &unmounted, true, &proving).is_empty(),
             "loading on: the pre-warm mounts it"
         );
         assert_eq!(p.len(), 3);
@@ -3802,11 +3914,11 @@ mod tests {
             (EngineKind::MlxSidecar, Some(&[alias])),
         ]);
         let mut p = pool.clone();
-        assert!(exclude_unmountable_sidecar_devices(&mut p, &mounted, false).is_empty());
+        assert!(exclude_unmountable_sidecar_devices(&mut p, &mounted, false, &proving).is_empty());
         assert_eq!(p.len(), 3);
         let lm_only = served(&[(EngineKind::LmStudio, Some(lm_ids))]);
         let mut p = pool.clone();
-        assert!(exclude_unmountable_sidecar_devices(&mut p, &lm_only, false).is_empty());
+        assert!(exclude_unmountable_sidecar_devices(&mut p, &lm_only, false, &proving).is_empty());
         assert_eq!(p.len(), 3);
     }
 
@@ -3816,6 +3928,7 @@ mod tests {
     /// own event; loading on leaves it for the pre-warm's remount; a mounted alias stays.
     #[test]
     fn a_sidecar_serving_another_alias_under_load_off_leaves_the_pool_by_name() {
+        let proving = recording_sidecar();
         let wanted = "workhorse-qwen3.5-9b-4bit-mlx";
         let pool = vec![
             dev("mac-gabee", "gabee-qwen3.8-27b", None),
@@ -3831,7 +3944,7 @@ mod tests {
             ),
         ]);
         let mut p = pool.clone();
-        let gone = exclude_unmountable_sidecar_devices(&mut p, &other, false);
+        let gone = exclude_unmountable_sidecar_devices(&mut p, &other, false, &proving);
         assert_eq!(
             gone,
             vec![SidecarExclusion::ServesOtherAlias {
@@ -3852,7 +3965,7 @@ mod tests {
         assert!(dropped.is_empty());
         let mut p = pool.clone();
         assert!(
-            exclude_unmountable_sidecar_devices(&mut p, &other, true).is_empty(),
+            exclude_unmountable_sidecar_devices(&mut p, &other, true, &proving).is_empty(),
             "loading on: the pre-warm remounts it under the wanted alias"
         );
         assert_eq!(p.len(), 3);
@@ -4599,6 +4712,159 @@ engine.wait()
                 assert!(err.contains(&format!("pid {engine}")), "{err}");
                 assert!(untouched);
             });
+        }
+
+        /// Q-250's pool build with loading OFF (the default, where `ensure_loaded` never runs):
+        /// an LM Studio device and one sidecar device whose id the engine on `port` serves, the
+        /// sidecar catalog read live through `served_by_engine`. Returns what the exclusion left
+        /// in the pool, its run.jsonl events, and the facts the engines recorded meanwhile.
+        fn load_off_pool_build(
+            port: u16,
+            engines: &Engines,
+        ) -> (Vec<String>, Vec<serde_json::Value>, Vec<serde_json::Value>) {
+            let mut pool = vec![
+                dev("mac-gabee", "gabee-qwen3.8-27b", None),
+                dev("mihai-mlx", SERVED, Some(EngineKind::MlxSidecar)),
+            ];
+            let served = served_by_engine(engines, &pool);
+            assert_eq!(
+                served[&EngineKind::MlxSidecar],
+                Some(HashSet::from([SERVED.to_string()])),
+                "port {port} serves the device's id: the catalog keep is reached"
+            );
+            let events = sidecar_exclusion_events(&exclude_unmountable_sidecar_devices(
+                &mut pool, &served, false, engines,
+            ));
+            let kept = pool.into_iter().map(|d| d.id).collect();
+            (kept, events, engines.take_probe_absences())
+        }
+
+        fn engines_on(port: u16) -> Engines {
+            let mut engines = Engines::with_lmstudio_for_tests(RecordingEngine::new("lmstudio"));
+            engines.register_sidecar("mlx-sidecar", Arc::new(sidecar_on(port)));
+            engines
+        }
+
+        fn excluded_reason(events: &[serde_json::Value]) -> String {
+            let [event] = events else {
+                panic!("one exclusion event: {events:?}");
+            };
+            assert_eq!(event["event"], "sidecar-device-excluded");
+            assert_eq!(event["id"], "mihai-mlx");
+            event["reason"].as_str().unwrap().to_string()
+        }
+
+        /// A listener no goose started serves the device's id. Before Q-250 the device stayed in
+        /// the pool and the build dispatched to it; now it leaves by name — pid, command line, the
+        /// rule it failed, the step — and the listener is left serving.
+        #[test]
+        fn load_off_a_listener_no_goose_started_leaves_the_pool_by_name() {
+            let port = free_port();
+            let mut stand_in = Command::new("python3")
+                .args(["-c", FAKE_ENGINE, &port.to_string(), GOLDEN_V1_MODELS])
+                .spawn()
+                .unwrap();
+            let pid = stand_in.id();
+            wait_listening(port, pid);
+            let (kept, events, _) = load_off_pool_build(port, &engines_on(port));
+            let untouched = alive(pid);
+            stop_after(&[pid], || {
+                assert_eq!(
+                    kept,
+                    vec!["mac-gabee"],
+                    "the pool kept the device pid {pid} serves, which no goose started"
+                );
+                let reason = excluded_reason(&events);
+                assert!(reason.starts_with("engine-port-held: "), "{reason}");
+                assert!(reason.contains(&format!("pid {pid}")), "{reason}");
+                assert!(reason.contains("http.server"), "the command line: {reason}");
+                assert!(
+                    reason.contains(&format!("carries no {SIDECAR_MARKER_ENV}")),
+                    "the rule it failed: {reason}"
+                );
+                assert!(
+                    reason.contains(&format!("`kill {pid}`")),
+                    "the step: {reason}"
+                );
+                assert!(untouched, "the exclusion signals nothing");
+            });
+            stand_in.wait().unwrap();
+        }
+
+        /// A goose died and left its engine on the port, marked for it. With loading off nothing
+        /// of this run's mounts, so nothing would stop it and supervise its successor: the device
+        /// leaves by name, the holders and the start that stops them named.
+        #[test]
+        fn load_off_a_leftover_whose_goose_is_gone_leaves_the_pool_by_name() {
+            let port = free_port();
+            let (launcher, engine) = engine_pair(port, &engine_marker(port), "same_group");
+            let (kept, events, _) = load_off_pool_build(port, &engines_on(port));
+            let untouched = alive(engine) && alive(launcher);
+            stop_after(&[launcher, engine], || {
+                assert_eq!(
+                    kept,
+                    vec!["mac-gabee"],
+                    "the pool kept the leftover pair {launcher}/{engine} nobody supervises"
+                );
+                let reason = excluded_reason(&events);
+                assert!(
+                    reason.starts_with("sidecar-leftover-not-adopted: "),
+                    "{reason}"
+                );
+                assert!(
+                    reason.contains(&format!("pids {engine}, {launcher}")),
+                    "{reason}"
+                );
+                assert!(reason.contains("`goose swarm pool`"), "the step: {reason}");
+                assert!(untouched, "the exclusion signals nothing");
+            });
+        }
+
+        /// The desktop's shape: a live goose supervises the engine serving the id. Kept, as
+        /// before, and the share is said once per pid however often the pool build asks.
+        #[test]
+        fn load_off_an_engine_a_live_goose_supervises_is_kept_and_said_once() {
+            let port = free_port();
+            let (starter, engine) = engine_pair(port, &engine_marker(port), "new_group");
+            let engines = engines_on(port);
+            let first = load_off_pool_build(port, &engines);
+            let again = load_off_pool_build(port, &engines);
+            let untouched = alive(engine) && alive(starter);
+            stop_after(&[starter, engine], || {
+                for (kept, events, _) in [&first, &again] {
+                    assert_eq!(kept, &vec!["mac-gabee", "mihai-mlx"]);
+                    assert!(events.is_empty(), "{events:?}");
+                }
+                let [said] = first.2.as_slice() else {
+                    panic!("the share is said once: {:?}", first.2);
+                };
+                assert_eq!(said["event"], "sidecar-engine-shared");
+                assert_eq!(said["pid"], engine);
+                assert_eq!(said["starter"], starter);
+                assert!(again.2.is_empty(), "said once per pid: {:?}", again.2);
+                assert!(untouched);
+            });
+        }
+
+        /// This process's own engine — its launcher chain ends here — is kept, silently.
+        #[test]
+        fn load_off_this_processs_own_engine_is_kept_silently() {
+            let port = free_port();
+            let mut own = Command::new("python3")
+                .args(["-c", FAKE_ENGINE, &port.to_string(), GOLDEN_V1_MODELS])
+                .env(SIDECAR_MARKER_ENV, engine_marker(port))
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let pid = own.id();
+            wait_listening(port, pid);
+            let (kept, events, facts) = load_off_pool_build(port, &engines_on(port));
+            stop_after(&[pid], || {
+                assert_eq!(kept, vec!["mac-gabee", "mihai-mlx"]);
+                assert!(events.is_empty(), "{events:?}");
+                assert!(facts.is_empty(), "{facts:?}");
+            });
+            own.wait().unwrap();
         }
     }
 }

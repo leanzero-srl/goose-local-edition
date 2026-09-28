@@ -459,6 +459,13 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   984b74763 carries no marker and is refused, named — never reaped; Unmount still reclaims the port from ANY listener
   (`reclaim_port`, unproven — the owner's explicit command). Tests: tests/port_holders.rs (real orphans via a
   process-group `sh` that exits), engine `a_mount_stops_its_own_leftover_engine_and_names_one_it_may_not_stop`.
+  THE PANEL READS THE SAME HOLDERS (Q-249, 2026-09-28): `status()` fills `stray_listener_holders` (pid, argv, ours,
+  `not_ours_rule` = `NotOursRule::as_str` unreadable|initOrSelf|otherUser|otherEngine|noMarker|liveStarter, the
+  reason, live starter pid+argv) through the mount's own `engine_marker(port)` + `read_port_holders` — only while no
+  mount is in flight (lsof per poll of a start would read the start's own child) — or `stray_listener_holders_error`.
+  The desktop's `StrayListenerBanner` says whose and ONE step in Q-240's order (`strayStep`: live starter → quit it,
+  never a kill; goosed itself → another port; all ours → start again in Run it; else `kill <not-ours pids>` + Copy).
+  A new `NotOurs` arm needs a `NotOursRule` AND a catalog phrase, or the panel falls back to the raw reason.
 - A SWARM BUILD REUSES AN ALREADY-SERVING ENGINE ONLY ON THE SAME PROOF (Q-248, 2026-09-28). Before: goose-cli's
   `SidecarEngine::ensure_loaded` returned Ok whenever `/v1/models` on `mlx_engine.port` served the pool id — any
   listener (unmarked stand-in, a dead goose's leftover, an engine marked for another port) was adopted (measured red,
@@ -471,6 +478,16 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   argv, the failed rule and the step — the device leaves the pool through `engine-mount-failed`. TRAP: an in-process
   stub listener is "this goosed itself" and is refused — reuse tests need a REAL stand-in process
   (`swarm_engine.rs` tests `fast_path_ownership`). Off unix nothing is ever reused (`engine-port-held`, unreadable).
+- LOADING OFF (THE DEFAULT) PROVES THE SAME WAY (Q-250, 2026-09-28). With `allow_model_load: false` the pre-warm and
+  `ensure_loaded` never run, so Q-248 alone left `exclude_unmountable_sidecar_devices` keeping ANY sidecar device whose
+  id the port served (measured red, 3 tests). Now its catalog keep asks the device's engine `SwarmEngine::prove_served`,
+  which reads the SAME verdict (`SidecarEngine::served_by`, shared with `reuse_served`): Own/Supervised → kept exactly
+  as before (Supervised said once per pid, `sidecar-engine-shared`, drained at the next `take_probe_absences` seam);
+  Leftover → excluded (`sidecar-device-excluded{id, reason: "sidecar-leftover-not-adopted: … next step: mount the engine
+  from a goose window or enable loading …"}` — with loading off nothing would stop and supervise it); anything else →
+  `sidecar-device-excluded{reason: "engine-port-held: …"}` naming pid, argv, rule, step. Nothing is signalled. LM Studio's
+  `prove_served` is Ok by definition (goose starts no process behind it). The desktop's own engine is `Supervised`
+  because the Electron app spawns `goose swarm` as a separate process whose parent is not goosed.
 - A KILLED CHILD IS "GONE" TO sysinfo BEFORE ITS PARENT CAN SEE IT (Q-245, 2026-09-28). Measured: for 48 of 50
   SIGKILLed children `proc_pidinfo` (so `machine::process_start`/`prove`) answered nothing while `waitid(WNOWAIT)` did
   not yet report the exit. A test that waits for a killed child and then asserts the supervisor's next `try_wait`

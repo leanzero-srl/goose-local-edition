@@ -2711,6 +2711,18 @@
   "leavingRows.figure": {
     "defaultMessage": "{rows, plural, other {durdurulmuş istek hâlâ motordan çıkıyor}}{since, select, none {} other { · {since} önce durduruldu}}"
   },
+  "leavingRows.reasonCancelled": {
+    "defaultMessage": "Çağıran tarafından iptal edildi"
+  },
+  "leavingRows.reasonOther": {
+    "defaultMessage": "Durduruldu: {reason}"
+  },
+  "leavingRows.reasonTextCycle": {
+    "defaultMessage": "Motor durdurdu: yanıt kendi etrafında dönüyordu"
+  },
+  "leavingRows.reasonToolRepeat": {
+    "defaultMessage": "Motor durdurdu: aynı araç çağrısını tekrarlıyordu"
+  },
   "leavingRows.stage": {
     "defaultMessage": "Durduruldu · çıkıyor"
   },
@@ -9571,6 +9583,69 @@
   },
   "strategies.whenShare": {
     "defaultMessage": "paylaşım"
+  },
+  "strayListener.copied": {
+    "defaultMessage": "Kopyalandı"
+  },
+  "strayListener.copy": {
+    "defaultMessage": "Kopyala"
+  },
+  "strayListener.copyLabel": {
+    "defaultMessage": "{command} komutunu kopyala"
+  },
+  "strayListener.holder": {
+    "defaultMessage": "pid {pid} · {command}"
+  },
+  "strayListener.initOrSelf": {
+    "defaultMessage": "Bu goose’un kendi uygulaması motor portunu dinliyor"
+  },
+  "strayListener.label": {
+    "defaultMessage": "{port} portu kullanımda"
+  },
+  "strayListener.liveStarter": {
+    "defaultMessage": "Bu goose’un değil — pid {pid} ({command}) başlattı ve hâlâ çalıştırıyor: bu Mac’teki başka bir goose ya da bir terminal"
+  },
+  "strayListener.noMarker": {
+    "defaultMessage": "Bu goose’un değil — goose motor işareti taşımıyor (daha eski bir goose ya da başka bir program başlattı)"
+  },
+  "strayListener.noneNamed": {
+    "defaultMessage": "{port} portunda bir şey yanıt veriyor ama şu an orada dinleyen bir süreç yok — az önce kapanmış olabilir."
+  },
+  "strayListener.otherEngine": {
+    "defaultMessage": "Bu goose’un değil — başka bir motor ya da port için başlatılmış bir goose motoru"
+  },
+  "strayListener.otherRule": {
+    "defaultMessage": "Bu goose’un değil — {reason}"
+  },
+  "strayListener.otherUser": {
+    "defaultMessage": "Bu goose’un değil — bu Mac’te başka bir kullanıcı olarak çalışıyor"
+  },
+  "strayListener.ours": {
+    "defaultMessage": "Bu goose’un kendi motoru, önceki bir çalıştırmadan kalmış — artık onu hiçbir şey çalıştırmıyor"
+  },
+  "strayListener.stepKill": {
+    "defaultMessage": "Sonraki: bu komutla durdurun, ardından Çalıştır’da yeniden başlatın."
+  },
+  "strayListener.stepMount": {
+    "defaultMessage": "Sonraki: Çalıştır’da yeniden başlatın — başlatma önce bu artığı durdurur."
+  },
+  "strayListener.stepOtherPort": {
+    "defaultMessage": "Sonraki: motorun ayarlarında ona başka bir port verin."
+  },
+  "strayListener.stepQuit": {
+    "defaultMessage": "Sonraki: onu başlatanı kapatın (pid {pid}), ardından Çalıştır’da yeniden başlatın."
+  },
+  "strayListener.unnamed": {
+    "defaultMessage": "Bu goose’un çalıştırmadığı bir süreç {port} portunu dinliyor — Unmount onu durdurur."
+  },
+  "strayListener.unread": {
+    "defaultMessage": "{port} portunu kimin tuttuğu okunamadı ({error}). Unmount orayı dinleyen her şeyi durdurur."
+  },
+  "strayListener.unreadable": {
+    "defaultMessage": "Bu goose’un olduğu kanıtlanamadı — kimin başlattığı okunamadı"
+  },
+  "strayListener.unreadableCommand": {
+    "defaultMessage": "komut satırı okunamıyor"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} sağlayıcısı yapılandırıldı"
