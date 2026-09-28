@@ -109,7 +109,10 @@ export function TickRow({
                 {intl.formatMessage(chip.label)}
               </span>
             )}
-            <span className="min-w-0 flex-1 truncate text-xs text-lz-ink">{headline}</span>
+            {/* Open, the body says it in full; the truncated line would only repeat it. */}
+            <span className="min-w-0 flex-1 truncate text-xs text-lz-ink">
+              {open ? '' : headline}
+            </span>
           </>
         )}
         <ChevronRight

@@ -43,7 +43,7 @@ export function TickMarker({ message, tick }: { message: Message; tick: LoopTick
       className="group w-full mt-[16px] scroll-mt-16"
     >
       <div className="flex items-center gap-3">
-        <span aria-hidden className={cx('h-0 flex-1 border-t', SURFACE.hairline)} />
+        <span aria-hidden className="h-0 flex-1 border-t border-lz-border-strong" />
         <span
           className={cx(
             'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-lz-pill px-2.5 text-xs font-lz-semibold',
@@ -54,7 +54,7 @@ export function TickMarker({ message, tick }: { message: Message; tick: LoopTick
           <Repeat aria-hidden className="size-3.5" />
           {title}
         </span>
-        <span aria-hidden className={cx('h-0 flex-1 border-t', SURFACE.hairline)} />
+        <span aria-hidden className="h-0 flex-1 border-t border-lz-border-strong" />
         <button
           type="button"
           data-testid="loop-tick-marker-toggle"
