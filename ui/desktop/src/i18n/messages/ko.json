@@ -6995,6 +6995,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "모델 선택"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "기본값"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "모델"
   },

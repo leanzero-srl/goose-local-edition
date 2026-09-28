@@ -6995,6 +6995,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Chọn một mô hình"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Mặc định"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Mô hình"
   },

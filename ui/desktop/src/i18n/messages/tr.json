@@ -6995,6 +6995,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Bir model seçin"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Varsayılan"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
   },

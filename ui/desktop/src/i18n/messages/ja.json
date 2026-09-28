@@ -6995,6 +6995,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "モデルを選択"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "デフォルト"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "モデル"
   },

@@ -6995,6 +6995,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "选择模型"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "默认"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "模型"
   },

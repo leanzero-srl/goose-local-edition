@@ -6995,6 +6995,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "एक मॉडल चुनें"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "डिफ़ॉल्ट"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "मॉडल"
   },

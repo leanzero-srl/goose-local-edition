@@ -6995,6 +6995,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Pilih model"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Lalai"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Model"
   },

@@ -133,6 +133,7 @@ const i18n = defineMessages({
     defaultMessage: '{provider} has no model listing; these are the models goose knows for it.',
   },
   pickModel: { id: 'nodes.newPickModel', defaultMessage: 'Pick a model' },
+  providerDefault: { id: 'nodes.newProviderDefault', defaultMessage: 'Default' },
   nameIt: { id: 'nodes.newNameIt', defaultMessage: 'Name it' },
   name: { id: 'nodes.newName', defaultMessage: 'Name' },
   keepLoaded: {
@@ -755,7 +756,8 @@ function NewNodeDialogBody({
             selected={provider === p.name}
             onClick={() => {
               setProvider(p.name);
-              setProviderModel('');
+              // The default chosen in Cloud Providers is the first pick (Q-437).
+              setProviderModel(p.default_model ?? '');
             }}
             testId="new-node-provider-row"
           >
@@ -776,12 +778,18 @@ function NewNodeDialogBody({
     </div>
   );
 
-  const modelOptions =
+  const listed =
     models.kind === 'read'
       ? models.models
       : models.kind === 'unlisted' || models.kind === 'failed'
         ? models.catalog
         : [];
+  // The provider's default model (chosen and proven in Cloud Providers, whose dialog promises it
+  // "leads the list whenever you add a node") leads, marked — then the provider's own order (Q-437).
+  const providerDefault = providerDetails?.default_model || null;
+  const modelOptions = providerDefault
+    ? [providerDefault, ...listed.filter((m) => m !== providerDefault)]
+    : listed;
   const providerModelStep = (
     <div className="flex flex-col gap-3" data-testid="new-node-provider-model">
       <p className={cx(TYPE.body, WEIGHT.semibold)}>{intl.formatMessage(i18n.whichModel)}</p>
@@ -804,7 +812,10 @@ function NewNodeDialogBody({
         <Combobox
           aria-label={intl.formatMessage(i18n.providerModels)}
           placeholder={intl.formatMessage(i18n.pickModel)}
-          options={modelOptions.map((m) => ({ value: m }))}
+          options={modelOptions.map((m) => ({
+            value: m,
+            hint: m === providerDefault ? intl.formatMessage(i18n.providerDefault) : undefined,
+          }))}
           value={providerModel}
           onChange={setProviderModel}
         />

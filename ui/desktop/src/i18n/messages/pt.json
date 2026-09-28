@@ -6995,6 +6995,9 @@
   "nodes.newPickModel": {
     "defaultMessage": "Escolha um modelo"
   },
+  "nodes.newProviderDefault": {
+    "defaultMessage": "Padrão"
+  },
   "nodes.newProviderModels": {
     "defaultMessage": "Modelo"
   },
