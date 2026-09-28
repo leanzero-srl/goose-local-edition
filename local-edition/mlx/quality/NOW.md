@@ -39,25 +39,26 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-428 (+Q-430/432; break pass fixed 4 more, a3174fdab) the owner's "don't interrupt a node doing its thing" per-role option — agent-a626efc4490c889b7.
-- MERGED into /tmp/merge-074 (branch merge-074, 00:0x; no ledger row lost, gains Q-424/425):
-  - Q-417 (servedModel), Q-407 (dead goosed's commands), Q-423 (engine stderr; BOTH Macs), Q-426 (PiP X);
-  - Q-450 (claim_check: an announced action with no tool, a count no output holds; 0 false in 9,615 replies, 89b9d3c79);
-  - Q-449 (Linux pgrep counted a zombie; shutdown now waits for the exit it caused, 2b0473e56);
-  - Q-447 (float32 KV fix; BOTH Macs); Q-429/431/433..440 (demo fixes, ea2f02977). Medium confidence, live-only: Q-431's banner under share,
-    Q-434's delegate card, Q-436's remote load phases.
+- Q-441/442/443 (Q-428 follow-ups: honest Retry, waiting behind a queued switch, a way out of Wait) — based on
+  merge-074.
 
-## Batch 4 → 3.0.74 (next)
-1. When Q-428 reports (it has committed 111443cbf/93c0be18b/00e442205 plus its ledger, and is finishing), merge them into /tmp/merge-074 via ledger_resolve, with main merged in before the ff.
-2. ONE full gate in its own session (scratchpad/gate074.sh, target ~/goose-targets/g074), when #3u is at a turn
-   boundary or done. NO cargo on the MacBook while #3u decodes. The Q-447 agent is the one allowed job.
-3. ff main, push, release 3.0.74 (/tmp/rel074.sh), install on BOTH Macs (Q-423, maybe Q-447), split-start smoke.
-4. Live prove:
-   - Q-447 (decode ≥ 8 tok/s on a cache-hit turn);
-   - Q-428 (re-run the demo's shared-Mac case);
-   - Q-426 (PiP);
-   - Q-417.
-5. Tell the owner Q-428's result (his ask).
+## Batch 4 → 3.0.74 — merge-074 (/tmp/merge-074, d750166f1) COMPLETE, GATE RUNNING
+- Holds:
+  - Q-417, Q-407, Q-423 (BOTH Macs), Q-426;
+  - Q-429/431/433..440;
+  - Q-447 (float32 KV; BOTH Macs), Q-449, Q-450;
+  - Q-428/430/432 (b/o demo; break pass fixed 4).
+  No ledger row lost; Q-444..446 unused.
+- Gate: scratchpad/gate074.sh in its own session → /tmp/g074.out (target ~/goose-targets/g074; pnpm install, tsc,
+  vitest, eslint, i18n, fmt, lib, agent/compaction/acp_*/needs_you/chat_search/session, sidecar, providers,
+  leanzero-link, server, mcp+cli, clippy, development_gates, schema, wincheck).
+- Green → ff main, push → release 3.0.74 (/tmp/rel074.sh) → install BOTH Macs at an #3u turn boundary →
+  split-start smoke.
+- Then live-prove:
+  - Q-447 (decode ≥ 8 tok/s on cache-hit turns; entry bytes 32,768/token);
+  - Q-428 (the demo strategy with its Chat role on "Use the next node" and on "Wait");
+  - Q-426, Q-417, Q-450.
+- Then tell the owner about Q-428.
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
