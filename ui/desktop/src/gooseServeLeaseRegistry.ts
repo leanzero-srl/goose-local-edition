@@ -12,6 +12,8 @@ export interface GooseServeLease {
   secretKey: string;
   cleanup: () => Promise<GooseServeStop | void>;
   windowIds: Set<number>;
+  /** Windows handed this lease by `acquireLocal` that have not attached (or given it back) yet. */
+  pendingWindows: number;
   cleanedUp: boolean;
   exited: boolean;
   exitCode: number | null;
@@ -41,6 +43,7 @@ export class GooseServeLeaseRegistry {
       secretKey,
       cleanup: result.cleanup,
       windowIds: new Set<number>(),
+      pendingWindows: 0,
       cleanedUp: false,
       exited: false,
       exitCode: null,
@@ -100,6 +103,7 @@ export class GooseServeLeaseRegistry {
       secretKey,
       cleanup,
       windowIds: new Set<number>(),
+      pendingWindows: 0,
       cleanedUp: false,
       exited: false,
       exitCode: null,
@@ -118,34 +122,36 @@ export class GooseServeLeaseRegistry {
    * asking meanwhile. The start first waits for every stop under way: a goosed still tearing down
    * holds the mesh daemon, and a goosed started beside it is refused the mesh for good (Q-257,
    * Q-223). `start` resolves null when it failed (it has told the user); the next window tries anew.
+   * The caller then either attaches a window (`attachWindow`) or gives the lease back
+   * (`releaseUnattached`): until one of those, the lease counts as held, so a sibling window's failed
+   * creation cannot stop the goosed this one is about to use.
    */
-  acquireLocal(start: () => Promise<GooseServeLease | null>): Promise<GooseServeLease | null> {
-    const live = this.liveLocal();
-    if (live) return Promise.resolve(live);
-    this.localStart ??= (async () => {
-      try {
-        if (this.stopping.size > 0) {
-          this.logger.info(
-            `A window needs a goose serve backend: waiting for ${this.stopping.size} stopping backend(s) to exit first, so the new one can hold the LeanZero Link mesh`
-          );
-          await Promise.all([...this.stopping]);
+  async acquireLocal(
+    start: () => Promise<GooseServeLease | null>
+  ): Promise<GooseServeLease | null> {
+    const lease =
+      this.liveLocal() ??
+      (await (this.localStart ??= (async () => {
+        try {
+          if (this.stopping.size > 0) {
+            this.logger.info(
+              `A window needs a goose serve backend: waiting for ${this.stopping.size} stopping backend(s) to exit first, so the new one can hold the LeanZero Link mesh`
+            );
+            await Promise.all([...this.stopping]);
+          }
+          return await start();
+        } finally {
+          this.localStart = null;
         }
-        return await start();
-      } finally {
-        this.localStart = null;
-      }
-    })();
-    return this.localStart;
+      })()));
+    if (lease) lease.pendingWindows += 1;
+    return lease;
   }
 
-  /**
-   * Would releasing this window stop its backend — no other window is attached to its lease. A
-   * window with no lease answers true, so a guard reading this never relaxes on a window it cannot
-   * place.
-   */
-  isLastWindow(windowId: number): boolean {
-    const lease = this.leasesByWindowId.get(windowId);
-    return !lease || [...lease.windowIds].every((id) => id === windowId);
+  /** A lease `acquireLocal` handed out whose window was never made: stop it only if nobody holds it. */
+  async releaseUnattached(lease: GooseServeLease): Promise<void> {
+    if (lease.pendingWindows > 0) lease.pendingWindows -= 1;
+    if (lease.windowIds.size === 0 && lease.pendingWindows === 0) await this.cleanupLease(lease);
   }
 
   get(windowId: number): GooseServeLease | null {
@@ -175,6 +181,7 @@ export class GooseServeLeaseRegistry {
   }
 
   attachWindow(windowId: number, lease: GooseServeLease) {
+    if (lease.pendingWindows > 0) lease.pendingWindows -= 1;
     lease.windowIds.add(windowId);
     this.leasesByWindowId.set(windowId, lease);
   }
@@ -248,7 +255,11 @@ export class GooseServeLeaseRegistry {
     return Promise.all(this.uniqueLeases().map((lease) => this.cleanupLease(lease)));
   }
 
+  /** Every lease a window holds, plus the local goosed while it is not stopped — even between its
+   *  start and its first window attaching, so a quit then still stops it (Q-257). */
   private uniqueLeases(): GooseServeLease[] {
-    return [...new Set(this.leasesByWindowId.values())];
+    const leases = new Set(this.leasesByWindowId.values());
+    if (this.local && !this.local.cleanedUp) leases.add(this.local);
+    return [...leases];
   }
 }

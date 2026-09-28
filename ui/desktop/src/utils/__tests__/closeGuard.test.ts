@@ -16,12 +16,7 @@ import { SWARM_HEARTBEAT_STALE_MS } from '../../components/swarm/swarmRunLivenes
  * dialog, and only a confirmed reply lets the second `close` through.
  */
 describe('decideClose — a mouse close on a protected window is asked, never refused, never obeyed blind', () => {
-  const alive = {
-    confirmed: false,
-    windowHoldsLiveRun: true,
-    rendererCanAnswer: true,
-    closeStopsBackend: true,
-  };
+  const alive = { confirmed: false, windowHoldsLiveRun: true, rendererCanAnswer: true };
 
   it('asks when the window holds a live run and its renderer can answer', () => {
     expect(decideClose(alive)).toBe('ask');
@@ -40,14 +35,9 @@ describe('decideClose — a mouse close on a protected window is asked, never re
   });
 
   it('the confirmed flag wins even over a still-live run (the user already answered)', () => {
-    expect(decideClose({ ...alive, confirmed: true })).toBe('pass');
-  });
-
-  // Q-257: every window shares the app's one goosed. Closing a window that is not its lease's last
-  // leaves goosed — and the run it serves — standing, so nothing is asked; the last window, or any
-  // window while the app quits, still asks.
-  it('passes a window whose close leaves goosed standing (another window shares it)', () => {
-    expect(decideClose({ ...alive, closeStopsBackend: false })).toBe('pass');
+    expect(decideClose({ confirmed: true, windowHoldsLiveRun: true, rendererCanAnswer: true })).toBe(
+      'pass'
+    );
   });
 });
 
@@ -60,7 +50,6 @@ describe('ConfirmedCloses — the pass-through flag is consumed by exactly one c
         confirmed: flags.take(win),
         windowHoldsLiveRun: true,
         rendererCanAnswer: true,
-        closeStopsBackend: true,
       });
 
     expect(closeVerdict()).toBe('ask');
@@ -86,21 +75,20 @@ describe('ConfirmedCloses — the pass-through flag is consumed by exactly one c
   });
 });
 
-describe("the protected predicate is the accelerator guard's, stamp decay included", () => {
+describe('the protected predicate is the accelerator guard\'s, stamp decay included', () => {
   const NOW = 1_800_000_000_000;
   const verdictFor = (stamp: Parameters<typeof isSwarmRunStampAlive>[0]) =>
     decideClose({
       confirmed: false,
       windowHoldsLiveRun: isSwarmRunStampAlive(stamp, NOW),
       rendererCanAnswer: true,
-      closeStopsBackend: true,
     });
 
   it('a fresh stamp asks; a stamp past SWARM_HEARTBEAT_STALE_MS passes (no seconds literal of its own)', () => {
     expect(verdictFor({ heartbeat: NOW - 3_000, heartbeatExited: false })).toBe('ask');
-    expect(
-      verdictFor({ heartbeat: NOW - SWARM_HEARTBEAT_STALE_MS - 1, heartbeatExited: false })
-    ).toBe('pass');
+    expect(verdictFor({ heartbeat: NOW - SWARM_HEARTBEAT_STALE_MS - 1, heartbeatExited: false })).toBe(
+      'pass'
+    );
   });
 
   it('an EXITED run or no stamp at all closes as before', () => {

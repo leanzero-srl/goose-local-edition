@@ -49,8 +49,8 @@ export class QuitHold {
   constructor(private readonly deps: QuitHoldDeps) {}
 
   /**
-   * A quit is under way: every window's close now ends in goosed stopping, whichever window goes
-   * first — the close guard reads this so a window sharing goosed with another still asks (Q-257).
+   * A quit is under way. createChat reads it (Q-257): the app's one goosed is being stopped, and a
+   * window opened now would start a new goosed the finished hold no longer waits for.
    */
   isQuitting(): boolean {
     return this.quitting;

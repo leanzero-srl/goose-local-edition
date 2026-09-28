@@ -243,7 +243,7 @@ describe('QuitHold — Q-241: goosed has exited before the app does', () => {
 
 // Q-257: every window shares the app's one goosed. The quit must stop that one goosed ONCE, wait for
 // its exit with the app whole — the 3.0.65 shape (the process ends at the first window close) included
-// — and the close guard must know a quit is under way, so a window sharing goosed still asks.
+// — and createChat must know a quit is under way, so no window starts a goosed the hold never waits for.
 describe('QuitHold — one goosed shared by every window (Q-257)', () => {
   function sharedSetup(dieAtFirstClose = false) {
     const log = logger();

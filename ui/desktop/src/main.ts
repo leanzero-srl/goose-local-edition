@@ -1407,9 +1407,20 @@ const createChat = async (
     // ONE goosed per app, shared by every window (Q-257): split discovery needs the goosed that
     // holds the LeanZero Link mesh, and a per-window goosed is refused it. A new one starts only when
     // none is live (none yet, or the last one exited / is stopping).
+    // No window, and no goosed, is made while the app quits: the quit stops every goosed and lets
+    // the process go, so one started now would outlive the hold (the Q-241 orphan shape).
+    if (quitHold.isQuitting()) {
+      log.info('A new window was asked for while the app quits; none is made');
+      return;
+    }
     const reused = gooseServeLeases.liveLocal();
-    gooseServeLease = reused ?? (await gooseServeLeases.acquireLocal(startLocalGooseServe));
+    gooseServeLease = await gooseServeLeases.acquireLocal(startLocalGooseServe);
     if (!gooseServeLease) return;
+    if (quitHold.isQuitting()) {
+      log.info('The app began quitting while a window waited for goose serve; the window is not made');
+      await gooseServeLeases.releaseUnattached(gooseServeLease);
+      return;
+    }
     log.info(
       reused
         ? `Window shares the app's goose serve backend (pid ${reused.pid ?? '?'}, ${reused.windowIds.size} window(s) attached)`
@@ -1424,8 +1435,9 @@ const createChat = async (
 
     const lease = gooseServeLease;
     gooseServeLease = null;
-    // The shared goosed may already serve other windows (Q-257): only a lease no window holds stops.
-    if (lease.windowIds.size === 0) await gooseServeLeases.cleanupLease(lease);
+    // The shared goosed may serve other windows, or be on its way to one (Q-257): it stops only
+    // when no window holds it and none is about to.
+    await gooseServeLeases.releaseUnattached(lease);
   };
 
   let mainWindowState: ReturnType<typeof windowStateKeeper>;
@@ -1713,8 +1725,8 @@ const createChat = async (
   // FAIL OPEN: a destroyed or crashed webContents can neither mount the dialog nor reply, so its
   // window closes untouched rather than standing forever over a run nobody can see (decideClose).
   //
-  // Only a close that STOPS goosed is asked (Q-257): the lease's last window, or any window while
-  // the app quits. A window sharing goosed with another closes and the run goes on.
+  // Every window still asks with one goosed shared by all (Q-257): the run lives with THIS window's
+  // ACP connection, which its close aborts (closeGuard.ts has the measurement), not with goosed.
   mainWindow.on('close', (event) => {
     const contents = mainWindow.webContents;
     const rendererCanAnswer = !contents.isDestroyed() && !contents.isCrashed();
@@ -1722,7 +1734,6 @@ const createChat = async (
       confirmed: confirmedCloses.take(windowId),
       windowHoldsLiveRun: rendererCanAnswer && windowHoldsLiveRun(mainWindow),
       rendererCanAnswer,
-      closeStopsBackend: closeStopsBackend(mainWindow),
     });
     if (verdict === 'pass') return;
     event.preventDefault();
@@ -4942,10 +4953,7 @@ const windowLiveRuns = (win: BrowserWindow): CloseRunPayload['runs'] => {
 // "Stop run and close" gets exactly one `close` through. See mainWindow.on('close') in createChat.
 const confirmedCloses = new ConfirmedCloses();
 
-/**
- * Would any goose window's close guard ask before closing — the same verdict its `close` reaches.
- * Asked only by a quit, and a quit stops every goosed whichever window closes first.
- */
+/** Would any goose window's close guard ask before closing — the same verdict its `close` reaches. */
 const anyCloseWouldAsk = (): boolean =>
   BrowserWindow.getAllWindows().some((win) => {
     if (win.isDestroyed()) return false;
@@ -4956,7 +4964,6 @@ const anyCloseWouldAsk = (): boolean =>
         confirmed: confirmedCloses.has(win.id),
         windowHoldsLiveRun: rendererCanAnswer && windowHoldsLiveRun(win),
         rendererCanAnswer,
-        closeStopsBackend: true,
       }) === 'ask'
     );
   });
@@ -4970,13 +4977,6 @@ const quitHold = new QuitHold({
   closeWouldAsk: anyCloseWouldAsk,
 });
 app.on('before-quit', (event) => quitHold.onQuitEvent('before-quit', event));
-
-/**
- * Closing this window stops the goosed its runs live under (Q-257): it is the last window on its
- * lease (a window shares the app's one goosed with every other), or the app is quitting.
- */
-const closeStopsBackend = (win: BrowserWindow | null): boolean =>
-  win !== null && (quitHold.isQuitting() || gooseServeLeases.isLastWindow(win.id));
 
 let lastSwarmReadErrorLogMs = 0;
 ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
@@ -5852,8 +5852,7 @@ const refuseShortcutDuringRun = (
     triggeredByAccelerator,
     onBenchmarkView: focused !== null && isBenchmarkViewUrl(focused.webContents.getURL()),
     sessionRunLive: anySessionRunLive(),
-    // The chord closes the run only when the close stops goosed — the click's own rule (Q-257).
-    windowHoldsLiveRun: windowHoldsLiveRun(focused) && closeStopsBackend(focused),
+    windowHoldsLiveRun: windowHoldsLiveRun(focused),
   });
   if (refused) {
     const reason = shortcutRefusalReason(benchmarkRunning);

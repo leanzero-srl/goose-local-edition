@@ -35,11 +35,10 @@ export type ShortcutGuardInput = {
   onBenchmarkView: boolean;
   /** SOME renderer holds a live swarm-run subscription (its cached heartbeat stamp is fresh). spawn and
    *  quit refuse on this from any window: a stray chord never opens a window over a run, and quit
-   *  cleans every lease. Absent means "not known", which reads as false — the guard fails OPEN. */
+   *  cleans every lease. Absent means "not known", which reads as false — the guard fails OPEN, never closed. */
   sessionRunLive?: boolean;
-  /** The FOCUSED window's own renderer holds such a subscription AND its close would stop goosed — it
-   *  is the last window on the app's shared goosed, or the app is quitting (Q-257; main.ts feeds
-   *  `windowHoldsLiveRun && closeStopsBackend`). */
+  /** The FOCUSED window's own renderer holds such a subscription — the window whose close would take
+   *  the run with it. */
   windowHoldsLiveRun?: boolean;
 };
 
