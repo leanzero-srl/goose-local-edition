@@ -5819,7 +5819,9 @@ export type LoopStatus = 'running' | 'checking' | 'waiting' | 'waiting_turn' | '
 
 /**
  * Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.
- * The answer itself reaches the model as the person's next chat message, sent by the client.
+ * The answer itself reaches the model as the person's next chat message, sent by the client with
+ * `_meta.goose.needsYouAnswers = [itemId, …]` on the prompt: without that mark the message reads as
+ * typed and closes every question still open in the chat as superseded.
  */
 export type ResolveNeedsYouRequest_unstable = {
     sessionId: string;

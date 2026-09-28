@@ -6116,8 +6116,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "Trả lời"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose đang làm việc — bạn có thể trả lời khi lượt này kết thúc."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose đang làm việc — câu trả lời bạn đưa ra bây giờ sẽ chờ và được gửi khi lượt này kết thúc."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Hủy"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Đóng thông báo này"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "Đã xếp hàng · trả lời khi lượt này kết thúc"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Đã xếp hàng"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "Đang gửi câu trả lời của bạn…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {Cần bạn · # câu hỏi}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} đã xếp hàng"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Câu trả lời của bạn: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Chưa gửi — câu hỏi này đã đóng trước khi câu trả lời đang xếp hàng của bạn kịp gửi."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Chưa gửi — không thể lưu câu trả lời đang xếp hàng của bạn: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Bỏ qua"

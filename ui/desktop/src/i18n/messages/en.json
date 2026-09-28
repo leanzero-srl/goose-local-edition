@@ -6116,8 +6116,14 @@
   "needsYouCard.answer": {
     "defaultMessage": "Answer"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose is working — you can answer when this turn ends."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose is working — an answer you give now waits and is sent when this turn ends."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "Cancel"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "Close this notice"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "Dismiss"
@@ -6137,11 +6143,35 @@
   "needsYouCard.position": {
     "defaultMessage": "{index} of {total}"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "Queued · answers when this turn ends"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Queued"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "Recommended"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "Sending your answer…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count,plural,one{Needs you · # question} other{Needs you · # questions}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} queued"
+  },
   "needsYouCard.title": {
     "defaultMessage": "Needs you"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Your answer: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Not sent — this question was closed before your queued answer could go."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Not sent — your queued answer could not be saved: {error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "The MLX engine’s saved model serves {served}; this node wants {wanted}. Pick the model in Providers."

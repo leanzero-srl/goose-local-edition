@@ -1,6 +1,7 @@
 //! Session activity over ACP: which sessions have a turn in flight and which are waiting on the
 //! person (`ask_user` items), and closing an item with the person's answer or a dismissal — or,
-//! when the person writes a chat message instead, as superseded by it (Q-298).
+//! when the person writes a chat message instead, as superseded by it (Q-298) — unless the message
+//! is the card's own answer, marked as such (Q-344).
 
 use std::collections::HashMap;
 
@@ -241,6 +242,40 @@ impl GooseAcpAgent {
         }
     }
 
+    /// Q-344: whether this prompt is the card's own answer, per its `_meta.goose.needsYouAnswers`
+    /// mark — then it supersedes nothing: the questions it answers are closed already and the
+    /// chat's other open questions stay open for the person. A mark that is not honoured (stale,
+    /// forged, malformed, or the store unreadable) is logged with its reason and the message is
+    /// read as typed, so it supersedes as Q-298 says.
+    pub(super) async fn is_card_answer(
+        &self,
+        session_id: &str,
+        meta: Option<&serde_json::Map<String, serde_json::Value>>,
+        message_text: &str,
+    ) -> bool {
+        let Some(ids) = needs_you::card_answer_ids(meta) else {
+            return false;
+        };
+        let taken = match ids {
+            Ok(ids) => {
+                needs_you::take_card_answers(&self.session_manager, session_id, &ids, message_text)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        match taken {
+            Ok(_) => true,
+            Err(error) => {
+                warn!(
+                    session_id,
+                    %error,
+                    "the message's needs-you answer mark was not honoured; it supersedes the chat's open questions as a typed message does"
+                );
+                false
+            }
+        }
+    }
+
     pub(super) async fn on_resolve_needs_you(
         &self,
         req: ResolveNeedsYouRequest,
@@ -455,6 +490,7 @@ mod tests {
             answer: None,
             superseded_by: Some(String::new()),
             resolved_at: None,
+            answer_delivered_at: None,
         };
         let note = needs_you::superseded_note(&[item("Comma?"), item("Which folder?")], "  ");
         assert!(
@@ -510,6 +546,88 @@ mod tests {
         assert_eq!(
             seen.into_inner().unwrap(),
             vec![(session_id, item_id, NeedsYouStatus::Dismissed)]
+        );
+    }
+
+    fn marked(ids: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::json!({"goose": {"needsYouAnswers": ids}})
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn needs_you_the_card_answer_mark_is_read_only_as_a_list_of_ids() {
+        assert!(needs_you::card_answer_ids(None).is_none());
+        let unmarked = serde_json::json!({"goose": {"loopTick": {}}});
+        assert!(needs_you::card_answer_ids(unmarked.as_object()).is_none());
+        assert_eq!(
+            needs_you::card_answer_ids(Some(&marked(serde_json::json!(["ny_a", "ny_b"]))))
+                .unwrap()
+                .unwrap(),
+            vec!["ny_a".to_string(), "ny_b".to_string()]
+        );
+        for malformed in [
+            serde_json::json!([]),
+            serde_json::json!("ny_a"),
+            serde_json::json!(["ny_a", 7]),
+        ] {
+            assert!(
+                needs_you::card_answer_ids(Some(&marked(malformed.clone())))
+                    .unwrap()
+                    .is_err(),
+                "{malformed}"
+            );
+        }
+    }
+
+    /// Q-344: the card's answer message is honoured once, only for a question answered on the card
+    /// whose words it carries; every refusal writes nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn needs_you_a_card_answer_mark_is_honoured_once_and_only_for_its_own_answer() {
+        let (_dir, manager, session_id, item_id) = a_chat_with_a_question().await;
+        let ids = vec![item_id.clone()];
+        let message = "Answer to your question \"Which CSV delimiter does the owner want?\": A tab";
+
+        let open = needs_you::take_card_answers(&manager, &session_id, &ids, message).await;
+        assert!(
+            open.unwrap_err()
+                .to_string()
+                .contains("not answered on the card"),
+            "a mark on a question still open does not shield the message"
+        );
+
+        needs_you::resolve(
+            &manager,
+            &session_id,
+            &item_id,
+            Resolution::Answered("A tab".into()),
+        )
+        .await
+        .unwrap();
+        let typed = needs_you::take_card_answers(&manager, &session_id, &ids, "Use pipes").await;
+        assert!(
+            typed.unwrap_err().to_string().contains("does not carry"),
+            "a typed message with a borrowed mark is not the answer"
+        );
+        let unknown =
+            needs_you::take_card_answers(&manager, &session_id, &["ny_other".into()], message)
+                .await;
+        assert!(unknown
+            .unwrap_err()
+            .to_string()
+            .contains("no needs-you item"));
+
+        let taken = needs_you::take_card_answers(&manager, &session_id, &ids, message)
+            .await
+            .unwrap();
+        assert_eq!(taken.len(), 1);
+        assert!(taken[0].answer_delivered_at.is_some());
+
+        let stale = needs_you::take_card_answers(&manager, &session_id, &ids, message).await;
+        assert!(
+            stale.unwrap_err().to_string().contains("already delivered"),
+            "a mark is honoured once"
         );
     }
 }

@@ -21,7 +21,7 @@ import {
   acpChatSessionStore,
   useAcpChatSessionSnapshot,
 } from '../acp/chatSessionStore';
-import { acpSteerSession } from '../acp/prompt';
+import { acpSteerSession, needsYouAnswersMeta, type AcpPromptMeta } from '../acp/prompt';
 
 const initialTokenState: TokenState = {
   inputTokens: 0,
@@ -129,13 +129,14 @@ export function useChatSession({
   );
 
   const submitToAcpSession = useCallback(
-    async (targetSessionId: string, userMessage: Message) => {
+    async (targetSessionId: string, userMessage: Message, meta?: AcpPromptMeta) => {
       await acpChatSessionController.submitMessage(targetSessionId, userMessage, {
         getCurrentSnapshot: () =>
           targetSessionId === sessionId
             ? getCurrentSnapshot()
             : acpChatSessionStore.getSnapshot(targetSessionId),
         onFinish,
+        ...(meta ? { meta } : {}),
       });
     },
     [getCurrentSnapshot, onFinish, sessionId]
@@ -150,7 +151,7 @@ export function useChatSession({
 
   const handleSubmit = useCallback(
     async (input: UserInput) => {
-      const { msg: userMessage, images } = input;
+      const { msg: userMessage, images, needsYouAnswers } = input;
       const currentSnapshot = getCurrentSnapshot();
 
       if (
@@ -191,7 +192,11 @@ export function useChatSession({
         acpChatSessionActions.setMessages(sessionId, messagesForStore);
       }
 
-      await submitToAcpSession(sessionId, newMessage);
+      await submitToAcpSession(
+        sessionId,
+        newMessage,
+        needsYouAnswers?.length ? needsYouAnswersMeta(needsYouAnswers) : undefined
+      );
     },
     [getCurrentSnapshot, sessionId, submitToAcpSession]
   );

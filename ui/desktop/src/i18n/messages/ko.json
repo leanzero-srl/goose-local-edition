@@ -6116,8 +6116,38 @@
   "needsYouCard.answer": {
     "defaultMessage": "답변"
   },
-  "needsYouCard.busy": {
-    "defaultMessage": "goose가 작업 중입니다. 이 턴이 끝나면 답변할 수 있습니다."
+  "needsYouCard.busyQueues": {
+    "defaultMessage": "goose가 작업 중입니다. 지금 답하면 대기했다가 이 턴이 끝날 때 전송됩니다."
+  },
+  "needsYouCard.cancelQueued": {
+    "defaultMessage": "취소"
+  },
+  "needsYouCard.closeNotice": {
+    "defaultMessage": "이 알림 닫기"
+  },
+  "needsYouCard.queued": {
+    "defaultMessage": "대기 중 · 이 턴이 끝나면 답변합니다"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "대기 중"
+  },
+  "needsYouCard.sending": {
+    "defaultMessage": "답변을 보내는 중…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {확인 필요 · 질문 #개}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count}개 대기 중"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "내 답변: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "보내지 않음 — 대기 중인 답변이 전송되기 전에 이 질문이 닫혔습니다."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "보내지 않음 — 대기 중인 답변을 저장할 수 없습니다: {error}"
   },
   "needsYouCard.dismiss": {
     "defaultMessage": "닫기"
