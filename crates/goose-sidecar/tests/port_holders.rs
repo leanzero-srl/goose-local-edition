@@ -286,7 +286,10 @@ fn older_goose_engine(port: u16) -> (u32, u32) {
         .unwrap();
     let engine: u32 = line.trim().parse().unwrap();
     wait_listening(port, engine);
-    let starter = starter.id();
+    let starter_pid = starter.id();
+    // Reaped the moment the test stops it, so it never lingers as a zombie.
+    std::thread::spawn(move || starter.wait());
+    let starter = starter_pid;
     let read = |pid| goose_sidecar::port_holder::read_process(pid).unwrap();
     let (starter_read, engine_read) = (read(starter), read(engine));
     assert_eq!(
