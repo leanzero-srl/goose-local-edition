@@ -4713,9 +4713,13 @@ while True:
     /// resident bytes, `placement::engine_resident_bytes`).
     const LEFTOVER_HOLDS: u64 = 768 << 20;
 
+    /// It closes every descriptor it inherited before it allocates: std marks a new socket
+    /// close-on-exec only after creating it, so a spawn racing a parallel test's bind handed this
+    /// long-lived stand-in that test's listener — measured 2 of 3 full runs: the stray-listener test
+    /// read its port still held after it dropped it, and a second full holder read.
     fn leftover_holding_memory(port: u16, marker: Option<&str>) -> u32 {
         let script = format!(
-            "import os\nblob = bytearray(os.urandom(1 << 20)) * {}\n{ARGV_FAKE_ENGINE}",
+            "import os\nos.closerange(3, 65536)\nblob = bytearray(os.urandom(1 << 20)) * {}\n{ARGV_FAKE_ENGINE}",
             LEFTOVER_HOLDS >> 20
         );
         leftover_running(port, marker, &script)
