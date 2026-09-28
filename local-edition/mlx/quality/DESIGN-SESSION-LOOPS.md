@@ -1709,10 +1709,22 @@ to its end; two loops in two processes do not wait on each other's ticks as user
   and `on_prompt`'s early cancel stores the marker under the offer's id and settles the cancel through the same
   `record_cancelled_turn` the during-the-reply cancel uses (the notice for a stop; none for a yield).
 
-NOT cut in this pass: `mac_wide.rs` — the v1b yield trigger (a `kind: user` holder on the tick's own way, in any
-process) and the cross-process "no user reply open" wait before an offer, which is what would set the runner's
-`WayHeld` status (the contract, the sentence and its i18n exist; nothing sets it yet). v1a's in-process "any user
-turn yields" rule still stands.
+NOT cut in that pass, cut in the next (2026-09-28, `07b31bd90`..`8a13f0f1d`): `mac_wide.rs`.
+- **The yield (v1b).** v1a's "any user turn in this goosed yields" is gone. A running tick yields only to a PERSON's
+  reply on the way its own reply leased, in any goose process on this Mac. The reader is the loader's
+  (`Holds::persons_on`, the same traversal as `blockers`, kind `User`). A reply opening in another process announces
+  nothing, so a tick holding a way re-reads the other records on the loader's `LOOK_AGAIN` observation cadence.
+- **The check before an offer.** A `node:<id>` chat on an MLX node waits `WayHeld{way, chat, node}` while a person's
+  reply holds any way of this Mac's goose. A tick that yielded waits until THAT reply ends. Each wait ends on an event
+  (this process's holds changing; the kernel releasing another process's reply flock). The check runs again at the
+  tick's start.
+- **Where it stops.** Strategy and Auto chats are not held before the offer, because their node is the router's choice
+  at lease time; they yield at the lease instead. `omlx` and endpoint chats never lease through the router, so the
+  holders cannot see them.
+- **One gap, not cut.** A person's demand that must STOP the tick's way still waits for the tick's reply, because the
+  holder record carries no demand target.
+- **The early exit.** A person's plain message stopped before its reply is now stored and noticed. A slash command
+  stopped there is not stored, because what `agent.reply` stores for one depends on running it.
 
 ### L10: The wake broadcast
 
