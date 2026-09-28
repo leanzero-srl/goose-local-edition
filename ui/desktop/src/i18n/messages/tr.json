@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Yenilenmedi"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Değiştiriliyor"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Yüzen pencereyi kapat"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Çözümlenen model"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Modeli Seçin"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Düğüm, Mac'lerinizde ya da bulutta iş devredebileceğiniz bir modeldir. Sohbetler bir düğümde ya da stratejide başlar; swarm derlemeleri bir strateji ya da sürü havuzunuzu kullanır."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "{node} düğümüne geçiliyor"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Sürü havuzunuz okunamadı"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Düğümler"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Bu sohbet için {node} yükleniyor: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Değişiklik kaydedilemedi"

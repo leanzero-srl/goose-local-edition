@@ -348,7 +348,12 @@ export default function ChatInput({
   // Before the session's first read there is no turn — only a chat being opened (Q-158): nothing
   // here may say a turn runs (no Stop, no "0 /" counter, no turn attributed on the engine).
   const checkingSession = chatState === ChatState.LoadingConversation;
-  const chatServing = useChatServedBy(effectiveProvider, sessionId, isLoading && !checkingSession);
+  const chatServing = useChatServedBy(
+    effectiveProvider,
+    sessionId,
+    isLoading && !checkingSession,
+    effectiveModel ?? null
+  );
   const servedRef = useRef(chatServing.served);
   servedRef.current = chatServing.served;
 

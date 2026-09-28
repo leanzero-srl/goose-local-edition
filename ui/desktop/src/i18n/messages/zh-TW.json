@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "未重新整理"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "正在切換"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "關閉懸浮視窗"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "已解析的模型"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "選擇模型"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "節點是你可以交付工作的模型，執行在你的 Mac 上或雲端。聊天從某個節點或策略開始；swarm 建置使用策略或你的蜂群節點池。"
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "正在切換到 {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "無法讀取你的蜂群節點池"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "節點"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "正在為此聊天載入 {node}：{phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "變更無法儲存"

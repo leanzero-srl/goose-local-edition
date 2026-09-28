@@ -29,6 +29,7 @@ import { measuredFigure, type MlxMeasuredRead } from './mlxMeasuredRuns';
 import { leaveCause } from './leaveCause';
 import { routeContactLost, routePeerGone } from './routeContact';
 import { MLX_DISTRIBUTED_STALE_MS, snapshotPhase } from './mlxTray';
+import { isNodeSwap, swapStopsEngine, type NodeSwap } from './nodeSwap';
 
 /**
  * THE ENGINE GLANCE — the Engine tab's live state tile made small enough to carry everywhere: the
@@ -65,6 +66,11 @@ export type GlanceStage =
   | 'running'
   /** Weights going in, a split starting, a route mounting on its Mac. */
   | 'loading'
+  /**
+   * The node loader stopped this way to load another node (utils/nodeSwap.ts): the stopped way's
+   * "failed · exit 143" or "not mounted" is the swap's doing, never said as either (Q-254).
+   */
+  | 'swapping'
   | 'failed'
   | 'reconnecting'
   /** The route's Mac is away, not a blip (routeContact.ts `routePeerGone`). */
@@ -155,6 +161,8 @@ export interface EngineGlance {
    * window has reported a node for this way and model — nothing is guessed.
    */
   servedBy: GlanceServedBy | null;
+  /** While `stage` is `swapping`: the node the loader is loading, by its name. */
+  swapTo?: string;
 }
 
 export interface GlanceNeedsYou {
@@ -172,6 +180,11 @@ export interface GlanceSessions {
    * glance changed (glanceStore.ts). Absent = this window has not read it.
    */
   serving?: GlanceServingReport | null;
+  /**
+   * A window's report only: the swap its goosed's node loader is making (utils/nodeSwap.ts); null =
+   * none. Absent = this window has not read it.
+   */
+  swap?: NodeSwap | null;
 }
 
 export type GlanceDesktopMode = 'off' | 'away' | 'busy';
@@ -222,6 +235,8 @@ export interface EngineGlanceOptions {
   remote: MlxRemoteReport | null;
   /** Every window's serving report (`servingReportsOf`); the glance names a node only from these. */
   served: readonly GlanceServingReport[];
+  /** The swap a window's loader reports (`swapOfReports`); null = none in progress. */
+  swap?: NodeSwap | null;
 }
 
 type EngineParts = Omit<EngineGlance, 'servedBy'>;
@@ -245,6 +260,7 @@ const BUSY_STAGES: ReadonlySet<GlanceStage> = new Set<GlanceStage>([
   'prefill',
   'queued',
   'loading',
+  'swapping',
   'reconnecting',
   'serving',
   'held',
@@ -333,6 +349,32 @@ function liveParts(
 
 function glance(parts: Omit<EngineParts, 'busy'>): EngineParts {
   return { ...parts, busy: parts.present && BUSY_STAGES.has(parts.stage) };
+}
+
+/**
+ * The glance while the loader swaps: amber, the node it loads by name, the model it loads — none of
+ * the stopped way's figures or words (they describe an engine on its way out).
+ */
+function swapping(swap: NodeSwap, engine: GlanceEngine, pair: MeasuredPair): EngineParts {
+  return glance({
+    present: true,
+    phase: 'loading',
+    stage: 'swapping',
+    engine,
+    modelId: swap.target.modelId,
+    hero: null,
+    second: null,
+    progress: 'indeterminate',
+    waiting: null,
+    inflight: null,
+    chat: null,
+    side: [],
+    otherClients: 0,
+    ranges: rangesOf(pair),
+    nodes: [],
+    detail: null,
+    swapTo: swap.target.name,
+  });
 }
 
 /** The split's start: every rank's measured load summed, or indeterminate while any is unmeasured. */
@@ -424,12 +466,13 @@ export function servingKeptOf(
 }
 
 /**
- * The Nodes nav row's chip (design §5.1): "Loading" while the glance shows a load, "Failed" while it
- * shows the engine failed, nothing otherwise — a permanent "ready" count would be noise (Q-8).
+ * The Nodes nav row's chip (design §5.1): "Loading" while the glance shows a load or a swap, "Failed"
+ * while it shows the engine failed, nothing otherwise — a permanent "ready" count would be noise
+ * (Q-8). A way a swap stopped is the swap's "Loading", never "Failed" (Q-254).
  */
 export function nodesNavChip(engine: EngineGlance | null | undefined): 'loading' | 'failed' | null {
   if (!engine?.present) return null;
-  if (engine.stage === 'loading') return 'loading';
+  if (engine.stage === 'loading' || engine.stage === 'swapping') return 'loading';
   if (engine.stage === 'failed') return 'failed';
   return null;
 }
@@ -483,6 +526,24 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
       load: n.state === 'loading' && n.startWord !== 'makingRoom' ? n.load : null,
     }));
     const starting = ['preflight', 'starting'].includes(report.state);
+    // The split stopping — or failing as its ranks take the stop — while the loader loads another
+    // node is the swap, never "Failed" (Q-254); the split's own start failing stays Failed.
+    const swap =
+      !stale &&
+      (report.state === 'stopping' || report.state === 'failed') &&
+      swapStopsEngine(options.swap, {
+        way: 'split',
+        modelId: report.modelId,
+        failed: report.state === 'failed',
+      })
+        ? options.swap
+        : null;
+    if (swap)
+      return swapping(
+        swap,
+        { mode: 'distributed', nodeNames: report.nodeNames, backend: report.backend },
+        pair
+      );
     const stage: GlanceStage = stale
       ? 'stale'
       : report.state === 'failed'
@@ -600,6 +661,18 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
         : single.mode === 'reconnecting'
           ? 'reconnecting'
           : 'off';
+  // This Mac's engine stopped (or killed by the stop: "exit status: 143") while the loader loads
+  // another node is the swap's doing (Q-254); the target's own mount failing stays Failed.
+  if (
+    (stage === 'failed' || stage === 'off') &&
+    swapStopsEngine(options.swap, {
+      way: 'single',
+      modelId: single.modelId,
+      failed: stage === 'failed',
+    })
+  ) {
+    return swapping(options.swap, base.engine, pair);
+  }
   return glance({
     ...base,
     present: stage !== 'off',
@@ -682,6 +755,7 @@ export function isGlanceSessions(value: unknown): value is GlanceSessions {
   const v = value as Record<string, unknown>;
   return (
     (v.serving === undefined || v.serving === null || isGlanceServingReport(v.serving)) &&
+    (v.swap === undefined || v.swap === null || isNodeSwap(v.swap)) &&
     typeof v.running === 'number' &&
     Number.isFinite(v.running) &&
     Array.isArray(v.needsYou) &&

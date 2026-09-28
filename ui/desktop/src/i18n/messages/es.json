@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Sin actualizar"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Cambiando"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Desactivar la ventana flotante"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Modelo resuelto"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Seleccionar modelo"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Un nodo es un modelo al que puedes encargarle trabajo, en tus Macs o en la nube. Los chats empiezan en un nodo o una estrategia; las compilaciones del enjambre usan una estrategia o tu grupo del enjambre."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Cambiando a {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "No se pudo leer tu grupo del enjambre"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodos"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Cargando {node} para este chat: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "No se pudo guardar el cambio"

@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Tidak dikemas kini"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Menukar"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Matikan tetingkap terapung"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Model diselesaikan"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Pilih Model"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Nod ialah model yang boleh anda serahkan kerja, pada Mac anda atau di awan. Sembang bermula pada nod atau strategi; binaan swarm menggunakan strategi atau kumpulan swarm anda."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Bertukar ke {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Kumpulan swarm anda tidak dapat dibaca"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nod"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Memuatkan {node} untuk sembang ini: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Perubahan tidak dapat disimpan"

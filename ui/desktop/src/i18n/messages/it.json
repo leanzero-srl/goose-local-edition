@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Non aggiornato"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Cambio in corso"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Disattiva la finestra mobile"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Modello risolto"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Seleziona modello"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Un nodo è un modello a cui puoi affidare del lavoro, sui tuoi Mac o nel cloud. Le chat iniziano su un nodo o una strategia; le build dello sciame usano una strategia o il tuo pool dello sciame."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Passaggio a {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Impossibile leggere il tuo pool dello sciame"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodi"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Caricamento di {node} per questa chat: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Impossibile salvare la modifica"

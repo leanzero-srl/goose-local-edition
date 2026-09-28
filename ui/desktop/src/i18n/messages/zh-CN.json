@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "未刷新"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "正在切换"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "关闭悬浮窗口"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "解析后的模型"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "选择模型"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "节点是你可以交付工作的模型，运行在你的 Mac 上或云端。聊天从某个节点或策略开始；swarm 构建使用策略或你的蜂群节点池。"
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "正在切换到 {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "无法读取你的蜂群节点池"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "节点"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "正在为此聊天加载 {node}：{phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "此更改无法保存"

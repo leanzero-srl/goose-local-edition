@@ -23,7 +23,8 @@ import {
   useLatestMlxDistributedStatus,
   useMountLookup,
 } from '../noNodeNotice/mlxMount';
-import { deriveChatServedBy, type ChatServedBy } from './chatServedBy';
+import { useGlanceNodes } from '../engineGlance/glanceStore';
+import { deriveChatServedBy, type ChatNodesFacts, type ChatServedBy } from './chatServedBy';
 
 const i18n = defineMessages({
   thisMac: { id: 'chatServedBy.thisMac', defaultMessage: 'This Mac' },
@@ -99,7 +100,8 @@ export interface ChatServing {
 export function useChatServedBy(
   provider: string | null | undefined,
   sessionId: string | null,
-  turnInFlight: boolean
+  turnInFlight: boolean,
+  model: string | null = null
 ): ChatServing {
   const intl = useIntl();
   const isSwarm = provider === 'swarm';
@@ -132,6 +134,16 @@ export function useChatServedBy(
     latestMlxRemoteSingleReadError
   );
   const main = useMainEngineSnapshot(armed);
+  // goosed's nodes read — the loader's marks and the node names (Q-254, Q-255): the glance store's
+  // one read per window, re-read on each engine change and while the loader is at work.
+  const glanceNodes = useGlanceNodes();
+  const nodes: ChatNodesFacts | null = useMemo(
+    () =>
+      glanceNodes.kind === 'read'
+        ? { read: glanceNodes.read, residency: glanceNodes.residency }
+        : null,
+    [glanceNodes]
+  );
   const nowServed = `${singleServedId(status) ?? ''}|${distributed ? (distributedServedId(distributed) ?? '') : ''}`;
   useEffect(() => setServedKey(nowServed), [nowServed]);
 
@@ -159,6 +171,8 @@ export function useChatServedBy(
         turnInFlight,
         thisMac,
         engineLabel,
+        model,
+        nodes,
       }),
     [
       provider,
@@ -172,6 +186,8 @@ export function useChatServedBy(
       turnInFlight,
       thisMac,
       engineLabel,
+      model,
+      nodes,
     ]
   );
   return { served, single: status, armed, turnInFlight };

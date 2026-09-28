@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Non actualisé"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Changement"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Désactiver la fenêtre flottante"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Modèle résolu"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Sélectionner un modèle"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Un nœud est un modèle auquel vous pouvez confier du travail, sur vos Mac ou dans le cloud. Les discussions démarrent sur un nœud ou une stratégie ; les builds de l’essaim utilisent une stratégie ou votre pool de l’essaim."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Passage à {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Impossible de lire votre pool de l’essaim"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nœuds"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Chargement de {node} pour ce chat : {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Impossible d’enregistrer la modification"

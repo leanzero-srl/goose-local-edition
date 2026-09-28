@@ -1,4 +1,8 @@
-import type { BackgroundWorkKind } from '@aaif/goose-sdk';
+import type {
+  BackgroundWorkKind,
+  NodesReadResponse_unstable,
+  NodesResidencyResponse_unstable,
+} from '@aaif/goose-sdk';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
 import { foreignOwner, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
@@ -25,6 +29,9 @@ import { largestPrompt, readingRequest } from '../leanzero-swarm/engineFigures';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { splitStopAt, type SplitStop } from './splitStop';
+import type { ChatLoader } from './loaderText';
+import { nodeNameOfDevice, nodeNamesById } from '../nodes/model';
+import { nodeSwapOf, routeNodeIds, swapStopsEngine, type NodeSwap } from '../../utils/nodeSwap';
 import {
   distributedFact,
   distributedServedId,
@@ -119,6 +126,12 @@ export interface ChatBusy {
 export type ComposerReadiness =
   | { kind: 'unknown' }
   | { kind: 'ready' }
+  /**
+   * The node loader stands between this chat and an engine that answers (Q-254): it is loading a
+   * node this chat's turn waits on, or it stopped the way this chat was on to load another — said in
+   * the loader's words (loaderText.ts), never as "No model is mounted" or "Failed".
+   */
+  | { kind: 'loader'; loader: ChatLoader }
   | { kind: 'no-nodes' }
   | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact }
   | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null }
@@ -431,6 +444,29 @@ export interface ChatServedBy extends MlxEngineServing {
   readTps: number | null;
   /** Can the active provider answer — the readiness bar's actions hang off it. */
   readiness: ComposerReadiness;
+  /**
+   * The node loader's state for this chat (loaderText.ts): a load its turn waits on, a load that
+   * stopped the way it was on, or its turn queued in the loader; null = the loader is not in the way.
+   * Absent when no nodes read was given.
+   */
+  loader?: ChatLoader | null;
+  /**
+   * What this chat's model names, by the names the Nodes page shows (Q-255) — a `node:` session its
+   * node, a `strategy:` session its strategy and the node of it that serves; null = not a nodes
+   * route, or no nodes read. Never the raw id.
+   */
+  route?: ChatRoute | null;
+}
+
+/** A `node:` / `strategy:` chat's model, named (design §8.5's chip label). */
+export type ChatRoute =
+  | { kind: 'node'; name: string }
+  | { kind: 'strategy'; name: string; serving: string | null };
+
+/** goosed's nodes read as the chat surfaces take it: the defs and their residency. */
+export interface ChatNodesFacts {
+  read: NodesReadResponse_unstable;
+  residency: NodesResidencyResponse_unstable;
 }
 
 export interface ChatServedInputs {
@@ -455,6 +491,10 @@ export interface ChatServedInputs {
   thisMac: string;
   /** The omlx provider's node name in the readiness wording ("LeanZero MLX"). */
   engineLabel: string;
+  /** The chat's model (`node:<id>`, `strategy:<id>`, `swarm`, an MLX id); absent = not known. */
+  model?: string | null;
+  /** goosed's `nodes/read` + `nodes/residency` (glanceStore); absent or null = not read. */
+  nodes?: ChatNodesFacts | null;
 }
 
 const SNAPSHOT_ENGINE: Record<Exclude<ChatEngine, 'none'>, MlxEngineSnapshot['engine']> = {
@@ -703,7 +743,139 @@ const NOT_MLX: ChatServedBy = {
   readiness: UNKNOWN,
 };
 
+/**
+ * WHERE CHAT GOES, with the node loader in it: the engines' derivation below, then what the loader
+ * says (Q-254) and the chat's model by its node names (Q-255). The loader decides only while it is
+ * at work — its `loading`/`waiting` marks are goosed's, and they go when the way serves or the load
+ * is refused, so nothing here outlives the swap.
+ */
 export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
+  const core = deriveEngineServedBy(given);
+  const facts = given.nodes ?? null;
+  if (!facts) return core;
+  const routeIds = routeNodeIds(facts.read, given.model);
+  const named = withNodeNames(core, facts.read);
+  const route = routeOf(facts, given.model);
+  const loader = chatLoaderOf(facts, routeIds, given);
+  if (!loader) return { ...named, loader: null, route };
+  const waits = loader.kind === 'waiting';
+  if (servedReady(named)) {
+    // The engine still answers — the chat's turn waits on the loader all the same.
+    return { ...named, phase: waits ? 'held' : 'loading', loader, route };
+  }
+  return {
+    ...named,
+    // What the loader loads, never the way it stopped: the stopped engine's model and window and
+    // its failure words describe an engine on its way out.
+    model: loader.kind === 'loading' ? (loader.swap.target.modelId ?? named.model) : named.model,
+    where: loader.kind === 'loading' ? [] : named.where,
+    contextWindow: loader.kind === 'loading' ? null : named.contextWindow,
+    phase: waits ? 'held' : 'loading',
+    activity: null,
+    work: null,
+    busyWithOthers: null,
+    busyIn: null,
+    turnRequest: null,
+    turnWait: null,
+    readTps: null,
+    readiness: { kind: 'loader', loader },
+    loader,
+    route,
+  };
+}
+
+/**
+ * The readiness bar names the pool's nodes as the Nodes page does (Q-255), never by device id; a
+ * device no node adopted (an LM Studio one) has no other name than its id.
+ */
+function withNodeNames(served: ChatServedBy, read: NodesReadResponse_unstable): ChatServedBy {
+  const { readiness } = served;
+  if (readiness.kind !== 'unmounted' && readiness.kind !== 'distributed') return served;
+  const nodes = readiness.nodes.map((d) => nodeNameOfDevice(read.nodes, d) ?? d);
+  return { ...served, readiness: { ...readiness, nodes } };
+}
+
+function routeOf(facts: ChatNodesFacts, model: string | null | undefined): ChatRoute | null {
+  if (!model) return null;
+  const { read, residency } = facts;
+  const names = nodeNamesById(read.nodes);
+  if (model.startsWith('node:')) {
+    const name = names[model.slice('node:'.length)];
+    return name != null ? { kind: 'node', name } : null;
+  }
+  if (!model.startsWith('strategy:')) return null;
+  const id = model.slice('strategy:'.length).split('@')[0];
+  const strategy = (read.config.strategies ?? []).find((s) => s.id === id);
+  if (!strategy) return null;
+  const ids = routeNodeIds(read, model) ?? [];
+  // The node of the strategy that serves now — a pinned node before one that follows this Mac.
+  const serving = residency.nodes
+    .filter((r) => r.residency.kind === 'serving' && ids.includes(r.node))
+    .map((r) => read.nodes.find((n) => n.def.id === r.node))
+    .filter((n) => n != null)
+    .sort(
+      (a, b) =>
+        Number(a.def.placement == null || a.def.placement.kind === 'follows') -
+        Number(b.def.placement == null || b.def.placement.kind === 'follows')
+    )[0];
+  return { kind: 'strategy', name: strategy.name, serving: serving?.def.name ?? null };
+}
+
+/**
+ * The loader's state for THIS chat: a load its turn waits on (a node its model runs on, its turn in
+ * flight), a load that stopped the engine this chat faces (utils/nodeSwap.ts `swapStopsEngine` — a
+ * real failure of the node being loaded is not the swap's), or its turn queued for one of its nodes.
+ */
+function chatLoaderOf(
+  facts: ChatNodesFacts,
+  routeIds: string[] | null,
+  inputs: ChatServedInputs
+): ChatLoader | null {
+  const { read, residency } = facts;
+  const swap = nodeSwapOf(read, residency, routeIds ?? []);
+  if (swap) {
+    const forThisChat =
+      inputs.turnInFlight && routeIds != null && routeIds.includes(swap.target.id);
+    if (forThisChat || engineStoppedBy(swap, inputs)) {
+      return { kind: 'loading', swap, forThisChat };
+    }
+  }
+  if (!inputs.turnInFlight || routeIds == null) return null;
+  for (const row of residency.nodes) {
+    if (row.residency.kind === 'waiting' && routeIds.includes(row.node)) {
+      const name = nodeNamesById(read.nodes)[row.node] ?? row.node;
+      return { kind: 'waiting', node: name, reason: row.residency.reason };
+    }
+  }
+  return null;
+}
+
+/** The engine this chat faces is down, and the swap is why (a split stopping, an engine stopped). */
+function engineStoppedBy(swap: NodeSwap, inputs: ChatServedInputs): boolean {
+  const { distributed, single } = inputs;
+  if (
+    distributed &&
+    (distributed.state === 'stopping' || distributed.state === 'failed') &&
+    swapStopsEngine(swap, {
+      way: 'split',
+      modelId: distributed.modelId ?? null,
+      failed: distributed.state === 'failed',
+    })
+  ) {
+    return true;
+  }
+  return (
+    statusIsKnowable(single) &&
+    (single.state === 'failed' || single.state === 'stopped') &&
+    swapStopsEngine(swap, {
+      way: 'single',
+      modelId: single.modelId ?? null,
+      failed: single.state === 'failed',
+    })
+  );
+}
+
+function deriveEngineServedBy(given: ChatServedInputs): ChatServedBy {
   // A route whose `reconnecting` is only the registry's lagging mark while main reads its Mac
   // answering is the route main's read proves: serving (Q-64, utils/routeContact.ts).
   const inputs: ChatServedInputs =

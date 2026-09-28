@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Chưa làm mới"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Đang chuyển"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Tắt cửa sổ nổi"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Mô hình đã phân giải"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Chọn mô hình"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Nút là một mô hình mà bạn có thể giao việc, trên các Mac của bạn hoặc trên đám mây. Cuộc trò chuyện bắt đầu trên một nút hoặc một chiến lược; bản dựng swarm dùng một chiến lược hoặc nhóm của bầy của bạn."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Đang chuyển sang {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Không đọc được nhóm của bầy"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nút"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Đang tải {node} cho cuộc trò chuyện này: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Không lưu được thay đổi"

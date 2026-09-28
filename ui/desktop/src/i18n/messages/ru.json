@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Не обновлено"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Переключение"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Выключить плавающее окно"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Разрешенная модель"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Выбрать модель"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Узел — это модель, которой можно передать работу, на ваших Mac или в облаке. Чаты начинаются на узле или стратегии; сборки swarm используют стратегию или ваш пул роя."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Переключение на {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Не удалось прочитать ваш пул роя"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Узлы"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Загрузка {node} для этого чата: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Изменение не удалось сохранить"

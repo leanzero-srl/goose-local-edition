@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Not refreshed"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Swapping"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Turn off the floating window"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Resolved model"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Select Model"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "A node is a model you can hand work to, on your Macs or in the cloud. Chats start on a node or a strategy; swarm builds use a strategy or your swarm pool."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Swapping to {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Your swarm pool could not be read"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodes"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Loading {node} for this chat: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "The change could not be saved"

@@ -6,7 +6,13 @@ import { TYPE, cx } from '../lz';
 import { StudioSelect, ToneBanner, type StudioSelectOption } from '../leanzero-swarm/studio';
 import { mlxErrorMessage } from '../leanzero-swarm/mlxErrorMessage';
 import { refreshGlanceNodes } from '../engineGlance/glanceStore';
-import type { NodesConfig, NodesForBuilds, NodesForNewChats, ResolvedNodeDef } from './model';
+import {
+  nodeNamesById,
+  type NodesConfig,
+  type NodesForBuilds,
+  type NodesForNewChats,
+  type ResolvedNodeDef,
+} from './model';
 import type { Read } from './nodeGlance';
 import { buildReasonWords } from './StrategyCard';
 
@@ -67,7 +73,7 @@ export function UseSelectors({ config, nodes, eligibility }: UseSelectorsProps) 
   const [busy, setBusy] = useState(false);
   const [refusals, setRefusals] = useState<string[]>([]);
   const strategies = config.strategies ?? [];
-  const names = Object.fromEntries(nodes.map((n) => [n.def.id, n.def.name]));
+  const names = nodeNamesById(nodes);
 
   const chatOptions: UseOption[] = [
     { value: 'auto', label: intl.formatMessage(i18n.auto) },

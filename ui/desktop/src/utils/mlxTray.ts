@@ -39,6 +39,7 @@ import type { MlxClient, MlxServing } from './mlxServing';
 import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
 import { leaveCause, type LeaveCause } from './leaveCause';
 import { routeContactLost, routePeerGone, type PeerGone } from './routeContact';
+import { swapStopsEngine, type NodeSwap } from './nodeSwap';
 import {
   restoreSuperseded,
   restoreTrayLine,
@@ -139,6 +140,11 @@ export interface MlxTrayOptions {
   remote?: MlxRemoteReport | null;
   /** What the launch is bringing back, or why it could not; null = nothing to say. */
   restore?: MlxRestoreReport | null;
+  /**
+   * The swap a goose window's node loader is making (utils/nodeSwap.ts): the way it stopped reads
+   * "swapping to <node>", never "MLX failed" (Q-254). null = none.
+   */
+  swap?: NodeSwap | null;
 }
 
 /**
@@ -809,6 +815,19 @@ export function buildMlxTrayModel(
   };
 }
 
+/** The tray while the node loader swaps: the node it loads, never the stopped way's failure. */
+function swapTrayModel(node: string, canAct: boolean): MlxTrayModel {
+  return {
+    title: 'Swapping',
+    phase: 'loading',
+    items: [
+      { type: 'info', label: clip(`LeanZero MLX: swapping to ${node}`), phase: 'loading' },
+      { type: 'separator' },
+      { type: 'action', label: 'Open Providers', action: 'open-providers', enabled: canAct },
+    ],
+  };
+}
+
 function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptions): MlxTrayModel {
   const distributed = options.distributed;
   const hosting = distributed?.report.mode === 'single' ? distributed.report.hosting : null;
@@ -858,6 +877,18 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
       ],
     };
   }
+  if (
+    distributed?.report.mode === 'distributed' &&
+    !distributedStale(distributed) &&
+    (distributed.report.state === 'stopping' || distributed.report.state === 'failed') &&
+    swapStopsEngine(options.swap, {
+      way: 'split',
+      modelId: distributed.report.modelId,
+      failed: distributed.report.state === 'failed',
+    })
+  ) {
+    return swapTrayModel(options.swap.target.name, options.canAct);
+  }
   if (distributed?.report.mode === 'distributed') {
     // The distributed engine owns this Mac: the single engine cannot mount (goose refuses it), so
     // the menu speaks for the distributed run and offers its Stop instead of Mount. While the run is
@@ -890,6 +921,18 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
   }
   // A read of the distributed rank 0 never speaks for the single engine (a run that just stopped).
   const singleSnap = snapshot.engine === 'single' ? snapshot : INITIAL_SNAPSHOT;
+  // This Mac's engine stopped — or killed by the stop ("exit status: 143") — while a window's node
+  // loader loads another node is the swap, not a failure (Q-254).
+  if (
+    (singleSnap.mode === 'failed' || singleSnap.mode === 'off' || singleSnap.mode === 'unknown') &&
+    swapStopsEngine(options.swap, {
+      way: 'single',
+      modelId: singleSnap.modelId,
+      failed: singleSnap.mode === 'failed',
+    })
+  ) {
+    return swapTrayModel(options.swap.target.name, options.canAct);
+  }
   const items: MlxTrayItem[] = [];
   const singlePhase = snapshotPhase(singleSnap);
   items.push({

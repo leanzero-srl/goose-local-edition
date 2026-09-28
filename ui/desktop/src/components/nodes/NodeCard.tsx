@@ -30,6 +30,7 @@ import {
   cx,
 } from '../lz';
 import { figureText, stageWord } from '../engineGlance/EngineGlanceCard';
+import { loadPhaseWord } from './loadPhaseWord';
 import { formatElapsed } from '../leanzero-swarm/mlxLiveStats';
 import { PERMISSION_LABEL } from '../leanzero-swarm/useMacs';
 import { CandidateFigures, outcomeText } from '../leanzero-swarm/PlacementCandidates';
@@ -110,15 +111,6 @@ const i18n = defineMessages({
   },
   liveLine: { id: 'nodes.liveLine', defaultMessage: '{stage} · {chat}' },
   loadProgress: { id: 'nodes.loadProgress', defaultMessage: '{phase} · {done} of {total} GB' },
-  phaseWaitingForLoad: {
-    id: 'nodes.phaseWaitingForLoad',
-    defaultMessage: 'Waiting for another load to finish',
-  },
-  phaseMakingRoom: { id: 'mlxStateTile.makingRoom', defaultMessage: 'Making room' },
-  phaseStarting: { id: 'mlxStateTile.startingEngine', defaultMessage: 'Starting the engine' },
-  phaseLoading: { id: 'mlxStateTile.loadingWeights', defaultMessage: 'Loading weights' },
-  phaseWarming: { id: 'mlxStateTile.warming', defaultMessage: 'Warming up' },
-  phaseUnnamed: { id: 'nodes.phaseUnnamed', defaultMessage: 'Loading' },
   memNeed: { id: 'nodes.memNeed', defaultMessage: 'needs {need} of {budget} GB' },
   memPeak: { id: 'nodes.memPeak', defaultMessage: '{peak} of {budget} GB' },
   memPeakOnly: { id: 'nodes.memPeakOnly', defaultMessage: 'peak {peak} GB' },
@@ -173,26 +165,6 @@ export interface NodeCardProps {
 const gb = (intl: IntlShape, value: number) =>
   intl.formatNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-function phaseWord(intl: IntlShape, phase: string | null): string {
-  switch (phase) {
-    case 'waitingForLoad':
-      return intl.formatMessage(i18n.phaseWaitingForLoad);
-    case 'makingRoom':
-      return intl.formatMessage(i18n.phaseMakingRoom);
-    case 'starting':
-      return intl.formatMessage(i18n.phaseStarting);
-    case 'loading':
-      return intl.formatMessage(i18n.phaseLoading);
-    case 'warming':
-      return intl.formatMessage(i18n.phaseWarming);
-    case null:
-      return intl.formatMessage(i18n.phaseUnnamed);
-    default:
-      // A phase this build has no words for is shown as goose named it, never hidden.
-      return phase;
-  }
-}
-
 /** The line under the name, in the person's words; every fact comes from `nodeGlance`. */
 export function lineText(intl: IntlShape, line: GlanceLine): string {
   switch (line.kind) {
@@ -201,7 +173,7 @@ export function lineText(intl: IntlShape, line: GlanceLine): string {
       return line.chat ? intl.formatMessage(i18n.liveLine, { stage, chat: line.chat }) : stage;
     }
     case 'loadPhase': {
-      const phase = phaseWord(intl, line.phase);
+      const phase = loadPhaseWord(intl, line.phase);
       if (!line.progress) return phase;
       const GIB = 1024 * 1024 * 1024;
       return intl.formatMessage(i18n.loadProgress, {

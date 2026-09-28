@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "ताज़ा नहीं"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "बदल रहा है"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "फ़्लोटिंग विंडो बंद करें"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "हल किया गया मॉडल"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "मॉडल का चयन करें"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "नोड एक मॉडल है जिसे आप काम सौंप सकते हैं, आपके Mac पर या क्लाउड में। चैट किसी नोड या रणनीति पर शुरू होती हैं; swarm बिल्ड किसी रणनीति या आपके स्वार्म पूल का उपयोग करते हैं।"
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "{node} पर बदल रहा है"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "आपका स्वार्म पूल पढ़ा नहीं जा सका"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "नोड"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "इस चैट के लिए {node} लोड हो रहा है: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "बदलाव सहेजा नहीं जा सका"

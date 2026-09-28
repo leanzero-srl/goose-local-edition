@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Tidak diperbarui"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Menukar"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Matikan jendela mengambang"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Model yang diselesaikan"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Pilih Model"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Node adalah model yang bisa Anda serahi pekerjaan, di Mac Anda atau di cloud. Chat dimulai pada sebuah node atau strategi; build swarm memakai strategi atau pool swarm Anda."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Beralih ke {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Pool swarm Anda tidak dapat dibaca"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Node"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Memuat {node} untuk obrolan ini: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Perubahan tidak dapat disimpan"

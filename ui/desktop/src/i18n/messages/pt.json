@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Não atualizado"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Trocando"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Desativar a janela flutuante"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Modelo resolvido"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Selecionar Modelo"
   },
@@ -6677,6 +6683,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Um nó é um modelo ao qual você pode entregar trabalho, nos seus Macs ou na nuvem. Chats começam num nó ou numa estratégia; os builds do enxame usam uma estratégia ou seu pool do enxame."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Trocando para {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Não foi possível ler seu pool do enxame"
   },
@@ -6688,6 +6697,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nós"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Carregando {node} para este chat: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Não foi possível salvar a alteração"

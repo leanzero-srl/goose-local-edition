@@ -58,6 +58,7 @@ import {
 } from '../../utils/engineGlance';
 import { backgroundWorkFor, backgroundWorkLabel } from '../sessionActivity/backgroundWorkText';
 import { FormingPanel } from '../forming/FormingPanel';
+import { swappingText } from '../chatServedBy/loaderText';
 
 /**
  * The engine glance — the Engine tab's state tile made small. Pure presentation of main's glance
@@ -80,6 +81,7 @@ const i18n = defineMessages({
   notLoaded: { id: 'engineGlance.stage.notLoaded', defaultMessage: 'No model loaded' },
   running: { id: 'engineGlance.stage.running', defaultMessage: 'Running' },
   loading: { id: 'engineGlance.stage.loading', defaultMessage: 'Loading' },
+  swapping: { id: 'engineGlance.stage.swapping', defaultMessage: 'Swapping' },
   failed: { id: 'engineGlance.stage.failed', defaultMessage: 'Failed' },
   reconnecting: { id: 'engineGlance.stage.reconnecting', defaultMessage: 'Reconnecting' },
   away: { id: 'engineGlance.stage.away', defaultMessage: 'Mac away' },
@@ -196,6 +198,7 @@ const STAGE_WORD: Record<GlanceStage, (typeof i18n)['idle']> = {
   not_loaded: i18n.notLoaded,
   running: i18n.running,
   loading: i18n.loading,
+  swapping: i18n.swapping,
   failed: i18n.failed,
   reconnecting: i18n.reconnecting,
   away: i18n.away,
@@ -210,6 +213,19 @@ export function stageWord(intl: IntlShape, stage: GlanceStage): string {
   return intl.formatMessage(STAGE_WORD[stage]);
 }
 
+/**
+ * The glance's headline: its stage's word — and while the node loader swaps, the node it loads
+ * (Q-254: "Swapping to {node}", the words the composer and the Engine tile say too).
+ */
+export function glanceHeadline(
+  intl: IntlShape,
+  engine: Pick<EngineGlance, 'stage' | 'swapTo'>
+): string {
+  return engine.stage === 'swapping' && engine.swapTo
+    ? swappingText(intl, engine.swapTo)
+    : stageWord(intl, engine.stage);
+}
+
 export function StageIcon({ stage }: { stage: GlanceStage }) {
   switch (stage) {
     case 'generating':
@@ -221,6 +237,7 @@ export function StageIcon({ stage }: { stage: GlanceStage }) {
     case 'leaving':
       return <Hourglass />;
     case 'loading':
+    case 'swapping':
     case 'reconnecting':
       return <Loader2 className="animate-spin" />;
     case 'failed':
@@ -845,7 +862,7 @@ function GlanceFace(
   };
   const phaseFill = engine.present ? PHASE_FILL[engine.phase] : TONE_FILL.warn;
   const word = engine.present
-    ? stageWord(intl, engine.stage)
+    ? glanceHeadline(intl, engine)
     : intl.formatMessage(i18n.needsYou, { count: push.sessions.needsYou.length });
   const openLabel = question
     ? intl.formatMessage(i18n.openQuestion, { name: questionName, question: question.question })
@@ -984,7 +1001,9 @@ function GlanceFace(
                 {word}
               </span>
             </span>
-            {engine.present && (
+            {/* The mode line names the engine on its way out while a swap runs: the headline
+                names the node coming in instead. */}
+            {engine.present && engine.stage !== 'swapping' && (
               <span
                 data-testid="engine-glance-mode"
                 className={cx('break-words text-lz-meta', WEIGHT.semibold)}
