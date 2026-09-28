@@ -867,15 +867,24 @@ mod tests {
                 "Loop started: Make every test pass · every 10 min. The first tick runs now."
             );
             assert_eq!(
-                at("/loop Make every test pass", &a_loop(LoopCadence::SelfPaced, 0, false)),
+                at(
+                    "/loop Make every test pass",
+                    &a_loop(LoopCadence::SelfPaced, 0, false)
+                ),
                 "Loop started: Make every test pass · goose decides when. The first tick runs now."
             );
 
             let two = a_loop(every_10m(), 2, false);
             assert_eq!(at("/loop pause", &two), "Loop paused after tick 2.");
             assert_eq!(at("/loop stop", &two), "Loop stopped after tick 2.");
-            assert_eq!(at("/loop pause", &fresh), "Loop paused before its first tick.");
-            assert_eq!(at("/loop stop", &fresh), "Loop stopped before its first tick.");
+            assert_eq!(
+                at("/loop pause", &fresh),
+                "Loop paused before its first tick."
+            );
+            assert_eq!(
+                at("/loop stop", &fresh),
+                "Loop stopped before its first tick."
+            );
 
             let waiting = waiting_at(two.clone(), "2026-09-27T22:10:00Z");
             assert_eq!(
@@ -943,7 +952,11 @@ mod tests {
                 "/loop resume",
                 "/loop stop",
             ] {
-                assert_eq!(words(&reply(&agent, &id, line).await), seam::RUNNER_ABSENT, "{line}");
+                assert_eq!(
+                    words(&reply(&agent, &id, line).await),
+                    seam::RUNNER_ABSENT,
+                    "{line}"
+                );
             }
             assert!(stored(&manager, &id).await.is_none());
             assert!(

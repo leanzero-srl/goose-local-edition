@@ -440,7 +440,10 @@ mod tests {
             let result = call(&manager, &id, args(call_args)).await;
             assert_eq!(text(&result), RECORDED, "{verdict}");
             assert_ne!(result.is_error, Some(true));
-            assert!(ends_turn(&result), "{verdict}: a valid report ends the turn");
+            assert!(
+                ends_turn(&result),
+                "{verdict}: a valid report ends the turn"
+            );
 
             let report = last_report(&stored(&manager, &id).await.unwrap()).unwrap();
             assert_eq!(
@@ -532,13 +535,15 @@ mod tests {
     #[tokio::test]
     async fn outside_a_tick_the_report_is_refused_by_name() {
         let (_dir, manager, no_loop) = a_chat().await;
-        let good = || {
-            args(serde_json::json!({"verdict": "progress", "summary": "s", "next_step": "n"}))
-        };
+        let good =
+            || args(serde_json::json!({"verdict": "progress", "summary": "s", "next_step": "n"}));
         let result = call(&manager, &no_loop, good()).await;
         assert_eq!(text(&result), format!("Error: {NO_TICK}"));
         assert!(!ends_turn(&result));
-        assert!(stored(&manager, &no_loop).await.is_none(), "nothing written");
+        assert!(
+            stored(&manager, &no_loop).await.is_none(),
+            "nothing written"
+        );
 
         for between_ticks in [a_loop(every_10m(), 2, false), a_loop(every_10m(), 0, false)] {
             let (_dir, manager, id) = a_chat().await;
@@ -613,10 +618,7 @@ mod tests {
             assert!(ends_turn(&result));
         }
         let record = stored(&manager, &id).await.unwrap();
-        assert_eq!(
-            last_report(&record).unwrap().next_step,
-            "second next step"
-        );
+        assert_eq!(last_report(&record).unwrap().next_step, "second next step");
         assert_eq!(record.ticks.len(), 2);
     }
 
