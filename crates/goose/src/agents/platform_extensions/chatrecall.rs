@@ -1078,7 +1078,11 @@ mod tests {
         chat(&f.sm, "Ledger", SessionType::User, &texts).await;
         let (_, out) = call(&f, SEARCH_TOOL, serde_json::json!({"query": "ledger"})).await;
         let budget = OutputBudget::for_window(goose_providers::model::DEFAULT_CONTEXT_LIMIT, false);
-        assert!(out.starts_with("300 hits in 1 chat"), "{}", &out[..200]);
+        assert!(
+            out.starts_with("300 hits in 1 chat"),
+            "{}",
+            out.chars().take(200).collect::<String>()
+        );
         assert!(
             out.chars().count() <= budget.chars,
             "{} chars against a budget of {}",

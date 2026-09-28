@@ -207,7 +207,7 @@ pub fn group_digits(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -491,34 +491,34 @@ impl SearchQuery {
         let mut positive: Vec<(Term, bool)> = Vec::new();
         let mut excluded = Vec::new();
         let mut or_next = false;
-        let mut rest = input.trim();
-        while !rest.is_empty() {
-            let negate = rest.starts_with('-');
-            if negate {
-                rest = &rest[1..];
+        let mut chars = input.chars().peekable();
+        loop {
+            while chars.next_if(|c| c.is_whitespace()).is_some() {}
+            if chars.peek().is_none() {
+                break;
             }
-            let (raw, quoted, after) = if let Some(stripped) = rest.strip_prefix('"') {
-                match stripped.find('"') {
-                    Some(end) => (&stripped[..end], true, &stripped[end + 1..]),
-                    None => (stripped, true, ""),
+            let negate = chars.next_if_eq(&'-').is_some();
+            let quoted = chars.next_if_eq(&'"').is_some();
+            let mut raw = String::new();
+            if quoted {
+                for c in chars.by_ref() {
+                    if c == '"' {
+                        break;
+                    }
+                    raw.push(c);
                 }
             } else {
-                let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-                (&rest[..end], false, &rest[end..])
-            };
-            let prefix_after_quote = quoted && after.starts_with('*');
-            let after = if prefix_after_quote {
-                &after[1..]
-            } else {
-                after
-            };
-            rest = after.trim_start();
+                while let Some(c) = chars.next_if(|c| !c.is_whitespace()) {
+                    raw.push(c);
+                }
+            }
+            let prefix_after_quote = quoted && chars.next_if_eq(&'*').is_some();
             if !quoted && !negate && raw == "OR" {
                 or_next = !positive.is_empty();
                 continue;
             }
             let prefix = prefix_after_quote || (!quoted && raw.ends_with('*'));
-            let words = words(raw);
+            let words = words(&raw);
             if words.is_empty() {
                 continue;
             }
@@ -1002,50 +1002,16 @@ pub fn snippet<'a>(
     terms: impl IntoIterator<Item = &'a Term> + Clone,
     width: usize,
 ) -> Option<String> {
-    let lower = text.to_lowercase();
-    if lower.len() != text.len() {
-        return snippet_by_chars(text, terms, width);
-    }
-    let mut start = None;
+    let chars: Vec<char> = text.chars().collect();
     let mut word_start = None;
-    for (i, c) in lower
-        .char_indices()
-        .chain(std::iter::once((lower.len(), ' ')))
-    {
-        match (c.is_alphanumeric(), word_start) {
+    for i in 0..=chars.len() {
+        let in_word = chars.get(i).is_some_and(|c| c.is_alphanumeric());
+        match (in_word, word_start) {
             (true, None) => word_start = Some(i),
             (false, Some(ws)) => {
-                let token = &lower[ws..i];
-                if terms.clone().into_iter().any(|t| t.opens(token)) {
-                    start = Some((ws, i));
-                    break;
-                }
-                word_start = None;
-            }
-            _ => {}
-        }
-    }
-    let (ws, we) = start?;
-    Some(cut(text, ws, we, width))
-}
-
-fn snippet_by_chars<'a>(
-    text: &str,
-    terms: impl IntoIterator<Item = &'a Term> + Clone,
-    width: usize,
-) -> Option<String> {
-    let mut word_start = None;
-    let bounds: Vec<(usize, char)> = text
-        .char_indices()
-        .chain(std::iter::once((text.len(), ' ')))
-        .collect();
-    for (i, c) in bounds {
-        match (c.is_alphanumeric(), word_start) {
-            (true, None) => word_start = Some(i),
-            (false, Some(ws)) => {
-                let token = text[ws..i].to_lowercase();
+                let token: String = chars[ws..i].iter().collect::<String>().to_lowercase();
                 if terms.clone().into_iter().any(|t| t.opens(&token)) {
-                    return Some(cut(text, ws, i, width));
+                    return Some(cut(&chars, ws, i, width));
                 }
                 word_start = None;
             }
@@ -1055,27 +1021,22 @@ fn snippet_by_chars<'a>(
     None
 }
 
-/// `width` characters of `text` around the byte range `[ws, we)`, on one line, ellipses where cut.
-fn cut(text: &str, ws: usize, we: usize, width: usize) -> String {
-    let before: Vec<char> = text[..ws].chars().collect();
-    let word: String = text[ws..we].chars().collect();
-    let after: Vec<char> = text[we..].chars().collect();
-    let room = width.saturating_sub(word.chars().count());
-    let lead = (room / 3).min(before.len());
-    let trail = (room - lead).min(after.len());
-    let lead = (room - trail).min(before.len());
-    let head: String = before[before.len() - lead..].iter().collect();
-    let tail: String = after[..trail].iter().collect();
+/// `width` characters of `chars` around the word `[ws, we)`, on one line, ellipses where cut.
+fn cut(chars: &[char], ws: usize, we: usize, width: usize) -> String {
+    let room = width.saturating_sub(we - ws);
+    let lead = (room / 3).min(ws);
+    let trail = (room - lead).min(chars.len() - we);
+    let lead = (room - trail).min(ws);
     let mut out = String::new();
-    if lead < before.len() {
+    if lead < ws {
         out.push('…');
     }
-    out.push_str(&head);
+    out.extend(&chars[ws - lead..ws]);
     out.push('«');
-    out.push_str(&word);
+    out.extend(&chars[ws..we]);
     out.push('»');
-    out.push_str(&tail);
-    if trail < after.len() {
+    out.extend(&chars[we..we + trail]);
+    if we + trail < chars.len() {
         out.push('…');
     }
     out.split_whitespace().collect::<Vec<_>>().join(" ")
