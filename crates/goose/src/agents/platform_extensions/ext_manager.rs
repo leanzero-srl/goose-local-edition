@@ -35,6 +35,11 @@ pub enum ExtensionManagerToolError {
 
     #[error("Failed to deserialize parameters: {0}")]
     DeserializationError(#[from] serde_json::Error),
+
+    /// Q-267: an extension enabled mid-chat starts in the chat's folder; a call that carries none
+    /// is refused rather than started in goosed's own cwd (since Q-257 the shared $HOME).
+    #[error("This call carried no chat folder, so the extension was not started: it would run in goose's own folder instead of this chat's")]
+    NoSessionFolder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -153,6 +158,7 @@ impl ExtensionManagerClient {
 
     async fn handle_manage_extensions(
         &self,
+        ctx: &ToolCallContext,
         arguments: Option<JsonObject>,
     ) -> Result<Vec<Content>, ExtensionManagerToolError> {
         let arguments = arguments.ok_or(ExtensionManagerToolError::MissingParameter {
@@ -163,7 +169,7 @@ impl ExtensionManagerClient {
             serde_json::from_value(serde_json::Value::Object(arguments))?;
 
         match self
-            .manage_extensions_impl(params.action, params.extension_name)
+            .manage_extensions_impl(ctx, params.action, params.extension_name)
             .await
         {
             Ok(content) => Ok(content),
@@ -175,6 +181,7 @@ impl ExtensionManagerClient {
 
     async fn manage_extensions_impl(
         &self,
+        ctx: &ToolCallContext,
         action: ManageExtensionAction,
         extension_name: String,
     ) -> Result<Vec<Content>, ErrorData> {
@@ -218,8 +225,15 @@ impl ExtensionManagerClient {
             }
         };
 
+        let working_dir = ctx.working_dir.clone().ok_or_else(|| {
+            ErrorData::new(
+                ErrorCode::INVALID_REQUEST,
+                ExtensionManagerToolError::NoSessionFolder.to_string(),
+                None,
+            )
+        })?;
         extension_manager
-            .add_extension(config, None, None, None)
+            .add_extension(config, working_dir, None, Some(&ctx.session_id))
             .await
             .map(|_| {
                 vec![Content::text(format!(
@@ -232,6 +246,7 @@ impl ExtensionManagerClient {
 
     async fn handle_create_tool(
         &self,
+        ctx: &ToolCallContext,
         arguments: Option<JsonObject>,
     ) -> Result<Vec<Content>, ExtensionManagerToolError> {
         let arguments = arguments.ok_or(ExtensionManagerToolError::MissingParameter {
@@ -257,8 +272,12 @@ impl ExtensionManagerClient {
             available_tools: Vec::new(),
         };
 
+        let working_dir = ctx
+            .working_dir
+            .clone()
+            .ok_or(ExtensionManagerToolError::NoSessionFolder)?;
         extension_manager
-            .add_extension(config.clone(), None, None, None)
+            .add_extension(config.clone(), working_dir, None, Some(&ctx.session_id))
             .await
             .map_err(|e| ExtensionManagerToolError::OperationFailed {
                 message: format!("Failed to register tool '{}': {}", params.name, e),
@@ -625,8 +644,8 @@ impl McpClientTrait for ExtensionManagerClient {
             SEARCH_AVAILABLE_EXTENSIONS_TOOL_NAME => {
                 self.handle_search_available_extensions().await
             }
-            MANAGE_EXTENSIONS_TOOL_NAME => self.handle_manage_extensions(arguments).await,
-            CREATE_TOOL_TOOL_NAME => self.handle_create_tool(arguments).await,
+            MANAGE_EXTENSIONS_TOOL_NAME => self.handle_manage_extensions(ctx, arguments).await,
+            CREATE_TOOL_TOOL_NAME => self.handle_create_tool(ctx, arguments).await,
             crate::agents::tool_deferral::LOAD_TOOLS_TOOL_NAME => {
                 self.handle_load_tools(session_id, arguments).await
             }

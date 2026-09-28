@@ -10,27 +10,27 @@ use crate::recipe::RECIPE_FILE_EXTENSIONS;
 
 const GOOSE_RECIPE_PATH_ENV_VAR: &str = "GOOSE_RECIPE_PATH";
 
-pub fn get_recipe_library_dir(is_global: bool) -> PathBuf {
-    if is_global {
-        Paths::config_dir().join("recipes")
-    } else {
-        env::current_dir().unwrap().join(".goose/recipes")
-    }
+/// The user's recipe library, `<config>/recipes`.
+pub fn get_recipe_library_dir() -> PathBuf {
+    Paths::config_dir().join("recipes")
 }
 
-fn local_recipe_dirs() -> Vec<PathBuf> {
-    let mut local_dirs = vec![PathBuf::from(".")];
+/// The folders a recipe is looked up in. `project_dir` is the folder of the chat or window asking —
+/// its root, `.goose/recipes` and `.agents/recipes`; `None` means no project (the user's library,
+/// `GOOSE_RECIPE_PATH` and goose's `.agents` home only). Q-265: the project folders were the
+/// process cwd, and since Q-257 the desktop's one goosed runs in $HOME for every window.
+fn local_recipe_dirs(project_dir: Option<&Path>) -> Vec<PathBuf> {
+    let mut local_dirs: Vec<PathBuf> = project_dir.map(Path::to_path_buf).into_iter().collect();
 
     if let Ok(recipe_path_env) = env::var(GOOSE_RECIPE_PATH_ENV_VAR) {
         let path_separator = if cfg!(windows) { ';' } else { ':' };
         local_dirs.extend(recipe_path_env.split(path_separator).map(PathBuf::from));
     }
-    local_dirs.push(get_recipe_library_dir(true));
-    local_dirs.push(get_recipe_library_dir(false));
-
-    // Also scan .agents/recipes/ for consistency with the .agents/ convention
-    if let Ok(cwd) = env::current_dir() {
-        local_dirs.push(cwd.join(".agents/recipes"));
+    local_dirs.push(get_recipe_library_dir());
+    if let Some(project) = project_dir {
+        local_dirs.push(project.join(".goose/recipes"));
+        // Also scan .agents/recipes/ for consistency with the .agents/ convention
+        local_dirs.push(project.join(".agents/recipes"));
     }
     // goose's own `.agents` home, under GOOSE_PATH_ROOT when set (Q-197).
     local_dirs.push(Paths::in_agents_home_dir("recipes"));
@@ -44,12 +44,24 @@ fn local_recipe_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-pub fn load_local_recipe_file(recipe_name: &str) -> Result<RecipeFile> {
+/// A recipe by path or by name, for the chat or window in `project_dir` (see `local_recipe_dirs`):
+/// a relative path is the project's.
+pub fn load_local_recipe_file(recipe_name: &str, project_dir: Option<&Path>) -> Result<RecipeFile> {
     if RECIPE_FILE_EXTENSIONS
         .iter()
         .any(|ext| recipe_name.ends_with(&format!(".{}", ext)))
     {
         let path = PathBuf::from(recipe_name);
+        let path = match project_dir {
+            Some(project) if path.is_relative() => project.join(path),
+            Some(_) => path,
+            None if path.is_relative() => {
+                return Err(anyhow!(
+                    "the recipe path {recipe_name} is relative and no project folder was given to resolve it"
+                ))
+            }
+            None => path,
+        };
         return read_recipe_file(path);
     }
 
@@ -60,7 +72,7 @@ pub fn load_local_recipe_file(recipe_name: &str) -> Result<RecipeFile> {
         ));
     }
 
-    let search_dirs = local_recipe_dirs();
+    let search_dirs = local_recipe_dirs(project_dir);
     for dir in &search_dirs {
         if let Ok(result) = load_recipe_file_from_dir(dir, recipe_name) {
             return Ok(result);
@@ -80,9 +92,9 @@ pub fn load_local_recipe_file(recipe_name: &str) -> Result<RecipeFile> {
     ))
 }
 
-pub fn list_local_recipes() -> Result<Vec<(PathBuf, Recipe)>> {
+pub fn list_local_recipes(project_dir: Option<&Path>) -> Result<Vec<(PathBuf, Recipe)>> {
     let mut recipes = Vec::new();
-    for dir in local_recipe_dirs() {
+    for dir in local_recipe_dirs(project_dir) {
         if let Ok(dir_recipes) = scan_directory_for_recipes(&dir) {
             recipes.extend(dir_recipes);
         }
@@ -182,7 +194,7 @@ fn generate_recipe_filename(title: &str, recipe_library_dir: &Path) -> PathBuf {
 }
 
 pub fn save_recipe_to_file(recipe: Recipe, file_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    let recipe_library_dir = get_recipe_library_dir(true);
+    let recipe_library_dir = get_recipe_library_dir();
 
     let file_path_value = match file_path {
         Some(path) => path,
@@ -196,4 +208,51 @@ pub fn save_recipe_to_file(recipe: Recipe, file_path: Option<PathBuf>) -> anyhow
     let yaml_content = recipe.to_yaml()?;
     fs::write(&file_path_value, yaml_content)?;
     Ok(file_path_value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RECIPE: &str =
+        "title: Ship it\ndescription: The project's deploy\ninstructions: Deploy.\n";
+
+    /// Q-265: the one goosed serves every window from $HOME (Q-257); a window's recipe list names
+    /// its own project, whatever folder the process runs in.
+    #[test]
+    fn a_projects_recipes_are_listed_and_loaded_from_the_named_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(project.join(".goose/recipes")).unwrap();
+        fs::create_dir_all(project.join(".agents/recipes")).unwrap();
+        fs::write(project.join(".goose/recipes/ship-it.yaml"), RECIPE).unwrap();
+        fs::write(project.join(".agents/recipes/agents-one.yaml"), RECIPE).unwrap();
+        let project = project.canonicalize().unwrap();
+        assert_ne!(env::current_dir().unwrap().canonicalize().unwrap(), project);
+
+        let listed: Vec<PathBuf> = list_local_recipes(Some(&project))
+            .unwrap()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        assert!(
+            listed.contains(&project.join(".goose/recipes/ship-it.yaml")),
+            "{listed:?}"
+        );
+        assert!(
+            listed.contains(&project.join(".agents/recipes/agents-one.yaml")),
+            "{listed:?}"
+        );
+
+        assert!(load_local_recipe_file("ship-it", Some(&project)).is_ok());
+        assert!(load_local_recipe_file(".goose/recipes/ship-it.yaml", Some(&project)).is_ok());
+
+        let no_project: Vec<PathBuf> = list_local_recipes(None)
+            .unwrap()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        assert!(!no_project.iter().any(|path| path.starts_with(&project)));
+        assert!(load_local_recipe_file(".goose/recipes/ship-it.yaml", None).is_err());
+    }
 }

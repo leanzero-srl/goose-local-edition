@@ -5,7 +5,6 @@ use crate::conversation::{
     effective_role, fix_conversation, Conversation, CURRENT_TIME_TAG, TURN_CONTEXT_TAG,
     WORKING_DIRECTORY_TAG,
 };
-use std::path::{Path, PathBuf};
 
 const MIN_CONTEXT_FOR_MOIM: usize = 32_000;
 
@@ -81,10 +80,18 @@ pub async fn inject_moim(
         return conversation;
     }
 
-    let working_dir = session
-        .as_ref()
-        .map(|session| session.working_dir.clone())
-        .unwrap_or_else(|| PathBuf::from("."));
+    // Q-266 audit: an unreadable session told the model its folder was "." — goosed's cwd, which
+    // since Q-257 is $HOME for every window. The block now says the folder is unknown and why.
+    let working_dir = match &session {
+        Some(session) => session.working_dir.display().to_string(),
+        None => {
+            tracing::warn!(
+                session_id,
+                "turn context: the session record is unreadable, so its folder is unknown"
+            );
+            "unknown (this chat's session record could not be read)".to_string()
+        }
+    };
     let total_tokens = session
         .as_ref()
         .and_then(|session| session.usage.total_tokens);
@@ -152,7 +159,7 @@ fn should_skip_moim(context_limit: Option<usize>) -> bool {
 
 #[allow(clippy::too_many_arguments)]
 fn compose_moim(
-    working_dir: &Path,
+    working_dir: &str,
     total_tokens: Option<i32>,
     context_limit: Option<usize>,
     compaction_threshold: f64,
@@ -165,7 +172,7 @@ fn compose_moim(
     let mut lines = vec![
         open_tag(TURN_CONTEXT_TAG),
         tag(CURRENT_TIME_TAG, &timestamp.to_string()),
-        tag(WORKING_DIRECTORY_TAG, &working_dir.display().to_string()),
+        tag(WORKING_DIRECTORY_TAG, working_dir),
     ];
 
     match measured {
@@ -291,7 +298,7 @@ mod scratchpad_notice_tests {
         assert!(compaction_is_near(Some(130_000), Some(200_000), 0.8));
         assert!(!compaction_is_near(None, Some(200_000), 0.8));
         let with = compose_moim(
-            Path::new("/w"),
+            "/w",
             Some(130_000),
             Some(200_000),
             0.8,
@@ -302,7 +309,7 @@ mod scratchpad_notice_tests {
         );
         assert!(with.contains("<scratchpad-notice>"), "{with}");
         let without = compose_moim(
-            Path::new("/w"),
+            "/w",
             Some(130_000),
             Some(200_000),
             0.8,
@@ -320,6 +327,7 @@ mod tests {
     use super::*;
     use crate::conversation::message::Message;
     use rmcp::model::CallToolRequestParams;
+    use std::path::PathBuf;
 
     fn text_at(message: &crate::conversation::message::Message, index: usize) -> &str {
         message.content[index].as_text().unwrap()
@@ -513,7 +521,6 @@ mod tests {
     mod turn_context_detector_coupling {
         use super::*;
         use crate::conversation::is_turn_context_text;
-        use std::path::Path;
 
         fn moim(
             total_tokens: Option<i32>,
@@ -523,7 +530,7 @@ mod tests {
             extension_parts: Vec<String>,
         ) -> String {
             compose_moim(
-                Path::new("/Users/me/code/goose"),
+                "/Users/me/code/goose",
                 total_tokens,
                 context_limit,
                 0.8,
@@ -540,7 +547,7 @@ mod tests {
         #[test]
         fn measured_context_line_replaces_the_compaction_remaining_figure() {
             let block = compose_moim(
-                Path::new("/Users/me/code/goose"),
+                "/Users/me/code/goose",
                 Some(90_821),
                 Some(180_224),
                 0.8,
@@ -556,7 +563,7 @@ mod tests {
             assert!(!block.contains("<compaction>"), "{block}");
             assert!(is_turn_context_text(&block), "{block}");
             let classic = compose_moim(
-                Path::new("/x"),
+                "/x",
                 Some(90_821),
                 Some(128_000),
                 0.8,

@@ -8,8 +8,10 @@ use super::github_recipe::{
 };
 use goose::recipe::local_recipes::{list_local_recipes, load_local_recipe_file};
 
+/// The CLI's project is the folder it runs in: a terminal `goose` is started in its project.
 pub fn load_recipe_file(recipe_name: &str) -> Result<RecipeFile> {
-    load_local_recipe_file(recipe_name).or_else(|e| {
+    let project = std::env::current_dir()?;
+    load_local_recipe_file(recipe_name, Some(&project)).or_else(|e| {
         if let Some(recipe_repo_full_name) = configured_github_recipe_repo() {
             retrieve_recipe_from_github(recipe_name, &recipe_repo_full_name)
         } else {
@@ -31,7 +33,8 @@ pub fn list_available_recipes() -> Result<Vec<RecipeInfo>> {
     let mut recipes = Vec::new();
 
     // Search local recipes
-    if let Ok(local_recipes) = list_local_recipes() {
+    let project = std::env::current_dir()?;
+    if let Ok(local_recipes) = list_local_recipes(Some(&project)) {
         recipes.extend(local_recipes.into_iter().map(|(path, recipe)| {
             let name = path
                 .file_stem()

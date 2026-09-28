@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -193,6 +194,40 @@ pub struct AgentConfig {
     pub use_login_shell_path: Option<bool>,
 }
 
+/// The hooks one session runs: its project's (`<working_dir>/.agents/plugins` and the project's plugin
+/// settings) beside the user's, run in the project's folder. An agent is built before it knows its
+/// session, so it starts with the user's hooks only and `load_hooks_for` loads the project's the moment
+/// the session's folder is known — at every reply, since the folder can change mid-session.
+///
+/// Q-263: this was `HookManager::load(std::env::current_dir())` at construction. goosed is one process
+/// for every window since Q-257 and runs in $HOME, so a chat's project hooks never loaded and $HOME's
+/// applied to every window; before Q-257 they came from the window's launch folder, already wrong for a
+/// chat in another folder.
+struct SessionHooks {
+    root: Option<PathBuf>,
+    manager: Arc<crate::hooks::HookManager>,
+    pinned: bool,
+}
+
+impl SessionHooks {
+    fn user_scope(use_login_shell_path: bool) -> Self {
+        Self {
+            root: None,
+            manager: Arc::new(crate::hooks::HookManager::load(None, use_login_shell_path)),
+            pinned: false,
+        }
+    }
+
+    #[cfg(test)]
+    fn pinned(manager: crate::hooks::HookManager) -> Self {
+        Self {
+            root: None,
+            manager: Arc::new(manager),
+            pinned: true,
+        }
+    }
+}
+
 impl AgentConfig {
     pub fn new(
         session_manager: Arc<SessionManager>,
@@ -266,9 +301,11 @@ pub struct Agent {
 
     pub(super) retry_manager: RetryManager,
     pub(super) tool_inspection_manager: ToolInspectionManager,
-    pub(super) hook_manager: crate::hooks::HookManager,
+    hooks: std::sync::RwLock<SessionHooks>,
     #[cfg(test)]
     stop_hook_block_cap_override: Option<u32>,
+    #[cfg(test)]
+    hook_loader_for_test: Option<fn(&Path) -> crate::hooks::HookManager>,
     container: Mutex<Option<Container>>,
     goal: Mutex<Option<String>>,
     grind: Mutex<Option<String>>,
@@ -430,12 +467,11 @@ impl Agent {
                 inspection_session_manager,
                 repeat_guard.clone(),
             ),
-            hook_manager: crate::hooks::HookManager::load(
-                std::env::current_dir().ok().as_deref(),
-                use_login_shell_path,
-            ),
+            hooks: std::sync::RwLock::new(SessionHooks::user_scope(use_login_shell_path)),
             #[cfg(test)]
             stop_hook_block_cap_override: None,
+            #[cfg(test)]
+            hook_loader_for_test: None,
             container: Mutex::new(None),
             goal: Mutex::new(None),
             grind: Mutex::new(None),
@@ -552,7 +588,7 @@ impl Agent {
     /// that have no matcher (e.g. `SessionStart`, `SessionEnd`).
     #[cfg(test)]
     pub(crate) fn set_hook_manager_for_test(&mut self, hook_manager: crate::hooks::HookManager) {
-        self.hook_manager = hook_manager;
+        *self.hooks.get_mut().expect("hooks lock") = SessionHooks::pinned(hook_manager);
     }
 
     #[cfg(test)]
@@ -571,11 +607,47 @@ impl Agent {
             .unwrap_or(DEFAULT_STOP_HOOK_BLOCK_CAP)
     }
 
+    fn hook_manager(&self) -> Arc<crate::hooks::HookManager> {
+        Arc::clone(&self.hooks.read().expect("hooks lock").manager)
+    }
+
+    /// Load the hooks of the session's folder (see `SessionHooks`); a no-op when they are already
+    /// the loaded ones.
+    pub fn load_hooks_for(&self, working_dir: &Path) {
+        {
+            let hooks = self.hooks.read().expect("hooks lock");
+            if hooks.pinned || hooks.root.as_deref() == Some(working_dir) {
+                return;
+            }
+        }
+        #[cfg(test)]
+        let manager = match self.hook_loader_for_test {
+            Some(load) => load(working_dir),
+            None => crate::hooks::HookManager::load(
+                Some(working_dir),
+                self.config.resolve_use_login_shell_path(),
+            ),
+        };
+        #[cfg(not(test))]
+        let manager = crate::hooks::HookManager::load(
+            Some(working_dir),
+            self.config.resolve_use_login_shell_path(),
+        );
+        let mut hooks = self.hooks.write().expect("hooks lock");
+        if !hooks.pinned {
+            *hooks = SessionHooks {
+                root: Some(working_dir.to_path_buf()),
+                manager: Arc::new(manager),
+                pinned: false,
+            };
+        }
+    }
+
     pub async fn emit_hook(&self, event: crate::hooks::HookEvent, session_id: &str) {
-        if !self.hook_manager.has_hooks(event) {
+        if !self.hook_manager().has_hooks(event) {
             return;
         }
-        self.hook_manager
+        self.hook_manager()
             .emit(event, crate::hooks::HookContext::new(event, session_id))
             .await;
     }
@@ -589,10 +661,10 @@ impl Agent {
     }
 
     async fn emit_stop_hook(&self, session_id: &str, last_assistant_message: &str) {
-        if !self.hook_manager.has_hooks(crate::hooks::HookEvent::Stop) {
+        if !self.hook_manager().has_hooks(crate::hooks::HookEvent::Stop) {
             return;
         }
-        self.hook_manager
+        self.hook_manager()
             .emit(
                 crate::hooks::HookEvent::Stop,
                 Self::stop_hook_context(session_id, last_assistant_message),
@@ -605,7 +677,7 @@ impl Agent {
         session_id: &str,
         last_assistant_message: &str,
     ) -> crate::hooks::HookDecision {
-        self.hook_manager
+        self.hook_manager()
             .emit_blocking(
                 crate::hooks::HookEvent::Stop,
                 Self::stop_hook_context(session_id, last_assistant_message),
@@ -724,14 +796,14 @@ impl Agent {
         tool_input: Option<Value>,
         working_dir: &str,
     ) {
-        if !self.hook_manager.has_hooks(event) {
+        if !self.hook_manager().has_hooks(event) {
             return;
         }
         let mut ctx = crate::hooks::HookContext::new(event, session_id)
             .with_tool(tool_name.to_string(), tool_input)
             .with_working_dir(working_dir.to_string());
         ctx.matcher_context = Some(matcher_context.to_string());
-        self.hook_manager.emit(event, ctx).await;
+        self.hook_manager().emit(event, ctx).await;
     }
 
     fn with_post_tool_hook(
@@ -740,7 +812,7 @@ impl Agent {
         tool_call: &CallToolRequestParams,
         session: &Session,
     ) -> ToolCallResult {
-        let hook_manager = self.hook_manager.clone();
+        let hook_manager = self.hook_manager();
         let session_id = session.id.clone();
         let working_dir = session.working_dir.to_string_lossy().to_string();
         let tool_name = tool_call.name.to_string();
@@ -1261,7 +1333,7 @@ impl Agent {
             .record_tool_arguments(&tool_call.arguments, &session.working_dir);
 
         if self
-            .hook_manager
+            .hook_manager()
             .has_hooks(crate::hooks::HookEvent::PreToolUse)
         {
             let ctx =
@@ -1275,7 +1347,7 @@ impl Agent {
                     )
                     .with_working_dir(session.working_dir.to_string_lossy().to_string());
             if let crate::hooks::HookDecision::Deny { reason, plugin } = self
-                .hook_manager
+                .hook_manager()
                 .emit_blocking(crate::hooks::HookEvent::PreToolUse, ctx)
                 .await
             {
@@ -1519,18 +1591,17 @@ impl Agent {
         extensions: Vec<ExtensionConfig>,
         session_id: &str,
     ) -> anyhow::Result<Vec<ExtensionLoadResult>> {
-        let working_dir = match self
+        // Q-267: an unreadable session refuses the load instead of starting every extension in
+        // goosed's own cwd (since Q-257 the shared $HOME).
+        let working_dir = self
             .config
             .session_manager
             .get_session(session_id, false)
             .await
-        {
-            Ok(session) => Some(session.working_dir),
-            Err(e) => {
-                warn!("Failed to get session for bulk load: {}", e);
-                None
-            }
-        };
+            .with_context(|| {
+                format!("session {session_id} is unreadable, so its extensions have no folder")
+            })?
+            .working_dir;
         let container = self.container.lock().await.clone();
 
         let extension_futures = extensions
@@ -1591,7 +1662,7 @@ impl Agent {
                     session_id, e
                 ))
             })?;
-        let working_dir = Some(session.working_dir);
+        let working_dir = session.working_dir;
 
         match &extension {
             ExtensionConfig::Frontend { .. } => {
@@ -1763,6 +1834,7 @@ impl Agent {
         let session = session_manager
             .get_session(&session_config.id, true)
             .await?;
+        self.load_hooks_for(&session.working_dir);
         let is_first_turn = session
             .conversation
             .as_ref()
@@ -1774,7 +1846,7 @@ impl Agent {
         }
 
         if self
-            .hook_manager
+            .hook_manager()
             .has_hooks(crate::hooks::HookEvent::UserPromptSubmit)
         {
             let ctx = crate::hooks::HookContext::new(
@@ -1782,7 +1854,7 @@ impl Agent {
                 &session_config.id,
             )
             .with_message(message_text.clone());
-            self.hook_manager
+            self.hook_manager()
                 .emit(crate::hooks::HookEvent::UserPromptSubmit, ctx)
                 .await;
         }
@@ -2090,7 +2162,7 @@ impl Agent {
                     for message in self.drain_pending_steers(&session_config.id).await {
                         let message_text = message.as_concat_text();
                         if self
-                            .hook_manager
+                            .hook_manager()
                             .has_hooks(crate::hooks::HookEvent::UserPromptSubmit)
                         {
                             let ctx = crate::hooks::HookContext::new(
@@ -2098,7 +2170,7 @@ impl Agent {
                                 &session_config.id,
                             )
                             .with_message(message_text);
-                            self.hook_manager
+                            self.hook_manager()
                                 .emit(crate::hooks::HookEvent::UserPromptSubmit, ctx)
                                 .await;
                         }
@@ -4435,6 +4507,77 @@ echo start >> "$PLUGIN_ROOT/hook.log"
 
         assert_eq!(env.hook_invocations(), 1);
         assert_eq!(provider.call_count(), 2);
+        Ok(())
+    }
+
+    /// The project plugins under `<root>/.agents/plugins`, as discovery lists them for a session
+    /// in `root` — without discovery's write of the plugins map into the user's real config.
+    fn project_plugins_of(root: &Path) -> crate::hooks::HookManager {
+        let plugins = std::fs::read_dir(root.join(".agents").join("plugins"))
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| DiscoveredPlugin {
+                        name: entry.file_name().to_string_lossy().into_owned(),
+                        root: entry.path(),
+                        scope: PluginScope::Project,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        crate::hooks::HookManager::from_plugins_in_for_test(plugins, root)
+    }
+
+    /// Q-263: since Q-257 one goosed serves every window and runs in $HOME, so a hook loaded from
+    /// the process's folder is never the chat's. A session in a project runs that project's hooks,
+    /// in that project's folder, and the payload names it.
+    #[tokio::test]
+    async fn a_session_runs_its_own_folders_hooks_in_its_folder() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let project = temp_dir.path().join("project");
+        let plugin = project.join(".agents").join("plugins").join("project-hook");
+        std::fs::create_dir_all(plugin.join("hooks"))?;
+        std::fs::write(
+            plugin.join("hooks/hooks.json"),
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"pwd -P >> \"$PLUGIN_ROOT/cwd.log\"; cat > \"$PLUGIN_ROOT/payload.json\""}]}]}}"#,
+        )?;
+        let project = project.canonicalize()?;
+        assert_ne!(std::env::current_dir()?.canonicalize()?, project);
+
+        let data_dir = temp_dir.path().join("data");
+        let session_manager = Arc::new(SessionManager::new(data_dir.clone()));
+        let mut agent = Agent::with_config(AgentConfig::new(
+            session_manager.clone(),
+            Arc::new(PermissionManager::new(data_dir)),
+            None,
+            GooseMode::Auto,
+            true,
+            GoosePlatform::GooseDesktop,
+        ));
+        agent.hook_loader_for_test = Some(project_plugins_of);
+        let session = session_manager
+            .create_session(
+                project.clone(),
+                "project chat".to_string(),
+                SessionType::Hidden,
+                GooseMode::Auto,
+            )
+            .await?;
+        agent
+            .update_provider(
+                Arc::new(CountingTextProvider::new()),
+                goose_providers::model::ModelConfig::new("mock-model"),
+                &session.id,
+            )
+            .await?;
+
+        run_stop_hook_test_turn(&agent, &session.id, "first").await?;
+
+        let ran_in = std::fs::read_to_string(plugin.join("cwd.log"))?;
+        assert_eq!(ran_in.trim(), project.to_string_lossy());
+        let payload: Value =
+            serde_json::from_str(&std::fs::read_to_string(plugin.join("payload.json"))?)?;
+        assert_eq!(payload["working_dir"], project.to_string_lossy().as_ref());
         Ok(())
     }
 

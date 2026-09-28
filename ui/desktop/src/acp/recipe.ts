@@ -7,7 +7,8 @@ import type {
 } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
 
-let inFlightListRecipes: Promise<RecipeListEntryDto[]> | null = null;
+let inFlightListRecipes: { workingDir: string; promise: Promise<RecipeListEntryDto[]> } | null =
+  null;
 
 export async function encodeRecipe(recipe: RecipeDto): Promise<string> {
   try {
@@ -77,26 +78,28 @@ export async function createRecipeFromSession(sessionId: string): Promise<Recipe
   }
 }
 
-export async function listRecipes(): Promise<RecipeListEntryDto[]> {
+// `workingDir` is this window's folder: goose serves every window from one backend (Q-257), so the
+// window names the project whose recipes it lists (Q-265).
+export async function listRecipes(workingDir: string): Promise<RecipeListEntryDto[]> {
   const pending = inFlightListRecipes;
-  if (pending) {
-    return pending;
+  if (pending && pending.workingDir === workingDir) {
+    return pending.promise;
   }
 
   const listPromise = (async () => {
     const client = await getAcpClient();
-    const response = await client.goose.recipesList_unstable({});
+    const response = await client.goose.recipesList_unstable({ working_dir: workingDir });
     return response.recipes;
   })().catch((error) => {
     throw normalizeAcpError(error, 'Failed to list recipes');
   });
 
-  inFlightListRecipes = listPromise;
+  inFlightListRecipes = { workingDir, promise: listPromise };
 
   try {
     return await listPromise;
   } finally {
-    if (inFlightListRecipes === listPromise) {
+    if (inFlightListRecipes?.promise === listPromise) {
       inFlightListRecipes = null;
     }
   }

@@ -661,16 +661,11 @@ pub fn scan_skills(working_dir: Option<&Path>) -> SkillScan {
     scan
 }
 
+/// The skills a folder's chat can use; `None` lists the user's own and goose's built-in skills
+/// only. Q-267: `None` used to read the process cwd as the project — goosed's, since Q-257 the
+/// shared $HOME — so a caller without a folder listed $HOME's project skills as if they were its own.
 pub fn list_installed_skills(working_dir: Option<&Path>) -> Vec<SourceEntry> {
-    let fallback;
-    let wd = match working_dir {
-        Some(p) => Some(p),
-        None => {
-            fallback = std::env::current_dir().ok();
-            fallback.as_deref()
-        }
-    };
-    discover_skills(wd)
+    discover_skills(working_dir)
 }
 
 #[cfg(test)]

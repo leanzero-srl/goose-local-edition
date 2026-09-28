@@ -368,7 +368,12 @@ pub struct DeleteRecipeRequest {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/recipes/list", response = ListRecipesResponse)]
-pub struct ListRecipesRequest {}
+pub struct ListRecipesRequest {
+    /// The asking window's folder: its project recipes (`<dir>`, `<dir>/.goose/recipes`,
+    /// `<dir>/.agents/recipes`) are listed beside the user's library. Required — the one goosed
+    /// serves every window (Q-257), so its own cwd is no window's project (Q-265).
+    pub working_dir: String,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 pub struct ListRecipesResponse {

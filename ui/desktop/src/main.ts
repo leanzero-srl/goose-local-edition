@@ -1138,7 +1138,7 @@ const appWindows = new Map<string, BrowserWindow>();
 
 const gooseServeLeases = new GooseServeLeaseRegistry(log);
 
-// Once per launch (every window's goosed is this app's child, so later windows find nothing new).
+// Once per launch (every goosed this app starts is its child, so a later start finds nothing new).
 // A failed scan is logged and the launch goes on: the new goosed then meets the old one's mesh
 // daemon and Link names it, as before this reaper existed.
 let orphanedGoosedReap: Promise<void> | null = null;
@@ -1158,6 +1158,81 @@ const reapOrphanedGoosedOnce = (): Promise<void> => {
     }
   })();
   return orphanedGoosedReap;
+};
+
+// goosed's stderr, kept whole for the life of every goosed (gooseServe.ts has why). App-wide, not
+// under a window's dir: one goosed serves every window (Q-257), so no window's project owns it.
+const GOOSE_SERVE_STDERR_LOG = path.join(app.getPath('userData'), 'logs', 'goose-serve-stderr.log');
+
+/**
+ * Start the app's one local goosed (Q-257: every window shares it — gooseServeLeaseRegistry.ts).
+ * Its cwd is the home dir, never a window's project: each ACP session carries its own working dir,
+ * and a process-wide cwd that was the first window's project would leak it into every other window's
+ * fallbacks. Resolves null when the start failed — the user was told and the app is quitting.
+ */
+const startLocalGooseServe = async (): Promise<GooseServeLease | null> => {
+  // Before the first goosed of this launch: a goosed an earlier run of this app left orphaned
+  // still holds its mesh daemon (Q-223) — stop it, per pid on proof, and wait for it to exit.
+  await reapOrphanedGoosedOnce();
+  const localCertificateTrust = trustBackendCertificate('127.0.0.1', null);
+
+  let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
+  try {
+    gooseServeResult = await startGooseServe({
+      serverSecret: GENERATED_SECRET,
+      dir: os.homedir(),
+      tls: true,
+      env: {
+        GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
+      },
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+      logger: log,
+      diagnosticsDir: STARTUP_LOGS_DIR,
+      stderrLogPath: GOOSE_SERVE_STDERR_LOG,
+      readinessFetch: net.fetch as unknown as typeof globalThis.fetch,
+    });
+    if (!gooseServeResult.certFingerprint) {
+      await gooseServeResult.cleanup();
+      throw new Error('goose serve started with TLS but did not return a certificate fingerprint');
+    }
+
+    const localCertFingerprint = normalizeFingerprint(gooseServeResult.certFingerprint);
+    if (
+      localCertificateTrust.trust.fingerprint &&
+      localCertificateTrust.trust.fingerprint !== localCertFingerprint
+    ) {
+      await gooseServeResult.cleanup();
+      throw new Error('goose serve TLS certificate fingerprint did not match readiness probe');
+    }
+    localCertificateTrust.trust.fingerprint = localCertFingerprint;
+  } catch (error) {
+    localCertificateTrust.release();
+    log.error('goose serve failed to start', error);
+    dialog.showMessageBoxSync({
+      type: 'error',
+      title: `${brandName()} Failed to Start`,
+      message: 'The backend server failed to start.',
+      detail: [
+        'Backend: goose serve',
+        'Readiness check: HTTPS GET /status',
+        `Startup error:\n${errorMessage(error)}`,
+      ].join('\n\n'),
+      buttons: ['OK'],
+    });
+    app.quit();
+    return null;
+  }
+
+  const cleanupGooseServe = gooseServeResult.cleanup;
+  gooseServeResult.cleanup = async () => {
+    try {
+      return await cleanupGooseServe();
+    } finally {
+      localCertificateTrust.release();
+    }
+  };
+  return gooseServeLeases.create(gooseServeResult, GENERATED_SECRET);
 };
 
 // Track pending initial messages per window
@@ -1244,7 +1319,7 @@ const createChat = async (
   }
 
   const serverSecret = externalBackend ? externalBackend.secret : GENERATED_SECRET;
-  let workingDir = dir || os.homedir();
+  const workingDir = dir || os.homedir();
   let gooseServeLease: GooseServeLease | null = null;
 
   if (externalBackend) {
@@ -1330,70 +1405,28 @@ const createChat = async (
       return;
     }
   } else {
-    // Before the first goosed of this launch: a goosed an earlier run of this app left orphaned
-    // still holds its mesh daemon (Q-223) — stop it, per pid on proof, and wait for it to exit.
-    await reapOrphanedGoosedOnce();
-    const localCertificateTrust = trustBackendCertificate('127.0.0.1', null);
-
-    let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
-    try {
-      gooseServeResult = await startGooseServe({
-        serverSecret,
-        dir: workingDir,
-        tls: true,
-        env: {
-          GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
-        },
-        isPackaged: app.isPackaged,
-        resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-        logger: log,
-        diagnosticsDir: STARTUP_LOGS_DIR,
-        readinessFetch: net.fetch as unknown as typeof globalThis.fetch,
-      });
-      if (!gooseServeResult.certFingerprint) {
-        await gooseServeResult.cleanup();
-        throw new Error(
-          'goose serve started with TLS but did not return a certificate fingerprint'
-        );
-      }
-
-      const localCertFingerprint = normalizeFingerprint(gooseServeResult.certFingerprint);
-      if (
-        localCertificateTrust.trust.fingerprint &&
-        localCertificateTrust.trust.fingerprint !== localCertFingerprint
-      ) {
-        await gooseServeResult.cleanup();
-        throw new Error('goose serve TLS certificate fingerprint did not match readiness probe');
-      }
-      localCertificateTrust.trust.fingerprint = localCertFingerprint;
-    } catch (error) {
-      localCertificateTrust.release();
-      log.error('goose serve failed to start', error);
-      dialog.showMessageBoxSync({
-        type: 'error',
-        title: `${brandName()} Failed to Start`,
-        message: 'The backend server failed to start.',
-        detail: [
-          'Backend: goose serve',
-          'Readiness check: HTTPS GET /status',
-          `Startup error:\n${errorMessage(error)}`,
-        ].join('\n\n'),
-        buttons: ['OK'],
-      });
-      app.quit();
+    // ONE goosed per app, shared by every window (Q-257): split discovery needs the goosed that
+    // holds the LeanZero Link mesh, and a per-window goosed is refused it. A new one starts only when
+    // none is live (none yet, or the last one exited / is stopping).
+    // No window, and no goosed, is made while the app quits: the quit stops every goosed and lets
+    // the process go, so one started now would outlive the hold (the Q-241 orphan shape).
+    if (quitHold.isQuitting()) {
+      log.info('A new window was asked for while the app quits; none is made');
       return;
     }
-
-    workingDir = gooseServeResult.workingDir;
-    const cleanupGooseServe = gooseServeResult.cleanup;
-    gooseServeResult.cleanup = async () => {
-      try {
-        return await cleanupGooseServe();
-      } finally {
-        localCertificateTrust.release();
-      }
-    };
-    gooseServeLease = gooseServeLeases.create(gooseServeResult, serverSecret);
+    const reused = gooseServeLeases.liveLocal();
+    gooseServeLease = await gooseServeLeases.acquireLocal(startLocalGooseServe);
+    if (!gooseServeLease) return;
+    if (quitHold.isQuitting()) {
+      log.info('The app began quitting while a window waited for goose serve; the window is not made');
+      await gooseServeLeases.releaseUnattached(gooseServeLease);
+      return;
+    }
+    log.info(
+      reused
+        ? `Window shares the app's goose serve backend (pid ${reused.pid ?? '?'}, ${reused.windowIds.size} window(s) attached)`
+        : `Window uses the app's goose serve backend (pid ${gooseServeLease.pid ?? '?'})`
+    );
   }
 
   const cleanupUnregisteredGooseServeLease = async () => {
@@ -1403,7 +1436,9 @@ const createChat = async (
 
     const lease = gooseServeLease;
     gooseServeLease = null;
-    await gooseServeLeases.cleanupLease(lease);
+    // The shared goosed may serve other windows, or be on its way to one (Q-257): it stops only
+    // when no window holds it and none is about to.
+    await gooseServeLeases.releaseUnattached(lease);
   };
 
   let mainWindowState: ReturnType<typeof windowStateKeeper>;
@@ -1690,6 +1725,9 @@ const createChat = async (
   //
   // FAIL OPEN: a destroyed or crashed webContents can neither mount the dialog nor reply, so its
   // window closes untouched rather than standing forever over a run nobody can see (decideClose).
+  //
+  // Every window still asks with one goosed shared by all (Q-257): the run lives with THIS window's
+  // ACP connection, which its close aborts (closeGuard.ts has the measurement), not with goosed.
   mainWindow.on('close', (event) => {
     const contents = mainWindow.webContents;
     const rendererCanAnswer = !contents.isDestroyed() && !contents.isCrashed();
@@ -2413,14 +2451,15 @@ let mlxRemote: MlxRemoteReport | null = null;
 // What the launch is bringing back (components/leanzero-swarm/mlxRestore.ts); null = nothing to say.
 let mlxRestore: MlxRestoreReport | null = null;
 // ONE restore per app launch: the first window to ask runs it, every later window (or a reload) is
-// told no — each window runs its own goosed, and two restores would start the thing twice.
+// told no — every window shares the app's one goosed (Q-257), and two restores would start the
+// thing twice.
 let mlxRestoreClaimed = false;
 
 // LeanZero Link's line in the tray, from the renderer's latest Link state read (utils/linkTrayReport):
 // connected, reconnecting, or — loudly — a launch reconnect that failed, with its Retry.
 let linkTray: LinkTrayReport | null = null;
-// One report per window (each window runs its own goosed); the tray shows the one that speaks for
-// the Mac (pickLinkTrayReport).
+// One report per window (all read the app's one goosed since Q-257, so they agree); the tray shows
+// the one that speaks for the Mac (pickLinkTrayReport).
 const linkTrayByWindow = new Map<number, LinkTrayReport | null>();
 // The linked Macs, one line each in My Macs's words and phase colours (utils/macsTrayReport), from
 // the renderer's roster read; while they are known they replace the bare "Link: connected" line.

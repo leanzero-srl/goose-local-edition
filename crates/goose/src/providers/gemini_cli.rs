@@ -8,7 +8,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 use super::base::{
-    stream_from_single_message, MessageStream, Provider, ProviderDef, ProviderMetadata,
+    sessionless_working_dir, stream_from_single_message, MessageStream, Provider, ProviderDef,
+    ProviderMetadata,
 };
 use super::cli_common::{error_from_event, extract_usage_tokens};
 use super::utils::filter_extensions_from_system_prompt;
@@ -38,6 +39,8 @@ pub const GEMINI_CLI_DOC_URL: &str = "https://ai.google.dev/gemini-api/docs";
 #[derive(Debug, serde::Serialize)]
 pub struct GeminiCliProvider {
     command: PathBuf,
+    /// The session's folder: the CLI runs in it (Q-266 — never goosed's cwd).
+    working_dir: PathBuf,
     #[serde(skip)]
     name: String,
     #[serde(skip)]
@@ -45,15 +48,14 @@ pub struct GeminiCliProvider {
 }
 
 impl GeminiCliProvider {
-    pub async fn from_env(
-        _tls_config: Option<crate::providers::api_client::TlsConfig>,
-    ) -> Result<Self> {
+    pub async fn in_folder(working_dir: PathBuf) -> Result<Self> {
         let config = Config::global();
         let command: String = config.get_gemini_cli_command().unwrap_or_default().into();
         let resolved_command = SearchPaths::builder().with_npm().resolve(&command)?;
 
         Ok(Self {
             command: resolved_command,
+            working_dir,
             name: GEMINI_CLI_PROVIDER_NAME.to_string(),
             cli_session_id: Arc::new(OnceLock::new()),
         })
@@ -94,6 +96,7 @@ impl GeminiCliProvider {
     fn build_command(&self, prompt: &str, model_name: &str) -> Command {
         let mut cmd = Command::new(&self.command);
         configure_subprocess(&mut cmd);
+        cmd.current_dir(&self.working_dir);
 
         if let Ok(path) = SearchPaths::builder().with_npm().path() {
             cmd.env("PATH", path);
@@ -178,9 +181,17 @@ impl ProviderDef for GeminiCliProvider {
 
     fn from_env(
         _extensions: Vec<crate::config::ExtensionConfig>,
-        tls_config: Option<crate::providers::api_client::TlsConfig>,
+        _tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
-        Box::pin(Self::from_env(tls_config))
+        Box::pin(async move { Self::in_folder(sessionless_working_dir()?).await })
+    }
+
+    fn from_env_with_working_dir(
+        _extensions: Vec<crate::config::ExtensionConfig>,
+        working_dir: PathBuf,
+        _tls_config: Option<crate::providers::api_client::TlsConfig>,
+    ) -> BoxFuture<'static, Result<Self::Provider>> {
+        Box::pin(Self::in_folder(working_dir))
     }
 }
 
@@ -324,9 +335,23 @@ impl Provider for GeminiCliProvider {
 mod tests {
     use super::*;
 
+    /// Q-266: the Gemini CLI a chat drives runs in the chat's folder, not goosed's cwd ($HOME
+    /// since Q-257).
+    #[test]
+    fn the_cli_runs_in_the_sessions_folder() {
+        let project = std::env::temp_dir().join("q266-gemini-project");
+        let provider = GeminiCliProvider {
+            working_dir: project.clone(),
+            ..make_provider()
+        };
+        let cmd = provider.build_command("hi", "gemini-2.5-pro");
+        assert_eq!(cmd.as_std().get_current_dir(), Some(project.as_path()));
+    }
+
     fn make_provider() -> GeminiCliProvider {
         GeminiCliProvider {
             command: PathBuf::from("gemini"),
+            working_dir: std::env::temp_dir(),
             name: "gemini-cli".to_string(),
             cli_session_id: Arc::new(OnceLock::new()),
         }

@@ -43,11 +43,22 @@ export class QuitHold {
   private stopping: Promise<void> | null = null;
   /** Set when the held quit is let go; a refused quit (the close guard) clears it. */
   private released = false;
+  /** From a quit's first event until the close guard refuses it. */
+  private quitting = false;
 
   constructor(private readonly deps: QuitHoldDeps) {}
 
+  /**
+   * A quit is under way. createChat reads it (Q-257): the app's one goosed is being stopped, and a
+   * window opened now would start a new goosed the finished hold no longer waits for.
+   */
+  isQuitting(): boolean {
+    return this.quitting;
+  }
+
   /** Answer one quit event: hold it (preventDefault) while a goosed still has to exit. */
   onQuitEvent(door: QuitDoor, event: QuitEvent): 'held' | 'passed' {
+    this.quitting = true;
     if (this.stopping) {
       // A second quit during the hold (Cmd+Q again, SIGTERM) waits on the same stop.
       event.preventDefault();
@@ -75,6 +86,7 @@ export class QuitHold {
   quitRefused(): void {
     if (this.stopping) return;
     this.released = false;
+    this.quitting = false;
   }
 
   private release(abandoned: number | null): void {

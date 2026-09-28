@@ -89,7 +89,12 @@ async fn main() -> anyhow::Result<()> {
             match server {
                 McpCommand::AutoVisualiser => serve(AutoVisualiserRouter::new()).await?,
                 McpCommand::ComputerController => serve(ComputerControllerServer::new()).await?,
-                McpCommand::Memory => serve(goose::builtin_extension::memory_server()).await?,
+                McpCommand::Memory => {
+                    serve(goose::builtin_extension::memory_server(
+                        std::env::current_dir()?,
+                    ))
+                    .await?
+                }
                 McpCommand::Tutorial => serve(TutorialServer::new()).await?,
             }
         }

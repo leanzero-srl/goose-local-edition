@@ -429,15 +429,15 @@ async fn child_process_client(
         command.env("PATH", path);
     }
 
-    if working_dir.exists() && working_dir.is_dir() {
-        tracing::info!("Setting MCP process working directory: {:?}", working_dir);
-        command.current_dir(working_dir);
-    } else {
-        tracing::warn!(
-            "Working directory doesn't exist or isn't a directory: {:?}",
-            working_dir
-        );
+    // A missing session folder refuses the start: spawned without a dir, the server would run in
+    // goosed's own cwd — since Q-257 the shared $HOME, which is no session's folder.
+    if !working_dir.is_dir() {
+        return Err(ExtensionError::SetupError(format!(
+            "the session's folder {} does not exist or is not a folder, so the extension was not started",
+            working_dir.display()
+        )));
     }
+    command.current_dir(working_dir);
 
     let (transport, mut stderr) = TokioChildProcess::builder(command)
         .stderr(Stdio::piped())
@@ -900,6 +900,7 @@ impl ExtensionManager {
                 session_manager,
                 session: None,
                 use_login_shell_path,
+                working_dir: None,
             },
             provider,
             tools_cache: Mutex::new(None),
@@ -949,13 +950,15 @@ impl ExtensionManager {
             .any(|ext| ext.supports_resources())
     }
 
-    /// Add an extension with an optional working directory.
-    /// If working_dir is None, falls back to current_dir.
+    /// Add an extension that starts in `working_dir` — the session's folder, or for a start with no
+    /// session a folder the caller names. Q-267: this took an `Option` that fell back to
+    /// `GOOSE_WORKING_DIR` and then the process cwd; since Q-257 goosed serves every window from
+    /// $HOME, so an extension the model enabled mid-chat started in $HOME.
     #[allow(clippy::too_many_lines)]
     pub async fn add_extension(
         self: &Arc<Self>,
         config: ExtensionConfig,
-        working_dir: Option<PathBuf>,
+        working_dir: PathBuf,
         container: Option<&Container>,
         session_id: Option<&str>,
     ) -> ExtensionResult<()> {
@@ -979,10 +982,7 @@ impl ExtensionManager {
 
         let mut temp_dir = None;
 
-        let effective_working_dir = working_dir
-            .clone()
-            .or_else(|| std::env::var("GOOSE_WORKING_DIR").ok().map(PathBuf::from))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let effective_working_dir = working_dir;
 
         let client: Box<dyn McpClientTrait> = match &config {
             ExtensionConfig::Sse { .. } => {
@@ -1035,6 +1035,7 @@ impl ExtensionManager {
                     // Platform extension: create via in-process client factory
                     let mut context = self.context.clone();
                     context.extension_manager = Some(Arc::downgrade(self));
+                    context.working_dir = Some(effective_working_dir.clone());
                     if let Some(id) = session_id {
                         if let Ok(session) =
                             self.context.session_manager.get_session(id, false).await
@@ -1092,7 +1093,7 @@ impl ExtensionManager {
                     } else {
                         let (server_read, client_write) = tokio::io::duplex(65536);
                         let (client_read, server_write) = tokio::io::duplex(65536);
-                        extension_fn(server_read, server_write);
+                        extension_fn(server_read, server_write, effective_working_dir.clone());
 
                         Box::new(
                             McpClient::connect(
@@ -2989,7 +2990,9 @@ mod tests {
         assert_eq!(em.extensions.lock().await.len(), 1);
 
         // Calling add_extension with the same config must be a no-op (Ok, count unchanged).
-        let result = em.add_extension(config, None, None, None).await;
+        let result = em
+            .add_extension(config, std::env::temp_dir(), None, None)
+            .await;
         assert!(result.is_ok(), "identical config should be a no-op");
         assert_eq!(
             em.extensions.lock().await.len(),
@@ -3037,7 +3040,9 @@ mod tests {
         // add_extension with changed config attempts to create a new client (fails here
         // because Frontend configs cannot be added as server extensions), but must preserve
         // the old extension so the session isn't left without it.
-        let result = em.add_extension(config_b, None, None, None).await;
+        let result = em
+            .add_extension(config_b, std::env::temp_dir(), None, None)
+            .await;
         assert!(result.is_err(), "Frontend add_extension must return Err");
         assert_eq!(
             em.extensions.lock().await.len(),
@@ -3323,5 +3328,91 @@ mod tests {
             header_found,
             "custom header x-api-key was not forwarded through the OAuth connection path"
         );
+    }
+
+    /// Q-264: the memory builtin runs inside goosed; since Q-257 goosed's cwd is $HOME for every
+    /// window. A session in a project gets that project's local memories in its instructions and
+    /// its home-folder note only when its own folder is the home folder.
+    #[tokio::test]
+    async fn the_memory_builtin_indexes_its_sessions_folder_not_the_process_cwd() {
+        crate::builtin_extension::register_builtin_extensions(
+            crate::builtin_extension::builtin_extensions(),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(project.join(".goose").join("memory")).unwrap();
+        std::fs::write(
+            project
+                .join(".goose")
+                .join("memory")
+                .join("deploy-commands.txt"),
+            "# project\nThis project deploys with make ship-it.\n\n",
+        )
+        .unwrap();
+        assert_ne!(
+            std::env::current_dir().unwrap().canonicalize().unwrap(),
+            project.canonicalize().unwrap()
+        );
+
+        let em = Arc::new(ExtensionManager::new_without_provider(
+            temp.path().join("data"),
+        ));
+        em.add_extension(
+            ExtensionConfig::Builtin {
+                name: "memory".to_string(),
+                display_name: None,
+                description: "memory".to_string(),
+                timeout: None,
+                bundled: None,
+                available_tools: vec![],
+            },
+            project.clone(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let info = em.get_extensions_info(&project).await;
+        let memory = info.iter().find(|i| i.name == "memory").unwrap();
+        assert!(
+            memory
+                .instructions
+                .contains("deploy-commands [project]: This project deploys with make ship-it."),
+            "{}",
+            memory.instructions
+        );
+        assert!(!memory.instructions.contains("user's HOME folder"));
+    }
+
+    /// Q-267: a child MCP server whose session folder is gone is refused, never started in
+    /// goosed's own cwd.
+    #[tokio::test]
+    async fn a_stdio_extension_whose_folder_is_missing_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let em = Arc::new(ExtensionManager::new_without_provider(
+            temp.path().join("data"),
+        ));
+        let err = em
+            .add_extension(
+                ExtensionConfig::Stdio {
+                    name: "echo".to_string(),
+                    description: "echo".to_string(),
+                    cmd: "cat".to_string(),
+                    args: vec![],
+                    envs: Default::default(),
+                    env_keys: vec![],
+                    timeout: None,
+                    cwd: None,
+                    bundled: None,
+                    available_tools: vec![],
+                },
+                temp.path().join("gone"),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("does not exist"), "{err}");
     }
 }

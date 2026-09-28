@@ -22,12 +22,16 @@ pub struct SkillsClient {
 }
 
 impl SkillsClient {
+    /// Q-267: the folder was the session's or else the process cwd — goosed's, since Q-257 the
+    /// shared $HOME. It is the folder the extension manager started this client for.
     pub fn new(context: PlatformExtensionContext) -> anyhow::Result<Self> {
         let working_dir = context
-            .session
-            .as_ref()
-            .map(|s| s.working_dir.clone())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            .working_dir
+            .clone()
+            .or_else(|| context.session.as_ref().map(|s| s.working_dir.clone()))
+            .ok_or_else(|| {
+                anyhow::anyhow!("the skills extension was started without a folder, so it has no project skills to read")
+            })?;
 
         let info = InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(EXTENSION_NAME, "1.0.0").with_title("Skills"));
@@ -323,6 +327,7 @@ mod tests {
             session_manager: Arc::new(crate::session::SessionManager::instance()),
             session: Some(session),
             use_login_shell_path: false,
+            working_dir: None,
         })
         .unwrap()
         .with_builtin_skills(false);
@@ -351,11 +356,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_skill_not_found_returns_error() {
+        let temp_dir = TempDir::new().unwrap();
         let client = SkillsClient::new(PlatformExtensionContext {
             extension_manager: None,
             session_manager: Arc::new(crate::session::SessionManager::instance()),
             session: None,
             use_login_shell_path: false,
+            working_dir: Some(temp_dir.path().to_path_buf()),
         })
         .unwrap();
 
@@ -368,5 +375,34 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error.unwrap_or(false));
+    }
+
+    /// Q-267: the skills client reads the folder the extension manager started it for — a chat's
+    /// project skills — and with no folder at all it refuses instead of reading goosed's cwd.
+    #[tokio::test]
+    async fn the_skills_client_reads_the_folder_it_was_started_for() {
+        let temp_dir = TempDir::new().unwrap();
+        let skill_dir = temp_dir.path().join(".agents/skills/project-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: project-skill\ndescription: The project's own skill\n---\nDo it.",
+        )
+        .unwrap();
+        let context = |working_dir: Option<std::path::PathBuf>| PlatformExtensionContext {
+            extension_manager: None,
+            session_manager: Arc::new(crate::session::SessionManager::instance()),
+            session: None,
+            use_login_shell_path: false,
+            working_dir,
+        };
+
+        let client = SkillsClient::new(context(Some(temp_dir.path().to_path_buf()))).unwrap();
+        assert!(client
+            .discover_skills()
+            .iter()
+            .any(|skill| skill.name == "project-skill"));
+
+        assert!(SkillsClient::new(context(None)).is_err());
     }
 }

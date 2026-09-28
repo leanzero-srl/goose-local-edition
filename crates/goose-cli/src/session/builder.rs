@@ -7,7 +7,7 @@ use goose::agents::{Agent, Container, ExtensionError};
 use goose::config::resolve_extensions_for_new_session;
 use goose::config::{Config, ExtensionConfig, GooseMode};
 use goose::model_config::model_config_from_user_config;
-use goose::providers::create;
+use goose::providers::create_with_working_dir;
 use goose::recipe::Recipe;
 use goose::session::session_manager::SessionType;
 use goose::session::EnabledExtensionsState;
@@ -657,6 +657,17 @@ pub async fn build_session(session_config: SessionBuilderConfig) -> CliSession {
     if session_config.resume {
         handle_resumed_session_workdir(&agent, &session_id, session_config.interactive).await;
     }
+    // The session's folder (a resume may have switched to it above): its provider and its hooks
+    // belong to it (Q-263/Q-266), whatever folder this process was started in.
+    let session_working_dir = session_manager
+        .get_session(&session_id, false)
+        .await
+        .unwrap_or_else(|e| {
+            output::render_error(&format!("Failed to read session metadata: {}", e));
+            process::exit(1);
+        })
+        .working_dir;
+    agent.load_hooks_for(&session_working_dir);
 
     let extensions_for_provider =
         match collect_extension_configs(&agent, &session_config, recipe, &session_id).await {
@@ -668,7 +679,13 @@ pub async fn build_session(session_config: SessionBuilderConfig) -> CliSession {
         };
 
     let (new_provider, effective_provider_name, effective_model_name, effective_model_config) =
-        match create(&resolved.provider_name, extensions_for_provider.clone()).await {
+        match create_with_working_dir(
+            &resolved.provider_name,
+            extensions_for_provider.clone(),
+            session_working_dir.clone(),
+        )
+        .await
+        {
             Ok(provider) => (
                 provider,
                 resolved.provider_name.clone(),
@@ -706,7 +723,13 @@ pub async fn build_session(session_config: SessionBuilderConfig) -> CliSession {
                             ));
                             process::exit(1);
                         });
-                match create(&fallback_provider, extensions_for_provider.clone()).await {
+                match create_with_working_dir(
+                    &fallback_provider,
+                    extensions_for_provider.clone(),
+                    session_working_dir.clone(),
+                )
+                .await
+                {
                     Ok(provider) => (
                         provider,
                         fallback_provider,

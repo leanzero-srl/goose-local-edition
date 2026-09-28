@@ -240,3 +240,86 @@ describe('QuitHold — Q-241: goosed has exited before the app does', () => {
     expect(log.lines.filter((l) => l.includes('waiting for'))).toHaveLength(2);
   });
 });
+
+// Q-257: every window shares the app's one goosed. The quit must stop that one goosed ONCE, wait for
+// its exit with the app whole — the 3.0.65 shape (the process ends at the first window close) included
+// — and createChat must know a quit is under way, so no window starts a goosed the hold never waits for.
+describe('QuitHold — one goosed shared by every window (Q-257)', () => {
+  function sharedSetup(dieAtFirstClose = false) {
+    const log = logger();
+    const registry = new GooseServeLeaseRegistry(log);
+    const goosed = fakeGoosed();
+    const lease = registry.create(goosed.result, 'secret');
+    registry.attachWindow(1, lease);
+    registry.attachWindow(2, lease);
+    let hold: QuitHold;
+    const app = electronQuit({ registry, hold: () => hold, windows: [1, 2], dieAtFirstClose });
+    hold = new QuitHold({
+      backends: registry,
+      logger: log,
+      quit: app.quit,
+      closeWouldAsk: () => false,
+    });
+    return { log, goosed, app, hold: () => hold };
+  }
+
+  it('two windows, one goosed: one stop, waited for before any window closes', async () => {
+    const { app, goosed, log } = sharedSetup();
+
+    app.quit();
+    expect(app.steps).toEqual(['before-quit:held']);
+    expect(goosed.cleanup).toHaveBeenCalledTimes(1);
+    expect(log.lines[0]).toContain('waiting for 1 attached backend(s)');
+
+    goosed.exit();
+    await flush();
+    expect(app.steps).toEqual([
+      'before-quit:held',
+      'before-quit:passed',
+      'close 1',
+      'closed 1',
+      'close 2',
+      'closed 2',
+      'will-quit:passed',
+      'process ended',
+    ]);
+    expect(goosed.cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('the 3.0.65 shape with two windows: the shared goosed exited before the first close', async () => {
+    const { app, goosed } = sharedSetup(true);
+
+    app.quit();
+    goosed.exit();
+    await flush();
+    expect(app.steps).toEqual([
+      'before-quit:held',
+      'before-quit:passed',
+      'close 1',
+      'process ended',
+    ]);
+    expect(goosed.cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('isQuitting is set by the quit and cleared by a refused one', () => {
+    const { app, hold } = sharedSetup();
+    expect(hold().isQuitting()).toBe(false);
+    app.quit();
+    expect(hold().isQuitting()).toBe(true);
+  });
+
+  it('a quit the close guard refused is no longer a quit', () => {
+    const log = logger();
+    const registry = new GooseServeLeaseRegistry(log);
+    const hold = new QuitHold({
+      backends: registry,
+      logger: log,
+      quit: () => undefined,
+      closeWouldAsk: () => true,
+    });
+    hold.onQuitEvent('before-quit', { preventDefault: vi.fn() });
+    expect(hold.isQuitting()).toBe(true);
+    hold.quitRefused();
+    expect(hold.isQuitting()).toBe(false);
+  });
+});

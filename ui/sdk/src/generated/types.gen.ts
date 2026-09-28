@@ -1687,7 +1687,12 @@ export type ScanRecipeResponse_unstable = {
 };
 
 export type ListRecipesRequest_unstable = {
-    [key: string]: unknown;
+    /**
+     * The asking window's folder: its project recipes (`<dir>`, `<dir>/.goose/recipes`,
+     * `<dir>/.agents/recipes`) are listed beside the user's library. Required — the one goosed
+     * serves every window (Q-257), so its own cwd is no window's project (Q-265).
+     */
+    working_dir: string;
 };
 
 export type ListRecipesResponse_unstable = {

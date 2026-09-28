@@ -15,7 +15,7 @@ import { engineLiveness } from '../components/swarm/swarmRunLiveness';
 
 export type GuardedShortcutAction = 'spawn' | 'close' | 'quit' | 'navigate' | 'reload';
 
-// 'spawn' and 'quit' touch the run from any window (a second backend, an orphaned run); 'close',
+// 'spawn' and 'quit' touch the run from any window (a stray window over the run, an orphaned run); 'close',
 // 'navigate' and 'reload' only matter on the window that shows the benchmark view.
 const benchmarkWindowOnly: ReadonlySet<GuardedShortcutAction> = new Set([
   'close',
@@ -34,8 +34,8 @@ export type ShortcutGuardInput = {
   triggeredByAccelerator: boolean;
   onBenchmarkView: boolean;
   /** SOME renderer holds a live swarm-run subscription (its cached heartbeat stamp is fresh). spawn and
-   *  quit refuse on this from any window: a second window is a second backend, and quit cleans every
-   *  lease. Absent means "not known", which reads as false — the guard fails OPEN, never closed. */
+   *  quit refuse on this from any window: a stray chord never opens a window over a run, and quit
+   *  cleans every lease. Absent means "not known", which reads as false — the guard fails OPEN, never closed. */
   sessionRunLive?: boolean;
   /** The FOCUSED window's own renderer holds such a subscription — the window whose close would take
    *  the run with it. */

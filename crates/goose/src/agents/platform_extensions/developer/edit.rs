@@ -236,16 +236,15 @@ fn apply_line_limit(content: &str, line: Option<u32>, limit: Option<u32>) -> Str
     lines[start..end].concat()
 }
 
+/// A relative path is the chat's folder's. Every goosed dispatch carries the folder; a call
+/// without one keeps the path relative rather than naming goosed's own cwd as the chat's folder
+/// (Q-266 audit: that cwd is $HOME for every window since Q-257) — the OS resolves it against the
+/// process cwd only for a caller that runs goose where its work is (the CLI).
 pub fn resolve_path(path: &str, working_dir: Option<&Path>) -> PathBuf {
     let path = PathBuf::from(path);
-    if path.is_absolute() {
-        path
-    } else {
-        working_dir
-            .map(Path::to_path_buf)
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(path)
+    match working_dir {
+        Some(dir) if path.is_relative() => dir.join(path),
+        _ => path,
     }
 }
 

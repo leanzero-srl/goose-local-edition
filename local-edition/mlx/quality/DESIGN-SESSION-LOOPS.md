@@ -48,9 +48,12 @@ Abbreviations: `S` = `ui/desktop/src`, `G` = `crates/goose/src`, `AW` = `crates/
    The runner OFFERS a tick (`loops/tickDue`); the offer stands until `on_prompt` accepts it; a renderer that cannot
    submit answers `loops/tickRefused{reason}` and the runner re-offers on the renderer's own "attempt cleared" event.
    A tick is never dropped silently. The runner owns the record, the prompt text and every decision.
-9. **Honest limits.** Ticks run only while the chat's window is open, because each window runs its own goosed. A
-   window closed mid-loop, or an app that quit and left its goosed orphaned (Q-223), comes back as "Paused, goose
-   was closed". While the Mac sleeps no tick runs: on wake, one tick runs rather than a burst. "Keep awake" is the
+9. **Honest limits.** Ticks run only while a goose window is open. Since Q-257 (2026-09-28) every window of the app
+   shares ONE goosed, so the runner keeps a loop while ANY window's connection holds a tick door — closing the
+   chat's own window no longer releases its loops when another window is open (before Q-257 each window ran its
+   own goosed and closing the chat's window was the end; whether a tick offered while no open window shows its chat
+   runs there is the renderer's, L2c's to state). The last window closed mid-loop, or an app that quit and left its
+   goosed orphaned (Q-223), comes back as "Paused, goose was closed". While the Mac sleeps no tick runs: on wake, one tick runs rather than a burst. "Keep awake" is the
    existing wakelock setting, which does nothing until Q-230's fix lands; the loop design depends on that fix and
    adds no blocker of its own.
 10. **Q-227: the composer's "Recipes & loops" button and its whole dialog are removed.** Evidence of use on both Macs:
@@ -339,8 +342,10 @@ says how the two meet.
   - `user_turn()` bumps `running` and `started` (`:48-54`).
   - `after_user_turns` runs a call when no user turn runs, and a user turn that starts drops it and re-asks it from
     the start (`:58-76`).
-  - It is **process-local** (`:85-97`), and each window has its own goosed. So a user turn in window B does not reach
-    window A's goosed (D9).
+  - It is **process-local** (`:85-97`). Until Q-257 each window had its own goosed, so a user turn in window B did not
+    reach window A's goosed (D9). Since Q-257 every window of the app shares one goosed, so between two windows of
+    the app it does; D9 stands only across goose PROCESSES (a CLI `goose serve`, a `goose swarm run` child, another
+    app build).
 - **Session storage.**
   - `Session` has `working_dir`, `session_type`, `extension_data` and `project_id` (`G/session/session_manager.rs:62-96`).
   - `extension_data` is keyed `"name.version"` (`G/session/extension_data.rs:14-41`). It is read and written through
@@ -374,9 +379,9 @@ says how the two meet.
 | D4 | A stop check that cannot run reads as "not passed" and the loop continues | `scheduler.rs:926` `.unwrap_or(false)` | retired with `LoopConfig` (L8); session loops name it (§4.6) |
 | D5 | "Schedule + iterations" runs all iterations back to back in one fire | `scheduler.rs:898-932` | retired (L8) |
 | D6 | Scheduled iterations use the global model and goosed's cwd, not the chat's node or folder | `scheduler.rs:952-953, :961` | stays for scheduled recipes; session loops use the session's own |
-| D7 | Two windows may fire one schedule twice (each goosed loads `schedule.json`) | `server_factory.rs:67-84`, `main.ts:2391` | **not verified**; filed for the scheduler owner, out of this lane |
+| D7 | Two windows may fire one schedule twice (each goosed loads `schedule.json`) | `server_factory.rs:67-84`, `main.ts:2391` | **not verified**; filed for the scheduler owner, out of this lane. Since Q-257 the app's windows share one goosed and so one scheduler; two goose processes (a CLI `goose serve` beside the app) still each load it |
 | D8 | A running Agent Work desk outlives the app as an orphan and is not re-adopted | `main.ts:7010-7014`, `:6772-6790` | out of this lane; filed |
-| D9 | turn_priority is per goosed, so a user turn in another window does not make this window's background work yield | `turn_priority.rs:85-97`, `main.ts:2391` | §5.3 names the seam (S5 holders) |
+| D9 | turn_priority is per goosed, so a user turn in another window does not make this window's background work yield | `turn_priority.rs:85-97`, `main.ts:2391` | §5.3 names the seam (S5 holders). Since Q-257 the app's windows share one goosed, so D9 is gone between windows of one app and stands only across goose processes (CLI `goose serve`, a swarm child, another build) — where the S5 holders are still the seam |
 | D10 | The open Changes panel covers the chat's right third | walk `02-…png` | kept by the Q-190 rule; §8.3 mitigates for a long-open loop tab |
 | D11 | Settings › Import writes `loop_config` through `acpCreateSchedule`, and reads an unparseable `schedule.json` as "no loops" | `GooseImportSection.tsx:88-98` (`catch { /* malformed schedule.json — no loops */ }`), `:161-170` | L8: the loop half names "Loops are no longer imported" per entry found, and an unreadable file is named with its error |
 | D12 | Every cancelled turn is recorded "You stopped this answer", whoever cancelled it | `server.rs:2897-2916`, `turn_outcome.rs:93-128` | L2b: a cancel carries its cause; a tick's yield is recorded `yielded`, never as the user's stop |
@@ -821,7 +826,7 @@ tap (`:2726`), the S5 loader's per-reply guard and the served-turn record.
 | Situation | What happens | What the user sees |
 |---|---|---|
 | The chat's window is open (any chat shown) | ticks fire | normal states |
-| The window is closed (its goosed is released, `main.ts` `mainWindow.once('closed', … releaseWindow)`) | the connection ends → the door drops → the runner, with no door left, releases its loops (`owner = None`, `paused{closed_at}`); if goosed dies first, proof of gone covers it | reopening the chat: **Paused** "goose was closed at {time}; {k} ticks were due" with [Resume] (one tick now) and [Stop loop] |
+| The LAST window is closed (the app's one shared goosed is released only then, Q-257 — `main.ts` `mainWindow.once('closed', … releaseWindow)`; closing one of several windows ends only that window's connection and door) | the connection ends → the door drops → the runner, with no door left, releases its loops (`owner = None`, `paused{closed_at}`); if goosed dies first, proof of gone covers it | reopening the chat: **Paused** "goose was closed at {time}; {k} ticks were due" with [Resume] (one tick now) and [Stop loop] |
 | The app quits | same as closed. If the quit leaves goosed orphaned (Q-223, open) or hangs (Q-229, open), the orphan either released its loops when its renderer's connection ended, or is proven gone by its reparenting (§5.1 condition 3); the new window never shows "Looping in another window" for it | same |
 | The Mac sleeps | tokio's clock does not advance during sleep (Rust's `Instant` on macOS does not count suspended time), so a timer armed before sleep would fire late by the sleep's length | **L10** adds `powerMonitor.on('resume')` in main → `system-resumed` to every window → the renderer calls `loops/wake` → the runner re-reads the wall clock: one tick if one or more were due (origin `on_wake`, "Missed while your Mac slept — ran once on wake"), never a burst (launchd's coalescing). This is NOT in L1: `fdcac1d1a` left it out because `main.ts` is S7's file; L10 cuts it after S7 merges. J4 measures the `Instant` behaviour rather than assuming it |
 | Keep awake | the existing wakelock setting (`main.ts:2823` `set-wakelock`), **which today saves the setting and keeps nothing awake (Q-230, open, cutting)**. The loop design DEPENDS on Q-230's fix and adds no loop-specific blocker (§11 Q5): Q-230's stated fix mentions "while a loop is armed, lane L" — lane L declines that half in v1 | the start dialog shows the toggle only once Q-230 has landed (L4 depends on it). Before that the dialog says "Your Mac may sleep; ticks wait until it wakes." and nothing more |

@@ -215,10 +215,9 @@ impl Agent {
             .config
             .session_manager
             .get_session(session_id, false)
-            .await
-            .ok()
-            .map(|s| s.working_dir);
-        let output = skill_slash_command::format_installed_skills(working_dir.as_deref());
+            .await?
+            .working_dir;
+        let output = skill_slash_command::format_installed_skills(Some(&working_dir));
         Ok(Some(Message::assistant().with_text(output)))
     }
 
@@ -458,11 +457,10 @@ impl Agent {
             .config
             .session_manager
             .get_session(session_id, false)
-            .await
-            .ok()
-            .map(|session| session.working_dir);
+            .await?
+            .working_dir;
 
-        match skill_slash_command::resolve_command(command, params_str, working_dir.as_deref()) {
+        match skill_slash_command::resolve_command(command, params_str, Some(&working_dir)) {
             Ok(None) => Ok(None),
             Ok(Some(prompt)) => Ok(Some(Message::user().with_text(prompt))),
             Err(text) => Ok(Some(Message::assistant().with_text(text))),

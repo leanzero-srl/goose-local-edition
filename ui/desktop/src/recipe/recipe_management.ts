@@ -9,6 +9,7 @@ import {
 } from '../acp/recipe';
 import { stripEmptyExtensions } from '.';
 import type { Recipe, RecipeManifest } from '.';
+import { getInitialWorkingDir } from '../utils/workingDir';
 
 /** AI-author a recipe from a live session's conversation, for review/edit in the create modal. */
 export const createRecipeFromSession = async (sessionId: string): Promise<Recipe> => {
@@ -35,14 +36,9 @@ export const saveRecipe = async (
   }
 };
 
-export const listSavedRecipes = async (): Promise<RecipeManifest[]> => {
-  try {
-    return await acpListRecipes();
-  } catch (error) {
-    console.warn('Failed to list saved recipes:', error);
-    return [];
-  }
-};
+// A failed listing reaches the caller: the Recipes view shows it instead of an empty library.
+export const listSavedRecipes = async (): Promise<RecipeManifest[]> =>
+  acpListRecipes(getInitialWorkingDir());
 
 export const deleteRecipe = async (id: string): Promise<void> => {
   await acpDeleteRecipe(id);

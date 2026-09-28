@@ -328,6 +328,7 @@ mod tests {
             session_manager: Arc::clone(manager),
             session: None,
             use_login_shell_path: false,
+            working_dir: None,
         })
         .unwrap()
     }

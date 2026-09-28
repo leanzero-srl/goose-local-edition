@@ -31,17 +31,10 @@ impl TreeTool {
     }
 
     pub fn tree_with_cwd(&self, params: TreeParams, working_dir: Option<&Path>) -> CallToolResult {
-        let path = PathBuf::from(&params.path);
-        let root = if path.is_absolute() {
-            path
-        } else {
-            working_dir
-                .map(Path::to_path_buf)
-                .or_else(|| std::env::current_dir().ok())
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(path)
-        };
-        self.tree_at(root, params.depth)
+        self.tree_at(
+            super::edit::resolve_path(&params.path, working_dir),
+            params.depth,
+        )
     }
 
     fn tree_at(&self, root: PathBuf, depth: u32) -> CallToolResult {

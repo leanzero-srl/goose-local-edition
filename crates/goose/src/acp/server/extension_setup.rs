@@ -40,7 +40,9 @@ impl GooseAcpAgent {
         }
         let key = config.key();
         let manager = Arc::new(ExtensionManager::new_without_provider(Paths::data_dir()));
-        manager.add_extension(config, None, None, None).await
+        // Settings tests a server outside any chat: it starts in the named sessionless folder.
+        let sessionless = Paths::sessionless_dir().internal_err()?;
+        manager.add_extension(config, sessionless.clone(), None, None).await
             .map_err(|_| agent_client_protocol::Error::internal_error().data("The MCP server could not connect. Check its executable, credentials and endpoint."))?;
         let result = async {
             let tools = manager.get_prefixed_tools("mcp-setup", Some(key.clone())).await.internal_err()?;
@@ -62,7 +64,7 @@ impl GooseAcpAgent {
                 // Use the bundled server's research directory so list-cached-documents
                 // and read-cached-document can consume sources collected in the UI.
                 let folder = folder.join("docs").join("research-output");
-                let ctx = crate::agents::ToolCallContext::new("mcp-setup".into(), None, None);
+                let ctx = crate::agents::ToolCallContext::new("mcp-setup".into(), Some(sessionless.clone()), None);
                 let call = CallToolRequestParams::new(tool_name).with_arguments(serde_json::json!({"url": url.as_str()}).as_object().expect("object literal").clone());
                 let response = manager.dispatch_tool_call(&ctx, call, CancellationToken::new()).await.internal_err()?.result.await.internal_err()?;
                 if response.is_error == Some(true) {

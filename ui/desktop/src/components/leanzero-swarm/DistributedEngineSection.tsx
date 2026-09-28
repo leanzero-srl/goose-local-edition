@@ -1334,7 +1334,8 @@ function RunFacts({ status }: { status: MlxDistributedStatus }) {
 }
 
 // ---------------------------------------------------------------------------
-// A run another window supervises (each window runs its own goosed)
+// A run another goose process supervises (a CLI goose serve, another app build — this app's windows
+// all share one goosed since Q-257, so a split one window loaded is every window's own)
 // ---------------------------------------------------------------------------
 
 function OtherWindowRun({ owner }: { owner: MlxDistributedOwner }) {

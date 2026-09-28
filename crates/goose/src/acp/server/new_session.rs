@@ -36,7 +36,9 @@ impl GooseAcpAgent {
             None => SessionType::Acp,
         };
         let current_mode: GooseMode = config.get_goose_mode().unwrap_or_default();
-        let recipe = self.resolve_recipe_from_meta(args.meta.as_ref()).await?;
+        let recipe = self
+            .resolve_recipe_from_meta(args.meta.as_ref(), &args.cwd)
+            .await?;
         let session_name = match recipe.as_ref() {
             Some((recipe, _)) if !recipe.title.trim().is_empty() => recipe.title.clone(),
             _ => crate::session::session_naming::UNTITLED_SESSION_NAME.to_string(),

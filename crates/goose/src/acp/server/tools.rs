@@ -91,7 +91,18 @@ impl GooseAcpAgent {
             params
         };
 
-        let ctx = crate::agents::ToolCallContext::new(session_id.clone(), None, None);
+        // Q-266 audit: a tool the app calls directly runs in the chat's folder — with no folder a
+        // developer shell or a relative write landed in goosed's cwd, $HOME since Q-257.
+        let working_dir = self
+            .session_manager
+            .get_session(session_id, false)
+            .await
+            .map_err(|_| {
+                agent_client_protocol::Error::resource_not_found(Some(session_id.to_string()))
+                    .data(format!("Session not found: {session_id}"))
+            })?
+            .working_dir;
+        let ctx = crate::agents::ToolCallContext::new(session_id.clone(), Some(working_dir), None);
         let tool_result = agent
             .extension_manager
             .dispatch_tool_call(&ctx, tool_call, CancellationToken::new())

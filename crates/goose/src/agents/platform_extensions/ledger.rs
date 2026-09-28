@@ -318,7 +318,12 @@ impl LedgerClient {
     /// The chat's CURRENT folder: the session is read at every call, because the user can move a
     /// chat to another folder mid-session (the folder chip → `update_working_dir`), and a folder
     /// captured when the extension was built kept writing to the old one.
-    async fn ledger_file(&self, session_id: &str) -> LedgerFile {
+    ///
+    /// Q-266 audit: with the session unreadable it fell back to the folder the extension started
+    /// in and then to goosed's cwd — since Q-257 the shared $HOME, no chat's folder. The extension
+    /// is always started for a folder (`PlatformExtensionContext::working_dir`), so that is the
+    /// fallback; with neither the ledger is refused.
+    async fn ledger_file(&self, session_id: &str) -> Result<LedgerFile, String> {
         let working_dir = match self
             .context
             .session_manager
@@ -329,13 +334,19 @@ impl LedgerClient {
             Err(err) => {
                 tracing::warn!(session_id, %err, "ledger: session unreadable, using the folder the extension started in");
                 self.context
-                    .session
-                    .as_ref()
-                    .map(|s| s.working_dir.clone())
-                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+                    .working_dir
+                    .clone()
+                    .or_else(|| self.context.session.as_ref().map(|s| s.working_dir.clone()))
+                    .ok_or_else(|| {
+                        format!("this chat's session is unreadable ({err}) and the ledger was started without a folder")
+                    })?
             }
         };
-        LedgerFile::for_chat(&working_dir, session_id, dirs::home_dir().as_deref())
+        Ok(LedgerFile::for_chat(
+            &working_dir,
+            session_id,
+            dirs::home_dir().as_deref(),
+        ))
     }
 
     fn get_tools() -> Vec<Tool> {
@@ -405,7 +416,14 @@ impl McpClientTrait for LedgerClient {
             Some(working_dir) => {
                 LedgerFile::for_chat(working_dir, &ctx.session_id, dirs::home_dir().as_deref())
             }
-            None => self.ledger_file(&ctx.session_id).await,
+            None => match self.ledger_file(&ctx.session_id).await {
+                Ok(ledger) => ledger,
+                Err(error) => {
+                    return Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Error: {error}"
+                    ))]))
+                }
+            },
         };
         let result: std::result::Result<String, String> = match name {
             "ledger_append" => {
@@ -515,7 +533,10 @@ impl McpClientTrait for LedgerClient {
     }
 
     async fn get_moim(&self, session_id: &str) -> Option<String> {
-        Some(self.ledger_file(session_id).await.moim())
+        match self.ledger_file(session_id).await {
+            Ok(ledger) => Some(ledger.moim()),
+            Err(error) => Some(format!("The project ledger is unavailable: {error}")),
+        }
     }
 }
 

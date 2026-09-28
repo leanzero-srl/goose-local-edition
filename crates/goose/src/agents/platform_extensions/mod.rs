@@ -290,6 +290,10 @@ pub struct PlatformExtensionContext {
     pub session_manager: std::sync::Arc<crate::session::SessionManager>,
     pub session: Option<std::sync::Arc<Session>>,
     pub use_login_shell_path: bool,
+    /// The folder this extension was started for — the session's, or the one a sessionless start
+    /// named. The extension manager sets it on every start (Q-267); `None` only on the manager's
+    /// own template context, which starts nothing.
+    pub working_dir: Option<std::path::PathBuf>,
 }
 
 impl PlatformExtensionContext {

@@ -201,3 +201,151 @@ describe('GooseServeLeaseRegistry', () => {
     expect(store.hasBackendsToStop()).toBe(false);
   });
 });
+
+// Q-257: every window once spawned its own goosed, and a second goosed on the Mac is refused the
+// LeanZero Link mesh while the first holds it — so window 2 could not load the split. One goosed per
+// app now: windows share the live local lease; a new one starts only when none is live.
+describe('GooseServeLeaseRegistry — one local goosed per app (Q-257)', () => {
+  it('a second window reuses the live local lease; its close leaves goosed standing', async () => {
+    const cleanup = vi.fn(async () => 'exited' as const);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const start = vi.fn(async () => store.create(createGooseServeResult({ cleanup }), 's'));
+
+    const first = await store.acquireLocal(start);
+    store.attachWindow(1, first!);
+    const second = await store.acquireLocal(start);
+    store.attachWindow(2, second!);
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(second).toBe(first);
+
+    await store.releaseWindow(1);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(store.liveLocal()).toBe(first);
+
+    await store.releaseWindow(2);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(store.liveLocal()).toBeNull();
+  });
+
+  it('windows asking while the first goosed is still starting share that one start', async () => {
+    const store = new GooseServeLeaseRegistry(createLogger());
+    let finish!: () => void;
+    const started = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const start = vi.fn(async () => {
+      await started;
+      return store.create(createGooseServeResult(), 's');
+    });
+
+    const a = store.acquireLocal(start);
+    const b = store.acquireLocal(start);
+    finish();
+    const [leaseA, leaseB] = await Promise.all([a, b]);
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(leaseA).not.toBeNull();
+    expect(leaseB).toBe(leaseA);
+  });
+
+  it('an exited goosed sends the next window to a fresh start', async () => {
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const firstResult = createGooseServeResult();
+    const first = await store.acquireLocal(async () => store.create(firstResult, 's'));
+    store.attachWindow(1, first!);
+
+    firstResult.process.emit('exit', 1, null);
+    expect(store.liveLocal()).toBeNull();
+
+    const start = vi.fn(async () => store.create(createGooseServeResult(), 's'));
+    const second = await store.acquireLocal(start);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(second).not.toBe(first);
+    expect(store.liveLocal()).toBe(second);
+    // The window left on the dead goosed still reads the recovery message.
+    expect(() => store.getAcpUrl(1)).toThrow(GOOSE_SERVE_EXITED_USER_MESSAGE);
+  });
+
+  it('a new goosed starts only after the one still tearing down has exited (it holds the mesh)', async () => {
+    let exitOld!: () => void;
+    const oldExited = new Promise<void>((resolve) => {
+      exitOld = resolve;
+    });
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const old = store.create(
+      createGooseServeResult({ cleanup: () => oldExited.then(() => 'exited' as const) }),
+      's'
+    );
+    store.attachWindow(1, old);
+    void store.releaseWindow(1);
+    expect(store.liveLocal()).toBeNull();
+
+    const start = vi.fn(async () => store.create(createGooseServeResult(), 's'));
+    const next = store.acquireLocal(start);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(start).not.toHaveBeenCalled();
+
+    exitOld();
+    await expect(next).resolves.not.toBeNull();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed start is not remembered: the next window tries again', async () => {
+    const store = new GooseServeLeaseRegistry(createLogger());
+    await expect(store.acquireLocal(async () => null)).resolves.toBeNull();
+    const start = vi.fn(async () => store.create(createGooseServeResult(), 's'));
+    await expect(store.acquireLocal(start)).resolves.not.toBeNull();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('an external lease is never offered as the local goosed', () => {
+    const store = new GooseServeLeaseRegistry(createLogger());
+    store.attachWindow(1, store.createExternal('wss://example.com/acp', 's'));
+    expect(store.liveLocal()).toBeNull();
+  });
+
+  // Refuter D2: two windows wait on one start; the first one's BrowserWindow throws before the
+  // second has attached. Giving the lease back must not stop the goosed the second is about to use.
+  it('a window whose creation failed never stops the goosed a sibling window is about to attach', async () => {
+    const cleanup = vi.fn(async () => 'exited' as const);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const start = vi.fn(async () => store.create(createGooseServeResult({ cleanup }), 's'));
+    const [failed, sibling] = await Promise.all([
+      store.acquireLocal(start),
+      store.acquireLocal(start),
+    ]);
+
+    await store.releaseUnattached(failed!);
+    expect(cleanup).not.toHaveBeenCalled();
+    store.attachWindow(2, sibling!);
+    expect(store.getAcpUrl(2)).toBe('ws://127.0.0.1:1234/acp?token=test');
+
+    await store.releaseWindow(2);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('a lease handed out to one window and given back unused is stopped', async () => {
+    const cleanup = vi.fn(async () => 'exited' as const);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const lease = await store.acquireLocal(async () =>
+      store.create(createGooseServeResult({ cleanup }), 's')
+    );
+    await store.releaseUnattached(lease!);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(store.liveLocal()).toBeNull();
+  });
+
+  // Refuter D3's other half: a quit that lands between a goosed's start and its window attaching
+  // still finds that goosed and waits for it.
+  it('a quit stops the local goosed even before its first window has attached', async () => {
+    const cleanup = vi.fn(async () => 'exited' as const);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    await store.acquireLocal(async () => store.create(createGooseServeResult({ cleanup }), 's'));
+
+    expect(store.hasBackendsToStop()).toBe(true);
+    await expect(store.stopAllAndWait()).resolves.toEqual({ abandoned: 0 });
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(store.hasBackendsToStop()).toBe(false);
+  });
+});

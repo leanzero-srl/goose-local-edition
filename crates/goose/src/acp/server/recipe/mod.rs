@@ -51,19 +51,22 @@ impl GooseAcpAgent {
     pub(super) async fn resolve_recipe_from_meta(
         &self,
         meta: Option<&Meta>,
+        project_dir: &Path,
     ) -> Result<Option<(Recipe, PathBuf)>, agent_client_protocol::Error> {
         let resolved = if let Some(deeplink) = meta_string(meta, "recipeDeeplink")? {
             let recipe = recipe_deeplink::decode(&deeplink).map_err(|e| {
                 agent_client_protocol::Error::invalid_params().data(format!("recipeDeeplink: {e}"))
             })?;
-            Some((recipe, get_recipe_library_dir(true)))
+            Some((recipe, get_recipe_library_dir()))
         } else if let Some(id) = meta_string(meta, "recipeId")? {
-            let path = self.resolve_recipe_path_by_id(&id).await?;
+            let path = self
+                .resolve_recipe_path_by_id(&id, Some(project_dir))
+                .await?;
             let recipe = load_recipe_from_path(&path).internal_err_ctx("Failed to load recipe")?;
             let recipe_dir = path
                 .parent()
                 .map(Path::to_path_buf)
-                .unwrap_or_else(|| get_recipe_library_dir(true));
+                .unwrap_or_else(get_recipe_library_dir);
             Some((recipe, recipe_dir))
         } else {
             None
@@ -75,22 +78,28 @@ impl GooseAcpAgent {
         Ok(resolved)
     }
 
+    /// An id is the hash of a recipe's path, handed out by a listing. A miss relists the recipes of
+    /// `project_dir` (`None`: the user's library only — a request that names an id carries no
+    /// folder, so a project recipe is found only while a window's listing is in the cache).
     async fn resolve_recipe_path_by_id(
         &self,
         id: &str,
+        project_dir: Option<&Path>,
     ) -> Result<PathBuf, agent_client_protocol::Error> {
         if let Some(path) = self.recipe_path_cache.lock().await.get(id).cloned() {
             return Ok(path);
         }
-        let map: HashMap<String, PathBuf> = list_recipe_file_manifests()
-            .unwrap_or_default()
+        let listed: HashMap<String, PathBuf> = list_recipe_file_manifests(project_dir)
+            .internal_err_ctx("Failed to list recipes")?
             .into_iter()
             .map(|manifest| (manifest.id, manifest.file_path))
             .collect();
-        let resolved = map.get(id).cloned();
-        *self.recipe_path_cache.lock().await = map;
+        let resolved = listed.get(id).cloned();
+        self.recipe_path_cache.lock().await.extend(listed);
         resolved.ok_or_else(|| {
-            agent_client_protocol::Error::invalid_params().data(format!("recipe not found: {id}"))
+            agent_client_protocol::Error::invalid_params().data(format!(
+                "recipe not found: {id} — it is not in the recipe library, and no window has listed a project that holds it; list the recipes again from its window"
+            ))
         })
     }
 
@@ -146,14 +155,19 @@ impl GooseAcpAgent {
 
     pub(super) async fn on_list_recipes(
         &self,
-        _req: ListRecipesRequest,
+        req: ListRecipesRequest,
     ) -> Result<ListRecipesResponse, agent_client_protocol::Error> {
-        let manifests = list_recipe_file_manifests().internal_err_ctx("Failed to list recipes")?;
-        let recipe_file_hash_map: HashMap<_, _> = manifests
-            .iter()
-            .map(|manifest| (manifest.id.clone(), manifest.file_path.clone()))
-            .collect();
-        *self.recipe_path_cache.lock().await = recipe_file_hash_map;
+        let project_dir = PathBuf::from(req.working_dir.trim());
+        super::validate_absolute_cwd(&project_dir)?;
+        let manifests = list_recipe_file_manifests(Some(&project_dir))
+            .internal_err_ctx("Failed to list recipes")?;
+        // Extended, never replaced: every window lists its own project, and one window's list must
+        // not drop the ids another window is about to act on.
+        self.recipe_path_cache.lock().await.extend(
+            manifests
+                .iter()
+                .map(|manifest| (manifest.id.clone(), manifest.file_path.clone())),
+        );
 
         let scheduled_jobs = self.agent_manager.scheduler().list_scheduled_jobs().await;
         let schedule_map: HashMap<_, _> = scheduled_jobs
@@ -190,7 +204,7 @@ impl GooseAcpAgent {
         &self,
         req: DeleteRecipeRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let file_path = self.resolve_recipe_path_by_id(&req.id).await?;
+        let file_path = self.resolve_recipe_path_by_id(&req.id, None).await?;
         fs::remove_file(&file_path).internal_err_ctx("Failed to delete recipe")?;
         self.recipe_path_cache.lock().await.remove(&req.id);
         Ok(EmptyResponse {})
@@ -200,7 +214,7 @@ impl GooseAcpAgent {
         &self,
         req: ScheduleRecipeRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let file_path = self.resolve_recipe_path_by_id(&req.id).await?;
+        let file_path = self.resolve_recipe_path_by_id(&req.id, None).await?;
         if let Err(err) = self
             .agent_manager
             .scheduler()
@@ -220,7 +234,7 @@ impl GooseAcpAgent {
         &self,
         req: SetRecipeSlashCommandRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let file_path = self.resolve_recipe_path_by_id(&req.id).await?;
+        let file_path = self.resolve_recipe_path_by_id(&req.id, None).await?;
         if let Err(err) =
             recipe_slash_command::set_recipe_slash_command(file_path, req.slash_command)
         {
@@ -244,7 +258,7 @@ impl GooseAcpAgent {
         validate_recipe_without_dir(&recipe)?;
 
         let file_path = match req.id.as_ref() {
-            Some(id) => Some(self.resolve_recipe_path_by_id(id).await?),
+            Some(id) => Some(self.resolve_recipe_path_by_id(id, None).await?),
             None => None,
         };
 
@@ -378,7 +392,7 @@ impl GooseAcpAgent {
             return Ok(());
         }
 
-        let recipe_dir = get_recipe_library_dir(true);
+        let recipe_dir = get_recipe_library_dir();
         if let Some(rendered) = self.render_recipe(
             recipe,
             &recipe_dir,

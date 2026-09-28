@@ -608,14 +608,17 @@ impl SummonClient {
         )
     }
 
-    async fn get_working_dir(&self, session_id: &str) -> PathBuf {
+    /// Q-266: an unreadable session is refused, never answered from goosed's cwd (since Q-257 the
+    /// shared $HOME, no chat's folder).
+    async fn get_working_dir(&self, session_id: &str) -> Result<PathBuf, String> {
         self.context
             .session_manager
             .get_session(session_id, false)
             .await
-            .ok()
             .map(|s| s.working_dir)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+            .map_err(|e| {
+                format!("Failed to read this chat's session, so its folder is unknown: {e}")
+            })
     }
 
     async fn get_sources(&self, session_id: &str, working_dir: &Path) -> Vec<SourceEntry> {
@@ -682,7 +685,7 @@ impl SummonClient {
             None => return Ok(String::new()),
         };
 
-        match load_local_recipe_file(&sr.path) {
+        match load_local_recipe_file(&sr.path, Some(&session.working_dir)) {
             Ok(recipe_file) => Self::format_subrecipe_content(name, &recipe_file.content),
             Err(_) => Ok(String::new()),
         }
@@ -732,7 +735,9 @@ impl SummonClient {
             }
             seen.insert(sr.name.clone());
 
-            let description = self.build_subrecipe_description(sr).await;
+            let description = self
+                .build_subrecipe_description(sr, &session.working_dir)
+                .await;
 
             sources.push(SourceEntry {
                 source_type: SourceType::Subrecipe,
@@ -748,12 +753,16 @@ impl SummonClient {
         }
     }
 
-    async fn build_subrecipe_description(&self, sr: &crate::recipe::SubRecipe) -> String {
+    async fn build_subrecipe_description(
+        &self,
+        sr: &crate::recipe::SubRecipe,
+        project_dir: &Path,
+    ) -> String {
         if let Some(desc) = &sr.description {
             return desc.clone();
         }
 
-        if let Ok(recipe_file) = load_local_recipe_file(&sr.path) {
+        if let Ok(recipe_file) = load_local_recipe_file(&sr.path, Some(project_dir)) {
             if let Ok(recipe) = Recipe::from_content(&recipe_file.content) {
                 let mut desc = recipe.description.clone();
 
@@ -812,7 +821,7 @@ impl SummonClient {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let working_dir = self.get_working_dir(session_id).await;
+        let working_dir = self.get_working_dir(session_id).await?;
 
         if source_name.is_none() {
             return self
@@ -1416,9 +1425,10 @@ impl SummonClient {
 
             if let Some(sub_recipes) = sub_recipes {
                 if let Some(sr) = sub_recipes.iter().find(|sr| sr.name == source.name) {
-                    let recipe_file = load_local_recipe_file(&sr.path).map_err(|e| {
-                        format!("Failed to load subrecipe '{}': {}", source.name, e)
-                    })?;
+                    let recipe_file = load_local_recipe_file(&sr.path, Some(&session.working_dir))
+                        .map_err(|e| {
+                            format!("Failed to load subrecipe '{}': {}", source.name, e)
+                        })?;
 
                     let mut merged: HashMap<String, String> = HashMap::new();
                     if let Some(values) = &sr.values {
@@ -1448,7 +1458,7 @@ impl SummonClient {
             }
         }
 
-        let recipe_file = load_local_recipe_file(&source.path)
+        let recipe_file = load_local_recipe_file(&source.path, Some(&session.working_dir))
             .map_err(|e| format!("Failed to load recipe '{}': {}", source.name, e))?;
 
         let param_values: Vec<(String, String)> = params
@@ -1529,7 +1539,13 @@ impl SummonClient {
         recipe: &Recipe,
         session: &crate::session::Session,
     ) -> Result<TaskConfig, anyhow::Error> {
-        let (provider, model_config) = self.resolve_provider(params, recipe, session).await?;
+        let effective_working_dir = match &params.working_dir {
+            Some(dir) => resolve_working_dir(&session.working_dir, dir)?,
+            None => session.working_dir.clone(),
+        };
+        let (provider, model_config) = self
+            .resolve_provider(params, recipe, session, &effective_working_dir)
+            .await?;
 
         let mut extensions = EnabledExtensionsState::extensions_or_default(
             Some(&session.extension_data),
@@ -1569,11 +1585,6 @@ impl SummonClient {
                 max_turns
             );
         }
-
-        let effective_working_dir = match &params.working_dir {
-            Some(dir) => resolve_working_dir(&session.working_dir, dir)?,
-            None => session.working_dir.clone(),
-        };
 
         let task_config = TaskConfig::new(
             provider,
@@ -1675,6 +1686,7 @@ impl SummonClient {
         params: &DelegateParams,
         recipe: &Recipe,
         session: &crate::session::Session,
+        working_dir: &Path,
     ) -> Result<
         (
             Arc<dyn crate::providers::base::Provider>,
@@ -1686,7 +1698,14 @@ impl SummonClient {
             .ok_or_else(|| anyhow::anyhow!("No provider configured"))?;
 
         let model_config = self.resolve_model_config(params, recipe, session, &provider_name)?;
-        let provider = providers::create(&provider_name, Vec::new()).await?;
+        // Q-266: the delegate's provider works in the delegate's folder — an ACP or CLI provider
+        // (Claude Code, codex, the swarm) built without one ran in goosed's cwd, $HOME since Q-257.
+        let provider = providers::create_with_working_dir(
+            &provider_name,
+            Vec::new(),
+            working_dir.to_path_buf(),
+        )
+        .await?;
         Ok((provider, model_config))
     }
 
@@ -2104,6 +2123,7 @@ mod tests {
             session_manager: Arc::new(crate::session::SessionManager::instance()),
             session: None,
             use_login_shell_path: false,
+            working_dir: None,
         }
     }
 
@@ -2337,7 +2357,7 @@ You review code."#;
         let path = temp_dir.path().join("invalid.yaml");
         fs::write(&path, "api_key: SUPERSECRET\n").unwrap();
 
-        let recipe_file = load_local_recipe_file(path.to_str().unwrap()).unwrap();
+        let recipe_file = load_local_recipe_file(path.to_str().unwrap(), None).unwrap();
         let error =
             SummonClient::format_subrecipe_content("invalid", &recipe_file.content).unwrap_err();
 
@@ -2355,7 +2375,7 @@ You review code."#;
         )
         .unwrap();
 
-        let recipe_file = load_local_recipe_file(path.to_str().unwrap()).unwrap();
+        let recipe_file = load_local_recipe_file(path.to_str().unwrap(), None).unwrap();
         let content =
             SummonClient::format_subrecipe_content("child", &recipe_file.content).unwrap();
 

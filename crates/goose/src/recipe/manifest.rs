@@ -23,8 +23,10 @@ pub fn short_id_from_path(path: &str) -> String {
     format!("{:016x}", h)
 }
 
-pub fn list_recipe_file_manifests() -> Result<Vec<RecipeFileManifest>> {
-    let recipes_with_path = list_local_recipes()?;
+/// The recipes a window or chat in `project_dir` can see (`None`: no project — see
+/// `local_recipes::local_recipe_dirs`).
+pub fn list_recipe_file_manifests(project_dir: Option<&Path>) -> Result<Vec<RecipeFileManifest>> {
+    let recipes_with_path = list_local_recipes(project_dir)?;
     let mut manifests = Vec::new();
 
     for (file_path, mut recipe) in recipes_with_path {
@@ -51,16 +53,16 @@ pub fn list_recipe_file_manifests() -> Result<Vec<RecipeFileManifest>> {
     Ok(manifests)
 }
 
-pub fn get_recipe_file_path_by_id(id: &str) -> Result<PathBuf> {
-    list_recipe_file_manifests()?
+pub fn get_recipe_file_path_by_id(id: &str, project_dir: Option<&Path>) -> Result<PathBuf> {
+    list_recipe_file_manifests(project_dir)?
         .into_iter()
         .find(|manifest| manifest.id == id)
         .map(|manifest| manifest.file_path)
         .ok_or_else(|| anyhow!("Recipe not found: {}", id))
 }
 
-pub fn load_recipe_by_id(id: &str) -> Result<Recipe> {
-    let path = get_recipe_file_path_by_id(id)?;
+pub fn load_recipe_by_id(id: &str, project_dir: Option<&Path>) -> Result<Recipe> {
+    let path = get_recipe_file_path_by_id(id, project_dir)?;
     load_recipe_from_path(&path)
 }
 
