@@ -654,7 +654,9 @@ mod read {
     /// of this user's file tables instead of a process spawn. Measured 2026-09-28 on this Mac
     /// (1,000 processes, 683 of this user's): 2.9 ms median against lsof's 60 ms, the same 20
     /// (pid, port) LISTEN pairs Mac-wide, a client connection to the port not listed. lsof, run
-    /// as this user, sees no other user's sockets either, so the two answer the same set.
+    /// as this user, sees no other user's sockets either, so the two answer the same set. A
+    /// `socket_fdinfo` of another size (a macOS whose layout moved) is read as naming nothing; the
+    /// cache then disagrees with lsof's set on every read and keeps nothing — slower, never wrong.
     #[cfg(target_os = "macos")]
     pub fn listener_pids(port: u16) -> Result<Vec<u32>> {
         use libproc_abi::*;
