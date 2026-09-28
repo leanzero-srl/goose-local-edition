@@ -345,16 +345,63 @@ pub fn parse_progress(line: &str) -> Option<ProgressLine> {
 /// Build `spec` on a node, streaming every output line to `on_line`: a LeanZero Link node builds
 /// it itself from its own pins (`link_control::provision`); ssh and this Mac run
 /// [`provision_script`]. The one path both "Save and provision" and a Run that finds a stale env
-/// take.
+/// take. A node whose `done` line proves another pin than `spec`'s is an error ([`PinWatch`]).
 pub async fn provision_on(
     host: Option<&str>,
     spec: &EnvSpec,
     on_line: &mut (dyn FnMut(&str) + Send),
 ) -> Result<Option<i32>> {
-    match super::link_control::link_peer(host) {
-        Some(peer) => super::link_control::provision(peer, spec, on_line).await,
-        None => run_streaming(host, &provision_script(spec), on_line).await,
+    let mut pin = PinWatch::default();
+    let mut watch = |line: &str| {
+        pin.see(line);
+        on_line(line);
+    };
+    let code = match super::link_control::link_peer(host) {
+        Some(peer) => super::link_control::provision(peer, spec, &mut watch).await?,
+        None => run_streaming(host, &provision_script(spec), &mut watch).await?,
+    };
+    pin.verdict(host.unwrap_or("this Mac"), spec)?;
+    Ok(code)
+}
+
+/// Q-234: the proof a node's `done` line (`already|installed <python> <proof>`) ends in must be
+/// THIS goose's. The script run over ssh or here carries this goose's pins and refuses any other
+/// proof itself; a LeanZero Link peer builds from ITS goose's pins (`ManagedEnv` names the env,
+/// never the pin), so a peer on another goose version reported `done` for its own pin — the
+/// re-preflight then found the env stale again and refused with "goose updates it when you press
+/// Run", a promise the next press broke the same way. That is refused here by name. A missing
+/// `done` line is `runner_update::provision_verdict`'s to refuse (every caller reads it).
+#[derive(Debug, Default)]
+pub struct PinWatch {
+    done: Option<String>,
+}
+
+impl PinWatch {
+    pub fn see(&mut self, line: &str) {
+        if let Some(progress) = parse_progress(line).filter(|p| p.step == "done") {
+            self.done = Some(progress.detail);
+        }
     }
+
+    pub fn verdict(&self, node: &str, spec: &EnvSpec) -> Result<()> {
+        match &self.done {
+            Some(detail) => built_at_pin(node, spec, detail),
+            None => Ok(()),
+        }
+    }
+}
+
+fn built_at_pin(node: &str, spec: &EnvSpec, done_detail: &str) -> Result<()> {
+    if done_detail.ends_with(&format!(" {}", spec.expect)) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{node} built {} at another pin than this goose's — it runs a different goose version, \
+         whose runner pin is its own: it reported 'done {done_detail}', this goose pins '{}'. \
+         Install the same goose on both Macs, then press Run again",
+        spec.name,
+        spec.expect
+    )
 }
 
 /// Run `script` on a node, handing every output line (stdout and stderr) to `on_line` as it
@@ -655,6 +702,151 @@ mod tests {
         assert_eq!(code, Some(0), "{out}");
         assert!(out.contains("GOOSE_PROV done already"), "{out}");
         assert!(!out.contains("GOOSE_PROV install"), "{out}");
+    }
+
+    /// Q-234 against the script itself: an EXISTING env whose proof answers another fork commit
+    /// (the measured a18e14fd4 while goose pins PIPELINE_FORK_COMMIT) is reinstalled in place —
+    /// `uv venv --allow-existing`, then `uv pip install` of the pinned packages — and proven at the
+    /// pin; the next run touches nothing. A uv that leaves the old commit in place is a loud
+    /// `fail … imports '<old>'` (exit 6), never a done. Measured with the real uv (0.11.28 here,
+    /// 0.11.7 the Studio's): `uv pip install "rapid-mlx @ git+…@8c0007054"` over an env holding
+    /// a18e14fd4 prints "- rapid-mlx==0.14.3 (…@a18e14fd4…) + rapid-mlx==0.14.3 (…@8c0007054…)".
+    #[tokio::test]
+    async fn an_existing_env_on_another_commit_is_reinstalled_at_the_pin() {
+        let stale = "0.32.2 0.31.3 a18e14fd464adbddd487025aa767cab480bf4226";
+        let spec = EnvSpec::pipeline();
+        let run = |uv_converges: bool| {
+            let spec = spec.clone();
+            async move {
+                let home = tempfile::tempdir().unwrap();
+                let bin = home.path().join(".local/bin");
+                std::fs::create_dir_all(&bin).unwrap();
+                let env_bin = home.path().join(ENVS_DIR).join(&spec.name).join("bin");
+                std::fs::create_dir_all(&env_bin).unwrap();
+                let executable = |path: &std::path::Path, body: String| {
+                    std::fs::write(path, body).unwrap();
+                    std::fs::set_permissions(
+                        path,
+                        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+                    )
+                    .unwrap();
+                };
+                // The env as the stale install left it: its proof answers `stale`.
+                executable(
+                    &env_bin.join("python"),
+                    "#!/bin/sh\ncat \"$0.answer\"\n".to_string(),
+                );
+                std::fs::write(env_bin.join("python.answer"), stale).unwrap();
+                // `uv pip install --python <P> …`: $4 is the env's python.
+                let pip = if uv_converges {
+                    format!(
+                        "echo \"$*\" >> \"$HOME/pip.log\"; echo '{}' > \"$4.answer\"",
+                        spec.expect
+                    )
+                } else {
+                    "echo \"$*\" >> \"$HOME/pip.log\"".to_string()
+                };
+                executable(
+                    &bin.join("uv"),
+                    format!(
+                        "#!/bin/sh\ncase \"$1\" in\n--version) echo 'uv 9.9.9';;\n\
+                         venv) echo \"venv $*\" >> \"$HOME/venv.log\";;\npip) {pip};;\nesac\n"
+                    ),
+                );
+                let script = provision_script_from(&spec, &["\"$HOME/.local/bin/uv\""]);
+                let mut runs = Vec::new();
+                for _ in 0..2 {
+                    let out = tokio::process::Command::new("/bin/sh")
+                        .arg("-c")
+                        .arg(&script)
+                        .env("HOME", home.path())
+                        .env("PATH", "/usr/bin:/bin")
+                        .output()
+                        .await
+                        .unwrap();
+                    runs.push((
+                        out.status.code(),
+                        String::from_utf8_lossy(&out.stdout).into_owned(),
+                    ));
+                }
+                let log = |name: &str| {
+                    std::fs::read_to_string(home.path().join(name)).unwrap_or_default()
+                };
+                (runs, log("venv.log"), log("pip.log"))
+            }
+        };
+
+        let (runs, venv, pip) = run(true).await;
+        let (code, out) = &runs[0];
+        assert_eq!(*code, Some(0), "{out}");
+        let steps: Vec<String> = out
+            .lines()
+            .filter_map(parse_progress)
+            .map(|p| p.step)
+            .collect();
+        assert_eq!(steps, ["check", "uv", "venv", "install", "done"], "{out}");
+        assert!(
+            out.contains("GOOSE_PROV done installed") && out.trim_end().ends_with(&spec.expect),
+            "{out}"
+        );
+        assert!(venv.contains("--allow-existing"), "{venv}");
+        assert!(
+            pip.contains(PIPELINE_FORK),
+            "the pinned fork is what is installed: {pip}"
+        );
+        let mut pin = PinWatch::default();
+        out.lines().for_each(|l| pin.see(l));
+        pin.verdict("this Mac", &spec).unwrap();
+        let (again, out_again) = &runs[1];
+        assert_eq!(*again, Some(0), "{out_again}");
+        assert!(out_again.contains("GOOSE_PROV done already"), "{out_again}");
+        assert!(!out_again.contains("GOOSE_PROV install"), "{out_again}");
+
+        let (runs, _, _) = run(false).await;
+        let (code, out) = &runs[0];
+        assert_eq!(*code, Some(6), "{out}");
+        assert!(
+            out.contains(&format!("GOOSE_PROV fail the env imports '{stale}'")),
+            "{out}"
+        );
+        assert!(!out.contains("GOOSE_PROV done"), "{out}");
+    }
+
+    /// Q-234: a node's `done` line must prove THIS goose's pin. The measured shape — the Studio's
+    /// fork env at a18e14fd4 — reported by a peer that built its own goose's pin is refused naming
+    /// both; this goose's proof passes; no `done` line is left to `provision_verdict`.
+    #[test]
+    fn a_done_line_at_another_pin_is_refused_by_name() {
+        let spec = EnvSpec::pipeline();
+        let python =
+            "/Users/workhorse/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python";
+        let mut other = PinWatch::default();
+        other.see(&format!("GOOSE_PROV check {python}"));
+        other.see(&format!(
+            "GOOSE_PROV done already {python} 0.32.2 0.31.3 a18e14fd464adbddd487025aa767cab480bf4226"
+        ));
+        let refused = format!(
+            "{:#}",
+            other.verdict("Work's Mac Studio", &spec).unwrap_err()
+        );
+        assert!(
+            refused.starts_with(
+                "Work's Mac Studio built rapid-mlx-pipeline-qwen4-py3.12 at another pin"
+            ) && refused.contains("a18e14fd464adbddd487025aa767cab480bf4226")
+                && refused.contains(&format!("this goose pins '{}'", spec.expect)),
+            "{refused}"
+        );
+
+        let mut same = PinWatch::default();
+        same.see(&format!(
+            "GOOSE_PROV done installed {python} {}",
+            spec.expect
+        ));
+        same.verdict("Work's Mac Studio", &spec).unwrap();
+
+        let mut unfinished = PinWatch::default();
+        unfinished.see("GOOSE_PROV fail uv pip install exited 1");
+        unfinished.verdict("Work's Mac Studio", &spec).unwrap();
     }
 
     #[tokio::test]

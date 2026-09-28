@@ -305,6 +305,12 @@ fn failure_words(row: &RunnerUpdateRow) -> UpdateFailure {
         )
     } else if row.detail.contains("(ssh failed)") {
         format!("goose could not reach {node} over ssh to update its split runner")
+    } else if row.step.as_deref() == Some("done") {
+        // `provision::PinWatch` refused a node that finished: it built its own goose's pin.
+        format!(
+            "{node} runs a different goose version, which builds the split's runner at its own \
+             pin — install the same goose on both Macs, then press Run again"
+        )
     } else {
         format!("Updating the split's runner on {node} failed")
     };
@@ -706,6 +712,77 @@ mod tests {
         let mut own = asked.clone();
         own.nodes[1].python = "/tmp/elsewhere/bin/python".to_string();
         assert!(!only_repointed(&asked, &own));
+    }
+
+    /// A LeanZero Link peer builds from ITS goose's pins. The one on another goose version,
+    /// measured shape (Q-234): the Studio's pipeline env at a18e14fd4 (lz-pipeline-qwen4.12) while
+    /// this goose pins PIPELINE_FORK_COMMIT.
+    struct OtherGoose;
+
+    const OTHER_GOOSE_DONE: &str = "GOOSE_PROV done already \
+        /Users/workhorse/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python \
+        0.32.2 0.31.3 a18e14fd464adbddd487025aa767cab480bf4226";
+
+    impl NodeExec for OtherGoose {
+        fn run<'a>(
+            &'a self,
+            _host: Option<&'a str>,
+            _script: &'a str,
+        ) -> BoxFuture<'a, Result<ExecOutput>> {
+            Box::pin(async { panic!("the rebuild runs no raw script") })
+        }
+
+        /// What `provision::provision_on` does with a node's lines, over lines a peer on another
+        /// goose prints: its own proof, exit 0.
+        fn provision<'a>(
+            &'a self,
+            host: Option<&'a str>,
+            spec: &'a EnvSpec,
+            on_line: &'a mut (dyn FnMut(&str) + Send),
+        ) -> BoxFuture<'a, Result<Option<i32>>> {
+            Box::pin(async move {
+                let mut pin = provision::PinWatch::default();
+                let own_pin = if host.is_some() {
+                    OTHER_GOOSE_DONE.to_string()
+                } else {
+                    format!("GOOSE_PROV done installed /p {}", spec.expect)
+                };
+                for line in ["GOOSE_PROV check /p", own_pin.as_str()] {
+                    pin.see(line);
+                    on_line(line);
+                }
+                pin.verdict(host.unwrap_or("this Mac"), spec)?;
+                Ok(Some(0))
+            })
+        }
+    }
+
+    /// Q-234: a peer that finished at its own goose's pin is a failed update naming the reason —
+    /// before, the update read `done`, the second preflight found the same stale env and refused
+    /// with "goose updates it when you press Run", and every press repeated it. This Mac, built
+    /// at this goose's pin, is done.
+    #[tokio::test]
+    async fn a_peer_that_builds_another_gooses_pin_fails_the_update_by_name() {
+        let jobs = stale_only(&measured_stale()).unwrap();
+        let failure = update_runners(&OtherGoose, &jobs, &|_: &RunnerUpdate| {})
+            .await
+            .unwrap_err();
+        assert_eq!(failure.node, "Work's Mac Studio");
+        assert_eq!(
+            failure.message,
+            "Work's Mac Studio runs a different goose version, which builds the split's runner at \
+             its own pin — install the same goose on both Macs, then press Run again"
+        );
+        assert!(
+            failure
+                .detail
+                .contains("a18e14fd464adbddd487025aa767cab480bf4226")
+                && failure
+                    .detail
+                    .contains(&format!("this goose pins '{}'", EnvSpec::pipeline().expect)),
+            "{}",
+            failure.detail
+        );
     }
 
     /// A failed rebuild names the Mac in plain words; the node's output rides Details.
