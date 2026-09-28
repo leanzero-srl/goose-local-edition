@@ -40,7 +40,8 @@
 //!   failure (memory-gate BLOCK, disk-full, its 501) surfaces verbatim as `400`/`500`,
 //!   never swallowed or faked.
 //! - `POST /v1/swarm/inference/v1/chat/completions`, `GET /v1/swarm/inference/v1/models`,
-//!   `GET /v1/swarm/inference/v1/status` → the CHAT INFERENCE PROXY: a same-account device's
+//!   `GET /v1/swarm/inference/v1/status`, `GET /v1/swarm/inference/goose/admission` (the
+//!   engine's memory-hold wait, answered at the lift) → the CHAT INFERENCE PROXY: a same-account device's
 //!   chat answered by THIS node's own loopback engine, streamed through byte for byte. Its own
 //!   switch (the injected [`ChatServing`], read per request) gates it: off → `403`
 //!   [`crate::inference::chat_serving_disabled`]; none injected → `501`; nothing listening →
@@ -82,7 +83,7 @@ use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -423,7 +424,7 @@ async fn serve_listener(listener: TcpListener, router: Router) {
 }
 
 fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/v1/swarm/nodes", get(nodes))
         .route("/v1/swarm/sessions", get(sessions))
         .route("/v1/swarm/stream", get(stream))
@@ -435,13 +436,21 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         // The distributed MLX engine's node side; `{op}` is interpreted by the injected
         // `DistributedNode` (an unknown op is its loud `404`).
         .route("/v1/swarm/distributed/{op}", post(distributed_proxy))
-        .route(
-            &EnginePath::ChatCompletions.control_route(),
-            post(inference_chat_completions),
-        )
-        .route(&EnginePath::Models.control_route(), get(inference_models))
-        .route(&EnginePath::Status.control_route(), get(inference_status))
-        .route(&inference::streams_route(), get(inference_stream_liveness))
+        .route(&inference::streams_route(), get(inference_stream_liveness));
+    // Every engine path the relay forwards is served here from the one list, so a path added
+    // to `EnginePath::ALL` cannot reach a relay without reaching this gate too (Q-399: the
+    // admission wait was missing from both).
+    let router = EnginePath::ALL.into_iter().fold(router, |router, path| {
+        let handler = move |State(ctx): State<Ctx>, headers: HeaderMap, body: Body| {
+            inference(ctx, path, headers, body)
+        };
+        let route = path.control_route();
+        match path.method() {
+            Method::POST => router.route(&route, post(handler)),
+            _ => router.route(&route, get(handler)),
+        }
+    });
+    router
         .layer(axum::middleware::from_fn_with_state(token, require_token))
         .with_state(ctx)
 }
@@ -817,27 +826,11 @@ async fn inference(ctx: Ctx, path: EnginePath, headers: HeaderMap, body: Body) -
     .await
 }
 
-async fn inference_chat_completions(
-    State(ctx): State<Ctx>,
-    headers: HeaderMap,
-    body: Body,
-) -> Response {
-    inference(ctx, EnginePath::ChatCompletions, headers, body).await
-}
-
 async fn inference_stream_liveness(
     State(ctx): State<Ctx>,
     Path(id): Path<String>,
 ) -> Json<StreamLiveness> {
     Json(ctx.streams.liveness(&id))
-}
-
-async fn inference_models(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
-    inference(ctx, EnginePath::Models, headers, Body::empty()).await
-}
-
-async fn inference_status(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
-    inference(ctx, EnginePath::Status, headers, Body::empty()).await
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

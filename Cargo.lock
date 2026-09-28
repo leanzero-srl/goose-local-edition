@@ -6526,6 +6526,7 @@ dependencies = [
  "dirs",
  "futures",
  "gethostname",
+ "goose-provider-types",
  "goose-sidecar",
  "hmac 0.13.0",
  "libc",

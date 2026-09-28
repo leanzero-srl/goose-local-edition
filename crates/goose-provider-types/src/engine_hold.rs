@@ -134,13 +134,17 @@ pub async fn wait_for_admission(hold: &ProviderError) -> Result<(), ProviderErro
         .await
         .map_err(|e| ended(format!("the engine went away while it held ({e})")))?;
     let status = answer.status();
-    let body = answer.json::<Value>().await.map_err(|e| {
+    let text = answer.text().await.map_err(|e| {
         ended(format!(
-            "{url} answered {status} with no readable body ({e})"
+            "{url} answered {status} and the answer broke off ({e})"
         ))
     })?;
-    if !status.is_success() || body.get("admission_open") != Some(&Value::Bool(true)) {
-        return Err(ended(format!("{url} answered {status}: {body}")));
+    // A proxy between goose and the engine (the LeanZero Link relay: a peer that left mid-wait)
+    // answers in words, not JSON; those words are the reason and are said as-is (Q-401).
+    let admitted = serde_json::from_str::<Value>(&text)
+        .is_ok_and(|body| body.get("admission_open") == Some(&Value::Bool(true)));
+    if !status.is_success() || !admitted {
+        return Err(ended(format!("{url} answered {status}: {text}")));
     }
     tracing::info!(admission = %url, "{ADMITTED_WORDS}");
     notify(EngineHoldEvent::Admitted {
