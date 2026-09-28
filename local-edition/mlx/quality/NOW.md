@@ -1,30 +1,33 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 10:5x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 13:2x (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed: 3.0.69 on both Macs (main 435b6f0d4: + Q-294/295/296 split cache fixes, Q-297 skill re-load note, and the
-  batch Q-271..274, Q-276/277, Q-282..284, Q-286/290). Install reaped no orphan. Split up.
-- E2E #3p RUNNING (RU-2026-09-28-3p-split-tensor, 27B split, jira brief, 30 turns). THE MEASUREMENT: every turn's
-  first big call reads ~its whole prefix from cache (Q-294), and a big skill is never re-sent in full (Q-297).
-  Compare against #3o: turns 3/5 read 0, turn 6 40k/102k; turn 7 grew 102k → 193k.
+- Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
+  Split up. E2E #3q RUNNING (RU-2026-09-28-3q-split-tensor, jira brief) since 13:13.
+- LIVE-PROVEN on 3.0.69 (#3p, 13 turns): Q-294/295/296 — every turn's first call 97–99% from cache (was 0% on #3o
+  turns 3/5); Q-297 holding (skill loaded once). #3p turn 9 = a compaction that re-read ~143k cold → Q-342.
+- On main after 3.0.70 (→ 3.0.71): Q-292/293 (Run it row + gate chip read Q-276's credit), Q-325 (focus ring
+  drew nothing app-wide; 664 dead classes remapped + a guard — VISUAL blast radius ~400 host sites: walk it live),
+  Q-337/338 (owner: cached vs new two-part prompt-read bar; split position includes the cached prefix).
 
 ## CI
-- Green through bcb9fecc0/d5c944a81; 4f63906d4 running.
+- Green through fe97eb652; 0828e9ca8/838e041a9 running.
 
-## Agents (the 3.0.68 live critic's 24 rows, Q-298..Q-321, in five file-disjoint batches)
-- A needs-you supersede (Q-298, Q-319) · B theme/glance/window title/460 (Q-300, 313, 315, 318, 321) ·
-  C transcript working row, error events, reviewing words (Q-301, 302, 307) · D Nodes/New node/planner words
-  (Q-299, 303–306, 308–311, 317) · E Run it details/tray/tick markers/dark contrast (Q-312, 314, 316, 320).
-- Queued: Q-292/293 (Run it row + gate chip vs the leftover credit); Q-261/281 measured on #3p.
+## Agents
+- Q-344 (a card answer must not supersede its sibling; built ON the Q-340/341 branch — needs-you fold + answer
+  queue — they land together) · Q-342 (compaction reuses the cached prefix) · Q-350 + Q-343 (activity says
+  single/off while the split restores; 2,684 unfinished request logs).
+- Queued: Q-334 (focus ring colour outside the local edition), Q-335 (~55 faded opacity uses), Q-336/261/281
+  (model behaviour, measured on #3q).
 
 ## Next actions (in order)
-1. Read #3p by its words each tick; check calls.tsv first-call cache per turn; stop rules.
-2. Merge batches A–E via scratch + gate (REAL pnpm install if the SDK changes) → build 3.0.70.
-3. Live proves on 3.0.69 between E2E runs: Q-254/272 swap words, Q-257 two windows, Q-276 kill -9 → restore,
-   Q-260 image, Q-278 J2, J4 with r5.mjs.
+1. Merge Q-340/341+344, Q-342, Q-350/343 via scratch + gate → build 3.0.71 → install at a #3q turn boundary.
+2. On 3.0.71: live critic walk (Q-325's visual change, Q-337's bar, needs-you fold/queue), then E2E #3r.
+3. Live proves still open: Q-254/272 swap words, Q-257 two windows, Q-276 kill -9 → restore, Q-278 J2, J4.
 
 ## Standing rules for every tick
 - CI, agents, disk ≥ 30 GB, clean.sh; kill stale shells; delete ~/goose-targets/<id> on merge.
-- Merge via scratch, gate, ff main. Coordinator assigns Q ids (A: 322-323, B: 324-325, C: 326-327, D: 328-329, E: 330-331).
-- rustfmt --check hand-resolved .rs conflicts. Tests never touch port 8090. One GPU user at a time.
+- Merge via scratch (REAL pnpm install when the SDK changes), gate, ff main. Coordinator assigns Q ids; agents use
+  their OWN scratch folders. rustfmt --check hand-resolved .rs conflicts. Tests never touch port 8090.
+- Never navigate the main window while an E2E runs (split-start/probes moved #3q's page at 13:13).
