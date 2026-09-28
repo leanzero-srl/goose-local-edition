@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Занят в «{name}»} other {Занят в другом чате}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Сообщение, отправленное сейчас, уйдёт на {node} — оно не ждёт этого ответа."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Сообщение, отправленное сейчас, дождётся конца этого ответа, затем загрузит {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Сообщение, отправленное сейчас, делит движок с этим ответом — оно идёт медленнее или ждёт, если нет места."
   },

@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named,select,yes{{elapsed,select,none{Busy in ‘{name}’} other{Busy in ‘{name}’ · {elapsed}}}} other{{elapsed,select,none{Busy in another chat} other{Busy in another chat · {elapsed}}}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "A message sent now goes to {node} — it does not wait for that answer."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "A message sent now waits for that answer to finish, then loads {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "A message sent now shares the engine with that answer — it runs slower, or waits if there is no room."
   },

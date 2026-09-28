@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {‘{name}’에서 작업 중} other {다른 채팅에서 작업 중}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "지금 보내는 메시지는 {node}(으)로 갑니다 — 그 답변을 기다리지 않습니다."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "지금 보내는 메시지는 그 답변이 끝나기를 기다린 뒤 {node}을(를) 로드합니다."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "지금 보낸 메시지는 그 답변과 엔진을 나눠 씁니다 — 더 느리게 실행되거나, 여유가 없으면 기다립니다."
   },

@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {正在处理“{name}”} other {正在处理另一个聊天}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "现在发送的消息会发往 {node}——不等待那个回答。"
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "现在发送的消息会等那个回答结束，然后加载 {node}。"
+  },
   "busyIn.sendShares": {
     "defaultMessage": "现在发送的消息将与该回答共享引擎 — 速度会变慢，若没有空间则会等待。"
   },

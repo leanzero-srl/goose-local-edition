@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Occupé dans « {name} »} other {Occupé dans une autre discussion}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Un message envoyé maintenant va à {node} — il n’attend pas cette réponse."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Un message envoyé maintenant attend la fin de cette réponse, puis charge {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Un message envoyé maintenant partage le moteur avec cette réponse — il avance plus lentement, ou attend s’il n’y a pas de place."
   },

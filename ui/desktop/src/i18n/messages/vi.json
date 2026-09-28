@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Đang bận trong ‘{name}’} other {Đang bận trong cuộc trò chuyện khác}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Tin nhắn gửi bây giờ sẽ đến {node} — không chờ câu trả lời đó."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Tin nhắn gửi bây giờ chờ câu trả lời đó xong, rồi nạp {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Tin nhắn gửi bây giờ dùng chung engine với câu trả lời đó — chạy chậm hơn, hoặc chờ nếu không còn chỗ."
   },

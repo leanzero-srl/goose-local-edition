@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {Sibuk dalam ‘{name}’} other {Sibuk dalam sembang lain}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "Mesej yang dihantar sekarang pergi ke {node} — ia tidak menunggu jawapan itu."
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "Mesej yang dihantar sekarang menunggu jawapan itu selesai, kemudian memuatkan {node}."
+  },
   "busyIn.sendShares": {
     "defaultMessage": "Mesej yang dihantar sekarang berkongsi enjin dengan jawapan itu — berjalan lebih perlahan, atau menunggu jika tiada ruang."
   },

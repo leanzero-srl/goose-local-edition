@@ -455,6 +455,12 @@
   "busyIn.headline": {
     "defaultMessage": "{named, select, yes {「{name}」で処理中} other {別のチャットで処理中}}{elapsed, select, none {} other { · {elapsed}}}"
   },
+  "busyIn.sendGoesTo": {
+    "defaultMessage": "今送信したメッセージは {node} に送られます — その回答を待ちません。"
+  },
+  "busyIn.sendLoadsAfter": {
+    "defaultMessage": "今送信したメッセージはその回答が終わるのを待ってから {node} を読み込みます。"
+  },
   "busyIn.sendShares": {
     "defaultMessage": "今送信したメッセージは、その回答とエンジンを共有します — 遅くなるか、空きがなければ待機します。"
   },
