@@ -269,7 +269,9 @@ fn older_goose_engine(port: u16) -> (u32, u32) {
         .arg0(&own)
         .args([
             "-c",
-            r#"set -m; python3 -c "$1" "$2" & echo $!; wait"#,
+            // The engine leads its own group, as `uv` does: set by the engine itself, since `set -m`
+            // gives a background job its own group only where sh has job control (not dash on Linux CI).
+            r#"python3 -c 'import os, sys; os.setpgid(0, 0); src = sys.argv.pop(1); exec(compile(src, "engine", "exec"))' "$1" "$2" & echo $!; wait"#,
             "sh",
             FAKE_ENGINE,
             &port.to_string(),
