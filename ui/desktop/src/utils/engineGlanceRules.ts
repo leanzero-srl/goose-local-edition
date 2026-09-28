@@ -75,19 +75,94 @@ export interface GooseWindowFacts {
   onScreen: boolean;
   focused: boolean;
   bounds: Rect;
+  /**
+   * The share of the window no other app's window covers, read from macOS's window list
+   * (engineGlanceCoverage.ts) — null when it was not read (not macOS, goose in front, nothing live
+   * to float, or the read failed, which main logs). Q-313: macOS reports no occlusion while a 4–20 px
+   * sliver of the window still shows, so `onScreen` alone kept "seen" a window no one could see.
+   */
+  visibleShare: number | null;
+}
+
+// ratio: of a goose window's own area left uncovered, below which — goose behind another app — it
+// counts as covered (Q-313). Receipts: Q-226 measured macOS reporting occlusion from ~60 px to spare
+// and NOT for 4 or 20 px; Q-313's 2048×1280 window over goose's 2056×1289 left an 8×9 px L = 1.08%
+// and no glance showed. A 20 px strip of a 2056-wide window is ~1%, a 60 px one ~3%: 5% sits above
+// every measured no-event sliver and far below a half-covered window (50%), which stays "seen".
+export const GLANCE_COVERED_SHARE = 0.05;
+
+/**
+ * A goose window a person can see: on screen (macOS occlusion) and — while goose is not the app in
+ * front — more than a sliver of it left uncovered (Q-313). With goose in front, its focused window is
+ * over everything, so a share read while it was behind never counts.
+ */
+function gooseWindowSeen(w: GooseWindowFacts, gooseInFront: boolean): boolean {
+  if (!w.onScreen) return false;
+  if (gooseInFront || w.visibleShare == null) return true;
+  return w.visibleShare >= GLANCE_COVERED_SHARE;
+}
+
+function seenGooseWindows(windows: readonly GooseWindowFacts[]): GooseWindowFacts[] {
+  const gooseInFront = windows.some((w) => w.focused);
+  return windows.filter((w) => gooseWindowSeen(w, gooseInFront));
 }
 
 /**
  * goose can be seen — what the "while goose is in the background" desktop window hangs on (Q-226).
- * macOS: any goose window has some part on screen. Not "goose is the active app": with several
- * displays goose is often in plain view while another app has focus, and the card then floated over
- * goose's own window, duplicating the sidebar card beside it. Not "a goose window is focused"
- * either: goose's own open-folder panel or a menu leaves none focused (Q-217). Elsewhere the
- * occlusion is not reported; a focused goose window is the fact, as before.
+ * macOS: any goose window has more than a sliver on screen (Q-313). Not "goose is the active app":
+ * with several displays goose is often in plain view while another app has focus, and the card then
+ * floated over goose's own window, duplicating the sidebar card beside it. Not "a goose window is
+ * focused" either: goose's own open-folder panel or a menu leaves none focused (Q-217). Elsewhere
+ * the occlusion is not reported; a focused goose window is the fact, as before.
  */
 export function gooseOnScreen(platform: string, windows: readonly GooseWindowFacts[]): boolean {
   if (platform !== 'darwin') return windows.some((w) => w.focused);
+  return seenGooseWindows(windows).length > 0;
+}
+
+/**
+ * Whether main reads macOS's window list now (Q-313): on macOS, while the desktop window could
+ * show (on, not snoozed, something live), with goose behind another app, and while some goose
+ * window is still reported on screen — a window macOS already calls covered needs no second read.
+ */
+export function coverageWanted(
+  platform: string,
+  push: GlancePush | null,
+  snoozed: boolean,
+  windows: readonly GooseWindowFacts[]
+): boolean {
+  if (platform !== 'darwin' || push == null) return false;
+  if (push.prefs.desktop === 'off' || snoozed || !glanceLive(push)) return false;
+  if (windows.some((w) => w.focused)) return false;
   return windows.some((w) => w.onScreen);
+}
+
+/** The share of `target` no rect in `above` covers — exact, over the grid of every rect's edges. */
+export function visibleShare(target: Rect, above: readonly Rect[]): number {
+  const area = target.width * target.height;
+  if (area <= 0) return 0;
+  const clipped = above
+    .map((r) => ({
+      x0: Math.max(r.x, target.x),
+      y0: Math.max(r.y, target.y),
+      x1: Math.min(r.x + r.width, target.x + target.width),
+      y1: Math.min(r.y + r.height, target.y + target.height),
+    }))
+    .filter((r) => r.x0 < r.x1 && r.y0 < r.y1);
+  const edges = (ends: number[]) => [...new Set(ends)].sort((a, b) => a - b);
+  const xs = edges([target.x, target.x + target.width, ...clipped.flatMap((r) => [r.x0, r.x1])]);
+  const ys = edges([target.y, target.y + target.height, ...clipped.flatMap((r) => [r.y0, r.y1])]);
+  let covered = 0;
+  for (let i = 0; i + 1 < xs.length; i++) {
+    for (let j = 0; j + 1 < ys.length; j++) {
+      const cx = (xs[i] + xs[i + 1]) / 2;
+      const cy = (ys[j] + ys[j + 1]) / 2;
+      if (clipped.some((r) => r.x0 <= cx && cx < r.x1 && r.y0 <= cy && cy < r.y1)) {
+        covered += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]);
+      }
+    }
+  }
+  return (area - covered) / area;
 }
 
 export interface Rect {
@@ -203,7 +278,7 @@ export function placeGlance(input: {
     ...(remembered && remembered.id !== input.working.id ? [remembered] : []),
     ...others,
   ];
-  const seen = input.windows.filter((w) => w.onScreen).map((w) => w.bounds);
+  const seen = seenGooseWindows(input.windows).map((w) => w.bounds);
   for (const display of order) {
     for (const corner of corners) {
       const bounds = cornerBounds(corner, input.size, display.workArea, input.margin);
@@ -217,5 +292,5 @@ export function placeGlance(input: {
 
 /** Still clear of every goose window that can be seen — else it must move (or go). */
 export function clearOfGoose(bounds: Rect, windows: readonly GooseWindowFacts[]): boolean {
-  return !windows.some((w) => w.onScreen && intersects(w.bounds, bounds));
+  return !seenGooseWindows(windows).some((w) => intersects(w.bounds, bounds));
 }
