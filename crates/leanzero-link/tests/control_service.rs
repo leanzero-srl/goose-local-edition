@@ -898,18 +898,25 @@ async fn a_peer_answering_4xx_keeps_its_last_status_and_carries_the_error() {
         "an answering peer is never fabricated Offline: {row}"
     );
 
-    // Negative control: a TRANSPORT failure (the stub is gone) is Offline, text kept.
+    // Negative control: a TRANSPORT failure (the stub is gone) is Offline, text kept — the
+    // transport error naming the stub's URL, not the 401 answer before it. Q-420: this once read
+    // `!e.contains("401")`, and the transport text carries the stub's ephemeral PORT, so a port
+    // like 40117 or 54012 held the check false for good and the test timed out on a correct row.
     stub.vanish().await;
+    let stub_url = format!(":{stub_port}/v1/swarm/");
     wait_until("the vanished stub to flip Offline", || {
         let client = &client;
         let base = &base;
+        let stub_url = &stub_url;
         async move {
             let nodes = get_json(client, &format!("{base}/v1/swarm/nodes")).await;
             peer_row(&nodes, "node-stub").is_some_and(|p| {
                 p["status"] == serde_json::json!({"type": "Offline"})
-                    && p["last_poll_error"]
-                        .as_str()
-                        .is_some_and(|e| !e.contains("401"))
+                    && p["last_poll_error"].as_str().is_some_and(|e| {
+                        e.contains(stub_url.as_str())
+                            && !e.contains(" answered ")
+                            && !e.contains("token mismatch")
+                    })
             })
         }
     })
