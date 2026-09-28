@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-28 13:5x (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 13:47 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.70 on both Macs (main 95324ea8d: critic batches A–E, Q-298 needs-you supersede, Q-292/293 NOT yet).
@@ -21,7 +21,9 @@ Updated: 2026-09-28 13:5x (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   Q-346 (mid-turn prompt rebuild drops project instructions; ON Q-342) · Q-347 (post-compaction cold head).
 - Q-342 merged into scratch /tmp/merge-q342 (+ main), gate → /tmp/g342.out (relaunched 13:26; the first died).
 - #3r turn 2 (13:40): the 27B invented `websearch`/`fetch` 13× before the real web tool → Q-367 + Q-368
-  (facts paragraph restated 4×) CUTTING (wire read first). Run continues.
+  (facts paragraph restated 4×) CUTTING (wire read first). Turn 2 ended 761 s, 27 tools, a correct
+  sourced answer (EOL 2026-03-30 / 2028-03-30 / 2029-03-28). Turn 3 running. Studio-side: forge-tuner got a
+  goose tool-call training proposal (docs/GOOSE-TOOLCALL-ROUND.md, 6631628) — owner picks public vs private data.
 - Owner features (designs DESIGN-Q357/358/359-*.md): Q-357 compaction revamp CUTTING (all slices, on merge-q342) ·
   Q-358 search S1+S2 CUTTING; notes S3–S5 QUEUED behind: merge-q344 · Q-359 C0/C1/C2/C4 CUTTING; C3 SCHEDULED
   waits on: relay decode tok/s + 4-delegates-on-2-Macs wall time.
