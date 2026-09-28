@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "sıran bittikten sonra"
   },
+  "loops.origin.first": {
+    "defaultMessage": "senin başlattığın"
+  },
   "loops.origin.now": {
     "defaultMessage": "senin tarafından çalıştırıldı"
   },

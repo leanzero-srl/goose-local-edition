@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "sau lượt của bạn"
   },
+  "loops.origin.first": {
+    "defaultMessage": "do bạn bắt đầu"
+  },
   "loops.origin.now": {
     "defaultMessage": "do bạn chạy"
   },

@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "あなたのターンの後"
   },
+  "loops.origin.first": {
+    "defaultMessage": "あなたが開始"
+  },
   "loops.origin.now": {
     "defaultMessage": "あなたが実行"
   },

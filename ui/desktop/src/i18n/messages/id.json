@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "setelah giliran Anda"
   },
+  "loops.origin.first": {
+    "defaultMessage": "dimulai oleh Anda"
+  },
   "loops.origin.now": {
     "defaultMessage": "dijalankan oleh Anda"
   },

@@ -224,6 +224,7 @@ export const loopWords = defineMessages({
   originOnWake: { id: 'loops.origin.onWake', defaultMessage: 'after your Mac woke' },
   originResume: { id: 'loops.origin.resume', defaultMessage: 'after you resumed' },
   originNow: { id: 'loops.origin.now', defaultMessage: 'run by you' },
+  originFirst: { id: 'loops.origin.first', defaultMessage: 'started by you' },
 
   headerTick: { id: 'loops.header.tick', defaultMessage: 'tick {n}' },
   headerTickOf: { id: 'loops.header.tickOf', defaultMessage: 'tick {n} of {k}' },

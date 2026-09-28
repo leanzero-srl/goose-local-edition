@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "nach deinem Zug"
   },
+  "loops.origin.first": {
+    "defaultMessage": "von dir begonnen"
+  },
   "loops.origin.now": {
     "defaultMessage": "von dir gestartet"
   },

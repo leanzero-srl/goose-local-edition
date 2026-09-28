@@ -2,7 +2,13 @@ import { createIntl } from 'react-intl';
 import { describe, expect, it } from 'vitest';
 import raw from '../../../../../crates/goose/src/session_loops/loops.fixture.json';
 import { sentenceMessage, sentenceValues } from './loopWords';
-import { statusSentence, type LoopRecord, type LoopStatus, type LoopStatusReason } from './model';
+import {
+  clockTime,
+  statusSentence,
+  type LoopRecord,
+  type LoopStatus,
+  type LoopStatusReason,
+} from './model';
 
 interface SentenceCase {
   name: string;
@@ -26,7 +32,8 @@ describe('the NOW sentences in the catalogs', () => {
         c.status,
         c.reason,
         Date.parse(c.now),
-        c.utcOffsetMinutes
+        c.utcOffsetMinutes,
+        clockTime
       );
       expect(got.ok, c.name).toBe(true);
       if (!got.ok) continue;

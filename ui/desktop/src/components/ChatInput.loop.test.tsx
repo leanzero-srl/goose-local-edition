@@ -251,7 +251,7 @@ describe('the composer Loop slot (§7.1, §8.1)', () => {
     unmount();
 
     for (const [state, text, tone] of [
-      [{ kind: 'loop', loop: waitingRecord(), status: 'waiting' }, 'Next tick 22:51', 'accent'],
+      [{ kind: 'loop', loop: waitingRecord(), status: 'waiting' }, 'Next tick 10:51 PM', 'accent'],
       [{ kind: 'loop', loop: waitingRecord(), status: 'paused' }, 'Loop paused', 'stopped'],
       [{ kind: 'loop', loop: waitingRecord(), status: 'needs_you' }, 'Loop needs you', 'warn'],
       [{ kind: 'loop', loop: waitingRecord(), status: 'ended' }, 'Loop ended', 'stopped'],
@@ -384,7 +384,7 @@ describe('the composer while a tick runs (§5.3, §8.1)', () => {
     await waitFor(() => expect(loops.get).toHaveBeenCalledWith('s1'));
     await waitFor(() =>
       expect(screen.getByTestId('loop-reply')).toHaveTextContent(
-        /^Loop: Make scripts\/generate_users\.js produce every problem class in notes\/kickoff\.md · Tick 5 · started 22:41 · 2m · tick 5$/
+        /^Loop: Make scripts\/generate_users\.js produce every problem class in notes\/kickoff\.md · Tick 5 · started 10:41 PM · 2m · tick 5$/
       )
     );
   });

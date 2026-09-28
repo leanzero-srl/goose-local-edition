@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "在你的回合之後"
   },
+  "loops.origin.first": {
+    "defaultMessage": "由你啟動"
+  },
   "loops.origin.now": {
     "defaultMessage": "由你執行"
   },

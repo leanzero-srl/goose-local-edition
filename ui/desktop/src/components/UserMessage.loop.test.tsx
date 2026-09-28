@@ -66,7 +66,7 @@ describe('UserMessage and loops', () => {
   it('renders a tick prompt as the divider, not a bubble, with the exact prompt one click away', () => {
     mount(tickMessage(true), loopSessionOf('s1', loopRecord()));
     const marker = screen.getByTestId('loop-tick-marker');
-    expect(marker).toHaveTextContent('Loop tick 3 · 22:21 · every 10 min');
+    expect(marker).toHaveTextContent('Loop tick 3 · 10:21 PM · every 10 min');
     expect(marker.id).toBe(`loop-tick-${markerId(3)}`);
     expect(screen.queryByTestId('user-message-body')).not.toBeInTheDocument();
     expect(screen.queryByText('Edit')).not.toBeInTheDocument();
@@ -78,7 +78,7 @@ describe('UserMessage and loops', () => {
 
   it('reads a replayed tick id as a marker even without metadata, and without the loop says no cadence', () => {
     mount(tickMessage(false), null);
-    expect(screen.getByTestId('loop-tick-marker')).toHaveTextContent('Loop tick 3 · 22:21');
+    expect(screen.getByTestId('loop-tick-marker')).toHaveTextContent('Loop tick 3 · 10:21 PM');
     expect(screen.getByTestId('loop-tick-marker')).not.toHaveTextContent('every');
   });
 
@@ -91,7 +91,7 @@ describe('UserMessage and loops', () => {
     );
     mount(tickMessage(true), loopSessionOf('s1', record));
     expect(screen.getByTestId('loop-tick-marker-yielded')).toHaveTextContent(
-      'Stopped at 22:27 for your message in "Kickoff notes" — the loop continues after your turn.'
+      'Stopped at 10:27 PM for your message in "Kickoff notes" — the loop continues after your turn.'
     );
   });
 
@@ -102,16 +102,45 @@ describe('UserMessage and loops', () => {
     );
     mount(tickMessage(true), loopSessionOf('s1', record));
     expect(screen.getByTestId('loop-tick-marker')).toHaveTextContent(
-      'Loop tick 3 · 22:21 · after your turn'
+      'Loop tick 3 · 10:21 PM · after your turn'
     );
     expect(screen.getByTestId('loop-tick-marker')).not.toHaveTextContent('every 10 min');
+  });
+
+  it('Q-316: the first tick is the one the person started, and its time reads in the chat’s clock', () => {
+    // Live critic on 3.0.68: "Loop tick 1 · 06:45 · back to back" / "· every 5 min" on the tick the
+    // person started with Start, and a 24 h "06:45" a line above the chat's "6:48 AM".
+    const id = markerId(1);
+    const first: Message = {
+      id,
+      role: 'user',
+      created: Date.parse('2026-09-28T06:45:00Z') / 1000,
+      content: [{ type: 'text', text: 'Loop tick 1 — "Make it pass" · every 10 min' }],
+      metadata: {
+        userVisible: true,
+        agentVisible: true,
+        loopTick: { loopId: 'lp_0a1b2c3d', n: 1, messageId: id },
+      },
+    };
+    const record = loopRecord();
+    expect(record.ticks!.find((t) => t.n === 1)?.origin).toBe('first');
+    for (const cadence of [
+      { kind: 'every' as const, every: '5m' },
+      { kind: 'back_to_back' as const },
+    ]) {
+      const { unmount } = mount(first, loopSessionOf('s1', { ...record, cadence }));
+      const marker = screen.getByTestId('loop-tick-marker');
+      expect(marker).toHaveTextContent('Loop tick 1 · 6:45 AM · started by you');
+      expect(marker).not.toHaveTextContent(/every|back to back|06:45/);
+      unmount();
+    }
   });
 
   it('names no cause when the record no longer holds the tick, rather than guess the cadence', () => {
     const record = loopRecord();
     record.ticks = record.ticks!.filter((t) => t.n !== 3);
     mount(tickMessage(true), loopSessionOf('s1', record));
-    expect(screen.getByTestId('loop-tick-marker')).toHaveTextContent('Loop tick 3 · 22:21');
+    expect(screen.getByTestId('loop-tick-marker')).toHaveTextContent('Loop tick 3 · 10:21 PM');
     expect(screen.getByTestId('loop-tick-marker')).not.toHaveTextContent('every');
   });
 
@@ -136,7 +165,7 @@ describe('UserMessage and loops', () => {
       );
     });
     expect(screen.getByTestId('loop-tick-marker-yielded')).toHaveTextContent(
-      'Stopped at 22:27 for your message in "Pong, renamed" — the loop continues after your turn.'
+      'Stopped at 10:27 PM for your message in "Pong, renamed" — the loop continues after your turn.'
     );
   });
 

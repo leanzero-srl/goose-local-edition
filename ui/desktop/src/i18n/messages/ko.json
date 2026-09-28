@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "사용자의 턴이 끝난 후"
   },
+  "loops.origin.first": {
+    "defaultMessage": "직접 시작함"
+  },
   "loops.origin.now": {
     "defaultMessage": "사용자가 실행함"
   },

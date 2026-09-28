@@ -16,6 +16,7 @@ import {
   totalTokens,
   totalWallSeconds,
   viewerOffsetMinutes,
+  chatClockTime,
 } from './loopView';
 import {
   durationWords,
@@ -355,7 +356,14 @@ function NowBlock({
   // Q-279: a yield records the chat's name at that moment; the NOW line names it as it is now.
   const turnChat = useChatName(turn?.sessionId ?? '', turn?.chat ?? '');
   const shown = turn ? { ...turn, chat: turnChat } : reason;
-  const sentence = statusSentence(loop, status, shown, nowMs, viewerOffsetMinutes(nowMs));
+  const sentence = statusSentence(
+    loop,
+    status,
+    shown,
+    nowMs,
+    viewerOffsetMinutes(nowMs),
+    chatClockTime
+  );
   let text: string;
   if (!sentence.ok) {
     text = intl.formatMessage(w.statusUnreadable, { error: sentence.error });

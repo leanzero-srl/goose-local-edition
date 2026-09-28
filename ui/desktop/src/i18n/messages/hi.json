@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "आपकी बारी के बाद"
   },
+  "loops.origin.first": {
+    "defaultMessage": "आपने शुरू किया"
+  },
   "loops.origin.now": {
     "defaultMessage": "आपने चलाया"
   },

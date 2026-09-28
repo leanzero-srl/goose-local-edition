@@ -3089,6 +3089,9 @@
   "loops.origin.afterYourTurn": {
     "defaultMessage": "depois da sua vez"
   },
+  "loops.origin.first": {
+    "defaultMessage": "iniciado por você"
+  },
   "loops.origin.now": {
     "defaultMessage": "executado por você"
   },
