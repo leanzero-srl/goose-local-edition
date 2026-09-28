@@ -111,6 +111,13 @@ a measurement, a dead end, a decision with its reason — once each. Read furthe
 ledger_read. Facts that should be recalled by topic belong in memory; the ledger is
 what happened, in order.
 
+## loop
+
+### Instructions
+This chat runs a loop: a tick is a turn whose prompt starts with "Loop tick".
+End every tick by calling `loop_report`, after rewriting the loop's state file;
+calling it ends the tick. Outside a tick the tool is refused.
+
 ## needs_you
 
 ### Instructions
