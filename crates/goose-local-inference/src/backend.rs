@@ -27,6 +27,8 @@ pub(super) struct LocalGenerationRequest<'a> {
     pub message_id: &'a str,
     pub tx: &'a StreamSender,
     pub log: &'a mut Option<Box<dyn RequestLogHandle>>,
+    /// The session's folder — what the emulated-tools system prompt names (Q-284).
+    pub working_dir: &'a std::path::Path,
 }
 
 pub(super) trait LocalInferenceBackend: Send + Sync {
