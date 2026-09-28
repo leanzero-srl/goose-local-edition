@@ -793,21 +793,73 @@ impl std::fmt::Display for UnsupervisedListenerError {
 
 impl std::error::Error for UnsupervisedListenerError {}
 
+/// The marker every engine this manager starts on `port` carries — the one a later goosed's proof
+/// reads, so the mount's refusal and the status's holders judge a listener by the same value.
+fn engine_marker(port: u16) -> String {
+    sidecar_marker(ENGINE_SIDECAR_NAME, &format!("http://127.0.0.1:{port}"))
+}
+
+/// Every LISTEN pid on `port`, judged against `marker`; `Err` says why they could not be read.
+async fn read_port_holders(
+    port: u16,
+    marker: &str,
+) -> std::result::Result<Vec<PortHolder>, String> {
+    #[cfg(unix)]
+    {
+        crate::port_holder::inspect_port(port, marker)
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (port, marker);
+        Err("this platform cannot read a port's listeners".to_string())
+    }
+}
+
+/// One LISTEN pid on the engine port while this manager supervises nothing (Q-249): what the
+/// Engine panel names beside `stray_listener_port` — the same facts [`UnsupervisedListenerError`]
+/// refuses a mount with, so the panel and the refusal can never disagree about who holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrayListenerHolder {
+    pub pid: u32,
+    /// Its command line; empty when it could not be read.
+    pub argv: Vec<String>,
+    /// Proven an engine this goose's sidecar started on this port whose goosed is gone
+    /// (`port_holder::ownership_proof`): a Mount stops it per pid and starts the engine.
+    pub ours: bool,
+    /// When not ours: the rule it failed (`port_holder::NotOursRule::as_str`) and the finding in
+    /// full, with its pids and values.
+    pub not_ours_rule: Option<String>,
+    pub not_ours_reason: Option<String>,
+    /// When the reason is that what started it is alive: that process — the one to quit.
+    pub live_starter_pid: Option<u32>,
+    pub live_starter_argv: Option<Vec<String>>,
+}
+
+impl From<&PortHolder> for StrayListenerHolder {
+    fn from(holder: &PortHolder) -> Self {
+        let not_ours = holder.verdict.as_ref().err();
+        let starter = not_ours.and_then(|n| n.live_starter.as_ref());
+        Self {
+            pid: holder.pid,
+            argv: holder.argv.clone(),
+            ours: holder.verdict.is_ok(),
+            not_ours_rule: not_ours.map(|n| n.rule.as_str().to_string()),
+            not_ours_reason: not_ours.map(|n| n.reason.clone()),
+            live_starter_pid: starter.map(|s| s.pid),
+            live_starter_argv: starter.map(|s| s.argv.clone()),
+        }
+    }
+}
+
 /// The refusal a mount owes when something it does not supervise listens on `port`: `None` when
 /// nothing does, or when every holder is proven this sidecar's own leftover (the start stops it).
 async fn unsupervised_listener(port: u16, marker: &str) -> Option<UnsupervisedListenerError> {
     if !port_has_listener(port) {
         return None;
     }
-    #[cfg(unix)]
-    let holders = crate::port_holder::inspect_port(port, marker)
-        .await
-        .map_err(|e| format!("{e:#}"));
-    #[cfg(not(unix))]
-    let holders: std::result::Result<Vec<PortHolder>, String> = {
-        let _ = marker;
-        Err("this platform cannot read a port's listeners".to_string())
-    };
+    let holders = read_port_holders(port, marker).await;
     if let Ok(holders) = &holders {
         if !holders.is_empty() && holders.iter().all(|h| h.verdict.is_ok()) {
             tracing::warn!(
@@ -893,6 +945,11 @@ pub struct EngineStatus {
     /// Set when the manager supervises nothing but SOMETHING already listens on the
     /// configured port — an engine orphaned by a previous goosed. `unmount` reclaims it.
     pub stray_listener_port: Option<u16>,
+    /// Who holds `stray_listener_port`, read while no mount is in flight (Q-249): every LISTEN
+    /// pid with its verdict. `None` when the port is not stray, while a mount is in flight, or
+    /// exactly when `stray_listener_holders_error` says why they could not be read.
+    pub stray_listener_holders: Option<Vec<StrayListenerHolder>>,
+    pub stray_listener_holders_error: Option<String>,
     /// Free pages plus reclaimable file cache (`memory::measure`); 0 exactly when
     /// `memory_error` says the measurement failed.
     pub available_memory_gb: f64,
@@ -1536,8 +1593,9 @@ impl MlxEngineManager {
         };
         let base_url = format!("http://127.0.0.1:{}", settings.port);
         if supervised.is_none() {
-            let marker = sidecar_marker(ENGINE_SIDECAR_NAME, &base_url);
-            if let Some(refused) = unsupervised_listener(settings.port, &marker).await {
+            if let Some(refused) =
+                unsupervised_listener(settings.port, &engine_marker(settings.port)).await
+            {
                 *state = ManagerState::Stopped;
                 return Err(refused.into());
             }
@@ -1746,6 +1804,8 @@ impl MlxEngineManager {
             gate_message,
             gate_verdict,
             stray_listener_port: None,
+            stray_listener_holders: None,
+            stray_listener_holders_error: None,
             available_memory_gb: reading.map_or(0.0, |r| gib_of(r.available_bytes)),
             total_memory_gb: reading.map_or(0.0, |r| gib_of(r.total_bytes)),
             reclaimable_cache_gb: reading.and_then(|r| r.reclaimable_cache_bytes.map(gib_of)),
@@ -1844,6 +1904,17 @@ impl MlxEngineManager {
         }
         if running.is_none() && port_has_listener(settings.port) {
             status.stray_listener_port = Some(settings.port);
+            // While a mount is in flight the listener is the start's own child; the holders are
+            // read only when no start runs, which is when the Engine panel names them.
+            if status.state != "mounting" {
+                match read_port_holders(settings.port, &engine_marker(settings.port)).await {
+                    Ok(holders) => {
+                        status.stray_listener_holders =
+                            Some(holders.iter().map(StrayListenerHolder::from).collect())
+                    }
+                    Err(why) => status.stray_listener_holders_error = Some(why),
+                }
+            }
         }
         if let Some((running_model, running_argv)) = running {
             let desired_model = settings.model_id.as_deref().unwrap_or(&running_model);
@@ -2878,9 +2949,31 @@ mod tests {
         let status = manager.status().await;
         assert_eq!(status.state, "stopped");
         assert_eq!(status.stray_listener_port, Some(port));
+        let own = std::process::id();
+        let holders = status
+            .stray_listener_holders
+            .unwrap_or_else(|| panic!("holders unread: {:?}", status.stray_listener_holders_error));
+        assert_eq!(holders.len(), 1, "{holders:?}");
+        let holder = &holders[0];
+        assert_eq!(
+            holder.pid, own,
+            "Q-249: the status names who holds the port"
+        );
+        assert!(!holder.argv.is_empty(), "its command line: {holder:?}");
+        assert!(!holder.ours);
+        assert_eq!(holder.not_ours_rule.as_deref(), Some("initOrSelf"));
+        assert!(
+            holder
+                .not_ours_reason
+                .as_deref()
+                .is_some_and(|r| r.contains("this goosed itself")),
+            "{holder:?}"
+        );
         drop(listener);
         let status = manager.status().await;
         assert_eq!(status.stray_listener_port, None);
+        assert_eq!(status.stray_listener_holders, None);
+        assert_eq!(status.stray_listener_holders_error, None);
     }
 
     #[tokio::test]
@@ -3659,7 +3752,9 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         });
 
         let foreign = leftover_engine(port, None);
+        let before = manager.status().await;
         let refused = manager.mount("pub/small").await;
+        let after = manager.status().await;
         let foreign_alive = alive(foreign) && port_has_listener(port);
         // SAFETY: the test's own stand-in, signalled by its pid alone.
         unsafe { libc::kill(foreign as libc::pid_t, libc::SIGKILL) };
@@ -3672,10 +3767,31 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert!(text.contains("serve /leftover --port"), "{text}");
         assert!(text.contains("carries no GOOSE_SIDECAR"), "{text}");
         assert!(foreign_alive, "the unmarked leftover was touched: {text}");
-        assert_eq!(manager.status().await.state, "stopped");
+        assert_eq!(after.state, "stopped");
+        // Q-249: the status the Engine panel reads names the same holder the refusal did, before
+        // the Mount and after it.
+        for status in [&before, &after] {
+            let holders = status.stray_listener_holders.as_ref().unwrap_or_else(|| {
+                panic!("holders unread: {:?}", status.stray_listener_holders_error)
+            });
+            assert_eq!(
+                holders.iter().map(|h| h.pid).collect::<Vec<_>>(),
+                [foreign],
+                "{holders:?}"
+            );
+            let holder = &holders[0];
+            assert!(
+                holder.argv.join(" ").contains("serve /leftover --port"),
+                "{holder:?}"
+            );
+            assert!(!holder.ours);
+            assert_eq!(holder.not_ours_rule.as_deref(), Some("noMarker"));
+            assert_eq!(holder.live_starter_pid, None, "sh exited: init adopted it");
+        }
 
-        let marker = sidecar_marker(ENGINE_SIDECAR_NAME, &format!("http://127.0.0.1:{port}"));
+        let marker = engine_marker(port);
         let ours = leftover_engine(port, Some(&marker));
+        let seen = manager.status().await;
         let mounted = manager.mount("pub/small").await;
         let status = settle(&manager).await;
         let ours_alive = alive(ours);
@@ -3685,6 +3801,17 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             unsafe { libc::kill(ours as libc::pid_t, libc::SIGKILL) };
         }
         mounted.unwrap();
+        let seen_holders = seen
+            .stray_listener_holders
+            .unwrap_or_else(|| panic!("holders unread: {:?}", seen.stray_listener_holders_error));
+        assert_eq!(
+            seen_holders
+                .iter()
+                .map(|h| (h.pid, h.ours, h.not_ours_rule.clone()))
+                .collect::<Vec<_>>(),
+            [(ours, true, None)],
+            "the marked leftover reads as this goose's own before the Mount stops it"
+        );
         assert_eq!(status.state, "running", "{:?}", status.last_error);
         assert!(!ours_alive, "the marked leftover {ours} still runs");
         assert_ne!(status.pid, Some(ours));

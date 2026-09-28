@@ -8,7 +8,7 @@ use crate::config::ConfigError;
 use crate::providers::mlx_serving_intent::{self, IntentKind, IntentRecord, ServingIntent};
 use goose_sidecar::engine::{
     expand_tilde, global_manager, EngineLoad, EngineSettings, MlxEngineManager, ModelProfile,
-    MountRefused, ThinkingMode,
+    MountRefused, StrayListenerHolder, ThinkingMode,
 };
 use goose_sidecar::fit::{FitVerdict, AVAILABLE_MARGIN_RATIO};
 use goose_sidecar::hf::{self, DownloadTracker};
@@ -464,6 +464,10 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         active_requests_error: status.active_requests_error,
         max_concurrent_requests: Some(goose_sidecar::engine::MAX_CONCURRENT_REQUESTS),
         stray_listener_port: status.stray_listener_port,
+        stray_listener_holders: status
+            .stray_listener_holders
+            .map(|holders| holders.into_iter().map(stray_holder_to_dto).collect()),
+        stray_listener_holders_error: status.stray_listener_holders_error,
         probe_error: status.probe_error,
         gate_message: status.gate_message,
         gate_verdict: status.gate_verdict,
@@ -486,6 +490,18 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         serving_intent_error: None,
         machine_load: status.machine_load.map(machine_load_to_dto),
         machine_load_error: status.machine_load_error,
+    }
+}
+
+fn stray_holder_to_dto(holder: StrayListenerHolder) -> MlxStrayListenerHolderDto {
+    MlxStrayListenerHolderDto {
+        pid: holder.pid,
+        argv: holder.argv,
+        ours: holder.ours,
+        not_ours_rule: holder.not_ours_rule,
+        not_ours_reason: holder.not_ours_reason,
+        live_starter_pid: holder.live_starter_pid,
+        live_starter_argv: holder.live_starter_argv,
     }
 }
 
@@ -1359,6 +1375,55 @@ impl MlxControl for GoosedMlxControl {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// Q-249: who holds a stray port reaches the wire whole — pid, command line, the verdict, the
+    /// rule and the live starter — so the Engine panel can name it; a port that is not stray
+    /// sends none of it.
+    #[test]
+    fn a_stray_ports_holders_reach_the_wire_named() {
+        let holder = StrayListenerHolder {
+            pid: 35319,
+            argv: vec![
+                "python".to_string(),
+                "rapid-mlx".to_string(),
+                "serve".to_string(),
+            ],
+            ours: false,
+            not_ours_rule: Some("liveStarter".to_string()),
+            not_ours_reason: Some(
+                "the process that started it, pid 73403 (`goose serve`), is alive".to_string(),
+            ),
+            live_starter_pid: Some(73403),
+            live_starter_argv: Some(vec!["goose".to_string(), "serve".to_string()]),
+        };
+        let dto = MlxEngineStatusDto {
+            state: "stopped".to_string(),
+            stray_listener_port: Some(8090),
+            stray_listener_holders: Some(vec![stray_holder_to_dto(holder)]),
+            ..Default::default()
+        };
+        let wire = serde_json::to_value(&dto).unwrap();
+        assert_eq!(
+            wire["strayListenerHolders"],
+            serde_json::json!([{
+                "pid": 35319,
+                "argv": ["python", "rapid-mlx", "serve"],
+                "ours": false,
+                "notOursRule": "liveStarter",
+                "notOursReason": "the process that started it, pid 73403 (`goose serve`), is alive",
+                "liveStarterPid": 73403,
+                "liveStarterArgv": ["goose", "serve"],
+            }])
+        );
+        assert!(wire.get("strayListenerHoldersError").is_none());
+
+        let quiet = serde_json::to_value(MlxEngineStatusDto {
+            state: "stopped".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(quiet.get("strayListenerHolders").is_none(), "{quiet}");
+    }
 
     #[test]
     fn a_stopped_engine_says_who_stopped_it_or_that_nobody_did_since_this_goose_started() {

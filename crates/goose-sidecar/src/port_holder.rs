@@ -42,18 +42,58 @@ pub struct HolderProcess {
     pub marker: Option<String>,
 }
 
+/// Which of [`ownership_proof`]'s rules a holder failed — what a surface says in its own words
+/// (Q-249); `NotOurs::reason` carries the same finding with its pids and values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotOursRule {
+    /// The listener, its process group, or a launcher's parent could not be read.
+    Unreadable,
+    /// The listener is init or this goosed itself.
+    InitOrSelf,
+    /// It runs as another user.
+    OtherUser,
+    /// A goose sidecar started it, for another engine or port.
+    OtherEngine,
+    /// It carries no marker: not started by a goose sidecar, or by a goose older than the marker.
+    NoMarker,
+    /// The process that started it is alive: another goose on this Mac, or a shell, runs it.
+    LiveStarter,
+}
+
+impl NotOursRule {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NotOursRule::Unreadable => "unreadable",
+            NotOursRule::InitOrSelf => "initOrSelf",
+            NotOursRule::OtherUser => "otherUser",
+            NotOursRule::OtherEngine => "otherEngine",
+            NotOursRule::NoMarker => "noMarker",
+            NotOursRule::LiveStarter => "liveStarter",
+        }
+    }
+}
+
+/// The live process that started a holder, as read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Starter {
+    pub pid: u32,
+    pub argv: Vec<String>,
+}
+
 /// Why a holder is not an engine this goose may stop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotOurs {
+    pub rule: NotOursRule,
     pub reason: String,
     /// The live process that started it, when THAT is the reason: another goose (or a shell)
     /// runs it, and the step is to stop that one.
-    pub live_starter: Option<u32>,
+    pub live_starter: Option<Starter>,
 }
 
 impl NotOurs {
-    fn because(reason: String) -> Self {
+    fn because(rule: NotOursRule, reason: String) -> Self {
         Self {
+            rule,
             reason,
             live_starter: None,
         }
@@ -115,12 +155,16 @@ impl fmt::Display for PortHeld {
                 named.join("; ")
             );
         }
-        let step = match self
-            .holders
-            .iter()
-            .find_map(|h| h.verdict.as_ref().err().and_then(|n| n.live_starter))
-        {
-            Some(starter) => format!("quit what started it (pid {starter}), then start again"),
+        let step = match self.holders.iter().find_map(|h| {
+            h.verdict
+                .as_ref()
+                .err()
+                .and_then(|n| n.live_starter.as_ref())
+        }) {
+            Some(starter) => format!(
+                "quit what started it (pid {}), then start again",
+                starter.pid
+            ),
             None => format!(
                 "stop it per pid (`kill {}`), then start again",
                 self.holders
@@ -158,45 +202,60 @@ pub fn ownership_proof(
     own_pid: u32,
 ) -> Result<Vec<HolderProcess>, NotOurs> {
     let Some(listener) = lineage.first() else {
-        return Err(NotOurs::because("it could not be read".to_string()));
+        return Err(NotOurs::because(
+            NotOursRule::Unreadable,
+            "it could not be read".to_string(),
+        ));
     };
     if listener.pid <= 1 || listener.pid == own_pid {
-        return Err(NotOurs::because(format!(
-            "pid {} is init or this goosed itself",
-            listener.pid
-        )));
+        return Err(NotOurs::because(
+            NotOursRule::InitOrSelf,
+            format!("pid {} is init or this goosed itself", listener.pid),
+        ));
     }
     let marked = |process: &HolderProcess| -> Result<(), NotOurs> {
         if process.uid != Some(own_uid) {
-            return Err(NotOurs::because(format!(
-                "pid {} runs as uid {}, not this user's {own_uid}",
-                process.pid,
-                process
-                    .uid
-                    .map_or("unknown".to_string(), |uid| uid.to_string())
-            )));
+            return Err(NotOurs::because(
+                NotOursRule::OtherUser,
+                format!(
+                    "pid {} runs as uid {}, not this user's {own_uid}",
+                    process.pid,
+                    process
+                        .uid
+                        .map_or("unknown".to_string(), |uid| uid.to_string())
+                ),
+            ));
         }
         match process.marker.as_deref() {
             Some(found) if found == marker => Ok(()),
-            Some(found) => Err(NotOurs::because(format!(
-                "pid {} carries {SIDECAR_MARKER_ENV}={found}, a goose sidecar's for another \
-                 engine or port, not {marker}",
-                process.pid
-            ))),
-            None => Err(NotOurs::because(format!(
-                "pid {} carries no {SIDECAR_MARKER_ENV} in its environment — every engine a goose \
-                 sidecar starts carries {SIDECAR_MARKER_ENV}={marker} (a goose older than this \
-                 check stamped none)",
-                process.pid
-            ))),
+            Some(found) => Err(NotOurs::because(
+                NotOursRule::OtherEngine,
+                format!(
+                    "pid {} carries {SIDECAR_MARKER_ENV}={found}, a goose sidecar's for another \
+                     engine or port, not {marker}",
+                    process.pid
+                ),
+            )),
+            None => Err(NotOurs::because(
+                NotOursRule::NoMarker,
+                format!(
+                    "pid {} carries no {SIDECAR_MARKER_ENV} in its environment — every engine a \
+                     goose sidecar starts carries {SIDECAR_MARKER_ENV}={marker} (a goose older \
+                     than this check stamped none)",
+                    process.pid
+                ),
+            )),
         }
     };
     marked(listener)?;
     let Some(group) = listener.group else {
-        return Err(NotOurs::because(format!(
-            "the process group of pid {} could not be read",
-            listener.pid
-        )));
+        return Err(NotOurs::because(
+            NotOursRule::Unreadable,
+            format!(
+                "the process group of pid {} could not be read",
+                listener.pid
+            ),
+        ));
     };
     let mut chain = Vec::new();
     for process in lineage.iter().take_while(|p| p.group == Some(group)) {
@@ -209,22 +268,29 @@ pub fn ownership_proof(
         Some(parent) if parent == own_pid => Ok(chain),
         Some(parent) => match lineage.iter().find(|p| p.pid == parent) {
             Some(starter) => Err(NotOurs {
+                rule: NotOursRule::LiveStarter,
                 reason: format!(
                     "the process that started it, pid {parent} (`{}`), is alive — another goose \
                      on this Mac, or a shell, runs it",
                     starter.argv.join(" ")
                 ),
-                live_starter: Some(parent),
+                live_starter: Some(Starter {
+                    pid: parent,
+                    argv: starter.argv.clone(),
+                }),
             }),
-            None => Err(NotOurs::because(format!(
-                "pid {}'s parent, pid {parent}, could not be read (it may have just exited)",
-                top.pid
-            ))),
+            None => Err(NotOurs::because(
+                NotOursRule::Unreadable,
+                format!(
+                    "pid {}'s parent, pid {parent}, could not be read (it may have just exited)",
+                    top.pid
+                ),
+            )),
         },
-        None => Err(NotOurs::because(format!(
-            "the parent of pid {} could not be read",
-            top.pid
-        ))),
+        None => Err(NotOurs::because(
+            NotOursRule::Unreadable,
+            format!("the parent of pid {} could not be read", top.pid),
+        )),
     }
 }
 
@@ -308,9 +374,10 @@ mod read {
                 None => PortHolder {
                     pid,
                     argv: Vec::new(),
-                    verdict: Err(NotOurs::because(format!(
-                        "pid {pid} could not be read (it may have just exited)"
-                    ))),
+                    verdict: Err(NotOurs::because(
+                        NotOursRule::Unreadable,
+                        format!("pid {pid} could not be read (it may have just exited)"),
+                    )),
                 },
                 Some(listener) => {
                     let argv = listener.argv.clone();
@@ -515,7 +582,15 @@ mod tests {
     fn a_live_goosed_above_it_makes_it_another_gooses() {
         let kept =
             ownership_proof(&[engine(), uv(GOOSED), goosed(GOOSED)], MARKER, UID, 999).unwrap_err();
-        assert_eq!(kept.live_starter, Some(GOOSED));
+        assert_eq!(kept.rule, NotOursRule::LiveStarter);
+        assert_eq!(
+            kept.live_starter,
+            Some(Starter {
+                pid: GOOSED,
+                argv: vec!["goose".to_string(), "serve".to_string()],
+            }),
+            "the starter carries its command line, so a surface can say what to quit"
+        );
         assert!(
             kept.reason.contains("pid 73403 (`goose serve`)"),
             "{}",
@@ -536,6 +611,7 @@ mod tests {
             "{}",
             kept.reason
         );
+        assert_eq!(kept.rule, NotOursRule::NoMarker);
 
         let elsewhere = HolderProcess {
             marker: Some("mlx-engine@http://127.0.0.1:8091".to_string()),
@@ -543,6 +619,7 @@ mod tests {
         };
         let kept = ownership_proof(&[elsewhere, uv(1)], MARKER, UID, 999).unwrap_err();
         assert!(kept.reason.contains("127.0.0.1:8091"), "{}", kept.reason);
+        assert_eq!(kept.rule, NotOursRule::OtherEngine);
 
         let unmarked_launcher = HolderProcess {
             marker: None,
@@ -554,6 +631,7 @@ mod tests {
             "{}",
             kept.reason
         );
+        assert_eq!(kept.rule, NotOursRule::NoMarker);
 
         let other_user = HolderProcess {
             uid: Some(0),
@@ -561,13 +639,16 @@ mod tests {
         };
         let kept = ownership_proof(&[other_user, uv(1)], MARKER, UID, 999).unwrap_err();
         assert!(kept.reason.contains("uid 0"), "{}", kept.reason);
+        assert_eq!(kept.rule, NotOursRule::OtherUser);
 
         let itself = HolderProcess {
             pid: 999,
             ..engine()
         };
-        assert!(ownership_proof(&[itself], MARKER, UID, 999).is_err());
-        assert!(ownership_proof(&[], MARKER, UID, 999).is_err());
+        let kept = ownership_proof(&[itself], MARKER, UID, 999).unwrap_err();
+        assert_eq!(kept.rule, NotOursRule::InitOrSelf);
+        let kept = ownership_proof(&[], MARKER, UID, 999).unwrap_err();
+        assert_eq!(kept.rule, NotOursRule::Unreadable);
 
         let unknown_parent = HolderProcess {
             parent: None,
@@ -575,6 +656,7 @@ mod tests {
         };
         let kept = ownership_proof(&[engine(), unknown_parent], MARKER, UID, 999).unwrap_err();
         assert!(kept.reason.contains("could not be read"), "{}", kept.reason);
+        assert_eq!(kept.rule, NotOursRule::Unreadable);
 
         let kept = ownership_proof(&[engine()], MARKER, UID, 999).unwrap_err();
         assert!(
@@ -583,6 +665,7 @@ mod tests {
             kept.reason
         );
         assert_eq!(kept.live_starter, None);
+        assert_eq!(kept.rule, NotOursRule::Unreadable);
 
         let groupless = HolderProcess {
             group: None,
@@ -591,6 +674,7 @@ mod tests {
         };
         let kept = ownership_proof(&[groupless], MARKER, UID, 999).unwrap_err();
         assert!(kept.reason.contains("process group"), "{}", kept.reason);
+        assert_eq!(kept.rule, NotOursRule::Unreadable);
     }
 
     #[test]
@@ -625,7 +709,10 @@ mod tests {
             holders: vec![PortHolder {
                 pid: 35319,
                 argv: Vec::new(),
-                verdict: Err(NotOurs::because("pid 35319 could not be read".to_string())),
+                verdict: Err(NotOurs::because(
+                    NotOursRule::Unreadable,
+                    "pid 35319 could not be read".to_string(),
+                )),
             }],
             survived_the_stop: false,
         };
