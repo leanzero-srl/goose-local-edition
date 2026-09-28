@@ -66,6 +66,7 @@ import {
   mlxEngineSettingsUpdate,
   mlxEngineStatus,
   mlxEngineUnmount,
+  MlxMountRefusedError,
   type MlxBrowseFilters,
   type MlxBrowseHit,
   type MlxBrowseSort,
@@ -91,6 +92,8 @@ import { SELF_KEY, macTarget, peerRefuses, routePeerName, type Mac } from './mac
 import { WithMacs, useMacs } from './useMacs';
 import { MlxStateTile, servingEngine } from './MlxStateTile';
 import { MlxRestoreBanner } from './MlxRestoreLine';
+import { MlxMountRefusalBanner, gateRefusalOf } from './MlxMountRefusalBanner';
+import { portHeldBy } from './mlxPortHeld';
 import { settleRestoreLine } from './mlxRestore';
 import type { MlxServing } from '../../utils/mlxServing';
 import type { MlxEngineKind } from '../../utils/mlxInFlight';
@@ -215,19 +218,28 @@ const i18n = defineMessages({
 });
 
 /**
- * The mount failure banners, ONE per failure. The sidecar's refusal of a mount the memory gate
- * blocks arrives TWICE — the mount call rejects with "memory gate BLOCK for '<model>': <message>"
- * and the status keeps that gate's `<message>` as `gateMessage` — so a mount error that carries the
- * blocking gate's message is the same failure and renders once, as the gate's banner.
+ * The mount failure banners, ONE per failure. A memory refusal is the status's last gate: with its
+ * figures (`gateFit`) it is MlxMountRefusalBanner's, in plain words (Q-277) — `gateBlock` is then
+ * null; from a goose before `gateFit` it is `gateMessage` verbatim. The mount call's own rejection
+ * of a gate refusal is never kept as a mount error (onMount), and one that carries the gate's words
+ * is the same failure. A refusal that names the port a stray listener holds is the Engine tab's
+ * StrayListenerBanner, which names the holder and the step from the status — not a second banner.
  */
 export function mountFailureBanners(
-  status: Pick<MlxEngineStatus, 'gateVerdict' | 'gateMessage'> | null,
+  status:
+    | (Pick<MlxEngineStatus, 'gateVerdict' | 'gateMessage'> &
+        Partial<Pick<MlxEngineStatus, 'gateFit' | 'state' | 'strayListenerPort'>>)
+    | null,
   mountError: string | null
 ): { gateBlock: string | null; mountError: string | null } {
-  const gateBlock =
+  const gateWords =
     status?.gateVerdict === 'block' && status.gateMessage ? status.gateMessage : null;
-  const same = mountError != null && gateBlock != null && mountError.includes(gateBlock);
-  return { gateBlock, mountError: same ? null : mountError };
+  const gateBlock = gateRefusalOf(status) == null ? gateWords : null;
+  const sameAsGate = mountError != null && gateWords != null && mountError.includes(gateWords);
+  const strayPort = status?.state === 'stopped' ? status.strayListenerPort : undefined;
+  const sameAsStray =
+    mountError != null && strayPort != null && portHeldBy(mountError) === strayPort;
+  return { gateBlock, mountError: sameAsGate || sameAsStray ? null : mountError };
 }
 
 /** A quiet table cell: the meta register in tabular figures. */
@@ -1009,8 +1021,9 @@ function EngineSection(props: EngineSectionProps) {
 
   return (
     <div className="flex flex-col gap-4 pb-8">
-      <MlxRestoreBanner />
+      <MlxRestoreBanner refusedModelId={gateRefusalOf(status)?.modelId ?? null} />
       {statusError && <ToneBanner tone="err" label="Engine unreachable" text={statusError} />}
+      {status && <MlxMountRefusalBanner status={status} />}
       {banners.gateBlock && (
         <ToneBanner
           tone="err"
@@ -2819,7 +2832,11 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
       try {
         await mlxEngineMount(mountModelId);
       } catch (error) {
-        setMountError(mlxErrorMessage(error, 'Mount failed.'));
+        // A memory refusal is the status's last gate — the one refusal banner states it (Q-277);
+        // kept here too, a later refusal's gate would stand beside this one's stale figures.
+        if (!(error instanceof MlxMountRefusedError)) {
+          setMountError(mlxErrorMessage(error, 'Mount failed.'));
+        }
       } finally {
         setEngineBusy(false);
         void refreshStatus();
@@ -2884,7 +2901,9 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
           await mlxEngineUnmount(macTarget(mac));
           await mlxEngineMount(modelId, macTarget(mac));
         } catch (error) {
-          setMountError(macsCtx.describeError(mac, mlxErrorMessage(error, 'Remount failed.')));
+          if (!(mac.isSelf && error instanceof MlxMountRefusedError)) {
+            setMountError(macsCtx.describeError(mac, mlxErrorMessage(error, 'Remount failed.')));
+          }
         } finally {
           setEngineBusy(false);
           if (mac.isSelf) void refreshStatus();

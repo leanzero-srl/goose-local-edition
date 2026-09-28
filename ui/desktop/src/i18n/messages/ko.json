@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "응답 없음 · 다른 창이 소유"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "세부 정보"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model}은(는) 시작을 요청했을 때 이 Mac에 맞지 않았습니다. 메모리가 바뀌어 이제 맞습니다. 다시 시작하세요."
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "세부 정보 숨기기"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "시작되지 않음"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model}은(는) 이 Mac에서 {need} GB가 필요하고 지금 쓸 수 있는 여유는 {free} GB입니다. {short} GB 부족합니다."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "취소"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link가 연결되어 있지 않습니다 ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "메모리가 부족합니다. {need} GB가 필요하고 쓸 수 있는 여유는 {free} GB입니다({short} GB 부족)"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "메모리가 부족합니다"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "메모리가 부족합니다({short} GB 부족)"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "다른 Mac"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "포트 {port}을(를) 이 goose가 멈출 수 없는 엔진이 사용 중입니다"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "{model}을(를) {kind, select, single {이 Mac에서} split {내 Mac 전체에서} other {{peer}에서}} 복원하는 중…"

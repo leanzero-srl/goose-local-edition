@@ -6775,6 +6775,17 @@
           ],
           "description": "The last memory-gate verdict for `gate_message`: \"allow\" | \"warn\" | \"block\"."
         },
+        "gateFit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMountFitDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last memory-gate verdict whole: the model it judged and the rule's figures — what\n`gateMessage`/`gateVerdict` say in words, so a refused mount is drawn from the same verdict\nobject the tile draws (`mountFit`) rather than from a sentence (Q-277). Absent before any\nmount, after a mount the port refused before its gate, and from a goose before it."
+        },
         "strayListenerPort": {
           "type": [
             "integer",
@@ -6965,6 +6976,112 @@
       ],
       "description": "Live MLX engine state. `state` is one of \"stopped\" | \"mounting\" | \"running\" | \"failed\".\n`context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never\nfabricated: a failed probe leaves them unset and reports `probe_error` instead."
     },
+    "MlxMountFitDto": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "description": "\"allow\" | \"warn\" | \"block\"."
+        },
+        "needBytes": {
+          "type": "integer",
+          "description": "`weightsBytes + kvBytes`.",
+          "minimum": 0
+        },
+        "weightsBytes": {
+          "type": "integer",
+          "description": "The model directory's bytes on disk.",
+          "minimum": 0
+        },
+        "kvBytes": {
+          "type": "integer",
+          "description": "KV for `contextTokens` (the smallest useful context); 0 when `kvError` says it could not be\nsized (then only the weights are charged).",
+          "minimum": 0
+        },
+        "contextTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kvError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "availableBytes": {
+          "type": "integer",
+          "description": "Available now (plus a mounted model's footprint, which a mount gets back).",
+          "minimum": 0
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ceilingBytes": {
+          "type": "integer",
+          "description": "Metal's recommended working-set ceiling on this Mac.",
+          "minimum": 0
+        },
+        "otherEnginesBytes": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "The resident bytes the OTHER MLX engines on this Mac hold, charged against the ceiling:\n`budgetBytes = min(availableBytes − marginBytes, ceilingBytes − otherEnginesBytes)`."
+        },
+        "marginBytes": {
+          "type": "integer",
+          "description": "`totalBytes × marginRatio`.",
+          "minimum": 0
+        },
+        "marginRatio": {
+          "type": "number",
+          "format": "double"
+        },
+        "shortBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Block only: `needBytes − budgetBytes`.",
+          "minimum": 0
+        },
+        "spareBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Allow/warn only: `budgetBytes − needBytes`.",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string",
+          "description": "The rule's arithmetic in words (a refusal's text, verbatim — the same as `gateMessage`)."
+        }
+      },
+      "required": [
+        "modelId",
+        "verdict",
+        "needBytes",
+        "weightsBytes",
+        "kvBytes",
+        "contextTokens",
+        "budgetBytes",
+        "availableBytes",
+        "totalBytes",
+        "ceilingBytes",
+        "marginBytes",
+        "marginRatio",
+        "message"
+      ],
+      "description": "The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −\nRAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is \"warn\" when what is left\nis inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes."
+    },
     "MlxStrayListenerHolderDto": {
       "type": "object",
       "properties": {
@@ -7078,112 +7195,6 @@
         "brand"
       ],
       "description": "A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count."
-    },
-    "MlxMountFitDto": {
-      "type": "object",
-      "properties": {
-        "modelId": {
-          "type": "string"
-        },
-        "verdict": {
-          "type": "string",
-          "description": "\"allow\" | \"warn\" | \"block\"."
-        },
-        "needBytes": {
-          "type": "integer",
-          "description": "`weightsBytes + kvBytes`.",
-          "minimum": 0
-        },
-        "weightsBytes": {
-          "type": "integer",
-          "description": "The model directory's bytes on disk.",
-          "minimum": 0
-        },
-        "kvBytes": {
-          "type": "integer",
-          "description": "KV for `contextTokens` (the smallest useful context); 0 when `kvError` says it could not be\nsized (then only the weights are charged).",
-          "minimum": 0
-        },
-        "contextTokens": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "kvError": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "budgetBytes": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "availableBytes": {
-          "type": "integer",
-          "description": "Available now (plus a mounted model's footprint, which a mount gets back).",
-          "minimum": 0
-        },
-        "totalBytes": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "ceilingBytes": {
-          "type": "integer",
-          "description": "Metal's recommended working-set ceiling on this Mac.",
-          "minimum": 0
-        },
-        "otherEnginesBytes": {
-          "type": "integer",
-          "default": 0,
-          "minimum": 0,
-          "description": "The resident bytes the OTHER MLX engines on this Mac hold, charged against the ceiling:\n`budgetBytes = min(availableBytes − marginBytes, ceilingBytes − otherEnginesBytes)`."
-        },
-        "marginBytes": {
-          "type": "integer",
-          "description": "`totalBytes × marginRatio`.",
-          "minimum": 0
-        },
-        "marginRatio": {
-          "type": "number",
-          "format": "double"
-        },
-        "shortBytes": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "description": "Block only: `needBytes − budgetBytes`.",
-          "minimum": 0
-        },
-        "spareBytes": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "description": "Allow/warn only: `budgetBytes − needBytes`.",
-          "minimum": 0
-        },
-        "message": {
-          "type": "string",
-          "description": "The rule's arithmetic in words (a refusal's text, verbatim — the same as `gateMessage`)."
-        }
-      },
-      "required": [
-        "modelId",
-        "verdict",
-        "needBytes",
-        "weightsBytes",
-        "kvBytes",
-        "contextTokens",
-        "budgetBytes",
-        "availableBytes",
-        "totalBytes",
-        "ceilingBytes",
-        "marginBytes",
-        "marginRatio",
-        "message"
-      ],
-      "description": "The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −\nRAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is \"warn\" when what is left\nis inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes."
     },
     "MlxEngineLoadDto": {
       "type": "object",

@@ -2633,6 +2633,13 @@ export type MlxEngineStatusDto = {
      */
     gateVerdict?: string | null;
     /**
+     * The last memory-gate verdict whole: the model it judged and the rule's figures — what
+     * `gateMessage`/`gateVerdict` say in words, so a refused mount is drawn from the same verdict
+     * object the tile draws (`mountFit`) rather than from a sentence (Q-277). Absent before any
+     * mount, after a mount the port refused before its gate, and from a goose before it.
+     */
+    gateFit?: MlxMountFitDto | null;
+    /**
      * Something already listens on the configured port while the manager supervises
      * nothing — an engine orphaned by a previous goosed, or anyone else's. Unmount reclaims it
      * only when `strayListenerStep.kind` is "start" (every holder is this goose's own leftover);
@@ -2733,6 +2740,66 @@ export type MlxEngineStatusDto = {
 };
 
 /**
+ * The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
+ * RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
+ * is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
+ */
+export type MlxMountFitDto = {
+    modelId: string;
+    /**
+     * "allow" | "warn" | "block".
+     */
+    verdict: string;
+    /**
+     * `weightsBytes + kvBytes`.
+     */
+    needBytes: number;
+    /**
+     * The model directory's bytes on disk.
+     */
+    weightsBytes: number;
+    /**
+     * KV for `contextTokens` (the smallest useful context); 0 when `kvError` says it could not be
+     * sized (then only the weights are charged).
+     */
+    kvBytes: number;
+    contextTokens: number;
+    kvError?: string | null;
+    budgetBytes: number;
+    /**
+     * Available now (plus a mounted model's footprint, which a mount gets back).
+     */
+    availableBytes: number;
+    totalBytes: number;
+    /**
+     * Metal's recommended working-set ceiling on this Mac.
+     */
+    ceilingBytes: number;
+    /**
+     * The resident bytes the OTHER MLX engines on this Mac hold, charged against the ceiling:
+     * `budgetBytes = min(availableBytes − marginBytes, ceilingBytes − otherEnginesBytes)`.
+     */
+    otherEnginesBytes?: number;
+    /**
+     * `totalBytes × marginRatio`.
+     */
+    marginBytes: number;
+    marginRatio: number;
+    /**
+     * Block only: `needBytes − budgetBytes`.
+     */
+    shortBytes?: number | null;
+    /**
+     * Allow/warn only: `budgetBytes − needBytes`.
+     */
+    spareBytes?: number | null;
+    /**
+     * The rule's arithmetic in words (a refusal's text, verbatim — the same as `gateMessage`).
+     */
+    message: string;
+};
+
+/**
  * One process listening on the engine port while this goose supervises no engine there (Q-249):
  * the same facts a refused Mount names — pid, command line, and whether it is this goose's.
  */
@@ -2797,66 +2864,6 @@ export type MlxChipDto = {
     hwModel: string;
     brand: string;
     gpuCores?: number | null;
-};
-
-/**
- * The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
- * RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
- * is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
- */
-export type MlxMountFitDto = {
-    modelId: string;
-    /**
-     * "allow" | "warn" | "block".
-     */
-    verdict: string;
-    /**
-     * `weightsBytes + kvBytes`.
-     */
-    needBytes: number;
-    /**
-     * The model directory's bytes on disk.
-     */
-    weightsBytes: number;
-    /**
-     * KV for `contextTokens` (the smallest useful context); 0 when `kvError` says it could not be
-     * sized (then only the weights are charged).
-     */
-    kvBytes: number;
-    contextTokens: number;
-    kvError?: string | null;
-    budgetBytes: number;
-    /**
-     * Available now (plus a mounted model's footprint, which a mount gets back).
-     */
-    availableBytes: number;
-    totalBytes: number;
-    /**
-     * Metal's recommended working-set ceiling on this Mac.
-     */
-    ceilingBytes: number;
-    /**
-     * The resident bytes the OTHER MLX engines on this Mac hold, charged against the ceiling:
-     * `budgetBytes = min(availableBytes − marginBytes, ceilingBytes − otherEnginesBytes)`.
-     */
-    otherEnginesBytes?: number;
-    /**
-     * `totalBytes × marginRatio`.
-     */
-    marginBytes: number;
-    marginRatio: number;
-    /**
-     * Block only: `needBytes − budgetBytes`.
-     */
-    shortBytes?: number | null;
-    /**
-     * Allow/warn only: `budgetBytes − needBytes`.
-     */
-    spareBytes?: number | null;
-    /**
-     * The rule's arithmetic in words (a refusal's text, verbatim — the same as `gateMessage`).
-     */
-    message: string;
 };
 
 /**

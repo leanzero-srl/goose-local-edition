@@ -911,6 +911,26 @@ impl From<&PortHolder> for StrayListenerHolder {
     }
 }
 
+/// Who holds the engine port before a mount judges its gate, while this manager runs no engine.
+enum PortBeforeMount {
+    Free,
+    /// Every holder is proven this goose's own leftover: the start stops it, so it frees memory.
+    OursLeftover(Vec<PortHolder>),
+    /// Something this goose may not stop, or holders that could not be read: the mount's refusal.
+    Held(UnsupervisedListenerError),
+}
+
+/// The resident bytes of whatever listens on `port` — the engine a start stops there.
+async fn footprint_on_port(port: u16) -> Result<u64> {
+    #[cfg(unix)]
+    return crate::placement::engine_resident_bytes(port).await;
+    #[cfg(not(unix))]
+    {
+        let _ = port;
+        Err(anyhow::anyhow!("process footprints are read on unix only"))
+    }
+}
+
 /// The refusal a mount owes when something it does not supervise listens on `port`: `None` when
 /// nothing does, or when every holder is proven this sidecar's own leftover (the start stops it).
 async fn unsupervised_listener(port: u16, marker: &str) -> Option<UnsupervisedListenerError> {
@@ -976,6 +996,13 @@ enum ManagerState {
     },
 }
 
+/// A memory-gate verdict and the model it judged: the last mount's gate (`EngineStatus::gate`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateJudged {
+    pub model_id: String,
+    pub verdict: FitVerdict,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineStatus {
     pub state: String,
@@ -1000,6 +1027,10 @@ pub struct EngineStatus {
     pub active_requests_error: Option<String>,
     pub gate_message: Option<String>,
     pub gate_verdict: Option<String>,
+    /// The last memory-gate verdict whole, with the model it judged — what `gate_message` and
+    /// `gate_verdict` say in words, for a surface that draws the refusal from its figures (Q-277).
+    #[serde(skip)]
+    pub gate: Option<GateJudged>,
     /// Set when the manager supervises nothing but SOMETHING already listens on the
     /// configured port — an engine orphaned by a previous goosed, or anyone else's. `unmount`
     /// reclaims it only when every holder is proven this goose's own leftover (Q-252).
@@ -1223,7 +1254,7 @@ pub struct MlxEngineManager {
     /// The swarm pool's nodes (`swarm.devices`): every name they give the mounted model is one the
     /// engine answers to (`build_serve_command`). Empty until the owner of the config hands them over.
     nodes: StdMutex<Vec<NodeModel>>,
-    last_gate: StdMutex<Option<FitVerdict>>,
+    last_gate: StdMutex<Option<GateJudged>>,
     /// The model a mount is making room for (macOS compaction runs before the gate judges again).
     making_room: StdMutex<Option<(String, u64)>>,
     /// The mount waiting for another load to leave this Mac (`mount_after_load`).
@@ -1423,7 +1454,7 @@ impl MlxEngineManager {
         let ceiling = self
             .gpu_ceiling()
             .context("reading the GPU ceiling the fit rule needs")?;
-        let (freed, note) = self.mounted_footprint(settings).await;
+        let (freed, note) = self.start_frees(settings).await;
         let need = single_engine_need(
             &expand_tilde(&settings.models_dir).join(&model.id),
             model.size_bytes,
@@ -1452,18 +1483,53 @@ impl MlxEngineManager {
         Ok((verdict, others))
     }
 
-    /// The running engine's resident bytes (what a mount gets back), with the sentence that says
-    /// so — or 0 and the sentence that says why it could not be counted.
-    async fn mounted_footprint(&self, settings: &EngineSettings) -> (u64, Option<String>) {
+    /// What a start on this Mac gets back before it loads, with the sentence that says so — or 0
+    /// and the sentence that says why it could not be counted. Two engines are stopped by a start:
+    /// the one this manager runs (a mount replaces it), and — while it runs none — this goose's own
+    /// leftover on the engine port, which the start's `port_holder::claim_port` stops per pid
+    /// before it spawns (Q-276: a kill -9'd goosed left its engine holding ~30 GB, and the gate
+    /// charged those bytes as used, so Restore, Run and Try again were each refused "short 2.0 GB"
+    /// before the claim that would have freed them ever ran). A holder not proven ours frees
+    /// nothing: the mount refuses on it before its gate ([`Self::port_before_mount`]), and its
+    /// memory stays in use.
+    async fn start_frees(&self, settings: &EngineSettings) -> (u64, Option<String>) {
         let mounted = match &*self.state.lock().await {
-            ManagerState::Running { model_id, .. } => model_id.clone(),
-            _ => return (0, None),
+            ManagerState::Running { model_id, .. } => Some(model_id.clone()),
+            // The start in flight owns the port: its listener is its own child, not a leftover.
+            ManagerState::Mounting { .. } => return (0, None),
+            ManagerState::Stopped | ManagerState::Failed { .. } => None,
         };
-        #[cfg(unix)]
-        let read = crate::placement::engine_resident_bytes(settings.port).await;
-        #[cfg(not(unix))]
-        let read: Result<u64> = Err(anyhow::anyhow!("process footprints are read on unix only"));
-        match read {
+        let port = settings.port;
+        let Some(mounted) = mounted else {
+            let PortBeforeMount::OursLeftover(holders) = self.port_before_mount(port).await else {
+                return (0, None);
+            };
+            let pids = holders
+                .iter()
+                .map(|h| h.pid.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return match footprint_on_port(port).await {
+                Ok(bytes) => (
+                    bytes,
+                    Some(format!(
+                        "pid {pids} on port {port} is this goose's own engine left from an \
+                         earlier run — nothing runs it and the start stops it first, so its {} \
+                         count as available",
+                        fit::gb(bytes)
+                    )),
+                ),
+                Err(e) => (
+                    0,
+                    Some(format!(
+                        "pid {pids} on port {port} is this goose's own leftover engine, which the \
+                         start stops first, but its memory could not be read ({e:#}); it counts \
+                         as in use"
+                    )),
+                ),
+            };
+        };
+        match footprint_on_port(port).await {
             Ok(bytes) => (
                 bytes,
                 Some(format!(
@@ -1478,6 +1544,22 @@ impl MlxEngineManager {
                      counts as in use"
                 )),
             ),
+        }
+    }
+
+    /// The ownership verdict on the engine port while this manager runs no engine there — read
+    /// BEFORE the gate (Q-276), through the status's own holder read (`port_holder`'s proof, cached
+    /// while the listeners and their lineages are unchanged, Q-253), so the verdict a mount acts on
+    /// and the one the Engine panel names are one read.
+    async fn port_before_mount(&self, port: u16) -> PortBeforeMount {
+        if !port_has_listener(port) {
+            return PortBeforeMount::Free;
+        }
+        match self.stray_holders(port, &engine_marker(port)).await {
+            Ok(holders) if !holders.is_empty() && holders.iter().all(|h| h.verdict.is_ok()) => {
+                PortBeforeMount::OursLeftover(holders)
+            }
+            holders => PortBeforeMount::Held(UnsupervisedListenerError { port, holders }),
         }
     }
 
@@ -1612,13 +1694,27 @@ impl MlxEngineManager {
         let settings = self.settings();
         let model = self.mountable_model(&settings, model_id)?;
 
+        // The ownership verdict comes first (Q-276): a holder this goose cannot stop refuses the
+        // mount by name — the fit is moot while the port is taken — and a leftover proven ours is
+        // counted by the gate as memory the start frees (`start_frees`).
+        let supervises = matches!(&*self.state.lock().await, ManagerState::Running { .. });
+        if !supervises {
+            if let PortBeforeMount::Held(refused) = self.port_before_mount(settings.port).await {
+                *self.last_gate.lock().unwrap() = None;
+                return Err(refused.into());
+            }
+        }
+
         #[allow(unused_mut)]
         let (mut gate, other_engines) = self.judge_model_beside(&settings, &model).await?;
         #[cfg(unix)]
         if gate.verdict == Verdict::Block {
             gate = self.make_room_then_gate(&settings, &model, gate).await?;
         }
-        *self.last_gate.lock().unwrap() = Some(gate.clone());
+        *self.last_gate.lock().unwrap() = Some(GateJudged {
+            model_id: model_id.to_string(),
+            verdict: gate.clone(),
+        });
         if gate.verdict == Verdict::Block {
             return Err(MountRefused {
                 model_id: model_id.to_string(),
@@ -1803,7 +1899,7 @@ impl MlxEngineManager {
         model: &LocalModel,
         blocked: FitVerdict,
     ) -> Result<FitVerdict> {
-        use crate::distributed::compaction::{compact_node, CompactionOutcome};
+        use crate::distributed::compaction::CompactionOutcome;
         let loaded = matches!(
             &*self.state.lock().await,
             ManagerState::Running { .. } | ManagerState::Mounting { .. }
@@ -1812,7 +1908,22 @@ impl MlxEngineManager {
             return Ok(blocked);
         }
         *self.making_room.lock().unwrap() = Some((model.id.clone(), model.size_bytes));
-        let outcome = compact_node(&crate::distributed::SystemExec, None, "this Mac").await;
+        // Compaction pressures every process on the Mac — the owner's live engine and whatever
+        // else runs — so a unit test that reaches it is answered as refused, never run.
+        #[cfg(test)]
+        let outcome: Result<CompactionOutcome> = Ok(CompactionOutcome::Refused(
+            crate::distributed::compaction::CompactionRefusal {
+                code: "unitTest".to_string(),
+                message: "a unit test never pressures this Mac".to_string(),
+            },
+        ));
+        #[cfg(not(test))]
+        let outcome = crate::distributed::compaction::compact_node(
+            &crate::distributed::SystemExec,
+            None,
+            "this Mac",
+        )
+        .await;
         *self.making_room.lock().unwrap() = None;
         Ok(match outcome {
             Ok(CompactionOutcome::Compacted(report)) => {
@@ -1898,8 +2009,12 @@ impl MlxEngineManager {
             Err(e) => (None, Some(format!("{e:#}"))),
         };
         let gib_of = |bytes: u64| bytes as f64 / GIB as f64;
-        let (gate_message, gate_verdict) = match self.last_gate.lock().unwrap().clone() {
-            Some(g) => (Some(g.message), Some(g.verdict.as_str().to_string())),
+        let gate = self.last_gate.lock().unwrap().clone();
+        let (gate_message, gate_verdict) = match &gate {
+            Some(g) => (
+                Some(g.verdict.message.clone()),
+                Some(g.verdict.verdict.as_str().to_string()),
+            ),
             None => (None, None),
         };
         let mut status = EngineStatus {
@@ -1915,6 +2030,7 @@ impl MlxEngineManager {
             active_requests_error: None,
             gate_message,
             gate_verdict,
+            gate,
             stray_listener_port: None,
             stray_listener_holders: None,
             stray_listener_holders_error: None,
@@ -3998,6 +4114,11 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     /// the argv fake and exits, so the engine is re-parented to init carrying the dead leader's
     /// pgid — the `uv`-SIGKILLed shape measured 2026-09-01. Returns once it listens.
     fn leftover_engine(port: u16, marker: Option<&str>) -> u32 {
+        leftover_running(port, marker, ARGV_FAKE_ENGINE)
+    }
+
+    /// [`leftover_engine`] running `script`.
+    fn leftover_running(port: u16, marker: Option<&str>, script: &str) -> u32 {
         use std::io::BufRead;
         use std::os::unix::process::CommandExt;
         let mut sh = std::process::Command::new("/bin/sh");
@@ -4006,7 +4127,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             r#"python3 -c "$1" serve /leftover --port "$2" --served-model-name pub/small \
                >/dev/null 2>&1 & echo $!"#,
             "sh",
-            ARGV_FAKE_ENGINE,
+            script,
             &port.to_string(),
         ])
         .stdout(std::process::Stdio::piped())
@@ -4584,6 +4705,195 @@ while True:
         assert!(
             !refused.verdict.could_ever_fit(),
             "Make room cannot free another engine"
+        );
+    }
+
+    /// What the Q-276 leftover holds: 768 MiB of incompressible pages (a random MiB repeated), made
+    /// resident before it binds — the stand-in for a 27B's ~30 GB, measured the same way (its
+    /// resident bytes, `placement::engine_resident_bytes`).
+    const LEFTOVER_HOLDS: u64 = 768 << 20;
+
+    /// It closes every descriptor it inherited before it allocates: std marks a new socket
+    /// close-on-exec only after creating it, so a spawn racing a parallel test's bind handed this
+    /// long-lived stand-in that test's listener — measured 2 of 3 full runs: the stray-listener test
+    /// read its port still held after it dropped it, and a second full holder read.
+    fn leftover_holding_memory(port: u16, marker: Option<&str>) -> u32 {
+        let script = format!(
+            "import os\nos.closerange(3, 65536)\nblob = bytearray(os.urandom(1 << 20)) * {}\n{ARGV_FAKE_ENGINE}",
+            LEFTOVER_HOLDS >> 20
+        );
+        leftover_running(port, marker, &script)
+    }
+
+    /// The 3.0.66 shape at a test's scale: an M4 Max 128 GB with 40 GiB available WHILE the
+    /// leftover holds its memory, and a model 256 MiB over the budget that leaves — so it fits only
+    /// when what the leftover holds is counted as freed (768 MiB of it: a spare of 512 MiB).
+    fn leftover_fixture(models_dir: &std::path::Path, id: &str) -> (MemoryReading, u64) {
+        let reading = MemoryReading {
+            available_bytes: 40 * GIB,
+            total_bytes: 128 * GIB,
+            reclaimable_cache_bytes: Some(10 * GIB),
+        };
+        let facts = NodeMemoryFacts {
+            available_bytes: reading.available_bytes,
+            total_bytes: reading.total_bytes,
+            ceiling_bytes: PINNED_MEMORY.1,
+            other_engines_bytes: 0,
+            freed_by_switch_bytes: 0,
+        };
+        let model_dir = models_dir.join(id);
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("config.json"), "{}").unwrap();
+        std::fs::File::create(model_dir.join("model.safetensors"))
+            .unwrap()
+            .set_len(facts.budget_bytes() + (256 << 20))
+            .unwrap();
+        (reading, PINNED_MEMORY.1)
+    }
+
+    /// Q-276, the 3.0.66 live sequence: a goosed killed with its engine up left that engine on the
+    /// port, marked `GOOSE_SIDECAR=mlx-engine@…`, holding its memory. After the relaunch Restore,
+    /// Run on this Mac and Try again were each refused by the memory gate ("short 2.0 GB — Make
+    /// room did not run (engineLoaded): this Mac runs an MLX engine (pid 21637 …)") BEFORE the
+    /// start's `claim_port` — the one step that stops that leftover — ever ran. The ownership
+    /// verdict now comes first: the leftover is proven ours, its measured footprint counts as what
+    /// the start frees (in the gate AND in the verdict the tile draws), and the start stops it per
+    /// pid and serves its own engine.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_gate_counts_its_own_leftover_as_freed_and_the_start_stops_it() {
+        let port = free_port();
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = manager_with_memory(leftover_fixture(tmp.path(), "pub/tight"));
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                ARGV_FAKE_ENGINE.to_string(),
+            ],
+            ..Default::default()
+        });
+        let leftover = leftover_holding_memory(port, Some(&engine_marker(port)));
+
+        let tile = manager.mount_fit("pub/tight").await;
+        let mounted = manager
+            .mount("pub/tight")
+            .await
+            .map_err(|e| format!("{e:#}"));
+        let status = settle(&manager).await;
+        let leftover_alive = alive(leftover);
+        if leftover_alive {
+            // SAFETY: the test's own stand-in, signalled by its pid alone.
+            unsafe { libc::kill(leftover as libc::pid_t, libc::SIGKILL) };
+        }
+        wait_exited(leftover).await;
+        let unmounted = manager.unmount().await;
+
+        if let Err(refused) = &mounted {
+            panic!("the mount was refused before its start could stop the leftover: {refused}");
+        }
+        let tile = tile.unwrap();
+        eprintln!("the verdict the tile draws: {}", tile.message);
+        assert_ne!(tile.verdict, Verdict::Block, "{}", tile.message);
+        assert!(
+            tile.facts.freed_by_switch_bytes >= LEFTOVER_HOLDS * 2 / 3,
+            "the leftover's measured footprint counts as freed: {}",
+            tile.message
+        );
+        assert!(
+            tile.message.contains(&format!(
+                "pid {leftover} on port {port} is this goose's own engine left from an earlier run"
+            )),
+            "{}",
+            tile.message
+        );
+        assert_eq!(status.state, "running", "{:?}", status.last_error);
+        assert_ne!(
+            status.pid,
+            Some(leftover),
+            "the start serves its own engine"
+        );
+        assert!(
+            !leftover_alive,
+            "the start left the leftover {leftover} running"
+        );
+        let gate = status
+            .gate
+            .as_ref()
+            .expect("the mount's gate is on the status");
+        assert_eq!(gate.model_id, "pub/tight");
+        assert_eq!(
+            (
+                gate.verdict.verdict,
+                gate.verdict.facts.freed_by_switch_bytes > 0
+            ),
+            (tile.verdict, true),
+            "the gate and the tile are one rule on one read: {}",
+            gate.verdict.message
+        );
+        unmounted.unwrap();
+    }
+
+    /// Q-276's other half: the same leftover NOT proven ours (unmarked — a terminal's server, or an
+    /// engine a goose older than the marker left) still counts as used in the verdict the tile
+    /// draws, and the mount refuses on the port BEFORE its gate — named, with the one next step,
+    /// nothing signalled — so no memory refusal stands in for the real reason and no stale gate
+    /// banner is left beside it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_leftover_not_ours_still_counts_and_the_mount_names_it_before_the_gate() {
+        let port = free_port();
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = manager_with_memory(leftover_fixture(tmp.path(), "pub/tight"));
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                ARGV_FAKE_ENGINE.to_string(),
+            ],
+            ..Default::default()
+        });
+        let foreign = leftover_holding_memory(port, None);
+
+        let tile = manager.mount_fit("pub/tight").await;
+        let refused = manager.mount("pub/tight").await;
+        let status = manager.status().await;
+        let untouched = alive(foreign) && port_has_listener(port);
+        // SAFETY: the test's own stand-in, signalled by its pid alone.
+        unsafe { libc::kill(foreign as libc::pid_t, libc::SIGKILL) };
+        wait_exited(foreign).await;
+
+        let tile = tile.unwrap();
+        assert_eq!(tile.verdict, Verdict::Block, "{}", tile.message);
+        assert_eq!(tile.facts.freed_by_switch_bytes, 0, "{}", tile.message);
+        let err = refused.expect_err("a mount over a listener not proven ours");
+        assert!(
+            err.downcast_ref::<MountRefused>().is_none(),
+            "the port refuses the mount, not the memory gate: {err:#}"
+        );
+        let text = format!("{err:#}");
+        eprintln!("the refusal: {text}");
+        assert!(
+            text.starts_with(&format!(
+                "port {port} has an unsupervised listener: pid {foreign}"
+            )),
+            "{text}"
+        );
+        assert!(text.contains("nothing was signalled"), "{text}");
+        assert!(
+            text.contains(&format!("stop it per pid (`kill {foreign}`)")),
+            "the one next step: {text}"
+        );
+        assert!(untouched, "the leftover not proven ours was signalled");
+        assert_eq!(status.state, "stopped");
+        assert!(status.gate.is_none() && status.gate_verdict.is_none());
+        assert_eq!(
+            status.stray_listener_step.as_ref().map(|s| s.kind.as_str()),
+            Some("kill")
         );
     }
 }

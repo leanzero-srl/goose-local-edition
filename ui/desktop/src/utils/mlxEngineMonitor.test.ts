@@ -9,6 +9,7 @@ import {
 } from './mlxEngineMonitor';
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
 import { routePeerGone } from './routeContact';
+import { leftoverPortOf } from '../acp/mlx-engine';
 import type { MlxServingRead } from './mlxServing';
 import { measuredFigure, type MeasuredRunsFetch, type MlxMeasuredRead } from './mlxMeasuredRuns';
 import {
@@ -684,5 +685,81 @@ describe('isMlxEngineReport', () => {
     expect(isMlxEngineReport({ state: 'exploded' })).toBe(false);
     expect(isMlxEngineReport({ state: 'running', baseUrl: 8090 })).toBe(false);
     expect(isMlxEngineReport(null)).toBe(false);
+  });
+});
+
+/**
+ * Q-277: after a kill -9'd goosed the relaunched goose runs no engine, its own leftover still
+ * answers on the port, and the tray read "single/running" beside a panel saying no model mounted.
+ * The activity follows goose's word: stopped over its own leftover is OFF, named, and the port is not
+ * read; any other listener goose does not run (another goose's live engine) is read as before.
+ */
+describe('MlxEngineMonitor — goose stopped over its own leftover is OFF (Q-277)', () => {
+  it('the leftover answering is not goose running: OFF, named, the loop stops', async () => {
+    const h = harness({ status: () => answered(IDLE_STATUS) });
+    h.monitor.reportFromRenderer({ state: 'stopped', leftoverBaseUrl: BASE });
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    const s = h.monitor.current();
+    expect(s).toMatchObject({ engine: 'single', mode: 'off', modelId: null, stats: null });
+    expect(s.statusDetail).toBe(
+      `goose runs no engine: ${BASE} is answered by this goose's own engine left from an earlier run, which nothing runs — a start stops it first`
+    );
+    expect(h.readStatus).not.toHaveBeenCalled();
+    expect(h.scheduled).toHaveLength(0);
+  });
+
+  it('the start that stops it: goose running again reads the port again', async () => {
+    const h = harness({ status: () => answered(IDLE_STATUS) });
+    h.monitor.reportFromRenderer({ state: 'stopped', leftoverBaseUrl: BASE });
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    h.monitor.reportFromRenderer({ state: 'running', baseUrl: BASE, modelId: 'org/m' });
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(2));
+    expect(h.monitor.current().mode).toBe('running');
+  });
+
+  it('stopped with no leftover of its own (another goose runs what answers): read as before', async () => {
+    const h = harness({ status: () => answered(IDLE_STATUS) });
+    h.monitor.reportFromRenderer({ state: 'stopped' });
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    expect(h.monitor.current().mode).toBe('running');
+  });
+
+  it('a leftover report is a report; a non-string address is not', () => {
+    expect(isMlxEngineReport({ state: 'stopped', leftoverBaseUrl: BASE })).toBe(true);
+    expect(isMlxEngineReport({ state: 'stopped', leftoverBaseUrl: 8090 })).toBe(false);
+  });
+});
+
+describe('leftoverPortOf — what the renderer tells main', () => {
+  const base = { restartRequired: false, availableMemoryGb: 40, totalMemoryGb: 128 };
+  it('only goose stopped over holders that are all its own leftover', () => {
+    const step = (kind: string) => ({ kind, text: '' });
+    expect(
+      leftoverPortOf({
+        ...base,
+        state: 'stopped',
+        strayListenerPort: 8090,
+        strayListenerStep: step('start'),
+      })
+    ).toBe(8090);
+    for (const kind of ['quitStarter', 'restartGoose', 'otherPort', 'kill']) {
+      expect(
+        leftoverPortOf({
+          ...base,
+          state: 'stopped',
+          strayListenerPort: 8090,
+          strayListenerStep: step(kind),
+        })
+      ).toBeNull();
+    }
+    expect(
+      leftoverPortOf({
+        ...base,
+        state: 'mounting',
+        strayListenerPort: 8090,
+        strayListenerStep: step('start'),
+      })
+    ).toBeNull();
+    expect(leftoverPortOf({ ...base, state: 'stopped' })).toBeNull();
   });
 });

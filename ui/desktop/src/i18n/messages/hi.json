@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "जवाब नहीं दे रहा · दूसरी विंडो के स्वामित्व में"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "विवरण"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model} को शुरू करने के समय यह इस Mac पर नहीं समाया। मेमोरी बदल गई है और अब यह समा जाता है — इसे फिर से शुरू करें।"
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "विवरण छिपाएँ"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "शुरू नहीं हुआ"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} को इस Mac पर {need} GB चाहिए और अभी इसके लिए {free} GB खाली है — {short} GB कम।"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "रद्द करें"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link कनेक्ट नहीं है ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "पर्याप्त मेमोरी नहीं — इसे {need} GB चाहिए और इसके लिए {free} GB खाली है ({short} GB कम)"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "पर्याप्त मेमोरी नहीं"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "पर्याप्त मेमोरी नहीं ({short} GB कम)"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "दूसरे Mac"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "पोर्ट {port} ऐसे इंजन ने ले रखा है जिसे यह goose रोक नहीं सकता"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "{model} {kind, select, single {इस Mac पर} split {आपके Macs पर} other {{peer} पर}} पुनर्स्थापित हो रहा है…"

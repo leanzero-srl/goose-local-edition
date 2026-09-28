@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "応答なし · 別のウィンドウが所有"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "詳細"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model} は起動を求められたとき、この Mac に収まりませんでした。メモリが変わり、今は収まります。もう一度起動してください。"
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "詳細を隠す"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "起動しませんでした"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} はこの Mac で {need} GB を必要とし、今使える空きは {free} GB です。{short} GB 不足しています。"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "キャンセル"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link が接続されていません ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "メモリが足りません。{need} GB が必要で、使える空きは {free} GB です（{short} GB 不足）"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "メモリが足りません"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "メモリが足りません（{short} GB 不足）"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "もう一方の Mac"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "ポート {port} は、この goose が停止できないエンジンが使用しています"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "{model} を {kind, select, single {この Mac で} split {あなたの Mac 全体で} other {{peer} で}} 復元中…"

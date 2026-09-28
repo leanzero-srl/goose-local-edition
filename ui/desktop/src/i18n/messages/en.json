@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "Not answering · owned by another window"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "Details"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model} did not fit on this Mac when it was asked to start. Memory has changed and it fits now — start it again."
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "Hide details"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "Did not start"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} needs {need} GB on this Mac and {free} GB is free for it now — {short} GB short."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Cancel"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link is not connected ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "not enough memory — it needs {need} GB and {free} GB is free for it ({short} GB short)"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "not enough memory"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "not enough memory ({short} GB short)"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "the other Mac"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "port {port} is taken by an engine this goose may not stop"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "{kind,select,single{Restoring {model} on this Mac…} split{Restoring {model} across your Macs…} other{Restoring {model} on {peer}…}}"

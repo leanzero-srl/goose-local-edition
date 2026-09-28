@@ -2742,6 +2742,40 @@ export const zMlxEngineStatusRequest_unstable = z.object({
 });
 
 /**
+ * The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
+ * RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
+ * is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
+ */
+export const zMlxMountFitDto = z.object({
+    modelId: z.string(),
+    verdict: z.string(),
+    needBytes: z.number().int().gte(0),
+    weightsBytes: z.number().int().gte(0),
+    kvBytes: z.number().int().gte(0),
+    contextTokens: z.number().int().gte(0),
+    kvError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    budgetBytes: z.number().int().gte(0),
+    availableBytes: z.number().int().gte(0),
+    totalBytes: z.number().int().gte(0),
+    ceilingBytes: z.number().int().gte(0),
+    otherEnginesBytes: z.number().int().gte(0).optional().default(0),
+    marginBytes: z.number().int().gte(0),
+    marginRatio: z.number(),
+    shortBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    spareBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    message: z.string()
+});
+
+/**
  * One process listening on the engine port while this goose supervises no engine there (Q-249):
  * the same facts a refused Mount names — pid, command line, and whether it is this goose's.
  */
@@ -2790,40 +2824,6 @@ export const zMlxChipDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional()
-});
-
-/**
- * The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
- * RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
- * is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
- */
-export const zMlxMountFitDto = z.object({
-    modelId: z.string(),
-    verdict: z.string(),
-    needBytes: z.number().int().gte(0),
-    weightsBytes: z.number().int().gte(0),
-    kvBytes: z.number().int().gte(0),
-    contextTokens: z.number().int().gte(0),
-    kvError: z.union([
-        z.string(),
-        z.null()
-    ]).optional(),
-    budgetBytes: z.number().int().gte(0),
-    availableBytes: z.number().int().gte(0),
-    totalBytes: z.number().int().gte(0),
-    ceilingBytes: z.number().int().gte(0),
-    otherEnginesBytes: z.number().int().gte(0).optional().default(0),
-    marginBytes: z.number().int().gte(0),
-    marginRatio: z.number(),
-    shortBytes: z.union([
-        z.number().int().gte(0),
-        z.null()
-    ]).optional(),
-    spareBytes: z.union([
-        z.number().int().gte(0),
-        z.null()
-    ]).optional(),
-    message: z.string()
 });
 
 /**
@@ -2965,6 +2965,10 @@ export const zMlxEngineStatusDto = z.object({
     ]).optional(),
     gateVerdict: z.union([
         z.string(),
+        z.null()
+    ]).optional(),
+    gateFit: z.union([
+        zMlxMountFitDto,
         z.null()
     ]).optional(),
     strayListenerPort: z.union([

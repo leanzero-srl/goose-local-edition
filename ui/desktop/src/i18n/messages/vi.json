@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "Không phản hồi · thuộc cửa sổ khác"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "Chi tiết"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model} không vừa Mac này khi được yêu cầu khởi động. Bộ nhớ đã thay đổi và giờ nó vừa — hãy khởi động lại."
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "Ẩn chi tiết"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "Chưa khởi động"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} cần {need} GB trên Mac này và hiện có {free} GB trống cho nó — thiếu {short} GB."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Hủy"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link chưa được kết nối ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "không đủ bộ nhớ — cần {need} GB và có {free} GB trống cho nó (thiếu {short} GB)"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "không đủ bộ nhớ"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "không đủ bộ nhớ (thiếu {short} GB)"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "Mac kia"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "cổng {port} đang bị một engine mà goose này không được dừng chiếm giữ"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "Đang khôi phục {model} {kind, select, single {trên Mac này} split {trên các Mac của bạn} other {trên {peer}}}…"

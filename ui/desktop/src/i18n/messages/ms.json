@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "Tidak menjawab · dimiliki tetingkap lain"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "Butiran"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model} tidak muat pada Mac ini semasa diminta bermula. Memori telah berubah dan kini ia muat — mulakan semula."
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "Sembunyikan butiran"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "Tidak bermula"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} perlukan {need} GB pada Mac ini dan kini {free} GB kosong untuknya — kurang {short} GB."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Batal"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link tidak bersambung ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "memori tidak mencukupi — ia perlukan {need} GB dan {free} GB kosong untuknya (kurang {short} GB)"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "memori tidak mencukupi"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "memori tidak mencukupi (kurang {short} GB)"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "Mac lain"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "port {port} digunakan oleh enjin yang tidak boleh dihentikan oleh goose ini"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "Memulihkan {model} {kind, select, single {pada Mac ini} split {merentas Mac anda} other {pada {peer}}}…"

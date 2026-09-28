@@ -88,6 +88,13 @@ export interface MlxEngineStatus {
   /** A mount gate refusal (e.g. not enough memory). Render VERBATIM, never paraphrased. */
   gateMessage?: string;
   gateVerdict?: 'allow' | 'warn' | 'block';
+  /**
+   * The last gate whole — the model it judged and the rule's figures, `gateMessage` among them
+   * (Q-277): the Engine tab draws ONE refusal from it, in plain words, with the tile's own live
+   * verdict for that model. Absent before any mount, after a mount the port refused before its
+   * gate, and from a goose before it.
+   */
+  gateFit?: MlxMountFitDto | null;
   /** Persisted settings would spawn the running engine differently; remount to apply. */
   restartRequired: boolean;
   /**
@@ -453,13 +460,30 @@ function reportToMain(status: MlxEngineStatus): void {
       electron?: { mlxEngineReport?: (r: Record<string, string | undefined>) => void };
     }
   ).electron?.mlxEngineReport;
+  const leftover = leftoverPortOf(status);
   report?.({
     state: status.state,
     baseUrl: status.baseUrl,
     modelId: status.modelId,
     servedModelId: status.servedModelId,
     lastError: status.lastError,
+    // The sidecar's own form of the engine's address (`engine_base_url`), as main's config reads it.
+    ...(leftover != null ? { leftoverBaseUrl: `http://127.0.0.1:${leftover}` } : {}),
   });
+}
+
+/**
+ * The engine port while goose runs no engine there and every process on it is this goose's own
+ * leftover from an earlier run (`strayListenerStep.kind` `start`: nothing alive runs it, and a
+ * start stops it first) — an engine answering there is not goose's engine (Q-277: the tray read
+ * "single/running" off a kill -9'd goosed's leftover while the panel said no model mounted).
+ */
+export function leftoverPortOf(status: MlxEngineStatus): number | null {
+  return status.state === 'stopped' &&
+    status.strayListenerPort != null &&
+    status.strayListenerStep?.kind === 'start'
+    ? status.strayListenerPort
+    : null;
 }
 
 /**
@@ -468,7 +492,14 @@ function reportToMain(status: MlxEngineStatus): void {
  * `action` says how to start it) and the model's badge from the same plan.
  */
 export interface MlxMountRefusal {
-  fit: { modelId: string; verdict: string; message: string; shortBytes?: number | null };
+  fit: {
+    modelId: string;
+    verdict: string;
+    message: string;
+    shortBytes?: number | null;
+    needBytes?: number;
+    budgetBytes?: number;
+  };
   alternative?: MlxPlacementCandidateDto | null;
   badge?: MlxPlacementBadgeDto | null;
   alternativeError?: string | null;

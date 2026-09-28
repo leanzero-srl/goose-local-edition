@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "Не отвечает · принадлежит другому окну"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "Подробности"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model} не помещалась на этом Mac, когда её попросили запустить. Память изменилась, и теперь она помещается — запустите её снова."
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "Скрыть подробности"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "Не запущено"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} нужно {need} ГБ на этом Mac, а свободно для неё сейчас {free} ГБ — не хватает {short} ГБ."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Отмена"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link не подключён ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "не хватает памяти — нужно {need} ГБ, а свободно для неё {free} ГБ (не хватает {short} ГБ)"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "не хватает памяти"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "не хватает памяти (не хватает {short} ГБ)"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "другом Mac"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "порт {port} занят движком, который этот goose не может остановить"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "Восстановление {model} {kind, select, single {на этом Mac} split {на ваших Mac} other {на {peer}}}…"

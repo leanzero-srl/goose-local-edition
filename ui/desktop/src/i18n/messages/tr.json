@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "Yanıt vermiyor · başka bir pencereye ait"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model}, başlatılması istendiğinde bu Mac'e sığmıyordu. Bellek değişti ve artık sığıyor — yeniden başlatın."
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "Ayrıntıları gizle"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "Başlamadı"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} bu Mac'te {need} GB istiyor ve şu an onun için {free} GB boş — {short} GB eksik."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "İptal"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "LeanZero Link bağlı değil ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "yeterli bellek yok — {need} GB gerekiyor ve onun için {free} GB boş ({short} GB eksik)"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "yeterli bellek yok"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "yeterli bellek yok ({short} GB eksik)"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "diğer Mac"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "{port} bağlantı noktasını bu goose'un durduramayacağı bir motor tutuyor"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "{model} {kind, select, single {bu Mac’te} split {Mac’lerinizde} other {{peer} üzerinde}} geri yükleniyor…"

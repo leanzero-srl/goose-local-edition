@@ -5003,6 +5003,21 @@
   "mlxMount.foreignNotAnswering": {
     "defaultMessage": "Não responde · pertence a outra janela"
   },
+  "mlxMountRefusal.details": {
+    "defaultMessage": "Detalhes"
+  },
+  "mlxMountRefusal.fitsNow": {
+    "defaultMessage": "{model} não cabia neste Mac quando pediram para iniciá-lo. A memória mudou e agora cabe — inicie-o de novo."
+  },
+  "mlxMountRefusal.hideDetails": {
+    "defaultMessage": "Ocultar detalhes"
+  },
+  "mlxMountRefusal.label": {
+    "defaultMessage": "Não iniciou"
+  },
+  "mlxMountRefusal.short": {
+    "defaultMessage": "{model} precisa de {need} GB neste Mac e agora há {free} GB livres para ele — faltam {short} GB."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Cancelar"
   },
@@ -5066,8 +5081,20 @@
   "mlxRestore.linkDown": {
     "defaultMessage": "O LeanZero Link não está conectado ({detail})"
   },
+  "mlxRestore.notEnoughMemory": {
+    "defaultMessage": "memória insuficiente — precisa de {need} GB e há {free} GB livres para ele (faltam {short} GB)"
+  },
+  "mlxRestore.notEnoughMemoryPlain": {
+    "defaultMessage": "memória insuficiente"
+  },
+  "mlxRestore.notEnoughMemoryShort": {
+    "defaultMessage": "memória insuficiente (faltam {short} GB)"
+  },
   "mlxRestore.otherMac": {
     "defaultMessage": "o outro Mac"
+  },
+  "mlxRestore.portTaken": {
+    "defaultMessage": "a porta {port} está ocupada por um motor que este goose não pode parar"
   },
   "mlxRestore.restoring": {
     "defaultMessage": "Restaurando {model} {kind, select, single {neste Mac} split {nos seus Macs} other {em {peer}}}…"

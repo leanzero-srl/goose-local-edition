@@ -475,6 +475,10 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         probe_error: status.probe_error,
         gate_message: status.gate_message,
         gate_verdict: status.gate_verdict,
+        gate_fit: status
+            .gate
+            .as_ref()
+            .map(|g| fit_to_dto(&g.model_id, &g.verdict)),
         available_memory_gb: status.available_memory_gb,
         total_memory_gb: status.total_memory_gb,
         reclaimable_cache_gb: status.reclaimable_cache_gb,
@@ -1390,6 +1394,49 @@ impl MlxControl for GoosedMlxControl {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// Q-277: the last gate reaches the wire whole as `gateFit` — the model it judged, its verdict
+    /// and the short the refusal banner states — beside the words it always had; a status with no
+    /// gate sends none of it.
+    #[test]
+    fn the_last_gate_reaches_the_wire_whole() {
+        use goose_sidecar::fit::{judge, Need, NodeMemoryFacts, GIB};
+        let verdict = judge(
+            Need::single_engine(30 * GIB, Ok(0), 0),
+            NodeMemoryFacts {
+                available_bytes: 40 * GIB,
+                total_bytes: 128 * GIB,
+                ceiling_bytes: 115_448_725_504,
+                other_engines_bytes: 0,
+                freed_by_switch_bytes: 0,
+            },
+        );
+        let model = "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx";
+        let wire = serde_json::to_value(MlxEngineStatusDto {
+            state: "stopped".to_string(),
+            gate_message: Some(verdict.message.clone()),
+            gate_verdict: Some("block".to_string()),
+            gate_fit: Some(fit_to_dto(model, &verdict)),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(wire["gateFit"]["modelId"], model);
+        assert_eq!(wire["gateFit"]["verdict"], "block");
+        assert_eq!(wire["gateFit"]["needBytes"], 30 * GIB);
+        assert_eq!(
+            wire["gateFit"]["shortBytes"],
+            30 * GIB - verdict.budget_bytes,
+            "the short the banner states is the rule's own"
+        );
+        assert_eq!(wire["gateFit"]["message"], wire["gateMessage"]);
+
+        let quiet = serde_json::to_value(MlxEngineStatusDto {
+            state: "stopped".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(quiet.get("gateFit").is_none(), "{quiet}");
+    }
 
     /// Q-249: who holds a stray port reaches the wire whole — pid, command line, the verdict, the
     /// rule and the live starter — so the Engine panel can name it; a port that is not stray
