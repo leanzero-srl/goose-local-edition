@@ -132,7 +132,11 @@ export function WeightStepper({
   );
 }
 
-/** A switch on the accent: solid fill when on, strong border when off. Never a native checkbox. */
+/**
+ * A switch on the accent: the solid accent track when on, a solid ink-3 track when off, and a
+ * solid ink-4 track with a surface knob when disabled — a track in every state. Never a native
+ * checkbox.
+ */
 export function StudioSwitch({
   checked,
   onChange,
@@ -152,11 +156,13 @@ export function StudioSwitch({
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange(!checked)}
+      data-state={checked ? 'checked' : 'unchecked'}
       className={cx(
-        'inline-flex h-5 w-9 shrink-0 items-center px-0.5',
+        'inline-flex h-5 w-9 shrink-0 items-center px-0.5 disabled:pointer-events-none',
         RADIUS.pill,
-        checked ? 'bg-lz-accent' : 'bg-lz-border-strong',
-        DISABLED,
+        // One branch per state, never DISABLED's override: its surface-2 fill is the row's own
+        // colour, so a disabled switch drew as a lone white knob with no track (Q-312).
+        disabled ? 'bg-lz-ink-4' : checked ? 'bg-lz-accent' : 'bg-lz-ink-3',
         FOCUS,
         MOTION
       )}
@@ -164,8 +170,9 @@ export function StudioSwitch({
       <span
         aria-hidden
         className={cx(
-          'block size-4 bg-white transition-transform duration-120 ease-lz',
+          'block size-4 transition-transform duration-120 ease-lz',
           RADIUS.pill,
+          disabled ? 'bg-lz-surface-2' : 'bg-white',
           checked ? 'translate-x-4' : 'translate-x-0'
         )}
       />

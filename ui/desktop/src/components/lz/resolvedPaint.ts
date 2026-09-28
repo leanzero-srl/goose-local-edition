@@ -20,7 +20,8 @@ import { darkTokens, lightTokens } from '../../theme/theme-tokens';
  *
  * Variant model (deliberately pessimistic): base classes apply first, `data-[state=active]:`
  * when the element carries data-state="active", `aria-selected:`/`aria-current:` when the
- * attribute is set, and `hover:` LAST when `hover` is asked for — so a selected row that still
+ * attribute is set, `disabled:` when the element is disabled, and `hover:` LAST when `hover` is
+ * asked for — so a selected row that still
  * carries the neutral hover step resolves to that step under the pointer, which is exactly the
  * "selected must always win over hover" rule the tests pin.
  */
@@ -127,7 +128,7 @@ function design() {
   return (designPromise ??= loadDesignSystem(css, { base }));
 }
 
-const VARIANT_ORDER = ['', 'aria-selected:', 'aria-current:', 'data-[state=active]:', 'hover:'] as const;
+const VARIANT_ORDER = ['', 'aria-selected:', 'aria-current:', 'data-[state=active]:', 'disabled:', 'hover:'] as const;
 
 function variantOf(cls: string): (typeof VARIANT_ORDER)[number] | 'other' {
   for (const v of VARIANT_ORDER) if (v && cls.startsWith(v)) return v;
@@ -155,6 +156,9 @@ export async function resolvedPaint(
     el.getAttribute('data-state') === 'active' ||
     el.getAttribute('aria-selected') === 'true' ||
     el.getAttribute('aria-current') != null;
+  // A disabled control paints its `disabled:` classes: Q-312's switch lost its track to
+  // DISABLED's surface-2 fill, which a model that skipped the variant could not see.
+  const disabled = (el as HTMLButtonElement).disabled === true;
   const paint: ResolvedPaint = {
     bg: opts.inherit?.bg ?? null,
     text: opts.inherit?.text ?? null,
@@ -172,6 +176,7 @@ export async function resolvedPaint(
     if (v === 'other') return;
     if (v === 'hover:' && !opts.hover) return;
     if ((v === 'aria-selected:' || v === 'aria-current:' || v === 'data-[state=active]:') && !active) return;
+    if (v === 'disabled:' && !disabled) return;
     applicable.push({ order: VARIANT_ORDER.indexOf(v), sheet: sheetOrder.get(cls) ?? 0n, rule });
   });
   applicable.sort((a, b) => a.order - b.order || (a.sheet < b.sheet ? -1 : a.sheet > b.sheet ? 1 : 0));

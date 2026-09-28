@@ -510,16 +510,12 @@ describe('Run it on the real 27B plan', () => {
     expect(kind.parentElement?.textContent).not.toMatch(/JACCL|tensor/);
     expect(within(split).getByText('fits only at 72,704 context')).toBeInTheDocument();
 
-    // Q-25: the pipeline split goose cannot run for this model is no option at the card's top level
-    // — it waits, with its reason, under the split's Details.
-    const other = screen.getByTestId('placement-other-pipeline:jaccl:local+workhorse');
-    expect(within(split).getByTestId('placement-split-details')).toContainElement(other);
-    expect(other).not.toBeVisible();
+    // Q-25 moved the pipeline split goose cannot run under the split's Details; Q-312: it is no
+    // option at all, so Details carries no "1 other split … not supported yet" either.
     await userEvent.click(within(split).getByText('Details'));
-    expect(within(split).getByText('1 other split')).toBeVisible();
-    expect(
-      within(other).getByText(/^not supported yet: goose splits qwen3_5 tensor-parallel only$/)
-    ).toBeVisible();
+    expect(screen.queryByTestId('placement-others')).toBeNull();
+    expect(screen.queryByTestId('placement-other-pipeline:jaccl:local+workhorse')).toBeNull();
+    expect(screen.queryByText(/not supported yet/)).toBeNull();
     // No hardware lines under the card: the chips live on My Macs.
     expect(screen.queryByTestId('placement-nodes')).toBeNull();
     expect(mockPlan).toHaveBeenCalledWith('chat', MODEL);

@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "計畫 {gb} GB（含開銷）"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "請先填寫下方的空白欄位：試執行會檢查其中填寫的內容。"
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "請先設定拆分：試執行會檢查其中列出的 Mac。"
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "尚未執行預檢。試執行會檢查每個節點（可達性、記憶體、模型、Python、Thunderbolt 連結、連接埠），並在不啟動任何東西的情況下規劃各節點的層。"
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "預檢"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "請先停止拆分再進行試執行：它的各個 rank 佔用著試執行要檢查的連接埠和記憶體。"
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "記憶體壓力：危急"

@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "planned {gb} GB with overhead"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Fill in the empty fields below first: a dry run checks what they name."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Set up the split first: a dry run checks the Macs it names."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "No preflight has run yet. A dry run checks every node (reachability, memory, the model, Python, the Thunderbolt link, ports) and plans the layers per node without launching anything."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Stop the split to run a dry run: its ranks hold the ports and memory a dry run checks."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Pressure critical"

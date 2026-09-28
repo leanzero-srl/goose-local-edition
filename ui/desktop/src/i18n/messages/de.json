@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "geplant {gb} GB mit Overhead"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Fülle zuerst die leeren Felder unten aus: Ein Probelauf prüft, was sie angeben."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Richte zuerst die Aufteilung ein: Ein Probelauf prüft die Macs, die sie nennt."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Es lief noch kein Preflight. Ein Probelauf prüft jeden Node (Erreichbarkeit, Speicher, das Modell, Python, die Thunderbolt-Verbindung, Ports) und plant die Schichten pro Node, ohne etwas zu starten."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Beende die Aufteilung für einen Probelauf: Ihre Ränge belegen die Ports und den Speicher, die ein Probelauf prüft."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Druck kritisch"

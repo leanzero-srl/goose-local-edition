@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "नियोजित {gb} GB ओवरहेड सहित"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "पहले नीचे के खाली फ़ील्ड भरें: ड्राई रन वही जाँचता है जो उनमें लिखा है।"
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "पहले स्प्लिट सेट करें: ड्राई रन उन Mac को जाँचता है जिनके नाम इसमें हैं।"
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "अभी कोई प्रीफ़्लाइट नहीं चला। ड्राई रन हर नोड (पहुँच, मेमोरी, मॉडल, Python, Thunderbolt लिंक, पोर्ट) जाँचता है और कुछ भी लॉन्च किए बिना प्रति नोड परतों की योजना बनाता है।"
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "प्रीफ़्लाइट"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "ड्राई रन चलाने के लिए स्प्लिट रोकें: इसके रैंक वे पोर्ट और मेमोरी घेरे हुए हैं जिन्हें ड्राई रन जाँचता है।"
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "दबाव गंभीर"

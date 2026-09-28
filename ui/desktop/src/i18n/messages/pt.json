@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "planejado {gb} GB com sobrecarga"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Preencha primeiro os campos vazios abaixo: um teste a seco verifica o que eles indicam."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Configure primeiro a divisão: um teste a seco verifica os Macs que ela indica."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Nenhum preflight foi executado ainda. Um teste a seco verifica cada nó (acessibilidade, memória, o modelo, Python, o link Thunderbolt, portas) e planeja as camadas por nó sem iniciar nada."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Pare a divisão para fazer um teste a seco: os seus ranks ocupam as portas e a memória que o teste verifica."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Pressão crítica"

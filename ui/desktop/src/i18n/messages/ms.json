@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "dirancang {gb} GB dengan overhed"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Isi dahulu medan kosong di bawah: larian cubaan menyemak apa yang dinamakannya."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Sediakan pembahagian dahulu: larian cubaan menyemak Mac yang dinamakannya."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Belum ada preflight dijalankan. Larian kering menyemak setiap nod (kebolehcapaian, memori, model, Python, pautan Thunderbolt, port) dan merancang lapisan bagi setiap nod tanpa melancarkan apa-apa."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Hentikan pembahagian untuk menjalankan larian cubaan: rank-nya memegang port dan memori yang disemak larian cubaan."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Tekanan kritikal"

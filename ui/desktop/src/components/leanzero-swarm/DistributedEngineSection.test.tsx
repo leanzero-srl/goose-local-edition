@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
+import { contrast, resolvedPaint, studioToken } from '../lz/resolvedPaint';
 import {
   DistributedEngineSection,
   type DistributedEngineSectionProps,
@@ -1395,4 +1396,85 @@ describe('DistributedEngineSection — the split’s runner (Q-116)', () => {
     await userEvent.click(within(details).getByRole('button', { name: 'Details' }));
     expect(details).toHaveTextContent('GOOSE_PROV fail uv pip install exited 1');
   });
+});
+
+/**
+ * Q-312, live critic on 3.0.68 (Run it → Details, the split running): "Preflight (dry run)" was
+ * disabled with no reason, and "Repair the Thunderbolt link" drew as a lone white knob — the
+ * switch's DISABLED override filled its track with surface-2, the colour of the row it sits in.
+ */
+describe('DistributedEngineSection — a disabled Preflight says why; the switch keeps its track (Q-312)', () => {
+  const REASON =
+    /^Stop the split to run a dry run: its ranks hold the ports and memory a dry run checks\.$/;
+
+  it('while the split runs: Preflight disabled, the reason beside it and announced with it', () => {
+    section({ embedded: true });
+    const preflight = screen.getByRole('button', { name: 'Preflight (dry run)' });
+    expect(preflight).toBeDisabled();
+    const why = screen.getByTestId('mlx-dist-preflight-why');
+    expect(why).toHaveTextContent(REASON);
+    expect(preflight).toHaveAttribute('aria-describedby', why.id);
+    expect(
+      screen.getByRole('switch', { name: 'Repair the Thunderbolt link if a JACCL check fails' })
+    ).toBeDisabled();
+  });
+
+  it('a stopped split with a whole setup: Preflight enabled, no reason line', () => {
+    section({ embedded: true, status: STOPPED_WITH_CONFIG });
+    const preflight = screen.getByRole('button', { name: 'Preflight (dry run)' });
+    expect(preflight).toBeEnabled();
+    expect(preflight).not.toHaveAttribute('aria-describedby');
+    expect(screen.queryByTestId('mlx-dist-preflight-why')).toBeNull();
+  });
+
+  it('an empty required field: the reason points at the fields', async () => {
+    section({ status: STOPPED_WITH_CONFIG });
+    await openAdvanced();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit workhorse' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.clear(within(dialog).getByRole('textbox', { name: 'ssh alias' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+    expect(screen.getByRole('button', { name: 'Preflight (dry run)' })).toBeDisabled();
+    expect(screen.getByTestId('mlx-dist-preflight-why')).toHaveTextContent(
+      'Fill in the empty fields below first: a dry run checks what they name.'
+    );
+  });
+
+  it('nothing set up: the reason says to set it up', () => {
+    section({ embedded: true, status: { ...STOPPED_WITH_CONFIG, config: undefined } });
+    expect(screen.getByRole('button', { name: 'Preflight (dry run)' })).toBeDisabled();
+    expect(screen.getByTestId('mlx-dist-preflight-why')).toHaveTextContent(
+      'Set up the split first: a dry run checks the Macs it names.'
+    );
+  });
+
+  it('the switch paints a solid track against the row in every state and both themes', async () => {
+    const cases: Array<{ status: MlxDistributedStatus; on: boolean; disabled: boolean }> = [
+      { status: FLASH_READY, on: false, disabled: true },
+      { status: STOPPED_WITH_CONFIG, on: false, disabled: false },
+      { status: STOPPED_WITH_CONFIG, on: true, disabled: false },
+    ];
+    for (const c of cases) {
+      const { unmount } = section({ embedded: true, status: c.status });
+      const name = 'Repair the Thunderbolt link if a JACCL check fails';
+      if (c.on) await userEvent.click(screen.getByRole('switch', { name }));
+      const track = screen.getByRole('switch', { name });
+      expect(track).toHaveAttribute('aria-checked', String(c.on));
+      expect((track as HTMLButtonElement).disabled).toBe(c.disabled);
+      const knob = track.firstElementChild as HTMLElement;
+      for (const theme of ['light', 'dark'] as const) {
+        // Run it's split row is the inset surface (surface-2) the switch sits on.
+        const row = studioToken('--color-lz-surface-2', theme);
+        const t = await resolvedPaint(track, theme, { inherit: { bg: row } });
+        const k = await resolvedPaint(knob, theme);
+        const at = `${theme} on=${c.on} disabled=${c.disabled}`;
+        expect(t.missing, at).toEqual([]);
+        expect(t.bg, at).toMatch(/^#[0-9a-f]{6}$/);
+        expect(k.bg, at).toMatch(/^#[0-9a-f]{6}$/);
+        expect(contrast(t.bg, row), `${at} track vs row`).toBeGreaterThan(2);
+        expect(contrast(k.bg, t.bg), `${at} knob vs track`).toBeGreaterThan(2);
+      }
+      unmount();
+    }
+  }, 30_000);
 });

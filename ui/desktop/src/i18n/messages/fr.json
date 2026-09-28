@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "planifié {gb} Go avec surcoût"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Remplissez d’abord les champs vides ci-dessous : un essai à blanc vérifie ce qu’ils désignent."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Configurez d’abord la répartition : un essai à blanc vérifie les Mac qu’elle nomme."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Aucun preflight n’a encore été lancé. Un essai à blanc vérifie chaque nœud (joignabilité, mémoire, modèle, Python, liaison Thunderbolt, ports) et planifie les couches par nœud sans rien lancer."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Arrêtez la répartition pour lancer un essai à blanc : ses rangs occupent les ports et la mémoire que l’essai vérifie."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Pression critique"

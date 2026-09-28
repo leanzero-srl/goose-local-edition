@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   Loader2,
   MemoryStick,
@@ -149,6 +157,19 @@ const i18n = defineMessages({
   repairLink: {
     id: 'mlxDistributed.repairLink',
     defaultMessage: 'Repair the Thunderbolt link if a JACCL check fails',
+  },
+  preflightWhileRunning: {
+    id: 'mlxDistributed.preflightWhileRunning',
+    defaultMessage:
+      'Stop the split to run a dry run: its ranks hold the ports and memory a dry run checks.',
+  },
+  preflightNeedsSetup: {
+    id: 'mlxDistributed.preflightNeedsSetup',
+    defaultMessage: 'Set up the split first: a dry run checks the Macs it names.',
+  },
+  preflightNeedsFields: {
+    id: 'mlxDistributed.preflightNeedsFields',
+    defaultMessage: 'Fill in the empty fields below first: a dry run checks what they name.',
   },
   startHint: {
     id: 'mlxDistributed.startHint',
@@ -1921,6 +1942,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const [stopReport, setStopReport] = useState<MlxDistributedStopResponse['stop'] | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [makingRoom, setMakingRoom] = useState<string | null>(null);
+  const preflightWhyId = useId();
 
   const owning = ownsTheMac(status);
   const otherWindow = foreignOwner(status);
@@ -1949,6 +1971,15 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   // (start persists it).
   const payload = dirty && config ? cleanConfig(config) : null;
   const canAct = busy == null && status != null && config != null && missing.length === 0;
+  // Why the dry run cannot be pressed, said beside it (Q-312): a disabled control with no reason
+  // reads as broken. A busy view says nothing — the pressed control carries the spinner.
+  const preflightBlocked: MessageDescriptor | null = owning
+    ? i18n.preflightWhileRunning
+    : config == null
+      ? i18n.preflightNeedsSetup
+      : missing.length > 0
+        ? i18n.preflightNeedsFields
+        : null;
 
   const lastAlarmKind =
     [...(status?.events ?? [])].reverse().find((e) => isAlarmOrNotice(e.kind))?.kind ?? null;
@@ -2242,6 +2273,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
               icon={busy === 'preflight' ? <Loader2 className="animate-spin" /> : <Stethoscope />}
               onClick={onPreflight}
               disabled={!canAct || owning}
+              aria-describedby={preflightBlocked ? preflightWhyId : undefined}
             >
               {intl.formatMessage(i18n.preflight)}
             </Button>
@@ -2287,6 +2319,15 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
               <span className={TYPE.meta}>{intl.formatMessage(i18n.repairLink)}</span>
             </span>
           </div>
+          {preflightBlocked && (
+            <p
+              id={preflightWhyId}
+              data-testid="mlx-dist-preflight-why"
+              className={cx('break-words', TYPE.meta)}
+            >
+              {intl.formatMessage(preflightBlocked)}
+            </p>
+          )}
           {!embedded && <p className={TYPE.meta}>{intl.formatMessage(i18n.startHint)}</p>}
         </div>
       )}

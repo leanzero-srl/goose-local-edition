@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "dự kiến {gb} GB kèm chi phí phụ"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "Hãy điền các trường còn trống bên dưới trước: lần chạy thử kiểm tra những gì chúng chỉ định."
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "Hãy thiết lập việc chia trước: lần chạy thử kiểm tra các máy Mac mà nó chỉ định."
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Chưa chạy preflight nào. Một lần chạy thử kiểm tra từng node (khả năng kết nối, bộ nhớ, mô hình, Python, liên kết Thunderbolt, cổng) và lập kế hoạch lớp cho từng node mà không khởi chạy gì cả."
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "Preflight"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "Dừng việc chia để chạy thử: các rank của nó đang giữ cổng và bộ nhớ mà lần chạy thử kiểm tra."
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "Áp lực nguy cấp"

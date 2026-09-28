@@ -4382,11 +4382,20 @@
   "mlxDistributed.planned": {
     "defaultMessage": "計画 {gb} GB（オーバーヘッド込み）"
   },
+  "mlxDistributed.preflightNeedsFields": {
+    "defaultMessage": "先に下の空欄を入力してください。ドライランはそこに指定された内容を確認します。"
+  },
+  "mlxDistributed.preflightNeedsSetup": {
+    "defaultMessage": "先に分割を設定してください。ドライランは設定に含まれる Mac を確認します。"
+  },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "プリフライトはまだ実行されていません。ドライランは各ノード（到達性、メモリ、モデル、Python、Thunderbolt リンク、ポート）をチェックし、何も起動せずにノードごとのレイヤーを計画します。"
   },
   "mlxDistributed.preflightTitle": {
     "defaultMessage": "プリフライト"
+  },
+  "mlxDistributed.preflightWhileRunning": {
+    "defaultMessage": "ドライランを実行するには分割を停止してください。ドライランが確認するポートとメモリを分割のランクが使用しています。"
   },
   "mlxDistributed.pressure.critical": {
     "defaultMessage": "メモリ圧迫: 危険"
