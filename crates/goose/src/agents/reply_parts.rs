@@ -1099,6 +1099,11 @@ mod tests {
         const PROJECT_RULE: &str = "Q346 PROJECT RULE: cite the ledger row.";
         const EXTENSION_INSTRUCTIONS: &str = "Q346 EXTENSION: call q346_tool before editing.";
         let working_dir = tempfile::tempdir()?;
+        // The project file lives under Paths::data_dir(); sources.rs tests swap GOOSE_PATH_ROOT
+        // under this lock, and without it the project was written under one root and read under
+        // another (CI e3b810895: the prompt came back with no project section).
+        let root = tempfile::tempdir()?;
+        let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
         let slug = format!("q346-lib-{}", std::process::id());
         let project = crate::sources::create_source(
             goose_sdk_types::custom_requests::SourceType::Project,
