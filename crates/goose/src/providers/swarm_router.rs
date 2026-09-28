@@ -5380,6 +5380,7 @@ devices:
                 )),
                 ..Default::default()
             },
+            chat: None,
         }];
         let read = read_of(config);
         let chat = chain_plan(&nodes_route("strategy:daily").unwrap().unwrap(), &read).unwrap();

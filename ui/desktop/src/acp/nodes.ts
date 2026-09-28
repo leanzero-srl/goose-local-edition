@@ -8,6 +8,7 @@ import type {
   NodesReadResponse_unstable,
   NodesResidencyResponse_unstable,
   NodesServedLastResponse_unstable,
+  NodesSetChatNodesResponse_unstable,
   NodesWriteResponse_unstable,
 } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
@@ -27,6 +28,7 @@ export type Residency = NodesResidencyResponse_unstable;
 export type LoadHistory = NodesLoadHistoryResponse_unstable;
 export type ServedLast = NodesServedLastResponse_unstable;
 export type EnsureServing = NodeEnsureServing;
+export type SetChatNodes = NodesSetChatNodesResponse_unstable;
 
 async function call<T>(method: string, params: Record<string, unknown>): Promise<T> {
   const client = await getAcpClient();
@@ -53,6 +55,8 @@ export interface RemoveNodeOptions {
   andNewChatsAuto?: boolean;
   /** The count of live chats set to this node the person acknowledged. */
   acknowledgedSessions?: number;
+  /** "Also take it out of N chats' node sets" (Q-359). */
+  alsoFromChatNodeSets?: boolean;
 }
 
 export async function nodesRemoveNode(
@@ -60,6 +64,24 @@ export async function nodesRemoveNode(
   options: RemoveNodeOptions = {}
 ): Promise<NodesWrite> {
   return call<NodesWrite>('_goose/unstable/nodes/removeNode', { id, ...options });
+}
+
+/**
+ * THE door of one chat's own nodes (Q-359): `nodes[0]` answers the chat, its delegates share the
+ * whole set; `answerOnNext` lets the chat fail over down the set. goosed builds the chat's strategy
+ * and sets the chat's model to it (`model`) in the same call. An empty `nodes` removes the set and
+ * leaves the chat's model alone — move the chat first.
+ */
+export async function nodesSetChatNodes(
+  session: string,
+  nodes: string[],
+  answerOnNext: boolean
+): Promise<SetChatNodes> {
+  return call<SetChatNodes>('_goose/unstable/nodes/setChatNodes', {
+    session,
+    nodes,
+    answerOnNext,
+  });
 }
 
 export interface RemoveStrategyOptions {

@@ -169,6 +169,29 @@ quick = { 'id' => 'quick', 'name' => 'Quick', 'roles' => {
   'build' => { 'chain' => [{ 'node' => '27b-both', 'weight' => 1 }], 'when' => 'failover', 'ifNotLoaded' => 'load' }
 } }
 
+# One chat's own nodes (Q-359, DESIGN-Q359-CHAT-NODES.md "Mapping"), written from the design's words:
+# the chat answers on its lead (failover, load if not loaded), down the rest of the set only with
+# "answer on the next node"; its delegates share every node of the set (Build, share, weight 1 each).
+def chat_set_roles(nodes, answer_on_next)
+  link = ->(n) { { 'node' => n, 'weight' => 1 } }
+  answering = answer_on_next ? nodes : nodes.first(1)
+  {
+    'chat' => { 'chain' => answering.map(&link), 'when' => 'failover', 'ifNotLoaded' => 'load' },
+    'build' => { 'chain' => nodes.map(&link), 'when' => 'share', 'ifNotLoaded' => 'load' }
+  }
+end
+
+chat_sets = [
+  ['one node: the chat and its delegates on it', ['27b-both'], false],
+  ['a Mac model and a cloud node: the chat stays on its lead', ['27b-both', 'sonnet'], false],
+  ['answer on the next node: the chat fails over down the set', ['27b-both', 'sonnet'], true],
+  ['three nodes, the lead a cloud node', ['sonnet', 'flash-here', 'my-server'], false]
+].map do |(name, nodes, answer)|
+  { 'name' => name, 'session' => '20260928_7', 'nodes' => nodes, 'answerOnNext' => answer,
+    'strategy' => { 'id' => 'chat-20260928_7', 'name' => "This chat's nodes (20260928_7)",
+                    'roles' => chat_set_roles(nodes, answer), 'chat' => '20260928_7' } }
+end
+
 configs = [
   { 'name' => 'fresh: auto chats, pool builds', 'config' => { 'version' => 1, 'defs' => [], 'strategies' => [], 'declined' => [],
                                                               'forNewChats' => { 'kind' => 'auto' }, 'forBuilds' => { 'kind' => 'pool' } } },
@@ -177,7 +200,10 @@ configs = [
     'declined' => ['old-cloud'], 'forNewChats' => { 'kind' => 'strategy', 'id' => 'everyday' },
     'forBuilds' => { 'kind' => 'strategy', 'id' => 'quick' } } },
   { 'name' => 'new chats on one node', 'config' => { 'version' => 1, 'defs' => [flash], 'strategies' => [], 'declined' => [],
-                                                     'forNewChats' => { 'kind' => 'node', 'id' => 'flash-here' }, 'forBuilds' => { 'kind' => 'pool' } } }
+                                                     'forNewChats' => { 'kind' => 'node', 'id' => 'flash-here' }, 'forBuilds' => { 'kind' => 'pool' } } },
+  { 'name' => 'a chat\'s own node set beside a named strategy', 'config' => {
+    'version' => 1, 'defs' => [split_mlx, cloud], 'strategies' => [everyday, chat_sets[2]['strategy']], 'declined' => [],
+    'forNewChats' => { 'kind' => 'strategy', 'id' => 'everyday' }, 'forBuilds' => { 'kind' => 'pool' } } }
 ]
 
 model_ids = [
@@ -247,7 +273,8 @@ fixture = {
   'modelIds' => model_ids,
   'effectiveRole' => effective,
   'resolve' => cases,
-  'sentenceFacts' => sentences
+  'sentenceFacts' => sentences,
+  'chatNodeSets' => chat_sets
 }
 File.write(OUT, JSON.pretty_generate(fixture) + "\n")
-puts "#{cases.size} resolve cases, #{effective.size} inheritance cases, #{model_ids.size} model ids, #{configs.size} configs, #{sentences.size} sentence cases"
+puts "#{cases.size} resolve cases, #{effective.size} inheritance cases, #{model_ids.size} model ids, #{configs.size} configs, #{sentences.size} sentence cases, #{chat_sets.size} chat node sets"

@@ -6092,7 +6092,11 @@ export const zNodeStrategy = z.object({
         z.string(),
         z.null()
     ]).optional(),
-    roles: zNodeStrategyRoles.optional().default({})
+    roles: zNodeStrategyRoles.optional().default({}),
+    chat: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 /**
@@ -6218,7 +6222,10 @@ export const zNodesRefusalCode = z.union([
     z.literal('removedOutsideRemoveNode'),
     z.literal('buildIneligible'),
     z.literal('badId'),
-    z.literal('duplicateEntry')
+    z.literal('duplicateEntry'),
+    z.literal('chatNodeSetNotShared'),
+    z.literal('badChatNodeSet'),
+    z.literal('nodeInChatNodeSets')
 ]);
 
 /**
@@ -6260,7 +6267,8 @@ export const zNodesRemoveNodeRequest_unstable = z.object({
     acknowledgedSessions: z.union([
         z.number().int().gte(0),
         z.null()
-    ]).optional()
+    ]).optional(),
+    alsoFromChatNodeSets: z.boolean().optional().default(false)
 });
 
 /**
@@ -6271,6 +6279,27 @@ export const zNodesRemoveStrategyRequest_unstable = z.object({
     id: z.string(),
     andNewChatsAuto: z.boolean().optional().default(false),
     andBuildsPool: z.boolean().optional().default(false)
+});
+
+/**
+ * One chat's own nodes (Q-359): `nodes[0]` answers the chat, delegates share every node of the
+ * set (Build, `share`, weight 1 each); with `answerOnNext` the chat fails over down the set when
+ * its 1st can't run. goosed builds the chat's strategy and sets the chat's model to
+ * `strategy:<id>` in the same call. An empty `nodes` removes the chat's set and leaves its model
+ * alone (the caller has already moved the chat to what it runs on next).
+ */
+export const zNodesSetChatNodesRequest_unstable = z.object({
+    session: z.string(),
+    nodes: z.array(z.string()),
+    answerOnNext: z.boolean().optional().default(false)
+});
+
+export const zNodesSetChatNodesResponse_unstable = z.object({
+    write: zNodesWriteResponse_unstable,
+    model: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 /**
@@ -7632,6 +7661,7 @@ export const zExtRequest = z.object({
             zNodesWriteRequest_unstable,
             zNodesRemoveNodeRequest_unstable,
             zNodesRemoveStrategyRequest_unstable,
+            zNodesSetChatNodesRequest_unstable,
             zNodesBuildEligibilityRequest_unstable,
             zNodesResidencyRequest_unstable,
             zNodesLoadHistoryRequest_unstable,
@@ -7777,6 +7807,7 @@ export const zExtResponse = z.union([
                 zLeanzeroLinkRemoteExecuteResponse_unstable,
                 zNodesReadResponse_unstable,
                 zNodesWriteResponse_unstable,
+                zNodesSetChatNodesResponse_unstable,
                 zNodesBuildEligibilityResponse_unstable,
                 zNodesResidencyResponse_unstable,
                 zNodesLoadHistoryResponse_unstable,

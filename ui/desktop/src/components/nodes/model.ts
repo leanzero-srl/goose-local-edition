@@ -155,6 +155,59 @@ export function nodeNamesById(nodes: readonly ResolvedNodeDef[]): Record<string,
   return Object.fromEntries(nodes.map((n) => [n.def.id, n.def.name]));
 }
 
+/** A strategy the person made and named — every list of strategies shows only these. */
+export function isNamedStrategy(strategy: NodeStrategy): boolean {
+  return strategy.chat == null;
+}
+
+/** The strategies the person named (a chat's own node set is listed by no strategy surface). */
+export function namedStrategies(config: NodesConfig | null | undefined): NodeStrategy[] {
+  return (config?.strategies ?? []).filter(isNamedStrategy);
+}
+
+/** One chat's own nodes (Q-359): the set, lead first, and whether the chat answers down it. */
+export interface ChatNodeSet {
+  strategyId: string;
+  session: string;
+  nodes: string[];
+  answerOnNext: boolean;
+}
+
+/**
+ * The set a chat's strategy holds, read back as goosed wrote it (`chat_set_of` in nodes/mod.rs;
+ * both suites run the fixture's `chatNodeSets`): the whole set is Build's chain, and the chat answers
+ * down it when Chat's chain is longer than its lead. null for a named strategy.
+ */
+export function chatNodesOf(strategy: NodeStrategy): ChatNodeSet | null {
+  if (strategy.chat == null) return null;
+  const build = strategy.roles?.build;
+  if (!build) return null;
+  return {
+    strategyId: strategy.id,
+    session: strategy.chat,
+    nodes: build.chain.map((link) => link.node),
+    answerOnNext: (strategy.roles?.chat?.chain.length ?? 0) > 1,
+  };
+}
+
+/** `session`'s own node set, if it has one. */
+export function chatNodeSetOf(
+  config: NodesConfig | null | undefined,
+  session: string | null | undefined
+): ChatNodeSet | null {
+  if (!session) return null;
+  const strategy = (config?.strategies ?? []).find((s) => s.chat === session);
+  return strategy ? chatNodesOf(strategy) : null;
+}
+
+/** How many chats have their own node sets, and how many of those name `node` (when given). */
+export function chatNodeSetCount(config: NodesConfig | null | undefined, node?: string): number {
+  return (config?.strategies ?? [])
+    .map(chatNodesOf)
+    .filter((set): set is ChatNodeSet => set != null && (node == null || set.nodes.includes(node)))
+    .length;
+}
+
 /** A pool device's node by its name (adoption keeps the device id as `poolDevice`); null = none. */
 export function nodeNameOfDevice(nodes: readonly ResolvedNodeDef[], device: string): string | null {
   const node = nodes.find((n) => n.def.id === device || n.def.poolDevice === device);

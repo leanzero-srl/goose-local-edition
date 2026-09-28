@@ -252,6 +252,8 @@ import type {
   NodesResidencyResponse_unstable,
   NodesServedLastRequest_unstable,
   NodesServedLastResponse_unstable,
+  NodesSetChatNodesRequest_unstable,
+  NodesSetChatNodesResponse_unstable,
   NodesWriteRequest_unstable,
   NodesWriteResponse_unstable,
   OnboardingImportApplyRequest_unstable,
@@ -434,6 +436,7 @@ import {
   zNodesReadResponse_unstable,
   zNodesResidencyResponse_unstable,
   zNodesServedLastResponse_unstable,
+  zNodesSetChatNodesResponse_unstable,
   zNodesWriteResponse_unstable,
   zOnboardingImportApplyResponse_unstable,
   zOnboardingImportScanResponse_unstable,
@@ -2291,6 +2294,18 @@ export class GooseExtClient {
     return zNodesWriteResponse_unstable.parse(
       raw,
     ) as NodesWriteResponse_unstable;
+  }
+
+  async nodesSetChatNodes_unstable(
+    params: NodesSetChatNodesRequest_unstable,
+  ): Promise<NodesSetChatNodesResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/setChatNodes",
+      params,
+    );
+    return zNodesSetChatNodesResponse_unstable.parse(
+      raw,
+    ) as NodesSetChatNodesResponse_unstable;
   }
 
   async nodesBuildEligibility_unstable(

@@ -851,6 +851,11 @@
       "responseType": "NodesWriteResponse_unstable"
     },
     {
+      "method": "_goose/unstable/nodes/setChatNodes",
+      "requestType": "NodesSetChatNodesRequest_unstable",
+      "responseType": "NodesSetChatNodesResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/nodes/buildEligibility",
       "requestType": "NodesBuildEligibilityRequest_unstable",
       "responseType": "NodesBuildEligibilityResponse_unstable"
