@@ -474,4 +474,35 @@ describe('NodesTab', () => {
     await userEvent.click(screen.getByTestId('nodes-new'));
     expect(await screen.findByTestId('new-node-dialog')).toHaveTextContent('New node');
   });
+
+  it('Q-310: removing a pool node says what chats run on afterwards and how to get the card back — no “device”', async () => {
+    renderTab();
+    await openRemove(NODE_POOL.def.id);
+    const text = panelText();
+    expect(text).toContain(
+      'Only this card goes: its model stays in your swarm pool, so chats on Any node (Auto) keep running on it, and so do swarm builds that use the pool. To bring the card back, choose “Show removed pool nodes” on this page.'
+    );
+    expect(text).not.toContain('device');
+  });
+
+  it('Q-310: a removed pool node can be shown again — the write clears the removed list and keeps every def', async () => {
+    mockWrite.mockResolvedValueOnce({ written: true, refusals: [], read: readOf([]) });
+    const nodes = [NODE_SPLIT, NODE_FLASH, NODE_CLOUD];
+    store.state = readState(readOf(nodes, { ...CONFIG, declined: ['mlx-local'] }));
+    renderTab();
+    expect(screen.getByTestId('nodes-removed-pool')).toHaveTextContent(
+      '1 node you removed from your swarm pool is not shown'
+    );
+    await userEvent.click(screen.getByTestId('nodes-show-removed-pool'));
+    await waitFor(() => expect(mockWrite).toHaveBeenCalledTimes(1));
+    const written = mockWrite.mock.calls[0][0] as NodesConfig;
+    expect(written.declined).toEqual([]);
+    expect(written.defs!.map((d) => d.id)).toEqual(nodes.map((n) => n.def.id));
+    expect(mockRefresh).toHaveBeenCalled();
+  });
+
+  it('Q-310: nothing removed, nothing offered', () => {
+    renderTab();
+    expect(screen.queryByTestId('nodes-removed-pool')).toBeNull();
+  });
 });

@@ -6293,6 +6293,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Модель: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Запись пула роя {device}, имя модели там: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Не получилось: {error}"
   },
@@ -6429,7 +6435,7 @@
     "defaultMessage": "Память на {mac} относительно бюджета"
   },
   "nodes.memNeed": {
-    "defaultMessage": "нужно {need} из {budget} ГБ"
+    "defaultMessage": "нужно {need} ГБ, свободно {budget} ГБ"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "пика ещё нет"
@@ -6495,7 +6501,7 @@
     "defaultMessage": "Фильтр моделей"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} из {budget} ГБ"
+    "defaultMessage": "{mac}: нужно {need} ГБ, свободно {budget} ГБ"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Получите её в разделе «Модели»"
@@ -6526,6 +6532,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Назовите его"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Другой узел уже называется «{name}» — дайте этому другое имя"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Выберите модель, чтобы продолжить"
@@ -6580,6 +6589,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Настроить другого провайдера"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Запуск остановит {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Запуск остановит {model} на {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Тип"
@@ -6645,7 +6660,10 @@
     "defaultMessage": "Ожидание окончания другой загрузки"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Закрепить способ"
+    "defaultMessage": "Новый узел для этой модели"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Новый узел для модели"
   },
   "nodes.planFailed": {
     "defaultMessage": "Нет плана для этого способа: {error}"
@@ -6657,7 +6675,10 @@
     "defaultMessage": "Ваш пул роя"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Ваш пул роя · используется сборками swarm, пока «Сборки swarm используют» — «Ваш пул роя»"
+    "defaultMessage": "Ваш пул роя · на нём работают сборки swarm и чаты на «Любой узел (Авто)»"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Ваш пул роя · на нём работают чаты на «Любой узел (Авто)»; сборки swarm сейчас используют {strategy}"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {#-й}}"
@@ -6720,10 +6741,13 @@
     "defaultMessage": "Новые чаты сейчас начинаются на этом узле, поэтому его нельзя удалить отдельно."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Пул роя сохраняет своё устройство; этот узел здесь больше не показывается. Сам пул можно изменить ниже."
+    "defaultMessage": "Исчезнет только эта карточка: её модель остаётся в пуле роя, поэтому чаты на «Любой узел (Авто)» продолжают работать на ней, как и сборки swarm, использующие пул. Чтобы вернуть карточку, выберите «Показать удалённые узлы пула» на этой странице."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Удалить {node}?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, one {# узел, удалённый из пула роя, не показан} few {# узла, удалённых из пула роя, не показаны} many {# узлов, удалённых из пула роя, не показаны} other {# узла, удалённых из пула роя, не показаны}}"
   },
   "nodes.retry": {
     "defaultMessage": "Прочитать снова"
@@ -6742,6 +6766,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Показать в «Запуске»"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Показать удалённые узлы пула"
   },
   "nodes.startAction": {
     "defaultMessage": "Запустить {node}"
@@ -9458,14 +9485,17 @@
   "strategies.addNode": {
     "defaultMessage": "Добавить узел"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Все ваши узлы уже есть в этом списке"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Есть только один узел — создайте ещё один в разделе «Узлы», чтобы добавить его сюда"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Сборки swarm используют это"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Новые чаты начинаются здесь"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Может ли она использоваться сборками swarm, проверяется при сохранении."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Сборки swarm могут использовать эту стратегию."
@@ -9496,6 +9526,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Не удалось узнать, могут ли сборки swarm её использовать: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Проверяется по мере редактирования; пока ничего не сохранено."
   },
   "strategies.cancel": {
     "defaultMessage": "Отмена"
@@ -9540,7 +9573,7 @@
     "defaultMessage": "Стратегий пока нет"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: обслуживает то, что запущено в движке этого Mac; никогда не загружается"
+    "defaultMessage": "{node}: использует то, что сейчас выполняет этот Mac; никогда не запускает модель сам"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Ссылка"
@@ -9594,10 +9627,10 @@
     "defaultMessage": "На ваших Mac"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Один способ одновременно обслуживает ваши чаты: {node}"
+    "defaultMessage": "Для этой стратегии на ваших Mac работает только {node}, поэтому ничего не переключается."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Одновременно только один способ MLX обслуживает goose этого Mac, среди всех ваших Mac. Двум разным способам в одной стратегии приходится сменять друг друга."
+    "defaultMessage": "Ваши Mac одновременно выполняют только одну модель для goose на этом Mac — на одном Mac или распределённо. Узлы этой стратегии, работающие по-разному, сменяют друг друга: каждое переключение останавливает один и запускает другой."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: перенос лишней работы с {a} на {b} останавливал бы один, чтобы загрузить другой, каждый раз, когда {a} занят"

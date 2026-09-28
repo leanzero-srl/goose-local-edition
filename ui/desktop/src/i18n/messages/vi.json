@@ -6293,6 +6293,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Mô hình: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Mục nhóm của bầy {device}, tên mô hình ở đó: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "Không thành công: {error}"
   },
@@ -6429,7 +6435,7 @@
     "defaultMessage": "Bộ nhớ trên {mac} so với ngân sách"
   },
   "nodes.memNeed": {
-    "defaultMessage": "cần {need} trên {budget} GB"
+    "defaultMessage": "cần {need} GB, còn trống {budget} GB"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "chưa có đỉnh"
@@ -6495,7 +6501,7 @@
     "defaultMessage": "Lọc mô hình"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} trên {budget} GB"
+    "defaultMessage": "{mac}: cần {need} GB, còn trống {budget} GB"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Lấy một mô hình trong Mô hình"
@@ -6526,6 +6532,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Đặt tên"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Đã có nút khác tên là “{name}” — hãy đặt tên khác cho nút này"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Chọn một mô hình để tiếp tục"
@@ -6580,6 +6589,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Thiết lập nhà cung cấp khác"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Khởi động nút này sẽ dừng {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Khởi động nút này sẽ dừng {model} trên {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Loại"
@@ -6645,7 +6660,10 @@
     "defaultMessage": "Đang chờ một lượt nạp khác xong"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Ghim một cách"
+    "defaultMessage": "Nút mới cho mô hình này"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Nút mới cho một mô hình"
   },
   "nodes.planFailed": {
     "defaultMessage": "Không có kế hoạch cho cách này: {error}"
@@ -6657,7 +6675,10 @@
     "defaultMessage": "Nhóm của bầy của bạn"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Nhóm của bầy của bạn · được bản dựng swarm dùng khi “Bản dựng swarm dùng” là “Nhóm của bầy của bạn”"
+    "defaultMessage": "Nhóm của bầy của bạn · bản dựng swarm và các cuộc trò chuyện trên Nút bất kỳ (Tự động) chạy trên các nút này"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Nhóm của bầy của bạn · các cuộc trò chuyện trên Nút bất kỳ (Tự động) chạy trên các nút này; bản dựng swarm hiện dùng {strategy}"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {thứ #}}"
@@ -6720,10 +6741,13 @@
     "defaultMessage": "Cuộc trò chuyện mới hiện bắt đầu trên nút này, nên không thể chỉ gỡ riêng nút."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Nhóm của bầy vẫn giữ thiết bị của nó; nút này sẽ không hiện ở đây nữa. Hãy sửa chính nhóm đó ở bên dưới."
+    "defaultMessage": "Chỉ thẻ này biến mất: mô hình của nó vẫn ở trong nhóm của bầy, nên các cuộc trò chuyện trên Nút bất kỳ (Tự động) vẫn chạy trên đó, và các bản dựng swarm dùng nhóm cũng vậy. Để lấy lại thẻ, hãy chọn “Hiện các nút nhóm đã gỡ” trên trang này."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Gỡ {node}?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, other {# nút bạn đã gỡ khỏi nhóm của bầy đang không được hiển thị}}"
   },
   "nodes.retry": {
     "defaultMessage": "Đọc lại"
@@ -6742,6 +6766,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Hiện trong Chạy"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Hiện các nút nhóm đã gỡ"
   },
   "nodes.startAction": {
     "defaultMessage": "Khởi động {node}"
@@ -9458,14 +9485,17 @@
   "strategies.addNode": {
     "defaultMessage": "Thêm một nút"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Mọi nút của bạn đã có trong danh sách này"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Chỉ có một nút — hãy tạo thêm một nút trong Nút để thêm vào đây"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Bản dựng swarm dùng cái này"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Cuộc trò chuyện mới bắt đầu ở đây"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Việc bản dựng swarm có dùng được nó hay không sẽ được kiểm tra khi bạn lưu."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Bản dựng swarm có thể dùng chiến lược này."
@@ -9496,6 +9526,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "Không đọc được liệu bản dựng swarm có dùng được nó không: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Được kiểm tra khi bạn chỉnh sửa; chưa có gì được lưu."
   },
   "strategies.cancel": {
     "defaultMessage": "Hủy"
@@ -9540,7 +9573,7 @@
     "defaultMessage": "Chưa có chiến lược nào"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: phục vụ bất cứ thứ gì engine của Mac này đang chạy; không bao giờ nạp"
+    "defaultMessage": "{node}: dùng bất cứ thứ gì Mac này đang chạy; không bao giờ tự khởi động mô hình"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Liên kết"
@@ -9594,10 +9627,10 @@
     "defaultMessage": "Trên các Mac của bạn"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Một cách phục vụ cuộc trò chuyện của bạn tại một thời điểm: {node}"
+    "defaultMessage": "Chỉ {node} chạy trên các Mac của bạn cho chiến lược này, nên không có chuyển đổi nào."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Một cách MLX phục vụ goose của Mac này tại một thời điểm, trên tất cả các Mac của bạn. Hai cách khác nhau trong một chiến lược phải thay phiên nhau."
+    "defaultMessage": "Các Mac của bạn chạy mỗi lần một mô hình cho goose trên Mac này — trên một Mac hoặc chia giữa các Mac. Các nút trong chiến lược này chạy theo cách khác nhau sẽ thay phiên: mỗi lần chuyển sẽ dừng một nút và khởi động nút kia."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: chuyển phần việc dư từ {a} sang {b} sẽ phải dừng một cái để tải cái kia mỗi khi {a} bận"

@@ -6293,6 +6293,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "Modelo: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "Entrada del grupo del enjambre {device}, nombre del modelo allí: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "No funcionó: {error}"
   },
@@ -6429,7 +6435,7 @@
     "defaultMessage": "Memoria en {mac} frente a su presupuesto"
   },
   "nodes.memNeed": {
-    "defaultMessage": "necesita {need} de {budget} GB"
+    "defaultMessage": "necesita {need} GB, {budget} GB libres"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "aún sin pico"
@@ -6495,7 +6501,7 @@
     "defaultMessage": "Filtrar modelos"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} de {budget} GB"
+    "defaultMessage": "{mac}: necesita {need} GB, {budget} GB libres"
   },
   "nodes.newGetModels": {
     "defaultMessage": "Consigue uno en Modelos"
@@ -6526,6 +6532,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "Ponle nombre"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "Ya hay otro nodo llamado “{name}”: ponle a este otro nombre"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "Elige un modelo para continuar"
@@ -6580,6 +6589,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "Configurar otro proveedor"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "Iniciarlo detiene {model}."
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "Iniciarlo detiene {model} en {macs}."
   },
   "nodes.newStepKind": {
     "defaultMessage": "Tipo"
@@ -6645,7 +6660,10 @@
     "defaultMessage": "Esperando a que termine otra carga"
   },
   "nodes.pinWay": {
-    "defaultMessage": "Fijar una opción"
+    "defaultMessage": "Nuevo nodo para este modelo"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "Nuevo nodo para un modelo"
   },
   "nodes.planFailed": {
     "defaultMessage": "No hay plan para esta opción: {error}"
@@ -6657,7 +6675,10 @@
     "defaultMessage": "Tu grupo del enjambre"
   },
   "nodes.poolSection": {
-    "defaultMessage": "Tu grupo del enjambre · lo usan las compilaciones del enjambre mientras “Las compilaciones del enjambre usan” sea “Tu grupo del enjambre”"
+    "defaultMessage": "Tu grupo del enjambre · las compilaciones del enjambre y los chats en Cualquier nodo (Auto) se ejecutan en estos"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "Tu grupo del enjambre · los chats en Cualquier nodo (Auto) se ejecutan en estos; las compilaciones del enjambre usan ahora {strategy}"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {#.º}}"
@@ -6720,10 +6741,13 @@
     "defaultMessage": "Los chats nuevos empiezan ahora en este nodo, así que no se puede eliminar solo."
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "Tu grupo del enjambre conserva su dispositivo; este nodo ya no se muestra aquí. Edita el grupo en sí más abajo."
+    "defaultMessage": "Solo desaparece esta tarjeta: su modelo sigue en tu grupo del enjambre, así que los chats en Cualquier nodo (Auto) siguen ejecutándose en él, igual que las compilaciones del enjambre que usan el grupo. Para recuperar la tarjeta, elige “Mostrar nodos del grupo quitados” en esta página."
   },
   "nodes.removeTitle": {
     "defaultMessage": "¿Eliminar {node}?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, one {# nodo que quitaste de tu grupo del enjambre no se muestra} other {# nodos que quitaste de tu grupo del enjambre no se muestran}}"
   },
   "nodes.retry": {
     "defaultMessage": "Leer de nuevo"
@@ -6742,6 +6766,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "Mostrar en Ejecutar"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "Mostrar nodos del grupo quitados"
   },
   "nodes.startAction": {
     "defaultMessage": "Iniciar {node}"
@@ -9458,14 +9485,17 @@
   "strategies.addNode": {
     "defaultMessage": "Añadir un nodo"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "Todos tus nodos ya están en esta lista"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "Solo existe un nodo: crea otro en Nodos para añadirlo aquí"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Las compilaciones del enjambre usan esto"
   },
   "strategies.badgeChats": {
     "defaultMessage": "Los chats nuevos empiezan aquí"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "Si las compilaciones del enjambre pueden usarla se comprueba al guardar."
   },
   "strategies.buildsCan": {
     "defaultMessage": "Las compilaciones del enjambre pueden usar esta estrategia."
@@ -9496,6 +9526,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "No se pudo leer si las compilaciones del enjambre pueden usarla: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "Se comprueba mientras editas; aún no se ha guardado nada."
   },
   "strategies.cancel": {
     "defaultMessage": "Cancelar"
@@ -9540,7 +9573,7 @@
     "defaultMessage": "Aún no hay estrategias"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: sirve lo que sea que ejecute el motor de este Mac; nunca carga"
+    "defaultMessage": "{node}: usa lo que este Mac esté ejecutando; nunca inicia un modelo por sí mismo"
   },
   "strategies.linkLabel": {
     "defaultMessage": "Link"
@@ -9594,10 +9627,10 @@
     "defaultMessage": "En tus Macs"
   },
   "strategies.oneWay": {
-    "defaultMessage": "Una sola opción sirve tus chats a la vez: {node}"
+    "defaultMessage": "Solo {node} se ejecuta en tus Macs para esta estrategia, así que no hay cambios."
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "Una sola opción de MLX sirve a goose en este Mac a la vez, en todos tus Macs. Dos opciones distintas en una estrategia tienen que turnarse."
+    "defaultMessage": "Tus Macs ejecutan un solo modelo a la vez para goose en este Mac, en un Mac o repartido entre ellos. Los nodos de esta estrategia que se ejecutan de otra forma se turnan: cada cambio detiene uno e inicia el otro."
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: desbordar de {a} a {b} detendría uno para cargar el otro cada vez que {a} esté ocupado"

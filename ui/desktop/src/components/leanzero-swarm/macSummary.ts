@@ -6,6 +6,7 @@ import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { peerRefuses, type Mac } from './macs';
 import { activityPhase, hostingPhase, runPhase } from './mlxPhase';
 import type { MlxActivity } from './mlxLiveStats';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * What one Mac is doing, in ONE vocabulary and the engine-phase palette — the My Macs card and the
@@ -161,10 +162,8 @@ export function macStateWord(intl: IntlShape, state: MacState): string {
   return intl.formatMessage(WORDS[state]);
 }
 
-/** The model's own name: the last segment of its id (`Mihai-LeanZero/Qwen3.8-27B` → `Qwen3.8-27B`). */
-export function shortModel(modelId: string): string {
-  return modelId.split('/').pop() || modelId;
-}
+/** The model's own name (`Mihai-LeanZero/Qwen3.8-27B` → `Qwen3.8-27B`): the one rule, Q-308. */
+export const shortModel = modelShortName;
 
 function rate(tps: number): string {
   return tps >= 100 ? tps.toFixed(0) : tps.toFixed(1);

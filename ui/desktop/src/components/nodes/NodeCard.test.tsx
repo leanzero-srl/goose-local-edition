@@ -7,6 +7,7 @@ import { NodeCard, type NodeCardAction } from './NodeCard';
 import { nodeGlance, type NodeFacts, type NodeState } from './nodeGlance';
 import {
   LOADS_FLASH,
+  MODEL_27B,
   NODE_CLOUD,
   NODE_ENDPOINT,
   NODE_FLASH,
@@ -303,11 +304,40 @@ describe('NodeCard — the parts of a card', () => {
 
   it('a pool node reads its model through the pool and is edited there', async () => {
     const { onAction } = renderCard(NODE_POOL, facts());
-    expect(screen.getByTestId('node-model')).toHaveTextContent('qwen3.8-27b');
+    // Q-308: the pool entry's own model name is not a model spelling — it lives in Details; the
+    // card's line names what this Mac's engine runs.
     expect(screen.getByTestId('node-model')).toHaveTextContent('from your swarm pool');
+    expect(screen.getByTestId('node-model')).not.toHaveTextContent('qwen3.8-27b');
+    await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(screen.getByTestId('node-details-line')).toHaveTextContent(
+      'Swarm pool entry mlx-local, model name there: qwen3.8-27b'
+    );
     expect(screen.queryByTestId('node-edit')).toBeNull();
     await userEvent.click(screen.getByTestId('node-edit-in-pool'));
     expect(onAction).toHaveBeenCalledWith({ kind: 'editInPool' });
+  });
+
+  it('Q-308: a node names its model by the short name; the repo id is in Details only', async () => {
+    renderCard(NODE_SPLIT, facts());
+    const model = screen.getByTestId('node-model');
+    expect(model).toHaveTextContent('Qwen3.8-27B-Atlassian-Q8-mlx');
+    expect(model.textContent).not.toContain('/');
+    await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(screen.getByTestId('node-details-line')).toHaveTextContent(`Model: ${MODEL_27B}`);
+  });
+
+  it('Q-303: a follows node shows where it runs NOW — the split’s Macs, not “This Mac”', () => {
+    renderCard(NODE_POOL, facts({ residency: read({ kind: 'serving' }), serving: WAY_SPLIT }));
+    expect(screen.getByTestId('node-where')).toHaveTextContent('Split · 2 Macs');
+    cleanup();
+    renderCard(NODE_POOL, facts({ residency: read({ kind: 'notRunning', otherWay: null }) }));
+    expect(screen.getByTestId('node-where')).toHaveTextContent('This Mac');
+  });
+
+  it('Q-317: the follows card offers a new node for the model it runs, in plain words', () => {
+    renderCard(NODE_POOL, facts({ residency: read({ kind: 'serving' }), serving: WAY_SPLIT }));
+    expect(screen.getByTestId('node-pin-way')).toHaveTextContent('New node for this model');
+    expect(screen.getByTestId('node-pin-way')).not.toHaveTextContent('Pin');
   });
 
   it('serving: the live figures and memory peak against budget per Mac', () => {
@@ -326,7 +356,8 @@ describe('NodeCard — the parts of a card', () => {
   it('not serving: the planner’s need against budget, red when over', () => {
     renderCard(NODE_LOCAL_27B, facts());
     const row = screen.getByTestId('node-memory-row');
-    expect(row).toHaveTextContent('needs 63.4 of 61.8 GB');
+    // Q-306: the need, then what is free — "63.4 of 61.8 GB" read backwards.
+    expect(row).toHaveTextContent('needs 63.4 GB, 61.8 GB free');
     expect(within(row).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
   });
 

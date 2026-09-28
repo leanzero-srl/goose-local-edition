@@ -6293,6 +6293,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "模型：{id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "蜂群节点池条目 {device}，其中的模型名称：{model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "未能完成：{error}"
   },
@@ -6429,7 +6435,7 @@
     "defaultMessage": "{mac} 的内存（相对预算）"
   },
   "nodes.memNeed": {
-    "defaultMessage": "需要 {need} / {budget} GB"
+    "defaultMessage": "需要 {need} GB，可用 {budget} GB"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "尚无峰值"
@@ -6495,7 +6501,7 @@
     "defaultMessage": "筛选模型"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} / {budget} GB"
+    "defaultMessage": "{mac}：需要 {need} GB，可用 {budget} GB"
   },
   "nodes.newGetModels": {
     "defaultMessage": "在“模型”中获取"
@@ -6526,6 +6532,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "命名"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "已有另一个节点叫“{name}”——请给这个节点换个名字"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "选择一个模型以继续"
@@ -6580,6 +6589,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "设置另一个提供方"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "启动它会停止 {model}。"
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "启动它会停止 {macs} 上的 {model}。"
   },
   "nodes.newStepKind": {
     "defaultMessage": "类型"
@@ -6645,7 +6660,10 @@
     "defaultMessage": "正在等待另一次加载完成"
   },
   "nodes.pinWay": {
-    "defaultMessage": "固定一种方式"
+    "defaultMessage": "为此模型新建节点"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "为某个模型新建节点"
   },
   "nodes.planFailed": {
     "defaultMessage": "此方式没有计划：{error}"
@@ -6657,7 +6675,10 @@
     "defaultMessage": "你的蜂群节点池"
   },
   "nodes.poolSection": {
-    "defaultMessage": "你的蜂群节点池 · 当“swarm 构建使用”为“你的蜂群节点池”时，供 swarm 构建使用"
+    "defaultMessage": "你的蜂群节点池 · swarm 构建和“任意节点（自动）”上的对话在这些节点上运行"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "你的蜂群节点池 · “任意节点（自动）”上的对话在这些节点上运行；swarm 构建目前使用 {strategy}"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {第 # 个}}"
@@ -6720,10 +6741,13 @@
     "defaultMessage": "新聊天目前从此节点开始，因此不能单独移除它。"
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "蜂群节点池保留它的设备；此节点不会再在这里显示。请在下方编辑节点池本身。"
+    "defaultMessage": "只会移除这张卡片：它的模型仍在你的蜂群节点池中，所以“任意节点（自动）”上的对话会继续在它上面运行，使用节点池的 swarm 构建也一样。要找回这张卡片，请在此页面选择“显示已移除的节点池节点”。"
   },
   "nodes.removeTitle": {
     "defaultMessage": "移除 {node}？"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, other {你从蜂群节点池中移除的 # 个节点未显示}}"
   },
   "nodes.retry": {
     "defaultMessage": "重新读取"
@@ -6742,6 +6766,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "在“运行”中显示"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "显示已移除的节点池节点"
   },
   "nodes.startAction": {
     "defaultMessage": "启动 {node}"
@@ -9458,14 +9485,17 @@
   "strategies.addNode": {
     "defaultMessage": "添加节点"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "你所有的节点都已在此列表中"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "只有一个节点——请在“节点”中再创建一个，才能添加到这里"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "swarm 构建在使用"
   },
   "strategies.badgeChats": {
     "defaultMessage": "新聊天从此开始"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "swarm 构建能否使用它，会在你保存时检查。"
   },
   "strategies.buildsCan": {
     "defaultMessage": "swarm 构建可以使用此策略。"
@@ -9496,6 +9526,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "无法读取 swarm 构建能否使用它：{error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "在你编辑时检查；尚未保存任何内容。"
   },
   "strategies.cancel": {
     "defaultMessage": "取消"
@@ -9540,7 +9573,7 @@
     "defaultMessage": "还没有策略"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}：提供这台 Mac 的引擎正在运行的内容；从不加载"
+    "defaultMessage": "{node}：使用这台 Mac 当前运行的内容；从不自行启动模型"
   },
   "strategies.linkLabel": {
     "defaultMessage": "链接"
@@ -9594,10 +9627,10 @@
     "defaultMessage": "在你的 Mac 上"
   },
   "strategies.oneWay": {
-    "defaultMessage": "同一时间只有一种方式为你的聊天提供服务：{node}"
+    "defaultMessage": "此策略在你的 Mac 上只运行 {node}，因此不会切换。"
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "在你所有的 Mac 上，同一时间只有一种 MLX 方式为这台 Mac 的 goose 提供服务。同一策略中的两种不同方式只能轮流运行。"
+    "defaultMessage": "你的 Mac 一次只为这台 Mac 上的 goose 运行一个模型——在一台 Mac 上，或分布在多台 Mac 上。此策略中运行方式不同的节点会轮流运行：每次切换都会停止一个并启动另一个。"
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}：从 {a} 溢出到 {b} 会在 {a} 忙碌时每次都停止一个以加载另一个"

@@ -6293,6 +6293,12 @@
   "nodes.defaultName": {
     "defaultMessage": "{model} · {where}"
   },
+  "nodes.detailsModel": {
+    "defaultMessage": "मॉडल: {id}"
+  },
+  "nodes.detailsPool": {
+    "defaultMessage": "स्वार्म पूल प्रविष्टि {device}, वहाँ मॉडल का नाम: {model}"
+  },
   "nodes.displacedActionFailed": {
     "defaultMessage": "यह नहीं हुआ: {error}"
   },
@@ -6429,7 +6435,7 @@
     "defaultMessage": "{mac} पर मेमोरी उसके बजट के मुकाबले"
   },
   "nodes.memNeed": {
-    "defaultMessage": "{budget} GB में से {need} चाहिए"
+    "defaultMessage": "{need} GB चाहिए, {budget} GB खाली"
   },
   "nodes.memNoPeak": {
     "defaultMessage": "अभी कोई शिखर नहीं"
@@ -6495,7 +6501,7 @@
     "defaultMessage": "मॉडल फ़िल्टर करें"
   },
   "nodes.newFitOn": {
-    "defaultMessage": "{mac} {need} / {budget} GB"
+    "defaultMessage": "{mac}: {need} GB चाहिए, {budget} GB खाली"
   },
   "nodes.newGetModels": {
     "defaultMessage": "मॉडल में से एक लें"
@@ -6526,6 +6532,9 @@
   },
   "nodes.newNameIt": {
     "defaultMessage": "नाम दें"
+  },
+  "nodes.newNameTaken": {
+    "defaultMessage": "किसी दूसरे नोड का नाम पहले से “{name}” है — इसे कोई दूसरा नाम दें"
   },
   "nodes.newNeedModel": {
     "defaultMessage": "आगे बढ़ने के लिए एक मॉडल चुनें"
@@ -6580,6 +6589,12 @@
   },
   "nodes.newSetUpAnother": {
     "defaultMessage": "एक और प्रदाता सेट अप करें"
+  },
+  "nodes.newStartStops": {
+    "defaultMessage": "इसे शुरू करने से {model} रुक जाएगा।"
+  },
+  "nodes.newStartStopsOn": {
+    "defaultMessage": "इसे शुरू करने से {macs} पर {model} रुक जाएगा।"
   },
   "nodes.newStepKind": {
     "defaultMessage": "प्रकार"
@@ -6645,7 +6660,10 @@
     "defaultMessage": "किसी दूसरे लोड के पूरा होने की प्रतीक्षा"
   },
   "nodes.pinWay": {
-    "defaultMessage": "एक तरीका पिन करें"
+    "defaultMessage": "इस मॉडल के लिए नया नोड"
+  },
+  "nodes.pinWayNothing": {
+    "defaultMessage": "किसी मॉडल के लिए नया नोड"
   },
   "nodes.planFailed": {
     "defaultMessage": "इस तरीके के लिए कोई योजना नहीं: {error}"
@@ -6657,7 +6675,10 @@
     "defaultMessage": "आपका स्वार्म पूल"
   },
   "nodes.poolSection": {
-    "defaultMessage": "आपका स्वार्म पूल · जब तक “Swarm बिल्ड इसका उपयोग करते हैं” “आपका स्वार्म पूल” है, तब तक swarm बिल्ड द्वारा उपयोग किया जाता है"
+    "defaultMessage": "आपका स्वार्म पूल · swarm बिल्ड और कोई भी नोड (ऑटो) पर चैट इन पर चलते हैं"
+  },
+  "nodes.poolSectionStrategy": {
+    "defaultMessage": "आपका स्वार्म पूल · कोई भी नोड (ऑटो) पर चैट इन पर चलती हैं; swarm बिल्ड अभी {strategy} का उपयोग करते हैं"
   },
   "nodes.rankOrdinal": {
     "defaultMessage": "{rank, selectordinal, other {#वां}}"
@@ -6720,10 +6741,13 @@
     "defaultMessage": "नई चैट अभी इस नोड पर शुरू होती हैं, इसलिए इसे अकेले नहीं हटाया जा सकता।"
   },
   "nodes.removePoolBody": {
-    "defaultMessage": "आपका स्वार्म पूल अपना डिवाइस रखता है; यह नोड यहाँ फिर नहीं दिखेगा। पूल को नीचे खुद संपादित करें।"
+    "defaultMessage": "सिर्फ़ यह कार्ड हटेगा: इसका मॉडल आपके स्वार्म पूल में रहता है, इसलिए कोई भी नोड (ऑटो) पर चैट उस पर चलती रहेंगी, और पूल का उपयोग करने वाले swarm बिल्ड भी। कार्ड वापस लाने के लिए इस पेज पर “हटाए गए पूल नोड दिखाएँ” चुनें।"
   },
   "nodes.removeTitle": {
     "defaultMessage": "{node} हटाएँ?"
+  },
+  "nodes.removedPoolNodes": {
+    "defaultMessage": "{count, plural, one {आपके स्वार्म पूल से हटाया गया # नोड नहीं दिखाया गया है} other {आपके स्वार्म पूल से हटाए गए # नोड नहीं दिखाए गए हैं}}"
   },
   "nodes.retry": {
     "defaultMessage": "फिर से पढ़ें"
@@ -6742,6 +6766,9 @@
   },
   "nodes.showInRunIt": {
     "defaultMessage": "चलाएँ में दिखाएँ"
+  },
+  "nodes.showRemovedPoolNodes": {
+    "defaultMessage": "हटाए गए पूल नोड दिखाएँ"
   },
   "nodes.startAction": {
     "defaultMessage": "{node} शुरू करें"
@@ -9458,14 +9485,17 @@
   "strategies.addNode": {
     "defaultMessage": "एक नोड जोड़ें"
   },
+  "strategies.addNodeAllIn": {
+    "defaultMessage": "आपके सभी नोड पहले से इस सूची में हैं"
+  },
+  "strategies.addNodeOnlyOne": {
+    "defaultMessage": "सिर्फ़ एक नोड है — इसे यहाँ जोड़ने के लिए नोड में एक और बनाएँ"
+  },
   "strategies.badgeBuilds": {
     "defaultMessage": "Swarm बिल्ड इसका उपयोग करते हैं"
   },
   "strategies.badgeChats": {
     "defaultMessage": "नई चैट यहाँ शुरू होती हैं"
-  },
-  "strategies.buildsAfterSave": {
-    "defaultMessage": "क्या swarm बिल्ड इसे उपयोग कर सकते हैं, यह आपके सहेजने पर जाँचा जाता है।"
   },
   "strategies.buildsCan": {
     "defaultMessage": "Swarm बिल्ड इस रणनीति का उपयोग कर सकते हैं।"
@@ -9496,6 +9526,9 @@
   },
   "strategies.buildsUnread": {
     "defaultMessage": "क्या swarm बिल्ड इसे उपयोग कर सकते हैं, यह पढ़ा नहीं जा सका: {error}"
+  },
+  "strategies.buildsUnsaved": {
+    "defaultMessage": "आपके संपादित करते समय जाँचा जाता है; अभी कुछ भी सहेजा नहीं गया है।"
   },
   "strategies.cancel": {
     "defaultMessage": "रद्द करें"
@@ -9540,7 +9573,7 @@
     "defaultMessage": "अभी कोई रणनीति नहीं"
   },
   "strategies.followsRow": {
-    "defaultMessage": "{node}: इस Mac का इंजन जो भी चलाता है, उसी से सेवा देता है; कभी लोड नहीं होता"
+    "defaultMessage": "{node}: यह Mac जो भी चला रहा है उसी का उपयोग करता है; खुद कभी कोई मॉडल शुरू नहीं करता"
   },
   "strategies.linkLabel": {
     "defaultMessage": "लिंक"
@@ -9594,10 +9627,10 @@
     "defaultMessage": "आपके Mac पर"
   },
   "strategies.oneWay": {
-    "defaultMessage": "एक समय में एक ही तरीका आपकी चैट को सेवा देता है: {node}"
+    "defaultMessage": "इस रणनीति के लिए आपके Mac पर सिर्फ़ {node} चलता है, इसलिए कुछ नहीं बदलता।"
   },
   "strategies.oneWayRule": {
-    "defaultMessage": "आपके सभी Mac में, एक समय में केवल एक MLX तरीका इस Mac के goose को सेवा देता है। एक रणनीति के दो अलग-अलग तरीकों को बारी-बारी से चलना पड़ता है।"
+    "defaultMessage": "आपके Mac इस Mac के goose के लिए एक समय में एक ही मॉडल चलाते हैं — एक Mac पर या उनमें बाँटकर। इस रणनीति के जो नोड अलग तरह से चलते हैं, वे बारी-बारी से चलते हैं: हर बदलाव एक को रोकता है और दूसरे को शुरू करता है।"
   },
   "strategies.overflowTwoWays": {
     "defaultMessage": "{role}: जब भी {a} व्यस्त हो, {a} से {b} पर अतिरिक्त काम भेजने से एक को रोककर दूसरे को लोड करना पड़ेगा"

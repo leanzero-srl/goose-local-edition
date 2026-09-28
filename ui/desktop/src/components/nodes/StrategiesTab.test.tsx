@@ -50,10 +50,12 @@ vi.mock('../../acp/mlx-placement', async (importOriginal) => ({
 const mockLoads = vi.fn();
 const mockWrite = vi.fn();
 const mockRemove = vi.fn();
+const mockEligibility = vi.fn();
 vi.mock('../../acp/nodes', () => ({
   nodesLoadHistory: (...a: unknown[]) => mockLoads(...a),
   nodesWrite: (...a: unknown[]) => mockWrite(...a),
   nodesRemoveStrategy: (...a: unknown[]) => mockRemove(...a),
+  nodesBuildEligibility: (...a: unknown[]) => mockEligibility(...a),
 }));
 vi.mock('../../acp/providers', () => ({
   acpListProviderDetails: async () => [OPENROUTER],
@@ -154,6 +156,7 @@ const where = () => screen.getByTestId('where').textContent;
 beforeEach(() => {
   store.state = readState(readOf({ ...CONFIG, strategies: [...CONFIG.strategies!, QUICK, LOCAL] }));
   mockPlan.mockResolvedValue({ plans: PLANS, nodes: [], storeErrors: [], probeMs: 1 });
+  mockEligibility.mockResolvedValue(LOCAL_OK);
   mockLoads.mockImplementation(async (id: string) => ({
     groups: id === NODE_FLASH.def.id ? LOADS_FLASH : [],
     path: '/x',
@@ -384,19 +387,38 @@ describe('the strategy editor', () => {
     // The stored strategy's build answer is shown until something changes.
     const panel = screen.getByTestId('strategy-fit-panel');
     expect(within(panel).getByTestId('strategy-fit-one')).toHaveTextContent(
-      'One way at a time serves your chats: 27B Atlassian · both Macs'
+      'Only 27B Atlassian · both Macs runs on your Macs for this strategy, so nothing switches.'
     );
+    // Q-311: the rule in plain words — no "MLX way", no "goose's" jargon.
+    expect(panel).toHaveTextContent(
+      'Your Macs run one model at a time for goose on this Mac — on one Mac or split across them.'
+    );
+    expect(panel).not.toHaveTextContent('MLX way');
     expect(within(panel).getByTestId('strategy-builds')).toHaveAttribute('data-builds', 'refused');
     assertStudioClean(editor);
   });
 
-  it('a change makes the build answer wait for the save; Cancel drops strategy= in place', async () => {
+  it('Q-311: a change is checked as it is made — goosed answers for the draft, nothing is written; Cancel drops strategy= in place', async () => {
+    mockEligibility.mockResolvedValue(LOCAL_OK);
     renderTab('/nodes?tab=strategies&strategy=everyday');
-    await userEvent.type(screen.getByTestId('strategy-name'), ' days');
     const panel = screen.getByTestId('strategy-fit-panel');
-    expect(within(panel).getByTestId('strategy-builds-after-save')).toHaveTextContent(
-      'Whether swarm builds can use it is checked when you save.'
+    // Unchanged: the stored answer, no draft asked.
+    expect(within(panel).getByTestId('strategy-builds')).toHaveAttribute('data-builds', 'refused');
+    expect(mockEligibility).not.toHaveBeenCalled();
+    await userEvent.type(screen.getByTestId('strategy-name'), ' days');
+    await waitFor(() =>
+      expect(within(panel).getByTestId('strategy-builds')).toHaveAttribute(
+        'data-builds',
+        'eligible'
+      )
     );
+    const [id, draft] = mockEligibility.mock.calls[mockEligibility.mock.calls.length - 1];
+    expect(id).toBe('everyday');
+    expect(draft).toMatchObject({ id: 'everyday', name: 'Everyday days' });
+    expect(within(panel).getByTestId('strategy-builds-unsaved')).toHaveTextContent(
+      'Checked as you edit; nothing is saved yet.'
+    );
+    expect(panel).not.toHaveTextContent('checked when you save');
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByTestId('strategy-editor')).toBeNull();
     expect(where()).toBe('/nodes?tab=strategies');
@@ -473,6 +495,34 @@ describe('the strategy editor', () => {
     // Refused: nothing closes, the draft is kept.
     expect(screen.getByTestId('strategy-editor')).toBeInTheDocument();
     expect(within(roleRow('build')).getAllByTestId('strategy-chain-entry')).toHaveLength(2);
+  });
+
+  it('Q-311: a disabled “Add a node” says why beside it', async () => {
+    mockEligibility.mockResolvedValue(LOCAL_OK);
+    // One node only: make another first.
+    store.state = readState(readOf({ ...CONFIG, strategies: [LOCAL] }, [NODE_FLASH]));
+    renderTab('/nodes?tab=strategies&strategy=local');
+    const chat = roleRow('chat');
+    expect(within(chat).getByTestId('strategy-add-node')).toBeDisabled();
+    const why = within(chat).getByTestId('strategy-add-node-why');
+    expect(why).toHaveTextContent('Only one node exists — make another under Nodes to add it here');
+    expect(within(chat).getByTestId('strategy-add-node')).toHaveAttribute(
+      'aria-describedby',
+      why.id
+    );
+    cleanup();
+    // Every node already in the chain.
+    store.state = readState(
+      readOf({ ...CONFIG, strategies: [...CONFIG.strategies!, QUICK, LOCAL] })
+    );
+    renderTab('/nodes?tab=strategies&strategy=local');
+    const row = roleRow('chat');
+    await userEvent.click(within(row).getByTestId('strategy-add-node'));
+    await userEvent.click(within(row).getByTestId('strategy-add-node'));
+    expect(within(row).getByTestId('strategy-add-node')).toBeDisabled();
+    expect(within(row).getByTestId('strategy-add-node-why')).toHaveTextContent(
+      'Every node you have is already in this list'
+    );
   });
 
   it('Same as Chat takes a role back to inheriting; Chat cannot follow an unset Build', async () => {

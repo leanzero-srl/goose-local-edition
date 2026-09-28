@@ -97,6 +97,7 @@ import {
   type Mac,
 } from './macs';
 import { WithMacs, copyKey, copyRunning, useMacs } from './useMacs';
+import { modelShortName } from '../../utils/modelShortName';
 
 /**
  * RUN IT — the one way to start a model: on this Mac, on another Mac (its single engine, chat over
@@ -419,7 +420,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A split's blocker, in the person's words, naming each Mac. */
 export function splitBlockerText(intl: IntlShape, blocker: SplitBlocker, modelId: string): string {
-  const model = modelId.split('/').pop() || modelId;
+  const model = modelShortName(modelId);
   switch (blocker.kind) {
     case 'notSplittable':
       return blocker.reason ?? intl.formatMessage(i18n.splitNotSplittable, { model });
@@ -853,7 +854,7 @@ function PlacementCardBody({
         way.candidate?.nodeNames ?? savedSplit?.nodes.map((n) => n.name) ?? [],
         { type: 'conjunction' }
       );
-      const model = modelId.split('/').pop() || modelId;
+      const model = modelShortName(modelId);
       const say = (text: string) => setNotice({ tone: 'accent', text });
 
       say(intl.formatMessage(i18n.splitChecking, { nodes: names, model }));
