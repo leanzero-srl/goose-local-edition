@@ -15,7 +15,8 @@ import { missingUtilities } from '../lz/compileStudioCss';
  * <html>'s class the way the app always has; either control moves the other.
  *
  * The OS model: `os.dark` is what main sees; `os.rendererDark`, when set, pins the renderer's own
- * prefers-color-scheme to a different value — the stale state measured on 2026-09-02.
+ * prefers-color-scheme to a different value — the stale state measured on 2026-09-02 and again
+ * on 3.0.68 (Q-300). Under System the renderer's own media query is never read or listened to.
  */
 
 const os = vi.hoisted(() => ({
@@ -122,19 +123,36 @@ describe('ThemeSwitch — one store, two controls', () => {
     await waitFor(() => expect(setSetting).toHaveBeenCalledWith('theme', 'light'));
   });
 
-  it('System follows the OS through the prefers-color-scheme listener, and stops once a fixed theme is chosen', async () => {
+  it("System follows the OS through main's nativeTheme event alone, and stops once a fixed theme is chosen", async () => {
     mount();
     await waitFor(() => expect(radio('System').getAttribute('aria-checked')).toBe('true'));
-    await waitFor(() => expect(os.listeners.size).toBeGreaterThan(0));
+    await waitFor(() => expect(os.nativeListeners.size).toBeGreaterThan(0));
+    expect(os.listeners.size).toBe(0);
     flipOs(true);
     expect(html().classList.contains('dark')).toBe(true);
     flipOs(false);
     expect(html().classList.contains('light')).toBe(true);
 
     fireEvent.click(radio('Dark'));
-    await waitFor(() => expect(os.listeners.size).toBe(0));
     flipOs(false);
     expect(html().classList.contains('dark')).toBe(true);
+  });
+
+  it("Q-300: under System a stale prefers-color-scheme 'change' (a viewport change) never repaints over main's dark answer", async () => {
+    os.dark = true;
+    os.rendererDark = false;
+    mount();
+    await waitFor(() => expect(html().classList.contains('dark')).toBe(true));
+    act(() => os.listeners.forEach((fn) => fn()));
+    expect(html().classList.contains('dark')).toBe(true);
+    expect(html().classList.contains('light')).toBe(false);
+
+    fireEvent.click(radio('Light'));
+    fireEvent.click(radio('System'));
+    await waitFor(() => expect(html().classList.contains('dark')).toBe(true));
+    act(() => os.listeners.forEach((fn) => fn()));
+    expect(html().classList.contains('dark')).toBe(true);
+    expect(window.matchMedia('(prefers-color-scheme: dark)').matches).toBe(false);
   });
 
   it('the Settings › App buttons and the sidebar switch stay in sync both ways', async () => {
