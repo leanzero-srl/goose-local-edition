@@ -15,6 +15,7 @@ import MlxEngineView, {
 } from './MlxEngineView';
 import { mlxDistributedStart } from '../../acp/mlx-distributed';
 import { publishRestoreLine } from './mlxRestore';
+import { gateNow } from './MlxMountRefusalBanner';
 import type { PlacementPlan } from '../../acp/mlx-placement';
 import { NODES, PLAN_27B, PLAN_FLASH } from './placement.fixtures';
 import { NAV_ITEMS } from '../../hooks/useNavigationItems';
@@ -3690,6 +3691,88 @@ describe('MlxEngineView — one refusal, once, from one fit verdict (Q-277)', ()
     expect(mountFailureBanners(status, held).mountError).toBeNull();
     expect(mountFailureBanners({ ...status, strayListenerPort: 9600 }, held).mountError).toBe(held);
     expect(mountFailureBanners(status, 'model not found').mountError).toBe('model not found');
+  });
+
+  /**
+   * Q-293: after the banner said "fits now — start it again", the Details table's Mount gate chip
+   * still read the refused mount's "block" (status.gateVerdict, the LAST gate). The chip reads the
+   * verdict the banner and the tile read.
+   */
+  async function gateChip(): Promise<HTMLElement> {
+    const toggle = await screen.findByRole('button', { name: 'Engine details' });
+    if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle);
+    return within(screen.getByLabelText('Engine status')).getByTestId('mlx-gate-chip');
+  }
+
+  it('Q-293: the Mount gate chip says what the banner says once memory has freed', async () => {
+    refusedStatus(fitOf('allow', 30.8, 'fits, but only 0.2 GB under the budget'));
+    const { unmount } = render(<MlxEngineView />);
+    const refusal = await screen.findByTestId('mlx-mount-refusal');
+    await waitFor(() => expect(refusal).toHaveTextContent('it fits now — start it again.'));
+    expect(await screen.findByTestId('mlx-mount-cost')).toHaveTextContent('Fits, 0.2 GB');
+    const chip = await gateChip();
+    expect(chip).toHaveAttribute('data-verdict', 'allow');
+    expect(chip).toHaveTextContent(/^allow$/);
+    expect(within(chip).getByTestId('lz-chip')).toHaveAttribute('data-tone', 'ok');
+    expect(within(chip).getByTestId('lz-chip')).toHaveAttribute(
+      'title',
+      'fits, but only 0.2 GB under the budget'
+    );
+    unmount();
+  });
+
+  it('Q-293: still refused, the chip is the block the banner and the tile state', async () => {
+    const live = 'needs 30.6 GB but the budget 28.3 GB (short 2.3 GB)';
+    refusedStatus(fitOf('block', 28.3, live));
+    const { unmount } = render(<MlxEngineView />);
+    expect(await screen.findByTestId('mlx-mount-cost')).toHaveTextContent(
+      'Needs 2.3 GB more free memory'
+    );
+    const chip = await gateChip();
+    expect(chip).toHaveAttribute('data-verdict', 'block');
+    expect(within(chip).getByTestId('lz-chip')).toHaveAttribute('data-tone', 'err');
+    expect(within(chip).getByTestId('lz-chip')).toHaveAttribute('title', live);
+    unmount();
+  });
+
+  it('Q-293: gateNow — the live verdict for the gate’s model, else the gate as judged', () => {
+    const live = fitOf('allow', 30.8, 'fits now');
+    expect(gateNow({ gateFit: REFUSED, mountFit: live })).toEqual({
+      verdict: 'allow',
+      message: 'fits now',
+    });
+    // The tile shows another model: its verdict says nothing about this gate's.
+    expect(gateNow({ gateFit: REFUSED, mountFit: { ...live, modelId: 'other/model' } })).toEqual({
+      verdict: 'block',
+      message: GATE_WORDS,
+    });
+    expect(gateNow({ gateFit: REFUSED, mountFit: null })?.verdict).toBe('block');
+    // A goose before gateFit: its last verdict's word and words, as sent.
+    expect(gateNow({ gateVerdict: 'warn', gateMessage: 'tight' })).toEqual({
+      verdict: 'warn',
+      message: 'tight',
+    });
+    expect(gateNow({})).toBeNull();
+    expect(gateNow(null)).toBeNull();
+  });
+
+  it('Q-293: a WARN gate whose model fits comfortably now shows no memory-pressure line', async () => {
+    const warned = fitOf('allow', 31.0, 'fits, but only 0.4 GB under the budget');
+    mockStatus.mockImplementation(async (_nodeId?: string, fitModelId?: string | null) =>
+      statusOf({
+        state: 'stopped',
+        totalMemoryGb: 128,
+        gateVerdict: 'warn',
+        gateMessage: 'fits, but only 0.4 GB under the budget',
+        gateFit: { ...warned, verdict: 'warn' },
+        mountFit: fitModelId === QWEN ? fitOf('allow', 40.0, 'fits with room') : undefined,
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const chip = await gateChip();
+    await waitFor(() => expect(chip).toHaveAttribute('data-verdict', 'allow'));
+    expect(screen.queryByTestId('mlx-memory-pressure')).toBeNull();
+    unmount();
   });
 
   it('a goose without gateFit keeps its words verbatim under Mount blocked', () => {

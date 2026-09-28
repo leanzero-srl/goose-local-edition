@@ -58,6 +58,29 @@ export function refusalVerdict(
   return live != null && live.modelId === refused.modelId ? live : refused;
 }
 
+/**
+ * The mount gate as the Engine tab states it (Q-293): the last gate (`gateFit`) judged again NOW
+ * whenever the tile shows its model — the tile's own verdict (`mountFit`, via `refusalVerdict`) —
+ * else as it was judged. The refusal banner, the Details "Mount gate" chip and the memory-pressure
+ * line read this one verdict: on 3.0.66 the chip kept the refused mount's "block" under a banner
+ * saying "it fits now — start it again". A goose before `gateFit` sends only the last verdict's
+ * word and words (`gateVerdict`, `gateMessage`), which are stated as they are.
+ */
+export function gateNow(
+  status: Partial<
+    Pick<MlxEngineStatus, 'gateFit' | 'mountFit' | 'gateVerdict' | 'gateMessage'>
+  > | null
+): { verdict: string; message: string | undefined } | null {
+  const gate = status?.gateFit;
+  if (gate != null) {
+    const now = refusalVerdict(gate, status?.mountFit ?? null);
+    return { verdict: now.verdict, message: now.message };
+  }
+  return status?.gateVerdict != null
+    ? { verdict: status.gateVerdict, message: status.gateMessage }
+    : null;
+}
+
 export function MlxMountRefusalBanner({ status }: { status: MlxEngineStatus }) {
   const intl = useIntl();
   const line = useRestoreLine();

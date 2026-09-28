@@ -16,6 +16,7 @@ use super::runs::{ChatShape, WayRuns};
 use super::store::{PlacementKey, PlacementKind, RecordSource, SpeedRecord};
 use crate::distributed::plan::TensorModelFacts;
 use crate::distributed::Runner;
+use crate::engine::StartFrees;
 use crate::fit::{self, Need, NodeMemoryFacts, Verdict};
 use crate::kv_cache::KvCacheMode;
 
@@ -152,6 +153,13 @@ pub struct PlanInput<'a> {
     /// fits by construction — its memory is already in use, so this Mac's available figure cannot
     /// judge it.
     pub running: Option<(String, Option<u64>)>,
+    /// What a start of this Mac's single engine gets back — the mount gate's and the tile's own
+    /// credit (`MlxEngineManager::start_frees`). Only its `Leftover` arm is read here, and only by
+    /// this Mac's single-engine fit (Q-292): goose's own engine left on the engine port is stopped
+    /// by that start's port claim alone — a split starts beside it, so no other placement gets
+    /// its memory. The engine the manager runs (`Mounted`) reaches every placement through
+    /// `NodeMemory::freed_by_switch` instead, because every Run stops it first.
+    pub this_mac_start: Option<&'a StartFrees>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -489,15 +497,28 @@ fn status_for(max_fit: u64, wanted: u64, min_useful: u64) -> (FitStatus, Option<
 /// useful context decides whether it fits at all — the SAME verdict the mount gate reaches on
 /// that Mac — and the budget left above the weights sizes the context it can run at.
 fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
-    let b = match node_budget(node) {
+    let mut b = match node_budget(node) {
         Ok(b) => b,
         Err(reason) => return unknown_fit(reason),
     };
+    let leftover = input
+        .this_mac_start
+        .filter(|frees| node.is_local() && matches!(frees, StartFrees::Leftover { .. }));
+    if let Some(leftover) = leftover {
+        b.facts.freed_by_switch_bytes = b
+            .facts
+            .freed_by_switch_bytes
+            .saturating_add(leftover.bytes());
+        b.budget = b.facts.budget_bytes();
+    }
     let weights = input.bytes_on_disk;
-    let verdict = fit::judge(
+    let mut verdict = fit::judge(
         single_engine_need(weights, Ok(input.model), input.kv_mode),
         b.facts,
     );
+    if let Some(note) = leftover.and_then(StartFrees::note) {
+        verdict.append(note);
+    }
     let node_fit = |need_bytes| {
         vec![NodeFit {
             name: node.name.clone(),
@@ -1665,6 +1686,10 @@ mod tests {
 
     impl Fixture {
         fn plan(&self, goal: Goal) -> Plan {
+            self.plan_with_start(goal, None)
+        }
+
+        fn plan_with_start(&self, goal: Goal, this_mac_start: Option<&StartFrees>) -> Plan {
             plan(&PlanInput {
                 model_id: "m",
                 model: &self.model,
@@ -1679,6 +1704,7 @@ mod tests {
                 records: &self.records,
                 calibration: &self.cal,
                 running: self.running.clone(),
+                this_mac_start,
             })
         }
     }
@@ -2283,6 +2309,84 @@ mod tests {
         assert_eq!(here.fit.context, Some(262_144));
         assert!(here.fit.detail.starts_with("running now"));
         assert_eq!(plan.badge, Badge::FitsThisMac);
+    }
+
+    /// Q-292: while goose's own 27B is left on the engine port by a crashed goosed, the tile (the
+    /// mount gate's fit, Q-276) counts its memory as freed — the start stops it first. Run it's
+    /// "Run on this Mac" row reads the SAME credit and agrees; the split and the other Mac's row
+    /// do not get it (a split starts beside the leftover, and the figures are per Mac), so with
+    /// this MacBook's 20 GiB they stay as short as they were.
+    #[test]
+    fn this_macs_own_leftover_frees_memory_for_its_single_row_only() {
+        let mut f = the_27b();
+        f.nodes[0].memory = Ok(NodeMemory {
+            total_bytes: gib(128.0),
+            available_bytes: gib(20.0),
+            ceiling_bytes: Ok(M4_CEILING),
+            freed_by_switch: None,
+        });
+        let leftover = StartFrees::Leftover {
+            pids: vec![21637, 21517],
+            port: 8090,
+            bytes: Ok(qwen27b().resident_bytes),
+        };
+        let here = "single:local";
+        let tensor = "tensor:jaccl:local+link:worksmacstudio";
+        let studio = "single:link:worksmacstudio";
+
+        let without = f.plan(Goal::Chat);
+        let with = f.plan_with_start(Goal::Chat, Some(&leftover));
+
+        assert_eq!(by_id(&without, here).fit.status, FitStatus::Short);
+        let row = &by_id(&with, here).fit;
+        assert!(row.status.fits(), "{}", row.detail);
+        assert!(
+            row.detail.contains(
+                "pid 21637, 21517 on port 8090 is this goose's own engine left from an earlier \
+                 run — nothing runs it and the start stops it first, so its 28.8 GB count as \
+                 available"
+            ),
+            "the row says why, in the tile's own words: {}",
+            row.detail
+        );
+        assert!(
+            row.after_stopping.is_empty(),
+            "no model is serving here to stop: {:?}",
+            row.after_stopping
+        );
+        assert_eq!(by_id(&without, tensor).fit.status, FitStatus::Short);
+        for id in [tensor, studio] {
+            assert_eq!(
+                by_id(&with, id).fit,
+                by_id(&without, id).fit,
+                "{id} is credited only what stopping it frees"
+            );
+        }
+
+        let unread = StartFrees::Leftover {
+            pids: vec![21637],
+            port: 8090,
+            bytes: Err("footprint of pid 21637: no such process".into()),
+        };
+        let plan = f.plan_with_start(Goal::Chat, Some(&unread));
+        let row = &by_id(&plan, here).fit;
+        assert_eq!(row.status, FitStatus::Short);
+        assert!(
+            row.detail
+                .contains("its memory could not be read (footprint of pid 21637"),
+            "{}",
+            row.detail
+        );
+
+        let mounted = StartFrees::Mounted {
+            model_id: "other".into(),
+            bytes: Ok(qwen27b().resident_bytes),
+        };
+        assert_eq!(
+            by_id(&f.plan_with_start(Goal::Chat, Some(&mounted)), here).fit,
+            by_id(&without, here).fit,
+            "a mounted engine reaches the plan through freed_by_switch, never twice"
+        );
     }
 
     #[test]

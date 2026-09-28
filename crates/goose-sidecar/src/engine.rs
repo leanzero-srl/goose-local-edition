@@ -920,6 +920,79 @@ enum PortBeforeMount {
     Held(UnsupervisedListenerError),
 }
 
+/// What a start of this Mac's single engine gets back before it loads
+/// ([`MlxEngineManager::start_frees`]): the bytes the fit rule counts as available
+/// (`fit::NodeMemoryFacts::freed_by_switch_bytes`) and the sentence that says why — or, when the
+/// footprint could not be read, 0 and the sentence that says it counts as in use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartFrees {
+    /// Nothing listens on the port, a holder not proven ours does (it frees nothing), or a start
+    /// in flight owns it.
+    Nothing,
+    /// The engine this manager runs: a mount replaces it.
+    Mounted {
+        model_id: String,
+        bytes: Result<u64, String>,
+    },
+    /// This goose's own engine left on the port by an earlier run: only a single-engine start's
+    /// port claim stops it — a split starts beside it — so only the single engine's fit on this
+    /// Mac may count it (Q-292).
+    Leftover {
+        pids: Vec<u32>,
+        port: u16,
+        bytes: Result<u64, String>,
+    },
+}
+
+impl StartFrees {
+    pub fn bytes(&self) -> u64 {
+        match self {
+            StartFrees::Nothing => 0,
+            StartFrees::Mounted { bytes, .. } | StartFrees::Leftover { bytes, .. } => match bytes {
+                Ok(bytes) => *bytes,
+                // Unread: `note` says it counts as in use, and why.
+                Err(_) => 0,
+            },
+        }
+    }
+
+    pub fn note(&self) -> Option<String> {
+        match self {
+            StartFrees::Nothing => None,
+            StartFrees::Mounted { model_id, bytes } => Some(match bytes {
+                Ok(bytes) => format!(
+                    "{model_id} is mounted here: mounting replaces it, so its {} count as available",
+                    fit::gb(*bytes)
+                ),
+                Err(e) => format!(
+                    "{model_id} is mounted here but its memory could not be read ({e}); it counts \
+                     as in use"
+                ),
+            }),
+            StartFrees::Leftover { pids, port, bytes } => {
+                let pids = pids
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Some(match bytes {
+                    Ok(bytes) => format!(
+                        "pid {pids} on port {port} is this goose's own engine left from an \
+                         earlier run — nothing runs it and the start stops it first, so its {} \
+                         count as available",
+                        fit::gb(*bytes)
+                    ),
+                    Err(e) => format!(
+                        "pid {pids} on port {port} is this goose's own leftover engine, which the \
+                         start stops first, but its memory could not be read ({e}); it counts as \
+                         in use"
+                    ),
+                })
+            }
+        }
+    }
+}
+
 /// The resident bytes of whatever listens on `port` — the engine a start stops there.
 async fn footprint_on_port(port: u16) -> Result<u64> {
     #[cfg(unix)]
@@ -1454,7 +1527,7 @@ impl MlxEngineManager {
         let ceiling = self
             .gpu_ceiling()
             .context("reading the GPU ceiling the fit rule needs")?;
-        let (freed, note) = self.start_frees(settings).await;
+        let frees = self.start_frees_with(settings).await;
         let need = single_engine_need(
             &expand_tilde(&settings.models_dir).join(&model.id),
             model.size_bytes,
@@ -1471,10 +1544,10 @@ impl MlxEngineManager {
                 total_bytes: reading.total_bytes,
                 ceiling_bytes: ceiling,
                 other_engines_bytes: machine::other_engines_bytes(&others),
-                freed_by_switch_bytes: freed,
+                freed_by_switch_bytes: frees.bytes(),
             },
         );
-        if let Some(note) = note {
+        if let Some(note) = frees.note() {
             verdict.append(note);
         }
         if let Some(note) = machine::other_engines_note(&others) {
@@ -1483,67 +1556,42 @@ impl MlxEngineManager {
         Ok((verdict, others))
     }
 
-    /// What a start on this Mac gets back before it loads, with the sentence that says so — or 0
-    /// and the sentence that says why it could not be counted. Two engines are stopped by a start:
-    /// the one this manager runs (a mount replaces it), and — while it runs none — this goose's own
-    /// leftover on the engine port, which the start's `port_holder::claim_port` stops per pid
-    /// before it spawns (Q-276: a kill -9'd goosed left its engine holding ~30 GB, and the gate
-    /// charged those bytes as used, so Restore, Run and Try again were each refused "short 2.0 GB"
-    /// before the claim that would have freed them ever ran). A holder not proven ours frees
-    /// nothing: the mount refuses on it before its gate ([`Self::port_before_mount`]), and its
-    /// memory stays in use.
-    async fn start_frees(&self, settings: &EngineSettings) -> (u64, Option<String>) {
+    /// What a start of this Mac's single engine gets back before it loads, and from which engine
+    /// ([`StartFrees`]) — the one credit the mount gate, the tile ([`Self::mount_fit`]) and Run
+    /// it's "Run on this Mac" row read (Q-292). Two engines are stopped by a start: the one this
+    /// manager runs (a mount replaces it), and — while it runs none — this goose's own leftover on
+    /// the engine port, which the start's `port_holder::claim_port` stops per pid before it spawns
+    /// (Q-276: a kill -9'd goosed left its engine holding ~30 GB, and the gate charged those bytes
+    /// as used, so Restore, Run and Try again were each refused "short 2.0 GB" before the claim
+    /// that would have freed them ever ran). A holder not proven ours frees nothing: the mount
+    /// refuses on it before its gate ([`Self::port_before_mount`]), and its memory stays in use.
+    pub async fn start_frees(&self) -> StartFrees {
+        self.start_frees_with(&self.settings()).await
+    }
+
+    async fn start_frees_with(&self, settings: &EngineSettings) -> StartFrees {
         let mounted = match &*self.state.lock().await {
             ManagerState::Running { model_id, .. } => Some(model_id.clone()),
             // The start in flight owns the port: its listener is its own child, not a leftover.
-            ManagerState::Mounting { .. } => return (0, None),
+            ManagerState::Mounting { .. } => return StartFrees::Nothing,
             ManagerState::Stopped | ManagerState::Failed { .. } => None,
         };
         let port = settings.port;
-        let Some(mounted) = mounted else {
-            let PortBeforeMount::OursLeftover(holders) = self.port_before_mount(port).await else {
-                return (0, None);
-            };
-            let pids = holders
-                .iter()
-                .map(|h| h.pid.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return match footprint_on_port(port).await {
-                Ok(bytes) => (
-                    bytes,
-                    Some(format!(
-                        "pid {pids} on port {port} is this goose's own engine left from an \
-                         earlier run — nothing runs it and the start stops it first, so its {} \
-                         count as available",
-                        fit::gb(bytes)
-                    )),
-                ),
-                Err(e) => (
-                    0,
-                    Some(format!(
-                        "pid {pids} on port {port} is this goose's own leftover engine, which the \
-                         start stops first, but its memory could not be read ({e:#}); it counts \
-                         as in use"
-                    )),
-                ),
-            };
-        };
-        match footprint_on_port(port).await {
-            Ok(bytes) => (
-                bytes,
-                Some(format!(
-                    "{mounted} is mounted here: mounting replaces it, so its {} count as available",
-                    fit::gb(bytes)
-                )),
-            ),
-            Err(e) => (
-                0,
-                Some(format!(
-                    "{mounted} is mounted here but its memory could not be read ({e:#}); it \
-                     counts as in use"
-                )),
-            ),
+        let footprint =
+            || async move { footprint_on_port(port).await.map_err(|e| format!("{e:#}")) };
+        match mounted {
+            Some(model_id) => StartFrees::Mounted {
+                model_id,
+                bytes: footprint().await,
+            },
+            None => match self.port_before_mount(port).await {
+                PortBeforeMount::OursLeftover(holders) => StartFrees::Leftover {
+                    pids: holders.iter().map(|h| h.pid).collect(),
+                    port,
+                    bytes: footprint().await,
+                },
+                PortBeforeMount::Free | PortBeforeMount::Held(_) => StartFrees::Nothing,
+            },
         }
     }
 
@@ -4895,5 +4943,111 @@ while True:
             status.stray_listener_step.as_ref().map(|s| s.kind.as_str()),
             Some("kill")
         );
+    }
+
+    /// Q-292, against a real leftover: while goose's own engine holds the port, the tile counts its
+    /// memory as freed (Q-276) — and Run it's "Run on this Mac" row, fed the manager's own
+    /// `start_frees`, agrees. Fed as the placement context fed it before (only a RUNNING engine
+    /// was credited, so a leftover was nothing) the row read short beside the tile's fit —
+    /// measured red on this fixture: tile "fits, but only 0.5 GB under the budget 28.9 GB",
+    /// row "Short … budget 28.1 GB … (short 0.3 GB)".
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_its_this_mac_row_reads_the_tiles_leftover_credit() {
+        use crate::placement::model::ModelFacts;
+        use crate::placement::planner::{self, Goal, NodeInput, NodeMemory, PlanInput};
+        let port = free_port();
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = leftover_fixture(tmp.path(), "pub/tight");
+        let manager = manager_with_memory(fixture);
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            ..Default::default()
+        });
+        let leftover = leftover_holding_memory(port, Some(&engine_marker(port)));
+        let tile = manager.mount_fit("pub/tight").await;
+        let frees = manager.start_frees().await;
+        // SAFETY: the test's own stand-in, signalled by its pid alone.
+        unsafe { libc::kill(leftover as libc::pid_t, libc::SIGKILL) };
+        wait_exited(leftover).await;
+
+        let tile = tile.unwrap();
+        assert!(
+            matches!(&frees, StartFrees::Leftover { pids, port: p, bytes: Ok(b) }
+                if pids.contains(&leftover) && *p == port && *b >= LEFTOVER_HOLDS * 2 / 3),
+            "{frees:?}"
+        );
+        // config.json is `{}`: no KV facts, so both charge the weights alone.
+        let facts = ModelFacts {
+            model_type: "llama".into(),
+            layers: 1,
+            max_context: None,
+            moe: None,
+            quant: None,
+            resident_bytes: 0,
+            active_bytes_per_token: 0,
+            active_params_per_token: 0,
+            lookup_bytes: 0,
+            excluded_bytes: 0,
+            largest_layer_bytes: 0,
+            kv: Err("config.json names no attention".into()),
+        };
+        let nodes = vec![NodeInput {
+            id: "local".into(),
+            name: "This Mac".into(),
+            chip: Err("not read".into()),
+            memory: Ok(NodeMemory {
+                total_bytes: fixture.0.total_bytes,
+                available_bytes: fixture.0.available_bytes,
+                ceiling_bytes: Ok(fixture.1),
+                freed_by_switch: None,
+            }),
+            has_model: Ok(true),
+            remote_single: Ok(()),
+            split_refusal: None,
+        }];
+        let bytes_on_disk = hf::list_local_models(tmp.path()).unwrap()[0].size_bytes;
+        let calibration = crate::placement::predict::Calibration::fit(&Default::default());
+        let row = |this_mac_start| {
+            planner::plan(&PlanInput {
+                model_id: "pub/tight",
+                model: &facts,
+                bytes_on_disk,
+                kv_mode: None,
+                nodes: &nodes,
+                cluster: None,
+                tensor: None,
+                pipeline: None,
+                goal: Goal::Chat,
+                context: None,
+                records: &[],
+                calibration: &calibration,
+                running: None,
+                this_mac_start,
+            })
+            .candidates
+            .remove(0)
+            .fit
+        };
+        let before = row(None);
+        let now = row(Some(&frees));
+        eprintln!("tile: {:?} {}", tile.verdict, tile.message);
+        eprintln!("row before: {:?} {}", before.status, before.detail);
+        eprintln!("row now: {:?} {}", now.status, now.detail);
+
+        assert_ne!(tile.verdict, Verdict::Block, "{}", tile.message);
+        assert_eq!(
+            before.status,
+            planner::FitStatus::Short,
+            "the fixture reproduces Q-292: {}",
+            before.detail
+        );
+        assert!(now.status.fits(), "{}", now.detail);
+        let credit = format!(
+            "pid {leftover} on port {port} is this goose's own engine left from an earlier run"
+        );
+        assert!(tile.message.contains(&credit), "{}", tile.message);
+        assert!(now.detail.contains(&credit), "{}", now.detail);
     }
 }
