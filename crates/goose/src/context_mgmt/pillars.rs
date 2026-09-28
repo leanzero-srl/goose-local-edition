@@ -448,9 +448,7 @@ fn resolve_folder(path: &str, base: Option<&Path>) -> Option<PathBuf> {
 /// The quoted shell word `text` opens with, quotes removed, and what follows it.
 fn quoted_word(text: &str) -> Option<(&str, &str)> {
     let quote = text.chars().next().filter(|c| *c == '"' || *c == '\'')?;
-    let rest = &text[1..];
-    let end = rest.find(quote)?;
-    Some((&rest[..end], &rest[end + 1..]))
+    text.strip_prefix(quote)?.split_once(quote)
 }
 
 /// The folder a shell command works in when it opens with `cd` — `cd A && cd B && …` is B joined
@@ -464,10 +462,9 @@ fn cd_folder(command: &str, base: Option<&Path>) -> Option<PathBuf> {
     {
         let after = after.trim_start();
         let (target, tail) = quoted_word(after).unwrap_or_else(|| {
-            let end = after
+            after
                 .find(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|'))
-                .unwrap_or(after.len());
-            (&after[..end], &after[end..])
+                .map_or((after, ""), |end| after.split_at(end))
         });
         let tail = tail.trim_start_matches([' ', '\t']);
         let next = ["&&", "||", ";", "\n"]
