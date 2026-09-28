@@ -1702,9 +1702,10 @@ impl ExitSignals {
 }
 
 /// Drive the server until it ends on its own or a stop signal arrives. On a signal: tear
-/// down everything goosed supervises (`goose::acp::server::teardown_supervised` — the mesh
-/// daemon per-pid with the identity kept, then the engine sidecar through its own SIGTERM
-/// → grace → proven group kill), then exit with the conventional `128 + signal` code. The
+/// down everything goosed supervises (`goose::acp::server::teardown_supervised` — the peers
+/// told this goose is leaving, the engine sidecar through its own SIGTERM → grace → proven
+/// group kill, the distributed engine's ranks, then the mesh daemon per-pid with the identity
+/// kept), then exit with the conventional `128 + signal` code. The
 /// only bounds on the teardown are the supervisors' own per-pid grace windows; no wait is
 /// added here, and no clock decides any model work — this is process lifecycle.
 async fn serve_until_exit_signal<S>(serve: S, signals: &mut ExitSignals) -> Result<()>

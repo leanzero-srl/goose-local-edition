@@ -841,20 +841,26 @@ fn tracking_mesh_factory() -> Arc<dyn MeshFactory> {
     STARTED_MESHES.factory(Arc::new(RealMeshFactory))
 }
 
-/// `goose serve`'s exit path for the mesh: tell the linked peers this goose is quitting
-/// (`LinkManager::announce_leaving` — while the daemon still carries the notices; each is
-/// bounded by the Link's connect timeout), then stop the daemons ([`MeshRegistry::shutdown_live`]).
+/// `goose serve`'s exit path, first mesh step: tell the linked peers this goose is quitting
+/// (`LinkManager::announce_leaving`; each notice is bounded by the Link's connect timeout).
 /// goosed cannot tell a quit from the desktop's relaunch (both arrive as the same signal),
-/// so the reason it sends is `quitting`.
-pub(super) async fn shutdown_started_meshes() -> String {
-    let told = match existing_link_manager() {
+/// so the reason it sends is `quitting`. The daemon is NOT stopped here: the engines' own
+/// teardown still talks to peers over it (the distributed engine's rank-1 stop, Q-242) —
+/// [`stop_started_mesh_daemons`] runs last.
+pub(super) async fn announce_leaving_to_peers() -> String {
+    match existing_link_manager() {
         Some(manager) => match manager.announce_leaving(LeaveReason::Quitting).await {
             Some(report) => report.to_string(),
             None => "no peers told: LeanZero Link was not connected".to_string(),
         },
         None => "no peers told: LeanZero Link never started in this goosed".to_string(),
-    };
-    format!("{told}; {}", STARTED_MESHES.shutdown_live().await)
+    }
+}
+
+/// `goose serve`'s exit path, last step: stop the mesh daemons ([`MeshRegistry::shutdown_live`])
+/// once nothing left in the teardown needs a peer.
+pub(super) async fn stop_started_mesh_daemons() -> String {
+    STARTED_MESHES.shutdown_live().await
 }
 
 // ---------------------------------------------------------------------------
@@ -1312,7 +1318,7 @@ impl GooseAcpAgent {
         // or its cancel token never reaches the busy set the idle guard consults.
         link_serve::bind_run_managers(self.agent_manager.clone(), self.session_manager.clone());
         // The tracking factory is what lets `goose serve`'s exit path find the daemon this
-        // manager started (`shutdown_started_meshes`); the mesh itself is the real one.
+        // manager started (`stop_started_mesh_daemons`); the mesh itself is the real one.
         let mut manager = LinkManager::with_mesh_factory(config, source, tracking_mesh_factory())
             .internal_err_ctx("constructing the LeanZero Link manager")?;
         // Attach the process-wide remote executor if goose-server injected one at boot; a

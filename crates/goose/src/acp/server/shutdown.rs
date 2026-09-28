@@ -12,9 +12,13 @@
 //!
 //! The order is fixed: the stdio extension children first (Q-138 — `std::process::exit` after
 //! this sequence runs no destructor, so rmcp's own child cleanup never fired and every bundled
-//! MCP outlived goosed; they are leaves nothing else depends on); then the mesh, so peers see the
-//! node leave before its engine disappears; the engine last. Every step reports what it did in one line, and a step
-//! that has nothing to do says so — a silent step would be indistinguishable from a step
+//! MCP outlived goosed; they are leaves nothing else depends on); then the peers are told this
+//! goose is leaving, so they see the node go before its engine disappears; then the engines; the
+//! mesh daemon LAST, because the distributed engine's stop reaches its peer rank over the mesh
+//! (Q-242: with the daemon stopped second, every split's teardown said "rank 1 … cannot reach …
+//! over LeanZero Link" — eight goosed logs 2026-09-26..28, SIGTERM and stdin-EOF alike — and the
+//! peer's rank was left to notice on its own). Every step reports what it did in one line, and a
+//! step that has nothing to do says so — a silent step would be indistinguishable from a step
 //! that never ran.
 
 use std::sync::Arc;
@@ -62,6 +66,18 @@ impl SupervisedResource for StdioExtensions {
     }
 }
 
+struct LinkPeers;
+
+#[async_trait]
+impl SupervisedResource for LinkPeers {
+    fn name(&self) -> &'static str {
+        "leanzero-link peers"
+    }
+    async fn teardown(&self) -> String {
+        super::link::announce_leaving_to_peers().await
+    }
+}
+
 struct LinkMeshes;
 
 #[async_trait]
@@ -70,7 +86,7 @@ impl SupervisedResource for LinkMeshes {
         "leanzero-link mesh"
     }
     async fn teardown(&self) -> String {
-        super::link::shutdown_started_meshes().await
+        super::link::stop_started_mesh_daemons().await
     }
 }
 
@@ -98,17 +114,21 @@ impl SupervisedResource for MlxDistributedEngine {
     }
 }
 
-/// The production sequence: every stdio extension child, the mesh daemon, then the engine
-/// sidecar, then the distributed engine's ranks (at most one of the two engines runs; the other
-/// reports it has nothing).
+/// The production sequence: every stdio extension child, the going-away notice to the peers,
+/// the engine sidecar, the distributed engine's ranks (at most one of the two engines runs; the
+/// other reports it has nothing), and the mesh daemon last — it carries the rank-1 stop.
 pub async fn teardown_supervised() -> Vec<TeardownReport> {
-    let resources: Vec<Arc<dyn SupervisedResource>> = vec![
+    teardown_in_order(&production_sequence()).await
+}
+
+fn production_sequence() -> Vec<Arc<dyn SupervisedResource>> {
+    vec![
         Arc::new(StdioExtensions),
-        Arc::new(LinkMeshes),
+        Arc::new(LinkPeers),
         Arc::new(MlxEngine),
         Arc::new(MlxDistributedEngine),
-    ];
-    teardown_in_order(&resources).await
+        Arc::new(LinkMeshes),
+    ]
 }
 
 #[cfg(test)]
@@ -175,9 +195,10 @@ mod tests {
             names,
             vec![
                 "stdio extensions",
-                "leanzero-link mesh",
+                "leanzero-link peers",
                 "mlx engine",
-                "mlx distributed engine"
+                "mlx distributed engine",
+                "leanzero-link mesh",
             ]
         );
         assert!(
@@ -186,7 +207,7 @@ mod tests {
             reports[0].outcome
         );
         assert!(
-            reports[1].outcome.contains("no mesh daemon"),
+            reports[1].outcome.contains("peer"),
             "{}",
             reports[1].outcome
         );
@@ -199,6 +220,31 @@ mod tests {
             reports[3].outcome.contains("nothing supervised"),
             "{}",
             reports[3].outcome
+        );
+        assert!(
+            reports[4].outcome.contains("no mesh daemon"),
+            "{}",
+            reports[4].outcome
+        );
+    }
+
+    /// Q-242: the mesh daemon outlives every step that talks to a peer over it — the going-away
+    /// notice and the distributed engine's rank-1 stop. Stopping it second (the old order) made
+    /// every split's rank-1 stop "cannot reach … over LeanZero Link".
+    #[test]
+    fn the_mesh_daemon_stops_after_every_step_that_reaches_a_peer() {
+        let names: Vec<_> = production_sequence().iter().map(|r| r.name()).collect();
+        let at = |name: &str| names.iter().position(|n| *n == name).unwrap();
+        let mesh = at("leanzero-link mesh");
+        assert_eq!(mesh, names.len() - 1, "{names:?}");
+        assert!(at("leanzero-link peers") < mesh, "{names:?}");
+        assert!(at("mlx distributed engine") < mesh, "{names:?}");
+        // Peers hear the node is leaving before its engines go (a peer served by this Mac's
+        // engine gets the notice, not a dead socket).
+        assert!(at("leanzero-link peers") < at("mlx engine"), "{names:?}");
+        assert!(
+            at("leanzero-link peers") < at("mlx distributed engine"),
+            "{names:?}"
         );
     }
 }

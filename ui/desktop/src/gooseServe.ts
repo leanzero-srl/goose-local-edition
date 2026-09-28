@@ -35,28 +35,44 @@ type ReadinessFetch = (input: string, init?: ReadinessFetchInit) => Promise<Resp
 // On SIGTERM goosed (`goose serve`) tears down what it supervises BEFORE it exits — the mesh
 // daemon and the engine sidecar, both spawned into process groups of their own that the group
 // signal above never reaches. The SIGKILL fallback must not cut that teardown short, so its
-// delay is the sum of the supervisors' own worst-case grace windows (each a per-pid
-// SIGTERM → 50 × 100 ms → SIGKILL leg; the sources are the constants named here):
+// delay is the sum of the supervisors' own worst-case windows, in teardown order
+// (crates/goose/src/acp/server/shutdown.rs; each per-pid leg is SIGTERM → 50 × 100 ms → SIGKILL;
+// the sources are the constants named here):
 //   stdio  crates/goose/src/agents/stdio_children.rs teardown_all (goose-sidecar's GRACE)   50 × 100 ms
 //          — every stdio extension child (bundled MCPs), all TERMed at once, one shared window (Q-138)
-//   mesh   crates/leanzero-link/src/mesh.rs   terminate_per_pid                 50 × 100 ms
+//   peers  crates/leanzero-link/src/manager.rs announce_leaving — every notice at once, each
+//          bounded as a whole by the control config's connect_timeout (control.rs)     5 s
 //   engine crates/goose-sidecar/src/lib.rs    terminate  (GRACE_TICKS × GRACE_TICK) 50 × 100 ms
 //                                             release_port / wait_port_clear      50 × 100 ms
 //   engine crates/goose-sidecar/src/engine.rs status() probe before the unmount   reqwest 5 s
+//   split  crates/goose-sidecar/src/distributed/supervisor.rs stop_ranks: the local rank's
+//          SIGTERM grace, its SIGKILL wait and the API port's wait_port_clear (3 × 50 × 100 ms),
+//          then the peer rank over LeanZero Link (link_control.rs stop_link_rank: the Link's
+//          connect_timeout 5 s, then link_host.rs stop_hosted on the peer — rank 0's broadcast
+//          grace, its SIGTERM grace and its SIGKILL wait, 3 × 50 × 100 ms). Q-242: this step now
+//          runs BEFORE the mesh stops, so it really does reach the peer.
+//   mesh   crates/leanzero-link/src/mesh.rs   terminate_per_pid                 50 × 100 ms
 // plus a margin for signal delivery and the final log flush. This is a CEILING: the stop
-// resolves on goosed's 'close' the moment its teardown finishes, which on the happy path is
-// well under a second.
+// resolves on goosed's exit the moment its teardown finishes, which on the happy path is
+// seconds (measured 2026-09-28: the SIGTERM teardown's notice ~0.3 s, a split's rank 0 in 0.2 s).
 const PER_PID_GRACE_MS = 50 * 100;
+const LINK_CONNECT_TIMEOUT_MS = 5000;
 const STDIO_EXTENSIONS_TEARDOWN_CEILING_MS = PER_PID_GRACE_MS;
-const MESH_TEARDOWN_CEILING_MS = PER_PID_GRACE_MS;
+const PEER_NOTICE_CEILING_MS = LINK_CONNECT_TIMEOUT_MS;
 const ENGINE_TEARDOWN_CEILING_MS = 2 * PER_PID_GRACE_MS;
 const ENGINE_STATUS_PROBE_CEILING_MS = 5000;
+const SPLIT_LOCAL_RANK_CEILING_MS = 3 * PER_PID_GRACE_MS;
+const SPLIT_PEER_RANK_CEILING_MS = LINK_CONNECT_TIMEOUT_MS + 3 * PER_PID_GRACE_MS;
+const MESH_TEARDOWN_CEILING_MS = PER_PID_GRACE_MS;
 const TEARDOWN_MARGIN_MS = 1000;
 export const GOOSED_SIGKILL_AFTER_MS =
   STDIO_EXTENSIONS_TEARDOWN_CEILING_MS +
-  MESH_TEARDOWN_CEILING_MS +
+  PEER_NOTICE_CEILING_MS +
   ENGINE_TEARDOWN_CEILING_MS +
   ENGINE_STATUS_PROBE_CEILING_MS +
+  SPLIT_LOCAL_RANK_CEILING_MS +
+  SPLIT_PEER_RANK_CEILING_MS +
+  MESH_TEARDOWN_CEILING_MS +
   TEARDOWN_MARGIN_MS;
 
 function killGroupOrProcess(proc: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
@@ -193,10 +209,7 @@ const appendErrorTail = (target: string[], lines: string[], maxLines = 100): voi
 const CERT_FINGERPRINT_PREFIX = 'GOOSED_CERT_FINGERPRINT=';
 const TLS_FINGERPRINT_TIMEOUT_MS = 5000;
 
-const fetchStatus = async (
-  statusUrl: string,
-  readinessFetch: ReadinessFetch
-): Promise<boolean> => {
+const fetchStatus = async (statusUrl: string, readinessFetch: ReadinessFetch): Promise<boolean> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1000);
 
