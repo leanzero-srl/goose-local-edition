@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "Strategien"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "Die Nachricht dieses Chats wartet nicht mehr auf {node}."
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "{node} jetzt laden (stoppt {serving} für {chats})"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "Eine laufende Antwort auf {serving} wird zuerst beendet; nichts wird abgebrochen. Die Einstellung der Strategie bleibt unverändert."
+  },
   "nodes.title": {
     "defaultMessage": "Nodes"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "Warte auf den Wechsel zu {node} für {chats} ({duration}): Er wurde vor dieser Nachricht angefordert und geht daher vor. Danach geht dieser Chat weiter."
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "Warte auf den Wechsel zu {node}, der über seine Karte gestartet wurde ({duration}): Er wurde vor dieser Nachricht angefordert und geht daher vor. Danach geht dieser Chat weiter."
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "Erstes Laden von {node}, noch nicht gemessen"

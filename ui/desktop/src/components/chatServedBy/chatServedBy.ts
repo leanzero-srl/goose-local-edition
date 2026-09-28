@@ -41,6 +41,7 @@ import { effectiveEntry, nodeNameOfDevice, nodeNamesById } from '../nodes/model'
 import {
   displacedOf,
   loadIsOthers,
+  nodeBehindSwitchOf,
   nodeRefusalOf,
   nodeSwapOf,
   nodeWaitOf,
@@ -1011,6 +1012,12 @@ function chatLoaderOf(
     if (forThisChat || engineStoppedBy(swap, inputs)) {
       return { kind: 'loading', swap, forThisChat };
     }
+  }
+  if (inputs.turnInFlight) {
+    // Q-442: this chat's own reply waits behind a switch asked before it (its node serves, so no
+    // node reads waiting) — goosed names the chat, so it holds for an Auto chat's lease too.
+    const behind = nodeBehindSwitchOf(read, residency, inputs.sessionId);
+    if (behind) return { kind: 'waiting', wait: behind };
   }
   if (inputs.turnInFlight && routeIds != null) {
     const wait = nodeWaitOf(read, residency, routeIds);

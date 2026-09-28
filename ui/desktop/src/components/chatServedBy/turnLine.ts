@@ -20,6 +20,16 @@ const i18n = defineMessages({
     defaultMessage: '{rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}',
   },
   retry: { id: 'nodes.fellBackRetry', defaultMessage: 'Retry {primary}' },
+  // Q-441 / Q-443: an action that stops the node the Mac serves for other chats says so.
+  takeOverNow: {
+    id: 'nodes.takeOverNow',
+    defaultMessage: 'Load {node} now (stops {serving} for {chats})',
+  },
+  takeOverNowHint: {
+    id: 'nodes.takeOverNowHint',
+    defaultMessage:
+      'A reply running on {serving} finishes first; nothing is cut. The strategy’s setting stays as it is.',
+  },
   // Q-428: the 1st was left to the node its Mac serves for other chats (the role's "Use the next
   // node"): no "can't run" — it could, and was not interrupted.
   fellBackServingOther: {
@@ -121,6 +131,29 @@ export function fellBackText(intl: IntlShape, fell: ChatFellBack): string {
   });
 }
 
+/**
+ * The fallback line's action. On a Q-428 "Use the next node" line it is NOT a retry: the loader
+ * would stop the node the Mac serves for the chats it names (a demand from no turn takes the Mac
+ * over) — so it says exactly that.
+ */
 export function fellBackRetryText(intl: IntlShape, fell: ChatFellBack): string {
+  if (fell.servingOther) return takeOverNowText(intl, fell.primary, fell.servingOther);
   return intl.formatMessage(i18n.retry, { primary: fell.primary });
+}
+
+/** "Load {node} now (stops {serving} for chat "…")" — Q-441's and Q-443's one label. */
+export function takeOverNowText(
+  intl: IntlShape,
+  node: string,
+  other: NodeServingOtherDto
+): string {
+  return intl.formatMessage(i18n.takeOverNow, {
+    node,
+    serving: other.serving,
+    chats: servingChatsText(intl, other.chats),
+  });
+}
+
+export function takeOverNowHint(intl: IntlShape, other: NodeServingOtherDto): string {
+  return intl.formatMessage(i18n.takeOverNowHint, { serving: other.serving });
 }

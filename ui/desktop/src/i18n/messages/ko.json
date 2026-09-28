@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "전략"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "이 채팅의 메시지는 더 이상 {node}을(를) 기다리지 않습니다."
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "지금 {node} 로드 ({chats}의 {serving} 중지)"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "{serving}에서 실행 중인 응답이 먼저 끝납니다. 중간에 끊기는 것은 없습니다. 전략 설정은 그대로 유지됩니다."
+  },
   "nodes.title": {
     "defaultMessage": "노드"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "{chats}을(를) 위한 {node}(으)로의 전환을 기다리는 중 ({duration}): 이 메시지보다 먼저 요청되어 먼저 진행됩니다. 그다음 이 채팅이 계속됩니다."
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "카드에서 시작된 {node}(으)로의 전환을 기다리는 중 ({duration}): 이 메시지보다 먼저 요청되어 먼저 진행됩니다. 그다음 이 채팅이 계속됩니다."
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "{node} 첫 로드, 아직 측정되지 않음"

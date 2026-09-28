@@ -153,7 +153,35 @@ export interface NodeWait {
   replies: { way: string; count: number; chats: string[] } | null;
   /** The role says wait while the Mac serves another node for chats between replies (Q-428). */
   servingOther: NodeServingOtherDto | null;
+  /**
+   * Q-442: the chat's own node serves, and its reply waits behind a switch to `switchTo` asked for
+   * before the reply began (for `chats`; none = a Start on a node's card). `load` is then the
+   * switch's measured load, the part of the wait a measurement can say.
+   */
+  behind: { switchTo: SwapTarget; chats: string[] } | null;
   load: MeasuredLoad | null;
+}
+
+/** Q-442: `sessionId`'s reply waits behind a queued switch (goosed's `behindSwitches`). */
+export function nodeBehindSwitchOf(
+  read: NodesReadResponse_unstable,
+  residency: NodesResidencyResponse_unstable,
+  sessionId: string | null
+): NodeWait | null {
+  if (!sessionId) return null;
+  const entry = (residency.behindSwitches ?? []).find((b) => b.session === sessionId);
+  if (!entry) return null;
+  const switchTo = read.nodes.some((n) => n.def.id === entry.switchTo)
+    ? nodeTarget(read, entry.switchTo)
+    : { id: entry.switchTo, name: entry.switchToName, modelId: null, way: null };
+  return {
+    target: nodeTarget(read, entry.node),
+    reason: '',
+    replies: null,
+    servingOther: null,
+    behind: { switchTo, chats: entry.chats ?? [] },
+    load: measuredLoadOf(residency, entry.switchTo),
+  };
 }
 
 export function nodeWaitOf(
@@ -178,6 +206,7 @@ export function nodeWaitOf(
         }
       : null,
     servingOther: servingOther ?? null,
+    behind: null,
     load: measuredLoadOf(residency, row.node),
   };
 }
@@ -290,24 +319,21 @@ export function routeNodeIds(
 }
 
 /**
- * Q-430: a chat's turn on a `node:` / `strategy:` route may wait in the loader while NO node its
- * model runs on serves (queued behind another chat's reply, or loading). True while none of its
- * MLX nodes serves and it has at least one — the composer then keeps reading the loader's marks
- * (glanceStore `watchGlanceNodes`) so its waiting line can say whose reply it waits for. A route
- * of cloud nodes only never waits on the loader.
+ * A chat's turn on a `node:` / `strategy:` route with an MLX node may wait in the loader at any
+ * point of the turn, and nothing the glance keys on announces it: behind another chat's reply
+ * while none of its nodes serves (Q-430 — the way serving the other chat kept its model and
+ * stage), and behind a switch queued before its reply began while its OWN node serves (Q-442 —
+ * the other chat's switch waits on a third chat's reply, so no engine moves either). While such a
+ * turn is in flight the composer keeps reading the loader's marks (glanceStore
+ * `watchGlanceNodes`). A route of cloud nodes only, or Auto, never waits on the loader.
  */
-export function turnAwaitsItsNode(
+export function turnCanWaitInLoader(
   read: NodesReadResponse_unstable,
-  residency: NodesResidencyResponse_unstable,
   model: string | null | undefined
 ): boolean {
   const ids = routeNodeIds(read, model);
   if (!ids || ids.length === 0) return false;
-  const mlx = ids.filter((id) => read.nodes.some((n) => n.def.id === id && n.def.kind === 'mlx'));
-  if (mlx.length === 0) return false;
-  return !mlx.some(
-    (id) => residency.nodes.find((r) => r.node === id)?.residency.kind === 'serving'
-  );
+  return ids.some((id) => read.nodes.some((n) => n.def.id === id && n.def.kind === 'mlx'));
 }
 
 const WAYS: ReadonlySet<string> = new Set<SwapWay>(['single', 'remoteSingle', 'split']);

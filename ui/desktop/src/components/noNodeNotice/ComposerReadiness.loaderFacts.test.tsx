@@ -38,12 +38,14 @@ vi.mock('../../acp/mlx-engine', () => ({
 }));
 let residency: NodesResidencyResponse_unstable = J3_SERVING_SINGLE;
 let servedRecord: NodeServedTurnDto | null = null;
+let takeOverTaken = true;
 const mockExtMethod = vi.fn(async (method: string, _params?: unknown) => {
   if (method.endsWith('/nodes/read')) return J3_READ;
   if (method.endsWith('/nodes/residency')) return residency;
   if (method.endsWith('/nodes/servedLast')) return { record: servedRecord };
   if (method.endsWith('/nodes/ensureServing'))
     return { answer: { kind: 'wait', reason: 'loading' } };
+  if (method.endsWith('/nodes/takeOverNow')) return { taken: takeOverTaken };
   if (method.endsWith('/nodes/write')) return { written: true, refusals: [] };
   return { status: { state: 'off' } };
 });
@@ -179,6 +181,7 @@ beforeEach(() => {
   devices = [MLX_DEVICE];
   settings = SAVED_27B;
   servedRecord = null;
+  takeOverTaken = true;
 });
 afterEach(() => resetEngineGlanceForTests(null));
 
@@ -673,5 +676,146 @@ describe('Q-430: the waiting line reads from the loader’s hold wherever the wa
         'Waiting while Mihai Macbook serves Qwen3.8-27B-Atlassian-Q8-mlx · this Mac for chat "Kickoff notes": Qwen3.8-27B-Atlassian-Q8-mlx · both Macs loads when that chat is closed or moved to another node (first load not measured yet)'
       )
     );
+  });
+});
+
+describe('Q-441 / Q-442 / Q-443: the Mac serving another node — what each line and button does', () => {
+  const OTHER = {
+    mac: 'Mihai Macbook',
+    serving: SPLIT.name,
+    chats: ['Kickoff notes'],
+    replies: 0,
+  };
+
+  it('Q-441: the "Use the next node" line’s button says it stops the other node, not "Retry"', async () => {
+    residency = J3_SERVING_SPLIT;
+    const reason = `Mihai Macbook is serving ${SPLIT.name} for chat "Kickoff notes"; ${CHAT.name} is left to it`;
+    servedRecord = {
+      node: SPLIT.id,
+      role: 'chat',
+      rank: 2,
+      reason,
+      tried: [{ node: CHAT.id, reason }],
+      atMs: 1,
+      servingOther: OTHER,
+    };
+    mockStatus.mockResolvedValue(STOPPED);
+    show(J3_STRATEGY, false);
+    await screen.findByTestId('composer-readiness-fell-back');
+    const button = screen.getByTestId('composer-readiness-retry-primary');
+    expect(button.textContent).toBe(
+      'Load Qwen3.8-27B-Atlassian-Q8-mlx · this Mac now (stops Qwen3.8-27B-Atlassian-Q8-mlx · both Macs for chat "Kickoff notes")'
+    );
+    expect(button.getAttribute('title')).toBe(
+      'A reply running on Qwen3.8-27B-Atlassian-Q8-mlx · both Macs finishes first; nothing is cut. The strategy’s setting stays as it is.'
+    );
+    fireEvent.click(button);
+    // The same call it always made: a demand from no turn, which takes the Mac over.
+    await waitFor(() =>
+      expect(mockExtMethod).toHaveBeenCalledWith('_goose/unstable/nodes/ensureServing', {
+        node: CHAT.id,
+      })
+    );
+  });
+
+  it('Q-441: once the 1st serves there is nothing left to ask for — no button', async () => {
+    residency = J3_SERVING_SINGLE;
+    servedRecord = {
+      node: SPLIT.id,
+      role: 'chat',
+      rank: 2,
+      reason: 'x',
+      tried: [{ node: CHAT.id, reason: 'x' }],
+      atMs: 1,
+      servingOther: OTHER,
+    };
+    mockStatus.mockResolvedValue(RUNNING);
+    show(J3_STRATEGY, false);
+    await screen.findByTestId('composer-readiness-fell-back');
+    expect(screen.queryByTestId('composer-readiness-retry-primary')).toBeNull();
+  });
+
+  it('Q-443: the Wait line takes the Mac over for this message only, in one click', async () => {
+    residency = withRows(J3_SERVING_SINGLE, {
+      [SPLIT.id]: {
+        node: SPLIT.id,
+        residency: {
+          kind: 'waiting',
+          reason: 'the loader’s own words',
+          servingOther: { ...OTHER, serving: CHAT.name },
+        },
+      },
+    });
+    mockStatus.mockResolvedValue(RUNNING);
+    show(`node:${SPLIT.id}`, true);
+    const button = await screen.findByTestId('composer-readiness-take-over');
+    expect(button.textContent).toBe(
+      'Load Qwen3.8-27B-Atlassian-Q8-mlx · both Macs now (stops Qwen3.8-27B-Atlassian-Q8-mlx · this Mac for chat "Kickoff notes")'
+    );
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(mockExtMethod).toHaveBeenCalledWith('_goose/unstable/nodes/takeOverNow', {
+        node: SPLIT.id,
+        sessionId: 'chat-1',
+      })
+    );
+    // The turn stopped waiting between the read and the click: said, never a silent no-op.
+    takeOverTaken = false;
+    fireEvent.click(screen.getByTestId('composer-readiness-take-over'));
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
+        'This chat’s message no longer waits for Qwen3.8-27B-Atlassian-Q8-mlx · both Macs.'
+      )
+    );
+  });
+
+  it('Q-443: a wait for replies under Take it over offers no take-over — it already takes over', async () => {
+    residency = withRows(J3_SERVING_SINGLE, {
+      [SPLIT.id]: {
+        node: SPLIT.id,
+        residency: {
+          kind: 'waiting',
+          reason: 'r',
+          replies: { way: "this Mac's engine", wayNodes: [CHAT.id], count: 1, chats: ['K'] },
+        },
+      },
+    });
+    mockStatus.mockResolvedValue(RUNNING);
+    show(`node:${SPLIT.id}`, true);
+    await screen.findByTestId('composer-readiness-loader');
+    expect(screen.queryByTestId('composer-readiness-take-over')).toBeNull();
+  });
+
+  it('Q-442: a reply behind a queued switch — its own node serving, no glance change — says so', async () => {
+    // Chat-1's node serves (this Mac); another chat's switch to the split was asked first and
+    // waits on a third chat's reply, so no engine moves. The first read has no record yet.
+    residency = J3_SERVING_SINGLE;
+    mockStatus.mockResolvedValue(RUNNING);
+    show(`node:${CHAT.id}`, true);
+    await waitFor(() =>
+      expect(mockExtMethod.mock.calls.some(([m]) => m.endsWith('/nodes/residency'))).toBe(true)
+    );
+    expect(screen.queryByTestId('composer-readiness-loader')).toBeNull();
+    residency = withRows(
+      J3_SERVING_SINGLE,
+      { [SPLIT.id]: { ...J3_SERVING_SINGLE.nodes[2], load: LOAD_98S } },
+      {
+        behindSwitches: [
+          {
+            session: 'chat-1',
+            node: CHAT.id,
+            switchTo: SPLIT.id,
+            switchToName: SPLIT.name,
+            chats: ['Kickoff notes'],
+          },
+        ],
+      }
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-readiness-loader').textContent).toBe(
+        'Waiting for the switch to Qwen3.8-27B-Atlassian-Q8-mlx · both Macs for chat "Kickoff notes" (about 1m 38s): it was asked for before this message, so it goes first. Then this chat carries on.'
+      )
+    );
+    expect(screen.queryByTestId('composer-readiness-take-over')).toBeNull();
   });
 });

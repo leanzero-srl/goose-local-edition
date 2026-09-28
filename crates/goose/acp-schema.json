@@ -15842,6 +15842,14 @@
             "null"
           ],
           "description": "Why no node carries a measured load: the load store could not be read."
+        },
+        "behindSwitches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeBehindSwitchDto"
+          },
+          "description": "Replies of this process waiting behind a switch queued before they began (Q-442). Their\nown node still serves, so no node's residency can say it: each names its chat.",
+          "default": []
         }
       },
       "required": [
@@ -16357,6 +16365,41 @@
       ],
       "description": "A node whose way the loader stopped to load another (design §8.7 `nodes.displacedNotice`),\nkept until that node serves again."
     },
+    "NodeBehindSwitchDto": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": "string",
+          "description": "The chat whose reply waits (a delegate's reply is its chat's)."
+        },
+        "node": {
+          "type": "string",
+          "description": "The node the reply was going to use."
+        },
+        "switchTo": {
+          "type": "string",
+          "description": "The node the queued switch loads, by id and by the name the Nodes page shows."
+        },
+        "switchToName": {
+          "type": "string"
+        },
+        "chats": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The chat the switch is for, by name; empty for a Start on a node's card.",
+          "default": []
+        }
+      },
+      "required": [
+        "session",
+        "node",
+        "switchTo",
+        "switchToName"
+      ],
+      "description": "A chat's reply waits behind a switch to another node that was asked for before the reply\nbegan (design §6.4 step 1: new replies never starve a queued switch). The reply holds nothing\nmeanwhile; when the switch leaves the queue the turn routes again on what serves then."
+    },
     "NodesLoadHistoryRequest_unstable": {
       "type": "object",
       "properties": {
@@ -16798,6 +16841,38 @@
           "description": "Which way serves is unknown (an unreadable record)."
         }
       ]
+    },
+    "NodesTakeOverNowRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "sessionId"
+      ],
+      "description": "Q-443: take the Mac over for ONE turn. The demand `sessionId`'s chat has queued for `node`\nunder the role's `wait` stops waiting for the other node's chats and loads (a reply running\nthere still finishes first). The strategy's setting is not changed.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/takeOverNow"
+    },
+    "NodesTakeOverNowResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "taken": {
+          "type": "boolean",
+          "description": "False when no turn of that chat waits for the node under `wait` any more (it loaded,\nmoved on or ended)."
+        }
+      },
+      "required": [
+        "taken"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/takeOverNow"
     },
     "CompactionPreviewRequest_unstable": {
       "type": "object",
@@ -21092,6 +21167,15 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/NodesTakeOverNowRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/takeOverNow",
+                  "title": "NodesTakeOverNowRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/CompactionPreviewRequest_unstable"
                     }
                   ],
@@ -22257,6 +22341,14 @@
                         }
                       ],
                       "title": "NodesEnsureServingResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesTakeOverNowResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesTakeOverNowResponse_unstable"
                     },
                     {
                       "allOf": [

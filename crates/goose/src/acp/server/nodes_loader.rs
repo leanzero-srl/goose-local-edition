@@ -53,9 +53,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use goose_sdk_types::custom_requests::{
-    MlxDistributedConfigDto, MlxPlacementKeyDto, MlxPlacementKindDto, NodeDisplacedDto,
-    NodeEnsureServing, NodeIfServingOther, NodeLoadRefusalCode, NodeRefusalFactsDto,
-    NodeRepliesWaitDto, NodeServingOtherDto,
+    MlxDistributedConfigDto, MlxPlacementKeyDto, MlxPlacementKindDto, NodeBehindSwitchDto,
+    NodeDisplacedDto, NodeEnsureServing, NodeIfServingOther, NodeLoadRefusalCode,
+    NodeRefusalFactsDto, NodeRepliesWaitDto, NodeServingOtherDto,
 };
 use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
 use tokio::sync::{oneshot, Notify};
@@ -193,6 +193,9 @@ enum Look {
         /// This demand waits for the other node's chats to be done (the `wait` setting): it is
         /// no switch those chats' next replies wait behind, nor one other demands queue behind.
         yields: bool,
+        /// Its node serves, and it waits behind this switch queued before its reply began: the
+        /// node's residency reads serving, so the wait is said per chat (Q-442).
+        behind: Option<Ahead>,
     },
     Go(Box<(Prepared, SwitchPlan)>),
 }
@@ -210,6 +213,9 @@ struct Queued {
     /// It waits under `wait` for another node's chats (Q-428): it keeps its place in the queue
     /// but holds no one behind it (see `Look::Wait::yields`).
     yields: bool,
+    /// What it does when the Mac serves another node: the role's setting, until the person takes
+    /// the Mac over for this turn (Q-443, `take_over_now`).
+    setting: NodeIfServingOther,
 }
 
 impl Queued {
@@ -241,6 +247,8 @@ pub(crate) struct Core {
     activity: StdMutex<BTreeMap<String, LoaderActivity>>,
     /// Nodes a swap stopped, by node id, until each serves again (design §8.7's displaced notice).
     displaced: StdMutex<BTreeMap<String, NodeDisplacedDto>>,
+    /// Replies waiting behind a switch queued before they began, by the waiter's number (Q-442).
+    behind: StdMutex<BTreeMap<u64, NodeBehindSwitchDto>>,
     changed: Arc<Notify>,
     /// One swap at a time in this process; the swap claim serialises processes.
     swapping: Arc<tokio::sync::Mutex<()>>,
@@ -260,6 +268,18 @@ impl Drop for Ticket {
             .unwrap()
             .retain(|q| q.seq != self.seq);
         self.core.changed.notify_waiters();
+    }
+}
+
+/// A waiter's behind-a-switch record (Q-442) goes with the waiter, however it ends.
+struct Behind {
+    core: Arc<Core>,
+    seq: u64,
+}
+
+impl Drop for Behind {
+    fn drop(&mut self) {
+        self.core.forget_behind(self.seq);
     }
 }
 
@@ -381,6 +401,7 @@ impl Core {
             queue: StdMutex::new(VecDeque::new()),
             activity: StdMutex::new(BTreeMap::new()),
             displaced: StdMutex::new(BTreeMap::new()),
+            behind: StdMutex::new(BTreeMap::new()),
             changed,
             swapping: Arc::new(tokio::sync::Mutex::new(())),
         })
@@ -457,6 +478,91 @@ impl Core {
         self.displaced.lock().unwrap().remove(node);
     }
 
+    /// Every reply waiting behind a switch queued before it began, one per chat and node.
+    pub(crate) fn behind_switches(&self) -> Vec<NodeBehindSwitchDto> {
+        let mut out: Vec<NodeBehindSwitchDto> = Vec::new();
+        for entry in self.behind.lock().unwrap().values() {
+            if !out.contains(entry) {
+                out.push(entry.clone());
+            }
+        }
+        out
+    }
+
+    /// Record that the reply of `session` (waiter number `seq`) waits on `node` behind `ahead`.
+    /// The chat names are read only when the switch it waits behind changes.
+    async fn note_behind(&self, seq: u64, session: &str, node: &str, ahead: &Ahead) {
+        let current = self
+            .behind
+            .lock()
+            .unwrap()
+            .get(&seq)
+            .is_some_and(|b| b.switch_to == ahead.node);
+        if current {
+            return;
+        }
+        let chats = match &ahead.session {
+            Some(s) => vec![self.chat_words(&self.holds.root_of(s)).await],
+            None => Vec::new(),
+        };
+        self.behind.lock().unwrap().insert(
+            seq,
+            NodeBehindSwitchDto {
+                session: self.holds.root_of(session),
+                node: node.to_string(),
+                switch_to: ahead.node.clone(),
+                switch_to_name: ahead.node_name.clone(),
+                chats,
+            },
+        );
+    }
+
+    fn forget_behind(&self, seq: u64) {
+        self.behind.lock().unwrap().remove(&seq);
+    }
+
+    /// Q-443: the person takes the Mac over for THIS turn — every demand of `session`'s chat for
+    /// `node` that waits under `wait` looks again as `takeOver` (a running reply is still never
+    /// cut). The role's setting is untouched: the next turn reads it again. False when no such
+    /// demand is queued (it loaded, moved on or ended).
+    pub(crate) fn take_over_now(&self, session: &str, node: &str) -> bool {
+        let waiting: Vec<(u64, String)> = self
+            .queue
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|q| q.node == node && q.setting == NodeIfServingOther::Wait)
+            .filter_map(|q| q.session.clone().map(|s| (q.seq, s)))
+            .collect();
+        let root = self.holds.root_of(session);
+        let chosen: Vec<u64> = waiting
+            .into_iter()
+            .filter(|(_, s)| self.holds.root_of(s) == root)
+            .map(|(seq, _)| seq)
+            .collect();
+        let mut taken = false;
+        for queued in self.queue.lock().unwrap().iter_mut() {
+            if chosen.contains(&queued.seq) && queued.setting == NodeIfServingOther::Wait {
+                queued.setting = NodeIfServingOther::TakeOver;
+                taken = true;
+            }
+        }
+        if taken {
+            self.changed.notify_waiters();
+        }
+        taken
+    }
+
+    /// A demand's setting as it stands now (`take_over_now` may have changed it).
+    fn setting_of(&self, seq: u64, asked: NodeIfServingOther) -> NodeIfServingOther {
+        self.queue
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|q| q.seq == seq)
+            .map_or(asked, |q| q.setting)
+    }
+
     pub(crate) async fn ensure_serving(self: &Arc<Self>, demand: Demand) -> NodeEnsureServing {
         if demand.node.kind != NodeDefKind::Mlx {
             return NodeEnsureServing::Ready;
@@ -516,7 +622,7 @@ impl Core {
                 r.facts,
             )
         };
-        let setting = demand.if_serving_other;
+        let asked = demand.if_serving_other;
         let node = match self.ways.resolve(&demand.node).await {
             Ok(node) => node,
             Err(r) => return refused(r),
@@ -538,8 +644,13 @@ impl Core {
             tick,
             swapping: false,
             yields: false,
+            setting: asked,
         });
         let ticket = Ticket {
+            core: Arc::clone(self),
+            seq,
+        };
+        let _behind = Behind {
             core: Arc::clone(self),
             seq,
         };
@@ -566,7 +677,7 @@ impl Core {
                     reply_opened,
                     tick,
                     looks == 1,
-                    setting,
+                    self.setting_of(seq, asked),
                 )
                 .await;
             let (first_prepared, _) = match look {
@@ -578,9 +689,16 @@ impl Core {
                     replies,
                     serving_other,
                     yields,
+                    behind,
                 } => {
                     if let (None, Some(root), Some(session)) = (&paused, &root, &session) {
                         paused = Some(self.pause(root, session));
+                    }
+                    match (&behind, &session) {
+                        (Some(ahead), Some(session)) => {
+                            self.note_behind(seq, session, &node.def.id, ahead).await
+                        }
+                        _ => self.forget_behind(seq),
                     }
                     self.set_yields(seq, yields);
                     self.set_activity(LoaderActivity::Waiting {
@@ -595,6 +713,7 @@ impl Core {
                 }
                 Look::Go(go) => *go,
             };
+            self.forget_behind(seq);
             // It switches now: from here no reply that opens after it may lease the way it will
             // stop (a yielding entry would still let one through until the claim — Q-428).
             self.set_yields(seq, false);
@@ -621,7 +740,7 @@ impl Core {
                     reply_opened,
                     tick,
                     true,
-                    setting,
+                    self.setting_of(seq, asked),
                 )
                 .await
             {
@@ -755,12 +874,14 @@ impl Core {
                 return match ahead {
                     Some(other) => Look::Wait {
                         reason: format!(
-                            "{name} is serving, and a switch to {other} was asked for before this reply began; this reply waits behind it"
+                            "{name} is serving, and a switch to {} was asked for before this reply began; this reply waits behind it",
+                            other.node_name
                         ),
                         wake: Wake::Changed,
                         replies: None,
                         serving_other: None,
                         yields: false,
+                        behind: Some(other),
                     },
                     None => Look::Ready,
                 };
@@ -775,6 +896,7 @@ impl Core {
                     replies: None,
                     serving_other: None,
                     yields: false,
+                    behind: None,
                 }
             }
             Ok(Residency::NotServing) => {}
@@ -815,6 +937,7 @@ impl Core {
                 replies: None,
                 serving_other: None,
                 yields: false,
+                behind: None,
             };
         }
         // 4. The stop set.
@@ -832,6 +955,7 @@ impl Core {
                 replies: None,
                 serving_other: None,
                 yields: false,
+                behind: None,
             };
         }
         for stop in &plan.stops {
@@ -857,6 +981,7 @@ impl Core {
         // Q-428: the Mac serves another node for other chats — the role's setting decides. A way
         // no one uses is not "serving another node": it is switched under every setting.
         let mut yields = false;
+        let mut resting: Option<NodeServingOtherDto> = None;
         if setting != NodeIfServingOther::TakeOver {
             match self.serving_other(node, &plan, own, seq).await {
                 Err(r) => return Look::Refused(r),
@@ -881,10 +1006,16 @@ impl Core {
                             replies: None,
                             serving_other: Some(other),
                             yields: true,
+                            behind: None,
                         };
                     }
-                    // Replies run on it: step 7 waits for them, this demand yielding meanwhile.
-                    _ => yields = true,
+                    // Replies run on it: step 7 waits for them, this demand yielding meanwhile —
+                    // and its line says what `wait` waits for: after those replies, the chats
+                    // closing or moving, never "loading when they finish" (Q-443).
+                    _ => {
+                        yields = true;
+                        resting = Some(other);
+                    }
                 },
             }
         }
@@ -930,6 +1061,7 @@ impl Core {
                 replies: None,
                 serving_other: None,
                 yields,
+                behind: None,
             };
         }
         if let Some(blocker) = blockers.first() {
@@ -970,8 +1102,9 @@ impl Core {
                     count: count as u32,
                     chats,
                 }),
-                serving_other: None,
+                serving_other: resting,
                 yields,
+                behind: None,
             };
         }
         if plan.stops.iter().any(|s| s.way == WayRef::local()) {
@@ -993,6 +1126,7 @@ impl Core {
                     replies: None,
                     serving_other: None,
                     yields: false,
+                    behind: None,
                 };
             }
         }
@@ -1015,7 +1149,7 @@ impl Core {
         node: &str,
         reply_opened: Option<u64>,
         asker_is_tick: bool,
-    ) -> Option<String> {
+    ) -> Option<Ahead> {
         let opened = reply_opened?;
         self.queue
             .lock()
@@ -1028,7 +1162,7 @@ impl Core {
                     && (!q.yields || q.swapping)
                     && (asker_is_tick || !q.tick || q.swapping)
             })
-            .map(|q| q.node_name.clone())
+            .map(Ahead::of)
     }
 
     /// Step 1 for a LEASE (the router asks before every MLX lease, served or not): a switch queued
@@ -1036,6 +1170,10 @@ impl Core {
     /// A reply opened before the switch keeps its way for every call (batching per reply), and a
     /// call outside any reply holds nothing across calls, so neither waits.
     pub(crate) fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {
+        self.lease_behind(session, node).map(|a| a.node_name)
+    }
+
+    fn lease_behind(&self, session: &str, node: &str) -> Option<Ahead> {
         let root = self.holds.root_of(session);
         let opened = self.holds.reply_opened(&root)?;
         self.switch_ahead(u64::MAX, node, Some(opened), self.holds.is_tick(&root))
@@ -1043,21 +1181,27 @@ impl Core {
 
     /// Wait until no switch is queued ahead of `session`'s reply. The reply holds nothing
     /// meanwhile (a switch it waits behind must never wait on it); woken by the queue changing —
-    /// a demand leaving it, served or refused or cancelled — never by a clock.
+    /// a demand leaving it, served or refused or cancelled — never by a clock. The chat's line
+    /// names the switch it waits behind (Q-442, `behind_switches`) for as long as it waits.
     pub(crate) async fn wait_behind_queued_switches(self: &Arc<Self>, session: &str, node: &str) {
         let root = self.holds.root_of(session);
         let mut paused: Option<Paused> = None;
+        let behind = Behind {
+            core: Arc::clone(self),
+            seq: self.holds.next_seq(),
+        };
         loop {
             let notified = self.changed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            let Some(ahead) = self.queued_switch_ahead(session, node) else {
+            let Some(ahead) = self.lease_behind(session, node) else {
                 return;
             };
             if paused.is_none() {
-                tracing::info!(%session, %node, switch_to = %ahead, "nodes loader: this reply opened after a queued switch; its lease waits behind it");
+                tracing::info!(%session, %node, switch_to = %ahead.node_name, "nodes loader: this reply opened after a queued switch; its lease waits behind it");
                 paused = Some(self.pause(&root, session));
             }
+            self.note_behind(behind.seq, session, node, &ahead).await;
             notified.await;
         }
     }
@@ -1102,11 +1246,7 @@ impl Core {
             .unwrap()
             .iter()
             .find(|q| q.goes_before(seq, asker_is_tick))
-            .map(|q| Ahead {
-                node: q.node.clone(),
-                node_name: q.node_name.clone(),
-                session: q.session.clone(),
-            })
+            .map(Ahead::of)
     }
 
     fn set_yields(&self, seq: u64, yields: bool) {
@@ -1353,6 +1493,16 @@ struct Ahead {
     session: Option<String>,
 }
 
+impl Ahead {
+    fn of(q: &Queued) -> Self {
+        Ahead {
+            node: q.node.clone(),
+            node_name: q.node_name.clone(),
+            session: q.session.clone(),
+        }
+    }
+}
+
 /// "chat "Kickoff notes"", "chats "A" and "B"" — the loader's words for the chats a way serves.
 fn chats_words(chats: &[String]) -> String {
     let quoted: Vec<String> = chats.iter().map(|c| format!("\"{c}\"")).collect();
@@ -1479,6 +1629,14 @@ impl NodeLoader for Seam {
 
     fn forget_displaced(&self, node: &str) {
         self.0.forget_displaced(node)
+    }
+
+    fn behind_switches(&self) -> Vec<NodeBehindSwitchDto> {
+        self.0.behind_switches()
+    }
+
+    fn take_over_now(&self, session: &str, node: &str) -> bool {
+        self.0.take_over_now(session, node)
     }
 
     fn persons_on_way_of(&self, session: &str) -> Result<seam::WayShare, String> {

@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "Strategi"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "Pesan obrolan ini tidak lagi menunggu {node}."
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "Muat {node} sekarang (menghentikan {serving} untuk {chats})"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "Balasan yang sedang berjalan di {serving} selesai lebih dulu; tidak ada yang diputus. Pengaturan strategi tetap seperti semula."
+  },
   "nodes.title": {
     "defaultMessage": "Node"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "Menunggu peralihan ke {node} untuk {chats} ({duration}): diminta sebelum pesan ini, jadi didahulukan. Setelah itu obrolan ini berlanjut."
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "Menunggu peralihan ke {node} yang dimulai dari kartunya ({duration}): diminta sebelum pesan ini, jadi didahulukan. Setelah itu obrolan ini berlanjut."
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "Pemuatan pertama {node}, belum diukur"

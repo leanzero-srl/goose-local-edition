@@ -178,17 +178,20 @@ async function readNodes(chatSessionId: string | null): Promise<GlanceNodesState
 function loaderAtWork(state: GlanceNodesState): boolean {
   return (
     state.kind === 'read' &&
-    state.residency.nodes.some(
+    (state.residency.nodes.some(
       (r) => r.residency.kind === 'loading' || r.residency.kind === 'waiting'
-    )
+    ) ||
+      // Q-442: a reply behind a queued switch — its end changes nothing the glance keys on either.
+      (state.residency.behindSwitches ?? []).length > 0)
   );
 }
 
 let lookAgain: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Q-430: chats whose turn is in flight on a node that does not serve yet. Such a turn may be
- * queued in the loader — waiting for another chat's reply — and NOTHING the glance keys on
+ * Q-430 / Q-442: chats whose turn is in flight on an MLX node (`turnCanWaitInLoader`). Such a turn
+ * may be queued in the loader — waiting for another chat's reply, or behind a switch asked before
+ * its reply began while its own node serves — and NOTHING the glance keys on
  * changes while it waits: the way serving the other chat keeps its model and its stage (the
  * demo's shot 41: 26 s into the wait the glance still read "Reading prompt" for the other chat),
  * so no read was taken, the loader's `waiting` mark was never seen, and the composer said
@@ -196,16 +199,16 @@ let lookAgain: ReturnType<typeof setTimeout> | null = null;
  * watches, the read is taken again at the engine's own read interval — an observation cadence,
  * never a decision: what the read says decides.
  */
-let watchers = 0;
+// A set, not a count: a watch that ends after the store was reset (a test's unmount after its
+// reset) must not leave the next watch at zero and its reads unscheduled.
+const watchers = new Set<symbol>();
 
 export function watchGlanceNodes(): () => void {
-  watchers += 1;
+  const watch = Symbol('watch');
+  watchers.add(watch);
   refreshGlanceNodes();
-  let stopped = false;
   return () => {
-    if (stopped) return;
-    stopped = true;
-    watchers -= 1;
+    watchers.delete(watch);
   };
 }
 
@@ -221,7 +224,7 @@ export function refreshGlanceNodes(): void {
     if (seq !== nodesSeq) return;
     nodesState = next;
     nodesListeners.forEach((l) => l());
-    if ((loaderAtWork(next) || watchers > 0) && nodesListeners.size > 0) {
+    if ((loaderAtWork(next) || watchers.size > 0) && nodesListeners.size > 0) {
       lookAgain = setTimeout(() => {
         lookAgain = null;
         refreshGlanceNodes();
@@ -335,7 +338,7 @@ export function resetEngineGlanceForTests(next: GlancePush | null = null): void 
   nodesState = { kind: 'unread' };
   nodesKey = null;
   nodesSeq += 1;
-  watchers = 0;
+  watchers.clear();
   if (lookAgain != null) clearTimeout(lookAgain);
   lookAgain = null;
 }

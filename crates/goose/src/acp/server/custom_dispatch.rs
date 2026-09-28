@@ -1504,6 +1504,14 @@ impl GooseAcpAgent {
         crate::nodes::acp::ensure_serving(req).await
     }
 
+    #[custom_method(NodesTakeOverNowRequest)]
+    async fn dispatch_nodes_take_over_now(
+        &self,
+        req: NodesTakeOverNowRequest,
+    ) -> Result<NodesTakeOverNowResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::take_over_now(req).await
+    }
+
     #[custom_method(CompactionPreviewRequest)]
     async fn dispatch_compaction_preview(
         &self,

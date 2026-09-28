@@ -911,6 +911,11 @@
       "responseType": "NodesEnsureServingResponse_unstable"
     },
     {
+      "method": "_goose/unstable/nodes/takeOverNow",
+      "requestType": "NodesTakeOverNowRequest_unstable",
+      "responseType": "NodesTakeOverNowResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/session/compaction/preview",
       "requestType": "CompactionPreviewRequest_unstable",
       "responseType": "CompactionPreviewResponse_unstable"

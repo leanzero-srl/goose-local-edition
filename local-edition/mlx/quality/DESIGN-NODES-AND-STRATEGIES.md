@@ -562,6 +562,12 @@ The chat's last way is `Holds.last_way`. It is kept after the reply ends, and a 
 - the one-turn "Answer on {next}" pick;
 - a card's Start.
 
+**The ways out (Q-441, Q-443, 2026-09-29).** The desktop never closes a chat's ACP session when a window leaves it (the session store keeps a loaded chat and never loads it again, background turns and loops run on it, and a close cancels the running turn and refuses the next prompt), so a `wait` behind an idle chat can last until that window closes or goosed restarts. Two buttons say what they stop, with one label, `nodes.takeOverNow`: "Load {node} now (stops {serving} for chat "…")".
+- On the `wait` line, it is `nodes/takeOverNow {node, sessionId}`. That chat's queued demand for the node looks again as `takeOver`, for this turn only. A reply running on the other node still finishes first. The role's setting is not changed. While replies run, a `wait` demand's line already carries `servingOther`, so it says what `wait` waits for, not "then loading".
+- On the `useNext` turn line (the old "Retry {primary}"), it is the card's Start, `nodes/ensureServing` with no session. That already took the Mac over; now the label says so. It is hidden once the 1st serves or loads.
+
+**Behind a queued switch (Q-442).** A reply that opened after a switch to another node was queued waits behind it while its own node serves (step 1, the router's `clear_of_queued_switches`). No node's residency can say this, so `nodes/residency.behindSwitches` names each waiting chat, its node, the switch's node and whose switch it is. The composer reads it by session: "Waiting for the switch to {node} for chat "…" ({duration}): it was asked for before this message, so it goes first. Then this chat carries on." A turn in flight on an MLX route keeps the nodes read going, because nothing the glance keys on moves.
+
 Q-432: the helpers around a reply (the fact check, the memory review, the title and the tool labels) never demand a load. They run on the chat's node when it serves, on a later chain entry that needs no load, or on the node this Mac serves now. Otherwise they are skipped with a logged reason (`background_work::never_switches`, `swarm_router::helper_plan`).
 
 A chain whose entries are all exhausted is a **loud refusal** that names every entry and its reason, exactly the router's "no node can serve this turn" contract. It never falls to "any node", because that would be a silent substitution (gate 1). The user-configured chain is the only fallback, and every step down it is announced.

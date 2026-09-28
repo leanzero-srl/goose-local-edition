@@ -7271,8 +7271,23 @@
   "nodes.tabStrategies": {
     "defaultMessage": "策略"
   },
+  "nodes.takeOverGone": {
+    "defaultMessage": "此聊天的消息已不再等待 {node}。"
+  },
+  "nodes.takeOverNow": {
+    "defaultMessage": "立即加载 {node}（停止为{chats}运行的 {serving}）"
+  },
+  "nodes.takeOverNowHint": {
+    "defaultMessage": "{serving} 上正在进行的回复会先完成，不会被中途切断。策略的设置保持不变。"
+  },
   "nodes.title": {
     "defaultMessage": "节点"
+  },
+  "nodes.turnBehindSwitch": {
+    "defaultMessage": "正在等待为{chats}切换到 {node}（{duration}）：该切换在这条消息之前请求，因此先进行。之后此聊天继续。"
+  },
+  "nodes.turnBehindSwitchStarted": {
+    "defaultMessage": "正在等待从其卡片启动的切换到 {node}（{duration}）：该切换在这条消息之前请求，因此先进行。之后此聊天继续。"
   },
   "nodes.turnFirstLoad": {
     "defaultMessage": "{node} 首次加载，尚未测量"
