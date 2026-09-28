@@ -301,12 +301,15 @@ export default function BaseChat({
   // The chat's session loop (Q-228): re-read when the transcript grows or the chat's state moves —
   // a tick's marker landing, a turn ending — so the rail and the tick dividers follow the loop.
   const sessionLoop = useSessionLoop(sessionId, `${messages.length}:${chatState}`);
+  const reloadLoop = sessionLoop.reload;
   const loopSession = useMemo(
     () => ({
       sessionId,
       loop: sessionLoop.state.kind === 'loop' ? sessionLoop.state.loop : null,
+      state: sessionLoop.state,
+      reload: () => void reloadLoop(),
     }),
-    [sessionId, sessionLoop.state]
+    [sessionId, sessionLoop.state, reloadLoop]
   );
 
   const recipe = session?.recipe as Recipe | null | undefined;

@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "o goose decide quando"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Executar o objetivo deste chat de novo e de novo — cada execução é uma rodada"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "A rodada {n} está terminando em segundo plano — você pode enviar quando ela acabar"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "A rodada {n} está em andamento — o que você enviar espera por ela. Use Enviar Agora para redirecioná-la."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Dispensar"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "O loop respondeu"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Parar a rodada {n} — o loop é pausado"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Loops executam turnos de chat. Este chat faz builds com o swarm — cada rodada iniciaria um build completo. Use o Agent Work para builds recorrentes."
+  },
   "loops.control.edit": {
     "defaultMessage": "Editar"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "O loop está aguardando você"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "Na fila · Enviar Agora redireciona a rodada {n}"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Enviar Agora — isto redireciona a rodada {n}"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Fechar o painel do loop"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Loop e alterações"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "O executor de loops não respondeu nem com um loop nem com uma recusa."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "Nenhum loop neste chat. Use {command} ou o botão Loop."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Loop pausado após a rodada {n}."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Loop pausado antes da primeira rodada."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Loop retomado — próxima rodada {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Loop retomado. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Loop retomado. Não foi possível ler a próxima rodada: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Loop: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Loop: {goal} · {sentence} · rodada {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "não foi possível ler o status: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Loop parado após a rodada {n}."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Loop parado antes da primeira rodada."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "A rodada {n} começa agora."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "A próxima rodada começa assim que uma termina."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Quando a próxima rodada acontece"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Logo após cada rodada"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "A cada"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Use um número e s, m ou h — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "Quando o goose decidir"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "loops.start.check": {
+    "defaultMessage": "Como o goose comprova"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Roda em {dir} após cada rodada. Quando ele tiver sucesso depois que o goose disser que terminou, o loop termina."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Este modelo precisa de um comando de verificação."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Fechar"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Comando"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Cada rodada é um turno em {served}. Seus turnos nesta janela sempre vêm primeiro — uma rodada espera ou pausa enquanto você conversa."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Cada rodada é um turno neste chat. Seus turnos nesta janela sempre vêm primeiro — uma rodada espera ou pausa enquanto você conversa."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Intervalo personalizado"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "personalizado: um número e s, m ou h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "A primeira rodada começa agora."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Objetivo"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Diga o que o loop deve fazer."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "a primeira linha do seu objetivo"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "O que cada rodada deve fazer avançar? ex.: Fazer todos os testes em ui/desktop passarem sem alterar os testes"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "O goose executa seu objetivo de novo e de novo neste chat — cada execução é uma rodada. Cada rodada lê seu arquivo de estado, trabalha, comprova o que fez e diz o que vem a seguir. Você pode redirecionar, pausar ou parar o loop a qualquer momento."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Manter este Mac acordado enquanto o goose estiver aberto"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Manter acordado não está funcionando: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "Esta é a configuração Impedir Suspensão do app — ela muda agora, para todos os chats."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "personalizado"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "Com que frequência"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Substituir"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "O loop atual termina após a rodada {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "O loop atual termina antes da primeira rodada."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "Não foi possível ler o loop atual — iniciar um novo o substitui."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Manter"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Substituir o loop?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Redefinir etapas"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Tentar novamente"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Salvar"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "Após cada rodada, o goose diz quando voltar e por quê — você verá o motivo."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Seu Mac pode entrar em repouso; as rodadas esperam até ele acordar."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Um dado deste loop: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} não é um dado que o goose conhece"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Iniciar loop"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Começar a partir de"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "Arquivo de estado"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Dê um nome ao arquivo de estado — o goose o lê primeiro e o reescreve por último."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "O goose o lê primeiro e o reescreve por último, para que o loop sobreviva a chats longos e à compactação. Você também pode editá-lo."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Mantenha o arquivo de estado dentro de {dir}."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "O que cada rodada faz"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Sem etapas — cada rodada trabalha só a partir do seu objetivo. Escreva etapas aqui se quiser."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "O que o goose lê a cada rodada"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "As partes destacadas são dados deste loop, preenchidos de novo a cada rodada — mude a verificação ou o arquivo de estado e as etapas acompanham."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "após {field} rodadas"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Parar após este número de rodadas"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Deixe vazio para rodar até o objetivo ser atingido ou até você parar."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Use um número inteiro de rodadas, 1 ou mais."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Parar após precisa de pelo menos uma rodada — deixe vazio para rodar até o objetivo ser atingido ou até você parar."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "a verificação passa depois que o goose informa que concluiu"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "o goose informa que o objetivo foi concluído"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Parar quando"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "você parar"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Cada rodada pode carregar {node} e parar {way}."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Loops executam turnos de chat. Este chat faz builds com o swarm, então cada rodada iniciaria um build completo. Use o Agent Work para builds recorrentes."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Em branco"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Seu objetivo, suas etapas."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Loop de qualidade de software"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Descubra o que está quebrado, escolha a coisa que mais importa, corrija e comprove com uma verificação. Repita."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Até uma verificação passar"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Continuar trabalhando até que um comando que você indicar tenha sucesso — testes, um build, um lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Observar e agir"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Olhar algo em um horário definido e agir quando mudar — um build, um deploy, uma pasta."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Não foi possível ler os modelos: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Lendo os modelos…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Repetir este chat em loop"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Editar loop"
   },
   "loops.status.checking": {
     "defaultMessage": "Verificando"

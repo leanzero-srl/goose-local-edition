@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose yang menentukan kapan"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Jalankan tujuan chat ini berulang kali — setiap jalannya adalah satu putaran"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Putaran {n} sedang diselesaikan di latar belakang — Anda bisa mengirim setelah selesai"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Putaran {n} sedang berjalan — yang Anda kirim akan menunggunya. Gunakan Kirim Sekarang untuk mengarahkannya."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Tutup"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "Loop menjawab"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Hentikan putaran {n} — loop dijeda"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Loop menjalankan giliran chat. Chat ini membangun dengan swarm — setiap putaran akan memulai build penuh. Gunakan Agent Work untuk build berulang."
+  },
   "loops.control.edit": {
     "defaultMessage": "Edit"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "Loop menunggu Anda"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "Diantrekan · Kirim Sekarang mengarahkan putaran {n}"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Kirim sekarang — ini mengarahkan putaran {n}"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Tutup panel loop"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Loop dan perubahan"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "Penjalan loop menjawab tanpa loop maupun penolakan."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "Tidak ada loop di chat ini. Gunakan {command} atau tombol Loop."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Loop dijeda setelah putaran {n}."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Loop dijeda sebelum putaran pertamanya."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Loop dilanjutkan — putaran berikutnya {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Loop dilanjutkan. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Loop dilanjutkan. Putaran berikutnya tidak dapat dibaca: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Loop: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Loop: {goal} · {sentence} · putaran {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "statusnya tidak dapat dibaca: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Loop dihentikan setelah putaran {n}."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Loop dihentikan sebelum putaran pertamanya."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Putaran {n} dimulai sekarang."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "Putaran berikutnya dimulai begitu satu putaran selesai."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Kapan putaran berikutnya berjalan"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Tepat setelah setiap putaran"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Setiap"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Gunakan angka dan s, m, atau h — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "Saat goose memutuskan"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "loops.start.check": {
+    "defaultMessage": "Cara goose membuktikannya"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Berjalan di {dir} setelah setiap putaran. Jika berhasil setelah goose menyatakan selesai, loop berakhir."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Templat ini memerlukan perintah untuk pemeriksaan."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Tutup"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Perintah"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Setiap putaran adalah satu giliran di {served}. Giliran Anda di jendela ini selalu didahulukan — putaran menunggu atau dijeda saat Anda sedang chat."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Setiap putaran adalah satu giliran di chat ini. Giliran Anda di jendela ini selalu didahulukan — putaran menunggu atau dijeda saat Anda sedang chat."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Interval kustom"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "kustom: angka dan s, m, atau h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "Putaran pertama berjalan sekarang."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Tujuan"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Tuliskan apa yang harus dilakukan loop."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "baris pertama tujuan Anda"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "Apa yang harus dimajukan setiap putaran? mis. Buat setiap tes di ui/desktop lolos tanpa mengubah tesnya"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose menjalankan tujuan Anda berulang kali di chat ini — setiap jalannya adalah satu putaran. Setiap putaran membaca file statusnya, bekerja, membuktikan apa yang dikerjakannya, dan menyebutkan langkah berikutnya. Anda bisa mengarahkan, menjeda, atau menghentikannya kapan saja."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Biarkan Mac ini tetap terjaga selama goose terbuka"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Tetap terjaga tidak berfungsi: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "Ini adalah pengaturan Cegah Tidur aplikasi — berubah sekarang, untuk setiap chat."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "kustom"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "Seberapa sering"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Ganti"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "Loop saat ini berakhir setelah putaran {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "Loop saat ini berakhir sebelum putaran pertamanya."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "Loop saat ini tidak dapat dibaca — memulai loop baru akan menggantikannya."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Pertahankan"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Ganti loop?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Atur ulang langkah"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Simpan"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "Setelah setiap putaran, goose menyebutkan kapan kembali dan mengapa — Anda akan melihat alasannya."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Mac Anda mungkin tidur; putaran menunggu sampai Mac bangun."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Fakta loop ini: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} bukan fakta yang dikenal goose"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Mulai loop"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Mulai dari"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "File status"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Beri nama file status — goose membacanya paling awal dan menulis ulangnya paling akhir."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose membaca file ini paling awal dan menulis ulangnya paling akhir, sehingga loop bertahan melewati chat panjang dan pemadatan. Anda juga bisa mengeditnya."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Simpan file status di dalam {dir}."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "Yang dilakukan setiap putaran"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Tanpa langkah — setiap putaran bekerja hanya dari tujuan Anda. Tulis langkah di sini jika Anda menginginkannya."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "Yang dibaca goose setiap putaran"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "Bagian yang disorot adalah fakta loop ini, diisi ulang di setiap putaran — ubah pemeriksaan atau file status dan langkah-langkahnya ikut berubah."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "setelah {field} putaran"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Berhenti setelah sejumlah putaran ini"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Biarkan kosong untuk berjalan sampai tujuan tercapai atau Anda menghentikannya."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Gunakan jumlah putaran berupa bilangan bulat, 1 atau lebih."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Batas putaran memerlukan setidaknya satu putaran — biarkan kosong untuk berjalan sampai tujuan tercapai atau Anda menghentikannya."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "pemeriksaan berhasil setelah goose melaporkan selesai"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose melaporkan tujuan selesai"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Berhenti saat"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "Anda menghentikannya"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Setiap putaran dapat memuat {node} dan menghentikan {way}."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Loop menjalankan giliran chat. Chat ini membangun dengan swarm, jadi setiap putaran akan memulai build penuh. Gunakan Agent Work untuk build berulang."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Kosong"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Tujuan Anda, langkah Anda."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Loop kualitas perangkat lunak"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Temukan apa yang rusak, pilih satu hal yang paling penting, perbaiki, buktikan dengan pemeriksaan. Ulangi."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Sampai pemeriksaan lolos"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Terus bekerja sampai perintah yang Anda tentukan berhasil — tes, build, lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Pantau dan bertindak"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Periksa sesuatu sesuai jadwal dan bertindak saat berubah — build, deploy, folder."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Templat tidak dapat dibaca: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Membaca templat…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Jadikan chat ini loop"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Edit loop"
   },
   "loops.status.checking": {
     "defaultMessage": "Memeriksa"

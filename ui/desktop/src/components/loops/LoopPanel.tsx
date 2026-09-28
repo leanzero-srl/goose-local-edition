@@ -108,7 +108,7 @@ export function LoopPanel({
   if (state.kind === 'unreadable') {
     return (
       <div data-testid="loop-panel-unreadable" className="flex flex-col items-start gap-2 p-4">
-        <p data-testid="loop-now" className={cx(TYPE.body, 'text-lz-err')}>
+        <p data-testid="loop-now" className="text-lz-body text-lz-err">
           {intl.formatMessage(w.unreadable, { error: state.error })}
         </p>
         <Button variant="destructive" size="sm" onClick={() => setConfirmStop(true)}>
@@ -426,7 +426,10 @@ function NowBlock({
     <div className="flex flex-col gap-2">
       <p
         data-testid="loop-now"
-        className={cx(TYPE.body, !sentence.ok && 'text-lz-err', 'whitespace-pre-wrap')}
+        className={cx(
+          'whitespace-pre-wrap text-lz-body',
+          sentence.ok ? 'text-lz-ink' : 'text-lz-err'
+        )}
       >
         {text}
       </p>

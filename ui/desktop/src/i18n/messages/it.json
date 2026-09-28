@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "decide goose quando"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Ciclo"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Esegui l’obiettivo di questa chat più e più volte — ogni esecuzione è un giro"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Il giro {n} sta finendo in background — puoi inviare quando termina"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Il giro {n} è in corso — ciò che invii lo aspetta. Usa Invia ora per reindirizzarlo."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Chiudi"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "Il ciclo ha risposto"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Ferma il giro {n} — il ciclo va in pausa"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "I cicli eseguono turni di chat. Questa chat costruisce con lo swarm — ogni giro avvierebbe una build completa. Usa Agent Work per le build ricorrenti."
+  },
   "loops.control.edit": {
     "defaultMessage": "Modifica"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "Il ciclo ti aspetta"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "In coda · Invia ora reindirizza il giro {n}"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Invia ora — reindirizza il giro {n}"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Chiudi il pannello del ciclo"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Ciclo e modifiche"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "L’esecutore dei cicli non ha risposto né con un ciclo né con un rifiuto."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "Nessun ciclo in questa chat. Usa {command} o il pulsante Ciclo."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Ciclo messo in pausa dopo il giro {n}."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Ciclo messo in pausa prima del suo primo giro."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Ciclo ripreso — prossimo giro {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Ciclo ripreso. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Ciclo ripreso. Impossibile leggere il suo prossimo giro: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Ciclo: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Ciclo: {goal} · {sentence} · giro {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "impossibile leggerne lo stato: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Ciclo fermato dopo il giro {n}."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Ciclo fermato prima del suo primo giro."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Il giro {n} parte ora."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "Il giro successivo parte non appena ne termina uno."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Quando parte il prossimo giro"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Subito dopo ogni giro"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Ogni"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Usa un numero seguito da s, m o h — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "Quando lo decide goose"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Annulla"
+  },
+  "loops.start.check": {
+    "defaultMessage": "Come lo dimostra goose"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Viene eseguito in {dir} dopo ogni giro. Quando riesce dopo che goose ha detto di aver finito, il ciclo termina."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Questo modello richiede un comando di controllo."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Chiudi"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Comando"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Ogni giro è un turno su {served}. I tuoi turni in questa finestra hanno sempre la precedenza — un giro aspetta o va in pausa mentre chatti."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Ogni giro è un turno in questa chat. I tuoi turni in questa finestra hanno sempre la precedenza — un giro aspetta o va in pausa mentre chatti."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Intervallo personalizzato"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "personalizzato: un numero seguito da s, m o h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "Il primo giro parte ora."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Obiettivo"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Di’ cosa deve fare il ciclo."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "la prima riga del tuo obiettivo"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "Cosa deve far avanzare ogni giro? ad es. Far passare tutti i test in ui/desktop senza modificare i test"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose esegue il tuo obiettivo più e più volte in questa chat — ogni esecuzione è un giro. Ogni giro legge il suo file di stato, lavora, dimostra ciò che ha fatto e dice cosa viene dopo. Puoi reindirizzare, mettere in pausa o fermare il ciclo in qualsiasi momento."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Tieni sveglio questo Mac finché goose è aperto"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Tenere sveglio il Mac non funziona: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "È l’impostazione Impedisci la sospensione dell’app — cambia subito, per tutte le chat."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "personalizzato"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "Ogni quanto"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Sostituisci"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "Il ciclo attuale termina dopo il giro {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "Il ciclo attuale termina prima del suo primo giro."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "Impossibile leggere il ciclo attuale — avviarne uno nuovo lo sostituisce."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Mantienilo"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Sostituire il ciclo?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Ripristina i passi"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Riprova"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Salva"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "Dopo ogni giro goose indica quando tornare e perché — vedrai il suo motivo."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Il tuo Mac può andare in stop; i giri aspettano che si risvegli."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Un dato di questo ciclo: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} non è un dato che goose conosce"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Avvia ciclo"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Parti da"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "File di stato"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Dai un nome al file di stato — goose lo legge per primo e lo riscrive per ultimo."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose lo legge per primo e lo riscrive per ultimo, così il ciclo sopravvive a chat lunghe e alla compattazione. Puoi modificarlo anche tu."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Tieni il file di stato dentro {dir}."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "Cosa fa ogni giro"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Nessun passo — ogni giro lavora solo sul tuo obiettivo. Scrivi qui dei passi se ne vuoi."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "Cosa legge goose a ogni giro"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "Le parti evidenziate sono dati di questo ciclo, ricompilati a ogni giro — cambia il controllo o il file di stato e i passi si adeguano."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "dopo {field} giri"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Ferma dopo questo numero di giri"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Lascia vuoto per continuare finché l’obiettivo non è raggiunto o finché non lo fermi."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Usa un numero intero di giri, 1 o più."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Ferma dopo richiede almeno un giro — lascia vuoto per continuare finché l’obiettivo non è raggiunto o finché non lo fermi."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "il controllo riesce dopo che goose ha segnalato di aver finito"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose segnala che l’obiettivo è raggiunto"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Ferma quando"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "lo fermi tu"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Ogni giro può caricare {node} e fermare {way}."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "I cicli eseguono turni di chat. Questa chat costruisce con lo swarm, quindi ogni giro avvierebbe una build completa. Usa Agent Work per le build ricorrenti."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Vuoto"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Il tuo obiettivo, i tuoi passi."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Ciclo di qualità del software"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Scopri cosa non funziona, scegli la cosa più importante, correggila, dimostralo con un controllo. Ripeti."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Finché un controllo non passa"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Continua a lavorare finché un comando che indichi non riesce — test, una build, un lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Osserva e agisci"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Osserva qualcosa secondo una pianificazione e agisci quando cambia — una build, un deploy, una cartella."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Impossibile leggere i modelli: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Lettura dei modelli…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Ripeti questa chat in ciclo"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Modifica ciclo"
   },
   "loops.status.checking": {
     "defaultMessage": "Controllo"

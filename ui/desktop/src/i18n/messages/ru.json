@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose решает, когда"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Цикл"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Выполнять цель этого чата снова и снова — каждый запуск это итерация"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Итерация {n} завершается в фоне — вы сможете отправить, когда она закончится"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Итерация {n} выполняется — отправленное вами дождётся её завершения. Чтобы направить её, нажмите «Отправить сейчас»."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Закрыть"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "Ответ цикла"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Остановить итерацию {n} — цикл встанет на паузу"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Циклы выполняют ходы чата. Этот чат собирает через swarm — каждая итерация запускала бы полную сборку. Для регулярных сборок используйте Agent Work."
+  },
   "loops.control.edit": {
     "defaultMessage": "Изменить"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "Цикл ждёт вас"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "В очереди · «Отправить сейчас» направит итерацию {n}"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Отправить сейчас — это направит итерацию {n}"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Закрыть панель цикла"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Цикл и изменения"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "Исполнитель цикла не вернул ни цикла, ни отказа."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "В этом чате нет цикла. Используйте {command} или кнопку «Цикл»."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Цикл поставлен на паузу после итерации {n}."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Цикл поставлен на паузу до первой итерации."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Цикл возобновлён — следующая итерация {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Цикл возобновлён. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Цикл возобновлён. Не удалось прочитать его следующую итерацию: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Цикл: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Цикл: {goal} · {sentence} · итерация {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "не удалось прочитать его состояние: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Цикл остановлен после итерации {n}."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Цикл остановлен до первой итерации."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Итерация {n} начинается сейчас."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "Следующая итерация начинается сразу после окончания предыдущей."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Когда запускать следующую итерацию"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Сразу после каждой итерации"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Каждые"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Укажите число и s, m или h — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "Когда решит goose"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "loops.start.check": {
+    "defaultMessage": "Как goose это докажет"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Выполняется в {dir} после каждой итерации. Когда команда проходит успешно после того, как goose сообщил о готовности, цикл завершается."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Для этого шаблона нужна команда проверки."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Закрыть"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Команда"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Каждая итерация — это один ход на {served}. Ваши ходы в этом окне всегда идут первыми — пока вы пишете в чат, итерация ждёт или встаёт на паузу."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Каждая итерация — это один ход в этом чате. Ваши ходы в этом окне всегда идут первыми — пока вы пишете в чат, итерация ждёт или встаёт на паузу."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Свой интервал"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "своё: число и s, m или h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "Первая итерация запускается сейчас."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Цель"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Опишите, что должен делать цикл."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "первая строка вашей цели"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "Что каждая итерация должна продвигать? Например: добиться, чтобы все тесты в ui/desktop проходили, не меняя сами тесты"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose снова и снова выполняет вашу цель в этом чате — каждый запуск это итерация. Каждая итерация читает свой файл состояния, работает, доказывает сделанное и говорит, что дальше. Вы можете в любой момент направить цикл, поставить его на паузу или остановить."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Не давать этому Mac уходить в сон, пока goose открыт"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Запрет сна не работает: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "Это настройка приложения «Запретить сон» — она меняется сразу и для всех чатов."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "своё"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "Как часто"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Заменить"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "Текущий цикл завершится после итерации {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "Текущий цикл завершится до первой итерации."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "Не удалось прочитать текущий цикл — запуск нового заменит его."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Оставить"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Заменить цикл?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Сбросить шаги"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Сохранить"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "После каждой итерации goose называет, когда вернуться и почему, — вы увидите его причину."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Ваш Mac может уйти в сон; итерации подождут, пока он не проснётся."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Факт этого цикла: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "goose не знает такого факта: {slot}"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Запустить цикл"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Начать с"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "Файл состояния"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Укажите файл состояния — goose читает его первым и перезаписывает последним."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose читает его первым и перезаписывает последним, поэтому цикл переживает длинные чаты и сжатие. Вы тоже можете его редактировать."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Держите файл состояния внутри {dir}."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "Что делает каждая итерация"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Шагов нет — каждая итерация работает только от вашей цели. Если нужны шаги, напишите их здесь."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "Что goose читает на каждой итерации"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "Выделенные части — факты этого цикла, они заново подставляются на каждой итерации: измените проверку или файл состояния, и шаги последуют за ними."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "после {field}-й итерации"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Остановить после этого числа итераций"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Оставьте пустым, чтобы цикл работал, пока цель не будет достигнута или вы его не остановите."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Укажите целое число итераций, 1 или больше."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Для остановки по счётчику нужна хотя бы одна итерация — оставьте поле пустым, чтобы цикл работал, пока цель не будет достигнута или вы его не остановите."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "проверка проходит после того, как goose сообщил о готовности"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose сообщает, что цель достигнута"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Остановить, когда"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "вы его останавливаете"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Каждая итерация может загрузить {node} и остановить {way}."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Циклы выполняют ходы чата. Этот чат собирает через swarm, поэтому каждая итерация запускала бы полную сборку. Для регулярных сборок используйте Agent Work."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Пустой"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Ваша цель, ваши шаги."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Цикл качества ПО"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Найти, что сломано, выбрать самое важное, исправить и доказать проверкой. Повторить."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Пока проверка не пройдёт"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Работать, пока указанная вами команда не выполнится успешно — тесты, сборка, линтер."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Следить и действовать"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Проверять что-то по расписанию и действовать, когда оно меняется — сборку, деплой, папку."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Не удалось прочитать шаблоны: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Чтение шаблонов…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Зациклить этот чат"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Изменить цикл"
   },
   "loops.status.checking": {
     "defaultMessage": "Проверка"

@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose entscheidet, wann"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Schleife"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Das Ziel dieses Chats immer wieder ausführen — jede Ausführung ist ein Durchlauf"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Durchlauf {n} wird im Hintergrund abgeschlossen — du kannst senden, wenn er endet"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Durchlauf {n} läuft — was du sendest, wartet darauf. Mit „Jetzt senden“ lenkst du ihn um."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Ausblenden"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "Die Schleife hat geantwortet"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Durchlauf {n} stoppen — die Schleife wird angehalten"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Schleifen führen Chat-Züge aus. Dieser Chat baut mit dem Swarm — jeder Durchlauf würde einen vollständigen Build starten. Nutze Agent Work für wiederkehrende Builds."
+  },
   "loops.control.edit": {
     "defaultMessage": "Bearbeiten"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "Schleife wartet auf dich"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "In der Warteschlange · „Jetzt senden“ lenkt Durchlauf {n} um"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Jetzt senden — lenkt Durchlauf {n} um"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Schleifenbereich schließen"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Schleife und Änderungen"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "Die Schleifensteuerung hat weder mit einer Schleife noch mit einer Ablehnung geantwortet."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "Keine Schleife in diesem Chat. Nutze {command} oder die Schaltfläche „Schleife“."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Schleife nach Durchlauf {n} angehalten."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Schleife vor ihrem ersten Durchlauf angehalten."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Schleife fortgesetzt — nächster Durchlauf {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Schleife fortgesetzt. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Schleife fortgesetzt. Ihr nächster Durchlauf konnte nicht gelesen werden: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Schleife: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Schleife: {goal} · {sentence} · Durchlauf {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "ihr Status konnte nicht gelesen werden: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Schleife nach Durchlauf {n} gestoppt."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Schleife vor ihrem ersten Durchlauf gestoppt."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Durchlauf {n} startet jetzt."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "Der nächste Durchlauf startet, sobald einer endet."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Wann der nächste Durchlauf läuft"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Direkt nach jedem Durchlauf"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Alle"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Gib eine Zahl mit s, m oder h an — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "Wenn goose es entscheidet"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "loops.start.check": {
+    "defaultMessage": "Wie goose es beweist"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Läuft nach jedem Durchlauf in {dir}. Wenn der Befehl erfolgreich ist, nachdem goose „erledigt“ gemeldet hat, endet die Schleife."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Diese Vorlage braucht einen Befehl zur Prüfung."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Schließen"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Befehl"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Jeder Durchlauf ist ein Zug auf {served}. Deine Züge in diesem Fenster haben immer Vorrang — ein Durchlauf wartet oder pausiert, während du chattest."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Jeder Durchlauf ist ein Zug in diesem Chat. Deine Züge in diesem Fenster haben immer Vorrang — ein Durchlauf wartet oder pausiert, während du chattest."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Eigenes Intervall"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "eigenes: eine Zahl mit s, m oder h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "Der erste Durchlauf startet jetzt."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Ziel"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Sag, was die Schleife tun soll."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "die erste Zeile deines Ziels"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "Was soll jeder Durchlauf voranbringen? z. B. Sorge dafür, dass jeder Test in ui/desktop besteht, ohne die Tests zu ändern"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose führt dein Ziel in diesem Chat immer wieder aus — jede Ausführung ist ein Durchlauf. Jeder Durchlauf liest seine Statusdatei, arbeitet, beweist, was er getan hat, und sagt, was als Nächstes kommt. Du kannst die Schleife jederzeit umlenken, anhalten oder stoppen."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Diesen Mac wach halten, solange goose geöffnet ist"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Wachhalten funktioniert nicht: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "Das ist die App-Einstellung „Energiesparmodus verhindern“ — sie ändert sich sofort, für jeden Chat."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "eigenes"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "Wie oft"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Ersetzen"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "Die aktuelle Schleife endet nach Durchlauf {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "Die aktuelle Schleife endet vor ihrem ersten Durchlauf."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "Die aktuelle Schleife konnte nicht gelesen werden — wenn du eine neue startest, ersetzt sie die alte."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Behalten"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Schleife ersetzen?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Schritte zurücksetzen"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Erneut versuchen"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Speichern"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "Nach jedem Durchlauf sagt goose, wann es weitergeht und warum — du siehst die Begründung."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Dein Mac kann in den Ruhezustand gehen; Durchläufe warten, bis er aufwacht."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Ein Fakt dieser Schleife: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} ist kein Fakt, den goose kennt"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Schleife starten"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Beginnen mit"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "Statusdatei"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Gib der Statusdatei einen Namen — goose liest sie zuerst und schreibt sie zuletzt neu."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose liest sie zuerst und schreibt sie zuletzt neu, damit die Schleife lange Chats und das Komprimieren übersteht. Du kannst sie auch selbst bearbeiten."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Lege die Statusdatei innerhalb von {dir} ab."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "Was jeder Durchlauf tut"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Keine Schritte — jeder Durchlauf arbeitet nur mit deinem Ziel. Schreib hier Schritte, wenn du welche möchtest."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "Was goose in jedem Durchlauf liest"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "Die hervorgehobenen Teile sind Fakten dieser Schleife und werden bei jedem Durchlauf neu eingesetzt — ändere die Prüfung oder die Statusdatei, und die Schritte ziehen mit."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "nach {field} Durchläufen"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Nach so vielen Durchläufen stoppen"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Leer lassen, damit sie läuft, bis das Ziel erreicht ist oder du sie stoppst."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Gib eine ganze Zahl an Durchläufen an, 1 oder mehr."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "„Stoppen nach“ braucht mindestens einen Durchlauf — lass das Feld leer, damit sie läuft, bis das Ziel erreicht ist oder du sie stoppst."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "die Prüfung besteht, nachdem goose „erledigt“ gemeldet hat"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose das Ziel als erledigt meldet"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Stoppen, wenn"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "du sie stoppst"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Jeder Durchlauf kann {node} laden und {way} stoppen."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Schleifen führen Chat-Züge aus. Dieser Chat baut mit dem Swarm, daher würde jeder Durchlauf einen vollständigen Build starten. Nutze Agent Work für wiederkehrende Builds."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Leer"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Dein Ziel, deine Schritte."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Softwarequalitäts-Schleife"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Finde, was kaputt ist, wähle das Wichtigste aus, behebe es und beweise es mit einer Prüfung. Wiederholen."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Bis eine Prüfung besteht"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Weiterarbeiten, bis ein Befehl, den du nennst, erfolgreich ist — Tests, ein Build, ein Lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Beobachten und handeln"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Etwas nach Zeitplan ansehen und handeln, wenn es sich ändert — ein Build, ein Deployment, ein Ordner."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Die Vorlagen konnten nicht gelesen werden: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Vorlagen werden gelesen…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Diesen Chat als Schleife ausführen"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Schleife bearbeiten"
   },
   "loops.status.checking": {
     "defaultMessage": "Prüfung"

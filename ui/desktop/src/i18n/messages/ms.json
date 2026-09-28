@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose yang menentukan bila"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "Gelung"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "Jalankan matlamat sembang ini berulang kali — setiap larian ialah satu pusingan"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "Pusingan {n} sedang diselesaikan di latar belakang — anda boleh menghantar apabila ia tamat"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "Pusingan {n} sedang berjalan — apa yang anda hantar akan menunggunya. Gunakan Hantar Sekarang untuk mengemudinya."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "Ketepikan"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "Gelung menjawab"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "Hentikan pusingan {n} — gelung dijeda"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "Gelung menjalankan giliran sembang. Sembang ini membina dengan swarm — setiap pusingan akan memulakan binaan penuh. Gunakan Agent Work untuk binaan berulang."
+  },
   "loops.control.edit": {
     "defaultMessage": "Edit"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "Gelung menunggu anda"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "Dalam baris gilir · Hantar Sekarang mengemudi pusingan {n}"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "Hantar sekarang — ini mengemudi pusingan {n}"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "Tutup panel gelung"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "Gelung dan perubahan"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "Pelari gelung menjawab tanpa gelung mahupun penolakan."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "Tiada gelung dalam sembang ini. Gunakan {command} atau butang Gelung."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "Gelung dijeda selepas pusingan {n}."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "Gelung dijeda sebelum pusingan pertamanya."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "Gelung disambung semula — pusingan seterusnya {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "Gelung disambung semula. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "Gelung disambung semula. Pusingan seterusnya tidak dapat dibaca: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "Gelung: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "Gelung: {goal} · {sentence} · pusingan {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "statusnya tidak dapat dibaca: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "Gelung dihentikan selepas pusingan {n}."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "Gelung dihentikan sebelum pusingan pertamanya."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "Pusingan {n} bermula sekarang."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "Pusingan seterusnya bermula sebaik sahaja satu pusingan tamat."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "Bila pusingan seterusnya berjalan"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "Sejurus selepas setiap pusingan"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "Setiap"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "Gunakan nombor dan s, m atau h — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "Apabila goose memutuskan"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "loops.start.check": {
+    "defaultMessage": "Cara goose membuktikannya"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "Berjalan dalam {dir} selepas setiap pusingan. Apabila ia berjaya selepas goose menyatakan selesai, gelung tamat."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "Templat ini memerlukan arahan untuk semakan."
+  },
+  "loops.start.close": {
+    "defaultMessage": "Tutup"
+  },
+  "loops.start.command": {
+    "defaultMessage": "Arahan"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "Setiap pusingan ialah satu giliran pada {served}. Giliran anda dalam tetingkap ini sentiasa didahulukan — pusingan menunggu atau dijeda semasa anda bersembang."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "Setiap pusingan ialah satu giliran dalam sembang ini. Giliran anda dalam tetingkap ini sentiasa didahulukan — pusingan menunggu atau dijeda semasa anda bersembang."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "Selang tersuai"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "tersuai: nombor dan s, m atau h (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "Pusingan pertama berjalan sekarang."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "Matlamat"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "Nyatakan apa yang perlu dilakukan oleh gelung."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "baris pertama matlamat anda"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "Apakah yang perlu dimajukan oleh setiap pusingan? cth. Jadikan setiap ujian dalam ui/desktop lulus tanpa mengubah ujian"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose menjalankan matlamat anda berulang kali dalam sembang ini — setiap larian ialah satu pusingan. Setiap pusingan membaca fail keadaannya, bekerja, membuktikan apa yang dilakukannya dan menyatakan langkah seterusnya. Anda boleh mengemudi, menjeda atau menghentikannya pada bila-bila masa."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "Pastikan Mac ini kekal berjaga semasa goose dibuka"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "Kekal berjaga tidak berfungsi: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "Ini ialah tetapan Cegah Tidur aplikasi — ia berubah sekarang, untuk setiap sembang."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "tersuai"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "Berapa kerap"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "Ganti"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "Gelung semasa tamat selepas pusingan {n}."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "Gelung semasa tamat sebelum pusingan pertamanya."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "Gelung semasa tidak dapat dibaca — memulakan gelung baharu akan menggantikannya."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "Kekalkan"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "Ganti gelung?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "Tetapkan semula langkah"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "Cuba lagi"
+  },
+  "loops.start.save": {
+    "defaultMessage": "Simpan"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "Selepas setiap pusingan, goose menyatakan bila hendak kembali dan sebabnya — anda akan melihat sebab itu."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Mac anda mungkin tidur; pusingan menunggu sehingga ia bangun."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "Fakta gelung ini: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot} bukan fakta yang diketahui oleh goose"
+  },
+  "loops.start.start": {
+    "defaultMessage": "Mulakan gelung"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "Mula daripada"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "Fail keadaan"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "Namakan fail keadaan — goose membacanya paling awal dan menulisnya semula paling akhir."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose membaca fail ini paling awal dan menulisnya semula paling akhir, supaya gelung bertahan melalui sembang panjang dan pemadatan. Anda juga boleh mengeditnya."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "Simpan fail keadaan di dalam {dir}."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "Apa yang dilakukan setiap pusingan"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "Tiada langkah — setiap pusingan bekerja daripada matlamat anda sahaja. Tulis langkah di sini jika anda mahu."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "Apa yang dibaca goose setiap pusingan"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "Bahagian yang diserlahkan ialah fakta gelung ini, diisi semula pada setiap pusingan — ubah semakan atau fail keadaan dan langkah akan mengikutinya."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "selepas {field} pusingan"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "Berhenti selepas bilangan pusingan ini"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "Biarkan kosong untuk berjalan sehingga matlamat tercapai atau anda menghentikannya."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "Gunakan bilangan pusingan dalam nombor bulat, 1 atau lebih."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "Had pusingan memerlukan sekurang-kurangnya satu pusingan — biarkan kosong untuk berjalan sehingga matlamat tercapai atau anda menghentikannya."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "semakan berjaya selepas goose melaporkan selesai"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose melaporkan matlamat selesai"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "Berhenti apabila"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "anda menghentikannya"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "Setiap pusingan mungkin memuatkan {node} dan menghentikan {way}."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "Gelung menjalankan giliran sembang. Sembang ini membina dengan swarm, jadi setiap pusingan akan memulakan binaan penuh. Gunakan Agent Work untuk binaan berulang."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "Kosong"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "Matlamat anda, langkah anda."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "Gelung kualiti perisian"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "Kenal pasti apa yang rosak, pilih satu perkara yang paling penting, betulkannya, buktikan dengan semakan. Ulang."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "Sehingga semakan lulus"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "Terus bekerja sehingga arahan yang anda namakan berjaya — ujian, binaan, lint."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "Pantau dan bertindak"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "Lihat sesuatu mengikut jadual dan bertindak apabila ia berubah — binaan, deploy, folder."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "Templat tidak dapat dibaca: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "Membaca templat…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "Jadikan sembang ini gelung"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "Edit gelung"
   },
   "loops.status.checking": {
     "defaultMessage": "Menyemak"

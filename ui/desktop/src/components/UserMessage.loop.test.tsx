@@ -17,6 +17,15 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+function loopSessionOf(sessionId: string, loop: LoopSessionValue['loop']): LoopSessionValue {
+  return {
+    sessionId,
+    loop,
+    state: loop ? { kind: 'loop', loop, status: loop.status } : { kind: 'none' },
+    reload: () => undefined,
+  };
+}
+
 function mount(message: Message, session: LoopSessionValue | null) {
   return render(
     <IntlTestWrapper>
@@ -46,7 +55,7 @@ function tickMessage(withMetadata: boolean): Message {
 
 describe('UserMessage and loops', () => {
   it('renders a tick prompt as the divider, not a bubble, with the exact prompt one click away', () => {
-    mount(tickMessage(true), { sessionId: 's1', loop: loopRecord() });
+    mount(tickMessage(true), loopSessionOf('s1', loopRecord()));
     const marker = screen.getByTestId('loop-tick-marker');
     expect(marker).toHaveTextContent('Loop tick 3 · 22:21 · every 10 min');
     expect(marker.id).toBe(`loop-tick-${markerId(3)}`);
@@ -71,7 +80,7 @@ describe('UserMessage and loops', () => {
         ? { ...t, outcome: { kind: 'yielded', toSession: 's2', toChat: 'Kickoff notes' } }
         : t
     );
-    mount(tickMessage(true), { sessionId: 's1', loop: record });
+    mount(tickMessage(true), loopSessionOf('s1', record));
     expect(screen.getByTestId('loop-tick-marker-yielded')).toHaveTextContent(
       'Stopped at 22:27 for your message in "Kickoff notes" — the loop continues after your turn.'
     );
@@ -79,8 +88,8 @@ describe('UserMessage and loops', () => {
 
   it("offers Loop this on a person's message and hands its words to the Start dialog", () => {
     const got: StartLoopRequest[] = [];
-    const off = onStartLoopRequest((r) => got.push(r));
-    mount(createUserMessage('Make every test pass'), { sessionId: 's1', loop: null });
+    const off = onStartLoopRequest((r) => got.push(r) > 0);
+    mount(createUserMessage('Make every test pass'), loopSessionOf('s1', null));
     fireEvent.click(screen.getByTestId('user-message-loop-this'));
     off();
     expect(got).toEqual([{ sessionId: 's1', mode: 'start', goal: 'Make every test pass' }]);
@@ -88,10 +97,7 @@ describe('UserMessage and loops', () => {
   });
 
   it('says so when no Start dialog took Loop this, and has no Loop this outside a chat', () => {
-    const { unmount } = mount(createUserMessage('Make every test pass'), {
-      sessionId: 's1',
-      loop: null,
-    });
+    const { unmount } = mount(createUserMessage('Make every test pass'), loopSessionOf('s1', null));
     fireEvent.click(screen.getByTestId('user-message-loop-this'));
     expect(screen.getByTestId('user-message-loop-this-refused')).toHaveTextContent(
       'The loop dialog is not in this build yet.'

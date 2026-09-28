@@ -2855,6 +2855,30 @@
   "loops.cadence.selfPaced": {
     "defaultMessage": "goose가 시점을 결정"
   },
+  "loops.composer.loop": {
+    "defaultMessage": "루프"
+  },
+  "loops.composer.loopTitle": {
+    "defaultMessage": "이 채팅의 목표를 계속 반복 실행 — 실행 한 번이 틱 하나입니다"
+  },
+  "loops.composer.placeholderTickElsewhere": {
+    "defaultMessage": "틱 {n}이(가) 백그라운드에서 마무리되는 중입니다 — 끝나면 보낼 수 있습니다"
+  },
+  "loops.composer.placeholderTickRunning": {
+    "defaultMessage": "틱 {n}이(가) 실행 중입니다 — 보낸 내용은 틱이 끝날 때까지 기다립니다. 틱의 방향을 바꾸려면 “지금 보내기”를 사용하세요."
+  },
+  "loops.composer.replyDismiss": {
+    "defaultMessage": "닫기"
+  },
+  "loops.composer.replyLabel": {
+    "defaultMessage": "루프의 응답"
+  },
+  "loops.composer.stopTick": {
+    "defaultMessage": "틱 {n} 중지 — 루프가 일시정지됩니다"
+  },
+  "loops.composer.swarmBuild": {
+    "defaultMessage": "루프는 채팅 턴을 실행합니다. 이 채팅은 swarm으로 빌드하므로 틱마다 전체 빌드가 시작됩니다. 반복 빌드에는 Agent Work를 사용하세요."
+  },
   "loops.control.edit": {
     "defaultMessage": "편집"
   },
@@ -3128,6 +3152,12 @@
   "loops.pill.waitingYou": {
     "defaultMessage": "루프가 답변 대기 중"
   },
+  "loops.queue.queuedSteers": {
+    "defaultMessage": "대기 중 · “지금 보내기”로 틱 {n}의 방향을 바꿉니다"
+  },
+  "loops.queue.sendNowSteers": {
+    "defaultMessage": "지금 보내기 — 틱 {n}의 방향을 바꿉니다"
+  },
   "loops.rail.closeLoop": {
     "defaultMessage": "루프 패널 닫기"
   },
@@ -3139,6 +3169,267 @@
   },
   "loops.rail.tabsLabel": {
     "defaultMessage": "루프 및 변경 사항"
+  },
+  "loops.reply.neither": {
+    "defaultMessage": "루프 실행기가 루프도 거부도 아닌 응답을 보냈습니다."
+  },
+  "loops.reply.noLoop": {
+    "defaultMessage": "이 채팅에는 루프가 없습니다. {command} 또는 루프 버튼을 사용하세요."
+  },
+  "loops.reply.pausedAfter": {
+    "defaultMessage": "틱 {n} 후 루프를 일시정지했습니다."
+  },
+  "loops.reply.pausedBefore": {
+    "defaultMessage": "첫 틱 전에 루프를 일시정지했습니다."
+  },
+  "loops.reply.resumedAt": {
+    "defaultMessage": "루프를 재개했습니다 — 다음 틱 {time}."
+  },
+  "loops.reply.resumedSentence": {
+    "defaultMessage": "루프를 재개했습니다. {sentence}"
+  },
+  "loops.reply.resumedUnreadable": {
+    "defaultMessage": "루프를 재개했습니다. 다음 틱을 읽을 수 없습니다: {error}"
+  },
+  "loops.reply.status": {
+    "defaultMessage": "루프: {goal} · {sentence}"
+  },
+  "loops.reply.statusTick": {
+    "defaultMessage": "루프: {goal} · {sentence} · 틱 {n}"
+  },
+  "loops.reply.statusUnreadable": {
+    "defaultMessage": "상태를 읽을 수 없습니다: {error}"
+  },
+  "loops.reply.stoppedAfter": {
+    "defaultMessage": "틱 {n} 후 루프를 중지했습니다."
+  },
+  "loops.reply.stoppedBefore": {
+    "defaultMessage": "첫 틱 전에 루프를 중지했습니다."
+  },
+  "loops.reply.tickNow": {
+    "defaultMessage": "틱 {n}이(가) 지금 시작됩니다."
+  },
+  "loops.start.backToBackHelp": {
+    "defaultMessage": "틱 하나가 끝나는 즉시 다음 틱이 시작됩니다."
+  },
+  "loops.start.cadence": {
+    "defaultMessage": "다음 틱 실행 시점"
+  },
+  "loops.start.cadenceBackToBack": {
+    "defaultMessage": "각 틱 직후"
+  },
+  "loops.start.cadenceEvery": {
+    "defaultMessage": "간격"
+  },
+  "loops.start.cadenceInvalid": {
+    "defaultMessage": "숫자와 s, m, h 중 하나를 사용하세요 — 90m, 2h"
+  },
+  "loops.start.cadenceSelfPaced": {
+    "defaultMessage": "goose가 결정할 때"
+  },
+  "loops.start.cancel": {
+    "defaultMessage": "취소"
+  },
+  "loops.start.check": {
+    "defaultMessage": "goose가 증명하는 방법"
+  },
+  "loops.start.checkHelp": {
+    "defaultMessage": "매 틱 후 {dir}에서 실행됩니다. goose가 완료했다고 말한 뒤 이 명령이 성공하면 루프가 끝납니다."
+  },
+  "loops.start.checkPlaceholder": {
+    "defaultMessage": "pnpm test"
+  },
+  "loops.start.checkRequired": {
+    "defaultMessage": "이 템플릿에는 확인할 명령이 필요합니다."
+  },
+  "loops.start.close": {
+    "defaultMessage": "닫기"
+  },
+  "loops.start.command": {
+    "defaultMessage": "명령"
+  },
+  "loops.start.costLine": {
+    "defaultMessage": "각 틱은 {served}에서의 턴 한 번입니다. 이 창에서의 사용자 턴이 항상 먼저입니다 — 채팅하는 동안 틱은 기다리거나 일시정지합니다."
+  },
+  "loops.start.costLineNoModel": {
+    "defaultMessage": "각 틱은 이 채팅에서의 턴 한 번입니다. 이 창에서의 사용자 턴이 항상 먼저입니다 — 채팅하는 동안 틱은 기다리거나 일시정지합니다."
+  },
+  "loops.start.customEvery": {
+    "defaultMessage": "사용자 지정 간격"
+  },
+  "loops.start.customHelp": {
+    "defaultMessage": "사용자 지정: 숫자와 s, m, h 중 하나 (90m, 2h)"
+  },
+  "loops.start.firstTickNow": {
+    "defaultMessage": "첫 틱이 지금 실행됩니다."
+  },
+  "loops.start.goal": {
+    "defaultMessage": "목표"
+  },
+  "loops.start.goalEmpty": {
+    "defaultMessage": "루프가 할 일을 입력하세요."
+  },
+  "loops.start.goalFirstLineEmpty": {
+    "defaultMessage": "목표의 첫 줄"
+  },
+  "loops.start.goalPlaceholder": {
+    "defaultMessage": "매 틱마다 무엇을 진척시켜야 하나요? 예: 테스트를 바꾸지 않고 ui/desktop의 모든 테스트 통과시키기"
+  },
+  "loops.start.intro": {
+    "defaultMessage": "goose가 이 채팅에서 목표를 계속 반복 실행합니다 — 실행 한 번이 틱 하나입니다. 각 틱은 상태 파일을 읽고, 작업하고, 한 일을 증명하고, 다음에 할 일을 알려줍니다. 언제든 방향을 바꾸거나 일시정지하거나 중지할 수 있습니다."
+  },
+  "loops.start.keepAwake": {
+    "defaultMessage": "goose가 열려 있는 동안 이 Mac이 잠자기 상태로 전환되지 않게 유지"
+  },
+  "loops.start.keepAwakeFailed": {
+    "defaultMessage": "잠자기 방지가 작동하지 않습니다: {reason}"
+  },
+  "loops.start.keepAwakeHelp": {
+    "defaultMessage": "앱의 잠자기 방지 설정입니다 — 지금 바로, 모든 채팅에 대해 바뀝니다."
+  },
+  "loops.start.presetCustom": {
+    "defaultMessage": "사용자 지정"
+  },
+  "loops.start.presets": {
+    "defaultMessage": "빈도"
+  },
+  "loops.start.replace": {
+    "defaultMessage": "교체"
+  },
+  "loops.start.replaceBody": {
+    "defaultMessage": "현재 루프는 틱 {n} 후에 끝납니다."
+  },
+  "loops.start.replaceBodyNoTick": {
+    "defaultMessage": "현재 루프는 첫 틱 전에 끝납니다."
+  },
+  "loops.start.replaceBodyUnreadable": {
+    "defaultMessage": "현재 루프를 읽을 수 없습니다 — 새 루프를 시작하면 교체됩니다."
+  },
+  "loops.start.replaceKeep": {
+    "defaultMessage": "유지"
+  },
+  "loops.start.replaceTitle": {
+    "defaultMessage": "루프를 교체할까요?"
+  },
+  "loops.start.resetSteps": {
+    "defaultMessage": "단계 재설정"
+  },
+  "loops.start.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "loops.start.save": {
+    "defaultMessage": "저장"
+  },
+  "loops.start.selfPacedHelp": {
+    "defaultMessage": "각 틱이 끝나면 goose가 언제 돌아올지와 그 이유를 정합니다 — 이유가 표시됩니다."
+  },
+  "loops.start.sleepLine": {
+    "defaultMessage": "Mac이 잠자기 상태가 될 수 있으며, 틱은 깨어날 때까지 기다립니다."
+  },
+  "loops.start.slotTitle": {
+    "defaultMessage": "이 루프의 정보: {name}"
+  },
+  "loops.start.slotUnknown": {
+    "defaultMessage": "{slot}은(는) goose가 아는 정보가 아닙니다"
+  },
+  "loops.start.start": {
+    "defaultMessage": "루프 시작"
+  },
+  "loops.start.startFrom": {
+    "defaultMessage": "시작점"
+  },
+  "loops.start.stateFile": {
+    "defaultMessage": "상태 파일"
+  },
+  "loops.start.stateFileEmpty": {
+    "defaultMessage": "상태 파일 이름을 지정하세요 — goose가 가장 먼저 읽고 마지막에 다시 씁니다."
+  },
+  "loops.start.stateFileHelp": {
+    "defaultMessage": "goose가 이 파일을 가장 먼저 읽고 마지막에 다시 쓰므로, 긴 채팅이나 압축 후에도 루프가 이어집니다. 직접 편집할 수도 있습니다."
+  },
+  "loops.start.stateFileOutside": {
+    "defaultMessage": "상태 파일은 {dir} 안에 두세요."
+  },
+  "loops.start.steps": {
+    "defaultMessage": "각 틱이 하는 일"
+  },
+  "loops.start.stepsBlankPlaceholder": {
+    "defaultMessage": "단계 없음 — 매 틱이 목표만으로 작업합니다. 단계가 필요하면 여기에 쓰세요."
+  },
+  "loops.start.stepsPreview": {
+    "defaultMessage": "goose가 매 틱 읽는 내용"
+  },
+  "loops.start.stepsPreviewHelp": {
+    "defaultMessage": "강조 표시된 부분은 이 루프의 정보로, 매 틱마다 다시 채워집니다 — 확인이나 상태 파일을 바꾸면 단계도 따라 바뀝니다."
+  },
+  "loops.start.stopAfter": {
+    "defaultMessage": "{field}틱 후"
+  },
+  "loops.start.stopAfterField": {
+    "defaultMessage": "중지 전까지 실행할 틱 수"
+  },
+  "loops.start.stopAfterHelp": {
+    "defaultMessage": "비워 두면 목표를 달성하거나 사용자가 중지할 때까지 실행됩니다."
+  },
+  "loops.start.stopAfterInvalid": {
+    "defaultMessage": "틱 수는 1 이상의 정수로 입력하세요."
+  },
+  "loops.start.stopAfterZero": {
+    "defaultMessage": "중지할 틱 수는 1 이상이어야 합니다 — 목표를 달성하거나 사용자가 중지할 때까지 실행하려면 비워 두세요."
+  },
+  "loops.start.stopCheck": {
+    "defaultMessage": "goose가 완료를 보고한 후 확인이 성공할 때"
+  },
+  "loops.start.stopDone": {
+    "defaultMessage": "goose가 목표 완료를 보고할 때"
+  },
+  "loops.start.stopWhen": {
+    "defaultMessage": "중지 조건"
+  },
+  "loops.start.stopYou": {
+    "defaultMessage": "사용자가 중지할 때"
+  },
+  "loops.start.swapLine": {
+    "defaultMessage": "각 틱에서 {node}을(를) 불러오고 {way}을(를) 중지할 수 있습니다."
+  },
+  "loops.start.swarmBuild": {
+    "defaultMessage": "루프는 채팅 턴을 실행합니다. 이 채팅은 swarm으로 빌드하기 때문에 틱마다 전체 빌드가 시작됩니다. 반복 빌드에는 Agent Work를 사용하세요."
+  },
+  "loops.start.template.blank": {
+    "defaultMessage": "빈 템플릿"
+  },
+  "loops.start.template.blankDescription": {
+    "defaultMessage": "목표도 단계도 직접 정합니다."
+  },
+  "loops.start.template.quality": {
+    "defaultMessage": "소프트웨어 품질 루프"
+  },
+  "loops.start.template.qualityDescription": {
+    "defaultMessage": "망가진 것을 찾고, 가장 중요한 하나를 골라 고치고, 확인으로 증명합니다. 이를 반복합니다."
+  },
+  "loops.start.template.untilCheck": {
+    "defaultMessage": "확인이 통과할 때까지"
+  },
+  "loops.start.template.untilCheckDescription": {
+    "defaultMessage": "지정한 명령이 성공할 때까지 계속 작업합니다 — 테스트, 빌드, 린트."
+  },
+  "loops.start.template.watch": {
+    "defaultMessage": "지켜보고 대응"
+  },
+  "loops.start.template.watchDescription": {
+    "defaultMessage": "일정에 따라 무언가를 살펴보고 바뀌면 대응합니다 — 빌드, 배포, 폴더."
+  },
+  "loops.start.templatesFailed": {
+    "defaultMessage": "템플릿을 읽을 수 없습니다: {error}"
+  },
+  "loops.start.templatesLoading": {
+    "defaultMessage": "템플릿을 읽는 중…"
+  },
+  "loops.start.title": {
+    "defaultMessage": "이 채팅을 루프로 실행"
+  },
+  "loops.start.titleEdit": {
+    "defaultMessage": "루프 편집"
   },
   "loops.status.checking": {
     "defaultMessage": "확인 중"

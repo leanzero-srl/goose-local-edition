@@ -240,7 +240,7 @@ describe('the Loop tab', () => {
       'The loop dialog is not in this build yet.'
     );
     const got: StartLoopRequest[] = [];
-    const off = onStartLoopRequest((r) => got.push(r));
+    const off = onStartLoopRequest((r) => got.push(r) > 0);
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     off();
     expect(got).toHaveLength(1);
