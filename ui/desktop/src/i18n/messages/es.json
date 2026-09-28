@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Sin actualizar"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Cambiando"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Desactivar la ventana flotante"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Modelo resuelto"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Seleccionar modelo"
   },
@@ -6443,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Ponle nombre"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Elige un modelo para continuar"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Ponle un nombre para guardarlo"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Elige un proveedor para continuar"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Elige una forma de ejecutarlo para continuar"
+  },
   "nodes.newNext": {
     "defaultMessage": "Siguiente"
   },
@@ -6578,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "Eliminar"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Eliminar e iniciar los chats nuevos en Cualquier nodo (Auto)"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Eliminarlo también de {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Una estrategia usa este nodo, así que no se puede eliminar solo.} other{# estrategias usan este nodo, así que no se puede eliminar solo.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Eliminarlo también de las estrategias que lo usan"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Marca la casilla de arriba para eliminarlo} other{Marca las # casillas de arriba para eliminarlo}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "El nodo se elimina de tus nodos. Tus Macs, modelos y proveedores quedan como están."
@@ -6587,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Eliminar"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Eliminarlo también de esas estrategias"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Eliminarlo de todos modos: # chat está configurado con este nodo} other{Eliminarlo de todos modos: # chats están configurados con este nodo}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Su próximo mensaje dirá que el nodo se eliminó y te pedirá que elijas otro.} other{Su próximo mensaje dirá que el nodo se eliminó y te pedirá que elijas otro.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Iniciar los chats nuevos en Cualquier nodo (Auto) en su lugar"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Los chats nuevos empiezan ahora en este nodo, así que no se puede eliminar solo."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Tu grupo del enjambre conserva su dispositivo; este nodo ya no se muestra aquí. Edita el grupo en sí más abajo."
   },
   "nodes.removeTitle": {
     "defaultMessage": "¿Eliminar {node}?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# chat está configurado con este nodo. Su próximo mensaje dirá que se eliminó.} other{# chats están configurados con este nodo. Su próximo mensaje dirá que se eliminó.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Leer de nuevo"
@@ -6677,6 +6710,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Un nodo es un modelo al que puedes encargarle trabajo, en tus Macs o en la nube. Los chats empiezan en un nodo o una estrategia; las compilaciones del enjambre usan una estrategia o tu grupo del enjambre."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Cambiando a {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "No se pudo leer tu grupo del enjambre"
   },
@@ -6688,6 +6724,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodos"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Cargando {node} para este chat: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "No se pudo guardar el cambio"
@@ -9380,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: nodo {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "No eliminado"
-  },
   "strategies.note": {
     "defaultMessage": "Nota (con tus palabras)"
   },
@@ -9416,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "Eliminar"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Eliminar e iniciar los chats nuevos en Cualquier nodo (Auto)"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Eliminar y dejar que las compilaciones del enjambre usen tu grupo del enjambre"
-  },
   "strategies.removeBody": {
     "defaultMessage": "La estrategia se elimina. Sus nodos quedan como están."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Eliminar"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Dejar que las compilaciones del enjambre usen tu grupo del enjambre en su lugar"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Las compilaciones del enjambre usan ahora esta estrategia, así que no se puede eliminar sola."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Quitar {node} de {role}"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Iniciar los chats nuevos en Cualquier nodo (Auto) en su lugar"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Los chats nuevos empiezan ahora con esta estrategia, así que no se puede eliminar sola."
   },
   "strategies.removeTitle": {
     "defaultMessage": "¿Eliminar {name}?"

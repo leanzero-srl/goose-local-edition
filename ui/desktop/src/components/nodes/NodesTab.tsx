@@ -3,8 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Laptop, Plus, RefreshCw, Server } from 'lucide-react';
 import type { NodesServingKind } from '@aaif/goose-sdk';
 import { defineMessages, useIntl } from '../../i18n';
-import { Button, Checkbox, EmptyState, RADIUS, SURFACE, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
-import { OverlayDialog, OverlayDialogTitle } from '../ui/OverlayDialog';
+import { Button, EmptyState, RADIUS, SURFACE, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 import { ToneBanner } from '../leanzero-swarm/studio';
 import { WithMacs } from '../leanzero-swarm/useMacs';
 import { useCutGuard } from '../leanzero-swarm/cutGuard';
@@ -21,7 +20,8 @@ import { NewNodeDialog, type NewNodeStart } from './NewNodeDialog';
 import { usedByOf } from './nodeGlance';
 import { useNodeFacts } from './useNodeFacts';
 import { nodeIdFor, putNode, uniqueName } from './nodeDraft';
-import type { NodeDef, ResolvedNodeDef } from './model';
+import { RemoveConfirmDialog, type RemoveConfirmation } from './RemoveConfirmDialog';
+import type { NodeDef, NodesConfig, ResolvedNodeDef } from './model';
 
 /**
  * THE NODES TAB (DESIGN-NODES-AND-STRATEGIES.md §8.2): every node definition as a card, in two
@@ -80,21 +80,36 @@ const i18n = defineMessages({
       'Your swarm pool keeps its device; this node is not shown here again. Edit the pool itself below.',
   },
   removeFromStrategies: {
-    id: 'nodes.removeFromStrategies',
-    defaultMessage: 'Remove it from those strategies too',
+    id: 'nodes.removeAlsoFromStrategies',
+    defaultMessage: 'Also remove it from {strategies}',
   },
-  removeAndAuto: {
-    id: 'nodes.removeAndAuto',
-    defaultMessage: 'Remove, and start new chats on Any node (Auto)',
+  removeFromUsingStrategies: {
+    id: 'nodes.removeAlsoFromUsingStrategies',
+    defaultMessage: 'Also remove it from the strategies that use it',
   },
-  removeUsedByChats: {
-    id: 'nodes.removeUsedByChats',
+  removeFromStrategiesWhy: {
+    id: 'nodes.removeAlsoFromStrategiesWhy',
     defaultMessage:
-      '{count, plural, one {# chat is} other {# chats are}} set to this node. Their next message will say it was removed.',
+      '{count, plural, one {A strategy uses this node} other {# strategies use this node}}, so it can’t be removed on its own.',
   },
-  removeConfirm: { id: 'nodes.removeConfirm', defaultMessage: 'Remove' },
-  cancel: { id: 'nodes.cancel', defaultMessage: 'Cancel' },
-  refused: { id: 'nodes.refused', defaultMessage: 'Not removed' },
+  removeNewChatsAuto: {
+    id: 'nodes.removeNewChatsAuto',
+    defaultMessage: 'Start new chats on Any node (Auto) instead',
+  },
+  removeNewChatsAutoWhy: {
+    id: 'nodes.removeNewChatsAutoWhy',
+    defaultMessage: 'New chats start on this node now, so it can’t be removed on its own.',
+  },
+  removeLiveChats: {
+    id: 'nodes.removeLiveChats',
+    defaultMessage:
+      'Remove it anyway: {count, plural, one {# chat is} other {# chats are}} set to this node',
+  },
+  removeLiveChatsWhy: {
+    id: 'nodes.removeLiveChatsWhy',
+    defaultMessage:
+      '{count, plural, one {Its} other {Their}} next message will say the node was removed and ask you to pick another.',
+  },
 });
 
 const ENGINE_OF: Record<NodesServingKind, MlxEngineKind> = {
@@ -114,89 +129,92 @@ interface RemoveState {
   busy: boolean;
 }
 
+/**
+ * A node's removal, its confirmations built from the config the dialog was opened on (the
+ * strategies that use it, new chats starting on it) and from the engine's own count of the chats
+ * set to it (it arrives as a refusal carrying `liveSessions`; there is no other reader of it).
+ * A refusal a box answers is never shown again as an error (Q-259).
+ */
 function RemoveDialog({
   state,
+  config,
   onChange,
   onConfirm,
   onClose,
 }: {
   state: RemoveState;
+  config: NodesConfig | null;
   onChange: (next: RemoveState) => void;
   onConfirm: () => void;
   onClose: () => void;
 }) {
   const intl = useIntl();
+  const id = state.node.def.id;
   const codes = new Set(state.refusals.map((r) => r.code));
-  const live = state.refusals.find((r) => r.code === 'liveSessionsNotAcknowledged');
+  const strategyNames = [
+    ...new Set((config ? usedByOf(config, id) : []).map((u) => u.strategyName)),
+  ];
+  const inStrategies = strategyNames.length > 0 || codes.has('nodeInUse');
+  const forNewChats =
+    (config?.forNewChats?.kind === 'node' && config.forNewChats.id === id) ||
+    codes.has('nodeIsForNewChats');
   // The count rides the refusal as a number (`liveSessions`); words without it offer nothing to
-  // acknowledge, never a count guessed from the message.
-  const liveCount = live?.liveSessions ?? null;
+  // acknowledge, never a count guessed from the message — they stay a refusal, in red.
+  const liveCount =
+    state.refusals.find((r) => r.code === 'liveSessionsNotAcknowledged')?.liveSessions ?? null;
+
+  const confirmations: RemoveConfirmation[] = [];
+  if (inStrategies) {
+    confirmations.push({
+      key: 'strategies',
+      label:
+        strategyNames.length > 0
+          ? intl.formatMessage(i18n.removeFromStrategies, {
+              strategies: intl.formatList(strategyNames, { type: 'conjunction' }),
+            })
+          : intl.formatMessage(i18n.removeFromUsingStrategies),
+      description: intl.formatMessage(i18n.removeFromStrategiesWhy, {
+        count: Math.max(strategyNames.length, 1),
+      }),
+      checked: state.alsoFromStrategies,
+      onChange: (v) => onChange({ ...state, alsoFromStrategies: v }),
+      testId: 'node-remove-from-strategies',
+    });
+  }
+  if (forNewChats) {
+    confirmations.push({
+      key: 'newChats',
+      label: intl.formatMessage(i18n.removeNewChatsAuto),
+      description: intl.formatMessage(i18n.removeNewChatsAutoWhy),
+      checked: state.andNewChatsAuto,
+      onChange: (v) => onChange({ ...state, andNewChatsAuto: v }),
+      testId: 'node-remove-and-auto',
+    });
+  }
+  if (liveCount != null) {
+    confirmations.push({
+      key: 'liveChats',
+      label: intl.formatMessage(i18n.removeLiveChats, { count: liveCount }),
+      description: intl.formatMessage(i18n.removeLiveChatsWhy, { count: liveCount }),
+      checked: state.acknowledged === liveCount,
+      onChange: (v) => onChange({ ...state, acknowledged: v ? liveCount : null }),
+      testId: 'node-remove-acknowledge',
+    });
+  }
+  const answered = new Set<string>(['nodeInUse', 'nodeIsForNewChats']);
+  if (liveCount != null) answered.add('liveSessionsNotAcknowledged');
+
   return (
-    <OverlayDialog
-      open
+    <RemoveConfirmDialog
+      title={intl.formatMessage(i18n.removeTitle, { node: state.node.def.name })}
+      body={intl.formatMessage(state.node.def.poolDevice ? i18n.removePoolBody : i18n.removeBody)}
+      confirmations={confirmations}
+      refusals={state.refusals.filter((r) => !answered.has(r.code))}
+      busy={state.busy}
+      onConfirm={onConfirm}
       onClose={onClose}
-      panelClassName={cx('flex w-[30rem] flex-col gap-4 p-5', SURFACE.overlay)}
-    >
-      <div data-testid="node-remove-dialog" className="flex flex-col gap-2">
-        <OverlayDialogTitle asChild>
-          <h2 className={TYPE.h2}>
-            {intl.formatMessage(i18n.removeTitle, { node: state.node.def.name })}
-          </h2>
-        </OverlayDialogTitle>
-        <p className={TYPE.body}>
-          {intl.formatMessage(state.node.def.poolDevice ? i18n.removePoolBody : i18n.removeBody)}
-        </p>
-      </div>
-      {state.refusals.length > 0 && (
-        <div role="alert" className="flex flex-col gap-2" data-testid="node-remove-refusals">
-          <span className={cx('text-lz-meta', WEIGHT.semibold, TONE_TEXT.err)}>
-            {intl.formatMessage(i18n.refused)}
-          </span>
-          {state.refusals.map((r) => (
-            <p key={r.code + r.message} className={cx('break-words', TYPE.body)}>
-              {r.message}
-            </p>
-          ))}
-          {codes.has('nodeInUse') && (
-            <Checkbox
-              checked={state.alsoFromStrategies}
-              onChange={(v) => onChange({ ...state, alsoFromStrategies: v })}
-              label={intl.formatMessage(i18n.removeFromStrategies)}
-              testId="node-remove-from-strategies"
-            />
-          )}
-          {codes.has('nodeIsForNewChats') && (
-            <Checkbox
-              checked={state.andNewChatsAuto}
-              onChange={(v) => onChange({ ...state, andNewChatsAuto: v })}
-              label={intl.formatMessage(i18n.removeAndAuto)}
-              testId="node-remove-and-auto"
-            />
-          )}
-          {liveCount != null && (
-            <Checkbox
-              checked={state.acknowledged === liveCount}
-              onChange={(v) => onChange({ ...state, acknowledged: v ? liveCount : null })}
-              label={intl.formatMessage(i18n.removeUsedByChats, { count: liveCount })}
-              testId="node-remove-acknowledge"
-            />
-          )}
-        </div>
-      )}
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          {intl.formatMessage(i18n.cancel)}
-        </Button>
-        <Button
-          variant="destructive"
-          disabled={state.busy}
-          onClick={onConfirm}
-          data-testid="node-remove-confirm"
-        >
-          {intl.formatMessage(i18n.removeConfirm)}
-        </Button>
-      </div>
-    </OverlayDialog>
+      testIdPrefix="node-remove"
+    />
   );
 }
 
@@ -566,6 +584,7 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
       {removing && (
         <RemoveDialog
           state={removing}
+          config={read?.config ?? null}
           onChange={setRemoving}
           onConfirm={() => void remove(removing)}
           onClose={() => setRemoving(null)}

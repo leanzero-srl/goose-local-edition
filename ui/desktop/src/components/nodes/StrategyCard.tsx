@@ -18,6 +18,7 @@ import { RoleChip, ROLE_WORD } from './NodeChips';
 import {
   ROLES,
   effectiveRole,
+  nodeNamesById,
   type NodeRole,
   type NodeRoleEntry,
   type NodeStrategy,
@@ -348,7 +349,7 @@ export function StrategyCard({
   onAction,
 }: StrategyCardProps) {
   const intl = useIntl();
-  const names = Object.fromEntries(nodes.map((n) => [n.def.id, n.def.name]));
+  const names = nodeNamesById(nodes);
   const roles = strategy.roles ?? {};
   const setRoles = ROLES.filter((r) => roles[r]);
   const inherited = ROLES.filter((r) => !roles[r]);

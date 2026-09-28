@@ -50,6 +50,8 @@ import { distributedStateWord } from './mlxModeLabel';
 import { engineWayOf, measuredRunsOf, type MeasuredRuns } from './measuredRuns';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
 import { engineFigures, type EngineFigure } from './engineFigures';
+import { swapStopsEngine, type NodeSwap } from '../../utils/nodeSwap';
+import { swappingText } from '../chatServedBy/loaderText';
 import {
   leavingFigureText,
   leavingStageWord,
@@ -384,6 +386,14 @@ export interface MlxStateTileProps {
    * route's Stop as `action` — whatever this Mac's own engine is doing meanwhile.
    */
   remote?: MlxRemoteSingleStatus | null;
+  /**
+   * The swap the node loader is making (utils/nodeSwap.ts, from the glance store's nodes read). An
+   * engine it stopped — "exit status: 143" is the stop's SIGTERM — reads "Swapping to {node}",
+   * never Failed; the node's own load failing stays Failed with its words (Q-254).
+   */
+  swap?: NodeSwap | null;
+  /** This Mac's single engine's model (its status), which `swap` is judged against. */
+  modelId?: string | null;
 }
 
 function compact(intl: IntlShape, n: number): string {
@@ -1344,6 +1354,8 @@ export interface ServingEngine {
   wordText: string;
   activity: ReturnType<typeof mlxActivity> | null;
   starting: boolean;
+  /** The node loader stopped this engine to load `swap`'s node: said as that, never Failed. */
+  swapping: boolean;
   dist: MlxDistributedStatus | null;
   hosting: MlxDistributedStatus['hosting'] | null;
   remote: MlxRemoteSingleStatus | null;
@@ -1353,7 +1365,7 @@ export function servingEngine(
   intl: IntlShape,
   input: Pick<
     MlxStateTileProps,
-    'state' | 'unreachable' | 'live' | 'distributed' | 'remote' | 'load'
+    'state' | 'unreachable' | 'live' | 'distributed' | 'remote' | 'load' | 'swap' | 'modelId'
   >
 ): ServingEngine {
   const { state, unreachable, live, distributed } = input;
@@ -1365,6 +1377,18 @@ export function servingEngine(
   const hosting = !dist ? (distributed?.hosting ?? null) : null;
   const remote =
     !dist && !hosting && input.remote && remoteRouteUp(input.remote) ? input.remote : null;
+  // The way the loader stopped (Q-254): the split stopping or failing as its ranks take the stop,
+  // or this Mac's engine stopped or killed by it — unless it is the loading node's own way failing.
+  const stoppedWay = dist
+    ? dist.state === 'stopping' || dist.state === 'failed'
+      ? { way: 'split' as const, modelId: dist.modelId ?? null, failed: dist.state === 'failed' }
+      : null
+    : !hosting && !remote && !starting && (state === 'failed' || state === 'stopped')
+      ? { way: 'single' as const, modelId: input.modelId ?? null, failed: state === 'failed' }
+      : null;
+  const swapTo =
+    stoppedWay && swapStopsEngine(input.swap, stoppedWay) ? input.swap.target.name : null;
+  const swapping = swapTo != null;
   const engineUp = dist
     ? runIsUp(dist)
     : remote
@@ -1373,15 +1397,17 @@ export function servingEngine(
   const activity = engineUp && live?.ok ? mlxActivity(live.stats) : null;
   // Only stopped rows still leaving: the word says so, never "Queued" with nothing queued (Q-246).
   const leavingOnly = engineUp && live?.ok ? engineHeadline(live.stats) === 'leaving' : false;
-  const phase: EnginePhase = dist
-    ? runPhase(dist.state, dist.admissionOpen, activity)
-    : hosting
-      ? hostingPhase(hosting.state)
-      : remote
-        ? remotePhase(remote.state, activity)
-        : starting
-          ? 'loading'
-          : singlePhase(state, unreachable, activity);
+  const phase: EnginePhase = swapping
+    ? 'loading'
+    : dist
+      ? runPhase(dist.state, dist.admissionOpen, activity)
+      : hosting
+        ? hostingPhase(hosting.state)
+        : remote
+          ? remotePhase(remote.state, activity)
+          : starting
+            ? 'loading'
+            : singlePhase(state, unreachable, activity);
   const word: keyof typeof STATE_WORD = remote
     ? remote.state === 'ready'
       ? 'running'
@@ -1395,27 +1421,30 @@ export function servingEngine(
       : (state ?? (unreachable ? 'unreachable' : 'checking'));
   // While the engine is up and read, the headline IS what it is doing — the tray's word
   // ("Remote · Idle"). "Running" beside a grey idle fill read as work (3.0.30, the owner).
-  const wordText = leavingOnly
-    ? leavingStageWord(intl)
-    : activity
-      ? intl.formatMessage(ACTIVITY_WORD[activity])
-      : dist
-        ? distributedStateWord(intl, dist.state)
-        : hosting
-          ? hosting.state === 'loading'
-            ? intl.formatMessage(i18n.hostingLoading, {
-                rank: hosting.rank,
-                requester: hosting.requesterName,
-              })
-            : distributedStateWord(intl, hosting.state)
-          : intl.formatMessage(STATE_WORD[word]);
+  const wordText = swapTo
+    ? swappingText(intl, swapTo)
+    : leavingOnly
+      ? leavingStageWord(intl)
+      : activity
+        ? intl.formatMessage(ACTIVITY_WORD[activity])
+        : dist
+          ? distributedStateWord(intl, dist.state)
+          : hosting
+            ? hosting.state === 'loading'
+              ? intl.formatMessage(i18n.hostingLoading, {
+                  rank: hosting.rank,
+                  requester: hosting.requesterName,
+                })
+              : distributedStateWord(intl, hosting.state)
+            : intl.formatMessage(STATE_WORD[word]);
   return {
     mode: dist ? 'distributed' : hosting ? 'hosting' : remote ? 'remote' : 'single',
     phase,
-    stateKey: dist ? dist.state : word,
+    stateKey: swapping ? 'swapping' : dist ? dist.state : word,
     wordText,
     activity,
     starting,
+    swapping,
     dist,
     hosting,
     remote,
@@ -1450,8 +1479,10 @@ export function MlxStateTile(props: MlxStateTileProps) {
   const load = props.load ?? null;
   const engine = servingEngine(intl, props);
   const measured = useMeasuredRuns(engine);
-  const { starting, dist, hosting, remote, activity, phase, wordText } = engine;
-  const icon = remote ? (
+  const { starting, swapping, dist, hosting, remote, activity, phase, wordText } = engine;
+  const icon = swapping ? (
+    <Loader2 className="animate-spin" />
+  ) : remote ? (
     remote.state === 'mounting' || remote.state === 'reconnecting' ? (
       <Loader2 className="animate-spin" />
     ) : remote.state === 'failed' ? (
@@ -1536,10 +1567,10 @@ export function MlxStateTile(props: MlxStateTileProps) {
         <RunningInstrument live={live} history={history} measured={measured} serving={serving} />
       )}
       {!dist && !hosting && !remote && starting && <MountingInstrument mount={mount} load={load} />}
-      {!dist && !hosting && !remote && !starting && state === 'stopped' && (
+      {!dist && !hosting && !remote && !starting && !swapping && state === 'stopped' && (
         <StoppedInstrument cost={cost} />
       )}
-      {!dist && !remote && !starting && state === 'failed' && (
+      {!dist && !remote && !starting && !swapping && state === 'failed' && (
         <p
           data-testid="mlx-failed-excerpt"
           title={failedError ?? undefined}

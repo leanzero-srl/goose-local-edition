@@ -122,6 +122,40 @@ afterEach(() => {
 });
 
 describe('New node · on your Macs', () => {
+  it('Q-259: a disabled Next or Create says why beside it, and the reason leaves once it is met', async () => {
+    renderDialog();
+    // Kind has a default (On your Macs): Next is live, nothing to say.
+    expect(screen.getByTestId('new-node-next')).toBeEnabled();
+    expect(screen.queryByTestId('new-node-blocked')).toBeNull();
+    await next();
+    const rows = await screen.findAllByTestId('new-node-model-row');
+    expect(screen.getByTestId('new-node-next')).toBeDisabled();
+    expect(screen.getByTestId('new-node-blocked')).toHaveTextContent('Pick a model to go on');
+    expect(screen.getByTestId('new-node-next')).toHaveAttribute(
+      'aria-describedby',
+      screen.getByTestId('new-node-blocked').id
+    );
+    await userEvent.click(rows[0]);
+    expect(screen.queryByTestId('new-node-blocked')).toBeNull();
+    await next();
+    await screen.findByTestId('placement-pick-split');
+    expect(screen.getByTestId('new-node-blocked')).toHaveTextContent(
+      'Pick a way to run it to go on'
+    );
+    await userEvent.click(screen.getByTestId('placement-pick-split'));
+    expect(screen.queryByTestId('new-node-blocked')).toBeNull();
+    await next();
+    const name = screen.getByTestId('new-node-name-input');
+    await userEvent.clear(name);
+    expect(screen.getByTestId('new-node-create')).toBeDisabled();
+    expect(screen.getByTestId('new-node-blocked')).toHaveTextContent('Give it a name to save it');
+    // Nothing was tried: no "Not saved".
+    expect(screen.queryByTestId('new-node-refusals')).toBeNull();
+    await userEvent.type(name, 'Mine');
+    expect(screen.queryByTestId('new-node-blocked')).toBeNull();
+    expect(screen.getByTestId('new-node-create')).toBeEnabled();
+  });
+
   it('two Macs: model with its badge, the split way, the default name, one def written', async () => {
     const { onSaved, onClose } = renderDialog();
     expect(screen.getByTestId('new-node-kind-mlx')).toHaveAttribute('aria-checked', 'true');

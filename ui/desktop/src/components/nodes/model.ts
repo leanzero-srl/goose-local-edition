@@ -146,6 +146,21 @@ export function newChatsModel(forNewChats: NodesForNewChats): string {
   }
 }
 
+/**
+ * THE node names — every surface that names a node by its id (the Nodes page's cards, pickers and
+ * strategy rows, the model chip, the composer bar) reads them here: `def.name`, the unique name the
+ * person gave it (Q-154), never the id (Q-255).
+ */
+export function nodeNamesById(nodes: readonly ResolvedNodeDef[]): Record<string, string> {
+  return Object.fromEntries(nodes.map((n) => [n.def.id, n.def.name]));
+}
+
+/** A pool device's node by its name (adoption keeps the device id as `poolDevice`); null = none. */
+export function nodeNameOfDevice(nodes: readonly ResolvedNodeDef[], device: string): string | null {
+  const node = nodes.find((n) => n.def.id === device || n.def.poolDevice === device);
+  return node?.def.name ?? null;
+}
+
 /** The Macs and link of a pinned way; `null` for a node that follows this Mac's engine. */
 export function placementMacs(
   placement: NodePlacement

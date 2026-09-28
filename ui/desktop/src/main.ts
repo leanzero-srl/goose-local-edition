@@ -164,6 +164,7 @@ import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
 import { phaseDotBitmap } from './utils/phaseDot';
 import { isMlxRemoteReport, remoteLiveBase, type MlxRemoteReport } from './utils/mlxRemoteReport';
 import { MLX_ENGINE_SNAPSHOT_CHANNEL } from './utils/mlxEngineMonitor';
+import { swapOfReports } from './utils/nodeSwap';
 import {
   ENGINE_GLANCE_CHANNEL,
   ENGINE_GLANCE_TURNED_OFF_CHANNEL,
@@ -2316,6 +2317,8 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
       remote: mlxRemote,
       // The node that serves, as each window's goosed read it (glanceStore.ts) — never guessed here.
       served: servingReportsOf(glanceSessionsByWindow.values(), closedWindowServing),
+      // The swap a window's node loader is making: the way it stopped is never "Failed" (Q-254).
+      swap: swapOfReports(glanceSessionsByWindow.values()),
     }),
     sessions:
       glanceSessionsByWindow.size > 0
@@ -2488,8 +2491,10 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     remote: mlxRemote,
     restore: mlxRestore,
   });
+  const swap = swapOfReports(glanceSessionsByWindow.values());
   // No engine configured, none reported and no distributed run: the tray says nothing about one.
   const silent =
+    swap == null &&
     snapshot.mode === 'unknown' &&
     snapshot.baseUrl == null &&
     distributed?.report.mode !== 'distributed' &&
@@ -2505,6 +2510,7 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     distributed,
     remote: mlxRemote,
     restore: mlxRestore,
+    swap,
   });
   if (process.platform === 'darwin') {
     tray.setTitle(silent ? '' : trayTitleText(model), { fontType: 'monospacedDigit' });
@@ -2605,11 +2611,12 @@ ipcMain.on('engine-glance-sessions', (event, report: unknown) => {
         closedWindowServing
       );
       glanceSessionsByWindow.delete(sender.id);
-      publishEngineGlance(mlxMonitor.current());
+      renderMlxTray(mlxMonitor.current());
     });
   }
   glanceSessionsByWindow.set(sender.id, report);
-  publishEngineGlance(mlxMonitor.current());
+  // The report carries the loader's swap, which the tray reads too: both are redrawn (Q-254).
+  renderMlxTray(mlxMonitor.current());
 });
 // A surface mounting after the last push asks for it; the loop is woken so a stale engine read is
 // never what it paints.

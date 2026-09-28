@@ -43,6 +43,7 @@ import { splitStopHeadline, splitStopMemory } from '../chatServedBy/splitStopTex
 import { peerGoneText } from '../chatServedBy/peerGoneText';
 import { busyInHeadline, busyInSendText } from '../chatServedBy/busyInText';
 import { turnWaitText } from '../chatServedBy/turnWaitText';
+import { loaderText, type ChatLoader } from '../chatServedBy/loaderText';
 import {
   distributedProblem,
   distributedServedId,
@@ -269,6 +270,9 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
     }
   }, []);
 
+  // The node loader is at work for this chat, or stopped the way it was on (Q-254): its words, never
+  // "No model is mounted" or the stopped way's "exit status: 143".
+  if (served.loader) return <LoaderBar loader={served.loader} />;
   // A relaunch bringing back what served: that is the line, not "No model is mounted" + Mount.
   if (armed && restoreText != null && !servedReady(served)) {
     return (
@@ -305,7 +309,9 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
     if (served.busyIn) return <BusyInBar busy={served.busyIn} />;
     return served.busyWithOthers ? <BusyBar served={served} busy={served.busyWithOthers} /> : null;
   }
-  if (readiness.kind === 'unknown' || readiness.kind === 'ready') return null;
+  if (readiness.kind === 'unknown' || readiness.kind === 'ready' || readiness.kind === 'loader') {
+    return null;
+  }
   return (
     <ReadinessStripBody
       readiness={readiness}
@@ -443,6 +449,49 @@ function TurnWaitBar({ wait }: { wait: TurnWait }) {
 }
 
 /**
+ * The node loader's line (loaderText.ts): amber with a spinner while it loads — "Loading {node} for
+ * this chat: {phase}", or "Swapping to {node}" — orange while this chat's turn waits in its queue,
+ * in its own words. Typing stays open; the turn goes the moment the way serves.
+ */
+function LoaderBar({ loader }: { loader: ChatLoader }) {
+  const intl = useIntl();
+  const loading = loader.kind === 'loading';
+  return (
+    <div
+      role="status"
+      data-testid="composer-readiness"
+      data-readiness="loader"
+      data-loader={loader.kind}
+      className={cx(
+        'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
+        RADIUS.control,
+        loading ? PHASE_FILL.loading : PHASE_FILL.held
+      )}
+    >
+      {loading ? (
+        <Loader2
+          aria-hidden
+          data-testid="composer-readiness-spinner"
+          data-for="loader"
+          className="size-4 shrink-0 animate-spin"
+        />
+      ) : (
+        <Hourglass aria-hidden className="size-4 shrink-0" />
+      )}
+      <span
+        data-testid="composer-readiness-loader"
+        className={cx('min-w-0 flex-1 break-words text-lz-body', WEIGHT.semibold)}
+      >
+        {loaderText(intl, loader)}
+      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <OpenEngineButton />
+      </div>
+    </div>
+  );
+}
+
+/**
  * The engine is answering one other chat of this app, named (Q-152): which one, for how long, what a
  * message sent now does, and the way to that chat. Sending stays open — the bar informs, it never
  * blocks typing.
@@ -506,7 +555,10 @@ function ReadinessStripBody({
   splitStartError,
   onStartSplit,
 }: {
-  readiness: Exclude<ComposerReadiness, { kind: 'unknown' } | { kind: 'ready' }>;
+  readiness: Exclude<
+    ComposerReadiness,
+    { kind: 'unknown' } | { kind: 'ready' } | { kind: 'loader' }
+  >;
   model: string | null;
   status: MlxEngineStatus | null;
   requesting: boolean;

@@ -1853,6 +1853,9 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Chưa làm mới"
   },
+  "engineGlance.stage.swapping": {
+    "defaultMessage": "Đang chuyển"
+  },
   "engineGlance.turnOff": {
     "defaultMessage": "Tắt cửa sổ nổi"
   },
@@ -5846,6 +5849,9 @@
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Mô hình đã phân giải"
   },
+  "modelsBottomBar.routeChip": {
+    "defaultMessage": "{route} · {node}"
+  },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Chọn mô hình"
   },
@@ -6443,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Đặt tên"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Chọn một mô hình để tiếp tục"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Đặt tên để lưu nó"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Chọn một nhà cung cấp để tiếp tục"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Chọn một cách chạy để tiếp tục"
+  },
   "nodes.newNext": {
     "defaultMessage": "Tiếp"
   },
@@ -6578,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "Gỡ"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Gỡ, và bắt đầu cuộc trò chuyện mới trên Nút bất kỳ (Tự động)"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Gỡ nút khỏi {strategies} luôn"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Một chiến lược đang dùng nút này, nên không thể chỉ gỡ riêng nút.} other{# chiến lược đang dùng nút này, nên không thể chỉ gỡ riêng nút.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Gỡ nút khỏi các chiến lược đang dùng nó luôn"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Đánh dấu ô ở trên để gỡ nút} other{Đánh dấu # ô ở trên để gỡ nút}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "Nút bị gỡ khỏi danh sách nút của bạn. Các Mac, mô hình và nhà cung cấp của bạn vẫn giữ nguyên."
@@ -6587,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Gỡ"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Gỡ nút khỏi các chiến lược đó luôn"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Vẫn gỡ: # cuộc trò chuyện đang đặt nút này} other{Vẫn gỡ: # cuộc trò chuyện đang đặt nút này}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Tin nhắn tiếp theo của nó sẽ báo rằng nút đã bị gỡ và yêu cầu bạn chọn nút khác.} other{Tin nhắn tiếp theo của chúng sẽ báo rằng nút đã bị gỡ và yêu cầu bạn chọn nút khác.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Thay vào đó, bắt đầu cuộc trò chuyện mới trên Nút bất kỳ (Tự động)"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Cuộc trò chuyện mới hiện bắt đầu trên nút này, nên không thể chỉ gỡ riêng nút."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Nhóm của bầy vẫn giữ thiết bị của nó; nút này sẽ không hiện ở đây nữa. Hãy sửa chính nhóm đó ở bên dưới."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Gỡ {node}?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# cuộc trò chuyện đang đặt nút này. Tin nhắn tiếp theo của nó sẽ báo rằng nút đã bị gỡ.} other{# cuộc trò chuyện đang đặt nút này. Tin nhắn tiếp theo của chúng sẽ báo rằng nút đã bị gỡ.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Đọc lại"
@@ -6677,6 +6710,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Nút là một mô hình mà bạn có thể giao việc, trên các Mac của bạn hoặc trên đám mây. Cuộc trò chuyện bắt đầu trên một nút hoặc một chiến lược; bản dựng swarm dùng một chiến lược hoặc nhóm của bầy của bạn."
   },
+  "nodes.swappingTo": {
+    "defaultMessage": "Đang chuyển sang {node}"
+  },
   "nodes.swarmUnreadable": {
     "defaultMessage": "Không đọc được nhóm của bầy"
   },
@@ -6688,6 +6724,9 @@
   },
   "nodes.title": {
     "defaultMessage": "Nút"
+  },
+  "nodes.turnLoading": {
+    "defaultMessage": "Đang tải {node} cho cuộc trò chuyện này: {phase}"
   },
   "nodes.useFailed": {
     "defaultMessage": "Không lưu được thay đổi"
@@ -9380,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: nút {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Chưa gỡ"
-  },
   "strategies.note": {
     "defaultMessage": "Ghi chú (lời của bạn)"
   },
@@ -9416,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "Gỡ"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Gỡ, và bắt đầu cuộc trò chuyện mới trên Nút bất kỳ (Tự động)"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Gỡ, và để bản dựng swarm dùng nhóm của bầy của bạn"
-  },
   "strategies.removeBody": {
     "defaultMessage": "Chiến lược bị gỡ. Các nút của nó vẫn giữ nguyên."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Gỡ"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Thay vào đó, để bản dựng swarm dùng nhóm của bầy của bạn"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Bản dựng swarm hiện dùng chiến lược này, nên không thể chỉ gỡ riêng chiến lược."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Đưa {node} ra khỏi {role}"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Thay vào đó, bắt đầu cuộc trò chuyện mới trên Nút bất kỳ (Tự động)"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Cuộc trò chuyện mới hiện bắt đầu với chiến lược này, nên không thể chỉ gỡ riêng chiến lược."
   },
   "strategies.removeTitle": {
     "defaultMessage": "Gỡ {name}?"
