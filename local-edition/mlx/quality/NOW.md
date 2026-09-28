@@ -56,7 +56,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-455 (chat compaction countdown → measured facts; prompt wording).
+- none. Q-455 DONE (fc6043cb4: chats read `context: N of M used (P%)`, prompt says usage is not a budget)
+  → /tmp/merge-q455, gate /tmp/gq455.out (own session) → ff main for 3.0.75.
 
 ## 3.0.74 = main edd009c6b — DMG BUILT 01:5x (notarized; ~/goose-builds/dmg + the Studio's ~/Downloads)
 - Install on BOTH Macs AFTER #3u ends (10 turns left at 02:00, incl. the turn-28 recall check). Installing
