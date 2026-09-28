@@ -1822,6 +1822,7 @@ mod live_agents {
         assert_eq!(agents.agents.lock().unwrap().len(), 1);
         assert_eq!(*agents.live().unwrap(), 9);
     }
+}
 
 /// Q-272 (§8.7 `nodes.displacedNotice`): a swap names, for the chat it displaced, the node it
 /// stopped, the node it stopped it for and the chat that asked; loading the stopped node back ends
