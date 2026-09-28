@@ -999,7 +999,22 @@ impl Runner {
                 });
             }
         };
-        let watcher = self.spawn_yield_watcher(session_id, n);
+        // v1a (§5.3): a user turn that began between the offer and this start yields the tick
+        // here, before the prompt goes on — decided now, not by a task racing `on_prompt`, so the
+        // tick never reaches the model and `on_prompt` settles it on its way in.
+        let turns = self.inner.deps.turns.running();
+        let yield_now = match turns.running {
+            0 => None,
+            _ => Some(
+                self.yield_cause(session_id, n, turns.sessions.first().cloned())
+                    .await,
+            ),
+        };
+        if let Some(cause) = yield_now {
+            let _ = ticket.cause.set(cause);
+            ticket.cancel.cancel();
+        }
+        let watcher = self.spawn_yield_watcher(session_id, n, turns.started);
         {
             let mut state = self.state();
             let mem = state.loops.entry(session_id.to_string()).or_default();
@@ -1024,30 +1039,31 @@ impl Runner {
         })
     }
 
-    /// v1a (§5.3): any user turn that starts in this process while the tick runs — or already runs
-    /// when it starts — yields the tick. L2c narrows this to the tick's own way.
-    fn spawn_yield_watcher(&self, session_id: &str, n: u32) -> tokio::task::AbortHandle {
+    /// v1a (§5.3): any user turn that starts in this process while the tick runs — counted from
+    /// `started`, the turns started when the tick began — yields the tick. A turn already running
+    /// then is `tick_started`'s own yield. L2c narrows this to the tick's own way.
+    fn spawn_yield_watcher(
+        &self,
+        session_id: &str,
+        n: u32,
+        started: u64,
+    ) -> tokio::task::AbortHandle {
         let turns = self.inner.deps.turns;
-        let snapshot = turns.running();
         let runner = Arc::downgrade(&self.inner);
         let session = session_id.to_string();
         tokio::spawn(async move {
-            let to = if snapshot.running > 0 {
-                snapshot.sessions.first().cloned()
-            } else {
-                turns
-                    .user_turn_started_since(snapshot.started)
-                    .await
-                    .session
-            };
+            let to = turns.user_turn_started_since(started).await.session;
             if let Some(inner) = runner.upgrade() {
-                Runner { inner }.yield_tick(&session, n, to).await;
+                let runner = Runner { inner };
+                let cause = runner.yield_cause(&session, n, to).await;
+                runner.yield_tick(&session, n, cause);
             }
         })
         .abort_handle()
     }
 
-    async fn yield_tick(&self, session_id: &str, n: u32, to: Option<String>) {
+    /// The yield's cause: the chat whose user turn the tick yields to, by id and name.
+    async fn yield_cause(&self, session_id: &str, n: u32, to: Option<String>) -> CancelCause {
         let (to_session, to_chat) = match to {
             Some(to) => {
                 let chat = match self.inner.deps.sessions.get_session(&to, false).await {
@@ -1068,16 +1084,20 @@ impl Runner {
                 (String::new(), String::new())
             }
         };
+        CancelCause::Yield {
+            to_session,
+            to_chat,
+            way: None,
+        }
+    }
+
+    fn yield_tick(&self, session_id: &str, n: u32, cause: CancelCause) {
         let state = self.state();
         let Some(running) = state.loops.get(session_id).and_then(|m| m.running.as_ref()) else {
             return;
         };
         if running.n == n {
-            let _ = running.cause.set(CancelCause::Yield {
-                to_session,
-                to_chat,
-                way: None,
-            });
+            let _ = running.cause.set(cause);
             running.cancel.cancel();
         }
     }

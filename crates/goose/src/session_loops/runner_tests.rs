@@ -544,6 +544,58 @@ async fn a_user_turn_mid_tick_yields_it_and_the_next_tick_follows_that_turn() {
     );
 }
 
+/// L2c: a user turn that began between the offer and the tick's start yields the tick at its start
+/// — decided before `started` returns, so `on_prompt` sees the cancel on its way in and the tick
+/// never reaches the model — and the yield names that turn's chat.
+#[tokio::test]
+async fn a_tick_started_under_a_running_user_turn_is_yielded_before_it_returns() {
+    let bed = bed().await;
+    bed.start(edit(every("10m"), None)).await;
+    let due = bed.due(1).await;
+    let turn = bed.turns.user_turn_in(&bed.other);
+    let reservation = bed
+        .runner
+        .accept_offer(&bed.session, &meta(&due))
+        .await
+        .expect("the offer stood when the turn began");
+    let cancel = CancellationToken::new();
+    let cause = Arc::new(OnceLock::new());
+    let run = reservation
+        .started(TickTicket {
+            cancel: cancel.clone(),
+            cause: cause.clone(),
+            context_window_tokens: 262_144,
+        })
+        .await
+        .unwrap();
+    assert!(cancel.is_cancelled(), "yielded before `started` returned");
+    assert_eq!(
+        cause.get(),
+        Some(&CancelCause::Yield {
+            to_session: bed.other.clone(),
+            to_chat: "Kickoff notes".into(),
+            way: None
+        })
+    );
+    drop(run.ended(TickEnd::Cancelled {
+        cause: cause.get().cloned(),
+    }));
+    let rec = bed
+        .until("tick 1 recorded", |r| r.ticks[0].outcome.is_some())
+        .await;
+    assert!(matches!(
+        rec.ticks[0].outcome,
+        Some(LoopTickOutcome::Yielded { .. })
+    ));
+    drop(turn);
+    let second = bed.due(2).await;
+    assert!(
+        second.prompt.contains("Tick 1 was stopped at"),
+        "{}",
+        second.prompt
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // A tick that asks, and the reviewers
 // ---------------------------------------------------------------------------------------------
