@@ -29,6 +29,12 @@ pub enum Answer {
     Unfinished(&'static str),
     /// Answers nothing until [`Model::release_held`] closes the socket (the call then errors).
     Hold,
+    /// 503 as goose's distributed engine answers while its watchdog holds admission for memory
+    /// (Q-397): the `memory_hold` code, the watchdog's words and the path to wait on. A
+    /// `GET /goose/admission` then waits until [`Model::admit`].
+    MemoryHold(&'static str),
+    /// 503 with no code — any other busy engine.
+    Busy(&'static str),
 }
 
 /// A scripted OpenAI-compatible endpoint: each completion request takes the next [`Answer`];
@@ -39,6 +45,16 @@ pub struct Model {
     script: Arc<Mutex<VecDeque<Answer>>>,
     held: Arc<Mutex<Vec<TcpStream>>>,
     pub requests: Arc<Mutex<Vec<String>>>,
+    /// Every `GET /goose/admission` received, and the ones still waiting for [`Model::admit`].
+    admission_waits: Arc<Mutex<usize>>,
+    waiting_for_admission: Arc<Mutex<Vec<TcpStream>>>,
+}
+
+fn json_response(status: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 fn chunk(delta: Value, finish: Option<&str>) -> String {
@@ -86,6 +102,8 @@ impl Model {
             script: Arc::new(Mutex::new(script.into())),
             held: Arc::default(),
             requests: Arc::default(),
+            admission_waits: Arc::default(),
+            waiting_for_admission: Arc::default(),
         };
         let serving = model.clone();
         tokio::spawn(async move {
@@ -95,6 +113,11 @@ impl Model {
                     return;
                 };
                 let request = read_request(&mut socket).await;
+                if request.starts_with("GET /goose/admission ") {
+                    *serving.admission_waits.lock().unwrap() += 1;
+                    serving.waiting_for_admission.lock().unwrap().push(socket);
+                    continue;
+                }
                 if request.starts_with("GET") {
                     let body = include_str!("../acp_test_data/openai_models.json");
                     let response = format!(
@@ -141,10 +164,43 @@ impl Model {
                         unfinished.push(socket);
                     }
                     Answer::Hold => serving.held.lock().unwrap().push(socket),
+                    Answer::MemoryHold(reason) => {
+                        let body = json!({"error": {
+                            "message": format!("goose distributed engine is not admitting new requests: {reason}"),
+                            "type": "server_busy",
+                            "code": "memory_hold",
+                            "reason": reason,
+                            "admission": "/goose/admission",
+                        }});
+                        let response = json_response("503 Service Unavailable", &body.to_string());
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    }
+                    Answer::Busy(message) => {
+                        let body = json!({"error": {"message": message, "type": "server_busy"}});
+                        let response = json_response("503 Service Unavailable", &body.to_string());
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    }
                 }
             }
         });
         model
+    }
+
+    /// The engine admits again: every waiting `GET /goose/admission` is answered.
+    pub async fn admit(&self) {
+        let waiting = std::mem::take(&mut *self.waiting_for_admission.lock().unwrap());
+        let response = json_response("200 OK", r#"{"admission_open": true}"#);
+        for mut socket in waiting {
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    }
+
+    pub fn admission_waits(&self) -> usize {
+        *self.admission_waits.lock().unwrap()
+    }
+
+    pub fn completion_requests(&self) -> usize {
+        self.requests.lock().unwrap().len()
     }
 
     /// Replace what the next completion requests get.

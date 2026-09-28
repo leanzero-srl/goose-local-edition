@@ -113,10 +113,15 @@ async fn relay_get(base_url: &str, path: &str) -> RelayAnswer {
         Ok(client) => client,
         Err(e) => return RelayAnswer::NoAnswer(format!("building the relay client: {e}")),
     };
+    // What is said about the answer never carries the relay's capability (Q-402): a reqwest error
+    // quotes the URL, and a peer's hold refusal names the relay's re-rooted admission path.
+    let said = |text: String| goose_providers::redact::redact_relay_capability(&text);
     let response = match client.get(format!("{base_url}/{path}")).send().await {
         Ok(response) => response,
         Err(e) => {
-            return RelayAnswer::NoAnswer(format!("this Mac's Link relay did not answer ({e})"))
+            return RelayAnswer::NoAnswer(said(format!(
+                "this Mac's Link relay did not answer ({e})"
+            )))
         }
     };
     let code = response.status().as_u16();
@@ -124,9 +129,9 @@ async fn relay_get(base_url: &str, path: &str) -> RelayAnswer {
         Ok(body) if (200..300).contains(&code) => RelayAnswer::Ok(body),
         Ok(body) => RelayAnswer::Status {
             code,
-            body: body.trim().to_string(),
+            body: said(body.trim().to_string()),
         },
-        Err(e) => RelayAnswer::NoAnswer(format!("{path} body unreadable ({e})")),
+        Err(e) => RelayAnswer::NoAnswer(said(format!("{path} body unreadable ({e})"))),
     }
 }
 

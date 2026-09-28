@@ -16,8 +16,9 @@
 #   other name goose's identity gives the same model (mlx_lm lists the HF cache, and a request
 #   naming any of those would make every rank try to load it), the goose id maps to each rank's
 #   OWN --model path (paths differ per node) and an alias is answered as the id, /goose/progress exposes the
-#   generation loop's step counter (the supervisor's liveness measure), /goose/admission lets the
-#   memory watchdog stop admitting new requests;
+#   generation loop's step counter (the supervisor's liveness measure), POST /goose/admission lets
+#   the memory watchdog stop admitting new requests, and GET /goose/admission answers when it
+#   admits again (rank_admission.py, Q-397: the 503 names the hold, a client waits on the lift);
 # - the thinking switch (rank_thinking.py, Q-135): a chat request's `enable_thinking` resolved the
 #   way the single engine resolves it (off unless pinned or asked for), so "auto" renders the same
 #   prompt here as on Rapid-MLX instead of the template's own default (on, effort xhigh);
@@ -329,7 +330,9 @@ served = spec["served_id"]
 # 0's only; an older requester's spec carries none (Q-131).
 served_aliases = [name for name in spec.get("served_aliases", []) if name != served]
 served_names = [served, *served_aliases]
-state = {"steps": 0, "inflight": 0, "admission_open": True, "admission_reason": None}
+state = {"steps": 0, "inflight": 0}
+# rank_admission.py (Q-397): what the memory watchdog holds and lifts, and the 503 that names it.
+admission = Admission()
 # rank_sampling.py (Q-159): rank 0's layers under each request's own sampling fields. Only rank 0
 # resolves — the workers sample from the arguments it shares.
 sampling_defaults = None
@@ -1424,7 +1427,7 @@ def do_GET(self):
             {
                 "steps": state["steps"],
                 "inflight": state["inflight"],
-                "admission_open": state["admission_open"],
+                "admission_open": admission.open,
                 "active": mx.get_active_memory(),
                 "peak": mx.get_peak_memory(),
             },
@@ -1469,6 +1472,14 @@ def do_GET(self):
         # The last answer the engine ended itself (Q-161, Q-181): its row leaves /v1/status with it.
         body["last_engine_stop"] = last_stop
         return send_json(self, 200, body)
+    if self.path == ADMISSION_PATH:
+        answer = admission.wait_open()
+        try:
+            return send_json(self, 200, answer)
+        except OSError:
+            # The client left while it waited (goose's Stop): nobody is left to answer.
+            self.close_connection = True
+            return None
     if self.path.startswith("/v1/models"):
         return send_json(
             self,
@@ -1499,30 +1510,18 @@ def do_GET(self):
 
 
 def do_POST(self):
-    if self.path == "/goose/admission":
+    if self.path == ADMISSION_PATH:
         length = int(self.headers.get("Content-Length") or 0)
-        body = json.loads(self.rfile.read(length) or b"{}")
-        state["admission_open"] = bool(body.get("open"))
-        state["admission_reason"] = body.get("reason")
-        if not state["admission_open"]:
+        answer = admission.set(json.loads(self.rfile.read(length) or b"{}"))
+        if not admission.open:
             # Memory is short: MLX's free-buffer cache goes back to the OS now (per process, no
             # collective, nothing a peer must mirror).
             mx.clear_cache()
-        return send_json(self, 200, {"admission_open": state["admission_open"]})
-    if not state["admission_open"]:
+        return send_json(self, 200, answer)
+    if not admission.open:
         length = int(self.headers.get("Content-Length") or 0)
         self.rfile.read(length)
-        return send_json(
-            self,
-            503,
-            {
-                "error": {
-                    "message": "goose distributed engine is not admitting new requests: "
-                    + str(state["admission_reason"]),
-                    "type": "server_busy",
-                }
-            },
-        )
+        return send_json(self, 503, admission.refusal())
     with lock:
         state["inflight"] += 1
     try:
