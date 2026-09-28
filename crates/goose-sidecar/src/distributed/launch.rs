@@ -2847,6 +2847,12 @@ print("GOOSE_TEST " + json.dumps({
                 "goose's omlx provider names its turn-context tail to an engine that declares it \
                  (Q-142), on the tool results too (Q-94)"
             );
+            assert_eq!(
+                model["capabilities"],
+                serde_json::json!(["text", "tools"]),
+                "mlx_lm.server reads text only, and says so: goose's omlx provider sends an \
+                 image's placeholder, never the image (Q-260)"
+            );
         }
         assert_eq!(
             seen["wrong_model"],

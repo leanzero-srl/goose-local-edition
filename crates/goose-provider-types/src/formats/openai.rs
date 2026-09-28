@@ -5,7 +5,10 @@ pub use crate::formats::unparsed_tool_call::UnparsedToolCalls;
 use crate::formats::unparsed_tool_call::{
     settle_reply, settle_text, RefusedToolCall, UnparsedCallHold,
 };
-use crate::images::{convert_image, detect_image_path, load_image_file, ImageFormat};
+use crate::images::{
+    attached_image_label, convert_image, detect_image_path, load_image_file, path_image_label,
+    tool_image_label, withheld_image_placeholder, ImageFormat, ImageReport, WithheldImage,
+};
 use crate::json::{parse_tool_arguments, truncation_error_message};
 use crate::mcp_utils::extract_text_from_resource;
 use crate::model::ModelConfig;
@@ -239,6 +242,11 @@ pub struct OpenAiFormatOptions {
     /// the LAST USER message (`rapid_mlx_transient_tail`): the joined block would change the tool
     /// message on the next request and cost that engine its prefix.
     pub turn_context_joins_tool_results: bool,
+    /// Q-260: the engine declared it reads text only. Every image part — an image a user message
+    /// names by its path, an attached image, an image a tool returned — becomes a named text
+    /// placeholder instead ([`withheld_image_placeholder`]), and the request reports it, so a past
+    /// image in history can never make the engine refuse a later turn.
+    pub text_only_engine: bool,
 }
 
 fn merge_reasoning_text(prefix: &str, suffix: &str) -> String {
@@ -385,6 +393,17 @@ pub fn format_messages_with_options(
     image_format: &ImageFormat,
     options: OpenAiFormatOptions,
 ) -> Vec<Value> {
+    format_messages_reporting_images(messages, image_format, options, &mut ImageReport::default())
+}
+
+/// [`format_messages_with_options`], reporting what became of every image part: sent, or — for a
+/// text-only engine — withheld behind a placeholder.
+pub fn format_messages_reporting_images(
+    messages: &[Message],
+    image_format: &ImageFormat,
+    options: OpenAiFormatOptions,
+    images: &mut ImageReport,
+) -> Vec<Value> {
     // U-batch (affd1cea1 ADAPT): the volatile <turn-context> block sits mid-history and changes
     // every turn, so it busts the OpenAI-compatible server's implicit prefix cache from that point
     // on — on a local fleet whose calls are prefill-dominated (30-900s), that is a full re-prefill
@@ -404,8 +423,11 @@ pub fn format_messages_with_options(
     // DeepSeek/Kimi require reasoning_content on every assistant tool-call message.
     let mut tool_call_turn_reasoning = String::new();
     let mut saw_tool_response = false;
+    let last_answer = messages.iter().rposition(|m| m.role == Role::Assistant);
+    let mut tool_names: HashMap<&str, &str> = HashMap::new();
 
-    for message in messages {
+    for (index, message) in messages.iter().enumerate() {
+        let unannounced = last_answer.is_none_or(|answer| index > answer);
         if options.preserve_thinking_context && message.role != Role::Assistant {
             pending_assistant_reasoning.clear();
         }
@@ -446,7 +468,17 @@ pub fn format_messages_with_options(
                     if !text.text.is_empty() {
                         if message.role == Role::User {
                             if let Some(image_path) = detect_image_path(&text.text) {
-                                if let Ok(image) = load_image_file(image_path.as_ref()) {
+                                if options.text_only_engine {
+                                    content_array.push(json!({"type": "text", "text": text.text}));
+                                    let placeholder = withhold(
+                                        images,
+                                        path_image_label(image_path.as_ref()),
+                                        unannounced,
+                                    );
+                                    content_array
+                                        .push(json!({"type": "text", "text": placeholder}));
+                                } else if let Ok(image) = load_image_file(image_path.as_ref()) {
+                                    images.sent += 1;
                                     has_non_text_content = true;
                                     content_array.push(json!({"type": "text", "text": text.text}));
                                     content_array.push(convert_image(&image, image_format));
@@ -472,6 +504,7 @@ pub fn format_messages_with_options(
                 }
                 MessageContent::ToolRequest(request) => match &request.tool_call {
                     Ok(tool_call) => {
+                        tool_names.insert(request.id.as_str(), tool_call.name.as_ref());
                         let sanitized_name = sanitize_function_name(&tool_call.name);
                         let arguments_str = match &tool_call.arguments {
                             Some(args) => {
@@ -536,7 +569,16 @@ pub fn format_messages_with_options(
 
                             for content in result.content.iter() {
                                 match content.deref() {
+                                    RawContent::Image(image) if options.text_only_engine => {
+                                        let tool = tool_names.get(response.id.as_str()).copied();
+                                        tool_content.push(Content::text(withhold(
+                                            images,
+                                            tool_image_label(tool, &image.mime_type),
+                                            unannounced,
+                                        )));
+                                    }
                                     RawContent::Image(image) => {
+                                        images.sent += 1;
                                         // Add placeholder text in the tool response
                                         tool_content.push(Content::text("This tool result included an image that is uploaded in the next message."));
 
@@ -586,7 +628,12 @@ pub fn format_messages_with_options(
                 MessageContent::ToolConfirmationRequest(_) => {}
                 MessageContent::ActionRequired(_) => {}
                 MessageContent::Image(image) => {
-                    if message.role == Role::User {
+                    if message.role == Role::User && options.text_only_engine {
+                        let placeholder =
+                            withhold(images, attached_image_label(image), unannounced);
+                        content_array.push(json!({"type": "text", "text": placeholder}));
+                    } else if message.role == Role::User {
+                        images.sent += 1;
                         has_non_text_content = true;
                         content_array.push(convert_image(image, image_format));
                     } else {
@@ -712,6 +759,13 @@ pub fn format_messages_with_options(
     }
 
     messages_spec
+}
+
+/// Record an image part the text-only engine is not sent, returning the placeholder it reads.
+fn withhold(images: &mut ImageReport, label: String, new: bool) -> String {
+    let placeholder = withheld_image_placeholder(&label);
+    images.withheld.push(WithheldImage { label, new });
+    placeholder
 }
 
 /// affd1cea1 ADAPT: find the LAST user message carrying a turn-context text block and strip that
@@ -2012,6 +2066,28 @@ pub fn create_request_with_options(
     for_streaming: bool,
     format_options: OpenAiFormatOptions,
 ) -> anyhow::Result<Value, Error> {
+    create_request_reporting_images(
+        model_config,
+        system,
+        messages,
+        tools,
+        image_format,
+        for_streaming,
+        format_options,
+    )
+    .map(|(payload, _)| payload)
+}
+
+/// [`create_request_with_options`], with the report of what became of every image part.
+pub fn create_request_reporting_images(
+    model_config: &ModelConfig,
+    system: &str,
+    messages: &[Message],
+    tools: &[Tool],
+    image_format: &ImageFormat,
+    for_streaming: bool,
+    format_options: OpenAiFormatOptions,
+) -> anyhow::Result<(Value, ImageReport), Error> {
     if model_config.model_name.starts_with("o1-mini") {
         return Err(anyhow!(
             "o1-mini model is not currently supported since goose uses tool calling and o1-mini does not support it. Please use o1 or o3 models instead."
@@ -2035,7 +2111,9 @@ pub fn create_request_with_options(
         "content": system
     });
 
-    let messages_spec = format_messages_with_options(messages, image_format, format_options);
+    let mut images = ImageReport::default();
+    let messages_spec =
+        format_messages_reporting_images(messages, image_format, format_options, &mut images);
     let mut tools_spec = format_tools(tools)?;
 
     validate_tool_schemas(&mut tools_spec);
@@ -2161,7 +2239,7 @@ pub fn create_request_with_options(
         }
     }
 
-    Ok(payload)
+    Ok((payload, images))
 }
 
 /// Request-param key whose value is appended as a trailing `assistant` message instead of being
@@ -5975,6 +6053,7 @@ mod cache_prefix_stability_tests {
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
                 turn_context_joins_tool_results: true,
+                ..Default::default()
             },
         );
         let last = joined.last().unwrap();
@@ -6001,6 +6080,7 @@ mod cache_prefix_stability_tests {
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
                 turn_context_joins_tool_results: true,
+                ..Default::default()
             },
         );
         assert_eq!(human_hosted, before, "only a tool-hosted block joins");
@@ -6015,6 +6095,7 @@ mod cache_prefix_stability_tests {
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
                 turn_context_joins_tool_results: true,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -6463,5 +6544,111 @@ mod unparsed_tool_call_tests {
         assert_eq!(failed.len(), 1);
         assert!(failed[0].message.contains("`bash`"));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod text_only_engine_tests {
+    use super::*;
+    use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+
+    fn q260_history() -> Vec<Message> {
+        vec![
+            Message::user()
+                .with_text("what is on this screenshot?")
+                .with_image("iVBORw0KGgo=", "image/png"),
+            Message::assistant().with_text("I could not read it."),
+            Message::user().with_text("then read it with the tool"),
+            Message::assistant()
+                .with_tool_request("call_img", Ok(CallToolRequestParams::new("read_image"))),
+            Message::user().with_tool_response(
+                "call_img",
+                Ok(CallToolResult::success(vec![
+                    Content::text("Loaded image."),
+                    Content::image("iVBORw0KGgo=", "image/png"),
+                ])),
+            ),
+        ]
+    }
+
+    fn formatted(text_only_engine: bool) -> (Vec<Value>, ImageReport) {
+        let mut images = ImageReport::default();
+        let spec = format_messages_reporting_images(
+            &q260_history(),
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                text_only_engine,
+                ..Default::default()
+            },
+            &mut images,
+        );
+        (spec, images)
+    }
+
+    /// Q-260: every image part — the attachment in history and the tool's image the request ends
+    /// on — becomes a named placeholder; only the tool's image is new (no answer follows it).
+    #[test]
+    fn a_text_only_engine_reads_a_named_placeholder_for_every_image_part() {
+        let (spec, images) = formatted(true);
+        let wire = serde_json::to_string(&spec).unwrap();
+        assert!(!wire.contains("image_url"), "{wire}");
+        assert_eq!(
+            spec[0]["content"],
+            json!(
+                "what is on this screenshot?\n\
+                 [image attachment (image/png) not sent: this model reads text only]"
+            )
+        );
+        assert_eq!(
+            spec.iter().find(|m| m["role"] == json!("tool")).unwrap()["content"],
+            json!(
+                "Loaded image. [image from read_image (image/png) not sent: this model reads \
+                 text only]"
+            )
+        );
+        assert_eq!(
+            images,
+            ImageReport {
+                sent: 0,
+                withheld: vec![
+                    WithheldImage {
+                        label: "attachment (image/png)".to_string(),
+                        new: false,
+                    },
+                    WithheldImage {
+                        label: "from read_image (image/png)".to_string(),
+                        new: true,
+                    },
+                ],
+            }
+        );
+    }
+
+    /// The negative control: an engine that reads images is formatted byte-for-byte as before,
+    /// and the report counts what went out.
+    #[test]
+    fn an_engine_that_reads_images_is_formatted_as_before() {
+        let (spec, images) = formatted(false);
+        assert_eq!(
+            spec,
+            format_messages_with_options(
+                &q260_history(),
+                &ImageFormat::OpenAi,
+                OpenAiFormatOptions::default()
+            )
+        );
+        assert_eq!(
+            images,
+            ImageReport {
+                sent: 2,
+                withheld: Vec::new(),
+            }
+        );
+        let wire = serde_json::to_string(&spec).unwrap();
+        assert_eq!(
+            wire.matches(r#""type":"image_url""#).count(),
+            2,
+            "both image parts go out: {wire}"
+        );
     }
 }

@@ -1373,6 +1373,10 @@ def do_GET(self):
                         "object": "model",
                         "owned_by": "goose-distributed",
                         "context_window": spec["context_window"],
+                        # The single engine's shape (Rapid-MLX routes/models.py): mlx_lm.server
+                        # refuses every non-text content part, so no "vision" (Q-260: goose sends
+                        # an engine that declares it reads text only a placeholder per image).
+                        "capabilities": ["text", "tools"],
                         **(
                             {"request_extensions": list(TRANSIENT_TAIL_EXTENSIONS)}
                             if transient_tail_boundary

@@ -50,7 +50,9 @@ impl Stream for Observed {
             match item {
                 Some(Ok((message, usage))) => {
                     if let Some(turn) = this.turn.as_mut() {
-                        if message.is_some() {
+                        // A notice the provider leads the stream with (Q-260's withheld images) is
+                        // not a token: timing it would read the prefill as instant.
+                        if message.as_ref().is_some_and(|m| !is_notice_only(m)) {
                             let now = Instant::now();
                             turn.first.get_or_insert(now);
                             turn.last = Some(now);
@@ -76,6 +78,16 @@ impl Stream for Observed {
         }
         next
     }
+}
+
+fn is_notice_only(message: &goose_providers::conversation::message::Message) -> bool {
+    !message.content.is_empty()
+        && message.content.iter().all(|c| {
+            matches!(
+                c,
+                goose_providers::conversation::message::MessageContent::SystemNotification(_)
+            )
+        })
 }
 
 /// Wrap a stream an MLX engine on this Mac is answering.
@@ -286,5 +298,20 @@ mod tests {
         let (message, seen) = items[0].as_ref().unwrap();
         assert_eq!(message.as_ref().unwrap().as_concat_text(), "hi");
         assert_eq!(seen.as_ref().unwrap().model, "m");
+    }
+
+    #[test]
+    fn a_leading_notice_is_not_the_first_token() {
+        use crate::conversation::message::SystemNotificationType;
+        let notice = Message::assistant().with_system_notification(
+            SystemNotificationType::InlineMessage,
+            "Qwen reads text only — the image a.png was not sent",
+        );
+        assert!(is_notice_only(&notice));
+        assert!(!is_notice_only(&Message::assistant().with_text("a")));
+        assert!(
+            !is_notice_only(&Message::assistant()),
+            "an empty chunk is timed as before"
+        );
     }
 }
