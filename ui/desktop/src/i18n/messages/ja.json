@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "モデルや実行する Mac を変更"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "このチャットのノード"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "失敗"
   },

@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Đổi mô hình hoặc máy Mac chạy nó"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Các nút của cuộc trò chuyện này"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Lỗi"
   },

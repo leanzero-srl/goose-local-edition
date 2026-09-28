@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "모델이나 실행할 Mac 변경"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "이 채팅의 노드"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "실패"
   },

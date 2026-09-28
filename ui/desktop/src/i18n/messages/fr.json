@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Changer le modèle ou le Mac qui l’exécute"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Les nœuds de cette discussion"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Échec"
   },

@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Ganti model atau Mac tempat model berjalan"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Node chat ini"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Gagal"
   },

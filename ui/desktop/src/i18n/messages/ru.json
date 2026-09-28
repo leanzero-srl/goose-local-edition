@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Сменить модель или Mac, на котором она работает"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Узлы этого чата"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Сбой"
   },

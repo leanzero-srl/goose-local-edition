@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Modeli veya çalıştığı Mac’i değiştir"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Bu sohbetin düğümleri"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Başarısız"
   },

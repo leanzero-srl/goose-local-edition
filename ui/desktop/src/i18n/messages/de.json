@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Modell oder Mac wechseln, auf dem es läuft"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Die Nodes dieses Chats"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Fehlgeschlagen"
   },

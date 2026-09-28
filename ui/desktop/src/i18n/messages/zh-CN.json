@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "更换模型或运行它的 Mac"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "此聊天的节点"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "失败"
   },

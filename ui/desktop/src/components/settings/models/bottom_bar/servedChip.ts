@@ -16,6 +16,7 @@ const i18n = defineMessages({
     defaultMessage: '{model} · not running',
   },
   routeChip: { id: 'modelsBottomBar.routeChip', defaultMessage: '{route} · {node}' },
+  ownNodes: { id: 'modelsBottomBar.ownNodes', defaultMessage: 'This chat’s nodes' },
 });
 
 export interface ServedChipWords {
@@ -71,12 +72,15 @@ export function servedChipWords(
   // A `node:` / `strategy:` chat names what it runs on by the Nodes page's names (design §8.5,
   // Q-255): the node, or the strategy and the node its turns go to — never `node:<id>`.
   const route = !isModelLoading ? (served?.route ?? null) : null;
+  // A chat's own node set is "This chat's nodes", never the name goosed generates for it (Q-379).
+  const routeName =
+    route?.kind === 'strategy' && route.own ? intl.formatMessage(i18n.ownNodes) : route?.name;
   const routeLabel =
     route == null
       ? null
       : route.kind === 'node' || route.node == null
-        ? route.name
-        : intl.formatMessage(i18n.routeChip, { route: route.name, node: route.node });
+        ? (routeName ?? null)
+        : intl.formatMessage(i18n.routeChip, { route: routeName, node: route.node });
   const engineLabel =
     servedModel == null
       ? null

@@ -512,6 +512,11 @@ export type ChatRoute =
   | {
       kind: 'strategy';
       name: string;
+      /**
+       * The chat's own node set (Q-359): named "This chat's nodes" by the chip, never by the name
+       * goosed generates for it only to keep strategy names unique (Q-379).
+       */
+      own: boolean;
       /** The node its turns go to (the last served, else the Chat role's first), by name. */
       node: string | null;
       nodeId: string | null;
@@ -946,6 +951,7 @@ function routeOf(facts: ChatNodesFacts, model: string | null | undefined): ChatR
   return {
     kind: 'strategy',
     name: strategy.name,
+    own: strategy.chat != null,
     node: nodeId != null ? (names[nodeId] ?? null) : null,
     nodeId,
   };

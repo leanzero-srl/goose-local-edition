@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "मॉडल या वह Mac बदलें जिस पर यह चलता है"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "इस चैट के नोड"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "विफल"
   },

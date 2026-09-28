@@ -5987,6 +5987,9 @@
   "modelsBottomBar.openEngineHint": {
     "defaultMessage": "Tukar model atau Mac yang menjalankannya"
   },
+  "modelsBottomBar.ownNodes": {
+    "defaultMessage": "Nod sembang ini"
+  },
   "modelsBottomBar.phase.failed": {
     "defaultMessage": "Gagal"
   },

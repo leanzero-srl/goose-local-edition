@@ -1825,8 +1825,13 @@ pub(crate) struct ChainPlan {
 
 /// The chain `route` names. A `node:` route is a chain of that one node, and a node that cannot
 /// serve ends the turn (the user chose exactly it). A removed node or strategy is named, never
-/// replaced.
-fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan, String> {
+/// replaced — a removed set of `session`'s own as "this chat's nodes", never by the id it carried
+/// only for uniqueness (Q-379).
+fn chain_plan(
+    route: &RouteModel,
+    read: &NodesReadResponse,
+    session: Option<&str>,
+) -> Result<ChainPlan, String> {
     let defs: HashMap<String, ResolvedNodeDef> = read
         .nodes
         .iter()
@@ -1859,8 +1864,12 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
                 .strategies
                 .iter()
                 .find(|s| &s.id == id)
-                .ok_or_else(|| {
-                    format!("the strategy '{id}' was removed. Pick another from the chip.")
+                .ok_or_else(|| match session {
+                    Some(session) if crate::nodes::is_chat_set_id_of(id, session) => {
+                        "this chat's nodes were removed. Pick a node for it from the chip."
+                            .to_string()
+                    }
+                    _ => format!("the strategy '{id}' was removed. Pick another from the chip."),
                 })?;
             let role = role.unwrap_or(NodeRole::Chat);
             let entry = crate::nodes::effective_entry(strategy, role).ok_or_else(|| {
@@ -1901,7 +1910,11 @@ fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan,
 async fn live_plan(route: &RouteModel) -> Result<ChainPlan, String> {
     let read = crate::nodes::read(Config::global(), this_mac_name().await)
         .map_err(|e| format!("{e:#}; nothing was routed"))?;
-    chain_plan(route, &read)
+    chain_plan(
+        route,
+        &read,
+        crate::session_context::current_session_id().as_deref(),
+    )
 }
 
 /// This Mac's name, read once per process (adoption names this Mac's engine node with it).
@@ -5389,13 +5402,19 @@ devices:
             chat: None,
         }];
         let read = read_of(config);
-        let chat = chain_plan(&nodes_route("strategy:daily").unwrap().unwrap(), &read).unwrap();
+        let chat = chain_plan(
+            &nodes_route("strategy:daily").unwrap().unwrap(),
+            &read,
+            None,
+        )
+        .unwrap();
         assert_eq!(chat.role, Some(NodeRole::Chat));
         assert_eq!(chat.entry.chain[0].node, "a");
         assert_eq!(chat.label, "the strategy \"Daily\" (chat)");
         let build = chain_plan(
             &nodes_route("strategy:daily@build").unwrap().unwrap(),
             &read,
+            None,
         )
         .unwrap();
         assert_eq!(build.entry.when, NodeWhen::Share);
@@ -5404,23 +5423,28 @@ devices:
         let testing = chain_plan(
             &nodes_route("strategy:daily@testing").unwrap().unwrap(),
             &read,
+            None,
         )
         .unwrap();
         assert_eq!(testing.entry, build.entry);
-        let node = chain_plan(&nodes_route("node:b").unwrap().unwrap(), &read).unwrap();
+        let node = chain_plan(&nodes_route("node:b").unwrap().unwrap(), &read, None).unwrap();
         assert_eq!(node.role, None);
         assert_eq!(node.entry.chain.len(), 1);
         assert_eq!(node.label, "\"Node b\"");
-        let gone = chain_plan(&nodes_route("node:ghost").unwrap().unwrap(), &read)
+        let gone = chain_plan(&nodes_route("node:ghost").unwrap().unwrap(), &read, None)
             .err()
             .unwrap();
         assert_eq!(
             gone,
             "the node 'ghost' was removed. Pick another node from the chip."
         );
-        let gone = chain_plan(&nodes_route("strategy:ghost").unwrap().unwrap(), &read)
-            .err()
-            .unwrap();
+        let gone = chain_plan(
+            &nodes_route("strategy:ghost").unwrap().unwrap(),
+            &read,
+            None,
+        )
+        .err()
+        .unwrap();
         assert!(gone.contains("the strategy 'ghost' was removed"), "{gone}");
     }
 
@@ -5450,6 +5474,7 @@ devices:
                     .unwrap()
                     .unwrap(),
                 &read,
+                None,
             )
             .unwrap();
             let same = chain_plan(
@@ -5457,12 +5482,46 @@ devices:
                     .unwrap()
                     .unwrap(),
                 &read,
+                None,
             )
             .unwrap();
             assert_eq!(own.label, format!("this chat's nodes ({suffix})"));
             assert_eq!(same.label, format!("the strategy \"Named\" ({suffix})"));
             assert_eq!(own.entry, same.entry, "the label is the only difference");
             assert_eq!(own.role, same.role);
+        }
+    }
+
+    /// Q-379: a chat whose own set was removed is told so about "this chat's nodes" — never by
+    /// the set's internal id; any other removed strategy keeps its own words.
+    #[test]
+    fn a_chats_removed_node_set_is_named_as_this_chats_nodes() {
+        let mut config = crate::nodes::empty_config();
+        config.defs = vec![cloud_def("a")];
+        let read = read_of(config);
+        let refusal = |route: &str, session: Option<&str>| {
+            chain_plan(&nodes_route(route).unwrap().unwrap(), &read, session)
+                .err()
+                .unwrap()
+        };
+        for route in ["strategy:chat-20260928_4", "strategy:chat-20260928_4-2"] {
+            let said = refusal(route, Some("20260928_4"));
+            assert_eq!(
+                said,
+                "this chat's nodes were removed. Pick a node for it from the chip."
+            );
+            assert!(!said.contains("chat-20260928"), "{said}");
+        }
+        // Another chat's set, a named strategy whose id starts the same way, and a call outside
+        // any session are not this chat's nodes.
+        for (route, session) in [
+            ("strategy:chat-20260928_40", Some("20260928_4")),
+            ("strategy:chat-20260928_4-x", Some("20260928_4")),
+            ("strategy:chat-helpers", Some("20260928_4")),
+            ("strategy:chat-20260928_4", None),
+        ] {
+            let said = refusal(route, session);
+            assert!(said.starts_with("the strategy '"), "{route}: {said}");
         }
     }
 
