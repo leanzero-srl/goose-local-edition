@@ -139,6 +139,13 @@
 #   `true` under ["boolean", "null"] was dropped, and a `$ref` object parameter arrived as its JSON
 #   text. The parser's `_get_arguments_config` is wrapped so the whole-call parse and the streamer
 #   read the type Rapid-MLX's parser reads (single engine, pipeline fork).
+# - a non-streamed answer whose tool call the parser refuses is a named 500 (Q-233,
+#   `NamedToolCallFormatter`): mlx_lm's ToolCallFormatter skipped a ValueError (the call silently
+#   gone from a 200) and let any other refusal escape after its 200 was buffered — a SyntaxError
+#   (literal_eval of a word) closed the connection with no reply. The 500 carries the parser's words
+#   and the call's text; a streamed answer is untouched (its streamer already leaves the refused
+#   call's arguments unterminated). Q-177's 500 now covers every failure before a byte reached the
+#   client, a buffered-but-unsent status line included.
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -244,6 +251,7 @@ for owner, name in (
     (server.APIHandler, "handle_completion"),
     (server.APIHandler, "handle_chat_completions"),
     (server.APIHandler, "generate_response"),
+    (server, "ToolCallFormatter"),
     (server, "process_message_content"),
     (qwen3_coder, "parse_tool_call"),
     (qwen3_coder, "_convert_param_value"),
@@ -1419,14 +1427,22 @@ def do_POST(self):
         # Named where it was seen (GOOSE_RANK_CANCELLED_BY_CLIENT); nobody is left to answer.
         self.close_connection = True
     except Exception as failure:
-        # Q-177: http.server answers an escaped exception by closing the socket. Before any status
-        # line was written (`_headers_buffer` exists from the first send_response) the client is
-        # told what failed; after it, the response already begun is all there is.
-        if hasattr(self, "_headers_buffer"):
+        # Q-177: http.server answers an escaped exception by closing the socket. Until a byte of
+        # the response reached the client the client is told what failed; after it, the response
+        # already begun is all there is. http.server buffers the status line and headers from
+        # send_response until end_headers writes them and empties the buffer (Q-233: mlx_lm's
+        # non-streamed answer buffers its 200 before generating), so an EMPTY buffer is a response
+        # on the wire, and a pending one is discarded here — this handler serves one request.
+        if getattr(self, "_headers_buffer", None) == []:
             raise
+        self._headers_buffer = []
         named = f"{type(failure).__name__}: {failure}"
-        emit("RANK_REQUEST_FAILED", {"path": self.path, "error": named})
-        send_json(self, 500, {"error": {"message": named, "type": "server_error"}})
+        error = {"message": named, "type": "server_error"}
+        if isinstance(failure, ToolCallUnparsed):
+            error["code"] = "tool_call_unparsed"
+            error["tool_text"] = failure.tool_text
+        emit("RANK_REQUEST_FAILED", {"path": self.path, "error": named, "code": error.get("code")})
+        send_json(self, 500, {"error": error})
     finally:
         with lock:
             state["inflight"] -= 1
@@ -1802,6 +1818,55 @@ def handle_completion(self, request, stop_words):
 
 
 server.APIHandler.handle_completion = handle_completion
+
+
+class ToolCallUnparsed(Exception):
+    """The tool parser refused a call of a non-streamed answer (Q-233): its words and the call."""
+
+    def __init__(self, parser, refusal, tool_text):
+        super().__init__(
+            f"the model's tool call could not be parsed by {parser} — "
+            f"{type(refusal).__name__}: {refusal}"
+        )
+        self.tool_text = tool_text
+
+
+upstream_tool_call_formatter = server.ToolCallFormatter
+
+
+class NamedToolCallFormatter(upstream_tool_call_formatter):
+    """mlx_lm's formatter, except that on a non-streamed answer any refusal of its parser is a
+    ToolCallUnparsed (do_POST's named 500) instead of a skipped call or a dropped connection. A
+    streamed answer's formatter is mlx_lm's own, unchanged."""
+
+    def __init__(self, tool_parser, tools, streaming=False):
+        if not streaming and tool_parser is not None:
+            tool_parser = refusing_unparsed(tool_parser)
+        super().__init__(tool_parser, tools, streaming)
+
+
+def refusing_unparsed(parser):
+    name = getattr(parser, "__module__", None) or repr(parser)
+
+    def parse(tool_text, tools):
+        try:
+            return parser(tool_text, tools)
+        except Exception as refusal:
+            emit(
+                "RANK_TOOL_CALL_UNPARSED",
+                {
+                    "stream": False,
+                    "parser": name,
+                    "why": f"{type(refusal).__name__}: {refusal}",
+                    "chars": len(tool_text),
+                },
+            )
+            raise ToolCallUnparsed(name, refusal, tool_text) from refusal
+
+    return parse
+
+
+server.ToolCallFormatter = NamedToolCallFormatter
 
 sys.argv = [
     "mlx_lm.server",

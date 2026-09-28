@@ -3652,7 +3652,7 @@ print("ok")
     /// model wrote, typed. NEGATIVE CONTROL: the parser's own `_get_arguments_config` put back,
     /// the same answer loses its call both ways: the stream's arguments never close, and the
     /// non-streamed request's SyntaxError escapes mlx_lm's ToolCallFormatter (it skips only
-    /// ValueError) and the connection closes with no reply.
+    /// ValueError) — the connection closed with no reply until Q-233 made it a named 500.
     #[test]
     fn a_call_with_optional_arguments_reaches_the_client_through_the_wrapper() {
         let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
@@ -3758,9 +3758,185 @@ print("GOOSE_TEST " + json.dumps({"fixed": fixed, "shipped": shipped, "expected"
             "negative control: the parser as shipped never closes the streamed call: {shipped}"
         );
         assert_eq!(
-            shipped["whole"]["dropped"], "RemoteDisconnected",
-            "negative control: the parser as shipped loses the non-streamed call: {shipped}"
+            shipped["whole"]["status"], 500,
+            "negative control: the parser as shipped loses the non-streamed call — since Q-233 a \
+             named 500, before it a connection closed with no reply: {shipped}"
         );
+        assert!(
+            shipped["whole"]["body"]
+                .as_str()
+                .unwrap()
+                .contains("SyntaxError: invalid decimal literal"),
+            "{shipped}"
+        );
+    }
+
+    /// Q-233 through the REAL mlx_lm 0.31.3 handler: a NON-streamed answer whose tool call the
+    /// parser refuses is a 500 naming the parser and its words (`code` `tool_call_unparsed`, the
+    /// call's text as `tool_text`), and the rank's log says so (GOOSE_RANK_TOOL_CALL_UNPARSED
+    /// `stream` false, GOOSE_RANK_REQUEST_FAILED). Both refusals the qwen3_coder parser raises:
+    /// a word under ["integer", "boolean"] (a union Q-232 leaves as written) — literal_eval's
+    /// SyntaxError, which escaped mlx_lm's ToolCallFormatter (it skips only ValueError) and, the
+    /// 200 already buffered, closed the connection with no reply (RemoteDisconnected, measured by
+    /// Q-232's negative control); and a word under "integer" — int()'s ValueError, which mlx_lm
+    /// skipped: a 200 whose call was silently gone. POSITIVE CONTROL: a call the parser reads is
+    /// answered 200 with it. NEGATIVE CONTROL: mlx_lm's own formatter put back, the ValueError is
+    /// that silent 200. A STREAMED answer with the same refused call is exactly what it was
+    /// (mlx_lm's formatter or the wrapper's, byte-identical frames): the streamer already fails
+    /// the call loudly by leaving its arguments unterminated.
+    #[test]
+    fn a_non_streamed_call_the_parser_refuses_is_a_named_500() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r##"
+import http.client
+
+TOOLS = [{"type": "function", "function": {"name": "schedule", "parameters": {
+    "type": "object", "required": ["what"],
+    "properties": {"what": {"type": "string"}, "count": {"type": ["integer", "boolean"]},
+                   "limit": {"type": "integer"}}}}}]
+
+def call(*params):
+    body = "".join(f"<parameter={key}>\n{value}\n</parameter>\n" for key, value in params)
+    return f"\n<function=schedule>\n{body}</function>\n"
+
+CALLS = {
+    "syntax": call(("what", "re-run the census"), ("count", "10m")),
+    "value": call(("what", "re-run the census"), ("limit", "ten")),
+    "read": call(("what", "re-run the census"), ("count", "5"), ("limit", "7")),
+}
+
+def generation_thread():
+    while True:
+        rqueue, request, args = responses.requests.get()
+        text = CALLS[request.messages[-1]["content"]]
+        rqueue.put(server.GenerationContext(
+            has_tool_calling=True, has_thinking=False, tool_parser=qwen3_coder.parse_tool_call,
+            sequences={(1,): "<tool_call>", (2,): "</tool_call>", (3,): "<|im_end|>"},
+            prompt=[0] * 8, prompt_cache_count=0,
+        ))
+        rqueue.put(token("<tool_call>", "tool", (1,)))
+        for i in range(0, len(text), 4):
+            rqueue.put(token(text[i:i + 4], "tool"))
+        rqueue.put(token("</tool_call>", "normal", (2,)))
+        rqueue.put(token("<|im_end|>", None, (3,), "stop"))
+        rqueue.put(None)
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def body(case, stream):
+    return {"model": served, "stream": stream, "tools": TOOLS,
+            "messages": [{"role": "user", "content": case}]}
+
+def whole(case):
+    try:
+        status, text = post("/v1/chat/completions", body(case, False))
+    except (ConnectionError, http.client.HTTPException) as dropped:
+        return {"dropped": type(dropped).__name__}
+    reply = json.loads(text)
+    if status != 200:
+        return {"status": status, "error": reply["error"]}
+    message = reply["choices"][0]["message"]
+    return {"status": status, "finish": reply["choices"][0]["finish_reason"],
+            "calls": [c["function"] for c in message.get("tool_calls") or []]}
+
+def streamed(case):
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/chat/completions"
+    request = urllib.request.Request(url, data=json.dumps(body(case, True)).encode())
+    frames = []
+    with urllib.request.urlopen(request, timeout=60) as reply:
+        status = reply.status
+        for raw in reply:
+            line = raw.decode().strip()
+            if line.startswith("data: ") and line != "data: [DONE]":
+                frame = json.loads(line[len("data: "):])
+                for key in ("id", "created", "system_fingerprint"):
+                    frame.pop(key, None)
+                for choice in frame["choices"]:
+                    for delta in choice.get("delta", {}).get("tool_calls", []):
+                        delta.pop("id", None)
+                frames.append(frame)
+            elif line == "data: [DONE]":
+                frames.append("[DONE]")
+    return {"status": status, "frames": frames}
+
+fixed = {case: whole(case) for case in CALLS}
+fixed["streamed"] = streamed("syntax")
+server.ToolCallFormatter = upstream_tool_call_formatter
+shipped = {case: whole(case) for case in CALLS}
+shipped["streamed"] = streamed("syntax")
+print("GOOSE_TEST " + json.dumps({"fixed": fixed, "shipped": shipped, "calls": CALLS}))
+"##;
+        let (seen, printed) = run_wrapper_checks(&python, checks);
+        let fixed = &seen["fixed"];
+        for (case, words) in [
+            ("syntax", "SyntaxError: invalid decimal literal"),
+            (
+                "value",
+                "ValueError: invalid literal for int() with base 10: 'ten'",
+            ),
+        ] {
+            let answer = &fixed[case];
+            assert_eq!(answer["status"], 500, "{case}: {answer}");
+            let error = &answer["error"];
+            assert_eq!(error["type"], "server_error", "{case}");
+            assert_eq!(error["code"], "tool_call_unparsed", "{case}");
+            assert_eq!(error["tool_text"], seen["calls"][case], "{case}");
+            let message = error["message"].as_str().unwrap();
+            assert!(
+                message.contains("mlx_lm.tool_parsers.qwen3_coder") && message.contains(words),
+                "{case}: the parser and its words: {message}"
+            );
+        }
+        let read = &fixed["read"];
+        assert_eq!(read["status"], 200, "{read}");
+        assert_eq!(read["finish"], "tool_calls");
+        assert_eq!(read["calls"][0]["name"], "schedule");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                read["calls"][0]["arguments"].as_str().unwrap()
+            )
+            .unwrap(),
+            serde_json::json!({"what": "re-run the census", "count": 5, "limit": 7})
+        );
+        let unparsed: Vec<serde_json::Value> = printed
+            .lines()
+            .filter_map(|l| l.strip_prefix("GOOSE_RANK_TOOL_CALL_UNPARSED "))
+            .map(|l| serde_json::from_str(l).unwrap())
+            .filter(|e: &serde_json::Value| e["stream"] == false)
+            .collect();
+        assert_eq!(unparsed.len(), 2, "{printed}");
+        assert!(
+            unparsed[0]["why"]
+                .as_str()
+                .unwrap()
+                .starts_with("SyntaxError"),
+            "{unparsed:?}"
+        );
+        assert!(
+            printed
+                .lines()
+                .filter(|l| l.starts_with("GOOSE_RANK_REQUEST_FAILED ")
+                    && l.contains("tool_call_unparsed"))
+                .count()
+                >= 2,
+            "{printed}"
+        );
+
+        let shipped = &seen["shipped"];
+        assert_eq!(shipped["value"]["status"], 200, "{shipped}");
+        assert_eq!(
+            shipped["value"]["calls"],
+            serde_json::json!([]),
+            "negative control: mlx_lm's formatter skips a ValueError — the call is silently gone"
+        );
+        assert_eq!(shipped["read"], fixed["read"]);
+        assert_eq!(
+            fixed["streamed"], shipped["streamed"],
+            "a streamed answer is untouched"
+        );
+        assert_eq!(fixed["streamed"]["status"], 200);
     }
 
     /// Q-232: the tensor program as shipped carries rank_tool_schema.py before the streamer and
@@ -7095,6 +7271,8 @@ print("ok")
              \x20   def handle_chat_completions(self): pass\n\
              \x20   def generate_response(self, text, finish_reason, **kwargs): pass\n\
              def process_message_content(messages): pass\n\
+             class ToolCallFormatter:\n\
+             \x20   def __init__(self, tool_parser, tools, streaming=False): pass\n\
              def _make_logits_processors(args): return []\n\
              class ModelProvider:\n\
              \x20   def __init__(self, cli_args): self.cli_args, self._model_map = cli_args, {}\n\
