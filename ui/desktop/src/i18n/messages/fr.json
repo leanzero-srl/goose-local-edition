@@ -6449,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Nommez-le"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Choisissez un modèle pour continuer"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Donnez-lui un nom pour l’enregistrer"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Choisissez un fournisseur pour continuer"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Choisissez une façon de l’exécuter pour continuer"
+  },
   "nodes.newNext": {
     "defaultMessage": "Suivant"
   },
@@ -6584,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "Supprimer"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Supprimer, et démarrer les nouvelles discussions sur N’importe quel nœud (Auto)"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Le retirer aussi de {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{Une stratégie utilise ce nœud, il ne peut donc pas être supprimé seul.} other{# stratégies utilisent ce nœud, il ne peut donc pas être supprimé seul.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Le retirer aussi des stratégies qui l’utilisent"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Cochez la case ci-dessus pour le supprimer} other{Cochez les # cases ci-dessus pour le supprimer}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "Le nœud est retiré de vos nœuds. Vos Mac, modèles et fournisseurs restent tels quels."
@@ -6593,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Supprimer"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Le retirer aussi de ces stratégies"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Le supprimer quand même : # discussion utilise ce nœud} other{Le supprimer quand même : # discussions utilisent ce nœud}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Son prochain message indiquera que le nœud a été supprimé et vous demandera d’en choisir un autre.} other{Leur prochain message indiquera que le nœud a été supprimé et vous demandera d’en choisir un autre.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Démarrer plutôt les nouvelles discussions sur N’importe quel nœud (Auto)"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Les nouvelles discussions démarrent actuellement sur ce nœud, il ne peut donc pas être supprimé seul."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Votre pool de l’essaim garde son appareil ; ce nœud n’est plus affiché ici. Modifiez le pool lui-même ci-dessous."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Supprimer {node} ?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# discussion utilise ce nœud. Son prochain message indiquera qu’il a été supprimé.} other{# discussions utilisent ce nœud. Leur prochain message indiquera qu’il a été supprimé.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Relire"
@@ -9392,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role} : nœud {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Non supprimé"
-  },
   "strategies.note": {
     "defaultMessage": "Note (vos mots)"
   },
@@ -9428,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "Supprimer"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Supprimer, et démarrer les nouvelles discussions sur N’importe quel nœud (Auto)"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Supprimer, et laisser les builds de l’essaim utiliser votre pool de l’essaim"
-  },
   "strategies.removeBody": {
     "defaultMessage": "La stratégie est supprimée. Ses nœuds restent tels quels."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Supprimer"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Laisser plutôt les builds de l’essaim utiliser votre pool de l’essaim"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Les builds de l’essaim utilisent actuellement cette stratégie, elle ne peut donc pas être supprimée seule."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Retirer {node} de {role}"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Démarrer plutôt les nouvelles discussions sur N’importe quel nœud (Auto)"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Les nouvelles discussions démarrent actuellement sur cette stratégie, elle ne peut donc pas être supprimée seule."
   },
   "strategies.removeTitle": {
     "defaultMessage": "Supprimer {name} ?"

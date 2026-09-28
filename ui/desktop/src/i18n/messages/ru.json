@@ -6449,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "Назовите его"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "Выберите модель, чтобы продолжить"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "Дайте ему имя, чтобы сохранить"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "Выберите провайдера, чтобы продолжить"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "Выберите способ запуска, чтобы продолжить"
+  },
   "nodes.newNext": {
     "defaultMessage": "Далее"
   },
@@ -6584,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "Удалить"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "Удалить и начинать новые чаты на «Любом узле (Авто)»"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "Удалить его и из {strategies}"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{# стратегия использует этот узел, поэтому его нельзя удалить отдельно.} few{# стратегии используют этот узел, поэтому его нельзя удалить отдельно.} many{# стратегий используют этот узел, поэтому его нельзя удалить отдельно.} other{# стратегии используют этот узел, поэтому его нельзя удалить отдельно.}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "Удалить его и из стратегий, которые его используют"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{Отметьте # флажок выше, чтобы удалить его} few{Отметьте # флажка выше, чтобы удалить его} many{Отметьте # флажков выше, чтобы удалить его} other{Отметьте # флажка выше, чтобы удалить его}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "Узел удаляется из ваших узлов. Ваши Mac, модели и провайдеры остаются как есть."
@@ -6593,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "Удалить"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "Удалить его и из этих стратегий"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{Всё равно удалить: # чат использует этот узел} few{Всё равно удалить: # чата используют этот узел} many{Всё равно удалить: # чатов используют этот узел} other{Всё равно удалить: # чата используют этот узел}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{Его следующее сообщение сообщит, что узел удалён, и попросит выбрать другой.} few{Их следующее сообщение сообщит, что узел удалён, и попросит выбрать другой.} many{Их следующее сообщение сообщит, что узел удалён, и попросит выбрать другой.} other{Их следующее сообщение сообщит, что узел удалён, и попросит выбрать другой.}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "Вместо этого начинать новые чаты на «Любом узле (Авто)»"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "Новые чаты сейчас начинаются на этом узле, поэтому его нельзя удалить отдельно."
   },
   "nodes.removePoolBody": {
     "defaultMessage": "Пул роя сохраняет своё устройство; этот узел здесь больше не показывается. Сам пул можно изменить ниже."
   },
   "nodes.removeTitle": {
     "defaultMessage": "Удалить {node}?"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{# чат использует этот узел. Его следующее сообщение сообщит, что узел удалён.} few{# чата используют этот узел. Их следующее сообщение сообщит, что узел удалён.} many{# чатов используют этот узел. Их следующее сообщение сообщит, что узел удалён.} other{# чата используют этот узел. Их следующее сообщение сообщит, что узел удалён.}}"
   },
   "nodes.retry": {
     "defaultMessage": "Прочитать снова"
@@ -9392,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}: узел {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "Не удалено"
-  },
   "strategies.note": {
     "defaultMessage": "Заметка (ваши слова)"
   },
@@ -9428,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "Удалить"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "Удалить и начинать новые чаты на «Любом узле (Авто)»"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "Удалить и позволить сборкам swarm использовать ваш пул роя"
-  },
   "strategies.removeBody": {
     "defaultMessage": "Стратегия удаляется. Её узлы остаются как есть."
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "Удалить"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "Вместо этого позволить сборкам swarm использовать ваш пул роя"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "Сборки swarm сейчас используют эту стратегию, поэтому её нельзя удалить отдельно."
   },
   "strategies.removeEntry": {
     "defaultMessage": "Убрать {node} из «{role}»"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "Вместо этого начинать новые чаты на «Любом узле (Авто)»"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "Новые чаты сейчас начинаются с этой стратегии, поэтому её нельзя удалить отдельно."
   },
   "strategies.removeTitle": {
     "defaultMessage": "Удалить {name}?"

@@ -6449,6 +6449,18 @@
   "nodes.newNameIt": {
     "defaultMessage": "命名"
   },
+  "nodes.newNeedModel": {
+    "defaultMessage": "選擇一個模型以繼續"
+  },
+  "nodes.newNeedName": {
+    "defaultMessage": "為它命名以儲存"
+  },
+  "nodes.newNeedProvider": {
+    "defaultMessage": "選擇一個提供方以繼續"
+  },
+  "nodes.newNeedWay": {
+    "defaultMessage": "選擇一種執行方式以繼續"
+  },
   "nodes.newNext": {
     "defaultMessage": "下一步"
   },
@@ -6584,8 +6596,17 @@
   "nodes.remove": {
     "defaultMessage": "移除"
   },
-  "nodes.removeAndAuto": {
-    "defaultMessage": "移除，並在「任意節點（自動）」上開始新聊天"
+  "nodes.removeAlsoFromStrategies": {
+    "defaultMessage": "同時從 {strategies} 中移除"
+  },
+  "nodes.removeAlsoFromStrategiesWhy": {
+    "defaultMessage": "{count,plural,one{有策略正在使用此節點，因此無法單獨移除它。} other{有 # 個策略正在使用此節點，因此無法單獨移除它。}}"
+  },
+  "nodes.removeAlsoFromUsingStrategies": {
+    "defaultMessage": "同時從使用它的策略中移除"
+  },
+  "nodes.removeBlocked": {
+    "defaultMessage": "{count,plural,one{勾選上方的核取方塊即可移除} other{勾選上方的 # 個核取方塊即可移除}}"
   },
   "nodes.removeBody": {
     "defaultMessage": "該節點會從你的節點中移除。你的 Mac、模型和提供方維持不變。"
@@ -6593,17 +6614,23 @@
   "nodes.removeConfirm": {
     "defaultMessage": "移除"
   },
-  "nodes.removeFromStrategies": {
-    "defaultMessage": "同時從這些策略中移除"
+  "nodes.removeLiveChats": {
+    "defaultMessage": "{count,plural,one{仍然移除：有 # 個聊天設為此節點} other{仍然移除：有 # 個聊天設為此節點}}"
+  },
+  "nodes.removeLiveChatsWhy": {
+    "defaultMessage": "{count,plural,one{它的下一則訊息會提示該節點已被移除，並請你選擇另一個節點。} other{它們的下一則訊息會提示該節點已被移除，並請你選擇另一個節點。}}"
+  },
+  "nodes.removeNewChatsAuto": {
+    "defaultMessage": "改為在「任意節點（自動）」上開始新聊天"
+  },
+  "nodes.removeNewChatsAutoWhy": {
+    "defaultMessage": "新聊天目前從此節點開始，因此無法單獨移除它。"
   },
   "nodes.removePoolBody": {
     "defaultMessage": "蜂群節點池保留它的裝置；此節點不會再在這裡顯示。請在下方編輯節點池本身。"
   },
   "nodes.removeTitle": {
     "defaultMessage": "移除 {node}？"
-  },
-  "nodes.removeUsedByChats": {
-    "defaultMessage": "{count,plural,one{有 # 個聊天設為此節點。它們的下一則訊息會提示該節點已被移除。} other{有 # 個聊天設為此節點。它們的下一則訊息會提示該節點已被移除。}}"
   },
   "nodes.retry": {
     "defaultMessage": "重新讀取"
@@ -9392,9 +9419,6 @@
   "strategies.nodeAt": {
     "defaultMessage": "{role}：節點 {rank}"
   },
-  "strategies.notRemoved": {
-    "defaultMessage": "未移除"
-  },
   "strategies.note": {
     "defaultMessage": "備註（你的說法）"
   },
@@ -9428,20 +9452,23 @@
   "strategies.remove": {
     "defaultMessage": "移除"
   },
-  "strategies.removeAndAuto": {
-    "defaultMessage": "移除，並讓新聊天改用「任何節點（自動）」"
-  },
-  "strategies.removeAndPool": {
-    "defaultMessage": "移除，並讓 swarm 建置改用你的蜂群節點池"
-  },
   "strategies.removeBody": {
     "defaultMessage": "此策略將被移除，其節點維持原樣。"
   },
-  "strategies.removeConfirm": {
-    "defaultMessage": "移除"
+  "strategies.removeBuildsPool": {
+    "defaultMessage": "改為讓 swarm 建置使用你的蜂群節點池"
+  },
+  "strategies.removeBuildsPoolWhy": {
+    "defaultMessage": "swarm 建置目前使用此策略，因此無法單獨移除它。"
   },
   "strategies.removeEntry": {
     "defaultMessage": "將 {node} 從 {role} 中移除"
+  },
+  "strategies.removeNewChatsAuto": {
+    "defaultMessage": "改為在「任意節點（自動）」上開始新聊天"
+  },
+  "strategies.removeNewChatsAutoWhy": {
+    "defaultMessage": "新聊天目前從此策略開始，因此無法單獨移除它。"
   },
   "strategies.removeTitle": {
     "defaultMessage": "移除 {name}？"
