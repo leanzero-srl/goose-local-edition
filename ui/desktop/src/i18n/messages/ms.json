@@ -11195,6 +11195,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Menunggu perkataan pertama model · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "Giliran ini berakhir tanpa balasan — aplikasi mungkin tertutup semasa goose sedang bekerja."
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Giliran ini gagal sebelum ada balasan."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Giliran ini gagal sebelum ada balasan: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Hantar semula"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose berhenti sebelum menjawab ini"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Batal"
   },

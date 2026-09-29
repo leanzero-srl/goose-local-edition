@@ -11195,6 +11195,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "モデルの最初の言葉を待っています · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "このターンは返答なしで終わりました — goose の作業中にアプリが閉じた可能性があります。"
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "このターンは返答の前に失敗しました。"
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "このターンは返答の前に失敗しました: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "再送信"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose はこれに答える前に止まりました"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "キャンセル"
   },

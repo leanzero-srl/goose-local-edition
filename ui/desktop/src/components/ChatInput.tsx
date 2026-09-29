@@ -18,6 +18,7 @@ import { acpListProviderDetails } from '../acp/providers';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { toastError } from '../toasts';
 import MentionPopover, { DisplayItemWithMatch } from './MentionPopover';
+import { mentionTriggerStart } from './mentionTrigger';
 import { COST_TRACKING_ENABLED } from '../updates';
 import { CostTracker } from './bottom_menu/CostTracker';
 import { ContextWindowIndicator } from './bottom_menu/ContextWindowIndicator';
@@ -114,6 +115,8 @@ const removeQueuedMessage = (messages: QueuedMessage[], messageId: string): Queu
   messages.filter((msg) => msg.id !== messageId);
 
 const MAX_IMAGES_PER_MESSAGE = 10;
+/** The mention picker's selectedIndex while the person has not arrowed to (or clicked) an item. */
+const NOTHING_CHOSEN = -1;
 
 const TOKEN_LIMIT_DEFAULT = 128000; // fallback for custom models that the backend doesn't know about
 
@@ -941,7 +944,7 @@ export default function ChatInput({
   ) => {
     const isSlashCommand = text.startsWith('/');
     const beforeCursor = text.slice(0, cursorPosition);
-    const lastAtIndex = isSlashCommand ? 0 : beforeCursor.lastIndexOf('@');
+    const lastAtIndex = isSlashCommand ? 0 : mentionTriggerStart(beforeCursor);
 
     if (lastAtIndex === -1) {
       // No @ found, close mention popover
@@ -968,7 +971,9 @@ export default function ChatInput({
       },
       query: afterAt,
       mentionStart: lastAtIndex,
-      selectedIndex: 0, // Reset selection when query changes
+      // An "@" picker starts with NOTHING chosen, so Enter sends the words (Q-492); the slash
+      // picker keeps its top command highlighted, as before.
+      selectedIndex: isSlashCommand ? 0 : NOTHING_CHOSEN,
       isSlashCommand,
       // filteredFiles will be populated by the MentionPopover component
     }));
@@ -1389,10 +1394,27 @@ export default function ChatInput({
         }));
         return;
       }
+      if (evt.key === 'Tab' && !evt.shiftKey) {
+        const displayFiles = mentionPopoverRef.current.getDisplayFiles();
+        if (displayFiles.length > 0) {
+          evt.preventDefault();
+          mentionPopoverRef.current.selectFile(Math.max(mentionPopover.selectedIndex, 0));
+          return;
+        }
+      }
       if (evt.key === 'Enter') {
-        evt.preventDefault();
-        mentionPopoverRef.current.selectFile(mentionPopover.selectedIndex);
-        return;
+        // Only an item the person actually chose takes the Enter. Nothing chosen, still
+        // scanning, or no match: the picker closes and Enter does what it always does — before
+        // Q-492 it went to an empty picker and the message was silently never sent.
+        const chosen =
+          mentionPopover.selectedIndex >= 0 &&
+          mentionPopoverRef.current.getDisplayFiles()[mentionPopover.selectedIndex] !== undefined;
+        if (chosen) {
+          evt.preventDefault();
+          mentionPopoverRef.current.selectFile(mentionPopover.selectedIndex);
+          return;
+        }
+        setMentionPopover((prev) => ({ ...prev, isOpen: false }));
       }
       if (evt.key === 'Escape') {
         evt.preventDefault();

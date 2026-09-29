@@ -11195,6 +11195,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Esperando las primeras palabras del modelo · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "El turno terminó sin respuesta: puede que la app se cerrara mientras goose trabajaba."
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "El turno falló antes de responder."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "El turno falló antes de responder: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Reenviar"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose se detuvo antes de responder a esto"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Cancelar"
   },
