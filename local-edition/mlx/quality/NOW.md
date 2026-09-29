@@ -40,13 +40,15 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   → release 3.0.80 → install when #3y allows.
 
 ## CI
-- The last red was Q-499's (a sidecar test port collision on Linux). Q-499 is fixed on its branch. Watch the next main runs.
+- Red 13:18Z: the RecipesView delete test hit its 5 s timeout (the vitest-under-load class). Q-466 is cutting
+  (general-purpose): make the slow tests cheap, or give each its measured wait; never the global timeout.
+- Q-499's sidecar port race is fixed on its branch.
 
 ## Queued / scheduled
 - Q-398 and Q-425 QUEUED behind: fork access.
 - Q-424 SCHEDULED waits on: a Studio ladder with the engine free.
 - Q-270, Q-373, Q-205 SCHEDULED waits on: their named measurements.
-- Q-466 waits on: a CI red naming one of its tests. Q-452 waits on: a second red.
+- Q-452 waits on: a second red.
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (72 GB). Take a vigil screenshot and READ it. The next free id is Q-507.
