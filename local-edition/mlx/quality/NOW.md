@@ -31,7 +31,9 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 ## Agents (worktrees)
 - Q-490 (SEVERE): closing a second window mid-turn kills the app, goosed and the engine, with no log (reproduced
   on 3.0.78 at 09:00:56Z). general-purpose agent, cutting. Lead: "1 window(s) attached" logged with 2 windows open.
-- Q-491: a folder-only window (open a folder in the app, a deep link) shows a blank main pane. panel-surgeon, cutting.
+- Q-491 DONE 078115bc8 (worktree-agent-aa019a3dc35cd9561): a folder-only /pair gets newSession=1 → PairRoute creates
+  the chat in that folder; handleFileOpen now opens a folder as a new chat (a behaviour change). Merge after g079
+  with Q-489; it touches main.ts createChat, and so may Q-490 (resolve there).
 - Q-487, Q-488, Q-489: done, in the gate/merge above.
 
 ## Next
