@@ -13,6 +13,7 @@ import { Check, Copy } from './icons';
 import { wrapHTMLInCodeBlock } from '../utils/htmlSecurity';
 import { isProtocolSafe, getProtocol, BLOCKED_PROTOCOLS } from '../utils/urlSecurity';
 import { ConfirmationModal } from './ui/ConfirmationModal';
+import { NoticeDialog } from './ui/NoticeDialog';
 import { FOCUS, MOTION, RADIUS, cx } from './lz';
 import { defineMessages, useIntl } from '../i18n';
 
@@ -215,6 +216,7 @@ const MarkdownContent = memo(function MarkdownContent({
   const intl = useIntl();
   const [processedContent, setProcessedContent] = useState(content);
   const [pendingLink, setPendingLink] = useState<{ protocol: string; href: string } | null>(null);
+  const [failedLink, setFailedLink] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -231,17 +233,11 @@ const MarkdownContent = memo(function MarkdownContent({
       try {
         await window.electron.openExternal(pendingLink.href);
       } catch {
-        await window.electron.showMessageBox({
-          type: 'error',
-          buttons: ['OK'],
-          title: intl.formatMessage(i18n.failedToOpenLink),
-          message: intl.formatMessage(i18n.noApplicationFound),
-          detail: pendingLink.href,
-        });
+        setFailedLink(pendingLink.href);
       }
     }
     setPendingLink(null);
-  }, [pendingLink, intl]);
+  }, [pendingLink]);
 
   const handleCancelOpen = useCallback(() => {
     setPendingLink(null);
@@ -321,6 +317,13 @@ const MarkdownContent = memo(function MarkdownContent({
         onCancel={handleCancelOpen}
         confirmLabel={intl.formatMessage(i18n.open)}
         cancelLabel={intl.formatMessage(i18n.cancel)}
+      />
+      <NoticeDialog
+        isOpen={failedLink !== null}
+        title={intl.formatMessage(i18n.failedToOpenLink)}
+        message={intl.formatMessage(i18n.noApplicationFound)}
+        detail={failedLink ?? undefined}
+        onClose={() => setFailedLink(null)}
       />
     </>
   );

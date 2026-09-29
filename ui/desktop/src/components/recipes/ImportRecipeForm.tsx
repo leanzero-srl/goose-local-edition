@@ -385,7 +385,7 @@ export default function ImportRecipeForm({ isOpen, onClose, onSuccess }: ImportR
                 ✕
               </button>
             </div>
-            <p className="mt-4 text-blue-700 text-sm">
+            <p className="mt-4 text-blue-700 dark:text-blue-300 text-sm">
               {intl.formatMessage(i18n.schemaDescription)}
             </p>
             <div className="flex-1 overflow-auto">

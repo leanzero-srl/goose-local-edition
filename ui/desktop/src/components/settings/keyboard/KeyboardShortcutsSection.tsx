@@ -3,6 +3,7 @@ import { type MessageDescriptor } from 'react-intl';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
 import { Button } from '../../ui/button';
 import { Switch } from '../../ui/switch';
+import { useConfirmDialog } from '../../ui/useConfirmDialog';
 import { ShortcutRecorder } from './ShortcutRecorder';
 import { KeyboardShortcuts, defaultKeyboardShortcuts } from '../../../utils/settings';
 import { trackSettingToggled } from '../../../utils/analytics';
@@ -308,6 +309,7 @@ export default function KeyboardShortcutsSection() {
   const [shortcuts, setShortcuts] = useState<KeyboardShortcuts | null>(null);
   const [editingKey, setEditingKey] = useState<keyof KeyboardShortcuts | null>(null);
   const [showRestartNotice, setShowRestartNotice] = useState(false);
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   const loadShortcuts = useCallback(async () => {
     const keyboardShortcuts = await window.electron.getSetting('keyboardShortcuts');
@@ -330,8 +332,7 @@ export default function KeyboardShortcutsSection() {
       )?.[0];
 
       if (conflictingKey) {
-        const confirmed = await window.electron.showMessageBox({
-          type: 'warning',
+        const confirmed = await confirm({
           title: intl.formatMessage(i18n.shortcutConflictTitle),
           message: intl.formatMessage(i18n.shortcutConflictToggleMessage, {
             shortcut: formatShortcut(defaultValue),
@@ -341,11 +342,11 @@ export default function KeyboardShortcutsSection() {
             conflictLabel: getShortcutLabel(conflictingKey, intl.formatMessage),
             targetLabel: getShortcutLabel(key, intl.formatMessage),
           }),
-          buttons: [intl.formatMessage(i18n.reassignShortcut), intl.formatMessage(i18n.cancel)],
-          defaultId: 1,
+          confirmLabel: intl.formatMessage(i18n.reassignShortcut),
+          cancelLabel: intl.formatMessage(i18n.cancel),
         });
 
-        if (confirmed.response !== 0) {
+        if (!confirmed) {
           return;
         }
 
@@ -377,8 +378,7 @@ export default function KeyboardShortcutsSection() {
     )?.[0];
 
     if (conflictingKey) {
-      const confirmed = await window.electron.showMessageBox({
-        type: 'warning',
+      const confirmed = await confirm({
         title: intl.formatMessage(i18n.shortcutConflictTitle),
         message: intl.formatMessage(i18n.shortcutConflictToggleMessage, {
           shortcut: formatShortcut(shortcut),
@@ -388,11 +388,11 @@ export default function KeyboardShortcutsSection() {
           conflictLabel: getShortcutLabel(conflictingKey, intl.formatMessage),
           targetLabel: getShortcutLabel(editingKey, intl.formatMessage),
         }),
-        buttons: [intl.formatMessage(i18n.reassignShortcut), intl.formatMessage(i18n.cancel)],
-        defaultId: 1,
+        confirmLabel: intl.formatMessage(i18n.reassignShortcut),
+        cancelLabel: intl.formatMessage(i18n.cancel),
       });
 
-      if (confirmed.response !== 0) {
+      if (!confirmed) {
         return;
       }
     }
@@ -418,16 +418,16 @@ export default function KeyboardShortcutsSection() {
   };
 
   const handleResetToDefaults = async () => {
-    const confirmed = await window.electron.showMessageBox({
-      type: 'question',
+    const confirmed = await confirm({
       title: intl.formatMessage(i18n.resetShortcutsTitle),
       message: intl.formatMessage(i18n.resetShortcutsMessage),
       detail: intl.formatMessage(i18n.resetShortcutsDetail),
-      buttons: [intl.formatMessage(i18n.resetToDefaultsHeading), intl.formatMessage(i18n.cancel)],
-      defaultId: 1,
+      confirmLabel: intl.formatMessage(i18n.resetToDefaultsHeading),
+      cancelLabel: intl.formatMessage(i18n.cancel),
+      confirmVariant: 'destructive',
     });
 
-    if (confirmed.response === 0) {
+    if (confirmed) {
       await window.electron.setSetting('keyboardShortcuts', { ...defaultKeyboardShortcuts });
       setShortcuts({ ...defaultKeyboardShortcuts });
       setShowRestartNotice(true);
@@ -452,6 +452,7 @@ export default function KeyboardShortcutsSection() {
 
   return (
     <div className="space-y-4 pr-4 pb-8 mt-1">
+      {confirmDialog}
       {showRestartNotice && (
         <Card className="rounded-lg border border-lz-warn">
           <CardContent className="pt-4 px-4 pb-4">

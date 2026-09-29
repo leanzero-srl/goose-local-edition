@@ -89,7 +89,7 @@ export default function ProviderSettings({
   }, []);
 
   return (
-    <div className="h-screen w-full flex flex-col bg-background-primary text-text-primary">
+    <div className="h-full w-full flex flex-col bg-background-primary text-text-primary">
       <ScrollArea className="flex-1 w-full">
         <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 md:px-8 pt-12 pb-4">
           {/* Consistent header pattern with back button */}

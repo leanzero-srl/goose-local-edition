@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "Настройки конфигурации не найдены."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "«{name}» должно быть true или false, поэтому не сохранено."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "«{name}» должно быть числом, поэтому не сохранено."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Сбросить изменения"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "Сохранение..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "Список или группа настроек, показаны только для чтения, чтобы сохранение здесь никогда их не сплющило. Измените их в config.yaml."
   },
   "configSettings.title": {
     "defaultMessage": "Конфигурация"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Не удалось сохранить провайдера. Проверьте конфигурацию и повторите попытку."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Не удалось сохранить провайдера: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "Провайдер поддерживает потоковые ответы"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "Активно"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Удалить"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Удалить эту модель? Позже её можно скачать снова."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "Удалить {model}?"
   },
   "localModelManager.download": {
     "defaultMessage": "Скачать"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Заметки, которые ждут вас"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "ОК"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Назад к списку"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "Отмена"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Заменить текущее содержимое значением по умолчанию? Ваши изменения будут потеряны."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Заменить на значение по умолчанию?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Сбросить все промпты к значениям по умолчанию? Это нельзя отменить."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Сбросить все промпты?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Сбросить этот промпт к значению по умолчанию? Это нельзя отменить."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Сбросить этот промпт?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "У вас есть несохраненные изменения. Вернуться назад?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Отменить несохранённые изменения?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Настроено"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Отменить изменения"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Изменить"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "Нет API-ключа?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Не удалось войти: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "Войти через {providerName}"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "Удалить «{title}»?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Удалить"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "Файл рецепта будет удален."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "Отмена"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Выбрать папку"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Удалить расписание «{id}»? Рецепт будет сохранен."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Удалить расписание?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Создать расписание"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "Обновление..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Удалить"
   },
   "schedulesView.resume": {
     "defaultMessage": "Продолжить"

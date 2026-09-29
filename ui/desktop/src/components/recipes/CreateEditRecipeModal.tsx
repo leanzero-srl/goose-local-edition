@@ -550,7 +550,7 @@ export default function CreateEditRecipeModal({
                   className="ml-4 p-2 hover:bg-background-primary rounded-lg transition-colors flex items-center disabled:cursor-not-allowed disabled:text-lz-ink-3 disabled:hover:bg-transparent"
                 >
                   {copied ? (
-                    <Check className="w-4 h-4 text-green-500" />
+                    <Check className="w-4 h-4 text-green-700 dark:text-green-400" />
                   ) : (
                     <Copy className="w-4 h-4 text-text-secondary" />
                   )}

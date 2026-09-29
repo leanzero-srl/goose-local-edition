@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { IntlTestWrapper } from '../../i18n/test-utils';
@@ -6,8 +8,7 @@ import { ConfigProvider } from '../ConfigContext';
 import UnreadableConfigBanner from './UnreadableConfigBanner';
 
 const CONFIG_PATH = '/Users/someone/.config/goose/config.yaml';
-const REASON =
-  "did not find expected ',' or ']' at line 4 column 1, while parsing a flow sequence at line 3 column 13";
+const REASON = "an unclosed '['";
 
 const acp = vi.hoisted(() => ({
   unreadable: [] as unknown[],
@@ -131,5 +132,48 @@ describe('UnreadableConfigBanner (Q-468)', () => {
     expect(within(banner).getByTestId('unreadable-config-reason').textContent).toBe(
       'expected a mapping of keys'
     );
+  });
+
+  it('takes its own row instead of floating over the route (Q-471)', async () => {
+    renderBanner();
+    await screen.findByTestId('unreadable-config-banner');
+    const row = screen.getByTestId('unreadable-config-banners');
+    expect(row.className).not.toMatch(/(^|\s)(fixed|absolute|sticky)(\s|$)/);
+    expect(row.className).toMatch(/(^|\s)shrink-0(\s|$)/);
+  });
+});
+
+describe('the app column gives the banner a row on every route (Q-471)', () => {
+  const src = (rel: string) => readFileSync(resolve(__dirname, '../..', rel), 'utf8');
+
+  it('mounts the banner inside the flex column, above the route area', () => {
+    const app = src('App.tsx');
+    const column = app.indexOf('h-screen overflow-hidden bg-background-secondary flex flex-col');
+    const banner = app.indexOf('<UnreadableConfigBanner />');
+    const routes = app.indexOf('data-testid="app-route-area"');
+    expect(column).toBeGreaterThan(-1);
+    expect(banner).toBeGreaterThan(column);
+    expect(routes).toBeGreaterThan(banner);
+    expect(app.slice(routes, routes + 120)).toMatch(/flex-1/);
+  });
+
+  // A route root sized to the viewport ignores the banner's row and runs off the bottom.
+  it.each([
+    'App.tsx',
+    'components/onboarding/OnboardingGuard.tsx',
+    'components/onboarding/OnboardingSuccess.tsx',
+    'components/Layout/MainPanelLayout.tsx',
+    'components/settings/providers/ProviderSettingsPage.tsx',
+    'components/settings/permission/PermissionSetting.tsx',
+    'components/schedule/ScheduleDetailView.tsx',
+    'components/LauncherView.tsx',
+    'components/apps/StandaloneAppView.tsx',
+  ])('%s sizes its route root to the route area, not the viewport', (rel) => {
+    const lines = src(rel)
+      .split('\n')
+      .filter((line) => /\bh-screen\b|\bh-dvh\b|'100vh'/.test(line))
+      .filter((line) => !line.includes('bg-background-secondary flex flex-col'))
+      .filter((line) => !line.includes('never h-screen'));
+    expect(lines).toEqual([]);
   });
 });

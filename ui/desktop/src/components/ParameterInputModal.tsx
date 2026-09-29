@@ -2,6 +2,7 @@ import React, { useId, useState, useEffect } from 'react';
 import { Parameter } from '../recipe';
 import { Button } from './ui/button';
 import { defineMessages, useIntl } from '../i18n';
+import { StudioSelect, type StudioSelectOption } from './leanzero-swarm/studio';
 
 const i18n = defineMessages({
   cancelRecipeSetup: {
@@ -91,6 +92,24 @@ const ParameterInputModal: React.FC<ParameterInputModalProps> = ({
     setInputValues({ ...defaultValues, ...initialValues });
   }, [parameters, initialValues]);
 
+  // The leading '' row is the old native "Select…" option: picking it clears the value.
+  const choiceOptions = (param: Parameter): StudioSelectOption[] | null => {
+    if (param.input_type === 'select' && param.options) {
+      return [
+        { value: '', label: intl.formatMessage(i18n.selectOption) },
+        ...param.options.map((option) => ({ value: option, label: option })),
+      ];
+    }
+    if (param.input_type === 'boolean') {
+      return [
+        { value: '', label: intl.formatMessage(i18n.select) },
+        { value: 'true', label: intl.formatMessage(i18n.true) },
+        { value: 'false', label: intl.formatMessage(i18n.false) },
+      ];
+    }
+    return null;
+  };
+
   const handleChange = (name: string, value: string): void => {
     setInputValues((prevValues: Record<string, string>) => ({ ...prevValues, [name]: value }));
   };
@@ -157,71 +176,53 @@ const ParameterInputModal: React.FC<ParameterInputModalProps> = ({
           </div>
           <div className="flex-1 overflow-y-auto px-8">
             <form onSubmit={handleSubmit} className="space-y-4 mb-4">
-              {parameters.map((param) => (
-                <div key={param.key}>
-                  <label
-                    htmlFor={fieldId(param.key)}
-                    className="block text-base font-medium text-text-primary mb-2"
-                  >
-                    {param.description || param.key}
-                    {needsUserValue(param) && <span className="text-red-500 ml-1">*</span>}
-                  </label>
-
-                  {param.input_type === 'select' && param.options ? (
-                    <select
-                      id={fieldId(param.key)}
-                      value={inputValues[param.key] || ''}
-                      onChange={(e) => handleChange(param.key, e.target.value)}
-                      className={`w-full p-3 border rounded-lg bg-background-secondary text-text-primary focus:outline-none focus:ring-2 ${
-                        validationErrors[param.key]
-                          ? 'border-red-500 focus:ring-red-500'
-                          : 'border-border-primary focus:ring-border-secondary'
-                      }`}
+              {parameters.map((param) => {
+                const choices = choiceOptions(param);
+                const current = inputValues[param.key] || '';
+                return (
+                  <div key={param.key}>
+                    <label
+                      htmlFor={choices ? undefined : fieldId(param.key)}
+                      className="block text-base font-medium text-text-primary mb-2"
                     >
-                      <option value="">{intl.formatMessage(i18n.selectOption)}</option>
-                      {param.options.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  ) : param.input_type === 'boolean' ? (
-                    <select
-                      id={fieldId(param.key)}
-                      value={inputValues[param.key] || ''}
-                      onChange={(e) => handleChange(param.key, e.target.value)}
-                      className={`w-full p-3 border rounded-lg bg-background-secondary text-text-primary focus:outline-none focus:ring-2 ${
-                        validationErrors[param.key]
-                          ? 'border-red-500 focus:ring-red-500'
-                          : 'border-border-primary focus:ring-border-secondary'
-                      }`}
-                    >
-                      <option value="">{intl.formatMessage(i18n.select)}</option>
-                      <option value="true">{intl.formatMessage(i18n.true)}</option>
-                      <option value="false">{intl.formatMessage(i18n.false)}</option>
-                    </select>
-                  ) : (
-                    <input
-                      id={fieldId(param.key)}
-                      type={param.input_type === 'number' ? 'number' : 'text'}
-                      value={inputValues[param.key] || ''}
-                      onChange={(e) => handleChange(param.key, e.target.value)}
-                      className={`w-full p-3 border rounded-lg bg-background-secondary text-text-primary focus:outline-none focus:ring-2 ${
-                        validationErrors[param.key]
-                          ? 'border-red-500 focus:ring-red-500'
-                          : 'border-border-primary focus:ring-border-secondary'
-                      }`}
-                      placeholder={
-                        param.default || intl.formatMessage(i18n.enterValue, { key: param.key })
-                      }
-                    />
-                  )}
+                      {param.description || param.key}
+                      {needsUserValue(param) && <span className="text-red-500 ml-1">*</span>}
+                    </label>
 
-                  {validationErrors[param.key] && (
-                    <p className="text-red-500 text-sm mt-1">{validationErrors[param.key]}</p>
-                  )}
-                </div>
-              ))}
+                    {choices ? (
+                      <StudioSelect
+                        aria-label={param.description || param.key}
+                        options={choices}
+                        value={choices.find((o) => o.value !== '' && o.value === current) ?? null}
+                        placeholder={choices[0].label}
+                        onChange={(o) => handleChange(param.key, o?.value ?? '')}
+                        className={
+                          validationErrors[param.key] ? 'rounded-lg ring-2 ring-red-500' : undefined
+                        }
+                      />
+                    ) : (
+                      <input
+                        id={fieldId(param.key)}
+                        type={param.input_type === 'number' ? 'number' : 'text'}
+                        value={inputValues[param.key] || ''}
+                        onChange={(e) => handleChange(param.key, e.target.value)}
+                        className={`w-full p-3 border rounded-lg bg-background-secondary text-text-primary focus:outline-none focus:ring-2 ${
+                          validationErrors[param.key]
+                            ? 'border-red-500 focus:ring-red-500'
+                            : 'border-border-primary focus:ring-border-secondary'
+                        }`}
+                        placeholder={
+                          param.default || intl.formatMessage(i18n.enterValue, { key: param.key })
+                        }
+                      />
+                    )}
+
+                    {validationErrors[param.key] && (
+                      <p className="text-red-500 text-sm mt-1">{validationErrors[param.key]}</p>
+                    )}
+                  </div>
+                );
+              })}
             </form>
           </div>
           <div className="p-8 pt-4 flex-shrink-0">

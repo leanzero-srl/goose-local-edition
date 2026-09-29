@@ -9,6 +9,7 @@ import { Plus, X, Trash2, AlertTriangle, ExternalLink, Search, Settings } from '
 import { cn } from '../../../../../../utils';
 import ProviderCatalogPicker from '../ProviderCatalogPicker';
 import { defineMessages, useIntl } from '../../../../../../i18n';
+import { errorMessage } from '../../../../../../utils/conversionUtils';
 
 const i18n = defineMessages({
   chooseSetup: {
@@ -196,6 +197,10 @@ const i18n = defineMessages({
   submitError: {
     id: 'customProviderForm.submitError',
     defaultMessage: 'Failed to save provider. Please check your configuration and try again.',
+  },
+  submitErrorWithReason: {
+    id: 'customProviderForm.submitErrorWithReason',
+    defaultMessage: 'Failed to save provider: {reason}',
   },
   cannotDeleteActive: {
     id: 'customProviderForm.cannotDeleteActive',
@@ -465,7 +470,12 @@ export default function CustomProviderForm({
       });
     } catch (error) {
       console.error('Failed to save custom provider:', error);
-      setSubmitError(intl.formatMessage(i18n.submitError));
+      const reason = errorMessage(error, '').trim();
+      setSubmitError(
+        reason
+          ? intl.formatMessage(i18n.submitErrorWithReason, { reason })
+          : intl.formatMessage(i18n.submitError)
+      );
     }
   };
 

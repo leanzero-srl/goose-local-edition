@@ -172,7 +172,7 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
 
   if (checkProviderError) {
     return (
-      <div className="h-screen w-full bg-background-primary flex flex-col items-center justify-center">
+      <div className="h-full w-full bg-background-primary flex flex-col items-center justify-center">
         <div className="text-center max-w-md">
           <div className="mb-4">
             <Goose className="size-8 mx-auto" />
@@ -200,7 +200,7 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
   }
 
   return (
-    <div className="h-screen w-full bg-background-primary overflow-hidden">
+    <div className="h-full w-full bg-background-primary overflow-hidden">
       <div className="h-full overflow-y-auto">
         <div
           className={`flex flex-col items-center p-4 pb-8 transition-all duration-500 ease-in-out ${hasSelection ? 'pt-8' : 'pt-[15vh]'}`}

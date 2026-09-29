@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Download, Trash2, X, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '../../ui/button';
+import { useConfirmDialog } from '../../ui/useConfirmDialog';
 import { useConfig } from '../../ConfigContext';
 import {
   cancelLocalDictationModelDownload,
@@ -38,6 +39,18 @@ const i18n = defineMessages({
   download: {
     id: 'localModelManager.download',
     defaultMessage: 'Download',
+  },
+  deleteConfirmTitle: {
+    id: 'localModelManager.deleteConfirmTitle',
+    defaultMessage: 'Delete {model}?',
+  },
+  deleteButton: {
+    id: 'localModelManager.deleteButton',
+    defaultMessage: 'Delete',
+  },
+  cancel: {
+    id: 'localModelManager.cancel',
+    defaultMessage: 'Cancel',
   },
   deleteConfirm: {
     id: 'localModelManager.deleteConfirm',
@@ -79,6 +92,7 @@ export const LocalModelManager = () => {
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
   const { read, upsert } = useConfig();
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   useEffect(() => {
     loadModels();
@@ -163,7 +177,14 @@ export const LocalModelManager = () => {
   };
 
   const deleteModel = async (modelId: string) => {
-    if (!window.confirm(intl.formatMessage(i18n.deleteConfirm))) return;
+    const confirmed = await confirm({
+      title: intl.formatMessage(i18n.deleteConfirmTitle, { model: capitalize(modelId) }),
+      message: intl.formatMessage(i18n.deleteConfirm),
+      confirmLabel: intl.formatMessage(i18n.deleteButton),
+      cancelLabel: intl.formatMessage(i18n.cancel),
+      confirmVariant: 'destructive',
+    });
+    if (!confirmed) return;
 
     try {
       await deleteLocalDictationModel(modelId);
@@ -187,6 +208,7 @@ export const LocalModelManager = () => {
 
   return (
     <div className="space-y-3">
+      {confirmDialog}
       <div className="text-xs text-text-secondary mb-2">
         <p>{intl.formatMessage(i18n.gpuAcceleration)}</p>
       </div>
@@ -228,7 +250,7 @@ export const LocalModelManager = () => {
                       </span>
                     )}
                     {isSelected && (
-                      <span className="text-xs bg-background-inverse text-white px-2 py-0.5 rounded">
+                      <span className="text-xs bg-background-inverse text-text-inverse px-2 py-0.5 rounded">
                         {intl.formatMessage(i18n.active)}
                       </span>
                     )}
@@ -253,6 +275,7 @@ export const LocalModelManager = () => {
                         variant="ghost"
                         size="sm"
                         onClick={() => deleteModel(model.id)}
+                        aria-label={intl.formatMessage(i18n.deleteButton)}
                         className="text-text-danger hover:text-text-danger"
                       >
                         <Trash2 className="w-4 h-4" />

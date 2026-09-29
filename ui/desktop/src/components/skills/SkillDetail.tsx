@@ -112,7 +112,7 @@ function PersonaEditor({
           onChange={(e) => setNotes(e.target.value)}
           spellCheck={false}
           placeholder="e.g. goose keeps getting this wrong: we use SQLModel here, not raw SQLAlchemy."
-          className="w-full h-40 p-3 font-mono text-xs bg-background-primary border border-border-primary text-text-primary focus:outline-none focus:border-border-secondary resize-y"
+          className="w-full h-40 p-3 font-mono text-xs bg-background-primary border border-border-primary text-text-primary focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring resize-y"
         />
         {error && <p className="mt-2 text-xs font-bold text-[#dc2626]">{error}</p>}
         <div className="flex gap-2 mt-3">
@@ -202,7 +202,7 @@ function BodyEditor({
         value={body}
         onChange={(e) => setBody(e.target.value)}
         spellCheck={false}
-        className="w-full h-[420px] p-3 font-mono text-xs bg-background-primary border border-border-primary text-text-primary focus:outline-none focus:border-border-secondary resize-y"
+        className="w-full h-[420px] p-3 font-mono text-xs bg-background-primary border border-border-primary text-text-primary focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring resize-y"
       />
       {error && <p className="text-xs font-bold text-[#dc2626]">{error}</p>}
       <div className="flex gap-2">

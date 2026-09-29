@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "未找到任何配置项。"
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "“{name}”必须是 true 或 false，因此未保存。"
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "“{name}”必须是数字，因此未保存。"
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "重置更改"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "保存中…"
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "一组列表或设置，以只读方式显示，确保在此保存时绝不会把它压平。请在 config.yaml 中编辑。"
   },
   "configSettings.title": {
     "defaultMessage": "配置"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "保存提供商失败。请检查配置后重试。"
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "无法保存提供商：{reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "提供商支持流式响应"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "启用中"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "取消"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "删除"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "删除此模型？之后可以重新下载。"
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "删除 {model}?"
   },
   "localModelManager.download": {
     "defaultMessage": "下载"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "等你处理的便签"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "确定"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "服务器可能正在启动或暂时不可用。"
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "返回列表"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "取消"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "用默认内容替换当前内容？你的更改将会丢失。"
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "替换为默认内容?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "确定要将所有提示词重置为默认值吗？此操作无法撤销。"
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "重置所有提示词?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "确定要将此提示词重置为默认吗？此操作无法撤销。"
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "重置此提示词?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "你有未保存的更改，确定要返回吗？"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "放弃未保存的更改?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "已自定义"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "放弃更改"
   },
   "promptsSettings.edit": {
     "defaultMessage": "编辑"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "没有 API 密钥？"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "登录失败：{reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "使用 {providerName} 登录"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "确定要删除“{title}”吗？"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "删除"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "配方文件将被删除。"
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "取消"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "选择文件夹"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "确定要删除计划“{id}”吗？"
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "移除计划?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "创建计划"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "刷新中…"
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "移除"
   },
   "schedulesView.resume": {
     "defaultMessage": "恢复"

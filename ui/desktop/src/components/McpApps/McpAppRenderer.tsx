@@ -43,6 +43,16 @@ import { errorMessage } from '../../utils/conversionUtils';
 import { getProtocol, isProtocolSafe } from '../../utils/urlSecurity';
 import { defineMessages, useIntl } from '../../i18n';
 import FlyingBird from '../FlyingBird';
+import { Button } from '../ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/dialog';
+import { useConfirmDialog } from '../ui/useConfirmDialog';
 import { formatExtensionName } from '../settings/extensions/subcomponents/ExtensionList';
 import {
   GooseDisplayMode,
@@ -797,6 +807,13 @@ export default function McpAppRenderer({
     });
   }, [state.status, pendingCsp, intl]);
 
+  const {
+    confirm: confirmOpenLink,
+    isOpen: openLinkPromptOpen,
+    options: openLinkPrompt,
+    settle: settleOpenLink,
+  } = useConfirmDialog();
+
   const handleOpenLink = useCallback(
     async ({ url }: { url: string }) => {
       if (isProtocolSafe(url)) {
@@ -809,23 +826,22 @@ export default function McpAppRenderer({
         return { status: 'error' as const, message: intl.formatMessage(i18n.invalidUrl) };
       }
 
-      const result = await window.electron.showMessageBox({
-        type: 'question',
-        buttons: [intl.formatMessage(i18n.cancelButton), intl.formatMessage(i18n.openButton)],
-        defaultId: 0,
+      const confirmed = await confirmOpenLink({
         title: intl.formatMessage(i18n.openExternalLinkTitle),
         message: intl.formatMessage(i18n.openProtocolLink, { protocol }),
         detail: intl.formatMessage(i18n.openLinkDetail, { url }),
+        confirmLabel: intl.formatMessage(i18n.openButton),
+        cancelLabel: intl.formatMessage(i18n.cancelButton),
       });
 
-      if (result.response !== 1) {
+      if (!confirmed) {
         return { status: 'error' as const, message: 'User cancelled' };
       }
 
       await window.electron.openExternal(url);
       return { status: 'success' as const };
     },
-    [intl]
+    [intl, confirmOpenLink]
   );
 
   const handleMessage = useCallback(
@@ -1234,6 +1250,26 @@ export default function McpAppRenderer({
           {renderContent()}
         </div>
       </div>
+
+      {/* The app's own confirm, raised above the fullscreen (z-1000) and PiP (z-900) containers
+          the guest's link request can come from; ConfirmationModal's z-50 would sit beneath them. */}
+      <Dialog open={openLinkPromptOpen} onOpenChange={(open) => !open && settleOpenLink(false)}>
+        <DialogContent className="z-[1100] sm:max-w-[425px] max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{openLinkPrompt?.title}</DialogTitle>
+            <DialogDescription>{openLinkPrompt?.message}</DialogDescription>
+          </DialogHeader>
+          <div className="overflow-y-auto min-h-0 text-sm text-text-secondary break-all">
+            {openLinkPrompt?.detail}
+          </div>
+          <DialogFooter className="pt-2 shrink-0">
+            <Button variant="outline" onClick={() => settleOpenLink(false)}>
+              {openLinkPrompt?.cancelLabel}
+            </Button>
+            <Button onClick={() => settleOpenLink(true)}>{openLinkPrompt?.confirmLabel}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, type RenderOptions, screen } from '@testing-library/react';
+import { render, type RenderOptions, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from '@tanstack/react-form';
 
@@ -486,26 +486,13 @@ describe('RecipeFormFields', () => {
       );
       expect(descriptionInput).toBeInTheDocument();
 
-      // Check for parameter type select within the parameter container
-      const selects = parameterContainer?.querySelectorAll('select');
-      expect(selects?.length).toBeGreaterThanOrEqual(2);
-
-      const inputTypeSelect = selects
-        ? Array.from(selects).find((select) =>
-            Array.from(select.options).some((option) => option.text === 'String')
-          )
-        : null;
-      expect(inputTypeSelect).toBeInTheDocument();
-      expect(inputTypeSelect?.value).toBe('string');
-
-      // Check for requirement select
-      const requirementSelect = selects
-        ? Array.from(selects).find((select) =>
-            Array.from(select.options).some((option) => option.text === 'Required')
-          )
-        : null;
-      expect(requirementSelect).toBeInTheDocument();
-      expect(requirementSelect?.value).toBe('required');
+      // The type and requirement pickers are the app's listbox, never a native <select> (Q-472).
+      expect(parameterContainer?.querySelector('select')).toBeNull();
+      const container = within(parameterContainer as HTMLElement);
+      const inputTypeSelect = container.getByRole('combobox', { name: 'Input Type' });
+      expect(inputTypeSelect).toHaveTextContent('String');
+      const requirementSelect = container.getByRole('combobox', { name: 'Requirement' });
+      expect(requirementSelect).toHaveTextContent('Required');
 
       // Verify we can interact with the parameter form fields
       // First clear the existing value, then type the new one
@@ -516,9 +503,10 @@ describe('RecipeFormFields', () => {
       }
 
       // Test changing the requirement
-      if (requirementSelect) {
-        await user.selectOptions(requirementSelect, 'optional');
-        expect(requirementSelect.value).toBe('optional');
+      {
+        await user.click(requirementSelect);
+        await user.click(screen.getByRole('option', { name: 'Optional' }));
+        expect(requirementSelect).toHaveTextContent('Optional');
 
         // After changing to optional, a default value field should appear
         const defaultValueInput = parameterContainer?.querySelector(
@@ -586,23 +574,26 @@ describe('RecipeFormFields', () => {
       // At minimum, we should have some SVG elements for the icons
       expect(warningIcons.length).toBeGreaterThan(0);
 
-      // Verify the unused parameters are marked with orange styling
+      // Verify the unused parameters are marked with the solid warn pill (white on warn-solid)
       const parameterContainers = document.querySelectorAll('.parameter-input');
       expect(parameterContainers.length).toBe(2);
 
-      // Check that each parameter container has an unused indicator with orange text
+      // Check that each parameter container has an unused indicator
       let unusedIndicatorsFound = 0;
       parameterContainers.forEach((container) => {
-        const unusedIndicator = container.querySelector('.text-orange-500');
+        const unusedIndicator = container.querySelector('[data-testid="parameter-unused"]');
         if (unusedIndicator) {
           unusedIndicatorsFound++;
         }
       });
       expect(unusedIndicatorsFound).toBe(2); // Both parameters should be marked as unused
 
-      // Verify the unused text appears with the warning styling
+      // Verify the unused text sits in the solid warning pill
       unusedTexts.forEach((unusedText) => {
-        expect(unusedText).toHaveClass('text-orange-500');
+        expect(unusedText.closest('[data-testid="parameter-unused"]')).toHaveClass(
+          'bg-lz-warn-solid',
+          'text-white'
+        );
       });
     });
 
@@ -667,14 +658,14 @@ describe('RecipeFormFields', () => {
         container.textContent?.includes('count')
       );
 
-      expect(usernameContainer?.querySelector('.text-orange-500')).not.toBeInTheDocument();
-      expect(countContainer?.querySelector('.text-orange-500')).not.toBeInTheDocument();
+      expect(usernameContainer?.querySelector('[data-testid="parameter-unused"]')).not.toBeInTheDocument();
+      expect(countContainer?.querySelector('[data-testid="parameter-unused"]')).not.toBeInTheDocument();
 
       // But unused_param should have the unused indicator
       const unusedContainer = Array.from(parameterContainers).find((container) =>
         container.textContent?.includes('unused_param')
       );
-      expect(unusedContainer?.querySelector('.text-orange-500')).toBeInTheDocument();
+      expect(unusedContainer?.querySelector('[data-testid="parameter-unused"]')).toBeInTheDocument();
     });
 
     it('shows delete button for parameters', async () => {

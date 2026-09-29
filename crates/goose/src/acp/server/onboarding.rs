@@ -293,8 +293,7 @@ fn parse_candidate_id(id: &str) -> Option<(OnboardingImportSourceKind, PathBuf)>
 
 fn read_yaml_mapping(path: &Path) -> anyhow::Result<Mapping> {
     let content = fs::read_to_string(path)?;
-    let value: serde_yaml::Value = serde_yaml::from_str(&content)?;
-    Ok(value.as_mapping().cloned().unwrap_or_default())
+    Ok(crate::config::base::parse_settings_file(path, &content)?)
 }
 
 fn mapping_contains_string(mapping: &Mapping, key: &str) -> bool {
@@ -677,6 +676,37 @@ extensions:
         assert_eq!(result.imported.skills, 1);
         assert_eq!(target_config.get_goose_provider().unwrap(), "openai");
         assert!(target.path().join("skills").join("reviewer").exists());
+    }
+
+    // Q-470: an import source's secrets.yaml that does not parse is refused by kind and place,
+    // never by quoting the pasted token that broke it.
+    #[test]
+    fn apply_goose_config_refuses_a_corrupt_source_secrets_file_without_echoing_it() {
+        let source = TempDir::new().unwrap();
+        let target = TempDir::new().unwrap();
+        let source_config = source.path().join(CONFIG_YAML_NAME);
+        fs::write(&source_config, "GOOSE_MODEL: gpt-5.1\n").unwrap();
+        fs::write(
+            source.path().join("secrets.yaml"),
+            "sk-proj-Q470importToken: x\nsk-proj-Q470importToken: x\n",
+        )
+        .unwrap();
+        let target_config = Config::new_with_file_secrets(
+            target.path().join(CONFIG_YAML_NAME),
+            target.path().join("secrets.yaml"),
+        )
+        .unwrap();
+
+        let err = apply_goose_config_candidate(&target_config, target.path(), &source_config)
+            .err()
+            .expect("a corrupt source secrets file is refused");
+
+        let message = err.to_string();
+        assert!(!message.contains("Q470"), "{message}");
+        assert!(
+            message.contains("duplicate key at line 2, column 1"),
+            "{message}"
+        );
     }
 
     #[test]

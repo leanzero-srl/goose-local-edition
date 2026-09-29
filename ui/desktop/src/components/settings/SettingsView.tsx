@@ -26,6 +26,7 @@ import { trackSettingsTabViewed } from '../../utils/analytics';
 import { useEdition } from '../../contexts/EditionContext';
 import { defineMessages, useIntl } from '../../i18n';
 import {
+  FOCUS,
   PageHeader,
   SectionHeader,
   Segmented,
@@ -72,7 +73,8 @@ export type SettingsViewOptions = {
   section?: string;
 };
 
-const TAB_PANEL = 'outline-none pb-lz-page';
+/** A Radix tab panel is a Tab stop (tabIndex 0), so it carries the focus ring like any other. */
+const TAB_PANEL = cx(FOCUS, 'pb-lz-page');
 
 export default function SettingsView({
   onClose,

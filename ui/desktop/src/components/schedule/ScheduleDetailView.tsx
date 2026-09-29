@@ -365,7 +365,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
 
   if (!scheduleId) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-gray-900 text-text-primary p-8">
+      <div className="h-full w-full flex flex-col items-center justify-center bg-white dark:bg-gray-900 text-text-primary p-8">
         <BackButton onClick={onNavigateBack} />
         <h1 className="text-2xl font-medium text-text-primary mt-4">
           {intl.formatMessage(i18n.scheduleNotFound)}
@@ -386,7 +386,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
     : '';
 
   return (
-    <div className="h-screen w-full flex flex-col bg-background-primary text-text-primary">
+    <div className="h-full w-full flex flex-col bg-background-primary text-text-primary">
       <div className="px-8 pt-6 pb-4 border-b border-border-primary flex-shrink-0">
         <BackButton onClick={onNavigateBack} />
         <h1 className="text-4xl font-light mt-1 mb-1 pt-8">
@@ -410,7 +410,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
               </div>
             )}
             {scheduleError && (
-              <p className="text-text-danger text-sm p-3 bg-background-danger border border-border-danger rounded-md">
+              <p className="text-white text-sm p-3 bg-lz-err-solid rounded-md">
                 {intl.formatMessage(i18n.errorPrefix, { error: scheduleError })}
               </p>
             )}
@@ -423,13 +423,13 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                     </h3>
                     <div className="mt-2 md:mt-0 flex items-center gap-2">
                       {scheduleDetails.currentlyRunning && (
-                        <div className="text-sm text-green-500 dark:text-green-400 font-semibold flex items-center">
-                          <span className="inline-block w-2 h-2 bg-green-500 dark:bg-green-400 rounded-full mr-1 animate-pulse"></span>
+                        <div className="inline-flex items-center rounded-full px-2 py-0.5 text-sm font-semibold bg-lz-ok-solid text-white">
+                          <span className="inline-block w-2 h-2 bg-white rounded-full mr-1 animate-lz-live"></span>
                           {intl.formatMessage(i18n.currentlyRunning)}
                         </div>
                       )}
                       {scheduleDetails.paused && (
-                        <div className="text-sm text-orange-500 dark:text-orange-400 font-semibold flex items-center">
+                        <div className="inline-flex items-center rounded-full px-2 py-0.5 text-sm font-semibold bg-lz-warn-solid text-white">
                           <Pause className="w-3 h-3 mr-1" />
                           {intl.formatMessage(i18n.paused)}
                         </div>
@@ -575,7 +575,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
               <p className="text-text-secondary">{intl.formatMessage(i18n.loadingSessions)}</p>
             )}
             {sessionsError && (
-              <p className="text-text-danger text-sm p-3 bg-background-danger border border-border-danger rounded-md">
+              <p className="text-white text-sm p-3 bg-lz-err-solid rounded-md">
                 {intl.formatMessage(i18n.errorPrefix, { error: sessionsError })}
               </p>
             )}

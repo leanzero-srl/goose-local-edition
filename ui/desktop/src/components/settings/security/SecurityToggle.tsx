@@ -3,6 +3,7 @@ import { Switch } from '../../ui/switch';
 import { useConfig } from '../../ConfigContext';
 import { trackSettingToggled } from '../../../utils/analytics';
 import { defineMessages, useIntl } from '../../../i18n';
+import { StudioSelect } from '../../leanzero-swarm/studio';
 
 const i18n = defineMessages({
   enablePromptInjection: {
@@ -341,8 +342,10 @@ export const SecurityToggle = () => {
       </div>
 
       <div
-        className={`overflow-hidden transition-all duration-300 ease-in-out ${
-          effectiveEnabled ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'
+        className={`transition-all duration-300 ease-in-out ${
+          effectiveEnabled
+            ? 'max-h-[1000px] opacity-100 overflow-visible'
+            : 'max-h-0 opacity-0 overflow-hidden'
         }`}
       >
         <div className="space-y-4 px-2 pb-2">
@@ -478,12 +481,13 @@ export const SecurityToggle = () => {
               </div>
             </div>
 
-            {/* Configuration Section */}
+            {/* Configuration Section — clipped only while collapsed: the model listbox is an
+                absolute popover and an always-hidden overflow would cut it off. */}
             <div
-              className={`overflow-hidden transition-all duration-300 ease-in-out ${
+              className={`transition-all duration-300 ease-in-out ${
                 effectiveEnabled && mlEnabled
-                  ? 'max-h-[32rem] opacity-100 mt-3'
-                  : 'max-h-0 opacity-0'
+                  ? 'max-h-[32rem] opacity-100 mt-3 overflow-visible'
+                  : 'max-h-0 opacity-0 overflow-hidden'
               }`}
             >
               <div>
@@ -498,22 +502,19 @@ export const SecurityToggle = () => {
                       <p className="text-xs text-text-secondary mb-2">
                         {intl.formatMessage(i18n.detectionModelDescription)}
                       </p>
-                      <select
-                        value={effectiveModel}
-                        onChange={(e) => handleModelChange(e.target.value)}
+                      <StudioSelect
+                        aria-label={intl.formatMessage(i18n.detectionModel)}
+                        options={availablePromptModels}
+                        value={
+                          availablePromptModels.find((model) => model.value === effectiveModel) ??
+                          null
+                        }
+                        placeholder={intl.formatMessage(i18n.detectionModel)}
+                        onChange={(model) => {
+                          if (model) handleModelChange(model.value);
+                        }}
                         disabled={!effectiveEnabled || !mlEnabled}
-                        className={`w-full px-3 py-2 text-sm border rounded ${
-                          effectiveEnabled && mlEnabled
-                            ? 'border-border-primary bg-background-primary text-text-primary'
-                            : 'border-border-primary bg-background-secondary text-text-secondary cursor-not-allowed'
-                        }`}
-                      >
-                        {availablePromptModels.map((model) => (
-                          <option key={model.value} value={model.value}>
-                            {model.label}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </div>
                   </div>
                 ) : (

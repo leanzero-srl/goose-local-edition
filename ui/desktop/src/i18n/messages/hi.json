@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "कोई कॉन्फ़िगरेशन सेटिंग नहीं मिली."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "\"{name}\" true या false होना चाहिए, इसलिए इसे सहेजा नहीं गया।"
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "\"{name}\" एक संख्या होनी चाहिए, इसलिए इसे सहेजा नहीं गया।"
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "परिवर्तन रीसेट करें"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "सहेजा जा रहा है..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "सेटिंग्स की एक सूची या समूह, केवल-पढ़ने के लिए दिखाया गया ताकि यहाँ सहेजने से यह कभी सपाट न हो। इसे config.yaml में संपादित करें।"
   },
   "configSettings.title": {
     "defaultMessage": "विन्यास"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "प्रदाता को सहेजने में विफल. कृपया अपना कॉन्फ़िगरेशन जांचें और पुनः प्रयास करें।"
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "प्रदाता सहेजा नहीं जा सका: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "प्रदाता स्ट्रीमिंग प्रतिक्रियाओं का समर्थन करता है"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "सक्रिय"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "हटाएँ"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "यह मॉडल हटाएं? आप इसे बाद में पुनः डाउनलोड कर सकते हैं."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "{model} हटाएँ?"
   },
   "localModelManager.download": {
     "defaultMessage": "डाउनलोड करें"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "आपके लिए इंतज़ार कर रहे नोट"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "ठीक है"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "सूची पर वापस जाएँ"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "वर्तमान सामग्री को डिफ़ॉल्ट से बदलें? आपके परिवर्तन खो जायेंगे."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "डिफ़ॉल्ट से बदलें?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "क्या आप वाकई सभी संकेतों को उनके डिफ़ॉल्ट पर रीसेट करना चाहते हैं? इसे असंपादित नहीं किया जा सकता है।"
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "सभी प्रॉम्प्ट रीसेट करें?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "क्या आप वाकई इस प्रॉम्प्ट को उसके डिफ़ॉल्ट पर रीसेट करना चाहते हैं? इसे असंपादित नहीं किया जा सकता है।"
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "यह प्रॉम्प्ट रीसेट करें?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "आपके पास सहेजे नहीं गए परिवर्तन हैं. क्या आप वाकई वापस जाना चाहते हैं?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "असहेजे बदलाव छोड़ दें?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "अनुकूलित"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "बदलाव छोड़ें"
   },
   "promptsSettings.edit": {
     "defaultMessage": "संपादित करें"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "क्या आपके पास API कुंजी नहीं है?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "साइन-इन विफल: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "{providerName} के साथ साइन इन करें"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "क्या आप वाकई \"{title}\" को हटाना चाहते हैं?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "हटाएँ"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "रेसिपी फ़ाइल हटा दी जाएगी."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "फ़ोल्डर चुनें"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "शेड्यूल \"{id}\" हटाएं? रेसिपी रखा जाएगा."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "शेड्यूल हटाएँ?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "शेड्यूल बनाएं"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "ताज़ा..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "हटाएँ"
   },
   "schedulesView.resume": {
     "defaultMessage": "बायोडाटा"

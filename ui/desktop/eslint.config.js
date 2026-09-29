@@ -154,7 +154,9 @@ module.exports = [
       '@typescript-eslint/no-var-requires': 'warn', // Downgrade to warning for Electron main process
       'no-undef': 'error',
       'no-useless-catch': 'warn',
-      'custom/no-window-location-href': 'error'
+      'custom/no-window-location-href': 'error',
+      // Owner rule (Q-472): never a native alert/confirm/prompt — the app's own dialogs only.
+      'no-alert': 'error'
     },
     settings: {
       react: {

@@ -108,6 +108,7 @@ import {
   type BenchCatalogBenchmark,
 } from './benchSessions';
 import log from './utils/logger';
+import { isAppDialogInFlight, showAppDialog } from './appDialogWindow';
 import { ensureWinShims } from './utils/winShims';
 import { addRecentDir, loadRecentDirs } from './utils/recentDirs';
 import { addProject, loadProjects, removeProject } from './utils/projectDirs';
@@ -1214,8 +1215,8 @@ const startLocalGooseServe = async (): Promise<GooseServeLease | null> => {
   } catch (error) {
     localCertificateTrust.release();
     log.error('goose serve failed to start', error);
-    dialog.showMessageBoxSync({
-      type: 'error',
+    await showAppDialog({
+      tone: 'error',
       title: `${brandName()} Failed to Start`,
       message: 'The backend server failed to start.',
       detail: [
@@ -1277,8 +1278,8 @@ const createChat = async (
   try {
     externalBackend = getActiveExternalBackend(settings);
   } catch (error) {
-    dialog.showMessageBoxSync({
-      type: 'error',
+    await showAppDialog({
+      tone: 'error',
       title: 'External Backend Misconfigured',
       message: 'The external backend environment is invalid.',
       detail: errorMessage(error),
@@ -1299,8 +1300,8 @@ const createChat = async (
     })();
 
     if (!usesHttps) {
-      const response = dialog.showMessageBoxSync({
-        type: 'error',
+      const response = await showAppDialog({
+        tone: 'error',
         title: 'External Backend Misconfigured',
         message: 'Certificate fingerprint requires an HTTPS external backend URL.',
         detail: 'Use an https:// URL or remove the configured certificate fingerprint.',
@@ -1348,8 +1349,8 @@ const createChat = async (
       if (!externalBackendReady) {
         externalCertificateTrust?.release();
         const canDisableExternalBackend = externalBackend.source === 'settings';
-        const response = dialog.showMessageBoxSync({
-          type: 'error',
+        const response = await showAppDialog({
+          tone: 'error',
           title: 'External Backend Unreachable',
           message: `Could not connect to external backend at ${externalBaseUrl}`,
           detail:
@@ -1385,8 +1386,8 @@ const createChat = async (
       externalCertificateTrust?.release();
       log.error('External ACP backend is misconfigured', error);
       const canDisableExternalBackend = externalBackend.source === 'settings';
-      const response = dialog.showMessageBoxSync({
-        type: 'error',
+      const response = await showAppDialog({
+        tone: 'error',
         title: 'External Backend Misconfigured',
         message: 'The external backend URL is invalid.',
         detail: errorMessage(error),
@@ -5860,10 +5861,6 @@ ipcMain.handle('swarm-cloud', async (_event, provider: string, args: string[]) =
   }
 });
 
-ipcMain.handle('show-message-box', async (_event, options) => {
-  return dialog.showMessageBox(options);
-});
-
 ipcMain.handle('show-save-dialog', async (_event, options) => {
   return dialog.showSaveDialog(options);
 });
@@ -6860,7 +6857,13 @@ app.whenReady().then(async () => {
   try {
     await appMain();
   } catch (error) {
-    dialog.showErrorBox(`${brandName()} Error`, `Failed to create main window: ${error}`);
+    log.error('Failed to create main window', error);
+    await showAppDialog({
+      tone: 'error',
+      title: `${brandName()} Error`,
+      message: `Failed to create main window: ${error}`,
+      buttons: ['OK'],
+    });
     app.quit();
   }
 });
@@ -6923,6 +6926,9 @@ app.on('will-quit', (event) => {
 });
 
 app.on('window-all-closed', () => {
+  // An app dialog's window can be the last one (a startup failure before any chat window): its
+  // ANSWER decides — every Quit branch calls app.quit() itself, and a Retry must survive the close.
+  if (isAppDialogInFlight()) return;
   // Only quit if we're not on macOS or don't have a tray icon
   if (process.platform !== 'darwin' || !tray) {
     app.quit();

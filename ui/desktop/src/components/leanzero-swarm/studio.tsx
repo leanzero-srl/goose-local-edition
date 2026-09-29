@@ -293,7 +293,7 @@ export function StudioSelect<T extends StudioSelectOption>({
         )}
       >
         <span className="min-w-0 flex-1 truncate">
-          {value ? render(value, 'value') : <span className="text-lz-ink-4">{placeholder}</span>}
+          {value ? render(value, 'value') : <span className="text-lz-ink-3">{placeholder}</span>}
         </span>
         {loading ? <Loader2 className="animate-spin text-lz-ink-3" /> : <ChevronDown />}
       </button>

@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "Tidak ada pengaturan konfigurasi yang ditemukan."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "\"{name}\" harus true atau false, jadi tidak disimpan."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "\"{name}\" harus berupa angka, jadi tidak disimpan."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Setel Ulang Perubahan"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "Menyimpan..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "Daftar atau kelompok pengaturan, ditampilkan hanya-baca agar menyimpan di sini tidak pernah meratakannya. Edit di config.yaml."
   },
   "configSettings.title": {
     "defaultMessage": "Konfigurasi"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Gagal menyimpan penyedia. Harap periksa konfigurasi Anda dan coba lagi."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Gagal menyimpan penyedia: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "Penyedia mendukung respons streaming"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "Aktif"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Hapus"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Hapus model ini? Anda dapat mengunduhnya kembali nanti."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "Hapus {model}?"
   },
   "localModelManager.download": {
     "defaultMessage": "Unduh"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Catatan yang menunggu Anda"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "OK"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Server mungkin sedang dimulai atau tidak tersedia untuk sementara."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Kembali ke Daftar"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "Batal"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Ganti konten saat ini dengan default? Perubahan Anda akan hilang."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Ganti dengan bawaan?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Apakah Anda yakin ingin menyetel ulang semua prompt ke default? Tindakan ini tidak dapat dibatalkan."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Setel ulang semua prompt?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Apakah Anda yakin ingin menyetel ulang prompt ini ke default? Tindakan ini tidak dapat dibatalkan."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Setel ulang prompt ini?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "Anda memiliki perubahan yang belum disimpan. Apakah Anda yakin ingin kembali?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Buang perubahan yang belum disimpan?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Disesuaikan"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Buang perubahan"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Edit"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "Tidak punya kunci API?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Gagal masuk: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "Masuk dengan {providerName}"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "Apakah Anda yakin ingin menghapus \"{title}\"?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Hapus"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "File resep akan dihapus."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "Batal"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Pilih folder"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Hapus jadwal \"{id}\"? Resep akan tetap disimpan."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Hapus jadwal?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Buat Jadwal"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "Menyegarkan..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Hapus"
   },
   "schedulesView.resume": {
     "defaultMessage": "Lanjutkan"

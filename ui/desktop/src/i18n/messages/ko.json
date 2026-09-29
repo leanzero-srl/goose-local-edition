@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "구성 설정을 찾을 수 없습니다."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "\"{name}\"은(는) true 또는 false여야 하므로 저장되지 않았습니다."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "\"{name}\"은(는) 숫자여야 하므로 저장되지 않았습니다."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "변경 사항 재설정"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "저장 중..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "설정 목록 또는 그룹입니다. 여기서 저장해도 평탄화되지 않도록 읽기 전용으로 표시합니다. config.yaml에서 편집하세요."
   },
   "configSettings.title": {
     "defaultMessage": "구성"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "제공업체를 저장하지 못했습니다. 설정을 확인하고 다시 시도하세요."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "공급자를 저장하지 못했습니다: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "제공업체는 스트리밍 응답을 지원합니다."
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "활성"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "취소"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "삭제"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "이 모델을 삭제하시겠습니까? 나중에 다시 다운로드할 수 있습니다."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "{model}을(를) 삭제할까요?"
   },
   "localModelManager.download": {
     "defaultMessage": "다운로드"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "기다리고 있는 메모"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "확인"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "목록으로 돌아가기"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "취소"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "현재 콘텐츠를 기본값으로 바꾸시겠습니까? 변경사항이 손실됩니다."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "기본값으로 바꿀까요?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "모든 프롬프트를 기본값으로 재설정하시겠습니까? 이 작업은 취소할 수 없습니다."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "모든 프롬프트를 재설정할까요?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "이 프롬프트를 기본값으로 재설정하시겠습니까? 이 작업은 취소할 수 없습니다."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "이 프롬프트를 재설정할까요?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "저장되지 않은 변경사항이 있습니다. 정말 돌아가시겠어요?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "저장하지 않은 변경 사항을 버릴까요?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "사용자 지정됨"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "변경 사항 버리기"
   },
   "promptsSettings.edit": {
     "defaultMessage": "편집"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "API 키가 없나요?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "로그인 실패: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "{providerName}으로 로그인"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "\"{title}\"을(를) 삭제하시겠습니까?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "삭제"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "레시피 파일이 삭제됩니다."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "취소"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "폴더 선택"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "일정 \"{id}\"을(를) 삭제하시겠습니까? 레시피는 유지됩니다."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "일정을 제거할까요?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "일정 생성"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "새로고침 중..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "제거"
   },
   "schedulesView.resume": {
     "defaultMessage": "재개"

@@ -52,7 +52,7 @@ export default function OnboardingSuccess({ providerName, onFinish }: Onboarding
   const [telemetryOptIn, setTelemetryOptIn] = useState(true);
 
   return (
-    <div className="h-screen w-full bg-background-primary overflow-hidden">
+    <div className="h-full w-full bg-background-primary overflow-hidden">
       <div className="h-full overflow-y-auto">
         <div className="flex flex-col items-center justify-center h-full p-4">
           <div className="max-w-md w-full mx-auto text-center">

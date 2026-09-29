@@ -6,7 +6,7 @@
 
 use std::time::{Duration, SystemTime};
 
-use crate::errors::{http_failure_text, ProviderError};
+use crate::errors::{authentication_failure_text, http_failure_text, ProviderError};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Response, StatusCode};
@@ -254,13 +254,9 @@ pub fn map_http_error_to_provider_error(
     let error = match (status, hold) {
         (_, Some(hold)) => hold,
         (StatusCode::OK, None) => unreachable!("Should not call this function with OK status"),
-        (StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN, None) => {
-            ProviderError::Authentication(format!(
-                "Authentication failed for {url}. Status: {}. Response: {}",
-                status,
-                extract_message()
-            ))
-        }
+        (StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN, None) => ProviderError::Authentication(
+            authentication_failure_text(url, status, &extract_message()),
+        ),
         (StatusCode::NOT_FOUND, None) => ProviderError::RequestFailed(http_failure_text(
             "Resource not found (404)",
             url,
