@@ -55,3 +55,16 @@
 - Model slips: 3,728 vs 4,328 (it caught this itself); "no command" (Q-453); "send first thing Monday", which
   is after Friday's call.
 - Long turns: 20 (1,625 s, 24 tools) and 26 (1,853 s, 37 tools), docx surgery by regex.
+
+### E2E #3v — 3.0.74, split tensor (262,144), python-stdlib-backport, session 20260929_5 — STOPPED after turn 8 (00:38 → 05:44) to install 3.0.76
+- 9 turns: 0 (1,110 s, vendoring + sha256 manifest), 1 (memories saved and split correctly), 2 (parser map), 3–4
+  (test.support shim on 3.9; the recursion tests rewritten honestly), 5–7, 8 (3,584 s, 87 tools: positions API).
+- goose proven:
+  - Q-367 LIVE (an invented `read_file` → closest tools → the right tool in one step);
+  - the repeat guard broke a model loop in turn 8 (the same narration + call ×3 → "Not run: …" → a different
+    step);
+  - decode 9.3–11.5 tok/s at 42–62k under load avg ~140 (Q-447 holding).
+- goose defect found: Q-469 (recall read "Quick one, no need…" as a correction and told the model to save its own
+  line as the person's rule; the model refused). Fixed in 3.0.76.
+- Model: turn 7 declared a design without writing it (caught itself in turn 8); several assert-then-retract
+  loops on its own wrapper (Q-451 class).
