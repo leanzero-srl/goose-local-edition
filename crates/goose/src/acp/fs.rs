@@ -108,10 +108,11 @@ impl AcpTools {
         }
     }
 
-    fn parse_args<T: serde::de::DeserializeOwned>(
+    fn parse_args<T: serde::de::DeserializeOwned + schemars::JsonSchema>(
+        tool: &str,
         arguments: Option<rmcp::model::JsonObject>,
     ) -> Result<T, String> {
-        DeveloperClient::parse_args(arguments).map_err(|e| format!("Error: {e}"))
+        DeveloperClient::parse_args(tool, arguments).map_err(|e| format!("Error: {e}"))
     }
 
     async fn read_content(&self, path: &Path) -> Result<String, String> {
@@ -127,7 +128,7 @@ impl AcpTools {
         arguments: Option<rmcp::model::JsonObject>,
         ctx: &crate::agents::ToolCallContext,
     ) -> Result<CallToolResult, McpError> {
-        let params: FileReadParams = match Self::parse_args(arguments) {
+        let params: FileReadParams = match Self::parse_args("read", arguments) {
             Ok(p) => p,
             Err(e) => return Ok(error_result(e)),
         };
@@ -152,7 +153,7 @@ impl AcpTools {
         arguments: Option<rmcp::model::JsonObject>,
         ctx: &crate::agents::ToolCallContext,
     ) -> Result<CallToolResult, McpError> {
-        let params: FileWriteParams = match Self::parse_args(arguments) {
+        let params: FileWriteParams = match Self::parse_args("write", arguments) {
             Ok(p) => p,
             Err(e) => return Ok(error_result(e)),
         };
@@ -189,7 +190,7 @@ impl AcpTools {
         arguments: Option<rmcp::model::JsonObject>,
         ctx: &crate::agents::ToolCallContext,
     ) -> Result<CallToolResult, McpError> {
-        let params: FileEditParams = match Self::parse_args(arguments) {
+        let params: FileEditParams = match Self::parse_args("edit", arguments) {
             Ok(p) => p,
             Err(e) => return Ok(error_result(e)),
         };
@@ -242,7 +243,7 @@ impl AcpTools {
         arguments: Option<rmcp::model::JsonObject>,
         ctx: &crate::agents::ToolCallContext,
     ) -> Result<CallToolResult, McpError> {
-        let params: ShellParams = match Self::parse_args(arguments) {
+        let params: ShellParams = match Self::parse_args("shell", arguments) {
             Ok(p) => p,
             Err(e) => return Ok(error_result(e)),
         };

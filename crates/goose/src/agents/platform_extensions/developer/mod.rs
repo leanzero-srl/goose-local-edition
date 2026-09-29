@@ -95,13 +95,42 @@ impl DeveloperClient {
             .clone()
     }
 
-    pub fn parse_args<T: serde::de::DeserializeOwned>(
+    /// Parses a tool call's arguments. When required fields are absent the answer names them,
+    /// lists the field NAMES that did arrive (never their values, which can be whole files) and
+    /// says how to retry — Q-482: a bare serde "missing field `path`" was misread by local models
+    /// as a match failure and answered with a whole-file rewrite. The path is never guessed.
+    pub fn parse_args<T: serde::de::DeserializeOwned + JsonSchema>(
+        tool: &str,
         arguments: Option<JsonObject>,
     ) -> Result<T, String> {
-        let value = arguments
-            .map(Value::Object)
-            .ok_or_else(|| "Missing arguments".to_string())?;
-        serde_json::from_value(value).map_err(|e| format!("Failed to parse arguments: {e}"))
+        let arguments = arguments.unwrap_or_default();
+        let required = Self::required_fields::<T>();
+        let missing: Vec<&str> = required
+            .iter()
+            .map(String::as_str)
+            .filter(|field| arguments.get(*field).is_none_or(Value::is_null))
+            .collect();
+        if !missing.is_empty() {
+            return Err(missing_fields_message(
+                tool, &required, &missing, &arguments,
+            ));
+        }
+        serde_json::from_value(Value::Object(arguments))
+            .map_err(|e| format!("Failed to parse arguments: {e}"))
+    }
+
+    fn required_fields<T: JsonSchema>() -> Vec<String> {
+        Self::schema::<T>()
+            .get("required")
+            .and_then(Value::as_array)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn get_tools() -> Vec<Tool> {
@@ -178,6 +207,74 @@ impl DeveloperClient {
     }
 }
 
+fn backticked(fields: &[&str]) -> String {
+    fields
+        .iter()
+        .map(|field| format!("`{field}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn spoken_list(fields: &[&str]) -> String {
+    match fields {
+        [] => String::new(),
+        [only] => (*only).to_string(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
+fn missing_fields_message(
+    tool: &str,
+    required: &[String],
+    missing: &[&str],
+    arguments: &JsonObject,
+) -> String {
+    let noun = if missing.len() == 1 {
+        "field"
+    } else {
+        "fields"
+    };
+    // Schema order first, then extras by name: the map's own order depends on whether
+    // serde_json's preserve_order feature is unified into the build.
+    let mut arrived: Vec<&str> = arguments
+        .iter()
+        .filter(|(_, value)| !value.is_null())
+        .map(|(key, _)| key.as_str())
+        .collect();
+    arrived.sort_by_key(|key| {
+        (
+            required
+                .iter()
+                .position(|field| field == key)
+                .unwrap_or(required.len()),
+            *key,
+        )
+    });
+    let arrived = if arrived.is_empty() {
+        "no fields".to_string()
+    } else {
+        backticked(&arrived)
+    };
+    let rest: Vec<&str> = required
+        .iter()
+        .map(String::as_str)
+        .filter(|field| !missing.contains(field))
+        .collect();
+    let retry = if rest.is_empty() {
+        format!("Call {tool} again with {}.", spoken_list(missing))
+    } else {
+        format!(
+            "Call {tool} again with {} first, then {}.",
+            spoken_list(missing),
+            spoken_list(&rest)
+        )
+    };
+    format!(
+        "Failed to parse arguments: missing required {noun} {}. Arrived: {arrived}. Nothing was changed. {retry}",
+        backticked(missing)
+    )
+}
+
 #[async_trait]
 impl McpClientTrait for DeveloperClient {
     async fn list_tools(
@@ -202,7 +299,7 @@ impl McpClientTrait for DeveloperClient {
     ) -> Result<CallToolResult, Error> {
         let working_dir = ctx.working_dir.as_deref();
         match name {
-            "shell" => match Self::parse_args::<ShellParams>(arguments) {
+            "shell" => match Self::parse_args::<ShellParams>(name, arguments) {
                 // The session id rides along so an own-group spawn is registered under the session
                 // that made it — the attempt-scoped reap (see process_groups) keys on it.
                 // A cancelled call drops the shell future, and dropping it terminates the
@@ -218,28 +315,28 @@ impl McpClientTrait for DeveloperClient {
                 },
                 Err(error) => Ok(ShellTool::error_result(&format!("Error: {error}"), None)),
             },
-            "write" => match Self::parse_args::<FileWriteParams>(arguments) {
+            "write" => match Self::parse_args::<FileWriteParams>(name, arguments) {
                 Ok(params) => Ok(self.edit_tools.file_write_with_cwd(params, working_dir)),
                 Err(error) => Ok(CallToolResult::error(vec![Content::text(format!(
                     "Error: {error}"
                 ))
                 .with_priority(0.0)])),
             },
-            "edit" => match Self::parse_args::<FileEditParams>(arguments) {
+            "edit" => match Self::parse_args::<FileEditParams>(name, arguments) {
                 Ok(params) => Ok(self.edit_tools.file_edit_with_cwd(params, working_dir)),
                 Err(error) => Ok(CallToolResult::error(vec![Content::text(format!(
                     "Error: {error}"
                 ))
                 .with_priority(0.0)])),
             },
-            "tree" => match Self::parse_args::<TreeParams>(arguments) {
+            "tree" => match Self::parse_args::<TreeParams>(name, arguments) {
                 Ok(params) => Ok(self.tree_tool.tree_with_cwd(params, working_dir)),
                 Err(error) => Ok(CallToolResult::error(vec![Content::text(format!(
                     "Error: {error}"
                 ))
                 .with_priority(0.0)])),
             },
-            "read_image" => match Self::parse_args::<ImageReadParams>(arguments) {
+            "read_image" => match Self::parse_args::<ImageReadParams>(name, arguments) {
                 Ok(params) => Ok(self
                     .image_tool
                     .image_read_with_cwd(params, working_dir)
@@ -339,6 +436,97 @@ mod tests {
         assert_eq!(
             fs::read_to_string(cwd.join("notes.txt")).unwrap(),
             "updated line"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_without_path_names_the_field_and_changes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = DeveloperClient::new(test_context(temp.path().join("sessions"))).unwrap();
+        let cwd = temp.path().join("workspace");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(cwd.join("notes.txt"), "first line").unwrap();
+        let huge_before = format!("first{}", "BEFORE-VALUE-".repeat(4096));
+
+        let ctx = ToolCallContext::new("session".to_owned(), Some(cwd.clone()), None);
+        let edit = client
+            .call_tool(
+                &ctx,
+                "edit",
+                Some(object!({
+                    "before": huge_before,
+                    "after": "updated"
+                })),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(edit.is_error, Some(true));
+        assert_eq!(
+            first_text(&edit),
+            "Error: Failed to parse arguments: missing required field `path`. \
+             Arrived: `before`, `after`. Nothing was changed. \
+             Call edit again with path first, then before and after."
+        );
+        assert!(!first_text(&edit).contains("BEFORE-VALUE-"));
+        assert!(!first_text(&edit).contains("updated"));
+        assert_eq!(
+            fs::read_to_string(cwd.join("notes.txt")).unwrap(),
+            "first line"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_path_tool_answers_a_missing_path_with_the_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = DeveloperClient::new(test_context(temp.path().join("sessions"))).unwrap();
+        let ctx = ToolCallContext::new("session".to_owned(), Some(temp.path().into()), None);
+        let mut checked = Vec::new();
+
+        for tool in DeveloperClient::get_tools() {
+            let required: Vec<String> = tool
+                .input_schema
+                .get("required")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
+            if !required.iter().any(|field| field == "path") {
+                continue;
+            }
+            let mut arguments = JsonObject::new();
+            for field in required.iter().filter(|field| *field != "path") {
+                arguments.insert(field.clone(), Value::String("x".into()));
+            }
+            let result = client
+                .call_tool(&ctx, &tool.name, Some(arguments), CancellationToken::new())
+                .await
+                .unwrap();
+            let text = first_text(&result);
+            assert_eq!(result.is_error, Some(true), "{}: {text}", tool.name);
+            assert!(
+                text.contains("missing required field `path`")
+                    && text.contains("Nothing was changed.")
+                    && text.contains(&format!("Call {} again with path", tool.name)),
+                "{}: {text}",
+                tool.name
+            );
+            checked.push(tool.name.to_string());
+        }
+
+        assert_eq!(checked, vec!["write", "edit", "tree"]);
+    }
+
+    #[test]
+    fn missing_arguments_list_every_required_field_and_no_arrivals() {
+        let error = DeveloperClient::parse_args::<FileWriteParams>("write", None).unwrap_err();
+        assert_eq!(
+            error,
+            "Failed to parse arguments: missing required fields `path`, `content`. \
+             Arrived: no fields. Nothing was changed. Call write again with path and content."
         );
     }
 
