@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "現在傳送的訊息會送往 {node}——不等待那個回答。"
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "現在傳送的訊息會送往 {node} — {passed} 未載入，因此那個回答所用的一切都不會被停止。"
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "現在傳送的訊息會等那個回答結束，然後載入 {node}。"
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "現在傳送的訊息會等待，直到引擎有空間處理它。"
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "現在傳送的訊息會等到該對話關閉或切換到其他節點後，再載入 {node}。"
   },
   "busyIn.sendYields": {
     "defaultMessage": "現在傳送的訊息優先：goose 會暫時擱置這次檢查，之後再重新執行。"

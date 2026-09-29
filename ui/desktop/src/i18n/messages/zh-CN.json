@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "现在发送的消息会发往 {node}——不等待那个回答。"
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "现在发送的消息会发往 {node} — {passed} 未加载，因此那个回答所用的一切都不会被停止。"
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "现在发送的消息会等那个回答结束，然后加载 {node}。"
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "现在发送的消息会等待，直到引擎有空间处理它。"
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "现在发送的消息会等到该对话关闭或切换到其他节点后，再加载 {node}。"
   },
   "busyIn.sendYields": {
     "defaultMessage": "现在发送的消息优先：goose 会暂时搁置这次检查，之后再重新运行。"

@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Pesan yang dikirim sekarang pergi ke {node} — tidak menunggu jawaban itu."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Pesan yang dikirim sekarang masuk ke {node} — {passed} tidak dimuat, jadi tidak ada yang dipakai jawaban itu yang dihentikan."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Pesan yang dikirim sekarang menunggu jawaban itu selesai, lalu memuat {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Pesan yang dikirim sekarang menunggu sampai mesin punya ruang untuknya."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Pesan yang dikirim sekarang menunggu sampai obrolan itu ditutup atau pindah ke node lain, lalu memuat {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Pesan yang dikirim sekarang didahulukan: goose menyisihkan pemeriksaan ini dan menjalankannya lagi setelahnya."

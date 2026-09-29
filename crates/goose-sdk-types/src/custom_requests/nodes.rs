@@ -736,6 +736,11 @@ pub struct NodeServingOtherDto {
     pub mac: String,
     /// The node serving now, as the Nodes page names it (the way's words when no node names it).
     pub serving: String,
+    /// The nodes that name the way serving now (ids), a node pinned to that way before one that
+    /// follows this Mac's engine (Q-459), so a surface names it as the Nodes page does: the split
+    /// the person made, never the follows node it is also served through.
+    #[serde(default)]
+    pub serving_nodes: Vec<String>,
     /// The chats it serves, by name: running a reply on it, or last served on it and still open.
     pub chats: Vec<String>,
     /// How many of their replies run on it now (0 = every one of those chats is between replies).
@@ -768,6 +773,8 @@ pub enum NodeRefusalFactsDto {
     ServingOther {
         mac: String,
         serving: String,
+        #[serde(default)]
+        serving_nodes: Vec<String>,
         chats: Vec<String>,
         replies: u32,
     },
@@ -778,6 +785,7 @@ impl NodeServingOtherDto {
         NodeRefusalFactsDto::ServingOther {
             mac: self.mac.clone(),
             serving: self.serving.clone(),
+            serving_nodes: self.serving_nodes.clone(),
             chats: self.chats.clone(),
             replies: self.replies,
         }
@@ -788,11 +796,13 @@ impl NodeServingOtherDto {
             NodeRefusalFactsDto::ServingOther {
                 mac,
                 serving,
+                serving_nodes,
                 chats,
                 replies,
             } => Some(NodeServingOtherDto {
                 mac: mac.clone(),
                 serving: serving.clone(),
+                serving_nodes: serving_nodes.clone(),
                 chats: chats.clone(),
                 replies: *replies,
             }),

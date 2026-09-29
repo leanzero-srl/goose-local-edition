@@ -41,6 +41,8 @@ import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
 import { promptRead } from './leanzero-swarm/engineFigures';
 import { usePublishTurnRead } from './turnWorking/turnReadStore';
+import { usePublishTurnHeld } from './turnWorking/turnHeldStore';
+import { turnHeldBeforeModel } from './chatServedBy/chatServedBy';
 import {
   heldContextLimit,
   nextMeasuredPrompt,
@@ -372,6 +374,8 @@ export default function ChatInput({
   const turnRequest = chatServing.served.turnRequest;
   const turnRead = useMemo(() => (turnRequest ? promptRead(turnRequest) : null), [turnRequest]);
   usePublishTurnRead(sessionId, turnRead);
+  // The composer's bar speaks for a turn the loader or the engine holds (Q-461): the row is silent.
+  usePublishTurnHeld(sessionId, turnHeldBeforeModel(chatServing.served));
 
   // The chat's session loop (Q-228 L4): the ONE read BaseChat makes beside the rail. Absent outside
   // a chat (the Hub's composer), where there is no Loop button.

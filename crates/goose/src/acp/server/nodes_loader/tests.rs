@@ -2055,6 +2055,7 @@ fn split_for_a(replies: u32) -> NodeServingOtherDto {
     NodeServingOtherDto {
         mac: "Work’s Mac Studio".into(),
         serving: "split node".into(),
+        serving_nodes: vec!["split".into()],
         chats: vec!["Chat chat-a".into()],
         replies,
     }

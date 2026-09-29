@@ -378,9 +378,24 @@ function ReadinessBar({
     // This chat's own turn is queued, and the engine says why (Q-238's `turnWait`, Q-246): the
     // same words as the chip's status line, from the same join.
     if (served.turnWait) return <TurnWaitBar wait={served.turnWait} />;
-    if (served.busyIn) return <BusyInBar busy={served.busyIn} />;
-    if (served.busyWithOthers) return <BusyBar served={served} busy={served.busyWithOthers} />;
-    return served.fellBack ? <FellBackBar fell={served.fellBack} /> : null;
+    // The turn line is where this chat's last turn went and its one way back (Q-381, Q-441): a
+    // busy bar about the next send never covers it (Q-458, 3.0.74: "Busy in ‘…’" hid "Chat is on
+    // deepseek (2nd) … · Load … now" while the other chat ran).
+    const turnLine = served.fellBack ? <FellBackBar fell={served.fellBack} /> : null;
+    const busy = served.busyIn ? (
+      <BusyInBar busy={served.busyIn} />
+    ) : served.busyWithOthers ? (
+      <BusyBar served={served} busy={served.busyWithOthers} />
+    ) : null;
+    if (busy && turnLine) {
+      return (
+        <>
+          {busy}
+          {turnLine}
+        </>
+      );
+    }
+    return busy ?? turnLine;
   }
   if (readiness.kind === 'unknown' || readiness.kind === 'ready' || readiness.kind === 'loader') {
     return null;
