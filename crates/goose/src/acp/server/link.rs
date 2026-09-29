@@ -35,6 +35,7 @@
 use super::*;
 
 use crate::config::ConfigError;
+use crate::execution::manager::{standalone_runs, RunRegistry};
 use std::sync::{Mutex as StdMutex, OnceLock, Weak};
 use std::time::Duration;
 
@@ -177,6 +178,9 @@ fn current_mlx_control() -> Option<Arc<dyn MlxControl>> {
 pub struct GoosedSwarmStateSource {
     agent_manager: Arc<AgentManager>,
     session_manager: Arc<SessionManager>,
+    /// The turns no manager holds (the scheduler's, Q-507): the process's [`standalone_runs`],
+    /// or a test's own registry ([`Self::with_standalone_runs`]).
+    standalone_runs: &'static RunRegistry,
     node_id: String,
     /// The remote-execution switch the control service built beside this source ENFORCES —
     /// what this node reports as `allows.manage_models`, not the config value a toggle may have
@@ -193,17 +197,35 @@ impl GoosedSwarmStateSource {
         Self {
             agent_manager,
             session_manager,
+            standalone_runs: standalone_runs(),
             node_id: stable_node_id(),
             allow_remote_execution,
         }
+    }
+
+    /// Read the standalone turns from `registry` instead of the process's: the scheduler jobs
+    /// other tests run in the same binary register there, and would make this node Busy.
+    #[cfg(test)]
+    fn with_standalone_runs(mut self, registry: &'static RunRegistry) -> Self {
+        self.standalone_runs = registry;
+        self
+    }
+
+    async fn snapshot(&self) -> LocalSnapshot {
+        snapshot_local(
+            &self.agent_manager,
+            self.standalone_runs,
+            &self.session_manager,
+            &self.node_id,
+        )
+        .await
     }
 }
 
 #[async_trait::async_trait]
 impl SwarmStateSource for GoosedSwarmStateSource {
     async fn local_node(&self) -> NodeState {
-        let snapshot =
-            snapshot_local(&self.agent_manager, &self.session_manager, &self.node_id).await;
+        let snapshot = self.snapshot().await;
         derive_node(
             &self.node_id,
             &snapshot,
@@ -230,9 +252,7 @@ impl GoosedSwarmStateSource {
     /// The local session index, or the store's error verbatim (`session index unreadable:
     /// <err>`) — what the trait's `local_sessions` forwards to.
     pub async fn local_sessions_checked(&self) -> Result<Vec<SessionSummary>, String> {
-        snapshot_local(&self.agent_manager, &self.session_manager, &self.node_id)
-            .await
-            .sessions
+        self.snapshot().await.sessions
     }
 
     /// The `NodeStateChanged` / `SessionUpserted` poller stream — the always-on half of
@@ -242,6 +262,7 @@ impl GoosedSwarmStateSource {
     fn node_session_poller(&self) -> BoxStream<'static, LinkEvent> {
         let (tx, rx) = tokio::sync::mpsc::channel::<LinkEvent>(256);
         let agent_manager = self.agent_manager.clone();
+        let standalone = self.standalone_runs;
         let session_manager = self.session_manager.clone();
         let node_id = self.node_id.clone();
         let allow_remote_execution = self.allow_remote_execution;
@@ -250,7 +271,8 @@ impl GoosedSwarmStateSource {
             let mut last_node_key: Option<(NodeStatus, u32)> = None;
             let mut last_sessions: HashMap<String, SessionSummary> = HashMap::new();
             loop {
-                let snapshot = snapshot_local(&agent_manager, &session_manager, &node_id).await;
+                let snapshot =
+                    snapshot_local(&agent_manager, standalone, &session_manager, &node_id).await;
 
                 // An unreadable index publishes NOTHING this tick: an empty index here
                 // would ride out as SessionUpserted silence plus a retain-wipe, which every
@@ -334,10 +356,11 @@ struct LocalSnapshot {
 
 async fn snapshot_local(
     agent_manager: &Arc<AgentManager>,
+    standalone: &RunRegistry,
     session_manager: &SessionManager,
     node_id: &str,
 ) -> LocalSnapshot {
-    let busy = busy_session_ids(agent_manager).await;
+    let busy = busy_session_ids(agent_manager, standalone).await;
 
     let sessions = match session_manager.list_sessions().await {
         Ok(sessions) => Ok(sessions
@@ -367,24 +390,23 @@ async fn snapshot_local(
 }
 
 /// The busy set: every session id holding an in-flight cancel token, read from the token
-/// maps alone — never from the session store or the agent cache. Both reply doors
+/// registries alone — never from the session store or the agent cache. Both reply doors
 /// register there (the ACP `on_prompt` run and goose-server's `spawn_reply_task`), as do
-/// the orchestrator's subagent runs.
+/// the orchestrator's subagent runs and the scheduler's runs.
 ///
-/// Two managers can exist in one process: the ACP server builds its own
-/// (`GooseAcpAgent::new`), while goose-server's `AppState` holds the
-/// [`AgentManager::instance`] singleton — so under `goosed agent` a REST reply or a
-/// remote-executed prompt runs on a manager this source was not built from. The union is
-/// this machine's truth; the singleton is only READ if it was already built, never
-/// constructed by asking.
-async fn busy_session_ids(agent_manager: &Arc<AgentManager>) -> HashSet<String> {
-    let mut busy: HashSet<String> = agent_manager.busy_session_ids().await.into_iter().collect();
-    if let Some(shared) = AgentManager::instance_if_built() {
-        if !Arc::ptr_eq(&shared, agent_manager) {
-            busy.extend(shared.busy_session_ids().await);
-        }
-    }
-    busy
+/// It is [`AgentManager::process_busy_sessions`]'s set, the one every window's Running list
+/// reads: this source's manager; the [`AgentManager::instance`] singleton when it was already
+/// built (under `goosed agent` a REST reply or a remote-executed prompt runs there); and the
+/// standalone turns no manager holds — a scheduled run (Q-509: a Mac running a schedule
+/// advertised Idle and accepted a peer's `/execute` beside it).
+async fn busy_session_ids(
+    agent_manager: &Arc<AgentManager>,
+    standalone: &RunRegistry,
+) -> HashSet<String> {
+    AgentManager::process_busy_sessions_with(agent_manager, standalone)
+        .await
+        .into_keys()
+        .collect()
 }
 
 /// The node's own [`NodeState`]. `mesh_ip` is left `None`: the source does not know the
@@ -2457,6 +2479,14 @@ mod tests {
         assert_eq!(err_text(&error), "not connected to the mesh");
     }
 
+    /// A standalone-run registry of the test's own. The scheduler tests in this binary run
+    /// real jobs, each registered in the process's `standalone_runs()` for as long as it runs;
+    /// a source reading that registry would flip Busy under an Idle assertion whenever one
+    /// overlaps (Q-509). Leaked like the mesh registries below: a `&'static` per test.
+    fn isolated_standalone_runs() -> &'static RunRegistry {
+        Box::leak(Box::new(RunRegistry::default()))
+    }
+
     async fn seeded_source() -> (tempfile::TempDir, GoosedSwarmStateSource) {
         use crate::agents::{AgentConfig, GoosePlatform};
         use crate::config::permission::PermissionManager;
@@ -2473,7 +2503,8 @@ mod tests {
             GoosePlatform::GooseDesktop,
         );
         let agent_manager = Arc::new(AgentManager::new(agent_config, Some(100)).await.unwrap());
-        let source = GoosedSwarmStateSource::new(agent_manager, session_manager, false);
+        let source = GoosedSwarmStateSource::new(agent_manager, session_manager, false)
+            .with_standalone_runs(isolated_standalone_runs());
         (temp, source)
     }
 
@@ -2564,6 +2595,74 @@ mod tests {
         assert_eq!(source.local_node().await.status, NodeStatus::Idle);
     }
 
+    /// Q-509: a scheduled run holds no manager's token — it is a standalone turn (Q-507) — and
+    /// the node advertised Idle while it worked, so a peer's `/execute` passed the idle guard
+    /// beside it. Registered, the node is Busy on that session (in `/nodes` and on the poller's
+    /// `NodeStateChanged`) and the session is live; released, the node is Idle again.
+    #[tokio::test]
+    async fn a_standalone_scheduled_run_makes_the_node_busy_until_released() {
+        let (_temp, source) = seeded_source().await;
+        let session = source
+            .session_manager
+            .create_session(
+                PathBuf::from("/tmp/project"),
+                "Scheduled job: nightly".to_string(),
+                SessionType::Scheduled,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(source.local_node().await.status, NodeStatus::Idle);
+
+        let run = crate::execution::manager::StandaloneRun::register_in(
+            source.standalone_runs,
+            &session.id,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        let busy = NodeStatus::Busy {
+            session_id: session.id.clone(),
+        };
+        let node = source.local_node().await;
+        assert_eq!(node.status, busy, "a scheduled run makes its node Busy");
+        assert_eq!(node.sessions_active, 1);
+        let live: Vec<String> = source
+            .local_sessions()
+            .await
+            .expect("the seeded store is readable")
+            .into_iter()
+            .filter(|s| s.live)
+            .map(|s| s.session_id)
+            .collect();
+        assert_eq!(live, vec![session.id.clone()]);
+
+        let mut stream = source.local_deltas_with(None);
+        let advertised = loop {
+            match stream.next().await.expect("the poller runs") {
+                LinkEvent::NodeStateChanged(node) => break node,
+                LinkEvent::SessionUpserted(_) | LinkEvent::SessionDelta { .. } => {}
+            }
+        };
+        assert_eq!(advertised.status, busy, "peers are told the node is Busy");
+
+        run.release().await;
+        let node = source.local_node().await;
+        assert_eq!(node.status, NodeStatus::Idle);
+        assert_eq!(node.sessions_active, 0);
+    }
+
+    /// The seam the fixture swaps is wired to the process's registry in production: the source
+    /// `build_link_manager` and the not-connected `/nodes` answer construct reads the same
+    /// standalone turns the scheduler registers and every window lists.
+    #[tokio::test]
+    async fn a_production_source_reads_the_process_standalone_runs() {
+        let (_temp, agent) = acp_agent().await;
+        let source = agent.link_source(false);
+        assert!(std::ptr::eq(source.standalone_runs, standalone_runs()));
+    }
+
     /// A source whose session store cannot open: the `sessions/` directory the storage
     /// created is replaced by a plain file before the lazy pool's first connection, so
     /// every store read fails with the real sqlite open error. The agent manager (and its
@@ -2588,7 +2687,8 @@ mod tests {
             GoosePlatform::GooseDesktop,
         );
         let agent_manager = Arc::new(AgentManager::new(agent_config, Some(100)).await.unwrap());
-        let source = GoosedSwarmStateSource::new(agent_manager, session_manager, false);
+        let source = GoosedSwarmStateSource::new(agent_manager, session_manager, false)
+            .with_standalone_runs(isolated_standalone_runs());
         (temp, source)
     }
 
@@ -2764,7 +2864,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let source = agent.link_source(false);
+        let source = Arc::into_inner(agent.link_source(false))
+            .expect("the test holds the only reference")
+            .with_standalone_runs(isolated_standalone_runs());
 
         agent
             .start_active_run(&session.id, "run_1".to_string(), CancellationToken::new())
