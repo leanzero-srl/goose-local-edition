@@ -20,21 +20,16 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   cards from yesterday's run. Answer them through the UI and prove the outcome (owner rule: nothing stays
   pending). Not done during #3x, because its turn would share the split with the run.
 
-## Gate / merge
-- merge-487-488 at ~/goose-targets/wt-m487 (1813810f2 = main + Q-487 204457a56 + Q-488 5a8d72d49). The full gate
-  runs at background priority (taskpolicy -b), target g079 → /tmp/g079.out.
-  - On green: merge Q-489 (0d11170ec, full vitest green in its worktree), rerun the UI part, ff main, push →
-    release 3.0.79.
-- Q-483..486 landed (4865e6dd3). The merge gate's 11 vitest reds were load timeouts (load 74): all 5 files green
-  alone, and main failed the same StrategiesTab test under the same load.
-
-## Agents (worktrees)
-- Q-490 (SEVERE): closing a second window mid-turn kills the app, goosed and the engine, with no log (reproduced
-  on 3.0.78 at 09:00:56Z). general-purpose agent, cutting. Lead: "1 window(s) attached" logged with 2 windows open.
-- Q-491 DONE 078115bc8 (worktree-agent-aa019a3dc35cd9561): a folder-only /pair gets newSession=1 → PairRoute creates
-  the chat in that folder; handleFileOpen now opens a folder as a new chat (a behaviour change). Merge after g079
-  with Q-489; it touches main.ts createChat, and so may Q-490 (resolve there).
-- Q-487, Q-488, Q-489: done, in the gate/merge above.
+## Gate / merge → 3.0.79
+- g079 (/tmp/g079.out): the full gate on merge-487-488 (1813810f2 = Q-487 204457a56 + Q-488 5a8d72d49), background
+  priority.
+- g079b (/tmp/g079b.out): chained to start when g079 ends. UI gate on merge-079b (968b6b7e3 = merge-487-488
+  + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2), no conflicts.
+- Both green → ff main to merge-079b, push, release 3.0.79. Install when #3x ends (or is stopped).
+  Then prove Q-490 live: closerepro2 must click [data-testid=confirm-close-run-stop]; expect main.log
+  "close held … chat turn(s) in flight", the app alive, no exit.
+- Q-490's cause: the main process exit(7). A broadcast threw on the closing window (Electron 41: isDestroyed()
+  is not enough), then the uncaught handler threw again. goosed saw stdin EOF → the engine stopped.
 
 ## Next
 1. Every tick: read #3x's words (r1.out, events.log, turns.tsv, the latest turn PNG) + a vigil screenshot.
@@ -53,7 +48,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-492.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-494.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
