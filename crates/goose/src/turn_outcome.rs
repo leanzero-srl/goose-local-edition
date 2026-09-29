@@ -12,9 +12,13 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::formats::openai::{ToolFormingEvent, ToolFormingObserver};
+use rmcp::model::Role;
 use serde::{Deserialize, Serialize};
 
-use crate::conversation::message::{Message, SystemNotificationContent, SystemNotificationType};
+use crate::conversation::message::{
+    Message, MessageContent, SystemNotificationContent, SystemNotificationType,
+};
+use crate::conversation::Conversation;
 use crate::session::extension_data::ExtensionState;
 use crate::session::{SessionManager, SessionType};
 
@@ -251,6 +255,100 @@ impl TurnMeter {
             output_tokens,
         }
     }
+}
+
+/// The words a reply streamed that the agent has not stored yet (Q-519). The agent stores a
+/// provider call's messages when that call's iteration ends; a stop — the in-window Stop, or the
+/// window closing with the answer live — drops the reply stream first, so the words the person
+/// watched stream died with it and the chat reopened on their prompt alone. Holds the call in
+/// flight's text and reasoning. A message the model reads that is not its own (a tool's result, a
+/// steer, a continuation) belongs to the same iteration, so the agent stores it with the call's
+/// words; the next call's first words are what prove that iteration stored.
+#[derive(Default)]
+pub struct StreamedReply {
+    in_flight: Conversation,
+    iteration_ended: bool,
+}
+
+impl StreamedReply {
+    pub fn on_message(&mut self, message: &Message) {
+        if !message.is_agent_visible() {
+            return;
+        }
+        if message.role != Role::Assistant {
+            self.iteration_ended = true;
+            return;
+        }
+        let words: Vec<MessageContent> = message
+            .content
+            .iter()
+            .filter(|content| {
+                matches!(
+                    content,
+                    MessageContent::Text(_) | MessageContent::Thinking(_)
+                )
+            })
+            .cloned()
+            .collect();
+        if words.is_empty() {
+            return;
+        }
+        if std::mem::take(&mut self.iteration_ended) {
+            self.in_flight = Conversation::default();
+        }
+        let mut streamed = message.clone();
+        streamed.content = words;
+        self.in_flight.push(streamed);
+    }
+
+    /// Stores the streamed messages no stored message already carries (the same id and the same
+    /// words — the net for an iteration that ended with no message between it and the next call).
+    /// Reasoning with no text is shown and never sent back: a provider drops unsigned reasoning, and
+    /// an assistant turn left empty is one a strict provider rejects.
+    pub async fn store(self, session_manager: &SessionManager, session_id: &str) -> Result<()> {
+        if self.in_flight.is_empty() {
+            return Ok(());
+        }
+        let stored = session_manager
+            .get_session(session_id, true)
+            .await?
+            .conversation
+            .ok_or_else(|| anyhow::anyhow!("session {session_id} has no conversation"))?;
+        for message in self.in_flight.messages() {
+            let already_stored = stored.messages().iter().any(|row| {
+                row.role == Role::Assistant
+                    && row.id.is_some()
+                    && row.id == message.id
+                    && words_of(row) == words_of(message)
+            });
+            if already_stored {
+                continue;
+            }
+            let has_text = message
+                .content
+                .iter()
+                .any(|content| matches!(content, MessageContent::Text(_)));
+            let message = if has_text {
+                message.clone()
+            } else {
+                message.clone().user_only()
+            };
+            session_manager.add_message(session_id, &message).await?;
+        }
+        Ok(())
+    }
+}
+
+fn words_of(message: &Message) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|content| match content {
+            MessageContent::Text(text) => Some(text.text.as_str()),
+            MessageContent::Thinking(thinking) => Some(thinking.thinking.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// User and scheduled sessions whose last turn failed.

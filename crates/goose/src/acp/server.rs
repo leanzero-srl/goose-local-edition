@@ -225,6 +225,10 @@ struct ActivePromptRun {
 /// `clear_active_run` never runs for it. The busy set is this connection's, but the manager can
 /// outlive the connection (LeanZero Link's idle guard holds the first connection's), so an uncleared
 /// registration removes its own entry and token when dropped — only while they are still this run's.
+///
+/// Q-519: it also holds the reply's [`StreamingTurn`] while the reply streams, and a prompt dropped
+/// with its connection (its window closed or reloaded mid-answer) is settled as stopped from here —
+/// the streamed words and the stopped line stored — before its run is cleared.
 struct RunRegistration {
     runs: Arc<Mutex<HashMap<String, ActivePromptRun>>>,
     agent_manager: Arc<AgentManager>,
@@ -232,6 +236,103 @@ struct RunRegistration {
     session_id: String,
     run_id: String,
     cleared: bool,
+    turn: Option<StreamingTurn>,
+}
+
+/// What a stopped reply leaves behind (Q-169, Q-519): its wall time and output, and the words it
+/// streamed that the agent had not stored.
+struct StreamingTurn {
+    meter: crate::turn_outcome::TurnMeter,
+    streamed: crate::turn_outcome::StreamedReply,
+    /// A person's turn. A loop tick dropped with its connection is ended by its own guard
+    /// (`TickPrompt`, "connection"), so it records no stop.
+    user: bool,
+}
+
+impl StreamingTurn {
+    fn start(user: bool) -> Self {
+        Self {
+            meter: crate::turn_outcome::TurnMeter::start(),
+            streamed: crate::turn_outcome::StreamedReply::default(),
+            user,
+        }
+    }
+}
+
+enum TurnStop {
+    /// Cancelled through the prompt: the person's Stop, or a tick yielding to a reply (`cause`).
+    Cancelled {
+        cause: Option<crate::session_loops::rules::CancelCause>,
+        window: ConnectionTo<Client>,
+        custom_notifications: bool,
+    },
+    /// The prompt was dropped with its connection while the reply streamed.
+    Dropped,
+}
+
+/// Settles a stopped reply: the words it streamed first, then (Q-169) the stop recorded with its
+/// chat line where the answer would have been, sent to the window when one is still there. A tick
+/// YIELDED to a user's reply (§5.2 step 5) was stopped by no one: no line, no Stopped outcome, and
+/// the previous turn's outcome cleared the way a new turn clears it.
+async fn settle_stopped_turn(
+    session_manager: Arc<SessionManager>,
+    session_id: String,
+    turn: StreamingTurn,
+    stop: TurnStop,
+) {
+    let StreamingTurn {
+        meter,
+        streamed,
+        user,
+    } = turn;
+    if let Err(error) = streamed.store(&session_manager, &session_id).await {
+        warn!(session_id, %error, "the stopped turn's streamed words were not stored; the chat shows them only until it reloads");
+    }
+    let window = match stop {
+        TurnStop::Cancelled {
+            cause: Some(crate::session_loops::rules::CancelCause::Yield { .. }),
+            ..
+        } => {
+            if let Err(error) =
+                crate::turn_outcome::record(&session_manager, &session_id, None).await
+            {
+                warn!(session_id, %error, "the yielded tick's turn outcome was not recorded");
+            }
+            return;
+        }
+        TurnStop::Cancelled {
+            window,
+            custom_notifications,
+            ..
+        } => Some((window, custom_notifications)),
+        TurnStop::Dropped if user => None,
+        TurnStop::Dropped => return,
+    };
+    let stopped = meter.stopped().await;
+    match crate::turn_outcome::record_stopped(&session_manager, &session_id, stopped).await {
+        Ok(notice) => {
+            let Some((cx, custom_notifications)) = window else {
+                return;
+            };
+            for content in &notice.content {
+                if let MessageContent::SystemNotification(notification) = content {
+                    if let Err(error) = send_status_message_update(
+                        &cx,
+                        custom_notifications,
+                        &session_id,
+                        notification,
+                    ) {
+                        warn!(
+                            session_id,
+                            ?error,
+                            "the stopped turn's notice was not sent; it is stored in the chat"
+                        );
+                    }
+                }
+            }
+        }
+        Err(error) => warn!(session_id, %error, "the stopped turn was not recorded"),
+    }
 }
 
 impl Drop for RunRegistration {
@@ -242,9 +343,24 @@ impl Drop for RunRegistration {
         let (runs, agent_manager) = (self.runs.clone(), self.agent_manager.clone());
         let session_manager = self.session_manager.clone();
         let (session_id, run_id) = (self.session_id.clone(), self.run_id.clone());
+        let turn = self.turn.take().map(|mut turn| {
+            turn.user &= !std::thread::panicking();
+            turn
+        });
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
                 runtime.spawn(async move {
+                    // Q-519: settled before the run clears, so a window that opens the chat once
+                    // it reads idle finds the streamed words and the stopped line stored.
+                    if let Some(turn) = turn {
+                        settle_stopped_turn(
+                            session_manager.clone(),
+                            session_id.clone(),
+                            turn,
+                            TurnStop::Dropped,
+                        )
+                        .await;
+                    }
                     let mut runs = runs.lock().await;
                     if runs.get(&session_id).map(|run| run.run_id.as_str()) == Some(&run_id) {
                         runs.remove(&session_id);
@@ -2646,6 +2762,7 @@ impl GooseAcpAgent {
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
             cleared: false,
+            turn: None,
         }
     }
 
@@ -2852,47 +2969,28 @@ impl GooseAcpAgent {
         Ok(loop_door::TickPrompt::new(run))
     }
 
-    /// A cancelled turn (Q-169): the person's stop is recorded with a chat line where the answer
-    /// would have been, and that line is sent to the window. A tick YIELDED to a user's reply
-    /// (§5.2 step 5) was stopped by no one: no notice, no Stopped outcome, and the previous turn's
-    /// outcome cleared the way a new turn clears it.
-    async fn record_cancelled_turn(
+    /// A turn cancelled through its prompt, settled on a task of its own (`settle_stopped_turn`):
+    /// a window closed right after its Stop drops this prompt mid-await, and the stop must still be
+    /// recorded whole (Q-519).
+    async fn settle_cancelled_turn(
         &self,
         cx: &ConnectionTo<Client>,
         session_id: &str,
-        cause: Option<&crate::session_loops::rules::CancelCause>,
-        meter: &crate::turn_outcome::TurnMeter,
+        cause: Option<crate::session_loops::rules::CancelCause>,
+        turn: StreamingTurn,
     ) {
-        if let Some(crate::session_loops::rules::CancelCause::Yield { .. }) = cause {
-            if let Err(error) =
-                crate::turn_outcome::record(&self.session_manager, session_id, None).await
-            {
-                warn!(session_id, %error, "the yielded tick's turn outcome was not recorded");
-            }
-            return;
-        }
-        let stopped = meter.stopped().await;
-        match crate::turn_outcome::record_stopped(&self.session_manager, session_id, stopped).await
-        {
-            Ok(notice) => {
-                for content in &notice.content {
-                    if let MessageContent::SystemNotification(notification) = content {
-                        if let Err(error) = send_status_message_update(
-                            cx,
-                            self.supports_goose_custom_notifications(),
-                            session_id,
-                            notification,
-                        ) {
-                            warn!(
-                                session_id,
-                                ?error,
-                                "the stopped turn's notice was not sent; it is stored in the chat"
-                            );
-                        }
-                    }
-                }
-            }
-            Err(error) => warn!(session_id, %error, "the stopped turn was not recorded"),
+        let settle = settle_stopped_turn(
+            self.session_manager.clone(),
+            session_id.to_string(),
+            turn,
+            TurnStop::Cancelled {
+                cause,
+                window: cx.clone(),
+                custom_notifications: self.supports_goose_custom_notifications(),
+            },
+        );
+        if let Err(error) = tokio::spawn(settle).await {
+            warn!(session_id, %error, "the stopped turn's record did not finish");
         }
     }
 
@@ -3053,11 +3151,11 @@ impl GooseAcpAgent {
                     .await
                 {
                     Ok(()) => {
-                        self.record_cancelled_turn(
+                        self.settle_cancelled_turn(
                             cx,
                             &session_id,
-                            cause.get(),
-                            &crate::turn_outcome::TurnMeter::start(),
+                            cause.get().cloned(),
+                            StreamingTurn::start(tick.is_none()),
                         )
                         .await
                     }
@@ -3195,9 +3293,11 @@ impl GooseAcpAgent {
         let mut stream = link_serve::tapped_reply(&session_id, stream);
 
         let mut was_cancelled = false;
-        // Q-169: what a stopped turn leaves behind — its wall time and the output it had streamed.
-        let mut meter = crate::turn_outcome::TurnMeter::start();
-        let args_observer = meter.tool_forming_observer();
+        // Q-169/Q-519: what a stopped turn leaves behind — its wall time, the output it had
+        // streamed, and the words the agent had not stored. Held by the run's registration, so a
+        // prompt dropped with its connection settles it too.
+        let turn = run.turn.insert(StreamingTurn::start(tick.is_none()));
+        let args_observer = turn.meter.tool_forming_observer();
         let mut first_event_logged = false;
         let mut event_count: u32 = 0;
         // Streaming chain buffer: tracks consecutive tool requests across
@@ -3270,14 +3370,15 @@ impl GooseAcpAgent {
                     if message.role == rmcp::model::Role::Assistant && message.is_agent_visible() {
                         for content in &message.content {
                             match content {
-                                MessageContent::Text(text) => meter.on_output(&text.text),
+                                MessageContent::Text(text) => turn.meter.on_output(&text.text),
                                 MessageContent::Thinking(thinking) => {
-                                    meter.on_output(&thinking.thinking)
+                                    turn.meter.on_output(&thinking.thinking)
                                 }
                                 _ => {}
                             }
                         }
                     }
+                    turn.streamed.on_message(&message);
 
                     let mut sessions = self.sessions.lock().await;
                     let Some(session) = sessions.get_mut(&session_id) else {
@@ -3345,7 +3446,7 @@ impl GooseAcpAgent {
                         break;
                     }
                 }
-                Ok(crate::agents::AgentEvent::Usage(usage)) => meter.on_usage(&usage),
+                Ok(crate::agents::AgentEvent::Usage(usage)) => turn.meter.on_usage(&usage),
                 Ok(crate::agents::AgentEvent::McpNotification((request_id, notification))) => {
                     if let Some(update) =
                         tool_notifications::tool_notification_update(request_id, notification)
@@ -3372,15 +3473,19 @@ impl GooseAcpAgent {
             }
         }
 
+        // Taken before any await: from here the prompt settles its own turn, and a drop of this
+        // future no longer does.
+        let turn = run.turn.take();
         // Drop the reply stream now (not at end of scope) so a cancelled run's in-flight provider
         // future — and any child process it spawned with kill_on_drop — is torn down immediately.
         drop(stream);
 
-        // Q-169: the dropped stream never reaches the agent's own end-of-turn record, so a stopped
-        // turn is recorded here — before the run-end update, so every list reads Stopped.
+        // Q-169: the dropped stream never reaches the agent's own end-of-turn record (nor its store
+        // of the call in flight, Q-519), so a stopped turn is settled here — before the run-end
+        // update, so every list reads Stopped.
         let cancel_cause = cause.get().cloned();
-        if was_cancelled {
-            self.record_cancelled_turn(cx, &session_id, cancel_cause.as_ref(), &meter)
+        if let (true, Some(turn)) = (was_cancelled, turn) {
+            self.settle_cancelled_turn(cx, &session_id, cancel_cause.clone(), turn)
                 .await;
         }
 
@@ -5325,6 +5430,7 @@ print(\"hello, world\")
                     session_id: "chat".to_string(),
                     run_id,
                     cleared: false,
+                    turn: None,
                 }
             }
         };
@@ -5353,6 +5459,7 @@ print(\"hello, world\")
             session_id: "chat".to_string(),
             run_id: "run_1".to_string(),
             cleared: false,
+            turn: None,
         });
         settle().await;
         assert_eq!(

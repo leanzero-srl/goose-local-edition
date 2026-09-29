@@ -6,7 +6,8 @@
 //! Measured answer (b): the websocket's close makes `agent-client-protocol-http` abort the
 //! connection's task, and that drops every future the connection spawned — `on_prompt` included —
 //! mid-await. Nothing after the await runs: no `clear_active_run`, no end-of-turn record. So the
-//! state a prompt holds for its turn must be released by guards that drop with the future.
+//! state a prompt holds for its turn must be released by guards that drop with the future — and
+//! since Q-519 the run's guard also settles the turn as stopped (`acp_closed_window_turn_test.rs`).
 
 #[path = "acp_ws/mod.rs"]
 mod acp_ws;
@@ -46,16 +47,20 @@ async fn a_closed_websocket_drops_the_prompt_it_was_running() {
         user_turns_running() == 0
     })
     .await;
-    // Nothing after the await ran: a prompt that ended through its own code records an outcome
-    // (a stop records "You stopped this answer"); the dropped one recorded none.
-    let rows = SessionManager::instance()
-        .sessions_with_extension_state::<TurnOutcomeState>()
-        .await
-        .unwrap();
-    assert!(
-        rows.iter().all(|row| row.session_id != session_id),
-        "the dropped prompt recorded no end of turn"
-    );
+    // Nothing after the await ran, so the prompt's run registration settles the turn it held as
+    // stopped (Q-519): a closed window's answer reads Stopped, as the in-window Stop's does.
+    eventually(
+        "the dropped prompt's turn is recorded as stopped",
+        || async {
+            SessionManager::instance()
+                .sessions_with_extension_state::<TurnOutcomeState>()
+                .await
+                .unwrap()
+                .iter()
+                .any(|row| row.session_id == session_id && row.state.stopped.is_some())
+        },
+    )
+    .await;
 
     // A new window on the same goose serves the same chat at once: nothing of the old
     // connection's run holds the session busy.
@@ -66,7 +71,20 @@ async fn a_closed_websocket_drops_the_prompt_it_was_running() {
             serde_json::json!({"sessionId": session_id, "cwd": work.path(), "mcpServers": []}),
         )
         .await;
-    reloaded.prompt(&session_id, "Go on", None).await;
-    reloaded.until_streaming(&session_id).await;
+    // The load replays the stopped answer's stored words as chunks; only the new answer's count.
+    reloaded.seen.clear();
+    let prompt = reloaded.prompt(&session_id, "Go on", None).await;
+    reloaded
+        .notification("session/update", |p| {
+            p["sessionId"] == session_id.as_str()
+                && p["update"]["sessionUpdate"] == "agent_message_chunk"
+                && p.to_string().contains("The reloaded window's answer")
+        })
+        .await;
+    assert!(
+        !reloaded.seen.iter().any(|frame| frame["id"] == prompt),
+        "the prompt was not refused: {:#?}",
+        reloaded.seen
+    );
     assert_eq!(user_turns_running(), 1);
 }
