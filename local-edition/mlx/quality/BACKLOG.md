@@ -1,62 +1,346 @@
-# MLX quality loop — BACKLOG (one row per open item; rewritten each tick; closed rows live in FINDINGS-LEDGER.md)
+# MLX quality loop — BACKLOG (generated from FINDINGS-LEDGER.md each tick; one line per open row)
 
-Updated 2026-09-27 (ledger reconciled against main + the release checkouts). Ratio today: 167 rows · 55 proven live · 83 awaiting live prove · 2 cutting · 18 open (+ 4 shipped before proving existed · 3 parked · 2 refuted).
-Before the reconcile: 51 "open" · 6 cutting/framed · 49 awaiting · 28 "fixed" with no prove status · 23 proven · 10 other — of the 51 "open": 32 were already fixed and shipped (12 of them proven live), 2 parked, 1 refuted, 16 truly open.
+Updated 2026-09-29 03:1x. Rows 405: proven live 66 · awaiting live prove 282 · cutting/open/framed 43 · queued/scheduled 3 · parked 7 · refuted/dropped 4
 
-## 1. Awaiting LIVE proof (prove in the named run, then mark "PROVEN LIVE <run>")
-| id | what | proven by |
-|---|---|---|
-| Q-107 · Q-141 · Q-142 | load_tools keeps the prefix; a tool call streams while written; 2nd+ tool calls read within ~4k of input | E2E #3f (27B tensor, jira brief, 3.0.56) calls.csv + chat |
-| Q-162 | no hang kill during a long prompt-cache search / compaction call | E2E #3f past its first compaction, rank0 log |
-| Q-13 · Q-151 · Q-153 | status line: "reading … of about Y at its measured Z tok/s", then "Writing for …"; counter adds tokens being written | E2E #3f turn 0 screenshots |
-| Q-147 | the running session is marked in every list; Active now | livecheck green during E2E #3f |
-| Q-132 · Q-109 | checker rows run reasoning-off and never block; "All N steps" with an undone step gets the goose check line | E2E #3f calls.csv checker rows; a 20-step census on 3.0.56 |
-| Q-84 · Q-91 · Q-88 · Q-94 | goose check line on a failed write / unsupported claim; condensed pairs are fact records; no empty "new turn" closing | E2E #3f transcript read turn by turn |
-| Q-96 · Q-97 · Q-99 · Q-100 | load_tools finds the right family; title within turn 0; tool cards carry the label + error; Thinking rows solid | E2E #3f screenshots |
-| Q-87 · Q-89 · Q-92 · Q-93 · Q-98 · Q-68 | two saves to one category both kept; a ~ chat keeps its own ledger; no invented reasons; card not clamped; memory search floor; recall suggestions | E2E memory turn (turn 1–2 of the jira brief) |
-| Q-79 · Q-104 · Q-115 | rank memory stays within the plan beside helper calls; goosed writes ~0 MB under a run | GOOSE_RANK_MEM + harness/diskio.py during E2E #3f |
-| Q-101 · Q-102 | the agent's shell runs the user's own node, shims only as fallback | `node -v` in an installed-app chat |
-| Q-148 · Q-149 · Q-150 · Q-152 · Q-154 · Q-155 · Q-156 · Q-157 · Q-158 | engine + chat surfaces from live round 1 | live critic round 2 on 3.0.56, during E2E #3f |
-| Q-12 · Q-41 · Q-42 · Q-43 · Q-44 · Q-45 · Q-46 | chip menu → Open Engine (no Switch-models dead end); fit badges name the Mac; details say whose engine; run book kept; Models chips; GB notes | live critic round 2 |
-| Q-67 · Q-71 · Q-72 · Q-80 · Q-82 · Q-130 | code themes both modes; split window wording; split trade-off + Long-documents ranking; Skills count; proposal card origin; Add node names | live critic round 2 |
-| Q-120 · Q-125 · Q-123 · Q-124 · Q-129 | fits-once-stopped badge; saved-setup line; tile = Run it = tray run count before/after relaunch; chip = this chat only | critic walk + relaunch with the Studio route up |
-| Q-33 · Q-58 · Q-59 · Q-63 · Q-64 | tile "Lost contact … reconnecting" (no raw 502); tray plain words; bar clears with main; one spinner side; one amber episode | recovery.mjs kill-link + relaunch-peer on 3.0.56 |
-| Q-111 | "isn't running" only after the Studio's own Leaving, with actions | quit goose on the Studio with a route up |
-| Q-17 | a foreign 39k request → the bar says busy, not "ready" | busy.mjs-style foreign request on the Studio, chat open |
-| Q-81 · Q-121 · Q-122 | split-stop notice survives relaunch; the cut answer says the split stopped | stop a split under a turn, relaunch, reopen |
-| Q-77 | restore waits out goose's own leftover rank | update + relaunch with the split up |
-| Q-29 · Q-76 · Q-106 | Run here mid-peer-mount → one engine; unproven pids never signalled; two loads at once → the second waits, named | R5 switch races on 3.0.56 + census |
-| Q-134 · Q-145 · Q-160 | pipeline admits a short request beside long ones; aging; admission by KV need | Flash pipeline load 26e (canaries every 60 s) |
-| Q-75 · Q-131 · Q-133 · Q-143 · Q-144 | pipeline restores prefixes; every served name answers; undeclared tool = failed call; turn-context on tool results; XML guard armed | E2E #5b on the Flash pipeline |
-| Q-138 · Q-139 | no bundled-mcps process after quit; MCP files never in the session dir | quit mid-session + ps; a search + fetch + doc in one chat |
-| Q-140 · Q-163 · Q-78 | load-sensitive tests and the pwd flake stay green; clean.sh flags a stand-in rank | the next CI runs on main; clean.sh on the next leftover |
-| Q-6 | fixed a63f213c0 (branch worktree-agent-a5c38d284ed596c0f) | swarm chat on the installed build: no "Coding · Agent" toggle, one "Recipes & loops" launcher |
-| Q-7 | fixed 83a0e8a44 (branch worktree-agent-a5c38d284ed596c0f) | chat on the split or routed to Work: Recipes & loops › Build a recipe with the fleet answers from that engine |
-| Q-9 | fixed 4bd9b5874 (branch worktree-agent-a5c38d284ed596c0f) | bug icon tooltip, aria-label and dialog title all "Report a problem" |
-| Q-21 | fixed 099406f01 263678d18 (branch worktree-agent-a5c38d284ed596c0f) | Escape closes Report a problem and the Recipes & loops hub; focus back on the opener |
-| Q-60 | fixed dbddaf9c6 (branch worktree-agent-a5c38d284ed596c0f) | kill a split rank mid-chat: the counter keeps "N / 262k" |
-| Q-23 | fixed f17a9f5bb (branch worktree-agent-a5c38d284ed596c0f) | Report a problem backdrop half-strength, folder chip under it (both themes) |
+## awaiting live prove (282)
+- Q-1 · Engine tile — headline "Running" over an idle tile; "Idle" only in the corner · _shipped 3.0.33 (5bd73e93b)_
+- Q-2 · Engine tile — big number = last run only, not a median · _shipped 3.0.35 (3cb0e0af8, 06f58b25b)_
+- Q-3 · composer — context always "0 / 128k" — a default, never measured, for a 262,144 model · _shipped 3.0.35 (af06267e7) — '0 / 262k' seen_
+- Q-10 · restore — restore gave up on an engine that became ready between two reads · _shipped 3.0.33 (e6476b9f7)_
+- Q-13 · chat turn · all — The first answer took 176 s. The screen said only "goose is working on it…". The bar stayed "· ready" and the  · _shipped 3.0.56 (ce5033f9f 3.0.39; fbc126a06 3.0.49; d27f4f73e 3.0.56) · awaiting_
+- Q-14 · chat "Alps description" · first-time — "Write three sentences about the Alps." led to "Let me check the previous session to avoid repeating what I al · _fixed 9f82b8068 · awaiting live prove_
+- Q-17 · composer · two-Mac — "Serving from Work's Mac Studio · ready" at 08:42:05, while the Studio was reading another client's 39.3K-toke · _shipped 3.0.39 (a65f72f66 e0d6872af; b72dc0350 3.0.56) · awaiting live prove_
+- Q-18 · backend · power — Every swarm session saves `"context_limit":128000` (sessions.db, 20260925_1..15). `get_context_limit` falls ba · _fixed a8c329084 · awaiting live prove_
+- Q-22 · Engine tile, tray · first-time — "1 request not from this app's chats or /v1": jargon, names nobody (21) · _fixed 5b28a4393 · awaiting live prove_
+- Q-23 · Report a Problem · all — The backdrop is solid black (`bg-opacity-50` does nothing on Tailwind 4) and the folder chip shows through it  · _fixed 71f4f82b4 · awaiting live prove_
+- Q-24 · chat · first-time — Faint grey "recalled: memories assistant-talk-and-swaps · past session 20260924_19" above answers: jargon, fad · _fixed e1fd42ff7 · awaiting live prove_
+- Q-26 · Run it · all — The Studio's "Running" chip is grey (the stopped tone) beside a live tile (26) · _fixed 4fa97bc72 · awaiting live prove_
+- Q-29 · Run it busy guard — during a switch, Run on the peer is disabled but Run on this Mac is accepted: Studio start clicked, then Run h · _shipped 3.0.46 (4ac0dd4e4) · awaiting live prove_
+- Q-31 · Link on the peer — the Studio's goose tailscaled killed at 12:14:59 → never restarted; 90 s and 4 min later still absent; the Stu · _shipped-candidate 3.0.36 · PROVEN R3 2026-09-25: tailscaled killed 13:57:05 → ne_
+- Q-32 · relay, request in flight — the request in flight when the peer's Link died hung SILENTLY until the client's own 120 s timeout; later requ · _shipped-candidate 3.0.36 · PROVEN R3: in-flight canary → 502 "lost this request _
+- Q-33 · Engine tile on a Link break — red "Failed" + raw "502: linkRelayFailed: cannot reach Link peer 'worksmacstudio-lan-6a972f': error sending re · _shipped 3.0.39 (925cff1bf a14823957) · awaiting live prove_
+- Q-34 · remote single after the peer app relaunches — the Studio app relaunched (12:17:59): Link back in ~6 s, but the Studio's engine is gone and nothing re-mounts · _shipped-candidate 3.0.36 · PROVEN R3: the Studio app relaunched 13:58:08 → this _
+- Q-37 · LeanZero Link ConnectCard — the banner "The mesh was on when this app last ran and did not come back:" is wrong for the new supervisor fai · _fixed 6a5820fa3 · awaiting live prove_
+- Q-38 · LeanZero Link Reconnecting card — does not show lastError, so "LeanZero Link's mesh daemon stopped (…) — restarting it with no user action" is o · _fixed ee67efd86 · awaiting live prove_
+- Q-39 · composer busy bar · all — My "ok" arrived, then "Work's Mac Studio is working on another request — your message waits its turn" appeared · _fixed e0d6872af 11898142c · PROVEN 3.0.38 (no busy bar for goose's own follow-up_
+- Q-40 · composer busy bar · all — During R3's 0.3–0.5 s canaries, "Work's Mac Studio is reading another request's 27-token prompt — your message · _fixed e0d6872af · PROVEN 3.0.38 (no flicker in 2 recordings) · shipped 3.0.39_
+- Q-43 · Engine details · power — The tile says "Serving from Work's Mac Studio" and Run it says "262,144 context", but Engine details says "Con · _shipped 3.0.42 (94e773c23) · awaiting live prove_
+- Q-44 · Engine tile · power — After the Studio relaunched at 13:58, the tile shows "274 requests served … 11m 7s engine uptime" and no rate. · _shipped 3.0.42 (7c6092901) · awaiting live prove_
+- Q-45 · Models tab · first-time — The copy that serves chat has a grey "Loaded" chip, while the idle copies have solid green "On disk" chips. Th · _fixed 42269876e · awaiting live prove_
+- Q-47 · composer bar · remote, break — Link killed on the Studio at 9.0 s: the bar went BLANK from 13.8 s to 23.4 s (relaunch: 13.4 s → 19.9 s). Main · _fixed 9a5633755 e0d6872af 925cff1bf · PROVEN 3.0.38: amber "Lost contact with Wo_
+- Q-48 · route status · remote — observe_route answers `failed` when the peer's status op is refused over Link (mlx_remote_single.rs `Err(refus · _fixed 925cff1bf 9a5633755 a14823957 · PROVEN 3.0.38: tray remote/reconnecting th_
+- Q-49 · chat transcript · remote, break — The dropped turn's error is glued INTO the partial answer: "…listen, andRan into this error: Server error: lin · _fixed 1a9bd8209 e53b5e52d b129fdb1d bf7423ded · PROVEN 3.0.38: "Work's Mac Studi_
+- Q-50 · composer busy bar · remote — During the user's OWN turn (2–9 s, both recordings) the bar said "Work's Mac Studio is reading another request · _fixed e0d6872af 11898142c · PROVEN 3.0.38: no busy bar during the own turn or go_
+- Q-59 · composer bar · all — The bar lingers about 2 s after recovery. Main is "running" at 184.6 s, and the bar clears at 186.8 s. Live: m · _shipped 3.0.39 (961a3eb11) · awaiting live prove_
+- Q-60 · context counter · power — "0 / 262k" vanishes under the bar (layout jump), then reads 0 after a turn whose prompt took 167 s to read · _fixed dbddaf9c6 · awaiting live prove_
+- Q-63 · bars, Engine tile · all — The spinner is on the left in Lost contact and on the right in Loading. The tile reads "1 requests served" (li · _shipped 3.0.39 (40df68725) · awaiting live prove_
+- Q-64 · composer bar · Link kill — 3.0.39 kill-link: the amber bar cleared at 182.2 s ("Checking whether … still has your answer…", chip Idle), t · _shipped 3.0.39 (af01e682d) · awaiting live prove_
+- Q-67 · chat · code block · light theme — A fenced code block (inside Thinking) renders a dark panel with variable names/arguments near-black on it (unr · _shipped 3.0.40 (1c0e79390 b6a882707) · awaiting live prove_
+- Q-68 · recall · skills/memories/MCPs — "recalled: skills goose-mlx-quality-loop, app-testing · loaded goose-mlx-quality-loop" on a Python-package tas · _shipped 3.0.40 (4962f5cd6) · awaiting live prove_
+- Q-71 · split · context window — The split now reports context_window 141,568 (3.0.39: 262,144); the counter reads "56k / 142k". Which is hones · _shipped 3.0.42 (0864c1426) · awaiting live prove_
+- Q-72 · Run it · split for a model that fits one Mac — E2E #1 turn 0 (a notes file, 4 tool calls, ~8.5k output tokens) took 20 min 20 s on the split: decode ~14 tok/ · _shipped 3.0.43 (6106c8aef 3.0.42; 84b32add0 3.0.43) · awaiting live prove_
+- Q-75 · split · PIPELINE mode — The pipeline runner keeps NO prompt cache: every turn re-reads goose's whole ~50k prompt from scratch (~2 min+ · _shipped 3.0.42 (cc790b8cd + fork b7bd1afc2) · awaiting live prove_
+- Q-76 · leanzero-link · signal guard — When `ps` fails, the Link signal guard still sends SIGTERM to a pid it could not prove is goose's — a guard fa · _shipped 3.0.42 (0ae3cd97f 179a53f1c) · awaiting live prove_
+- Q-77 · split · restore after an app update — After installing 3.0.41 (both apps quit and relaunched) the split's restore failed at once: "Could not restore · _shipped 3.0.42 (02651f99d 7f7c7aae3) · awaiting live prove_
+- Q-78 · clean.sh — clean.sh missed pid 9425 (`Python -c import base64,sys;exe…` without .goose/distributed/ in its argv) · _fixed ea2e63285 · awaiting live prove_
+- Q-79 · split · memory runaway — E2E #2 turn 1→2 (3.0.41, tensor): rank footprint flat 43–44 GB, then 47 → 57 → 59 → 70.6 → 76.8 GB on BOTH ran · _shipped 3.0.42 (157864d55 a99a0abe6) · awaiting live prove_
+- Q-80 · skills · loading — 40 × "Failed to parse skill frontmatter" in one session (unquoted colons, a leading `*` read as a YAML alias); · _shipped 3.0.43 (d221f3045 65e3b7bde) · awaiting live prove_
+- Q-81 · chat after the split dies — Every turn after the rank death showed "No model is mounted … mihai-mlx: The MLX engine is not running — nothi · _shipped 3.0.49 (92d97791d 3.0.42; eb25feb6d 3.0.49) · awaiting live prove_
+- Q-84 · chat answer · all — Under two red "Failed" Shell cards: "Here's the version I'm happy to hand over… 401 rows in the file I generat · _shipped 3.0.44 (3320ee995) · awaiting live prove_
+- Q-87 · memory + proposals · all — Parallel saves lose writes. #2b said "Both saved", but working-agents.txt holds only the dates rule; the zero- · _shipped 3.0.43 (3937c353d) · awaiting live prove_
+- Q-88 · tool-pair summaries · power — Agent-visible "user" summaries are false or give orders: "Write the E2E test artifacts for Harbourline … into  · _shipped 3.0.44 (4ba5e63aa 48f5f5576) · awaiting live prove_
+- Q-89 · ledger · two-client user — Chats started in ~ share `~/.goose/ledger.md`: #2b read #1's "[decision] Harbourline…". The folder chip says " · _shipped 3.0.43 (dd6ba66b6) · awaiting live prove_
+- Q-91 · chat · consultant — "I remember the shape of the announcement: the end of sale was October 2029 and the final support ended May 20 · _shipped 3.0.44 (3320ee995) · awaiting live prove_
+- Q-92 · saved preference · all — Invented reasons are saved permanently: "British spelling is the client's own convention"; "the receiving team · _shipped 3.0.43 (ef5de394e) · awaiting live prove_
+- Q-94 · agent loop · power — The turn-context block after tool results reads as an empty new turn: "The user hasn't sent a new message — th · _shipped 3.0.44 (41fff6704 e71815c12) · awaiting live prove_
+- Q-96 · tool discovery · power — `load_tools("Atlassian support lifecycle …")` returned `create-doc` first: "Wrong tool family", 2 min 49 s los · _shipped 3.0.43 (f88b72c4d) · awaiting live prove_
+- Q-97 · session title · all — #1 stayed "New Session" for 20+ min and 3 turns (sessions.db "New Chat") (friction) · _fixed f8b63e0a0 (+a7d53e4ab) · awaiting live prove_
+- Q-98 · memory search · power — For "ISO dates British spelling … Node zero dependencies", "10 of 32 matching", topped by "jira-mentions-index · _shipped 3.0.43 (acb98f5e9) · awaiting live prove_
+- Q-99 · tool cards · first-time — "Ledger Append kind, text" (argument names); raw `cd … && echo "---"`; a failed Write shows only "Same call an · _shipped 3.0.42 (8b329464b) · awaiting live prove_
+- Q-101 · shell tool output · all — Shell results carry the tool installer's setup log ("2026-09-25 23:09:20 - Starting node setup (common). Creat · _shipped 3.0.42 (903da5561) · awaiting live prove_
+- Q-103 · single engine · concurrent requests — Under R2's load (3 streams of unique 13k-token prompts), a 1-token canary waited up to 161 s: a short request  · _fixed f0a3cd07b (lz.10) + goose 213eb38c3 · awaiting live prove_
+- Q-104 · split · prefill peak — A batched prefill beside a 50k-token turn raised a rank 35 → 44 GB in ONE second; the split's memory plan does · _shipped 3.0.44 (ea8721c5a) · awaiting live prove_
+- Q-102 · shell tool · runtime — The agent's shell ran goose's bundled node v24 instead of the user's own (nvm/Homebrew): goose serve read the  · _shipped 3.0.43 (80bbd6df2) · awaiting live prove_
+- Q-106 · this MacBook · GPU wedge — ~00:5x several agents' dev goosed instances loaded 27B engines at the same time as another engine was loading, · _shipped 3.0.44 (065dad08f) · awaiting live prove_
+- Q-107 · tool deferral × prompt cache — E2E #2b's cold agent calls (2 of 3) came when the tool list changed (27 → 30 → 32 after load_tools): the Qwen  · _shipped 3.0.52 (0bebc666a eddd445c4) · awaiting live prove_
+- Q-109 · agent honesty · long task lists — In a 20-step census with the joined turn-context shape, one run skipped step 20 but said "All 20 steps succeed · _shipped 3.0.44 (6799c0873 7b730bb49) · awaiting live prove_
+- Q-111 · tray + bar · peer's goose quit for hours — With the Studio's goose app quit overnight (by the loop, to free its GPU), the MacBook's tray still said "Lost · _shipped 3.0.45 (e2d5615b7 e13eb5e91) · awaiting live prove_
+- Q-115 · goosed · session store (SSD wear) — macOS wrote a disk-writes resource report for the 3.0.45 goosed: 137.44 GB of file-backed memory dirtied in 1, · _shipped 3.0.47 (5d14455d1) · awaiting live prove_
+- Q-120 · model picker badge · fit rule — Flash badged red "Too big, short 1.6 GB" while the 27B held ~30 GB on the Studio that stopping it frees; Flash · _shipped 3.0.49 (6e06a4141 7857093b9) · awaiting live prove_
+- Q-125 · Run it · split Details — The split card's Details showed the setup saved for "rapid-mlx/Qwen3.8-Flash-Next-4bit" (Configuration) while  · _shipped 3.0.49 (7857093b9) · awaiting live prove_
+- Q-124 · chat model chip · after a turn ends — A run log recorded the chip's "Reading a prompt" at the moment the turn had ended: the chip's word was the ser · _shipped 3.0.49 (609e78066) · awaiting live prove_
+- Q-131 · split · served-id check — On 3.0.49 the Flash pipeline split serves `mihai-flash-qwen3.8-flash-next-4bit-mlx` (the Add-node alias Q-128  · _fixed 61ad1e4d6 · awaiting live prove_
+- Q-132 · the end-of-turn fact checker ("goose check:") · Flash pipeline split — On 3.0.49 at 14:28:57 the checker (llm_request.2557c942, 6,896 prompt tokens, 0 cached) was sent with `max_tok · _fixed 32f98fb96 · awaiting live prove_
+- Q-133 · split chat · a tool call shown as the reply — On 3.0.49 (14:28) Flash on the pipeline split ended turn 0 with `<tool_call>\n<function=bash>\n<parameter=comm · _fixed b21382223 (Rapid-MLX lz-pipeline-qwen4.4) + goose bcc55a378 · awaiting liv_
+- Q-134 · split · PIPELINE mode · admission — Flash pipeline split on 3.0.49, 14:39, rank 0 /v1/status: "generating running 1 waiting 4 slots 2 in_use 1 kv_ · _fixed c8d6d5faf + goose f7858bd8a · awaiting live prove_
+- Q-135 · split (tensor + pipeline) vs single · thinking on auto — The same 27B and the same goose request thought very differently per way. goose sends no chat_template_kwargs  · _fixed d0cc80d54 · awaiting live prove_
+- Q-137 · LeanZero Link · worker + mesh control plane · Funnel — After installing 3.0.50 on both Macs the MacBook could not connect Link: "worker request to https://worksmacst · _fixed 76d5d474c (branch worktree-agent-ab9d686cb3e2b7058, not merged) · awaiting_
+- Q-138 · bundled stdio MCPs (leanzero-web-search, leanzero-documents) · goosed  — The owner's MacBook fans revved for days: at 18:5x eight leanzero-web-search processes were orphaned (PPID 1), · _fixed a05bbbf7e · awaiting live prove_
+- Q-139 · bundled web-search MCP · session working dir — The LeanZero Web Search MCP creates a `docs/technical/` folder inside the session's working directory (found b · _fixed 2f9fcae2a · awaiting live prove_
+- Q-140 · goose hooks test + desktop toolShims test — Under heavy parallel load (an E2E + 3 agents building) the full gate on merged main failed `hooks::tests::comm · _fixed a9a16877d_
+- Q-141 · split (tensor, mlx_lm.server) · streaming — E2E #3c turn 0, 3.0.51: an agent call (prompt 32,488, 30,869 cached) generated 12,556+ tokens over 18+ min at  · _fixed b7800c2d1 · awaiting live prove_
+- Q-142 · tensor split prompt cache × goose turn-context — E2E #3c turn 3, 3.0.51 (20:51–20:56): three consecutive agent calls of 58,379 / 58,774 / 59,600 prompt tokens  · _fixed a8a26ea84 · awaiting live prove_
+- Q-143 · pipeline split (fork) · transient tail — Found by the Q-142 agent: the Flash pipeline runner (fork pipeline_qwen4 serve) does not accept goose's turn-c · _fixed 09f645526 + goose 5dbafb733 · awaiting live prove_
+- Q-144 · pipeline split (fork) · single-engine fixes — pipeline fork line missing single-engine fixes lz.3..lz.9: the lz-pipeline-qwen4 line branched from the single · _fixed 419306f70 (tag lz-pipeline-qwen4.8; Q-144 alone = b1bc3b8d9, tag .7) + goo_
+- Q-147 · sidebar + every session list · running state — Owner, 22:5x, screenshot while E2E #3d's session generated on the 27B split: "the ongoing session? can you spo · _shipped 3.0.55 (07b137a7a, merge 7ceebd771) · awaiting live prove_
+- Q-149 · tray · Sampling · Models · split serving — During the split: tray "Mihai Macbook — No model loaded" above "shard 1/2"; Sampling "no model mounted" beside · _fixed 997afe97e · awaiting live prove_
+- Q-150 · Engine card · progress — "Writing · 19,951 of 222,148 tokens · 9%" + a bar: 222,148 is the max_tokens ceiling, so it reads as 9% done / · _fixed c60f004d6 · awaiting live prove_
+- Q-151 · live chat · a long answer — For 39 min the chat showed only the footer "goose is writing 41 tool calls, the latest to ledger__ledger_appen · _shipped 3.0.56 (d27f4f73e 7138f4d67) · awaiting live prove_
+- Q-152 · old session's composer · engine busy elsewhere — "Serving other work" names no session and Send/Retry stay enabled: a retry silently waits behind a 39-min answ · _shipped 3.0.56 (b72dc0350) · awaiting live prove_
+- Q-153 · composer context counter — "40k / 262k" frozen during a turn while the engine holds 39,996 + 24,228 tokens (ContextWindowIndicator.tsx:30 · _shipped 3.0.56 (b9177d7bd) · awaiting live prove_
+- Q-155 · tray · Engine · naming the split — One thing, three names: "Dist · 11.0 tok/s", "The distributed engine owns this Mac…", "The split owns this Mac · _fixed 4a51ae50d · awaiting live prove_
+- Q-159 · split (tensor, and check pipeline) · sampling defaults × goose tool lo — E2E #3d turn 0, 3.0.52: the 40-min / ~24k-token answer (Q-146's "silent" call) was ONE response of 57 tool cal · _fixed — split 7d800f25d + fork lz-pipeline-qwen4.9 (71214c700); goose guard 4033_
+- Q-162 · split (tensor) · hang rule × prompt-cache search — E2E #3e 07:27: goose's compaction call ("## Task Context - An llm context limit", 259,408 input on a 262,144 w · _shipped 3.0.56 (e7febfe99, merge ba068a598) · awaiting live prove_
+- Q-163 · developer shell tool · CI — Two sibling tests failed on CI within a day, each once, each passing on re-run/locally: `developer::tests::dev · _fixed 887f8c1b1 · awaiting live prove_
+- Q-165 · split · admission guard (MemoryGrowth) — Load 26e on 3.0.56 (Flash pipeline) while a cargo release build ran on the MacBook: 08:25:38 goosed "Mihai Mac · _fixed bc47c7c1b · awaiting live prove (PROVE: a compile beside a busy split leav_
+- Q-166 · Engine tab · tray · restore line — A false 'Could not restore Qwen3.8-Flash-Next-4bit … Another MLX split (not goose's) is running on Work's Mac  · _fixed 00a6fe7b3 (sidecar: goose probes never foreign; restore-line supersede is _
+- Q-167 · Run it · Best — 'Run on Work's Mac Studio · Best … fits only at 38,669 context' while this app's chats read 41k–53k: (a) the s · _fixed 44388c16b · awaiting live prove_
+- Q-168 · Engine card · tray · Run it · rates — '18.0 tok/s reading, median of 2 prompts' / '(~18.0 vs ~335 tok/s)' come from the 2,048-token bucket; the 64k  · _fixed c41817dc6 (Rust: `promptBucket`/`prefillBucket` carry the size; naming it _
+- Q-169 · chat · sidebar · stopped turn — A stopped turn vanishes: 'Jira Migration Kickoff' shows only the user's message, the row '15m ago', sessions.d · _fixed 714e9b066 · awaiting live prove_
+- Q-170 · Sampling tab — Under 'Serving: Qwen3.8-27B … split across 2 Macs' the MODEL PROFILE opens on Flash with every field 'engine d · _fixed 6245bd085 · awaiting live prove_
+- Q-171 · session titles · header — First-four-words titles 'Hi. I'm starting a · 3' (1,361 messages), 'I want to work · 3', never retitled; the h · _fixed f8b63e0a0 (+a7d53e4ab) · awaiting live prove_
+- Q-172 · memory proposal card — A Sep 25 stump card '…by exception only". Bi' with 'Why: grounded by a lookup this turn' + Save sits under eve · _fixed 59c86d243 + 7464e8b32 · awaiting live prove_
+- Q-173 · chat · goose check line — 'goose check: the answer says both … they cannot both hold.' is 12 px grey-400 (faded); 'Suggested skill …' th · _fixed a58194e1a · awaiting live prove_
+- Q-174 · tray · Engine · jargon — 'Last: startFailed — preflight: … foreignEngines: another distri…', 'its ranks' memory…', 'JACCL' on tab, card · _fixed bf6e3a5be + 44388c16b (Rust strings; tray/tab labels are the desktop half)_
+- Q-175 · failed session composer · counter — '2k / 262k' on a 1,361-message session; sessions.db total_tokens = 2000 exactly; writer not found (ContextWind · _fixed a34771d3b · awaiting live prove_
+- Q-176 · Report a problem · overlay — The top-right 'Goose Swarm' badge draws over the dialog backdrop (z-[60] over z-40) (BaseChat.tsx:741; ui/dial · _fixed 71f4f82b4 · awaiting live prove_
+- Q-177 · split (tensor) · request validation — Found by the Q-161 agent probing 8091: a request with `top_logprobs` above 11 makes the split drop the connect · _fixed 9d0802fd1 · awaiting live prove (PROVE: on the installed build, POST top_l_
+- Q-178 · split · PIPELINE mode · streaming + visibility — E2E #5b (3.0.58, Flash pipeline, stdlib brief) turn 0: after "I have all hashes and the complete inventory. Le · _fixed fork 1b43e84a0 (tag lz-pipeline-qwen4.13; goose pin + pipeline_rank.py `st_
+- Q-179 · split · PIPELINE mode · prefix cache past ~53k — E2E #5b (3.0.58, Flash pipeline): agent calls read 40,058 → 46,926 of their prompt from cache (97%) until a 6, · _fixed fork dea9fe892 in tag lz-pipeline-qwen4.13 (a finished row's cache becomes_
+- Q-180 · install.sh — The 13:08 install of 3.0.59 never replaced the RUNNING MacBook app: `osascript quit` did not quit it within th · _fixed in harness (this commit)_
+- Q-182 · tensor split × goose prompt · periodic full re-read — E2E #3h (3.0.59, 27B tensor): agent calls reuse 97–99% of the prompt (e.g. 87,093 of 88,001) EXCEPT full misse · _fixed 87ae9ee31 · awaiting live prove_
+- Q-183 · desktop main · paths under GOOSE_PATH_ROOT — Found by the engine-glance agent in its isolated packaged build: with GOOSE_PATH_ROOT set, the Rust side (crat · _fixed 7b33a396b_
+- Q-184 · memory tool · global dir under GOOSE_PATH_ROOT — Found by the Q-183 agent: MemoryServer::new() (crates/goose-mcp/src/memory/mod.rs:194) builds the global memor · _fixed 4c96a83dd · awaiting live prove_
+- Q-185 · Engine card · Run it · sidebar during goose's end-of-turn fact check — E2E #3i turn 0 (3.0.60, 17:23:25Z): the agent's reply was done and goose ran its end-of-turn fact checker (tur · _fixed cdcd11f7e (engine e5bdedc63)_
+- Q-186 · r1.mjs · VIEW_AWAY — E2E #3i: the view moved to /leanzero-swarm at 17:21:47Z (someone opened the Engine page) and r1 waited with no · _fixed (this tick)_
+- Q-187 · memory tool · memory_proposals setting — Found by the Q-184 agent: the in-process memory builtin every desktop/CLI session uses is built with MemorySer · _fixed 66bcaf3b2 · awaiting live prove_
+- Q-188 · skills · global dir under GOOSE_PATH_ROOT — Found by the Q-184 agent: global skills use dirs::home_dir()/.agents/skills (crates/goose/src/skills/mod.rs:42 · _fixed 6716f4eae · awaiting live prove_
+- Q-189 · chat · Edit tool card — Owner 2026-09-27 (screenshot, #3i): an Edit card's Output says only "Edited …/notes/kickoff.md (1 lines -> 4 l · _fixed fa7027440 + d8639ce9d · awaiting live prove_
+- Q-190 · chat · session changes — Owner: no place lists what a session changed; ChatGPT/Codex show a changes list at the side. Wanted: a right-s · _fixed d8639ce9d · awaiting live prove_
+- Q-191 · chat header · brand pill — Owner (screenshot): the top-right pill says "Goose Swarm" (BaseChat.tsx:115) — must say LeanZero (the sidebar  · _fixed d29d630c1 · awaiting live prove_
+- Q-192 · Report a problem — Owner: "report a problem" must become a small form that emails office@leanzero.net, or lets the user join the  · _fixed d41bba91e · awaiting live prove_
+- Q-193 · navigation · Swarm Settings — Owner: Swarm Settings is buried as a Providers tab; a user expects nodes as a first-class place to start from  · _fixed 05399c5f0 · awaiting live prove_
+- Q-194 · navigation · My Macs — Owner: My Macs belongs inside LeanZero MLX as a tab beside Engine, with a flow that implies connecting Macs →  · _fixed 05399c5f0 · awaiting live prove_
+- Q-195 · Swarm Settings · node list — Owner: a node shows only a model dropdown — not whether it is distributed, which Macs, which engine, its state · _fixed 4b6295d37 · awaiting live prove_
+- Q-197 · global agents under GOOSE_PATH_ROOT — Found by the Q-188 agent: global agent definitions are still read from the owner's home under a root — crates/ · _fixed 177c2e71d · awaiting live prove_
+- Q-198 · desktop · 'Ask AI about this extension' prompt — Found by the Q-188 agent: the prompt tells the model the config lives at ~/.config/goose/config.yaml — untrue  · _fixed 4af3e8617 · awaiting live prove_
+- Q-200 · chat router · node Share/weight — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D1: the Share stepper changes build routing but not ch · _fixed 33120a129 · awaiting live prove_
+- Q-201 · Swarm Settings · supervision flag — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D2: the tooltip says the node 'takes the judge, review · _fixed 4b6295d37 · awaiting live prove_
+- Q-202 · settings · SwarmSettingsSection.tsx — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D3: 1,072 unrouted lines still read and write the `swa · _fixed f3297606d · awaiting live prove_
+- Q-203 · Providers + MLX tabs not in the URL — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D4: a deep link cannot open Models or Sampling and Bac · _fixed 05399c5f0 · awaiting live prove_
+- Q-204 · Providers / MLX tab labels / Nodes empty state — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D5: hardcoded English · _fixed 57af50371_
+- Q-206 · router CLOUD_REGISTRY — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D7: copies 4 of the 10 CLOUD_DEFS rows and works only  · _fixed 61ede7ba9 · awaiting live prove_
+- Q-211 · tool results · audience=user content reaches models — Found by the Q-189 agent: seven paths join every tool-result text item and ignore the MCP audience annotation, · _fixed 1a414a456 + 057bed98a_
+- Q-212 · ACP · build_tool_call_content drops audience — Found by the Q-189 agent: the server that turns tool results into desktop updates drops audience annotations,  · _fixed 53cb45848_
+- Q-213 · agents · update/delete path check — Found by the Q-197 agent: resolve_agent_file_with_roots accepts ANY .agents/.goose/.claude/agents/*.md path by · _fixed a3e56f3d2 · awaiting live prove_
+- Q-214 · onboarding · home config probe — Found by the Q-197 agent: acp/server/onboarding.rs:174 still probes the owner's ~/.config/goose/config.yaml un · _fixed 7134aa5a2 · awaiting live prove_
+- Q-215 · composer · live status line — Owner (3.0.61, screenshots 25/26): the line under the composer ('Writing for 1m 16s · 608 tokens · 11.1 tok/s  · _fixed fa479a3f8 · awaiting live prove_
+- Q-216 · sidebar · engine dock card overlap — Owner: sidebar items that expand draw UNDER the dock card · _fixed fa479a3f8 + 176019617 · awaiting live prove_
+- Q-217 · in-app floating engine card — Owner: 'I don't think we need PiP anymore, I think I saw sort of a faulty card showing in the right as well' — · _fixed fa479a3f8 · awaiting live prove_
+- Q-218 · sidebar dock card · hide + which request it shows — Owner: the card needs a way to hide completely and bring it back. And screenshot 26: the card said 'Reading pr · _fixed fa479a3f8 + db17316d6 · awaiting live prove_
+- Q-219 · r1.mjs · hidden chats + the stop race — E2E #3j turn 3 was recorded 'notice' (822 s, 33 tools) from a notice that is NOT in session 6: the app keeps # · _fixed (this tick)_
+- Q-220 · LeanZero Web Search MCP · fetch 404 — Owner asked why web search calls fail: E2E #3k (session 20260927_7, 21:24) had 3 get-single-web-page-content c · _fixed 514cfd5f5 · awaiting live prove_
+- Q-222 · three strings name 'Providers › My Macs' — Found by the S1 agent: after S1, My Macs lives under LeanZero MLX (?tab=mlx&mlx=macs), but AddNodeDialog.tsx:8 · _fixed 57af50371 · awaiting live prove_
+- Q-223 · app quit leaves goosed (goose serve) running → Link blocked — Owner screenshot after the 3.0.62 install: Link 'Connect failed — a tailscaled already answers on socket … (li · _fixed 508d0c8aa + 1a8faa545 + ed5a000ea + cf6157d03 + 856c0abe5 · LIVE-PROVEN wi_
+- Q-224 · desktop floating engine window · turning it off — Owner 2026-09-27: 'the PIP implementation when bringing another app in foreground is so kick-ass! keep it … ju · _fixed 089c01182 · awaiting live prove_
+- Q-225 · every CDP script picked the floating engine window — E2E #3l died at start: 'locator.click: Timeout 30000ms exceeded — waiting for New session in …'. Since 3.0.62  · _fixed (this tick)_
+- Q-226 · desktop floating engine window · when it shows — Owner screenshot (3.0.62, multiple screens): clicking a window on another display made the floating card appea · _fixed 195e64362 · awaiting live prove_
+- Q-227 · composer · 'Recipes & loops' button — Owner (screenshot 30): 'this might not be required anymore — we no longer use recipes and loops are baked into · _fixed fdcac1d1a · awaiting live prove_
+- Q-229 · quit never completes while the floating engine window exists — Installing 3.0.63: osascript quit closed the main window and ended goosed, but the app (pid 2190, 3.0.62) stay · _fixed 221714ef4 · awaiting live prove_
+- Q-230 · Settings · Keep awake (wakelock) toggle does nothing — Found by the loops design review: set-wakelock only saves enableWakelock (ui/desktop/src/main.ts ~2824-2848);  · _fixed ad8c9fe32 · awaiting live prove_
+- Q-231 · split engine · a turn queued ~38 s behind unlisted rows — E2E #3m turn 3 (3.0.63, 27B tensor, 20:16:2x–20:17:00Z): /v1/status showed the agent call 'queued' for 38.6 s  · _fixed 975356f31 · LIVE-PROVEN 3.0.65 (1 sample 03:16: yielded to the user turn, _
+- Q-232 · local models · tool calls with optional string arguments are lost — Found by the L3 agent (checked in the installed mlx_lm/tool_parsers/qwen3_coder.py): the qwen3_coder parser ke · _fixed eae39751e · LIVE-PROVEN 3.0.66 07:0x (tensor split: read_image with crop p_
+- Q-233 · tensor split · a parser SyntaxError on a non-streamed request drops th — Found by the Q-232 agent (its negative control): any qwen3_coder SyntaxError in mlx_lm's formatter on a NON-st · _fixed d7a318b5b · awaiting live prove_
+- Q-234 · pipeline engine installed behind its pin — Found by the Q-232 agent: ~/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12 is at a18e14fd4 (lz-pipeline-qw · _fixed a60f985f9 · awaiting live prove_
+- Q-235 · link_host relay test waits a fixed 10 s — Found by the Q-232 agent: link_host::a_link_rank_is_relayed_survives_a_control_outage_and_stops_verified waits · _fixed 62763b394_
+- Q-236 · tick.py misses two loud events — Reported by the S5/S8 agents: tick.py prints neither engine-mount-failed nor swarm-holder-unregistered, so a f · _fixed in place 2026-09-28 (~/goose-builds/loop-state/tick.py, outside the repo; _
+- Q-237 · the floating glance does not name the node — Reported by the S6 agent: the desktop floating window shows engine state but not which node/strategy holds the · _fixed a7b74219c · awaiting live prove_
+- Q-238 · panel lacks the Q-231 status fields — Reported by the Q-231 agent: the new PromptStepBudget/DepartureContext status fields reach the ACP stream but  · _fixed a181e8d70 · awaiting live prove_
+- Q-240 · a leftover uv process holds a port at engine start — Reported by the Q-223 agent: on the engine startup path a leftover uv process from an earlier launch can hold  · _fixed 984b74763 + 488a0b1a5 + dcf1d1382 · LIVE PROVE FAILED 3.0.66: the fit chec_
+- Q-241 · app quit does not wait for goosed — Live Q-223 prove on 3.0.65 (04:58 UTC-3 quit via osascript): the app was gone in 1 s, main.log carries NO quit · _fixed c8e4e1ec2 · LIVE-PROVEN 3.0.66 06:36:42 (osascript quit, split up): main.l_
+- Q-242 · quit teardown cannot reach the Studio — Same quit: goosed's teardown sent the peer-leaving notice and it failed after 5 s ('peer_leaving_notice_failed · _fixed bdd73fe26 · LIVE-PROVEN 3.0.66 06:36:42: 'told 1 peer(s) goose is quitting_
+- Q-243 · a vitest fixture leaks as an orphan goosed — pid 95645 '…/T/q223-PIcDvp/Goose Swarm.app/…/goose serve … --q223-kill-…' ppid 1, 12 min old, ignores SIGTERM  · _fixed e99558fec · LIVE-PROVEN 3.0.66 (a SIGKILLed vitest run's SIGTERM-ignoring _
+- Q-244 · mainPage took the hidden floating glance for the main window — On 3.0.65 split-start navigated the floating glance's page (its data-testid root is not rendered while hidden) · _fixed (this commit)_
+- Q-245 · two more count × sleep waits in sidecar tests — Found by the Q-233..235 agent: engine.rs ~2847 waits a fixed 5 s for a listener and launch.rs's wait_for caps  · _fixed 984b74763_
+- Q-246 · stopped requests still read as 'Reading' outside the chip — Found by the Q-238 agent: the Engine tile rows and the tray headline show a Q-231 'leaving' row (a fact check  · _fixed f489b0869 · awaiting live prove_
+- Q-247 · error lines paint grey across the app — Measured by the L4 agent in the compiled CSS (commit c16f1d5f1): every text-lz-ink* utility beats text-lz-err  · _fixed 2271fa63f · awaiting live prove_
+- Q-248 · the swarm adopts a leftover engine by model id — Found by the Q-240 agent: goose-cli's swarm ensure_loaded fast path adopts any listener on the engine port tha · _fixed d1324d2e3 · awaiting live prove (kill -9 a goosed with the engine up, star_
+- Q-249 · the Engine panel's stray-listener line names no holder — Found by the Q-240 agent: status().stray_listener_port says a port is held but not by whom — the pid/command/r · _fixed 59a9f8373 + 8d99bd273 + 8b13b1a4b · awaiting live prove_
+- Q-250 · loading OFF (the default) keeps a sidecar device by served id with no  — Found by the Q-248 agent: allow_model_load defaults to false (swarm.rs ~1299); with loading off, exclude_unmou · _fixed c16801f6e · awaiting live prove (loading off, the desktop engine serving t_
+- Q-251 · an unmarked desktop engine is told to be killed — Found by the Q-250 agent: an engine mounted by a goosed older than 984b74763 carries no GOOSE_SIDECAR marker,  · _fixed bf7ef944f + 398c75e36 + 63a8d72b3 · awaiting live prove_
+- Q-252 · Unmount kills another goose's live engine — Found by the Q-240 and Q-249 agents: Unmount's reclaim_port still stops whatever listens on the engine port wi · _fixed bf7ef944f + 63a8d72b3 · awaiting live prove_
+- Q-253 · every status poll runs lsof while the port is taken — Found by the Q-249 agent: while the engine is stopped and the port held, each status poll reads the holders wi · _fixed bf7ef944f · awaiting live prove_
+- Q-254 · a node swap reads as a failure — Live J3 on 3.0.65 (strategy Quick: Chat = Flash single, Build = 27B split; a delegating chat): the swaps WORK  · _fixed 8a545fbe6 + 03c2d4bb2 · awaiting live prove_
+- Q-255 · the model chip shows raw node ids — Live J3: the chip names nodes by id (e.g. mihai-mlx…) instead of the node's name (e.g. node:qwen3-8-27b-…-both · _fixed 8a545fbe6 + c75b2c2c3 · awaiting live prove_
+- Q-256 · a single reload through the restart path writes no load row — Live J3: mlx-load-measurements.jsonl gains a row per split load and Run it start, but the single engine reload · _fixed 41e068a0b (a restart through the supervisor writes its row at the same pla_
+- Q-257 · a second window's goosed cannot load the split — Live J3 step 3: a second goose window's goosed refuses the split with 'not connected to the LeanZero Link mesh · _fixed 039004c2f + 23cc82eba + 9b7d0f6fe · awaiting live prove_
+- Q-258 · the single engine stops listening mid cold prefill with no log line — Live J3/J4 on 3.0.65, seen THREE times (01:11:09, ~01:43:30, 02:30:52; J4 r3 "MLX engine is not listening on 8 · _fixed 73372f628 (tests take a free port; reclaim refuses the default port under _
+- Q-259 · Remove-node dialog: red 'Not removed', a duplicated sentence, Remove d — Live tester on 3.0.65 (Nodes page → remove a node): the dialog shows a red 'Not removed' before anything was t · _fixed 28570a509 · awaiting live prove_
+- Q-260 · an image poisons a split session — Live tester on 3.0.65: a message naming a local .png auto-attaches the image; the 27B split answers 404 'Only  · _fixed 6175e932c (+d8c3e7f0e Link test) · awaiting live prove_
+- Q-262 · r5.mjs J4 mode is broken on 3.0.65 — Live tester: r5.mjs takes the chat URL before resumeSessionId appears; its GOOSE_MODEL write is dead (the UI w · _fixed (this commit) · awaiting the next J4 run_
+- Q-271 · a starting split reads 'serving' — Found by the Q-254 agent: residency.rs always gives a split load_phase None, so the moment the split publishes · _fixed 5421e82e1 + fe464248e · awaiting live prove_
+- Q-272 · five §8.7 loader strings cannot be said — Found by the Q-254 agent: nodes.turnWaiting, displacedNotice, displacedFailed, refused*, fellBack need facts N · _fixed 5421e82e1 + 0470e5561 · awaiting live prove_
+- Q-273 · Auto chats show the pool device's model-mismatch line — Found by the Q-254 agent: a chat on Any node (Auto) still shows 'The saved MLX model serves …; the node wants  · _fixed 0470e5561 · awaiting live prove_
+- Q-274 · §8.5's node chip menu (S4) is not built — Found by the live tester and the Q-254 agent: the model chip's menu is the old one — no node list, no strategy · _fixed 0470e5561 · awaiting live prove_
+- Q-275 · Q-256's restart measurement misses the Loading phase on Linux CI — CI red on ae1276948 (Build and Test Rust Project): engine::tests::a_restart_through_the_supervisor_is_measured · _fixed bf3db6dd3 (not a late attach — the watch is set before the spawn; phases w_
+- Q-276 · the memory check refuses before Q-240's port claim can stop goose's ow — Live Q-240 prove on 3.0.66: engine pid 21637 (GOOSE_SIDECAR=mlx-engine@http://127.0.0.1:8090) left by a kill - · _fixed 04711fb97 + 2f781bb11 · awaiting live prove_
+- Q-277 · Engine tab stacks the same refusal three times and contradicts itself — Same scenario: the ~400-char refusal shows three times (Restore / Mount blocked / Mount failed); the tile says · _fixed d70038e2f · awaiting live prove_
+- Q-278 · after a yield the next tick's prompt loses the last completed tick — Live J2 on 3.0.66: tick 3's prompt said only 'Last tick (2, 06:48, yielded).' — tick 1's next step and check r · _fixed 6a2fd88ec · awaiting live prove_
+- Q-279 · the tick after a yield says 'back to back'; the yield names a stale ch — Live J2: the tick after a yield is labelled 'back to back' (design: 'after your turn'); the yield line names ' · _fixed 6a2fd88ec + cd5ad2dfa + 3bcf404cc · awaiting live prove_
+- Q-280 · Watch and act pastes the whole goal into its first step — Live: the template's first step reads 'Look at what Count the files in … Change nothing. names' · _fixed 6a2fd88ec · awaiting live prove_
+- Q-285 · Q-251's older-goose test depended on sh job control — CI red on 966fd2431 (Linux): port_holders.rs 'an_older_gooses_engine_is_told_to_restart_that_goose_everywhere' · _fixed (this commit): the stand-in engine sets its own group (os.setpgid(0,0)) be_
+- Q-286 · three real-process tests fail only under heavy machine load — Q-257 scratch gate 08:2x (release build + E2E + cargo concurrently): acp_loop_tick_start_test 'a_persons_stop_ · _fixed 0c728e966 + 5f72f2810_
+- Q-292 · Run it's 'Run on this Mac' row disagrees with the tile while a leftove — Found by the Q-276 agent: the placement planner credits only a RUNNING engine's memory, so while goose's own l · _fixed c200513d7 · awaiting live prove_
+- Q-293 · the Details 'Mount gate' chip keeps a stale block — Found by the Q-276 agent: after the banner says 'fits now — start it again', the Details table's Mount gate ch · _fixed 5c99fde7b · awaiting live prove_
+- Q-294 · the split's prompt cache misses at the start of some turns — E2E #3o on 3.0.66 (27B tensor split, calls.tsv): the first big call of turn 3 read cache 0 of 76,117, turn 5 c · _fixed cd7bef737 · LIVE-PROVEN 3.0.69 (E2E #3p turns 1–12, first call of each tur_
+- Q-295 · every saved tool error reloads as a different error — Found by the Q-294 agent: goose saved a tool error as '<code>: <message>' text and reloaded it as a fresh -326 · _fixed cd7bef737 (stored_error keeps the original code) · LIVE with Q-294 on 3.0._
+- Q-296 · end-of-turn side calls evict the split's conversation prefix — Found by the Q-294 agent: mlx_lm files each chat request's cut as a user cache entry; Q-182 protected the NEWE · _fixed cd7bef737 (the protected entry is the agent's own conversation prefix; adm_
+- Q-297 · the same skill is re-loaded in full again and again in one chat — E2E #3o on 3.0.66 (session 20260928_17, sessions.db messages 770234/770260/770269/770304/770324): the model lo · _fixed c089357c5 · LIVE 3.0.69 (E2E #3p: the 15k skill loaded ONCE in 12 turns; t_
+- Q-298 · an answered question stays 'Needs you' in five places — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): The ask_user questio · _fixed 91d2ee2ff · awaiting live prove_
+- Q-299 · 'Create and start' gives no warning that it stops the 27B on both Macs — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): New node → Name step · _fixed e5280eaf3 · awaiting live prove_
+- Q-300 · System theme paints light while macOS is dark — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): With System selected · _fixed b30db86de · awaiting live prove_
+- Q-301 · the transcript is blank for minutes while the split reads a long promp — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): A 40.5K-token prompt · _fixed b65a5d5a1 · awaiting live prove_
+- Q-302 · a model error shows as grey text with a raw URL and JSON and says retr — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Ran into this error · _fixed b65a5d5a1 1f2623544 8430f3cf9 493cde78c · awaiting live prove_
+- Q-303 · the node named after one Mac serves both — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Node · Mihai Macboo · _fixed 6053be34f + e5280eaf3 · awaiting live prove_
+- Q-304 · New node repeats Run it's 'Run stops…' notes in a dialog with no Run b — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): NewNodeDialog.tsx:69 · _fixed 6053be34f · awaiting live prove_
+- Q-305 · the planner note counts turns as chats and drops a unit — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Your chats are abou · _fixed 6053be34f · awaiting live prove_
+- Q-306 · New node's 'Does not fit' paints grey and a fit line reads backwards — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Does not fit: short · _fixed e5280eaf3 · awaiting live prove_
+- Q-307 · the chip says 'goose helper running' while the row says Reviewing, the — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): After a turn the chi · _fixed b65a5d5a1 · awaiting live prove_
+- Q-308 · one model, four spellings — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): Chip 'Qwen3.8-27B-At · _fixed 6053be34f + e5280eaf3 · awaiting live prove_
+- Q-309 · a duplicate node name is refused only after Create — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): Typing 'Mihai Macboo · _fixed e5280eaf3 · awaiting live prove_
+- Q-310 · Remove node says 'device' and not what chats use afterwards — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Your swarm pool kee · _fixed e5280eaf3 · awaiting live prove_
+- Q-311 · Strategy editor: 'Add a node' disabled with no reason, jargon, the che — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): StrategyEditor.tsx:4 · _fixed 6053be34f + e5280eaf3 · awaiting live prove_
+- Q-312 · Run it Details: a disabled Preflight with no reason, a switch with no  — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Preflight (dry run) · _fixed 15a66b237 · awaiting live prove_
+- Q-313 · the floating glance misses a window that covers goose but for a sliver — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): Windows App covered  · _fixed 5e4f47c10 · awaiting live prove_
+- Q-314 · tray: title 'Split · Idle' vs menu 'ready'; 'runs' vs 'prompts' — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): '⚪ Split · Idle' ove · _fixed a4b8afdfd · awaiting live prove_
+- Q-315 · 460 px: the needs-you pill covers the chat title, the files line cover — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'J[1 needs you]ssess · _fixed 4960d2cf4 · awaiting live prove_
+- Q-316 · tick markers: the first tick says 'back to back'/'every 5 min'; 24 h t — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Loop tick 1 · 06:45 · _fixed a9446b19b · awaiting live prove_
+- Q-317 · Nodes page pool header is a tautology; 'Pin a way' is jargon — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Your swarm pool · u · _fixed e5280eaf3 · awaiting live prove_
+- Q-318 · the window title never names the session or its state — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): 'Goose Swarm' throug · _fixed 4960d2cf4 · awaiting live prove_
+- Q-319 · the recommended answer repeats as the first 'Or pick' chip — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): NeedsYouCard.tsx:100 · _fixed f35f9ae5c · awaiting live prove_
+- Q-320 · dark theme: the blue tok/s figure on navy is low-contrast — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): '~11.5 tok/s writing · _fixed 4b2d60123 · awaiting live prove_
+- Q-321 · the sidebar stays collapsed after the window narrows and widens again — Live critic on 3.0.68 (/Users/mihaiperdum/goose-builds/quality/CRITIC-2026-09-28-3.0.68): Collapsed at 1000/46 · _fixed c06f06b29 · awaiting live prove_
+- Q-324 · the needs-you pill leaves the chat title ~21 px ('J…') at 460 px — Coordinator (batch B's 460 layout, 3.0.68): at a 460 px window the top-bar '1 needs you' pill is wide, and bat · _fixed 52f2b1573 · awaiting live prove_
+- Q-325 · the session title and three other controls show no keyboard focus ring — Found by the Q-315 fix: `focus-visible:ring-border-active` compiles to NOTHING in the Studio pipeline (missing · _fixed 12e734ec8 496942cda 223a16433 · awaiting live prove_
+- Q-337 · the prompt-read progress hides how much came from the prompt cache — Owner, 2026-09-28: a turn shows 'reading 97k' or '148k' and finishes quickly — the prefix cache supplied almos · _fixed 2e443333b · awaiting live prove_
+- Q-338 · the tensor split reports a warm read's position without its cached pre — Found building Q-337: mlx_lm 0.31.3's progress (processed, total) counts only the tokens past the restored pre · _fixed 9cdf7455c · awaiting live prove_
+- Q-340 · needs-you cards cannot be collapsed and swallow the chat — Owner, 3.0.69 screenshot 2026-09-28: two stacked 'Needs you' cards (1 of 2, 2 of 2) take the whole chat pane;  · _fixed 31cb7a8a3 + 8f8d26f16 (i18n 911278622) · awaiting live prove · on main 838_
+- Q-341 · a needs-you card cannot be answered while a prompt is being read — Owner: 'while prompt reading is happening I can't select a thing in there … we either need to allow users to g · _fixed 31cb7a8a3 (i18n 911278622) · awaiting live prove · on main 838b93b62_
+- Q-343 · 2,684 unfinished llm_request.<uuid>.jsonl files pile up in the log fol — ~/.local/state/goose/logs holds 2,684 llm_request.<uuid>.jsonl files back to 03:57 — calls that never complete · _fixed ccc804927 · awaiting live prove_
+- Q-344 · answering one of two open questions on its card closes the other as su — Found by the Q-340/341 fix, read in code: the card's answer goes to the model as a plain chat message (NeedsYo · _fixed d56c59d89 (schema 7c769cbce) · awaiting live prove · on main 838b93b62_
+- Q-346 · a mid-turn tools or hints refresh drops the project's instructions fro — Found by the Q-342 agent: reply_internal appends the project's instructions (load_project_instructions) to the · _fixed b52f65f60 · awaiting live prove_
+- Q-350 · while the split restores, engine activity says the single engine is of — Installed 3.0.70, 10:14:12Z after the install's relaunch: the Run it row for the split read 'Starting' (with S · _fixed 59851593e · awaiting live prove · LIVE-PROVEN 3.0.71 2026-09-28 (#3s start_
+- Q-357 · compaction revamp: visible, steerable, better — Owner, 2026-09-28 (screenshots: the context-meter menu 'Auto compact at 80% · Compact now'; the right rail's L · _fixed S1 eef1e427b · S2 a8d1405a6 · S3 a43fe8b6d · S4 575347513 · S5 447f9d5f2 ·_
+- Q-358 · goose searches other chats' transcripts and, on the person's direction — Owner: 'give it a tool or create a tool to allow for optimized searching within transcripts. Claude Code does  · _fixed search e60ec918d..60c5c6980 · notes fa7496bca c54a03aff 678996d43 · awaiti_
+- Q-359 · a chat on one node or several, adding nodes as it goes — Owner: 'choose in a chat if you want to use one or multiple nodes … have one running and then add more nodes i · _fixed C0 dda2e1dc2 · C1 becff1ebd · C4 e33b8cee3 · C2 158444ca5 · awaiting live _
+- Q-363 · chat history (recall's past session, chat search) — goose's own notes are stored as user-role TEXT — "[goose's record of an earlier tool call, condensed to save c · _fixed dad2588be · awaiting live prove_
+- Q-364 · Chat Search (chatrecall) default — `default_enabled: true` reaches only a config that has no `chatrecall` entry yet: the config migration (config · _fixed 45da6c06e · awaiting live prove_
+- Q-365 · a nodes_loader test failed ~2 in 6 runs: its stand-in process started  — found by the Q-359 lane while gating C4 · _fixed e33b8cee3 (in the C4 commit)_
+- Q-367 · the 27B calls tools that do not exist (websearch, fetch) 13 times befo — E2E #3r on 3.0.70, session 20260928_21 turn 2 (sessions.db 771224–771279): asked for Atlassian sources, the sp · _fixed b9fcf2f87 (+0fb34a4a7 test lint) · awaiting live prove_
+- Q-369 · load_tools tells the model an unknown name is "in your tool list" — E2E #3p on 3.0.69 (session 20260928_19, sessions.db 770729/770730): the 27B called extensionmanager__load_tool · _fixed b9fcf2f87 (+0fb34a4a7 test lint) · awaiting live prove_
+- Q-372 · a parameter value holding `</parameter>` is cut there on the split, an — found by Q-371's offline round-trip (venv copy of mlx_lm 0.31.3): `const close = "</parameter>";` in a `write` · _fixed d64583ca2 · awaiting live prove_
+- Q-376 · the E2E never answers a needs-you card, so the answered path is never  — Owner, 2026-09-28: 'you should also reply to any of those need you to ensure that the session works well when  · _fixed 741c8b7c5 · awaiting live prove_
+- Q-379 · a chat whose own node set was removed is told "the strategy 'chat-<sid — Q-359 lane report: loud and never Auto, but it names the internal strategy id instead of "this chat's nodes" · _fixed 26a7caeb9 · awaiting live prove_
+- Q-380 · the chip menu's failover switch and the chips' × are plain buttons ins — Q-359 lane report · _fixed 4342e97f4 · awaiting live prove_
+- Q-381 · a chat whose lead can't run with failover OFF ends with the refusal bu — Q-359 lane report; DESIGN-Q359-CHAT-NODES.md failure modes · _fixed 6374a5378 · awaiting live prove_
+- Q-382 · a delegate card says nothing while its node LOADS for it — the loader  — Q-359 lane report (design: "Loading 27B · Work's Mac Studio for this delegate: Loading weights") · _fixed 3e9a5f43a · awaiting live prove_
+- Q-383 · full vitest runs under load fail ONE timing test that passes alone: se — found by the Q-379..382 lane's gate · _fixed 2c53b26a3 + 96eff3f52 + 57ae7d7dc_
+- Q-388 · leanzero-documents `create-doc` ignores a relative `outputPath` and fi — E2E #3r turn 15 on 3.0.70 (session 20260928_21, sessions.db 771722/771723): outputPath 'report/readiness-asses · _fixed 3306c7635 · awaiting live prove_
+- Q-389 · read-doc cannot read ANY .xlsx: 'Failed to process document' — found proving Q-388: on the INSTALLED 3.0.70 copy (sandboxed HOME) create-excel wrote a workbook and read-doc  · _fixed 2c87d6913 · awaiting live prove_
+- Q-390 · every real-use E2E chat runs with its folder = $HOME, not the brief's  — sessions.db: 20260928_16..21 all have working_dir '/Users/mihaiperdum' while the brief's work is in ~/goose-bu · _fixed (this commit) · awaiting the next RU round · LIVE-PROVEN 3.0.71 2026-09-28_
+- Q-391 · transcript_index `the_backfill_resumes_from_its_watermark` races the b — batch-2 gate g072 (merge-072 b8c5fc59f): panicked at transcript_index.rs:1411 — `matching("mesh") == rows[1..] · _fixed 38d12913f_
+- Q-393 · the in-flight llm_request log hides a running request's answer: its li — #3r turn 18: hang-t18/llm_request.04861f67….jsonl (189,312 bytes, copied 17:17:59) = the request line with NO  · _fixed 57c35828e · awaiting live prove_
+- Q-397 · a turn ends in an error when the split holds new requests for memory — — #3r turn 18 (session 20260928_21, sessions.db 772243, 14:18:31): 'Ran into this error: … 503 … goose distribut · _fixed 1d97681d2 (needs a build carrying it on the Mac that STARTS the split — th_
+- Q-399 · a PEER's split holding for memory, reached through the LeanZero Link r — code read while fixing Q-397: the relay passes the engine's 503 body through unchanged (`leanzero-link` infere · _fixed 1249e0a6b (needs a build carrying it on the REQUESTING Mac — its goosed ru_
+- Q-400 · the swarm router reports queue_depth 55 on the split during one chat,  — #3r goose log 2026-09-28 14:10:31 'pick … free_slots 8, queued_ms 0, queue_depth 55' and at 14:18:31 about 8 r · _fixed f5b4a500c+d8cdff027 · awaiting live prove_
+- Q-401 · a memory-hold wait ended by anything that answers in words (the Link r — found fixing Q-399: `engine_hold::wait_for_admission` read the answer with `.json()` only; measured with the p · _fixed 1249e0a6b · not yet seen live_
+- Q-402 · the Link relay's capability URL (`/relay/<64 hex>`) enters goose's err — code read while fixing Q-399: `http_status::sanitize_url` keeps the path, so `http_failure_text` names `.../re · _fixed 3b8961213 · not yet seen live_
+- Q-403 · the split engine still reports the dropped reviewers as in flight seco — #3r goose log: 13:40:37 17 reviewers dropped by the user turn → 13:40:41.876 the agent's pick 'free_slots 0, q · _fixed 0afcaa45d · awaiting live prove_
+- Q-405 · Q-346's lib test `a_tools_refresh_changes_the_prompt_only_by_the_refre — CI run on e3b810895 (Linux): panicked at reply_parts.rs:1146, the printed prompt ends at '# Response Guideline · _fixed (this commit: the test takes env_lock with its own GOOSE_PATH_ROOT)_
+- Q-406 · the shell tool's timeout kills only bash: a `find` blocked by macOS pr — Q-394(b) investigation: in #3r (20260928_21, 772241/772242) `find ~ -maxdepth 3 … ¦ head` entered ~/Library/Mo · _fixed (this commit)_
+- Q-407 · a goosed that dies WITHOUT its teardown (crash, or the desktop's SIGKI — Q-406 moved goose serve's shell commands into process groups of their own; before, they sat in goosed's group, · _fixed (this commit) · awaiting live prove_
+- Q-409 · the desktop's engine monitor may show the Link relay's capability: it  — code read while fixing Q-402 (ui/desktop/src/utils/mlxEngineMonitor.ts read(): `route.peerName ?? base`; readR · _fixed 2fdb5d769 · awaiting live prove (before the fix, LIVE on 3.0.72 (2026-09-2_
+- Q-417 · engine activity names no model while the Studio single serves the 27B — 3.0.72, 18:10Z: mlxEngineActivity() → {engine: remote, mode: running, modelId: null, stats: {engineStatus: gen · _fixed 881e1cf34 · awaiting live prove_
+- Q-420 · main's CI went red 6 times in 2 h on three timing-sensitive integratio — Linux CI runs: acp_engine_hold_test `a_hold_is_waited_out_on_the_engines_admission_and_the_turn_completes` pan · _fixed 3298662dd + e8807438f + 059af17c9_
+- Q-421 · a note stored before the person's message could sort AFTER it — the mo — found reading Q-420's needs-you CI overflow (run 36456833216): on_prompt converts the prompt to a Message (cre · _fixed e8807438f_
+- Q-423 · a long answer turn on the Studio single over Link ends 'Ran into this  — 3.0.72, session 20260928_17 (an old E2E chat, ~176k tokens): after the needs-you answer (18:00:09Z) the turn p · _fixed 55c70bb4e (+ 4bf1092d4, 69162a1f5, eaed37406, 19dc91dd8) · awaiting live p_
+- Q-426 · the floating engine glance (PiP) cannot be dismissed: its X — and ever — Owner, 2026-09-28: 'the PiP element can still show if i press on X, actually if i press on any of its icons it · _fixed 89140d2d8 · awaiting live prove_
+- Q-428 · a strategy cannot say 'if this node's Mac is serving another way, use  — Owner: 'the strategy should have the option hopefully to avoid interrupting a node doing its thing'. Demo verd · _fixed 111443cbf + a3174fdab · awaiting live prove_
+- Q-429 · New node's 'A cloud model · 2 set up' counts local providers (oMLX, Go — NewNodeDialog.tsx:363-367 configured('cloud') does not exclude them (shots 02, 16) · _fixed c5287c168 · awaiting live prove_
+- Q-430 · a chat waiting on another chat's reply shows 'Waiting for the model’s  — chatServedBy.ts:991-993 shows it only when the node status reads 'waiting' (shot 41); cause not verified · _fixed 93c0be18b · awaiting live prove_
+- Q-431 · 'A message sent now shares the engine with that answer — it runs slowe — shot sd-B3-03 · _fixed 96fe63230 · awaiting live prove_
+- Q-432 · a chat's 4-second after-reply check takes the Mac back right after ano — 19:54:31 (shot 42): the waiting chat got its answer, then the other chat's end-of-turn check re-loaded the spl · _fixed 00e442205 · awaiting live prove_
+- Q-433 · the strategy editor's Build row says 'Used by swarm builds.' but Build — StrategyEditor.tsx:273 (every role but Chat) · _fixed 6d1622db6 · awaiting live prove_
+- Q-434 · the delegate card's loading line says 'for this chat' (design: 'for th — demo delegate cards · _fixed 8f0b27cba · awaiting live prove_
+- Q-435 · a brand-new chat that never ran is told '… was stopped for … Your next — shot 40 · _fixed fcc27b70f · awaiting live prove_
+- Q-436 · new rows in mlx-load-measurements have empty phasesMs (design asks sta — demo load records · _fixed 9ab70b851 · awaiting live prove_
+- Q-437 · the OpenRouter default model does not lead the New node model list alt — shot 18 (list starts at aion-labs) · _fixed a9080bd90 · awaiting live prove_
+- Q-438 · a new strategy keeps the id 'new-strategy' instead of following its na — config nodes.strategies · _fixed f34282431 · awaiting live prove_
+- Q-439 · a cloud node is named by the short model name ('deepseek-v4.1-flash')  — Nodes page · _fixed f1bcb626d · awaiting live prove_
+- Q-440 · 'New session here' from the Nodes page created a session without openi — demo · _fixed b2c9e62dd · awaiting live prove_
+- Q-441 · on a turn line that says '{mac} is serving {serving} for chat …' (Q-42 — ComposerReadiness.tsx FellBackBar retry → nodesEnsureServing(primaryId) (acp.rs: no session = takeOver) · _fixed 184e9ee9c · awaiting live prove_
+- Q-442 · a reply whose lease waits behind a switch queued before it opened (rou — nodes_loader.rs wait_behind_queued_switches (no set_activity); residency_of ignores activity on a serving node · _fixed 22be9fafd + 184e9ee9c · awaiting live prove_
+- Q-443 · Q-428's Wait on an IDLE chat ends only when that chat is closed or mov — acp/sessions.ts acpCloseSession callers; nodes_loader.rs serving_other (Ways::chat_open) · _fixed 22be9fafd + 184e9ee9c · awaiting live prove_
+- Q-447 · split decode ~2.7× slower since 3.0.71 when the prompt came from the c — E2E #3s/#3u + demo; ~/.local/share/goose/mlx-speed-measurements.jsonl (27B tensor, jaccl) · _fixed b49982c26 (rank_batch.py fills the empty row in the batch dtype; RANK_KV_D_
+- Q-449 · goose-sidecar test shutdown_releases_the_port_from_residue_of_its_own_ — CI run 36479348068 (a66c6ccf6, a NOW-only commit; the sibling run of the same sha passed) · _fixed 2b0473e56 (test drops zombies; shutdown waits for the exit it caused, per-_
+- Q-450 · a turn closed on "Re-running … now: 128 case-only duplicate groups" —  — E2E #3u turn 3, session 20260928_47 msgs 772484–772514 · _fixed 89b9d3c79 (claim_check: a no-tool reply announcing an action now; a count _
+- Q-455 · a chat's per-turn `<compaction>~Nk tokens remaining</compaction>` is r — E2E #3u turns 20–26, session 20260928_47; the request logs carry `<compaction>~0k tokens remaining</compaction · _fixed fc6043cb4 (chats read `context: N of M tokens used (P%)`, no countdown; pr_
 
-## 2. Cutting now
-| id | what | owner |
-|---|---|---|
-| Q-161 | tensor split: one answer of 221,604 tokens = 324 identical write+mkdir pairs | GPU investigation agent (worktree agent-abd19485320c16b61, sole GPU user) |
-| Q-164 | one /v1/completions request (IndexError in insert_segments) kills both split ranks | the same agent (same generation path, holds the repro) |
+## cutting / open / framed (43)
+- Q-30 · R5 switch races, run 1 — split→Studio refused while starting; Studio→this Mac mid-start: last click wins; →Studio: exactly one engine e · _pass_
+- Q-46 · Run it note · all — "runs on a linked Mac now: its 31.1 GiB there count as free for this model's other placements, because Run mov · _REOPENED — still wrong on 3.0.57 (critic round 2: jargon residue (#9)) · cutting_
+- Q-58 · tray menu · first-time — While reconnecting, the tray lists "Last read: timeout: no answer within 1500 ms" and "Error: …" raw · _REOPENED — still wrong on 3.0.57 (critic round 2: jargon residue (#9)) · cutting_
+- Q-93 · knowledge card · all — The fact is clamped mid-word ("…by exception only". Bi"), so Save stores the stump. "Why: grounded by a lookup · _REOPENED — still wrong on 3.0.57 (critic round 2: 2-day-old stump card (#7)) · c_
+- Q-100 · working line, Thinking · all — "goose is writing 1 tool call — 1 chars of arguments" (acp/server.rs:1993). "Thinking" rows are faded grey ita · _REOPENED — still wrong on 3.0.57 (critic round 2: faded goose-check line (#8)) ·_
+- Q-146 · split (tensor) · streaming — E2E #3d turn 0, 3.0.52 (Q-141's streamer IS in the running wrapper — decoded from the rank's argv, line 888):  · _framed — watcher reads the words when the call ends; instrument agent dispatched_
+- Q-148 · Run it · tray Stop · a live answer — 3.0.52 live round: while a 39-min split answer was being written, Run it's primary "Run on Work's Mac Studio · · _REOPENED — still wrong on 3.0.57 (critic round 2: Best at rest cannot hold the c_
+- Q-161 · split (tensor) · runaway answer — E2E #3e turn 0, 3.0.55 (sampling FIXED: /v1/status sampling_defaults temperature 1.0 / top_p 0.95 / top_k 20 f · _REOPENED — the ported guard does not hold the shape live (E2E #3f, 3.0.57) · cut_
+- Q-164 · split (tensor) · one request kills the pair — 08:23:23 while the Q-161 agent probed the live 27B split: a `POST /v1/completions` reached mlx_lm server.py:77 · _cutting (the Q-161 agent: same generation path, holds the repro)_
+- Q-181 · split (tensor) · cancel — After the chat's Stop (composer, 14:27) the split kept generating the cancelled request: /v1/status 'generatin · _cutting (agent)_
+- Q-196 · node strategies — Owner: virtual node DEFINITIONS (not physical Macs): single / distributed LeanZero MLX variants the engine rec · _framed_
+- Q-205 · planner/judge model choice — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D6: chosen by model-name heuristic ('27b','dense','cod · _framed_
+- Q-207 · CLI save of `swarm` — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D8: unknown fields in `swarm` are silently dropped by  · _framed_
+- Q-208 · engine status pollers — Lane D architect (DESIGN-NODES-AND-STRATEGIES.md §2.3): D9: five pollers of the same engine status · _framed_
+- Q-209 · leanzero.net contact endpoint · auto-receipt — Found by the Q-192 agent: a Goose Swarm problem report goes through leanzero.net's contact endpoint (Resend →  · _cutting_
+- Q-210 · leanzero.net contact endpoint · no rate limit — Found by the Q-192 agent: the public contact endpoint (now also the app's report path) has no rate limiting —  · _cutting_
+- Q-221 · skills · update/delete path check — Found by the Q-213 agent: resolve_discoverable_skill_dir accepts any folder named .agents/.goose/.claude/skill · _cutting_
+- Q-228 · session loops (software building) — Owner: loops are not only for Agent Work — 'in claude code we do have this capability of going over work on ti · _framed_
+- Q-261 · the 27B invents delegate results — Live J3: twice the 27B answered with a delegate's 'result' ('PING', 'ZEBRA-7') without calling the delegate to · _framed_
+- Q-263 · hooks — a chat's project hooks load from goosed's cwd, not the chat's folder · _PLAUSIBLE (read in code)_
+- Q-264 · memory — the memory extension reads goosed's cwd for the chat's folder · _PLAUSIBLE (read in code)_
+- Q-265 · Recipes view — project recipes are listed from goosed's cwd · _PLAUSIBLE (read in code)_
+- Q-266 · delegates · swarm provider — a provider created without a folder works in goosed's cwd · _PLAUSIBLE (read in code)_
+- Q-267 · extensions · skills — an extension enabled with no session starts in goosed's cwd · _PLAUSIBLE (read in code)_
+- Q-268 · close guard — a run watched only by a window already closed dies unasked with the last window · _PLAUSIBLE (read in code)_
+- Q-269 · Run it · split card — 'Running in another window' now means another goose process · _PLAUSIBLE (read in code)_
+- Q-270 · reload guard — a reload of a window running a session swarm build kills the build · _PLAUSIBLE (read in code)_
+- Q-282 · schedules — a scheduled recipe runs in goosed's cwd · _PLAUSIBLE (read in code)_
+- Q-283 · session import — an imported session with no recorded folder lands in goosed's cwd · _PLAUSIBLE (read in code)_
+- Q-284 · local inference — the tiny-model system prompt tells the model goosed's cwd as its working directory · _PLAUSIBLE (read in code)_
+- Q-281 · the 27B writes '[Tool result: …]' text before its tool calls — Live Q-232 session: before each tool call the split's reply carries visible text '[Tool result: ls -1 …]' / '[ · _framed_
+- Q-290 · benchmark Cancel / quit reap — a busy Mac's process table overflows the bench cancel's ps buffer, and Cancel stops nothing · _CONFIRMED (the same call measured ENOBUFS on this Mac; the cancel path itself no_
+- Q-334 · the upstream edition's keyboard ring is a near-white hairline — Found by the Q-325 fix (ui/desktop/src/theme/theme-tokens.ts:132/192): FOCUS and every `ring-ring` draw `--col · _open_
+- Q-335 · faded content and controls survive host-wide (opacity-30..90) — Found by the Q-325 sweep: the classes COMPILE, so the dead-utility guard cannot see them, and assertStudioClea · _open_
+- Q-336 · one shell command floods the context with a 73k-char dump — E2E #3p on 3.0.69 (session 20260928_19, sessions.db message 770536): the model ran a diagnostic that printed e · _framed_
+- Q-368 · the 27B re-states the same client-facts paragraph before tool calls, f — E2E #3r turn 2 (sessions.db 771223, 771248, 771268, 771276): 'On the client's production Jira setup: it's vers · _model behaviour — no goose cause found, no fix shipped (b9fcf2f87 is Q-367's)_
+- Q-373 · the split's XML guard forces a value closed at a content line that sta — measured offline (rank_xml_guard.py `XmlSkeletonGuard` + the 27B's tokenizer): after `<parameter=content>\n<co · _open_
+- Q-392 · after a compaction the chat's next reply never arrives: the engine ans — E2E #3r turn 18 on 3.0.70 (session 20260928_21): compaction 13:44→14:10:26 (159,636 prompt, 0 cached, 5,740 to · _head -10` (14:13:24) are uid 596's 90 tokens; the turn then ran that shell for i_
+- Q-394 · after a compaction the model lost the project's folder, searched the w — #3r turn 18 (session 20260928_21, working_dir /Users/mihaiperdum): the summary (772237, 20,538 chars) keeps on · _(a) fixed d8f7b6e76 + c35c17a33 · awaiting a compaction on the new build · (b) o_
+- Q-398 · a PIPELINE split's memory hold still ends the turn after 3 quick retri — code read while fixing Q-397: the fork's rank 0 (`rapid_mlx/distributed/pipeline_qwen4_serve.py` 496-511, pinn · _open_
+- Q-424 · fit rule / placement — the fit rule prices a single engine's context at the theoretical KV only (65,536 B/token for the 27B: 16 atten · _open_
+- Q-425 · engine fork (Rapid-MLX) — the fork's generic stream-error arm (helpers.py:4389) hides every exception class from the client, including M · _open_
+- Q-454 · leanzero-documents `create-doc` writes a markdown pipe table into the  — E2E #3u turn 15, session 20260928_47 msgs 772754/772755 → 772770-772774 · _Detail \_
 
-## 3. Open, ranked (dead end > misleads > stability > friction > cosmetic)
-| id | class | what | next step (where) |
-|---|---|---|---|
-| Q-14 | misleads | recall names chatrecall while it is disabled → 26 shell calls hunting a session | name it only when enabled (recall.rs:971-976) · engine |
-| Q-18 | misleads | the swarm session still defaults to 128000 until the router's first pick | read context_limit of a 3.0.56 chat in sessions.db; persist the probed window (providers/swarm.rs:623-627) · engine |
-| Q-146 | misleads | a streamed split answer can withhold text for 17+ min | read /v1/status stream.tail + withholding (56e1487ba, live since 3.0.55) on the next silent call, then fix from the words · engine (tensor wrapper) |
-| Q-37 | misleads | Link "did not come back:" prefix on every supervisor failure | show the supervisor's reason alone (LeanZeroLinkSection.tsx:392-398) · UI |
-| Q-103 | stability | a short request waits minutes behind a long prefill (single engine and tensor split) | carry Q-134's between-decode-steps admission to the single engine's MTP path; A/B the canary under R2 3×13k · engine (Rapid-MLX fork) |
-| Q-28 | friction | Run on this Mac refused while the split runs | stop the split first via the servingWays switch (PlacementCard.tsx:1456-1462, 1667-1671) · UI |
-| Q-38 | friction | the Reconnecting card never shows lastError | pass lastError to ConnectingCard (LeanZeroLinkSection.tsx:435-450, 762) · UI |
-| Q-20 | friction | Sampling opens on this Mac while the Studio serves | default to the route's peer (MlxEngineView.tsx:2431) · UI |
-| Q-22 | friction | "requests not from this app's chats or /v1" | "N requests from another app" (mlxTray.ts:456, MlxStateTile.tsx:173) · UI |
-| Q-26 | cosmetic | a writing engine's Run it chip is grey | pass live activity into wayServing (PlacementCard.tsx:794-826) · UI |
-| Q-24 | cosmetic | "recalled: memories … · past session <id>" jargon, faded | plain words in recall_line (recall.rs:879-896) + solid ink · engine words + UI |
-| Q-25 | cosmetic | "1 other split › not supported yet" outside Details | move under the split's Details (PlacementCard.tsx:1770-1795) · UI |
+## queued / scheduled (3)
+- Q-385 · the 27B blames the write tool for its own sampling slip and keeps sayi — #3r turn 3: one call sampled '() (((_s' where it meant '() => (((_s' (Q-371: proven by the ranks' token CRC tr · _SCHEDULED waits on: the split free after #3r — read ' =>' logprob at 771288's fi_
+- Q-427 · after Q-426: Settings › App still says 'Click it to open the Engine.'  — Q-426 lane report (engineGlanceDesktop.ts show path; EngineGlanceSettings intro) · _QUEUED behind: Q-426 landing (same files)_
+- Q-452 · goose-sidecar `engine::tests::status_reports_a_stray_listener_on_the_c — g074 (merge-074 d750166f1): engine.rs:3403 `assert_eq!(status.stray_listener_port, None)` after `drop(listener · _scheduled waits on: a second red (CI or gate) — then root-cause with the loop ha_
 
-Parked (evidence in the ledger): Q-11 (no panic in 115 min of R2), Q-90 (reviewer recall 33/40; the motivating pair 2/8, no design in hand), Q-19 update row (cache-size arms not needed).
+## parked (7)
+- Q-11 · Studio engine (remote single) — the text engine's mlx_lm BatchGenerator sets the wired limit to the full recommended working set (generate.py: · _parked: not reproduced in 115 min of R2 load (run 1 25 min, run 2 90 min / 164 r_
+- Q-90 · chat · consultant — "keeping technical support and security fixes … the whole way", then "the last stretch is read-only with no se · _parked: shipped 3.0.44 (b714e333c, 7b730bb49) raised recall 25/40 → 33/40, but t_
+- Q-19 · single engine cache size — Control arm measured: first 35,758-token call 226 s cold → next 25 s with 35,480 cached; one agent call fills  · _parked: the 22/24/36 GB arms are unmeasured and not needed — 0.35 of post-load f_
+- Q-199 · end-of-turn checks under back-to-back turns — E2E #3j (3.0.61): the fact checks of turns 0, 1 and 2 plus the memory reviewer all started at 18:03:01Z (llm_r · _parked (cost measured at seconds per boundary; a human reading the reply gives t_
+- Q-448 · the 27B invented a reason for a date conflict and wrote it into the cl — E2E #3u turn 1, session 20260928_47 msgs 772437–772448, work/notes/kickoff.md:3 · _parked: model behaviour → forge-tuner goose tool-call round addendum (Q-448 cont_
+- Q-451 · the 27B asserts facts about its own code, then retracts them within th — E2E #3u turns 5–6, session 20260928_47 msgs 772567, 772590→772596, 772600, 772609 · _parked: model behaviour → forge-tuner goose round addendum (verify each named re_
+- Q-453 · asked "What's the terminal command to see which processes use the most — E2E #3u turn 14, msg 772742; the raw stream llm_request.6.jsonl holds the same text; rank0 log 22:03–22:05Z ha · _parked: model behaviour → forge-tuner goose round addendum (answer the literal a_
