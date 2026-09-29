@@ -151,6 +151,20 @@ pub struct ReplyContext {
     pub model_config: goose_providers::model::ModelConfig,
 }
 
+/// Q-517: when a reply's steps before its first provider call ended, in ms since `reply` began —
+/// logged once per reply (target `perf`, debug), so a turn that starts late names the step it waited on.
+struct ReplyClock {
+    started: std::time::Instant,
+    stored_at_ms: u64,
+    compaction_checked_at_ms: u64,
+}
+
+impl ReplyClock {
+    fn at_ms(&self) -> u64 {
+        self.started.elapsed().as_millis() as u64
+    }
+}
+
 pub struct ToolCategorizeResult {
     pub frontend_requests: Vec<ToolRequest>,
     pub remaining_requests: Vec<ToolRequest>,
@@ -1808,6 +1822,7 @@ impl Agent {
         session_config: SessionConfig,
         cancel_token: Option<CancellationToken>,
     ) -> Result<BoxStream<'_, Result<AgentEvent>>> {
+        let reply_started = std::time::Instant::now();
         let session_manager = self.config.session_manager.clone();
 
         let message_text_for_trace = user_message.as_concat_text();
@@ -2002,6 +2017,7 @@ impl Agent {
             .conversation
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Session {} has no conversation", session_config.id))?;
+        let stored_at_ms = reply_started.elapsed().as_millis() as u64;
 
         let needs_auto_compact = check_if_compaction_needed(
             self.provider().await?.as_ref(),
@@ -2010,6 +2026,11 @@ impl Agent {
             &session,
         )
         .await?;
+        let clock = ReplyClock {
+            started: reply_started,
+            stored_at_ms,
+            compaction_checked_at_ms: reply_started.elapsed().as_millis() as u64,
+        };
 
         let conversation_to_compact = conversation.clone();
 
@@ -2047,7 +2068,7 @@ impl Agent {
                 }
             };
 
-            let mut reply_stream = self.reply_internal(final_conversation, session_config, session, cancel_token).await?;
+            let mut reply_stream = self.reply_internal(final_conversation, session_config, session, cancel_token, clock).await?;
             while let Some(event) = reply_stream.next().await {
                 yield event?;
             }
@@ -2060,8 +2081,10 @@ impl Agent {
         session_config: SessionConfig,
         session: Session,
         cancel_token: Option<CancellationToken>,
+        clock: ReplyClock,
     ) -> Result<BoxStream<'_, Result<AgentEvent>>> {
         let context = self.prepare_reply_context(&session, conversation).await?;
+        let context_ready_at_ms = clock.at_ms();
         let ReplyContext {
             mut conversation,
             mut tools,
@@ -2146,6 +2169,7 @@ impl Agent {
             // what the person saw when there was text. Recorded once the turn ends so every session
             // list can say FAILED.
             let mut turn_failure: Option<crate::turn_outcome::Failure> = None;
+            let mut first_call_timed = false;
 
             loop {
                 if is_token_cancelled(&cancel_token) {
@@ -2235,6 +2259,7 @@ impl Agent {
                 } else {
                     super::moim::ContextReport::Chat(last_call_usage)
                 };
+                let turn_context_started = std::time::Instant::now();
                 let conversation_with_moim = super::moim::inject_moim(
                     &session_config.id,
                     conversation.clone(),
@@ -2285,6 +2310,19 @@ impl Agent {
 
                 let (disclosed_tools, disclosed_prompt) =
                     self.disclose_tools(&tools, &system_prompt).await;
+                if !first_call_timed {
+                    first_call_timed = true;
+                    debug!(
+                        target: "perf",
+                        session_id = %session_config.id,
+                        stored_at_ms = clock.stored_at_ms,
+                        compaction_checked_at_ms = clock.compaction_checked_at_ms,
+                        context_ready_at_ms,
+                        turn_context_ms = turn_context_started.elapsed().as_millis() as u64,
+                        provider_call_at_ms = clock.at_ms(),
+                        "perf: reply steps before the first provider call (ms since reply start)"
+                    );
+                }
                 let provider_call_started_ms = chrono::Utc::now().timestamp_millis();
                 let mut stream = Self::stream_response_from_provider(
                     self.provider().await?,

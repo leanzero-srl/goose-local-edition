@@ -202,14 +202,32 @@ impl TokenCounter {
     }
 }
 
+/// Q-517: building o200k_base is CPU work (~50 ms release, ~400 ms debug on an M-series Mac), paid
+/// once per process by whoever counts first — measured as the first turn's compaction check. It runs on
+/// the blocking pool so it never stalls an async worker, and [`warm_tokenizer`] starts it with the
+/// server so a first chat finds it built.
 async fn get_tokenizer() -> Result<Arc<CoreBPE>, String> {
-    Ok(TOKENIZER
-        .get_or_init(|| async {
-            let bpe = tiktoken_rs::o200k_base().expect("Failed to initialize o200k_base tokenizer");
-            Arc::new(bpe)
+    TOKENIZER
+        .get_or_try_init(|| async {
+            tokio::task::spawn_blocking(|| {
+                Arc::new(
+                    tiktoken_rs::o200k_base().expect("Failed to initialize o200k_base tokenizer"),
+                )
+            })
+            .await
+            .map_err(|e| format!("the o200k_base tokenizer build did not finish: {e}"))
         })
         .await
-        .clone())
+        .cloned()
+}
+
+/// Builds the tokenizer in the background; a count that arrives first waits for this same build.
+pub fn warm_tokenizer() {
+    tokio::spawn(async {
+        if let Err(error) = get_tokenizer().await {
+            tracing::warn!(%error, "token counter: the tokenizer was not built ahead of the first count");
+        }
+    });
 }
 
 pub async fn create_token_counter() -> Result<TokenCounter, String> {
@@ -254,6 +272,16 @@ mod tests {
         let count = counter.count_tokens("First text");
         assert!(count > 0);
         assert_eq!(counter.cache_size(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_count_during_the_warm_up_waits_for_that_build() {
+        warm_tokenizer();
+        let (a, b) = tokio::join!(create_token_counter(), create_token_counter());
+        let (a, b) = (a.unwrap(), b.unwrap());
+        assert!(Arc::ptr_eq(&a.tokenizer, &b.tokenizer));
+        assert!(Arc::ptr_eq(&a.tokenizer, &get_tokenizer().await.unwrap()));
+        assert_eq!(a.count_tokens("hello world"), 2);
     }
 
     #[tokio::test]
