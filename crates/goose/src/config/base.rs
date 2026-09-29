@@ -59,6 +59,42 @@ pub enum ConfigError {
     LockError(String),
     #[error("Secret stored using file-based fallback")]
     FallbackToFileStorage,
+    #[error(
+        "{} could not be read ({reason}); it was left untouched and nothing was saved — fix or move the file, then retry",
+        path.display()
+    )]
+    Unparseable { path: PathBuf, reason: String },
+}
+
+/// A settings file that exists is the person's data. An empty document (blank, comments only,
+/// `---`, `~`) is an honestly empty mapping; anything else that is not a mapping is refused, so no
+/// read-modify-write can replace it with defaults.
+fn parse_settings_file(path: &Path, content: &str) -> Result<Mapping, ConfigError> {
+    let unparseable = |reason: String| ConfigError::Unparseable {
+        path: path.to_path_buf(),
+        reason,
+    };
+    match serde_yaml::from_str::<serde_yaml::Value>(content) {
+        Ok(serde_yaml::Value::Null) => Ok(Mapping::new()),
+        Ok(serde_yaml::Value::Mapping(mapping)) => Ok(mapping),
+        Ok(other) => Err(unparseable(format!(
+            "expected a mapping of keys, found {}",
+            yaml_kind(&other)
+        ))),
+        Err(e) => Err(unparseable(e.to_string())),
+    }
+}
+
+fn yaml_kind(value: &serde_yaml::Value) -> &'static str {
+    match value {
+        serde_yaml::Value::Null => "nothing",
+        serde_yaml::Value::Bool(_) => "a boolean",
+        serde_yaml::Value::Number(_) => "a number",
+        serde_yaml::Value::String(_) => "a string",
+        serde_yaml::Value::Sequence(_) => "a list",
+        serde_yaml::Value::Mapping(_) => "a mapping",
+        serde_yaml::Value::Tagged(_) => "a tagged value",
+    }
 }
 
 impl From<serde_json::Error> for ConfigError {
@@ -468,20 +504,14 @@ impl Config {
     }
 
     /// Load only the writable config file for read-modify-write operations.
-    /// Returns an empty mapping if the file doesn't exist or can't be parsed.
+    /// A missing file is an empty mapping; a file that does not parse is an error, because the
+    /// caller is about to save and would otherwise write emptiness over it (Q-465).
     fn load_write_config(&self) -> Result<Mapping, ConfigError> {
         if !self.write_path().exists() {
             return Ok(Mapping::new());
         }
         let content = std::fs::read_to_string(self.write_path())?;
-        let mut values = parse_yaml_content(&content).unwrap_or_else(|e| {
-            tracing::warn!(
-                "Config file {:?} is corrupt: {}. Starting fresh.",
-                self.write_path(),
-                e
-            );
-            Mapping::new()
-        });
+        let mut values = parse_settings_file(self.write_path(), &content)?;
 
         if crate::config::migrations::run_migrations(&mut values) {
             if let Err(e) = self.save_values(&values) {
@@ -501,14 +531,14 @@ impl Config {
             }
             match std::fs::read_to_string(path)
                 .map_err(ConfigError::from)
-                .and_then(|content| parse_yaml_content(&content))
+                .and_then(|content| parse_settings_file(path, &content))
             {
                 Ok(layer) => {
                     tracing::debug!("Loading config from: {:?}", path);
                     merge_config_values(&mut merged, layer);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to load config {:?}: {}. Skipping.", path, e);
+                    tracing::error!("Skipping config layer {:?} for reads: {}", path, e);
                 }
             }
         }
@@ -762,10 +792,15 @@ impl Config {
     {
         let _guard = self.guard.lock().unwrap();
         let mut values = self.load_write_config()?;
-        let current: T = values
-            .get(key)
-            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
-            .unwrap_or_default();
+        let current: T = match values.get(key) {
+            None | Some(serde_yaml::Value::Null) => T::default(),
+            Some(existing) => {
+                serde_yaml::from_value(existing.clone()).map_err(|e| ConfigError::Unparseable {
+                    path: self.write_path().clone(),
+                    reason: format!("the value of `{key}` does not have the expected shape: {e}"),
+                })?
+            }
+        };
         let updated = f(current);
         values.insert(serde_yaml::to_value(key)?, serde_yaml::to_value(updated)?);
         self.save_values(&values)
@@ -994,11 +1029,17 @@ impl Config {
     fn read_secrets_from_file(&self, path: &Path) -> Result<HashMap<String, Value>, ConfigError> {
         if path.exists() {
             let file_content = std::fs::read_to_string(path)?;
-            let yaml_value: serde_yaml::Value = serde_yaml::from_str(&file_content)?;
-            let json_value: Value = serde_json::to_value(yaml_value)?;
-            match json_value {
-                Value::Object(map) => Ok(map.into_iter().collect()),
-                _ => Ok(HashMap::new()),
+            let mapping = parse_settings_file(path, &file_content)?;
+            match serde_json::to_value(mapping) {
+                Ok(Value::Object(map)) => Ok(map.into_iter().collect()),
+                Ok(other) => Err(ConfigError::Unparseable {
+                    path: path.to_path_buf(),
+                    reason: format!("expected a mapping of keys, found {other}"),
+                }),
+                Err(e) => Err(ConfigError::Unparseable {
+                    path: path.to_path_buf(),
+                    reason: e.to_string(),
+                }),
             }
         } else {
             Ok(HashMap::new())
@@ -1634,15 +1675,162 @@ mod tests {
 
         std::fs::write(config_file.path(), "invalid: yaml: content: [unclosed")?;
 
-        // Reads skip corrupt files gracefully
         let values = config.all_values()?;
         assert!(values.is_empty() || !values.contains_key("key1"));
 
-        // A write starts fresh (corrupt content is discarded)
-        config.set_param("recovery_key", "value")?;
-        let reloaded = config.all_values()?;
-        assert!(reloaded.contains_key("recovery_key"));
+        Ok(())
+    }
 
+    // Q-465: a config file that exists but does not parse is the person's data, not an empty
+    // config. Every read-modify-write refuses, names the file and the parse error, and leaves the
+    // bytes exactly as they were.
+    #[test]
+    fn a_save_never_overwrites_an_unparseable_config() -> Result<(), ConfigError> {
+        let config_file = NamedTempFile::new().unwrap();
+        let secrets_file = NamedTempFile::new().unwrap();
+        let config = Config::new_with_file_secrets(config_file.path(), secrets_file.path())?;
+
+        let original = "GOOSE_PROVIDER: openai\nextensions: [unclosed\n";
+        std::fs::write(config_file.path(), original)?;
+
+        let writes: Vec<(&str, Result<(), ConfigError>)> = vec![
+            ("set_param", config.set_param("recovery_key", "value")),
+            (
+                "set_param_values",
+                config.set_param_values(&[("k".to_string(), Value::from("v"))]),
+            ),
+            ("delete", config.delete("GOOSE_PROVIDER")),
+            (
+                "update_param",
+                config.update_param::<Mapping, Mapping, _>("extensions", |m| m),
+            ),
+            ("set", config.set("k", &"v", false)),
+        ];
+        for (name, result) in writes {
+            let err = result
+                .err()
+                .unwrap_or_else(|| panic!("{name} accepted a save over an unparseable config"))
+                .to_string();
+            assert!(
+                err.contains(&config_file.path().display().to_string()),
+                "{name}: the error must name the file: {err}"
+            );
+            assert!(
+                err.contains("did not find expected"),
+                "{name}: the error must carry the parse error: {err}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(config_file.path())?,
+                original,
+                "{name} overwrote the unparseable config"
+            );
+        }
+        assert!(!config_file.path().with_extension("tmp").exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn a_config_that_is_not_a_mapping_is_never_overwritten() -> Result<(), ConfigError> {
+        let config_file = NamedTempFile::new().unwrap();
+        let secrets_file = NamedTempFile::new().unwrap();
+        let config = Config::new_with_file_secrets(config_file.path(), secrets_file.path())?;
+        let original = "- a\n- b\n";
+        std::fs::write(config_file.path(), original)?;
+
+        let err = config.set_param("k", "v").unwrap_err().to_string();
+        assert!(
+            err.contains(&config_file.path().display().to_string()),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_to_string(config_file.path())?, original);
+        Ok(())
+    }
+
+    #[test]
+    fn update_param_never_replaces_a_misshapen_value_with_the_default() -> Result<(), ConfigError> {
+        let config_file = NamedTempFile::new().unwrap();
+        let secrets_file = NamedTempFile::new().unwrap();
+        let config = Config::new_with_file_secrets(config_file.path(), secrets_file.path())?;
+        let original = "extensions:\n- developer\n- memory\n";
+        std::fs::write(config_file.path(), original)?;
+
+        let err = config
+            .update_param::<Mapping, Mapping, _>("extensions", |m| m)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("extensions"), "{err}");
+        let on_disk: Mapping = serde_yaml::from_str(&std::fs::read_to_string(config_file.path())?)?;
+        let original: Mapping = serde_yaml::from_str(original)?;
+        assert_eq!(
+            on_disk.get("extensions"),
+            original.get("extensions"),
+            "the person's extensions value must survive (a migration may still add other keys)"
+        );
+
+        std::fs::write(config_file.path(), "extensions:\n")?;
+        config.update_param::<Mapping, Mapping, _>("extensions", |mut m| {
+            m.insert("my-own-extension".into(), "on".into());
+            m
+        })?;
+        let extensions: Mapping = config.get_param("extensions")?;
+        assert_eq!(
+            extensions.get("my-own-extension"),
+            Some(&serde_yaml::Value::from("on"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_empty_or_comment_only_config_accepts_a_save() -> Result<(), ConfigError> {
+        for content in ["", "\n", "# nothing configured yet\n", "---\n", "~\n"] {
+            let config_file = NamedTempFile::new().unwrap();
+            let secrets_file = NamedTempFile::new().unwrap();
+            let config = Config::new_with_file_secrets(config_file.path(), secrets_file.path())?;
+            std::fs::write(config_file.path(), content)?;
+
+            config.set_param("new_key", "new_value")?;
+            let value: String = config.get_param("new_key")?;
+            assert_eq!(value, "new_value", "content {content:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_secret_save_never_overwrites_an_unparseable_secrets_file() -> Result<(), ConfigError> {
+        for original in [
+            "OPENAI_API_KEY: sk-1\nbroken: [unclosed\n",
+            "- not\n- a map\n",
+        ] {
+            let config_file = NamedTempFile::new().unwrap();
+            let secrets_file = NamedTempFile::new().unwrap();
+            let config = Config::new_with_file_secrets(config_file.path(), secrets_file.path())?;
+            std::fs::write(secrets_file.path(), original)?;
+
+            let err = config
+                .set_secret("ANTHROPIC_API_KEY", &"sk-2")
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(&secrets_file.path().display().to_string()),
+                "{original:?}: the error must name the file: {err}"
+            );
+            assert_eq!(std::fs::read_to_string(secrets_file.path())?, original);
+            assert!(config.delete_secret("OPENAI_API_KEY").is_err());
+            assert_eq!(std::fs::read_to_string(secrets_file.path())?, original);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_empty_secrets_file_accepts_a_save() -> Result<(), ConfigError> {
+        let config_file = NamedTempFile::new().unwrap();
+        let secrets_file = NamedTempFile::new().unwrap();
+        let config = Config::new_with_file_secrets(config_file.path(), secrets_file.path())?;
+
+        config.set_secret("ANTHROPIC_API_KEY", &"sk-2")?;
+        let value: String = config.get_secret("ANTHROPIC_API_KEY")?;
+        assert_eq!(value, "sk-2");
         Ok(())
     }
 
