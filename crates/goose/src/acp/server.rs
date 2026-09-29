@@ -3827,6 +3827,14 @@ impl GooseAcpAgent {
             .await
             .internal_err_ctx("Failed to remove in-memory agent")?;
 
+        if let Some(outcome) =
+            crate::agents::platform_extensions::developer::process_groups::stop_session_leftovers(
+                session_id,
+            )
+            .await
+        {
+            info!(session_id = %session_id, %outcome, "ACP session closed: stopped what its shell commands left running");
+        }
         info!(session_id = %session_id, "ACP session closed");
         Ok(CloseSessionResponse::new())
     }

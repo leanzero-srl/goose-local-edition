@@ -201,6 +201,20 @@ pub struct ShellOutput {
     /// Error reported by output collection after process exit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_collection_error: Option<String>,
+    /// Processes the command started that were still running after it ended (Q-520). They were
+    /// left running on purpose — a server started with `&` is meant to — and under goose serve are
+    /// stopped when the session is closed or deleted, or when goose serve shuts down.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub left_running: Vec<LeftRunning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LeftRunning {
+    pub pid: i32,
+    pub command: String,
+    pub cpu_percent: f32,
+    pub running_secs: u64,
 }
 
 /// Names the directory of goose's bundled runtime shims (node, npx, uvx, jbang). The desktop puts
@@ -519,6 +533,7 @@ impl ShellTool {
             still_running: execution.detached.is_some(),
             output_truncated: execution.output_truncated,
             output_collection_error: execution.output_collection_error.clone(),
+            left_running: execution.left_running.clone().unwrap_or_default(),
         };
         let structured_content = serde_json::to_value(&shell_output).ok();
         let render_result = match render_output(&interleaved, &format!("output-{slot}"), output_dir)
@@ -583,10 +598,22 @@ impl ShellTool {
             execution.exit_code.unwrap_or(1) != 0
         };
 
-        if execution.output_truncated {
-            rendered.push_str(
-                "\n\nOutput may be incomplete because stream draining timed out after process exit.",
-            );
+        match &execution.left_running {
+            Ok(left) if !left.is_empty() => {
+                rendered.push_str(&left_running_notice(left, execution.output_truncated))
+            }
+            outcome => {
+                if execution.output_truncated {
+                    rendered.push_str(
+                        "\n\nOutput may be incomplete because stream draining timed out after process exit.",
+                    );
+                }
+                if let Err(error) = outcome {
+                    rendered.push_str(&format!(
+                        "\n\nWhether this command left processes running could not be checked: {error}"
+                    ));
+                }
+            }
         }
         if let Some(error) = &execution.output_collection_error {
             rendered.push_str(&format!(
@@ -627,6 +654,7 @@ impl ShellTool {
             still_running: false,
             output_truncated: false,
             output_collection_error: None,
+            left_running: Vec::new(),
         };
         let mut result = CallToolResult::error(vec![Content::text(message).with_priority(0.0)]);
         result.structured_content = serde_json::to_value(&shell_output).ok();
@@ -646,6 +674,10 @@ struct ExecutionOutput {
     stall_cause: Option<String>,
     /// Processes of a terminated command still in its group after SIGKILL.
     survivors: Vec<i32>,
+    /// Q-520: processes of a command that ENDED still running in its own group, or why they could
+    /// not be listed. Empty for a timed-out command (see `survivors`) and for one in the
+    /// terminal's shared group, which has no group of its own to list.
+    left_running: Result<Vec<LeftRunning>, String>,
     /// II-7: set when the timeout expired on a REGISTERED own-group spawn and the process was
     /// detached instead of killed — the caller renders a measurement, never an error.
     detached: Option<DetachedShell>,
@@ -741,9 +773,9 @@ async fn run_command(
         .map_err(|error| format!("Failed to spawn shell command: {}", error))?;
 
     #[cfg(unix)]
-    let mut processes = child
-        .id()
-        .map(|pid| super::process_groups::CommandProcesses::spawned(pid as i32, own_group));
+    let mut processes = child.id().map(|pid| {
+        super::process_groups::CommandProcesses::spawned(pid as i32, own_group, session_id)
+    });
     #[cfg(unix)]
     let spawned_pgid = if own_group {
         let pgid = child.id().map(|p| p as i32);
@@ -819,6 +851,7 @@ async fn run_command(
                         output_collection_error: None,
                         stall_cause: None,
                         survivors: Vec::new(),
+                        left_running: Ok(Vec::new()),
                         detached: Some(DetachedShell {
                             pgid,
                             listening_ports,
@@ -907,6 +940,29 @@ async fn run_command(
         lines.push(item);
     }
 
+    // Read after the drain window, so a background job that was about to finish is not named.
+    #[cfg(unix)]
+    let left_running = match spawned_pgid {
+        Some(pgid) if !timed_out => {
+            super::process_groups::running_members(pgid)
+                .await
+                .map(|members| {
+                    members
+                        .into_iter()
+                        .map(|m| LeftRunning {
+                            pid: m.pid,
+                            command: m.command,
+                            cpu_percent: m.cpu_percent,
+                            running_secs: m.running_secs,
+                        })
+                        .collect()
+                })
+        }
+        _ => Ok(Vec::new()),
+    };
+    #[cfg(not(unix))]
+    let left_running = Ok(Vec::new());
+
     // A group with no survivors leaves the registry now; one whose daemonized grandchildren live
     // on STAYS registered — that entry is the leak-in-waiting the attempt-end reap exists to kill.
     #[cfg(unix)]
@@ -922,8 +978,66 @@ async fn run_command(
         output_collection_error,
         stall_cause,
         survivors,
+        left_running,
         detached: None,
     })
+}
+
+/// How many survivors are described line by line; the rest are still named by pid in the `kill`.
+const LEFT_RUNNING_LISTED: usize = 10;
+const LEFT_RUNNING_COMMAND_CHARS: usize = 200;
+
+/// Q-520: what an ended command left running, for the model — each process by pid and command, and
+/// the one command that stops them. Replaces "stream draining timed out" when they explain it.
+fn left_running_notice(left: &[LeftRunning], output_cut: bool) -> String {
+    let mut notice = String::from("\n\nStill running from this command after it ended:");
+    for process in left.iter().take(LEFT_RUNNING_LISTED) {
+        let mut command: String = process
+            .command
+            .chars()
+            .take(LEFT_RUNNING_COMMAND_CHARS)
+            .collect();
+        if command.len() < process.command.len() {
+            command.push('…');
+        }
+        notice.push_str(&format!(
+            "\npid {} `{command}` ({:.0}% CPU, running {})",
+            process.pid,
+            process.cpu_percent,
+            human_duration(process.running_secs)
+        ));
+    }
+    if left.len() > LEFT_RUNNING_LISTED {
+        notice.push_str(&format!(
+            "\n… and {} more",
+            left.len() - LEFT_RUNNING_LISTED
+        ));
+    }
+    let pids = left
+        .iter()
+        .map(|p| p.pid.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    notice.push_str(&format!(
+        "\nThey were NOT stopped. Stop them with `kill {pids}` if they are not meant to keep running."
+    ));
+    if output_cut {
+        notice.push_str(
+            "\nWhat they print from here on is not in this result: they still held the command's \
+             output when it ended, and nothing reads it any more. To see a background process's \
+             output, redirect it to a file (`… > out.log 2>&1 &`) and read the file.",
+        );
+    }
+    notice
+}
+
+fn human_duration(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3_600 => format!("{}m{:02}s", s / 60, s % 60),
+        s if s < 86_400 => format!("{}h{:02}m", s / 3_600, (s % 3_600) / 60),
+        s => format!("{}d{:02}h", s / 86_400, (s % 86_400) / 3_600),
+    }
 }
 
 fn build_shell_command(
@@ -1803,6 +1917,111 @@ mod tests {
             process_groups::take_lingering_with(pid).expect("its group must be recorded");
         let outcome = process_groups::terminate_ended_for_test(recorded).await;
         assert!(none_left(marker).await, "{outcome}");
+    }
+
+    /// Q-520: the model backgrounded a script with `&`, the command ended, and the result said only
+    /// "Output may be incomplete because stream draining timed out" while the script ran on at 99%
+    /// CPU; the model concluded it was gone and launched more. The result must name what is still
+    /// running — pid and command — and how to stop it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_command_that_leaves_a_process_running_names_it() {
+        use super::super::process_groups;
+        process_groups::enable();
+        let marker = "sleep 520001";
+        let _cleanup = PkillOnDrop(marker);
+        let tool = ShellTool::new_for_test().unwrap();
+        let result = tool
+            .shell_in_session(
+                ShellParams {
+                    command: format!("{marker} & echo started"),
+                    timeout_secs: None,
+                },
+                None,
+                Some("q520-named"),
+            )
+            .await;
+        let text = extract_text(&result).to_string();
+        let pid = String::from_utf8(
+            std::process::Command::new("pgrep")
+                .args(["-f", marker])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap_or_else(|| panic!("the backgrounded sleep must still run: {text}"))
+        .to_string();
+        assert_eq!(result.is_error, Some(false), "{text}");
+        assert!(text.contains("started"), "{text}");
+        assert!(
+            text.contains(&format!("pid {pid} `{marker}`")),
+            "the result must name the survivor: {text}"
+        );
+        assert!(text.contains(&format!("`kill {pid}`")), "{text}");
+        assert!(
+            !text.contains("stream draining timed out"),
+            "the survivor explains the cut-off output: {text}"
+        );
+        let value = result.structured_content.clone().unwrap();
+        assert_eq!(
+            value["left_running"][0]["pid"].as_i64(),
+            Some(pid.parse().unwrap()),
+            "{value}"
+        );
+        assert_eq!(value["left_running"][0]["command"], marker, "{value}");
+
+        let outcome = process_groups::stop_session_leftovers("q520-named")
+            .await
+            .expect("the session's leftover is recorded");
+        assert!(none_left(marker).await, "{outcome}");
+    }
+
+    /// A command whose background job finishes with it, or that starts none, names nothing.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_command_that_leaves_nothing_running_names_nothing() {
+        use super::super::process_groups;
+        process_groups::enable();
+        let tool = ShellTool::new_for_test().unwrap();
+        for command in ["echo done", "true & wait; echo done"] {
+            let result = tool
+                .shell_in_session(
+                    ShellParams {
+                        command: command.to_string(),
+                        timeout_secs: None,
+                    },
+                    None,
+                    Some("q520-nothing"),
+                )
+                .await;
+            let text = extract_text(&result).to_string();
+            assert_eq!(result.is_error, Some(false), "{text}");
+            assert!(!text.contains("Still running"), "{command}: {text}");
+            assert!(extract_shell_output(&result).left_running.is_empty());
+        }
+        assert!(process_groups::stop_session_leftovers("q520-nothing")
+            .await
+            .is_none());
+    }
+
+    #[test]
+    fn the_notice_names_each_survivor_and_the_kill() {
+        let left = vec![LeftRunning {
+            pid: 95770,
+            command: "python3 -X faulthandler tools/make_fake_logs.py".to_string(),
+            cpu_percent: 98.6,
+            running_secs: 123,
+        }];
+        let notice = left_running_notice(&left, true);
+        assert!(notice.contains(
+            "pid 95770 `python3 -X faulthandler tools/make_fake_logs.py` (99% CPU, running 2m03s)"
+        ));
+        assert!(notice.contains("`kill 95770`"), "{notice}");
+        assert!(notice.contains("redirect it to a file"), "{notice}");
+        assert!(!left_running_notice(&left, false).contains("redirect"));
     }
 
     /// A cancelled tool call drops the shell future; dropping it terminates the command instead
