@@ -25,7 +25,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
   - B1 Q-269 DONE → merged into /tmp/merge-075 (its backend half is not compiled yet; the 3.0.75 gate compiles it);
   - B2 Q-208 (five engine-status pollers → one; lower confidence);
   - B3 Q-334/335 (focus ring + faded opacity, host-wide visual);
-  - B7 Q-207 (swarm save drops unknown fields).
+  - B7 Q-207 (swarm save drops unknown fields);
+  - Q-456 (gooseServe.test.ts flakes on CI: args ['']).
 - Q-270/373/424/205 SCHEDULED on their measurements; Q-398/425 QUEUED behind fork access.
 
 ## 3.0.75 (next build) — on main now: Q-454 (docx tables), Q-455 (chat context line), the Linux lint fix
@@ -40,6 +41,6 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-456. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-457. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
