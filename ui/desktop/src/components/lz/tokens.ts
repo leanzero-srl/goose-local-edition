@@ -48,6 +48,23 @@ export const TONE_TEXT: Record<Tone, string> = {
   secondary: 'text-lz-secondary',
 };
 
+export type StatusTone = 'ok' | 'warn' | 'err' | 'accent';
+
+/**
+ * A CALLOUT — a box of prose that carries a status and may hold controls (a warning card with a
+ * Reset button, a provider error with a field under it). Q-457: these were colour-modifier washes
+ * (a yellow fill at 10%, a red-900 fill at 20% in dark) over a matching faded hairline. Now the box keeps its
+ * container's surface inside a SOLID border in the status hue and its words stay the page ink; the
+ * hue is also carried by the icon (TONE_TEXT), never by a tinted fill. A box whose whole content is
+ * ONE status line takes TONE_FILL instead.
+ */
+export const CALLOUT: Record<StatusTone, string> = {
+  ok: 'border border-lz-ok text-lz-ink',
+  warn: 'border border-lz-warn text-lz-ink',
+  err: 'border border-lz-err text-lz-ink',
+  accent: 'border border-lz-accent-line text-lz-ink',
+};
+
 /** The hue as a MARK with no text on it — dots, bars, progress. */
 export const TONE_DOT: Record<Tone, string> = {
   ok: 'bg-lz-ok',
@@ -254,3 +271,9 @@ export const TNUM = 'tnum';
 /** Disabled is a SOLID neutral (surface-2 fill, ink-3 text), never an opacity. */
 export const DISABLED =
   'disabled:pointer-events-none disabled:border-lz-border disabled:bg-lz-surface-2 disabled:text-lz-ink-3';
+
+/**
+ * DISABLED for an element disabled by a PROP rather than the `disabled` attribute (a react-select
+ * option, a click-to-edit div): the same solid fill and ink, applied unconditionally by the caller.
+ */
+export const DISABLED_NOW = 'cursor-not-allowed border-lz-border bg-lz-surface-2 text-lz-ink-3';

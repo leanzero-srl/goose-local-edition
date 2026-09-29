@@ -16,7 +16,7 @@ function GlowingRing() {
       className={`absolute pointer-events-none inset-0 rounded-[9px] origin-center 
                             bg-[linear-gradient(45deg,#13BBAF,#FF4F00)] 
                             animate-[rotate_6s_linear_infinite] z-[-1] 
-                            opacity-0 group-hover/card:opacity-40 transition-opacity duration-300`}
+                            opacity-0 group-hover/card:opacity-100 transition-opacity duration-300`}
     />
   );
 }

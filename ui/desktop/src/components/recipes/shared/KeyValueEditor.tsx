@@ -109,7 +109,7 @@ export default function KeyValueEditor({
                 onClick={() => handleRemove(key)}
                 variant="ghost"
                 size="sm"
-                className="p-1 hover:bg-background-danger/10 hover:text-text-danger"
+                className="p-1 hover:bg-lz-err-solid hover:text-white"
                 aria-label={intl.formatMessage(i18n.removeValue, { key })}
                 title={intl.formatMessage(i18n.removeValue, { key })}
               >

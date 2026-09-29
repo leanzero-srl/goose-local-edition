@@ -168,7 +168,7 @@ export default function EnvVarsSection({
                 className={cn(
                   'w-full border-border-primary',
                   envVar.value === '••••••••' && !envVar.isEdited
-                    ? 'text-text-secondary opacity-60 cursor-not-allowed hover:border-border-primary'
+                    ? 'text-text-secondary cursor-not-allowed hover:border-border-primary'
                     : 'text-text-primary hover:border-border-primary',
                   isFieldInvalid(index, 'value') && 'border-red-500 focus:border-red-500'
                 )}

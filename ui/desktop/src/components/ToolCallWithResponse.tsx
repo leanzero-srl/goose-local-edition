@@ -409,9 +409,9 @@ export default function ToolCallWithResponse({
         )}
         {/* Inline approval UI */}
         {showInlineApproval && (
-          <div className="border-t border-amber-500/30">
+          <div className="border-t border-lz-warn">
             {confirmationContent.prompt && (
-              <div className="px-4 py-2 text-sm text-amber-600 dark:text-amber-400 bg-amber-50/10">
+              <div className="px-4 py-2 text-sm font-medium bg-lz-warn-solid text-white">
                 {confirmationContent.prompt}
               </div>
             )}
@@ -912,7 +912,7 @@ function ToolCallView({
     <span
       className={cn(
         'flex items-center gap-2 min-w-0',
-        extensionTooltip && 'cursor-pointer hover:opacity-80'
+        extensionTooltip && 'cursor-pointer hover:text-text-primary'
       )}
     >
       <ToolIconWithStatus ToolIcon={getToolCallIcon(toolCall.name)} status={toolCallStatus} />
@@ -1197,7 +1197,7 @@ function SubagentLogEntry({ log }: { log: string }) {
       <span className="flex items-center gap-1.5">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
         <span className="font-medium text-text-secondary">{toolName}</span>
-        {extensionName && <span className="text-text-secondary opacity-60">· {extensionName}</span>}
+        {extensionName && <span className="text-text-secondary">· {extensionName}</span>}
       </span>
       {detailLines.length > 0 && (
         <pre className="ml-3 mt-0.5 text-xs text-text-secondary whitespace-pre-wrap">

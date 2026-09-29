@@ -412,7 +412,7 @@ export function RecipeFormFields({
 
       {/* Advanced Section - Collapsible */}
       <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="mt-6">
-        <CollapsibleTrigger className="flex items-baseline gap-2 w-full py-3 px-4 bg-background-secondary hover:bg-background-secondary/80 rounded-lg transition-colors border border-border-primary">
+        <CollapsibleTrigger className="flex items-baseline gap-2 w-full py-3 px-4 bg-background-secondary hover:bg-background-tertiary rounded-lg transition-colors border border-border-primary">
           <ChevronDown
             className={`w-4 h-4 text-text-secondary transition-transform duration-200 flex-shrink-0 relative top-0.5 ${
               advancedOpen ? 'rotate-0' : '-rotate-90'

@@ -260,7 +260,7 @@ describe('swarmReadiness — the distributed engine owns this Mac', () => {
   });
 });
 
-describe('swarmReadiness — another window’s goosed owns the distributed engine', () => {
+describe('swarmReadiness — another goose process owns the distributed engine', () => {
   it('its engine answering the node’s id is ready; not answering is its own state, never Mount', () => {
     expect(swarmReadiness(ready([MLX_NODE]), STOPPED, OTHER_WINDOW)).toEqual({ kind: 'ready' });
     expect(swarmReadiness(ready([MLX_NODE]), STOPPED, OTHER_WINDOW_LOADING)).toMatchObject({
@@ -1091,7 +1091,7 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
     expect(await screen.findByTestId('composer-readiness-mount')).toBeInTheDocument();
   });
 
-  it('another window’s run: named as owned there, read-only here, and its stop brings Mount back', async () => {
+  it('another goose’s run (Q-269): named as started there, read-only here, and its stop brings Mount back', async () => {
     const report = vi.fn();
     (window as unknown as { electron: unknown }).electron = { mlxDistributedReport: report };
     mockExtMethod.mockResolvedValue({ status: OTHER_WINDOW_LOADING });
@@ -1100,7 +1100,7 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
     wrap('swarm');
     const strip = await screen.findByTestId('composer-readiness');
     expect(strip.textContent).toContain(
-      'Split across 2 Macs · over Thunderbolt · Not answering · owned by another window — mihai-mlx'
+      'Split across 2 Macs · over Thunderbolt · Not answering · started by another goose — mihai-mlx'
     );
     expect(screen.getByTestId('composer-readiness-detail').textContent).toContain(
       'connection refused'

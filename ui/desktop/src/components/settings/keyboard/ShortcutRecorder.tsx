@@ -169,7 +169,7 @@ export function ShortcutRecorder({
               recording
                 ? 'bg-background-primary ring-1'
                 : conflict
-                  ? 'bg-background-secondary border-yellow-600/50'
+                  ? 'bg-background-primary border-lz-warn'
                   : 'bg-background-secondary border-border-primary cursor-pointer'
             }
             focus:outline-none focus:ring-1
@@ -189,9 +189,7 @@ export function ShortcutRecorder({
               {formatShortcut(capturedShortcut)}
             </span>
           ) : (
-            <span className="text-text-secondary">
-              {intl.formatMessage(i18n.clickToRecord)}
-            </span>
+            <span className="text-text-secondary">{intl.formatMessage(i18n.clickToRecord)}</span>
           )}
         </div>
         <Button

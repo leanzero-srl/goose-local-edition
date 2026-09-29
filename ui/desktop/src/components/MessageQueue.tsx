@@ -337,8 +337,8 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
         {/* Paused state indicator */}
         {isPaused && (
-          <div className="px-4 py-1.5 bg-amber-50/60 dark:bg-amber-900/20 border-b border-amber-200/30 dark:border-amber-800/30">
-            <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+          <div className={cx('px-4 py-1.5', TONE_FILL.warn)}>
+            <div className="flex items-center gap-2 text-xs font-medium">
               <Zap className="w-3 h-3" />
               <span>{intl.formatMessage(i18n.queuePausedCompact)}</span>
             </div>
@@ -412,8 +412,8 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
       {/* Status Banner for Paused State */}
       {isPaused && (
-        <div className="px-4 py-2 bg-amber-50/80 dark:bg-amber-900/20 border-b border-amber-200/50 dark:border-amber-800/50">
-          <div className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-200">
+        <div className={cx('px-4 py-2', TONE_FILL.warn)}>
+          <div className="flex items-center gap-2 text-sm font-medium">
             <Zap className="w-4 h-4" />
             <span>{intl.formatMessage(i18n.queuePausedExpanded)}</span>
           </div>
@@ -441,14 +441,16 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
               {/* Main message bubble */}
               <div
                 className={`relative flex items-center gap-3 rounded-xl px-4 py-3 border transition-all duration-300 ease-out ${
-                  draggedItem === message.id
-                    ? 'bg-background-info border-border-info opacity-60 scale-105 rotate-2'
-                    : dragOverItem === message.id
-                      ? 'bg-green-100/80 border-green-400 dark:bg-green-950/50 dark:border-green-600 scale-102'
-                      : hoveredMessage === message.id
-                        ? 'bg-background-secondary border-border-primary scale-101'
-                        : 'bg-background-secondary hover:bg-background-tertiary border-border-primary hover:border-border-primary'
-                } ${isSending ? 'opacity-60' : ''} backdrop-blur-sm`}
+                  isSending
+                    ? 'bg-background-secondary border-dashed border-border-info cursor-wait'
+                    : draggedItem === message.id
+                      ? 'bg-background-secondary border-lz-accent ring-2 ring-lz-accent scale-105 rotate-2'
+                      : dragOverItem === message.id
+                        ? 'bg-background-secondary border-green-600 ring-2 ring-green-600 scale-102'
+                        : hoveredMessage === message.id
+                          ? 'bg-background-secondary border-border-primary scale-101'
+                          : 'bg-background-secondary hover:bg-background-tertiary border-border-primary hover:border-border-primary'
+                } backdrop-blur-sm`}
               >
                 {/* Priority indicator */}
                 <div className="flex items-center gap-2">
@@ -465,8 +467,8 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                   {/* Drag handle */}
                   {onReorderMessages && !isSending && (
                     <div
-                      className={`opacity-0 group-hover:opacity-60 hover:opacity-100 transition-all duration-200 cursor-grab active:cursor-grabbing ${
-                        hoveredMessage === message.id ? 'opacity-40' : ''
+                      className={`opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-grab active:cursor-grabbing ${
+                        hoveredMessage === message.id ? 'opacity-100' : ''
                       }`}
                     >
                       <GripVertical className="w-4 h-4 text-text-secondary hover:text-text-primary" />
@@ -482,7 +484,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                         value={editContent}
                         onChange={(e) => setEditContent(e.target.value)}
                         disabled={isSending}
-                        className="w-full text-sm bg-background-primary border border-border-primary rounded-md px-2 py-1 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                        className="w-full text-sm bg-background-primary border border-border-primary rounded-md px-2 py-1 resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring"
                         rows={Math.min(Math.ceil(editContent.length / 60), 4)}
                         autoFocus
                       />
@@ -572,7 +574,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                       disabled={isEditing || isSending}
                       className={`h-7 w-7 p-0 rounded-full transition-all duration-200 ${
                         isEditing || isSending
-                          ? 'opacity-30 cursor-not-allowed'
+                          ? 'cursor-not-allowed'
                           : 'hover:bg-background-secondary'
                       }`}
                       title={
@@ -593,7 +595,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                     size="sm"
                     disabled={isSending}
                     onClick={() => onRemoveMessage(message.id)}
-                    className="opacity-60 hover:opacity-100 transition-opacity h-6 w-6 p-0 hover:bg-background-secondary hover:text-text-danger rounded-full"
+                    className="text-text-secondary transition-colors h-6 w-6 p-0 hover:bg-background-secondary hover:text-text-danger rounded-full"
                     title={intl.formatMessage(i18n.removeFromQueue)}
                   >
                     <X className="w-3 h-3" />
@@ -603,7 +605,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
               {/* Drop indicator with enhanced visuals */}
               {dragOverItem === message.id && draggedItem !== message.id && (
-                <div className="absolute inset-0 border-2 border-green-400 rounded-xl pointer-events-none animate-pulse bg-green-100/20 dark:bg-green-900/20" />
+                <div className="absolute inset-0 border-2 border-lz-ok rounded-xl pointer-events-none" />
               )}
 
               {/* Next up indicator */}
@@ -619,7 +621,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
       {/* Drag instructions */}
       {onReorderMessages && queuedMessages.length > 1 && (
-        <div className="px-4 pb-3 text-xs text-text-secondary flex items-center gap-2 opacity-60 hover:opacity-100 transition-opacity">
+        <div className="px-4 pb-3 text-xs text-text-secondary flex items-center gap-2">
           <GripVertical className="w-3 h-3" />
           <span>{intl.formatMessage(i18n.dragToReorder)}</span>
         </div>

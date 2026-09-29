@@ -26,14 +26,32 @@ import { useNavigation } from '../../hooks/useNavigation';
 import { SessionActivityMarker } from '../sessionActivity/ActivityPills';
 
 const i18n = defineMessages({
-  scheduleNotFound: { id: 'scheduleDetailView.scheduleNotFound', defaultMessage: 'Schedule Not Found' },
-  noScheduleId: { id: 'scheduleDetailView.noScheduleId', defaultMessage: 'No schedule ID provided. Return to schedules list.' },
+  scheduleNotFound: {
+    id: 'scheduleDetailView.scheduleNotFound',
+    defaultMessage: 'Schedule Not Found',
+  },
+  noScheduleId: {
+    id: 'scheduleDetailView.noScheduleId',
+    defaultMessage: 'No schedule ID provided. Return to schedules list.',
+  },
   scheduleDetails: { id: 'scheduleDetailView.scheduleDetails', defaultMessage: 'Schedule Details' },
-  viewingScheduleId: { id: 'scheduleDetailView.viewingScheduleId', defaultMessage: 'Viewing Schedule ID: {id}' },
-  scheduleInformation: { id: 'scheduleDetailView.scheduleInformation', defaultMessage: 'Schedule Information' },
-  loadingSchedule: { id: 'scheduleDetailView.loadingSchedule', defaultMessage: 'Loading schedule...' },
+  viewingScheduleId: {
+    id: 'scheduleDetailView.viewingScheduleId',
+    defaultMessage: 'Viewing Schedule ID: {id}',
+  },
+  scheduleInformation: {
+    id: 'scheduleDetailView.scheduleInformation',
+    defaultMessage: 'Schedule Information',
+  },
+  loadingSchedule: {
+    id: 'scheduleDetailView.loadingSchedule',
+    defaultMessage: 'Loading schedule...',
+  },
   errorPrefix: { id: 'scheduleDetailView.errorPrefix', defaultMessage: 'Error: {error}' },
-  currentlyRunning: { id: 'scheduleDetailView.currentlyRunning', defaultMessage: 'Currently Running' },
+  currentlyRunning: {
+    id: 'scheduleDetailView.currentlyRunning',
+    defaultMessage: 'Currently Running',
+  },
   paused: { id: 'scheduleDetailView.paused', defaultMessage: 'Paused' },
   scheduleLabel: { id: 'scheduleDetailView.scheduleLabel', defaultMessage: 'Schedule:' },
   cronExpression: { id: 'scheduleDetailView.cronExpression', defaultMessage: 'Cron Expression:' },
@@ -51,37 +69,83 @@ const i18n = defineMessages({
   editSchedule: { id: 'scheduleDetailView.editSchedule', defaultMessage: 'Edit Schedule' },
   unpauseSchedule: { id: 'scheduleDetailView.unpauseSchedule', defaultMessage: 'Unpause Schedule' },
   pauseSchedule: { id: 'scheduleDetailView.pauseSchedule', defaultMessage: 'Pause Schedule' },
-  inspectRunningJob: { id: 'scheduleDetailView.inspectRunningJob', defaultMessage: 'Inspect Running Job' },
+  inspectRunningJob: {
+    id: 'scheduleDetailView.inspectRunningJob',
+    defaultMessage: 'Inspect Running Job',
+  },
   killRunningJob: { id: 'scheduleDetailView.killRunningJob', defaultMessage: 'Kill Running Job' },
-  cannotModifyRunning: { id: 'scheduleDetailView.cannotModifyRunning', defaultMessage: 'Cannot trigger or modify a schedule while it\'s already running.' },
-  pausedWarning: { id: 'scheduleDetailView.pausedWarning', defaultMessage: 'This schedule is paused and will not run automatically. Use "Run Schedule Now" to trigger it manually or unpause to resume automatic execution.' },
+  cannotModifyRunning: {
+    id: 'scheduleDetailView.cannotModifyRunning',
+    defaultMessage: "Cannot trigger or modify a schedule while it's already running.",
+  },
+  pausedWarning: {
+    id: 'scheduleDetailView.pausedWarning',
+    defaultMessage:
+      'This schedule is paused and will not run automatically. Use "Run Schedule Now" to trigger it manually or unpause to resume automatic execution.',
+  },
   recentSessions: { id: 'scheduleDetailView.recentSessions', defaultMessage: 'Recent Sessions' },
-  loadingSessions: { id: 'scheduleDetailView.loadingSessions', defaultMessage: 'Loading sessions...' },
-  noSessions: { id: 'scheduleDetailView.noSessions', defaultMessage: 'No sessions found for this schedule.' },
+  loadingSessions: {
+    id: 'scheduleDetailView.loadingSessions',
+    defaultMessage: 'Loading sessions...',
+  },
+  noSessions: {
+    id: 'scheduleDetailView.noSessions',
+    defaultMessage: 'No sessions found for this schedule.',
+  },
   sessionId: { id: 'scheduleDetailView.sessionId', defaultMessage: 'Session ID: {id}' },
   created: { id: 'scheduleDetailView.created', defaultMessage: 'Created: {date}' },
   messages: { id: 'scheduleDetailView.messages', defaultMessage: 'Messages: {count}' },
   dir: { id: 'scheduleDetailView.dir', defaultMessage: 'Dir: {path}' },
   idLabel: { id: 'scheduleDetailView.idLabel', defaultMessage: 'ID:' },
   jobCancelled: { id: 'scheduleDetailView.jobCancelled', defaultMessage: 'Job Cancelled' },
-  jobCancelledMsg: { id: 'scheduleDetailView.jobCancelledMsg', defaultMessage: 'The job was cancelled while starting up.' },
-  scheduleCompleted: { id: 'scheduleDetailView.scheduleCompleted', defaultMessage: 'Run completed' },
-  completedSession: { id: 'scheduleDetailView.completedSession', defaultMessage: 'Session: {sessionId}' },
-  runScheduleError: { id: 'scheduleDetailView.runScheduleError', defaultMessage: 'Run Schedule Error' },
-  scheduleUnpaused: { id: 'scheduleDetailView.scheduleUnpaused', defaultMessage: 'Schedule Unpaused' },
+  jobCancelledMsg: {
+    id: 'scheduleDetailView.jobCancelledMsg',
+    defaultMessage: 'The job was cancelled while starting up.',
+  },
+  scheduleCompleted: {
+    id: 'scheduleDetailView.scheduleCompleted',
+    defaultMessage: 'Run completed',
+  },
+  completedSession: {
+    id: 'scheduleDetailView.completedSession',
+    defaultMessage: 'Session: {sessionId}',
+  },
+  runScheduleError: {
+    id: 'scheduleDetailView.runScheduleError',
+    defaultMessage: 'Run Schedule Error',
+  },
+  scheduleUnpaused: {
+    id: 'scheduleDetailView.scheduleUnpaused',
+    defaultMessage: 'Schedule Unpaused',
+  },
   unpausedMsg: { id: 'scheduleDetailView.unpausedMsg', defaultMessage: 'Unpaused "{id}"' },
   schedulePaused: { id: 'scheduleDetailView.schedulePaused', defaultMessage: 'Schedule Paused' },
   pausedMsg: { id: 'scheduleDetailView.pausedMsg', defaultMessage: 'Paused "{id}"' },
-  pauseUnpauseError: { id: 'scheduleDetailView.pauseUnpauseError', defaultMessage: 'Pause/Unpause Error' },
+  pauseUnpauseError: {
+    id: 'scheduleDetailView.pauseUnpauseError',
+    defaultMessage: 'Pause/Unpause Error',
+  },
   jobKilled: { id: 'scheduleDetailView.jobKilled', defaultMessage: 'Job Killed' },
   killJobError: { id: 'scheduleDetailView.killJobError', defaultMessage: 'Kill Job Error' },
   jobInspection: { id: 'scheduleDetailView.jobInspection', defaultMessage: 'Job Inspection' },
-  inspectNoInfo: { id: 'scheduleDetailView.inspectNoInfo', defaultMessage: 'No detailed information available' },
-  inspectJobError: { id: 'scheduleDetailView.inspectJobError', defaultMessage: 'Inspect Job Error' },
+  inspectNoInfo: {
+    id: 'scheduleDetailView.inspectNoInfo',
+    defaultMessage: 'No detailed information available',
+  },
+  inspectJobError: {
+    id: 'scheduleDetailView.inspectJobError',
+    defaultMessage: 'Inspect Job Error',
+  },
   scheduleUpdated: { id: 'scheduleDetailView.scheduleUpdated', defaultMessage: 'Schedule Updated' },
   updatedMsg: { id: 'scheduleDetailView.updatedMsg', defaultMessage: 'Updated "{id}"' },
-  updateScheduleError: { id: 'scheduleDetailView.updateScheduleError', defaultMessage: 'Update Schedule Error' },
-  scheduleNotFoundError: { id: 'scheduleDetailView.scheduleNotFoundError', defaultMessage: 'Schedule not found' },
+  updateScheduleError: {
+    id: 'scheduleDetailView.updateScheduleError',
+    defaultMessage: 'Update Schedule Error',
+  },
+  scheduleNotFoundError: {
+    id: 'scheduleDetailView.scheduleNotFoundError',
+    defaultMessage: 'Schedule not found',
+  },
 });
 
 interface ScheduleDetailViewProps {
@@ -131,23 +195,26 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
     }
   };
 
-  const fetchSchedule = useCallback(async (sId: string) => {
-    setIsLoadingSchedule(true);
-    setScheduleError(null);
-    try {
-      const allSchedules = await acpListSchedules();
-      const schedule = allSchedules.find((s) => s.id === sId);
-      if (schedule) {
-        setScheduleDetails(schedule);
-      } else {
-        setScheduleError(intl.formatMessage(i18n.scheduleNotFoundError));
+  const fetchSchedule = useCallback(
+    async (sId: string) => {
+      setIsLoadingSchedule(true);
+      setScheduleError(null);
+      try {
+        const allSchedules = await acpListSchedules();
+        const schedule = allSchedules.find((s) => s.id === sId);
+        if (schedule) {
+          setScheduleDetails(schedule);
+        } else {
+          setScheduleError(intl.formatMessage(i18n.scheduleNotFoundError));
+        }
+      } catch (err) {
+        setScheduleError(errorMessage(err, 'Failed to fetch schedule'));
+      } finally {
+        setIsLoadingSchedule(false);
       }
-    } catch (err) {
-      setScheduleError(errorMessage(err, 'Failed to fetch schedule'));
-    } finally {
-      setIsLoadingSchedule(false);
-    }
-  }, [intl]);
+    },
+    [intl]
+  );
 
   useEffect(() => {
     if (scheduleId) {
@@ -156,12 +223,15 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
     }
   }, [scheduleId, fetchSchedule]);
 
-  const openSession = useCallback((sessionId: string) => {
-    setView('pair', {
-      disableAnimation: true,
-      resumeSessionId: sessionId,
-    });
-  }, [setView]);
+  const openSession = useCallback(
+    (sessionId: string) => {
+      setView('pair', {
+        disableAnimation: true,
+        resumeSessionId: sessionId,
+      });
+    },
+    [setView]
+  );
 
   const handleRunNow = async () => {
     if (!scheduleId) return;
@@ -170,7 +240,10 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
       const result = await acpRunScheduleNow(scheduleId);
       trackScheduleRunNow(true);
       if (result.status === 'completed' && result.sessionId) {
-        toastSuccess({ title: intl.formatMessage(i18n.scheduleCompleted), msg: intl.formatMessage(i18n.completedSession, { sessionId: result.sessionId }) });
+        toastSuccess({
+          title: intl.formatMessage(i18n.scheduleCompleted),
+          msg: intl.formatMessage(i18n.completedSession, { sessionId: result.sessionId }),
+        });
       }
       await fetchSessions(scheduleId);
       await fetchSchedule(scheduleId);
@@ -192,10 +265,16 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
     try {
       if (scheduleDetails.paused) {
         await acpUnpauseSchedule(scheduleId);
-        toastSuccess({ title: intl.formatMessage(i18n.scheduleUnpaused), msg: intl.formatMessage(i18n.unpausedMsg, { id: scheduleId }) });
+        toastSuccess({
+          title: intl.formatMessage(i18n.scheduleUnpaused),
+          msg: intl.formatMessage(i18n.unpausedMsg, { id: scheduleId }),
+        });
       } else {
         await acpPauseSchedule(scheduleId);
-        toastSuccess({ title: intl.formatMessage(i18n.schedulePaused), msg: intl.formatMessage(i18n.pausedMsg, { id: scheduleId }) });
+        toastSuccess({
+          title: intl.formatMessage(i18n.schedulePaused),
+          msg: intl.formatMessage(i18n.pausedMsg, { id: scheduleId }),
+        });
       }
       await fetchSchedule(scheduleId);
     } catch (err) {
@@ -241,7 +320,10 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
           msg: `Session: ${result.sessionId}\nRunning for: ${duration}`,
         });
       } else {
-        toastSuccess({ title: intl.formatMessage(i18n.jobInspection), msg: intl.formatMessage(i18n.inspectNoInfo) });
+        toastSuccess({
+          title: intl.formatMessage(i18n.jobInspection),
+          msg: intl.formatMessage(i18n.inspectNoInfo),
+        });
       }
     } catch (err) {
       const errorMsg = errorMessage(err, 'Failed to inspect job');
@@ -264,7 +346,10 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
         edit.cron,
         edit.workingDir !== scheduleDetails?.workingDir ? edit.workingDir : undefined
       );
-      toastSuccess({ title: intl.formatMessage(i18n.scheduleUpdated), msg: intl.formatMessage(i18n.updatedMsg, { id: scheduleId }) });
+      toastSuccess({
+        title: intl.formatMessage(i18n.scheduleUpdated),
+        msg: intl.formatMessage(i18n.updatedMsg, { id: scheduleId }),
+      });
       await fetchSchedule(scheduleId);
       setIsModalOpen(false);
     } catch (err) {
@@ -282,10 +367,10 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-gray-900 text-text-primary p-8">
         <BackButton onClick={onNavigateBack} />
-        <h1 className="text-2xl font-medium text-text-primary mt-4">{intl.formatMessage(i18n.scheduleNotFound)}</h1>
-        <p className="text-text-secondary mt-2">
-          {intl.formatMessage(i18n.noScheduleId)}
-        </p>
+        <h1 className="text-2xl font-medium text-text-primary mt-4">
+          {intl.formatMessage(i18n.scheduleNotFound)}
+        </h1>
+        <p className="text-text-secondary mt-2">{intl.formatMessage(i18n.noScheduleId)}</p>
       </div>
     );
   }
@@ -304,17 +389,24 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
     <div className="h-screen w-full flex flex-col bg-background-primary text-text-primary">
       <div className="px-8 pt-6 pb-4 border-b border-border-primary flex-shrink-0">
         <BackButton onClick={onNavigateBack} />
-        <h1 className="text-4xl font-light mt-1 mb-1 pt-8">{intl.formatMessage(i18n.scheduleDetails)}</h1>
-        <p className="text-sm text-text-secondary mb-1">{intl.formatMessage(i18n.viewingScheduleId, { id: scheduleId })}</p>
+        <h1 className="text-4xl font-light mt-1 mb-1 pt-8">
+          {intl.formatMessage(i18n.scheduleDetails)}
+        </h1>
+        <p className="text-sm text-text-secondary mb-1">
+          {intl.formatMessage(i18n.viewingScheduleId, { id: scheduleId })}
+        </p>
       </div>
 
       <ScrollArea className="flex-grow">
         <div className="p-8 space-y-6">
           <section>
-            <h2 className="text-xl font-semibold text-text-primary mb-3">{intl.formatMessage(i18n.scheduleInformation)}</h2>
+            <h2 className="text-xl font-semibold text-text-primary mb-3">
+              {intl.formatMessage(i18n.scheduleInformation)}
+            </h2>
             {isLoadingSchedule && (
               <div className="flex items-center text-text-secondary">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {intl.formatMessage(i18n.loadingSchedule)}
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />{' '}
+                {intl.formatMessage(i18n.loadingSchedule)}
               </div>
             )}
             {scheduleError && (
@@ -345,13 +437,16 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                     </div>
                   </div>
                   <p className="text-sm text-text-primary">
-                    <span className="font-semibold">{intl.formatMessage(i18n.scheduleLabel)}</span> {readableCron}
+                    <span className="font-semibold">{intl.formatMessage(i18n.scheduleLabel)}</span>{' '}
+                    {readableCron}
                   </p>
                   <p className="text-sm text-text-primary">
-                    <span className="font-semibold">{intl.formatMessage(i18n.cronExpression)}</span> {scheduleDetails.cron}
+                    <span className="font-semibold">{intl.formatMessage(i18n.cronExpression)}</span>{' '}
+                    {scheduleDetails.cron}
                   </p>
                   <p className="text-sm text-text-primary">
-                    <span className="font-semibold">{intl.formatMessage(i18n.recipeSource)}</span> {scheduleDetails.source}
+                    <span className="font-semibold">{intl.formatMessage(i18n.recipeSource)}</span>{' '}
+                    {scheduleDetails.source}
                   </p>
                   <p className="text-sm text-text-primary">
                     <span className="font-semibold">{intl.formatMessage(i18n.folder)}</span>{' '}
@@ -367,13 +462,17 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   </p>
                   {scheduleDetails.currentlyRunning && scheduleDetails.currentSessionId && (
                     <p className="text-sm text-text-primary">
-                      <span className="font-semibold">{intl.formatMessage(i18n.currentSession)}</span>{' '}
+                      <span className="font-semibold">
+                        {intl.formatMessage(i18n.currentSession)}
+                      </span>{' '}
                       {scheduleDetails.currentSessionId}
                     </p>
                   )}
                   {scheduleDetails.currentlyRunning && scheduleDetails.jobStartTime && (
                     <p className="text-sm text-text-primary">
-                      <span className="font-semibold">{intl.formatMessage(i18n.processStarted)}</span>{' '}
+                      <span className="font-semibold">
+                        {intl.formatMessage(i18n.processStarted)}
+                      </span>{' '}
                       {formatToLocalDateWithTimezone(scheduleDetails.jobStartTime)}
                     </p>
                   )}
@@ -383,7 +482,9 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-text-primary mb-3">{intl.formatMessage(i18n.actions)}</h2>
+            <h2 className="text-xl font-semibold text-text-primary mb-3">
+              {intl.formatMessage(i18n.actions)}
+            </h2>
             <div className="flex flex-col md:flex-row gap-2">
               <Button
                 onClick={handleRunNow}
@@ -398,7 +499,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   <Button
                     onClick={() => setIsModalOpen(true)}
                     variant="outline"
-                    className="w-full md:w-auto flex items-center gap-2 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                    className="w-full md:w-auto flex items-center gap-2 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-lz-accent hover:text-lz-accent-ink"
                     disabled={isActionLoading}
                   >
                     <Edit className="w-4 h-4" />
@@ -409,8 +510,8 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                     variant="outline"
                     className={`w-full md:w-auto flex items-center gap-2 ${
                       scheduleDetails.paused
-                        ? 'text-green-600 dark:text-green-400 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/20'
-                        : 'text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/20'
+                        ? 'text-green-600 dark:text-green-400 border-green-300 dark:border-green-600 hover:bg-lz-ok-solid hover:text-white'
+                        : 'text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-600 hover:bg-lz-warn-solid hover:text-white'
                     }`}
                     disabled={isActionLoading}
                   >
@@ -434,7 +535,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   <Button
                     onClick={handleInspect}
                     variant="outline"
-                    className="w-full md:w-auto flex items-center gap-2 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                    className="w-full md:w-auto flex items-center gap-2 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-lz-accent hover:text-lz-accent-ink"
                     disabled={isActionLoading}
                   >
                     <Eye className="w-4 h-4" />
@@ -443,7 +544,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   <Button
                     onClick={handleKill}
                     variant="outline"
-                    className="w-full md:w-auto flex items-center gap-2 text-red-600 dark:text-red-400 border-red-300 dark:border-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    className="w-full md:w-auto flex items-center gap-2 text-red-600 dark:text-red-400 border-red-300 dark:border-red-600 hover:bg-lz-err-solid hover:text-white"
                     disabled={isActionLoading}
                   >
                     <Square className="w-4 h-4" />
@@ -467,8 +568,12 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-text-primary mb-4">{intl.formatMessage(i18n.recentSessions)}</h2>
-            {isLoadingSessions && <p className="text-text-secondary">{intl.formatMessage(i18n.loadingSessions)}</p>}
+            <h2 className="text-xl font-semibold text-text-primary mb-4">
+              {intl.formatMessage(i18n.recentSessions)}
+            </h2>
+            {isLoadingSessions && (
+              <p className="text-text-secondary">{intl.formatMessage(i18n.loadingSessions)}</p>
+            )}
             {sessionsError && (
               <p className="text-text-danger text-sm p-3 bg-background-danger border border-border-danger rounded-md">
                 {intl.formatMessage(i18n.errorPrefix, { error: sessionsError })}
@@ -502,7 +607,9 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                       </h3>
                       <SessionActivityMarker sessionId={sessionId} className="mt-1" />
                       <p className="text-xs text-text-secondary mt-1">
-                        {intl.formatMessage(i18n.created, { date: createdAt ? formatToLocalDateWithTimezone(createdAt) : 'N/A' })}
+                        {intl.formatMessage(i18n.created, {
+                          date: createdAt ? formatToLocalDateWithTimezone(createdAt) : 'N/A',
+                        })}
                       </p>
                       {messageCount !== undefined && (
                         <p className="text-xs text-text-secondary mt-1">
@@ -518,7 +625,8 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                         </p>
                       )}
                       <p className="text-xs text-text-secondary mt-1">
-                        {intl.formatMessage(i18n.idLabel)} <span className="font-mono">{sessionId}</span>
+                        {intl.formatMessage(i18n.idLabel)}{' '}
+                        <span className="font-mono">{sessionId}</span>
                       </p>
                     </Card>
                   );

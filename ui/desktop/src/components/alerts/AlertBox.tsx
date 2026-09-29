@@ -150,9 +150,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
           <div className="flex items-center justify-center gap-1 min-h-[20px]">
             {isEditingThreshold ? (
               <>
-                <span className="text-[10px] opacity-70">
-                  {intl.formatMessage(i18n.autoCompactAt)}
-                </span>
+                <span className="text-[10px]">{intl.formatMessage(i18n.autoCompactAt)}</span>
                 <input
                   type="number"
                   min="1"
@@ -190,11 +188,11 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
                   onClick={(e) => {
                     e.stopPropagation();
                   }}
-                  className="w-12 px-1 text-[10px] bg-white/10 border border-current/30 rounded outline-none text-center focus:bg-white/20 focus:border-current/50 transition-colors"
+                  className="w-12 px-1 text-[10px] bg-transparent border border-current rounded outline-none text-center focus:ring-1 focus:ring-current transition-colors"
                   disabled={isSaving}
                   autoFocus
                 />
-                <span className="text-[10px] opacity-70">%</span>
+                <span className="text-[10px]">%</span>
                 <button
                   type="button"
                   aria-label={intl.formatMessage(i18n.saveThreshold)}
@@ -204,7 +202,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
                     handleSaveThreshold();
                   }}
                   disabled={isSaving}
-                  className="p-1 hover:opacity-60 transition-opacity cursor-pointer relative z-50"
+                  className="p-1 rounded hover:ring-1 hover:ring-current cursor-pointer relative z-50"
                   style={{ minWidth: '20px', minHeight: '20px', pointerEvents: 'auto' }}
                 >
                   <FaSave className="w-3 h-3" />
@@ -212,7 +210,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
               </>
             ) : (
               <>
-                <span className="text-[10px] opacity-70">
+                <span className="text-[10px]">
                   {intl.formatMessage(i18n.autoCompactAt)} {Math.round(currentThreshold * 100)}%
                 </span>
                 <button
@@ -223,10 +221,10 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
                     e.stopPropagation();
                     setIsEditingThreshold(true);
                   }}
-                  className="p-1 hover:opacity-60 transition-opacity cursor-pointer relative z-10"
+                  className="p-1 rounded hover:ring-1 hover:ring-current cursor-pointer relative z-10"
                   style={{ minWidth: '20px', minHeight: '20px' }}
                 >
-                  <FaPencilAlt className="w-3 h-3 opacity-70" />
+                  <FaPencilAlt className="w-3 h-3" />
                 </button>
               </>
             )}
@@ -251,8 +249,8 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
               className={cn(
                 'flex items-center justify-center gap-1.5 text-[11px] outline-none',
                 alert.compactButtonDisabled
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:opacity-80 cursor-pointer'
+                  ? 'line-through cursor-not-allowed'
+                  : 'hover:underline cursor-pointer'
               )}
             >
               {alert.compactIcon}
@@ -274,7 +272,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
                     e.stopPropagation();
                     alert.action?.onClick();
                   }}
-                  className="text-[11px] text-left underline hover:opacity-80 cursor-pointer outline-none"
+                  className="text-[11px] text-left underline hover:decoration-2 cursor-pointer outline-none"
                 >
                   {alert.action.text}
                 </a>

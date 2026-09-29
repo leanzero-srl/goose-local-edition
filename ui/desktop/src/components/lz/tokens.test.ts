@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { missingUtilities } from './compileStudioCss';
 import {
+  CALLOUT,
   DISABLED,
   FOCUS,
   MOTION,
@@ -28,6 +29,7 @@ const EVERY_CONSTANT: Record<string, string> = {
   ...Object.fromEntries(Object.entries(TONE_FILL).map(([k, v]) => [`TONE_FILL.${k}`, v])),
   ...Object.fromEntries(Object.entries(TONE_TEXT).map(([k, v]) => [`TONE_TEXT.${k}`, v])),
   ...Object.fromEntries(Object.entries(TONE_DOT).map(([k, v]) => [`TONE_DOT.${k}`, v])),
+  ...Object.fromEntries(Object.entries(CALLOUT).map(([k, v]) => [`CALLOUT.${k}`, v])),
   ...Object.fromEntries(Object.entries(NODE_FILL).map(([k, v]) => [`NODE_FILL.${k}`, v])),
   ...Object.fromEntries(Object.entries(NODE_TEXT).map(([k, v]) => [`NODE_TEXT.${k}`, v])),
   ...Object.fromEntries(Object.entries(NODE_DOT).map(([k, v]) => [`NODE_DOT.${k}`, v])),
@@ -83,6 +85,11 @@ describe('LeanZero Studio tokens.ts — the class-name contract', () => {
     for (const tone of ['ok', 'warn', 'err', 'stopped'] as const) {
       expect(TONE_FILL[tone]).toContain(`bg-lz-${tone}-solid`);
       expect(TONE_TEXT[tone]).toBe(`text-lz-${tone}`);
+    }
+    // A callout carries its status on a solid EDGE and keeps the page ink — never a tinted fill.
+    for (const [tone, cls] of Object.entries(CALLOUT)) {
+      expect(cls, tone).toMatch(/^border border-lz-[a-z-]+ text-lz-ink$/);
+      expect(cls, tone).not.toMatch(/(^|\s)bg-/);
     }
   });
 

@@ -61,7 +61,8 @@ const i18n = defineMessages({
   },
   localModelsNote: {
     id: 'localModelPicker.localModelsNote',
-    defaultMessage: 'Local models keep everything on your machine for full privacy. Performance and context window size may vary compared to cloud providers depending on your hardware and model size.',
+    defaultMessage:
+      'Local models keep everything on your machine for full privacy. Performance and context window size may vary compared to cloud providers depending on your hardware and model size.',
   },
   failedToLoad: {
     id: 'localModelPicker.failedToLoad',
@@ -247,8 +248,8 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
       <div className="p-4 border rounded-xl bg-background-secondary">
         {phase === 'error' && (
           <div className="space-y-3">
-            <div className="border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20 rounded-lg p-3">
-              <p className="text-sm text-red-700 dark:text-red-400">{errorMessage}</p>
+            <div className="bg-lz-err-solid rounded-lg p-3">
+              <p className="text-sm font-medium text-white">{errorMessage}</p>
             </div>
             <button
               onClick={() => {
@@ -269,7 +270,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                 onClick={() => setSelectedModelId(recommended.id)}
                 className={`relative w-full p-4 border rounded-lg cursor-pointer transition-all duration-200 ${
                   selectedModelId === recommended.id
-                    ? 'border-blue-500 bg-blue-500/5'
+                    ? 'border-lz-accent-line ring-2 ring-inset ring-lz-accent-line'
                     : 'border-border-primary hover:border-border-primary'
                 }`}
               >
@@ -310,7 +311,9 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                   onClick={() => setShowAllModels(!showAllModels)}
                   className="text-sm text-blue-500 hover:text-blue-400 transition-colors flex items-center gap-1"
                 >
-                  {showAllModels ? intl.formatMessage(i18n.hideOtherSizes) : intl.formatMessage(i18n.showOtherSizes, { count: otherModels.length })}
+                  {showAllModels
+                    ? intl.formatMessage(i18n.hideOtherSizes)
+                    : intl.formatMessage(i18n.showOtherSizes, { count: otherModels.length })}
                   <svg
                     className={`w-3.5 h-3.5 transition-transform ${showAllModels ? 'rotate-180' : ''}`}
                     fill="none"
@@ -334,7 +337,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                         onClick={() => setSelectedModelId(model.id)}
                         className={`w-full p-4 border rounded-lg cursor-pointer transition-all duration-200 ${
                           selectedModelId === model.id
-                            ? 'border-blue-500 bg-blue-500/5'
+                            ? 'border-lz-accent-line ring-2 ring-inset ring-lz-accent-line'
                             : 'border-border-primary hover:border-border-primary'
                         }`}
                       >
@@ -371,15 +374,17 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
             <button
               onClick={handlePrimaryAction}
               disabled={!selectedModelId}
-              className="w-full px-4 py-2.5 bg-blue-600 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-700 cursor-pointer"
+              className="w-full px-4 py-2.5 bg-blue-600 rounded-lg text-white text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3 hover:bg-blue-700 cursor-pointer"
             >
               {selectedModel?.status.state === 'Downloaded'
                 ? intl.formatMessage(i18n.useModel, { modelId: selectedModel.id })
                 : selectedModel
-                  ? intl.formatMessage(i18n.downloadModel, { modelId: selectedModel.id, size: formatSize(selectedModel.sizeBytes) })
+                  ? intl.formatMessage(i18n.downloadModel, {
+                      modelId: selectedModel.id,
+                      size: formatSize(selectedModel.sizeBytes),
+                    })
                   : intl.formatMessage(i18n.selectModel)}
             </button>
-
           </div>
         )}
 
@@ -427,7 +432,9 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
               ) : (
                 <div className="flex items-center gap-3">
                   <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-text-secondary"></div>
-                  <span className="text-sm text-text-secondary">{intl.formatMessage(i18n.startingDownload)}</span>
+                  <span className="text-sm text-text-secondary">
+                    {intl.formatMessage(i18n.startingDownload)}
+                  </span>
                 </div>
               )}
             </div>
@@ -441,8 +448,8 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
           </div>
         )}
       </div>
-      <div className="rounded-lg bg-yellow-50/50 dark:bg-yellow-900/10 p-3 mt-3">
-        <p className="text-sm text-yellow-700 dark:text-yellow-300 leading-relaxed">
+      <div className="rounded-lg border border-lz-warn p-3 mt-3">
+        <p className="text-sm text-lz-ink leading-relaxed">
           {intl.formatMessage(i18n.localModelsNote)}
         </p>
       </div>

@@ -1,7 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { MLX_STATUS_POLL_MS } from './mlxLiveStats';
+import { createSharedPoll, useSharedPoll } from './sharedStatusPoll';
+
+/**
+ * The split's status (`mlxEngine/distributedStatus`) — ONE read per tick for every watcher in this
+ * window (Q-208): the Engine tab, My Macs' own card and the tray reporter while the split owns this
+ * Mac used to run three timers on it. Every read also lands in `latestMlxDistributedStatus` (inside
+ * `mlxDistributedStatus`), which the passive readers follow.
+ */
+export const distributedStatusPoll = createSharedPoll<MlxDistributedStatus>(() =>
+  mlxDistributedStatus()
+);
 
 /**
  * The Engine tab's read of the distributed engine, on the view's own 2-second cadence while the
@@ -13,60 +24,18 @@ export function useMlxDistributedStatus(enabled: boolean): {
   error: string | null;
   refresh: () => Promise<void>;
 } {
-  const [status, setStatus] = useState<MlxDistributedStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const snap = useSharedPoll(distributedStatusPoll, enabled ? { intervalMs: MLX_STATUS_POLL_MS } : null);
   const enabledRef = useRef(enabled);
   useEffect(() => {
     enabledRef.current = enabled;
   }, [enabled]);
-  const inFlight = useRef(false);
-
-  const refresh = useCallback(async () => {
-    if (!enabledRef.current || inFlight.current) return;
-    inFlight.current = true;
-    try {
-      const next = await mlxDistributedStatus();
-      if (!enabledRef.current) return;
-      setStatus(next);
-      setError(null);
-    } catch (e) {
-      if (!enabledRef.current) return;
-      setStatus(null);
-      setError(mlxErrorMessage(e, 'Could not read the split’s status.'));
-    } finally {
-      inFlight.current = false;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!enabled) {
-      setStatus(null);
-      setError(null);
-      return undefined;
-    }
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      if (timer != null) return;
-      void refresh();
-      timer = setInterval(() => void refresh(), MLX_STATUS_POLL_MS);
-    };
-    const stop = () => {
-      if (timer != null) {
-        clearInterval(timer);
-        timer = null;
-      }
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') start();
-      else stop();
-    };
-    onVisibility();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      stop();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [enabled, refresh]);
-
-  return { status, error, refresh };
+  const refresh = useCallback(
+    () => (enabledRef.current ? distributedStatusPoll.refresh() : Promise.resolve()),
+    []
+  );
+  return {
+    status: snap?.value ?? null,
+    error: snap?.failed ? mlxErrorMessage(snap.error, 'Could not read the split’s status.') : null,
+    refresh,
+  };
 }
