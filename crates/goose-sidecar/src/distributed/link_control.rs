@@ -629,10 +629,11 @@ pub async fn spawn_link_rank(
 /// prompt cache, Q-104's planned prefill, Q-136's group formation, Q-142's stable-prefix
 /// boundary, Q-161's tool-call skeleton guard and per-row logits processors, Q-182's kept prefix,
 /// Q-231's prompt-step yield, Q-294's conversation prefix, Q-347's stable head, Q-447's batch KV
-/// dtype) cannot read this Mac's rank spec (its serde names the unknown program tag). Said as what
-/// to do, not as a parse error.
+/// dtype, Q-502's every-conversation cache) cannot read this Mac's rank spec (its serde names the
+/// unknown program tag). Said as what to do, not as a parse error.
 pub fn older_peer_refusal(error: &str) -> Option<&'static str> {
     [
+        "mlxLmServerEveryConversation",
         "mlxLmServerKvDtype",
         "mlxLmServerStableHead",
         "mlxLmServerConversationPrefix",

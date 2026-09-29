@@ -23,8 +23,9 @@
 #
 # Keeping the entry is half of it; the cache must also not evict it (Q-182, `pop_keeping_newest_
 # prefix` below, installed by the wrapper on a spec that asks for `keep_newest_prefix`; Q-294's
-# `KeptEntry` since `keep_conversation_prefix`). The chat's stable head — its system prompt and
-# tools — is cut and kept the same way (Q-347, `cut_at_head`, on a spec that asks for
+# `KeptEntry` since `keep_conversation_prefix`; every conversation's, not only the newest one's,
+# since `keep_every_conversation`: Q-502's `Conversations`). The chat's stable head — its system
+# prompt and tools — is cut and kept the same way (Q-347, `cut_at_head`, on a spec that asks for
 # `keep_stable_head`), so a request whose messages changed (a compaction) still reads it.
 
 TRANSIENT_TAIL = "rapid_mlx_transient_tail"
@@ -417,3 +418,158 @@ class EvictionLog:
             "requests": record["requests"],
             "ago_s": round(at - record["at"], 3),
         }
+
+
+# Q-502 (E2E #3x, the same 15:10:16 sequence as Q-498 above): the kept entries were ONE
+# conversation's — the newest cut — so the second chat's cut moved the protection off #3x, and the
+# side call's admission left room for the second chat alone. Replayed through the real mlx_lm
+# 0.31.3 LRUPromptCache, holding that 84-token side call until the second chat's 77,683-token row
+# finished keeps #3x's prefix at the plan's 17,333,813,248 B, and #3x's next call reads 199,798
+# tokens from the cache instead of 0 — with no new memory. So, on a spec that asks for it
+# (`keep_every_conversation`): every conversation's stable prefix and head are kept while any stale
+# end or other entry is left to evict (`Conversations`, `keep_conversations`), and rank 0 admits a
+# request into a live batch only while the batch leaves room for all of them (rank_prefill.py
+# `admits`, `other_kept_bytes`). A conversation is named by its tokens alone — a request whose
+# prompt extends a conversation's kept prefix continues it — so every rank tracks the same
+# conversations over the same requests and inserts, and every rank evicts alike.
+
+
+class Conversation:
+    """One conversation the prompt cache keeps: its stable prefix (a `KeptEntry` each of its
+    requests cuts anew — the newer key, once inserted, replaces the older, which is then a stale
+    entry like any other), the key of its stable head (the entry lives in `Conversations.heads`,
+    shared by every conversation whose head is the same tokens), and the cut that last named it
+    (a count, the same on every rank)."""
+
+    def __init__(self, used):
+        self.prefix = KeptEntry()
+        self.head = None
+        self.used = used
+
+
+class Conversations:
+    """Every conversation's kept entries on a rank (Q-502)."""
+
+    def __init__(self):
+        self.all = []
+        self.heads = {}
+        self.cuts = 0
+
+    def cut(self, prompt, boundary, head):
+        """A request naming its transient tail cut its stable prefix at `boundary` and its head at
+        `head` (0 = none). It continues the conversation whose kept prefix its prompt extends (the
+        longest), else one holding no prefix — none held, none awaited — whose head it shares (its
+        prefix went and the chat goes on), else it opens one. Only a conversation's newest cut is
+        awaited: an earlier request of it that never inserted its prefix never will."""
+        self.cuts += 1
+        head_key = prefix_key(prompt[:head]) if head else None
+        conversation = self.extended_by(prompt)
+        if conversation is None and head_key is not None:
+            conversation = next(
+                (
+                    c
+                    for c in self.all
+                    if c.head == head_key and c.prefix.tokens is None and not c.prefix.cut_keys
+                ),
+                None,
+            )
+        if conversation is None:
+            conversation = Conversation(self.cuts)
+            self.all.append(conversation)
+        conversation.used = self.cuts
+        if boundary:
+            conversation.prefix.cut_keys.clear()
+            conversation.prefix.cut(prompt[:boundary])
+        if head_key is not None:
+            conversation.head = head_key
+            entry = self.heads.setdefault(head_key, KeptEntry())
+            entry.cut_keys[head_key[0]] = head_key[1]
+        self.drop_empty(conversation)
+        return conversation
+
+    def extended_by(self, prompt):
+        found = None
+        for c in self.all:
+            tokens = c.prefix.tokens
+            if tokens is None or len(tokens) > len(prompt):
+                continue
+            if found is not None and len(tokens) <= len(found.prefix.tokens):
+                continue
+            if prompt[: len(tokens)] == tokens:
+                found = c
+        return found
+
+    def drop_empty(self, current):
+        """Forget every conversation but `current` that holds nothing and awaits nothing, and every
+        head no conversation names."""
+        self.all = [
+            c
+            for c in self.all
+            if c is current
+            or c.prefix.tokens is not None
+            or c.prefix.cut_keys
+            or (c.head is not None and self.heads[c.head].tokens is not None)
+        ]
+        named = {c.head for c in self.all}
+        self.heads = {key: entry for key, entry in self.heads.items() if key in named}
+
+    def inserted(self, tokens, nbytes):
+        for c in self.all:
+            c.prefix.inserted(tokens, nbytes)
+        for entry in self.heads.values():
+            entry.inserted(tokens, nbytes)
+
+    def recent(self):
+        return sorted(self.all, key=lambda c: c.used, reverse=True)
+
+    def kept(self):
+        """Every conversation's kept entries, most precious first: the stable prefixes, the most
+        recently cut conversation's first, then the heads in the same order. A head is the part
+        of its conversation's prefix every request of the chat shares, read on its own only once
+        that prefix is gone (a compaction), so while room is short every conversation keeps what
+        its next request extends before any keeps its head."""
+        recent = self.recent()
+        entries = [c.prefix for c in recent]
+        for c in recent:
+            entry = self.heads.get(c.head)
+            if entry is not None and all(entry is not other for other in entries):
+                entries.append(entry)
+        return entries
+
+    def newest_prefix(self):
+        """The held prefix of the most recently cut conversation that holds one, or None."""
+        held = [c for c in self.recent() if c.prefix.tokens is not None]
+        return held[0].prefix.tokens if held else None
+
+    def reserve(self):
+        """What a batch leaves the cache (rank_prefill.py `admits`): the most recently cut
+        conversation's held prefix bytes and head bytes, the bytes of every other kept entry held
+        (each entry once), and how many conversations hold anything."""
+        recent = self.recent()
+        newest = recent[0] if recent else None
+        own = [newest.prefix, self.heads.get(newest.head)] if newest is not None else [None, None]
+        prefix, head = (e.nbytes if e is not None and e.tokens is not None else 0 for e in own)
+        counted = {id(e.tokens) for e in own if e is not None and e.tokens is not None}
+        other = 0
+        for entry in self.kept():
+            if entry.tokens is not None and id(entry.tokens) not in counted:
+                counted.add(id(entry.tokens))
+                other += entry.nbytes
+        holding = sum(
+            1
+            for c in recent
+            if c.prefix.tokens is not None
+            or (c.head in self.heads and self.heads[c.head].tokens is not None)
+        )
+        return prefix, head, other, holding
+
+
+def keep_conversations(cache_order, conversations):
+    """Install `pop_keeping` of every conversation's kept entries (`Conversations.kept`, read at
+    each eviction) on mlx_lm's `LRUPromptCache.CacheOrder`."""
+    upstream_pop = cache_order.pop
+
+    def pop(self):
+        return pop_keeping(self, upstream_pop, conversations.kept())
+
+    cache_order.pop = pop
