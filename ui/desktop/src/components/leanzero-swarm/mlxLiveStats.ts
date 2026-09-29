@@ -49,6 +49,12 @@ export interface MlxLiveRequest {
   prefilledTokens: number | null;
   promptTps: number | null;
   /**
+   * What of this prompt the prefix cache HAD held and evicted before the engine looked it up
+   * (Q-498, rank_boundary.py `EvictionLog.lost_prefix`), reported by the tensor split's rank 0;
+   * null when nothing it extends was evicted, and on engines that do not report it.
+   */
+  evictedPrefix: EvictedPrefix | null;
+  /**
    * What the tensor split's rank 0 adds to a row (Q-231, rank_live.py `row_handling`) — the facts
    * that say what a queued turn waits on. Rapid-MLX's single engine reports none of them: null /
    * false there, never guessed.
@@ -66,6 +72,39 @@ export interface MlxLiveRequest {
   stopped: string | null;
   stoppedAfterS: number | null;
   leaving: boolean;
+}
+
+/**
+ * An evicted prefix, as rank 0 names it (Q-498): `tokens` of this prompt had been cached and were
+ * evicted `agoS` seconds before the lookup, to make room for a batch of `rows` rows at `width`
+ * tokens, while the cache kept the prefix of `anotherConversation` — another chat's —,
+ * `thisConversation`, or no conversation at all (null).
+ */
+export interface EvictedPrefix {
+  tokens: number;
+  whileKeeping: 'anotherConversation' | 'thisConversation' | null;
+  rows: number | null;
+  width: number | null;
+  agoS: number | null;
+}
+
+/** rank 0's `evicted_prefix` → the lost prefix; null when absent or not one. */
+function evictedPrefixOf(v: unknown): EvictedPrefix | null {
+  const lost = obj(v);
+  const tokens = lost ? num(lost.tokens) : null;
+  if (!lost || tokens == null) return null;
+  return {
+    tokens,
+    whileKeeping:
+      lost.while_keeping === 'another_conversation'
+        ? 'anotherConversation'
+        : lost.while_keeping === 'this_conversation'
+          ? 'thisConversation'
+          : null,
+    rows: num(lost.rows),
+    width: num(lost.width),
+    agoS: num(lost.ago_s),
+  };
 }
 
 export interface MlxLiveStats {
@@ -235,6 +274,7 @@ export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
       cachedTokens: cachedTokensOf(r),
       prefilledTokens: num(r.prefilled_tokens),
       promptTps: num(r.prompt_tokens_per_second),
+      evictedPrefix: evictedPrefixOf(r.evicted_prefix),
       client: typeof r.client === 'string' && r.client ? r.client : null,
       heldForRoom: typeof r.held_for_room === 'boolean' ? r.held_for_room : null,
       stopped: stopReason(r.stopped),

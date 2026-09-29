@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "新内容 {fresh} 中已读 {done}"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "另一个聊天把这段对话的 {evicted} 挤出了引擎内存"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "另一个聊天把其中 {evicted} 挤出了内存"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "其中 {evicted} 曾在缓存中，后来被挤出了引擎内存"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "其中 {evicted} 被挤出了内存"
+  },
   "promptRead.soFar": {
     "defaultMessage": "已用 {elapsed}"
   },

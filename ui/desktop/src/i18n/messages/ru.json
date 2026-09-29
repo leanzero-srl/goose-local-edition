@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "прочитано {done} из {fresh} новых"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "другой чат вытеснил {evicted} этого разговора из памяти движка"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "другой чат вытеснил {evicted} из памяти"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted} было в кеше, затем вытеснено из памяти движка"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted} вытеснено из памяти"
+  },
   "promptRead.soFar": {
     "defaultMessage": "уже {elapsed}"
   },

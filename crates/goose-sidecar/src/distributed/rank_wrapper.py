@@ -180,6 +180,21 @@
 #   and the call's text; a streamed answer is untouched (its streamer already leaves the refused
 #   call's arguments unterminated). Q-177's 500 now covers every failure before a byte reached the
 #   client, a buffered-but-unsent status line included.
+# - a request whose prefix the cache HAD held says so (Q-498, rank_boundary.py `EvictionLog`):
+#   rank 0 records every entry the prompt cache evicts (the key's digest, the conversation prefix
+#   kept at that moment, the batch the room was made for), and a request that extends an evicted
+#   entry past what the cache supplied carries `evicted_prefix` on its /v1/status row and a
+#   GOOSE_RANK_PREFIX_LOST line. E2E #3x: a second chat's side call joined its 77,683-token row,
+#   the cache was trimmed below #3x's 6.62 GB prefix (the kept entries were the newer chat's), and
+#   #3x's next call read 200,456 tokens again while every surface said only "nothing cached".
+#   Recording only — what every rank evicts is unchanged, so the ranks still evict alike.
+# - every conversation's prefix is kept, not only the newest one's (Q-502, rank_boundary.py
+#   `Conversations`, on a spec that asks for `keep_every_conversation`): every rank keeps each
+#   conversation's stable prefix and head while a stale end or any other entry is left to evict,
+#   and rank 0 holds a request whose batch would leave the cache less than all of them until the
+#   batch drains enough. #3x's side call then waits 42.4 s for the second chat's row and #3x's next
+#   call reads 199,798 tokens from the cache instead of re-reading 200,456 for 18 minutes. A prefix
+#   the plan still cannot keep is named as Q-498 names it.
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -779,7 +794,8 @@ class LookupPromptCache(server.LRUPromptCache):
                 f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache keeps no empty "
                 "PromptTrie at `_trie`; the prompt search was written against mlx_lm 0.31.3"
             )
-        if kept_entries and not isinstance(getattr(getattr(self, "_lru", None), "_lrus", None), dict):
+        keeps = kept_entries or conversations is not None
+        if keeps and not isinstance(getattr(getattr(self, "_lru", None), "_lrus", None), dict):
             raise SystemExit(
                 f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache keeps no "
                 "CacheOrder at `_lru`; the kept entries were written against mlx_lm 0.31.3"
@@ -799,7 +815,16 @@ class LookupPromptCache(server.LRUPromptCache):
     # prompt minus its last token. Any other lookup is upstream's, unchanged. Every rank runs this
     # on its own cache over the same shared requests — the same decision, the same segments —
     # exactly as it runs mlx_lm's own lookup.
+    #
+    # Q-498: rank 0 then says what the lookup missed of an entry the cache had held and evicted
+    # (`note_lost_prefix`) — here, where the cached count is exactly what the request will read.
     def fetch_nearest_cache(self, model, tokens):
+        cache, rest = self.nearest_cache(model, tokens)
+        if evictions is not None:
+            note_lost_prefix(tokens, len(tokens) - len(rest))
+        return cache, rest
+
+    def nearest_cache(self, model, tokens):
         try:
             entry = self._trie.get(model, tokens) if tokens else None
         except KeyError:
@@ -832,24 +857,110 @@ server.LRUPromptCache = LookupPromptCache
 # request of the chat opens with — is cut by every agent request and kept after the conversation
 # prefix, and a batch leaves room for it beside the prefix. It changes where prefill chunks end and
 # what is evicted, so it rides its own ask (`keep_stable_head`).
-conversation_prefix = KeptEntry() if spec.get("keep_conversation_prefix") else None
-stable_head = KeptEntry() if spec.get("keep_stable_head") else None
+#
+# Q-502 (rank_boundary.py `Conversations`): EVERY conversation's prefix and head are kept — the
+# newest one's alone let a second chat's side call evict E2E #3x's — and rank 0 admits a request
+# into a live batch only while the batch leaves room for all of them. It changes what every rank
+# evicts, so it rides its own ask (`keep_every_conversation`), which supersedes the single kept
+# prefix and head (the head is still cut where `keep_stable_head` asks).
+keeps_heads = bool(spec.get("keep_stable_head"))
+conversations = Conversations() if spec.get("keep_every_conversation") else None
+conversation_prefix = (
+    KeptEntry() if spec.get("keep_conversation_prefix") and conversations is None else None
+)
+stable_head = KeptEntry() if keeps_heads and conversations is None else None
 kept_entries = tuple(entry for entry in (conversation_prefix, stable_head) if entry is not None)
-if kept_entries or spec.get("keep_newest_prefix"):
+if kept_entries or conversations is not None or spec.get("keep_newest_prefix"):
     if not hasattr(server.LRUPromptCache.CacheOrder, "pop"):
         raise SystemExit(
             f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache.CacheOrder has no "
             "pop; the kept prefix was written against mlx_lm 0.31.3"
         )
-if kept_entries:
+if conversations is not None:
+    keep_conversations(server.LRUPromptCache.CacheOrder, conversations)
+elif kept_entries:
     keep_entries(server.LRUPromptCache.CacheOrder, *kept_entries)
 elif spec.get("keep_newest_prefix"):
     keep_newest_prefix(server.LRUPromptCache.CacheOrder)
 
 
+def kept_prefix_tokens():
+    """The conversation prefix the cache keeps first now (Q-498's `while_keeping`), or None."""
+    if conversations is not None:
+        return conversations.newest_prefix()
+    return conversation_prefix.tokens if conversation_prefix is not None else None
+
+
+def kept_now():
+    """Every entry the cache keeps now, most precious first."""
+    return conversations.kept() if conversations is not None else kept_entries
+
+
+# Q-498 (rank_boundary.py `EvictionLog`): rank 0 records every entry its prompt cache evicts,
+# through whichever eviction order is installed above, and never changes the entry it returns —
+# so the ranks still evict alike. As many records as the cache holds entries at most. Both hooks
+# run in the generation thread, where an exception is RANK_FATAL: a record that cannot be kept is
+# named (GOOSE_RANK_EVICTION_UNRECORDED, the error and the request) and the eviction goes on.
+evictions = (
+    EvictionLog(int(spec["prompt_cache_entries"]))
+    if group.rank() == 0 and "prompt_cache_entries" in spec
+    else None
+)
+if evictions is not None:
+    ordered_pop = server.LRUPromptCache.CacheOrder.pop
+
+    def recorded_pop(self):
+        item = ordered_pop(self)
+        try:
+            batch = live_batch[0] if live_batch else None
+            rows, width = batch_shape(batch) if batch is not None else (0, 0)
+            evictions.evicted(
+                item[1],
+                kept_prefix_tokens(),
+                rows,
+                width,
+                sorted(request for request in batch_rows.values() if request is not None),
+                time.monotonic(),
+            )
+        except Exception as failure:
+            unrecorded("evicted", failure)
+        return item
+
+    server.LRUPromptCache.CacheOrder.pop = recorded_pop
+
+
+def unrecorded(step, failure):
+    emit(
+        "RANK_EVICTION_UNRECORDED",
+        {"step": step, "request_id": arriving[0], "error": f"{type(failure).__name__}: {failure}"},
+    )
+
+
+def note_lost_prefix(prompt, cached):
+    """Rank 0's generation thread, at the lookup of the request `_next_request` handed the loop
+    (`arriving`): what it lost to an eviction goes on its /v1/status row, and in the rank's log."""
+    request_id = arriving[0]
+    try:
+        lost = evictions.lost_prefix(prompt, cached, time.monotonic())
+    except Exception as failure:
+        unrecorded("lookup", failure)
+        return
+    with lock:
+        entry = live.get(request_id)
+        if entry is not None:
+            entry["evicted_prefix"] = lost
+    if lost is not None:
+        emit(
+            "RANK_PREFIX_LOST",
+            {"request_id": request_id, "prompt_tokens": len(prompt), "cached": cached, **lost},
+        )
+
+
 def cache_inserting(tokens, prompt_cache):
-    """What the prompt cache is about to hold, as the kept entries see it (Q-294, Q-347)."""
+    """What the prompt cache is about to hold, as the kept entries see it (Q-294, Q-347, Q-502)."""
     nbytes = sum(layer.nbytes for layer in prompt_cache)
+    if conversations is not None:
+        conversations.inserted(tokens, nbytes)
     for entry in kept_entries:
         entry.inserted(tokens, nbytes)
 
@@ -857,8 +968,9 @@ def cache_inserting(tokens, prompt_cache):
 def cache_inserted(prompt_cache):
     """A kept entry the insert replaced, or dropped as a trimmable entry's prefix, is no longer
     held (mlx_lm's `insert_cache` drops those without its eviction order)."""
-    if kept_entries:
-        forget_dropped(prompt_cache._lru, kept_entries)
+    kept = kept_now()
+    if kept:
+        forget_dropped(prompt_cache._lru, kept)
 
 
 if "prompt_cache_limit_bytes" in spec:
@@ -941,30 +1053,26 @@ original_next = server.ResponseGenerator._next_request
 held = deque()
 
 
-def conversation_prefix_bytes():
-    return conversation_prefix.nbytes if conversation_prefix is not None else 0
-
-
-def stable_head_bytes():
-    return stable_head.nbytes if stable_head is not None else 0
+def kept_room():
+    """(conversation prefix bytes, stable head bytes, every other conversation's kept bytes, how
+    many conversations the cache holds): the room a batch leaves the kept entries (Q-294, Q-347,
+    Q-502 — `Conversations.reserve` on a spec that keeps every conversation)."""
+    if conversations is not None:
+        return conversations.reserve()
+    prefix = conversation_prefix.nbytes if conversation_prefix is not None else 0
+    head = stable_head.nbytes if stable_head is not None else 0
+    return prefix, head, 0, None
 
 
 def room_for(prompt_tokens):
     batch = live_batch[0] if live_batch else None
     rows, width = batch_shape(batch) if batch is not None else (0, 0)
-    return admits(
-        prefill,
-        prompt_cache_limit,
-        rows,
-        width,
-        prompt_tokens,
-        conversation_prefix_bytes(),
-        stable_head_bytes(),
-    )
+    prefix, head, other, _ = kept_room()
+    return admits(prefill, prompt_cache_limit, rows, width, prompt_tokens, prefix, head, other)
 
 
 def publish_held():
-    held_ids[0] = tuple(getattr(request[1], "goose_request_id", None) for request, _ in held)
+    held_ids[0] = tuple(getattr(request[1], "goose_request_id", None) for request, _, _ in held)
 
 
 def drop_departed_held():
@@ -993,9 +1101,16 @@ def rank0_request(self, timeout):
     by the next arrival at once, so the request behind it is not left for another step."""
     drop_departed_held()
     if held and room_for(held[0][1]):
-        request, tokens = held.popleft()
+        request, tokens, since = held.popleft()
         publish_held()
-        emit("RANK_ADMISSION", {"released_tokens": tokens, "still_held": len(held)})
+        emit(
+            "RANK_ADMISSION",
+            {
+                "released_tokens": tokens,
+                "held_s": round(time.monotonic() - since, 3),
+                "still_held": len(held),
+            },
+        )
         return request
     while True:
         try:
@@ -1011,9 +1126,10 @@ def rank0_request(self, timeout):
         timeout = None
     if not held and room_for(tokens):
         return request
-    held.append((request, tokens))
+    held.append((request, tokens, time.monotonic()))
     publish_held()
     rows, width = batch_shape(live_batch[0]) if live_batch else (0, 0)
+    prefix, head, other, conversations_held = kept_room()
     emit(
         "RANK_ADMISSION",
         {
@@ -1023,8 +1139,13 @@ def rank0_request(self, timeout):
             "width": width,
             "charge": batch_kv_charge(prefill, rows + 1, max(width, tokens)),
             "kept_prefix": kept_prefix_bytes(prefill, max(width, tokens)),
-            "conversation_prefix": conversation_prefix_bytes(),
-            "stable_head": stable_head_bytes(),
+            "conversation_prefix": prefix,
+            "stable_head": head,
+            **(
+                {}
+                if conversations_held is None
+                else {"other_conversations": other, "conversations": conversations_held}
+            ),
             "limit": prompt_cache_limit,
         },
     )
@@ -1242,6 +1363,7 @@ def generate(
             "first_token": None,
             "last_token": None,
             "completion": 0,
+            "evicted_prefix": None,
         }
         live[request_id] = entry
         if getattr(posting, "before_row", False):
@@ -1453,6 +1575,7 @@ def _tokenize(self, tokenizer, request, args):
     except TailIgnored as ignored:
         if group.rank() == 0:
             emit("RANK_TRANSIENT_TAIL_IGNORED", {"why": str(ignored), "tail_chars": len(tail)})
+        record_cuts(prompt, 0, head)
         segments, segment_types = cut_at_head(segments, segment_types, head)
         return prompt, segments, segment_types, initial_state
     future = tokenizer.apply_chat_template(
@@ -1463,29 +1586,39 @@ def _tokenize(self, tokenizer, request, args):
         **template_args,
     )
     boundary = stable_boundary(prompt, future)
-    if conversation_prefix is not None and 0 < boundary < len(prompt):
-        conversation_prefix.cut(prompt[:boundary])
+    record_cuts(prompt, boundary if 0 < boundary < len(prompt) else 0, head)
     segments, segment_types = cut_at_boundary(segments, segment_types, boundary)
     segments, segment_types = cut_at_head(segments, segment_types, head)
     return prompt, segments, segment_types, initial_state
 
 
+def record_cuts(prompt, boundary, head):
+    """The entries this request cut for the cache to keep: its stable prefix ends at `boundary`
+    and its head at `head` (0 = not cut) — one conversation's (Q-502), or the single kept prefix
+    and head (Q-294, Q-347)."""
+    if conversations is not None:
+        if boundary or head:
+            conversations.cut(prompt, boundary, head)
+        return
+    if conversation_prefix is not None and boundary:
+        conversation_prefix.cut(prompt[:boundary])
+    if stable_head is not None and head:
+        stable_head.cut(prompt[:head])
+
+
 def cut_stable_head(tokenizer, messages, tools, template_args, prompt):
     """Where the chat's stable head ends in `prompt` — mlx_lm's own system-segment end, rendered
-    from the same messages, tools and template switches — recorded for the cache to keep. 0 on a
-    spec that keeps no head, or for a conversation that opens on no system message."""
-    probe = head_probe(messages) if stable_head is not None else None
+    from the same messages, tools and template switches. 0 on a spec that keeps no head, or for a
+    conversation that opens on no system message."""
+    probe = head_probe(messages) if keeps_heads else None
     if probe is None:
         return 0
-    head = head_end(
+    return head_end(
         prompt,
         tokenizer.apply_chat_template(
             probe, tools=tools, tokenize=True, add_generation_prompt=False, **template_args
         ),
     )
-    if head:
-        stable_head.cut(prompt[:head])
-    return head
 
 
 original_chat_request = server.APIHandler.handle_chat_completions

@@ -50,6 +50,7 @@ def admits(
     prompt_tokens,
     conversation_prefix_bytes=0,
     stable_head_bytes=0,
+    other_kept_bytes=0,
 ):
     """Whether a request of `prompt_tokens` may join a live batch of `rows` rows at `width`: an idle
     engine always takes it (the plan holds one row up to the window), a busy one only while the
@@ -66,13 +67,20 @@ def admits(
     system prompt + tools, 1,399,521,280 B, 11.8% of that plan's 11,830,886,400 B limit. Replayed
     at #3p's sizes (launch.rs), keeping the head in eviction alone still lost it to the end-of-turn
     bursts once the conversation prefix neared its 4.74 GB; with this room one or two of a burst's
-    eight helpers wait for the batch to drain instead."""
+    eight helpers wait for the batch to drain instead.
+
+    And room for every OTHER conversation's kept entries the cache holds (`other_kept_bytes`,
+    Q-502, rank_boundary.py `Conversations.reserve`): E2E #3x's 84-token side call joined the
+    second chat's 77,683-token row with room for that chat's prefix and head only, the cache was
+    trimmed to 5.79 GB and #3x's 6.62 GB prefix and 1.47 GB head went; #3x's next call re-read
+    200,456 tokens (18 min 12 s of prefill). Held until that row finished (42.4 s), the side call
+    runs alone and #3x reads 199,798 from the cache."""
     if rows == 0:
         return True
     widest = max(width, prompt_tokens)
     charge = batch_kv_charge(prefill, rows + 1, widest)
     kept = max(kept_prefix_bytes(prefill, widest), conversation_prefix_bytes) + stable_head_bytes
-    return charge + kept <= limit_bytes
+    return charge + kept + other_kept_bytes <= limit_bytes
 
 
 def kept_prefix_bytes(prefill, width):

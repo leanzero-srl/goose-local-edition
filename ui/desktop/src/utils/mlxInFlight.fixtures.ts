@@ -19,6 +19,7 @@ export const LIVE_WRITING: MlxLiveRequest = {
   cachedTokens: 0,
   prefilledTokens: null,
   promptTps: null,
+  evictedPrefix: null,
   client: null,
   heldForRoom: null,
   stopped: null,

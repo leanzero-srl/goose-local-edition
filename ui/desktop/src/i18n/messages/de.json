@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "{done} von {fresh} neuen gelesen"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "ein anderer Chat hat {evicted} dieses Gesprächs aus dem Speicher der Engine verdrängt"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "ein anderer Chat hat {evicted} davon aus dem Speicher verdrängt"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted} davon waren im Cache und wurden dann aus dem Speicher der Engine verdrängt"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted} davon wurden aus dem Speicher verdrängt"
+  },
   "promptRead.soFar": {
     "defaultMessage": "bisher {elapsed}"
   },

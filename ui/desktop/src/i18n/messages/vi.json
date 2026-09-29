@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "đã đọc {done} trên {fresh} token mới"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "một cuộc trò chuyện khác đã đẩy {evicted} của cuộc trò chuyện này ra khỏi bộ nhớ của engine"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "một cuộc trò chuyện khác đã đẩy {evicted} ra khỏi bộ nhớ"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted} từng nằm trong bộ nhớ đệm, rồi bị đẩy ra khỏi bộ nhớ của engine"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted} đã bị đẩy ra khỏi bộ nhớ"
+  },
   "promptRead.soFar": {
     "defaultMessage": "đến giờ {elapsed}"
   },

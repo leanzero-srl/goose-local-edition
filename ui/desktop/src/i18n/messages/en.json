@@ -8354,6 +8354,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "{done} of {fresh} new read"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "another chat pushed {evicted} of this conversation out of the engine’s memory"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "another chat pushed {evicted} of it out of memory"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted} of it was cached, then pushed out of the engine’s memory"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted} of it was pushed out of memory"
+  },
   "promptRead.soFar": {
     "defaultMessage": "{elapsed} so far"
   },

@@ -1,6 +1,7 @@
 import type { MeasuredFigure } from '../../utils/mlxMeasuredRuns';
 import {
   answeredRequests,
+  type EvictedPrefix,
   leavingRowsOf,
   liveDecodeTps,
   measuredPrefillTps,
@@ -167,12 +168,16 @@ export function readProgressOf(r: MlxLiveRequest): { done: number; total: number
  *    engine reports no position (the single engine: its split is known, its progress is not).
  * `cached` 0 is a measured "nothing cached". No split at all (null) = the engine has not looked the
  * prompt up yet, or reports no per-request figure: surfaces then draw the plain bar, never a guess.
+ *  - `evicted`: the part of the prompt the cache HAD held past `cached` and evicted before the
+ *    lookup, and why (Q-498 — E2E #3x's 200,456-token call read cold because a second chat's side
+ *    call pushed its 199,798-token prefix out); null when nothing it extends was evicted.
  */
 export interface PromptCache {
   total: number;
   cached: number;
   fresh: number;
   freshDone: number | null;
+  evicted: EvictedPrefix | null;
 }
 
 export function promptCacheOf(r: MlxLiveRequest): PromptCache | null {
@@ -187,6 +192,7 @@ export function promptCacheOf(r: MlxLiveRequest): PromptCache | null {
     // The position starts at the restored prefix; one reported before the first chunk (0) is
     // nothing of the new part read yet.
     freshDone: progress ? Math.max(0, progress.done - cached) : null,
+    evicted: r.evictedPrefix && r.evictedPrefix.tokens > cached ? r.evictedPrefix : null,
   };
 }
 

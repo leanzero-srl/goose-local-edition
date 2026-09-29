@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "{fresh} yeni tokenın {done} tanesi okundu"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "başka bir sohbet bu konuşmanın {evicted} kadarını motorun belleğinden çıkardı"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "başka bir sohbet {evicted} kadarını bellekten çıkardı"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted} kadarı önbellekteydi, sonra motorun belleğinden çıkarıldı"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted} kadarı bellekten çıkarıldı"
+  },
   "promptRead.soFar": {
     "defaultMessage": "şimdiye kadar {elapsed}"
   },
