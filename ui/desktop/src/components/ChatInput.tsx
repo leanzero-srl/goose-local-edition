@@ -39,7 +39,7 @@ import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
-import { strategyChatWindow } from './chatServedBy/strategyWindow';
+import { routedChatWindow } from './chatServedBy/routedWindow';
 import { promptRead } from './leanzero-swarm/engineFigures';
 import { usePublishTurnRead } from './turnWorking/turnReadStore';
 import { usePublishTurnHeld } from './turnWorking/turnHeldStore';
@@ -720,10 +720,10 @@ export default function ChatInput({
         return;
       }
 
-      // A strategy chat's window is the node that served its last turn (Q-467), the one compaction
+      // A `node:` / `strategy:` chat's window is the node that served its last turn (Q-467), the one compaction
       // reads (Q-463) — never the pool's engines. A node that did not report one leaves the window
       // unknown, and the counter says so; the window an earlier node served with is not held.
-      const routed = strategyChatWindow(model, chatServing.servedRecord);
+      const routed = routedChatWindow(model, chatServing.servedRecord);
       if (routed?.kind === 'known' || routed?.kind === 'unread') {
         holdMeasuredLimit(provider, model, routed.kind === 'known' ? routed.window : null);
         return;
@@ -811,7 +811,7 @@ export default function ChatInput({
     servedRecord === undefined ? 'unread' : (servedRecord?.node ?? 'none'),
     servedRecord?.contextWindow ?? '',
   ].join('|');
-  const windowUnknown = strategyChatWindow(effectiveModel, servedRecord)?.kind === 'unknown';
+  const windowUnknown = routedChatWindow(effectiveModel, servedRecord)?.kind === 'unknown';
   useEffect(() => {
     loadProviderDetails();
     // eslint-disable-next-line react-hooks/exhaustive-deps

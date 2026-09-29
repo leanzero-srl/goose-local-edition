@@ -167,7 +167,27 @@ describe('a strategy chat counts against the node that served it (Q-467)', () =>
   });
 });
 
-describe('a chat not on a strategy is unchanged (Q-467)', () => {
+describe('a node chat counts against its own node (Q-467)', () => {
+  beforeEach(() => {
+    served = splitServing();
+    servedRecord = undefined;
+  });
+
+  it('node:studio served at 131,072: that window, not the pool’s 262,144', async () => {
+    servedRecord = { ...record('studio', 131_072), role: undefined };
+    render(input('s1', 'node:studio'));
+    await waitFor(() => expect(indicator().getAttribute('data-limit')).toBe('131072'));
+  });
+
+  it('node:deepseek, which reports no window: "window unknown", never the pool’s', async () => {
+    servedRecord = { ...record('deepseek-v4-1-flash-openrouter'), role: undefined };
+    render(input('s1', 'node:deepseek-v4-1-flash-openrouter'));
+    await waitFor(() => expect(indicator().getAttribute('data-window')).toBe('unknown'));
+    expect(indicator().getAttribute('data-limit')).toBeNull();
+  });
+});
+
+describe('a plain MLX/provider chat is unchanged (Q-467)', () => {
   beforeEach(() => {
     served = splitServing();
     servedRecord = undefined;
