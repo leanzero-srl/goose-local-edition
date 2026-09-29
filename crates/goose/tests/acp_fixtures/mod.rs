@@ -225,6 +225,46 @@ pub struct OpenAiFixture {
     base_url: String,
     exchanges: Vec<(String, &'static str)>,
     queue: Arc<Mutex<VecDeque<(String, &'static str)>>>,
+    hold: Arc<ResponseHold>,
+}
+
+/// While closed, the mock answers no chat completion: each request waits in the mock's own server
+/// thread until the test opens it. A test that must act while a turn is provably in flight (steer
+/// it, cancel it) holds the provider instead of racing a fast canned response with a clock.
+#[derive(Default)]
+struct ResponseHold {
+    held: Mutex<bool>,
+    opened: std::sync::Condvar,
+}
+
+impl ResponseHold {
+    fn wait_open(&self) {
+        let mut held = self.held.lock().unwrap();
+        while *held {
+            held = self.opened.wait(held).unwrap();
+        }
+    }
+
+    fn set(&self, held: bool) {
+        *self.held.lock().unwrap() = held;
+        self.opened.notify_all();
+    }
+}
+
+/// The provider's responses are held until this is released or dropped — dropped on a panic too,
+/// so a failing test never leaves the mock's thread parked.
+#[allow(dead_code)]
+pub struct HeldResponses(Arc<ResponseHold>);
+
+#[allow(dead_code)]
+impl HeldResponses {
+    pub fn release(self) {}
+}
+
+impl Drop for HeldResponses {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
 }
 
 impl OpenAiFixture {
@@ -236,6 +276,7 @@ impl OpenAiFixture {
     ) -> Self {
         let mock_server = MockServer::start().await;
         let queue = Arc::new(Mutex::new(VecDeque::from(exchanges.clone())));
+        let hold = Arc::new(ResponseHold::default());
 
         // Always return the models when asked, as there is no POST data to validate
         Mock::given(method("GET"))
@@ -253,7 +294,9 @@ impl OpenAiFixture {
             .respond_with({
                 let queue = queue.clone();
                 let expected_session_id = expected_session_id.clone();
+                let hold = hold.clone();
                 move |req: &wiremock::Request| {
+                    hold.wait_open();
                     let body = std::str::from_utf8(&req.body).unwrap_or("");
 
                     // Validate session ID header
@@ -302,6 +345,7 @@ impl OpenAiFixture {
             base_url,
             exchanges,
             queue,
+            hold,
         }
     }
 
@@ -314,7 +358,15 @@ impl OpenAiFixture {
             base_url,
             exchanges: Vec::new(),
             queue: Arc::default(),
+            hold: Arc::default(),
         }
+    }
+
+    /// Holds every chat-completion response until the returned guard is released or dropped.
+    #[allow(dead_code)]
+    pub fn hold_responses(&self) -> HeldResponses {
+        self.hold.set(true);
+        HeldResponses(self.hold.clone())
     }
 
     pub fn uri(&self) -> &str {
@@ -442,10 +494,7 @@ pub enum Notification {
 
 /// Drains `drain` until it yields something, sleeping on `notify` between tries. The waiter is
 /// armed BEFORE each drain, so an update landing between the drain and the await still wakes it.
-pub async fn next_notifications(
-    notify: &tokio::sync::Notify,
-    drain: impl Fn() -> Vec<Notification>,
-) -> Vec<Notification> {
+pub async fn next_arrivals<T>(notify: &tokio::sync::Notify, drain: impl Fn() -> Vec<T>) -> Vec<T> {
     loop {
         let notified = notify.notified();
         tokio::pin!(notified);

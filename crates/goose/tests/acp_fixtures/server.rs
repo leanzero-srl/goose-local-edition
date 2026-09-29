@@ -62,6 +62,13 @@ impl AcpServerSession {
             .collect()
     }
 
+    /// Like `session_updates`, but waits for at least one: woken by each arriving update, bounded
+    /// only by the harness's own test timeout.
+    #[allow(dead_code)]
+    pub async fn next_session_updates(&self) -> Vec<SessionUpdate> {
+        super::next_arrivals(&self.notify, || self.session_updates()).await
+    }
+
     async fn send_prompt(
         &mut self,
         content: Vec<ContentBlock>,
@@ -477,7 +484,7 @@ impl Session for AcpServerSession {
     }
 
     async fn next_notifications(&self) -> Vec<super::Notification> {
-        super::next_notifications(&self.notify, || self.notifications()).await
+        super::next_arrivals(&self.notify, || self.notifications()).await
     }
 
     async fn prompt(
