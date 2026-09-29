@@ -17,7 +17,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-496 (the chat follows the turn: watch #3y, data-following);
   - Q-486.
 - E2E #3y RUNNING since 16:01: RU-2026-09-29-3y-split-tensor-coffee, session 20260929_19, the coffee brief (41 turns).
-  r1 proves every send (SEND_LOST). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
+  r1 proves every send (SEND_LOST). Turn 1 LANDED (Q-492 proven under the brief) and saved both memories, but
+  narrowed the privacy rule to this project (Q-506, model). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
 - E2E #3x STOPPED at turn 4 (E2E-RUNS): the Q-498 cache thrash with the owner's second chat; its memory turn was lost.
 
 ## Toward 3.0.80 (main has Q-495 4503c521a + Q-497 23c06bb8b)
@@ -30,7 +31,10 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-503 cutting ON 6b4e8fcfb: the sidecar probe/machine test flakes.
 - Q-500/501 DONE c900ee4ea (branch worktree-agent-adf3890d8dcce9f43, KEEP): running rows shared across windows, Stop
   from a second window, the banner reads the engine's request list. Full vitest 4,638 green.
-- Q-504 (a loop/schedule turn that no window sent cannot be stopped): general-purpose, cutting.
+- Q-504 (a loop/schedule turn that no window sent cannot be stopped): general-purpose, cutting ON c900ee4ea.
+- Q-505 SECURITY: a plaintext CONTEXT7 key sits in goose memory evolve-goose-test-loop.txt, which recall injects into
+  prompts. memory-skills-surgeon is cutting save/recall redaction plus a no-values scan. The OWNER decides on the existing
+  entry: tell him, never print the value.
 - When the agents land: one scratch branch (Q-502 includes Q-498; Q-503 includes Q-499; Q-500/501) → full gate → ff main
   → release 3.0.80 → install when #3y allows.
 
@@ -44,7 +48,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-466 waits on: a CI red naming one of its tests. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (72 GB). Take a vigil screenshot and READ it. The next free id is Q-505.
+- Check CI, agents, disk ≥ 30 GB (72 GB). Take a vigil screenshot and READ it. The next free id is Q-507.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
