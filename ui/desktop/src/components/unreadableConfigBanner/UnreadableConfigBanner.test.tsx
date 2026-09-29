@@ -6,8 +6,7 @@ import { ConfigProvider } from '../ConfigContext';
 import UnreadableConfigBanner from './UnreadableConfigBanner';
 
 const CONFIG_PATH = '/Users/someone/.config/goose/config.yaml';
-const REASON =
-  "did not find expected ',' or ']' at line 4 column 1, while parsing a flow sequence at line 3 column 13";
+const REASON = "an unclosed '['";
 
 const acp = vi.hoisted(() => ({
   unreadable: [] as unknown[],

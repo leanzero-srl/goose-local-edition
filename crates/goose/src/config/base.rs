@@ -101,20 +101,154 @@ fn parse_settings_content(content: &str) -> Result<Mapping, SettingsReadFailure>
             yaml_kind(&other)
         ))),
         Err(e) => {
-            let location = e.location();
+            let message = e.to_string();
+            let kind = yaml_error_kind(&message);
+            let place = e.location().map(|at| (at.line(), at.column()));
+            let place = match (kind, place) {
+                (DUPLICATE_KEY, Some(mapping_start)) => {
+                    duplicate_key_place(content, &message, mapping_start).or(Some(mapping_start))
+                }
+                _ => place,
+            };
             Err(SettingsReadFailure {
-                reason: e.to_string(),
-                line: location.as_ref().map(|at| at.line()),
-                column: location.as_ref().map(|at| at.column()),
+                reason: kind.to_string(),
+                line: place.map(|(line, _)| line),
+                column: place.map(|(_, column)| column),
             })
         }
     }
 }
 
-fn parse_settings_file(path: &Path, content: &str) -> Result<Mapping, ConfigError> {
+const DUPLICATE_KEY: &str = "duplicate key";
+
+/// Q-470: serde_yaml's messages quote the file's own text — a duplicate key, the path of keys
+/// above it — and a token pasted as a key is text like any other. So only the KIND of error leaves
+/// the parser; the place comes from the parser's location. The needles are serde_yaml's and
+/// libyaml's fixed wording, matched in order (the duplicate first: its message carries the
+/// person's text after the needle).
+const YAML_ERROR_KINDS: &[(&str, &str)] = &[
+    ("duplicate entry ", DUPLICATE_KEY),
+    (
+        "found a tab character",
+        "a tab character where indentation spaces are expected",
+    ),
+    (
+        "mapping values are not allowed",
+        "a ':' the indentation does not allow (a misaligned key, or a value that needs quotes)",
+    ),
+    (
+        "block sequence entries are not allowed",
+        "invalid indentation",
+    ),
+    ("did not find expected key", "invalid indentation"),
+    ("did not find expected '-' indicator", "invalid indentation"),
+    ("mapping keys are not allowed", "invalid indentation"),
+    ("could not find expected ':'", "a key without a ':'"),
+    ("did not find expected ',' or ']'", "an unclosed '['"),
+    ("did not find expected ',' or '}'", "an unclosed '{'"),
+    ("did not find expected node content", "a missing value"),
+    (
+        "found unexpected end of stream",
+        "an unclosed quote or bracket",
+    ),
+    (
+        "found character that cannot start any token",
+        "a character that cannot start a value (the value needs quotes)",
+    ),
+    (
+        "found unknown escape character",
+        "an invalid escape in a quoted string",
+    ),
+    (
+        "found invalid Unicode character escape code",
+        "an invalid escape in a quoted string",
+    ),
+    ("UTF-8 octet", "bytes that are not UTF-8"),
+    (
+        "unknown anchor",
+        "an alias to an anchor that does not exist",
+    ),
+    ("recursion limit exceeded", "nesting too deep"),
+    ("repetition limit exceeded", "too many repeated aliases"),
+    ("more than one document", "more than one YAML document"),
+];
+
+fn yaml_error_kind(message: &str) -> &'static str {
+    YAML_ERROR_KINDS
+        .iter()
+        .find(|(needle, _)| message.contains(needle))
+        .map_or(
+            "invalid YAML (a parser error goose does not name)",
+            |(_, kind)| kind,
+        )
+}
+
+/// serde_yaml places a duplicate at the start of the mapping that holds it. The duplicated key is
+/// read from the message only to find its second line at that mapping's indentation; it is never
+/// returned. `None` (a flow mapping, an escaped or non-string key) keeps the mapping's start.
+fn duplicate_key_place(
+    content: &str,
+    message: &str,
+    (mapping_line, mapping_column): (usize, usize),
+) -> Option<(usize, usize)> {
+    let (_, quoted) = message.split_once("with key \"")?;
+    let (key, _) = quoted.rsplit_once('"')?;
+    if key.contains('\\') {
+        return None;
+    }
+    let forms = [key.to_string(), format!("\"{key}\""), format!("'{key}'")];
+    let indent = mapping_column.checked_sub(1)?;
+    content
+        .lines()
+        .enumerate()
+        .skip(mapping_line.checked_sub(1)?)
+        .filter(|(_, line)| {
+            line.get(..indent)
+                .is_some_and(|lead| lead.bytes().all(|b| b == b' '))
+                && line.get(indent..).is_some_and(|rest| {
+                    forms.iter().any(|form| {
+                        rest.strip_prefix(form.as_str())
+                            .is_some_and(|after| after.trim_start().starts_with(':'))
+                    })
+                })
+        })
+        .nth(1)
+        .map(|(index, _)| (index + 1, mapping_column))
+}
+
+/// serde's shape errors quote the value they could not use (`invalid type: string "…"`), and that
+/// value may be a secret or an extension's token. The shape stays; the quoted text does not.
+fn without_quoted_values(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut chars = message.chars();
+    while let Some(c) = chars.next() {
+        if c != '"' {
+            out.push(c);
+            continue;
+        }
+        out.push_str("\"…\"");
+        while let Some(inner) = chars.next() {
+            match inner {
+                '\\' => {
+                    chars.next();
+                }
+                '"' => break,
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn parse_settings_file(path: &Path, content: &str) -> Result<Mapping, ConfigError> {
     parse_settings_content(content).map_err(|failure| ConfigError::Unparseable {
         path: path.to_path_buf(),
-        reason: failure.reason,
+        reason: match (failure.line, failure.column) {
+            (Some(line), Some(column)) => {
+                format!("{} at line {line}, column {column}", failure.reason)
+            }
+            _ => failure.reason,
+        },
     })
 }
 
@@ -143,16 +277,11 @@ fn diagnose_settings_file(path: &Path, role: SettingsFileRole) -> Option<Unreada
         Err(e) => SettingsReadFailure::without_location(e.to_string()),
         Ok(content) => match parse_settings_content(&content) {
             Err(failure) => failure,
-            Ok(mapping) if role == SettingsFileRole::Secrets => {
-                match serde_json::to_value(mapping) {
-                    Ok(Value::Object(_)) => return None,
-                    // Never the value itself: this file holds secrets.
-                    Ok(_) => SettingsReadFailure::without_location(
-                        "expected a mapping of keys".to_string(),
-                    ),
-                    Err(e) => SettingsReadFailure::without_location(e.to_string()),
-                }
-            }
+            Ok(mapping) if role == SettingsFileRole::Secrets => match secrets_from_mapping(mapping)
+            {
+                Ok(_) => return None,
+                Err(reason) => SettingsReadFailure::without_location(reason.to_string()),
+            },
             Ok(_) => return None,
         },
     };
@@ -163,6 +292,16 @@ fn diagnose_settings_file(path: &Path, role: SettingsFileRole) -> Option<Unreada
         line: failure.line,
         column: failure.column,
     })
+}
+
+/// The secrets file's mapping as the reader holds it. A failure never carries a key or a value:
+/// this file holds secrets.
+fn secrets_from_mapping(mapping: Mapping) -> Result<HashMap<String, Value>, &'static str> {
+    match serde_json::to_value(mapping) {
+        Ok(Value::Object(map)) => Ok(map.into_iter().collect()),
+        Ok(_) => Err("expected a mapping of keys"),
+        Err(_) => Err("a key that is not text"),
+    }
 }
 
 fn yaml_kind(value: &serde_yaml::Value) -> &'static str {
@@ -179,13 +318,13 @@ fn yaml_kind(value: &serde_yaml::Value) -> &'static str {
 
 impl From<serde_json::Error> for ConfigError {
     fn from(err: serde_json::Error) -> Self {
-        ConfigError::DeserializeError(err.to_string())
+        ConfigError::DeserializeError(without_quoted_values(&err.to_string()))
     }
 }
 
 impl From<serde_yaml::Error> for ConfigError {
     fn from(err: serde_yaml::Error) -> Self {
-        ConfigError::DeserializeError(err.to_string())
+        ConfigError::DeserializeError(without_quoted_values(&err.to_string()))
     }
 }
 
@@ -963,7 +1102,10 @@ impl Config {
             Some(existing) => {
                 serde_yaml::from_value(existing.clone()).map_err(|e| ConfigError::Unparseable {
                     path: self.write_path().clone(),
-                    reason: format!("the value of `{key}` does not have the expected shape: {e}"),
+                    reason: format!(
+                        "the value of `{key}` does not have the expected shape: {}",
+                        without_quoted_values(&e.to_string())
+                    ),
                 })?
             }
         };
@@ -1196,17 +1338,10 @@ impl Config {
         if path.exists() {
             let file_content = std::fs::read_to_string(path)?;
             let mapping = parse_settings_file(path, &file_content)?;
-            match serde_json::to_value(mapping) {
-                Ok(Value::Object(map)) => Ok(map.into_iter().collect()),
-                Ok(other) => Err(ConfigError::Unparseable {
-                    path: path.to_path_buf(),
-                    reason: format!("expected a mapping of keys, found {other}"),
-                }),
-                Err(e) => Err(ConfigError::Unparseable {
-                    path: path.to_path_buf(),
-                    reason: e.to_string(),
-                }),
-            }
+            secrets_from_mapping(mapping).map_err(|reason| ConfigError::Unparseable {
+                path: path.to_path_buf(),
+                reason: reason.to_string(),
+            })
         } else {
             Ok(HashMap::new())
         }
@@ -1882,7 +2017,7 @@ mod tests {
                 "{name}: the error must name the file: {err}"
             );
             assert!(
-                err.contains("did not find expected"),
+                err.contains("an unclosed '[' at line 3, column 1"),
                 "{name}: the error must carry the parse error: {err}"
             );
             assert_eq!(
@@ -2046,16 +2181,118 @@ mod tests {
         let file = &report[0];
         assert_eq!(file.path, config_path);
         assert_eq!(file.role, SettingsFileRole::Config);
-        assert!(
-            file.reason.contains("did not find expected"),
-            "{}",
-            file.reason
-        );
+        assert_eq!(file.reason, "an unclosed '['");
         assert_eq!((file.line, file.column), (Some(3), Some(1)), "{file:?}");
 
         assert!(config.set_param("k", "v").is_err());
         assert_eq!(std::fs::read_to_string(&config_path)?, original);
         assert_eq!(config.unreadable_files(), report);
+        Ok(())
+    }
+
+    const PASTED_TOKEN: &str = "sk-proj-Q470pastedAsAKeyZx9";
+
+    // Q-470: a token pasted as a key twice is a duplicate-key parse error, and serde_yaml's
+    // message for it quotes the key. The report, the save refusal and the reader's error name
+    // the file, the place and the kind of error only.
+    #[test]
+    fn a_duplicated_pasted_token_key_in_secrets_is_never_echoed() -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _, secrets_path) = config_in(&dir)?;
+        std::fs::write(
+            &secrets_path,
+            format!("OPENAI_API_KEY: sk-1\n{PASTED_TOKEN}: x\n{PASTED_TOKEN}: x\n"),
+        )?;
+
+        let report = config.unreadable_files();
+        assert_eq!(report.len(), 1, "{report:?}");
+        assert_eq!(report[0].role, SettingsFileRole::Secrets);
+        assert_eq!(report[0].reason, "duplicate key", "{report:?}");
+        assert!(!format!("{report:?}").contains("Q470"), "{report:?}");
+        assert_eq!((report[0].line, report[0].column), (Some(3), Some(1)));
+
+        let refusal = config.set_secret("ANTHROPIC_API_KEY", &"sk-2").unwrap_err();
+        assert!(!refusal.to_string().contains("Q470"), "{refusal}");
+        let read = config.get_secret::<String>("OPENAI_API_KEY").unwrap_err();
+        assert!(!read.to_string().contains("Q470"), "{read}");
+        Ok(())
+    }
+
+    // A config.yaml key is whatever the person typed — an `envs:` entry, a header name — so a
+    // token pasted there as a key is reported the same way.
+    #[test]
+    fn a_duplicated_pasted_token_key_in_config_is_never_echoed() -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, config_path, _) = config_in(&dir)?;
+        std::fs::write(
+            &config_path,
+            format!(
+                "extensions:\n  github:\n    envs:\n      {PASTED_TOKEN}: x\n      {PASTED_TOKEN}: x\n"
+            ),
+        )?;
+
+        let report = config.unreadable_files();
+        assert_eq!(report.len(), 1, "{report:?}");
+        assert_eq!(report[0].reason, "duplicate key", "{report:?}");
+        assert!(!format!("{report:?}").contains("Q470"), "{report:?}");
+        assert_eq!((report[0].line, report[0].column), (Some(5), Some(7)));
+        let refusal = config.set_param("k", "v").unwrap_err();
+        assert!(!refusal.to_string().contains("Q470"), "{refusal}");
+        assert!(
+            refusal
+                .to_string()
+                .contains("duplicate key at line 5, column 7"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    // A flow mapping has no line per key to find, so the place stays the mapping's start.
+    #[test]
+    fn a_duplicate_in_a_flow_mapping_keeps_the_mapping_start() {
+        let content = format!("envs: {{{PASTED_TOKEN}: x, {PASTED_TOKEN}: y}}\n");
+        let failure = parse_settings_content(&content).unwrap_err();
+        assert_eq!(failure.reason, "duplicate key");
+        assert!(failure.line.is_some() && failure.column.is_some());
+    }
+
+    #[test]
+    fn a_config_value_of_the_wrong_shape_is_refused_without_its_value() -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, config_path, _) = config_in(&dir)?;
+        std::fs::write(&config_path, format!("extensions: {PASTED_TOKEN}\n"))?;
+        let refusal = config
+            .update_param::<HashMap<String, String>, _, _>("extensions", |map| map)
+            .unwrap_err();
+        assert!(!refusal.to_string().contains("Q470"), "{refusal}");
+        let read = config
+            .get_param_for_update::<HashMap<String, String>>("extensions")
+            .unwrap_err();
+        assert!(!read.to_string().contains("Q470"), "{read}");
+        assert!(read.to_string().contains("invalid type: string"), "{read}");
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_values_are_removed_and_the_shape_kept() {
+        assert_eq!(
+            without_quoted_values(r#"invalid type: string "sk-a\"b", expected u32"#),
+            r#"invalid type: string "…", expected u32"#
+        );
+        assert_eq!(
+            without_quoted_values("missing field `cmd`"),
+            "missing field `cmd`"
+        );
+    }
+
+    #[test]
+    fn a_secret_of_the_wrong_shape_is_refused_without_its_value() -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _, _) = config_in(&dir)?;
+        config.set_secret("Q470_SHAPE", &PASTED_TOKEN)?;
+        let err = config.get_secret::<u32>("Q470_SHAPE").unwrap_err();
+        assert!(!err.to_string().contains("pastedAsAKey"), "{err}");
+        assert!(err.to_string().contains("invalid type: string"), "{err}");
         Ok(())
     }
 
