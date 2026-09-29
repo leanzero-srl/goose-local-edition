@@ -12,7 +12,8 @@ import { sessionActivityAt } from '../utils/dateUtils';
 import { useNavigation } from '../hooks/useNavigation';
 import { MAX_RECENT_SESSIONS } from '../hooks/useNavigationSessions';
 import { useConfig } from './ConfigContext';
-import { deriveProjects, folderName, type DerivedProject } from './Layout/ProjectsSection';
+import { deriveProjects, type DerivedProject } from './Layout/ProjectsSection';
+import { projectLabel, useProjectNames } from '../utils/projectNames';
 import { timeAgo } from './Layout/tree';
 import { deskHref, deskName } from './Layout/AgentWorkSection';
 import { foldDesk, type AgentWorkRosterRow } from './agent-work/agentWorkModel';
@@ -205,7 +206,10 @@ function ContinuePage({
   const setView = useNavigation();
   const { extensionsList } = useConfig();
   const latest = projects[0];
-  const projectOf = (s: SessionListItem) => folderName(s.workingDir ?? '') || s.workingDir || '';
+  // Two folders named "work" read "work — RU-…-3v-…" / "work — RU-…-3w-…" here as in the sidebar.
+  const projectName = useProjectNames(projects.map((p) => p.path));
+  const projectOf = (s: SessionListItem) =>
+    s.workingDir ? projectLabel(projectName(s.workingDir)) || s.workingDir : '';
   // Running and waiting sessions lead the recents; same-title rows get " · 2".
   const activity = useSessionActivity();
   const leads = (s: SessionListItem) => isActive(activityOf(activity, s.id));
@@ -234,7 +238,9 @@ function ContinuePage({
           actions={
             latest ? (
               <Button variant="primary" icon={<Plus />} onClick={newSession} title={latest.path}>
-                {intl.formatMessage(i18n.newSessionIn, { project: latest.name })}
+                {intl.formatMessage(i18n.newSessionIn, {
+                  project: projectLabel(projectName(latest.path)),
+                })}
               </Button>
             ) : undefined
           }
@@ -288,7 +294,9 @@ function ContinuePage({
             </div>
           ) : sessions.length === 0 ? (
             <p className={cx(TYPE.bodyMuted, 'px-4 py-3')}>
-              {intl.formatMessage(i18n.noSessionsYet, { project: latest?.name ?? '' })}
+              {intl.formatMessage(i18n.noSessionsYet, {
+                project: latest ? projectLabel(projectName(latest.path)) : '',
+              })}
             </p>
           ) : (
             <ul data-testid="landing-recent-sessions">

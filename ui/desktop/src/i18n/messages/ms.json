@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "Sesi tanpa tajuk"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "menunggu jawapan anda"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "menunggu jawapan anda sejak {time}"
+  },
   "addNode.addButton": {
     "defaultMessage": "Tambah nod"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "Tunjukkan sebab prompt ini dibaca dengan pantas, kadar dan memori"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, other {# memerlukan anda}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "Memori pada {node} berbanding bajetnya"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "Kemahiran"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, other {# memerlukan anda}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{questions, plural, other {# soalan}} dalam {chats, plural, other {# sembang}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "Jawab"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "Dihentikan"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, other {# memerlukan anda}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "Menunggu anda"

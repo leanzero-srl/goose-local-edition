@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "未命名会话"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "等待你的回答"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "自 {time} 起等待你的回答"
+  },
   "addNode.addButton": {
     "defaultMessage": "添加节点"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "显示此提示读取快的原因、速率和内存"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, other {# 个等你处理}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "{node} 的内存（相对预算）"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "技能"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, other {# 个等你处理}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{chats, plural, other {# 个对话}}中有 {questions, plural, other {# 个问题}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "回答"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "已停止"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, other {# 个需要你}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "等待你"

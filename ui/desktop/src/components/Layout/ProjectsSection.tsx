@@ -36,6 +36,12 @@ import {
 import { sessionActivityAt } from '../../utils/dateUtils';
 import type { ProjectEntry } from '../../utils/projectDirs';
 import {
+  distinctProjectNames,
+  folderName,
+  projectLabel,
+  publishProjectPaths,
+} from '../../utils/projectNames';
+import {
   Button,
   SectionHeader,
   Toolbar,
@@ -246,6 +252,8 @@ export interface DerivedProject {
   /** The normalized working directory; the grouping key and the cwd filter for paging. */
   path: string;
   name: string;
+  /** What tells this folder apart from a same-named one in the list (Q-485); absent when unique. */
+  hint?: string;
   /** Sessions known from the recent list, newest first. */
   sessions: SessionListItem[];
   /** In the user's folder registry (added with "+"); such a folder stays listed with no sessions. */
@@ -298,19 +306,17 @@ export function deriveProjects(
     }
   }
   const projects = [...byPath.values()];
+  const names = distinctProjectNames(projects.map((p) => p.path));
   for (const project of projects) {
     project.sessions.sort((a, b) => activityOf(b) - activityOf(a));
+    const hint = names.get(project.path)?.hint;
+    if (hint) project.hint = hint;
   }
   projects.sort((a, b) => b.lastActivity - a.lastActivity || a.name.localeCompare(b.name));
   return projects;
 }
 
-/** Last path segment of a directory — the display name of a project. */
-export function folderName(dir: string): string {
-  const trimmed = dir.replace(/\/+$/, '');
-  const seg = trimmed.split('/').filter(Boolean).pop();
-  return seg ?? trimmed;
-}
+export { folderName };
 
 /**
  * The sidebar filter: a folder whose name or path holds the query is listed whole; otherwise it is
@@ -553,7 +559,8 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
 }) => {
   const intl = useIntl();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const name = project.name || intl.formatMessage(i18n.noFolder);
+  const folder = project.name || intl.formatMessage(i18n.noFolder);
+  const name = projectLabel({ name: folder, hint: project.hint });
 
   const reveal = useCallback(() => {
     setMenu(null);
@@ -651,7 +658,17 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
           ) : (
             <Folder className="size-4 shrink-0 text-lz-ink-2" />
           )}
-          <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>{name}</span>
+          <span
+            data-testid="project-name"
+            className={cx('min-w-0 truncate text-lz-body text-lz-ink', WEIGHT.medium)}
+          >
+            {folder}
+            {project.hint && (
+              <span data-testid="project-name-hint" className="text-lz-ink-3">
+                {` — ${project.hint}`}
+              </span>
+            )}
+          </span>
           {!expanded && activeCount > 0 && (
             <span
               data-testid="project-active-count"
@@ -835,6 +852,10 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
     () => deriveProjects(recentSessions, registry),
     [recentSessions, registry]
   );
+  // Active now and the composer chip tell a same-named folder apart against this same list.
+  useEffect(() => {
+    publishProjectPaths(projects.map((p) => p.path));
+  }, [projects]);
   const filtering = query.trim() !== '';
   const listed = useMemo(
     () => filterProjects(projects, query, sessionsByProject),

@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "Sesión sin título"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "esperando tu respuesta"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "esperando tu respuesta desde las {time}"
+  },
   "addNode.addButton": {
     "defaultMessage": "Añadir nodo"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "Mostrar por qué este prompt se lee rápido, velocidades y memoria"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, one {# te necesita} other {# te necesitan}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "Memoria en {node} frente a su presupuesto"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, one {# te necesita} other {# te necesitan}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{questions, plural, one {# pregunta} other {# preguntas}} en {chats, plural, one {# chat} other {# chats}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "Responder"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "Detenida"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, one {# te necesita} other {# te necesitan}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "Esperándote"

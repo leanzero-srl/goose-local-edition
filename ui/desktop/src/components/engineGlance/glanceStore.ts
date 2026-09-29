@@ -100,18 +100,26 @@ export async function setGlancePrefs(prefs: GlancePrefs): Promise<void> {
   await bridge()?.engineGlancePrefsSet?.(prefs);
 }
 
-/** The window's session-state store as the glance reports it: running, and every open question. */
+/**
+ * The window's session-state store as the glance reports it: running, and every open question —
+ * ONE entry per question (a live elicitation is one too), the chats in the Active now order. Q-486:
+ * this once sent one entry per CHAT, so a chat asking two questions read "1 needs you" on the glance
+ * beside "2 need you" in the top bar; the glance counts chats as the distinct sessions here.
+ */
 export function glanceSessionsOf(state: Parameters<typeof activeSessions>[0]): GlanceSessions {
-  return {
-    running: state.running.length,
-    needsYou: activeSessions(state)
-      .filter((s) => s.needsYou > 0)
-      .map((s) => ({
-        sessionId: s.sessionId,
-        sessionName: s.sessionName,
-        question: s.headline ?? '',
-      })),
-  };
+  const needsYou = activeSessions(state)
+    .filter((s) => s.needsYou > 0)
+    .flatMap((s) =>
+      [
+        ...state.needsYou
+          .filter((item) => item.sessionId === s.sessionId)
+          .map((item) => item.question),
+        ...state.elicitations
+          .filter((request) => request.sessionId === s.sessionId)
+          .map((request) => request.request.message),
+      ].map((question) => ({ sessionId: s.sessionId, sessionName: s.sessionName, question }))
+    );
+  return { running: state.running.length, needsYou };
 }
 
 /**

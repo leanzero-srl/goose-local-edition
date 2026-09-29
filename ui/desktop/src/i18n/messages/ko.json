@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "제목 없는 세션"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "답변 대기 중"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "{time}부터 답변 대기 중"
+  },
   "addNode.addButton": {
     "defaultMessage": "노드 추가"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "이 프롬프트가 빨리 읽히는 이유, 속도, 메모리 보기"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, other {#개가 당신을 기다림}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "{node}의 메모리(예산 대비)"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "스킬"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, other {#개가 당신을 기다림}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{chats, plural, other {채팅 #개}}에 {questions, plural, other {질문 #개}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "답변"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "중지됨"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, other {#개 확인 필요}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "답변 대기 중"

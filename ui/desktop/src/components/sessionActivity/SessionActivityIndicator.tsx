@@ -12,6 +12,8 @@ import { FOCUS, MOTION, PHASE_FILL, RADIUS, TNUM, TONE_FILL, TYPE, WEIGHT, cx } 
 import { displaySessionListName } from '../../sessions';
 import { useNow } from './ActivityPills';
 import { noteWords } from '../notes/noteWords';
+import { projectLabel, useProjectNames } from '../../utils/projectNames';
+import { needsYouCountLabel } from './needsYouWords';
 import {
   activeSessions,
   elapsedLabel,
@@ -21,10 +23,6 @@ import {
 } from './sessionActivityStore';
 
 const i18n = defineMessages({
-  needsYou: {
-    id: 'sessionActivityIndicator.needsYou',
-    defaultMessage: '{count, plural, one {# needs you} other {# need you}}',
-  },
   running: {
     id: 'sessionActivityIndicator.running',
     defaultMessage: '{count} running',
@@ -43,11 +41,6 @@ const PILL_BUTTON = cx(
   FOCUS,
   MOTION
 );
-
-function folderOf(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? '';
-}
 
 /**
  * Q-324: at a narrow window (460 px measured) the pill's words took the top bar and left the chat
@@ -81,6 +74,7 @@ function ActivityGroup({
 }: GroupProps) {
   const intl = useIntl();
   const navigate = useNavigate();
+  const projectName = useProjectNames(sessions.map((s) => s.workingDir).filter(Boolean));
   const nameOf = (s: ActiveSession) =>
     s.sessionName ? displaySessionListName(s.sessionName) : intl.formatMessage(i18n.unnamed);
 
@@ -136,7 +130,9 @@ function ActivityGroup({
               {nameOf(s)}
             </span>
             <span className="w-full truncate text-lz-meta text-lz-ink-2">
-              {[folderOf(s.workingDir), detail(s)].filter(Boolean).join(' · ')}
+              {[s.workingDir ? projectLabel(projectName(s.workingDir)) : '', detail(s)]
+                .filter(Boolean)
+                .join(' · ')}
             </span>
           </DropdownMenuItem>
         ))}
@@ -165,7 +161,7 @@ export default function SessionActivityIndicator() {
       {waiting.length > 0 && (
         <ActivityGroup
           testId="indicator-needs-you"
-          label={intl.formatMessage(i18n.needsYou, { count: waitingCount })}
+          label={needsYouCountLabel(intl, { questions: waitingCount, chats: waiting.length })}
           count={waitingCount}
           menuLabel={intl.formatMessage(i18n.needsYouMenu)}
           fill={TONE_FILL.warn}

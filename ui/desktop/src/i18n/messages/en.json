@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "Untitled session"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "waiting for your answer"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "waiting for your answer since {time}"
+  },
   "addNode.addButton": {
     "defaultMessage": "Add node"
   },
@@ -2137,9 +2143,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "Show why this prompt reads fast, rates and memory"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count,plural,one{# needs you} other{# need you}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "Memory on {node} against its budget"
@@ -6512,6 +6515,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count,plural,one{# needs you} other{# need you}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{questions,plural,one{{chats,plural,one{{questions, number} question in # chat} other{{questions, number} question in # chats}}} other{{chats,plural,one{{questions, number} questions in # chat} other{{questions, number} questions in # chats}}}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "Answer"
   },
@@ -9706,9 +9715,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "Stopped"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count,plural,one{# needs you} other{# need you}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "Waiting for you"

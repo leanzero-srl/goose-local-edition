@@ -119,6 +119,29 @@ describe('ProjectsSection', () => {
     });
   });
 
+  // Q-485, the owner's screenshot of 2026-09-29: two folder rows both read "work".
+  it('two folders with the same name read by the part of their parent that differs', async () => {
+    electronMocks();
+    const q = '/Users/me/goose-builds/quality';
+    navMocks.recentSessions.current = [
+      listItem({ id: 'a', name: 'Bakery', workingDir: `${q}/RU-2026-09-29-3w-cafe/work` }),
+      listItem({ id: 'b', name: 'Vendor', workingDir: `${q}/RU-2026-09-28-3v-cafe/work` }),
+      listItem({ id: 'c', name: 'Goose', workingDir: '/proj/goose' }),
+    ];
+    renderSection();
+    await screen.findByText('Bakery');
+    const nameOf = (path: string) =>
+      within(screen.getByTestId(`project-row-${path}`)).getByTestId('project-name');
+    const w = nameOf(`${q}/RU-2026-09-29-3w-cafe/work`);
+    expect(w.textContent).toBe('work — RU-…-29-3w-…');
+    expect(within(w).getByTestId('project-name-hint').className).toContain('text-lz-ink-3');
+    expect(nameOf(`${q}/RU-2026-09-28-3v-cafe/work`).textContent).toBe('work — RU-…-28-3v-…');
+    expect(nameOf('/proj/goose').textContent).toBe('goose');
+    expect(
+      within(screen.getByTestId('project-row-/proj/goose')).queryByTestId('project-name-hint')
+    ).toBeNull();
+  });
+
   it('with no sessions and no folders it says where sessions will appear', async () => {
     electronMocks();
     renderSection();

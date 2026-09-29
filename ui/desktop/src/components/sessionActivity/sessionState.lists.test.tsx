@@ -437,7 +437,9 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
     ]);
     expect(rows[0].getAttribute('data-state')).toBe('needs-you');
     expect(rows[0].getAttribute('aria-busy')).toBeNull();
-    expect(rows[0].textContent).toContain('Which database?');
+    // Q-484: the row says what the chat waits on and since when, never the question's own words.
+    expect(rows[0].textContent).toContain('api · waiting for your answer since');
+    expect(rows[0].textContent).not.toContain('Which database?');
     expect(rows[1].getAttribute('data-state')).toBe('running');
     expect(rows[1].getAttribute('aria-busy')).toBe('true');
     expect(rows[1].textContent).toContain('Running · 27m');

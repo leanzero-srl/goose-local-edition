@@ -50,6 +50,7 @@ import {
   type GlanceStage,
 } from '../../utils/engineGlance';
 import { backgroundWorkFor, backgroundWorkLabel } from '../sessionActivity/backgroundWorkText';
+import { needsYouCountLabel } from '../sessionActivity/needsYouWords';
 import { FormingPanel } from '../forming/FormingPanel';
 import { swappingText } from '../chatServedBy/loaderText';
 
@@ -167,10 +168,6 @@ const i18n = defineMessages({
   nodeBar: { id: 'engineGlance.nodeBar', defaultMessage: 'Memory on {node} against its budget' },
   progressRead: { id: 'engineGlance.progressRead', defaultMessage: 'Prompt read so far' },
   progressLoad: { id: 'engineGlance.progressLoad', defaultMessage: 'Weights loaded so far' },
-  needsYou: {
-    id: 'engineGlance.needsYou',
-    defaultMessage: '{count, plural, one {# needs you} other {# need you}}',
-  },
   openQuestion: {
     id: 'engineGlance.openQuestion',
     defaultMessage: 'Open {name} — it asked: {question}',
@@ -491,6 +488,14 @@ function Details({ engine }: { engine: EngineGlance }) {
   );
 }
 
+/** The glance's needs-you words, counted the way the top bar counts them (Q-486). */
+function needsYouOf(intl: IntlShape, items: GlancePush['sessions']['needsYou']): string {
+  return needsYouCountLabel(intl, {
+    questions: items.length,
+    chats: new Set(items.map((item) => item.sessionId)).size,
+  });
+}
+
 function NeedsYouStrip({
   push,
   onOpenSession,
@@ -521,9 +526,7 @@ function NeedsYouStrip({
       )}
     >
       <Hand aria-hidden />
-      <span className={cx('shrink-0', WEIGHT.semibold, TNUM)}>
-        {intl.formatMessage(i18n.needsYou, { count: items.length })}
-      </span>
+      <span className={cx('shrink-0', WEIGHT.semibold, TNUM)}>{needsYouOf(intl, items)}</span>
       <span className="min-w-0 truncate">{name}</span>
     </button>
   );
@@ -790,7 +793,7 @@ function GlanceFace(props: EngineGlanceCardProps) {
   const phaseFill = engine.present ? PHASE_FILL[engine.phase] : TONE_FILL.warn;
   const word = engine.present
     ? glanceHeadline(intl, engine)
-    : intl.formatMessage(i18n.needsYou, { count: push.sessions.needsYou.length });
+    : needsYouOf(intl, push.sessions.needsYou);
   const openLabel = question
     ? intl.formatMessage(i18n.openQuestion, { name: questionName, question: question.question })
     : intl.formatMessage(i18n.openEngine);
@@ -873,7 +876,7 @@ function GlanceFace(props: EngineGlanceCardProps) {
                 TONE_FILL.warn
               )}
             >
-              {intl.formatMessage(i18n.needsYou, { count: needs })}
+              {needsYouOf(intl, push.sessions.needsYou)}
             </span>
           )}
         </span>

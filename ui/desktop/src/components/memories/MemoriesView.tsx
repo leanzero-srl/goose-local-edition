@@ -17,6 +17,7 @@ import {
 } from '../../utils/memoryProvenance';
 import { Button, Chip, EmptyState, FOCUS, MOTION, RADIUS, SURFACE, TNUM, TYPE, cx } from '../lz';
 import { LibraryGroup, LibraryRow, LibraryShell, shownSelection } from '../library/Library';
+import { projectLabel, useProjectNames } from '../../utils/projectNames';
 
 /** One stored memory — mirrors the shape returned by the `list-memories` IPC in main.ts. */
 export interface MemoryEntry {
@@ -220,6 +221,7 @@ function OriginSession({ sessionKey }: { sessionKey: string }) {
  * proposed and the agent's reason. A field with no data is not drawn.
  */
 function MemoryProvenance({ memory, workingDir }: { memory: MemoryEntry; workingDir?: string }) {
+  const projectName = useProjectNames(workingDir ? [workingDir] : []);
   const { sources, rest } = splitSourceTags(memory.tags);
   const origin = memory.origin;
   const rows: Array<{ key: string; label: string; value: ReactNode }> = [];
@@ -229,7 +231,7 @@ function MemoryProvenance({ memory, workingDir }: { memory: MemoryEntry; working
     value:
       memory.scope === 'global'
         ? 'Global — recalled in every project'
-        : `This project${workingDir ? ` — ${workingDir.split('/').filter(Boolean).pop()}` : ''}`,
+        : `This project${workingDir ? ` — ${projectLabel(projectName(workingDir))}` : ''}`,
   });
   for (const tag of sources) {
     rows.push({ key: `source-${tag}`, label: 'Source', value: describeSourceTag(tag) });

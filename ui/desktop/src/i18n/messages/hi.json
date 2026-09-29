@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "बिना शीर्षक का सत्र"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "आपके उत्तर की प्रतीक्षा"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "{time} से आपके उत्तर की प्रतीक्षा"
+  },
   "addNode.addButton": {
     "defaultMessage": "नोड जोड़ें"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "दिखाएँ: यह प्रॉम्प्ट तेज़ी से क्यों पढ़ा जाता है, दरें और मेमोरी"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, one {# को आपकी ज़रूरत है} other {# को आपकी ज़रूरत है}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "{node} पर मेमोरी उसके बजट के मुकाबले"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "कौशल"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, one {# को आपकी ज़रूरत है} other {# को आपकी ज़रूरत है}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{chats, plural, other {# चैट}} में {questions, plural, other {# प्रश्न}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "उत्तर दें"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "रोका गया"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, one {# को आपकी ज़रूरत है} other {# को आपकी ज़रूरत है}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "आपकी प्रतीक्षा में"

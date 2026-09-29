@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "Сеанс без названия"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "ждёт вашего ответа"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "ждёт вашего ответа с {time}"
+  },
   "addNode.addButton": {
     "defaultMessage": "Добавить узел"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "Показать, почему этот промпт читается быстро, скорости и память"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, one {# ждёт вас} few {# ждут вас} many {# ждут вас} other {# ждут вас}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "Память на {node} относительно бюджета"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "Навыки"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, one {# ждёт вас} few {# ждут вас} many {# ждут вас} other {# ждут вас}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{questions, plural, one {# вопрос} few {# вопроса} many {# вопросов} other {# вопроса}} в {chats, plural, one {# чате} other {# чатах}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "Ответить"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "Остановлено"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, one {# ждёт вас} few {# ждут вас} many {# ждут вас} other {# ждут вас}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "Ждут вас"

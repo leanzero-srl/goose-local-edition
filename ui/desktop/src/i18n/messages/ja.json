@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "無題のセッション"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "回答待ち"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "{time} から回答待ち"
+  },
   "addNode.addButton": {
     "defaultMessage": "ノードを追加"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "このプロンプトが速く読める理由、レート、メモリを表示"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, other {# 件があなたを待っています}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "{node} のメモリ（予算比）"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "スキル"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, other {# 件があなたを待っています}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{chats, plural, other {# 件のチャット}}に{questions, plural, other {# 件の質問}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "回答"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "停止"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, other {対応が必要 #件}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "あなたを待っています"

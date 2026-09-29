@@ -12,6 +12,7 @@ import {
 import { toast } from 'react-toastify';
 import { defineMessages, useIntl } from '../../i18n';
 import { MOTION, cx } from '../lz';
+import { projectLabel, useProjectNames } from '../../utils/projectNames';
 
 const i18n = defineMessages({
   failedToUpdateWorkingDir: {
@@ -62,6 +63,7 @@ export const DirSwitcher: React.FC<DirSwitcherProps> = ({
   onRestartEnd,
 }) => {
   const intl = useIntl();
+  const projectName = useProjectNames([workingDir]);
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
   const [isDirectoryChooserOpen, setIsDirectoryChooserOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -193,7 +195,7 @@ export const DirSwitcher: React.FC<DirSwitcherProps> = ({
               >
                 <FolderDot className="mr-1" size={16} />
                 <div className="max-w-[200px] truncate">
-                  {workingDir.replace(/\/+$/, '').split('/').pop() || workingDir}
+                  {projectLabel(projectName(workingDir)) || workingDir}
                 </div>
               </button>
             </DropdownMenuTrigger>

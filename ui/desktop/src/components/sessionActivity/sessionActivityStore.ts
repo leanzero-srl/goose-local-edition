@@ -387,6 +387,8 @@ export interface ActiveSession {
   needsYou: number;
   /** The first open question, or a live elicitation's message. */
   headline?: string;
+  /** When the oldest open question was asked (a live elicitation carries no time). */
+  waitingSince?: string;
   /** Notes from the person's other chats waiting here (Q-358). */
   notesWaiting: number;
   /** The chat the oldest waiting note came from. */
@@ -409,6 +411,12 @@ export function activeSessions(state: SessionActivitySnapshot): ActiveSession[] 
     const r = row(item.sessionId, item.sessionName, item.workingDir);
     r.needsYou += 1;
     r.headline ??= item.question;
+    if (
+      Number.isFinite(Date.parse(item.createdAt)) &&
+      (!r.waitingSince || Date.parse(item.createdAt) < Date.parse(r.waitingSince))
+    ) {
+      r.waitingSince = item.createdAt;
+    }
   }
   for (const request of state.elicitations) {
     const r = row(request.sessionId, '', '');

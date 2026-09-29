@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "Phiên chưa đặt tên"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "đang chờ bạn trả lời"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "đang chờ bạn trả lời từ {time}"
+  },
   "addNode.addButton": {
     "defaultMessage": "Thêm nút"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "Hiện lý do prompt này được đọc nhanh, tốc độ và bộ nhớ"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, other {# cần bạn}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "Bộ nhớ trên {node} so với ngân sách"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "Kỹ năng"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, other {# cần bạn}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{questions, plural, other {# câu hỏi}} trong {chats, plural, other {# cuộc trò chuyện}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "Trả lời"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "Đã dừng"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, other {# cần bạn}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "Đang chờ bạn"

@@ -8,6 +8,12 @@
   "activeNowSection.unnamed": {
     "defaultMessage": "Sessione senza titolo"
   },
+  "activeNowSection.waiting": {
+    "defaultMessage": "in attesa della tua risposta"
+  },
+  "activeNowSection.waitingSince": {
+    "defaultMessage": "in attesa della tua risposta dalle {time}"
+  },
   "addNode.addButton": {
     "defaultMessage": "Aggiungi nodo"
   },
@@ -2122,9 +2128,6 @@
   },
   "engineGlance.moreWithCache": {
     "defaultMessage": "Mostra perché questo prompt si legge in fretta, velocità e memoria"
-  },
-  "engineGlance.needsYou": {
-    "defaultMessage": "{count, plural, one {# ha bisogno di te} other {# hanno bisogno di te}}"
   },
   "engineGlance.nodeBar": {
     "defaultMessage": "Memoria su {node} rispetto al budget"
@@ -6488,6 +6491,12 @@
   "navigation.itemSkills": {
     "defaultMessage": "Competenze"
   },
+  "needsYou.count.chats": {
+    "defaultMessage": "{count, plural, one {# ha bisogno di te} other {# hanno bisogno di te}}"
+  },
+  "needsYou.count.questionsInChats": {
+    "defaultMessage": "{questions, plural, one {# domanda} other {# domande}} in {chats, plural, one {# chat} other {# chat}}"
+  },
   "needsYouCard.answer": {
     "defaultMessage": "Rispondi"
   },
@@ -9682,9 +9691,6 @@
   },
   "sessionActivity.stopped": {
     "defaultMessage": "Interrotta"
-  },
-  "sessionActivityIndicator.needsYou": {
-    "defaultMessage": "{count, plural, one {# ha bisogno di te} other {# hanno bisogno di te}}"
   },
   "sessionActivityIndicator.needsYouMenu": {
     "defaultMessage": "In attesa di te"
