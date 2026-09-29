@@ -33,13 +33,25 @@ impl Manifest {
         config_dir.join(".import").join("claude-code.json")
     }
 
-    /// Load the manifest for a config dir, or an empty one if absent/unreadable.
-    pub fn load(config_dir: &Path) -> Self {
+    /// Load the manifest for a config dir; an absent one is empty. An unreadable one is an error:
+    /// `apply` saves the manifest it loaded, so reading it as empty would erase every recorded
+    /// hash and revert target (Q-465).
+    pub fn load(config_dir: &Path) -> Result<Self> {
         let path = Self::path_in(config_dir);
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => anyhow::bail!(
+                "the import manifest {} could not be read ({e}); it was left untouched",
+                path.display()
+            ),
+        };
+        serde_json::from_str(&content).map_err(|e| {
+            anyhow::anyhow!(
+                "the import manifest {} does not parse ({e}); it was left untouched — fix or move it, then retry",
+                path.display()
+            )
+        })
     }
 
     /// Persist the manifest under a config dir.
@@ -70,5 +82,25 @@ impl Manifest {
             target: target.to_string(),
             hash: hash.to_string(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_absent_manifest_is_empty_and_an_unparseable_one_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Manifest::load(dir.path()).unwrap().entries.is_empty());
+
+        let path = Manifest::path_in(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = "{\"entries\": [ {\"import_type\": \"skills\"";
+        std::fs::write(&path, original).unwrap();
+
+        let err = Manifest::load(dir.path()).unwrap_err().to_string();
+        assert!(err.contains(&path.display().to_string()), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     }
 }

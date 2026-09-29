@@ -168,17 +168,24 @@ mod tests {
         );
     }
 
+    // Q-464: `bash -l` sources the developer's own profile, and under hermit nvm's profile hook
+    // prints its NPM_CONFIG_PREFIX complaint to stderr. An empty HOME keeps the login shell (the
+    // product path) while the only output left is the script's own.
     #[tokio::test]
     async fn a_script_reports_exit_and_streams() {
         let d = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
         let r = run_script(
             d.path(),
-            "echo out; echo err >&2; exit 3",
-            &[("X".into(), "1".into())],
+            "echo out $X; echo err >&2; exit 3",
+            &[
+                ("X".into(), "1".into()),
+                ("HOME".into(), home.path().display().to_string()),
+            ],
         )
         .await;
         assert_eq!(r.exit, Some(3));
-        assert_eq!(r.stdout.trim(), "out");
-        assert_eq!(r.stderr.trim(), "err");
+        assert_eq!(r.stdout, "out 1\n");
+        assert_eq!(r.stderr, "err\n");
     }
 }

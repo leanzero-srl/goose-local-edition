@@ -31,15 +31,17 @@ pub struct PairingStore {
 
 impl PairingStore {
     pub fn new() -> anyhow::Result<Self> {
-        let pairings = Self::load_pairings_from_config();
+        let pairings = Self::load_pairings_from_config()?;
         Ok(Self {
             pairings: RwLock::new(pairings),
         })
     }
 
-    fn load_pairings_from_config() -> HashMap<PlatformUser, PairingState> {
+    /// Every pairing save writes this whole map back, so an unreadable stored value is an error
+    /// rather than an empty map that the first save would write over (Q-465).
+    fn load_pairings_from_config() -> anyhow::Result<HashMap<PlatformUser, PairingState>> {
         let config = Config::global();
-        let entries: Vec<StoredPairing> = config.get_param(PAIRINGS_CONFIG_KEY).unwrap_or_default();
+        let entries: Vec<StoredPairing> = config.get_param_for_update(PAIRINGS_CONFIG_KEY)?;
         let mut map = HashMap::new();
         for entry in entries {
             let user = PlatformUser {
@@ -49,7 +51,7 @@ impl PairingStore {
             };
             map.insert(user, entry.state);
         }
-        map
+        Ok(map)
     }
 
     fn save_pairings_to_config(
@@ -69,10 +71,8 @@ impl PairingStore {
             .map_err(|e| anyhow::anyhow!("failed to save gateway pairings: {}", e))
     }
 
-    fn load_pending_codes() -> Vec<StoredPendingCode> {
-        Config::global()
-            .get_param(PENDING_CODES_CONFIG_KEY)
-            .unwrap_or_default()
+    fn load_pending_codes() -> anyhow::Result<Vec<StoredPendingCode>> {
+        Ok(Config::global().get_param_for_update(PENDING_CODES_CONFIG_KEY)?)
     }
 
     fn save_pending_codes(codes: &[StoredPendingCode]) -> anyhow::Result<()> {
@@ -107,7 +107,7 @@ impl PairingStore {
         gateway_type: &str,
         expires_at: i64,
     ) -> anyhow::Result<()> {
-        let mut codes = Self::load_pending_codes();
+        let mut codes = Self::load_pending_codes()?;
         codes.retain(|c| c.code != code);
         codes.push(StoredPendingCode {
             code: code.to_string(),
@@ -118,7 +118,7 @@ impl PairingStore {
     }
 
     pub async fn consume_pending_code(&self, code: &str) -> anyhow::Result<Option<String>> {
-        let mut codes = Self::load_pending_codes();
+        let mut codes = Self::load_pending_codes()?;
         let pos = codes.iter().position(|c| c.code == code);
         let Some(pos) = pos else {
             return Ok(None);

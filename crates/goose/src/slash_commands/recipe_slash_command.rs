@@ -40,7 +40,8 @@ fn save_slash_commands(commands: Vec<SlashCommandMapping>) -> Result<()> {
 pub fn set_recipe_slash_command(recipe_path: PathBuf, command: Option<String>) -> Result<()> {
     let recipe_path_str = recipe_path.to_string_lossy().to_string();
 
-    let mut commands = list_commands();
+    let mut commands: Vec<SlashCommandMapping> =
+        Config::global().get_param_for_update(SLASH_COMMANDS_CONFIG_KEY)?;
     commands.retain(|mapping| mapping.recipe_path != recipe_path_str);
 
     if let Some(cmd) = command {

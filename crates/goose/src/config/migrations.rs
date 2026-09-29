@@ -126,14 +126,12 @@ fn migrate_chatrecall_default_on(config: &mut Mapping) -> bool {
 fn migrate_platform_extensions(config: &mut Mapping) -> bool {
     let extensions_key = serde_yaml::Value::String(EXTENSIONS_CONFIG_KEY.to_string());
 
-    let extensions_value = config
-        .get(&extensions_key)
-        .cloned()
-        .unwrap_or(serde_yaml::Value::Mapping(Mapping::new()));
-
-    let mut extensions_map: Mapping = match extensions_value {
-        serde_yaml::Value::Mapping(m) => m,
-        _ => Mapping::new(),
+    // An `extensions` value that is not a mapping is the person's data in a shape goose cannot
+    // read; migrating it would replace it with the platform defaults on the next save (Q-465).
+    let mut extensions_map: Mapping = match config.get(&extensions_key) {
+        None | Some(serde_yaml::Value::Null) => Mapping::new(),
+        Some(serde_yaml::Value::Mapping(m)) => m.clone(),
+        Some(_) => return false,
     };
 
     let mut needs_save = false;

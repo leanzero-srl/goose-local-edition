@@ -354,7 +354,7 @@ pub fn apply(
     ctx: &ApplyContext,
     live: bool,
 ) -> Result<ImportReport> {
-    let mut manifest = manifest::Manifest::load(&ctx.config_dir);
+    let mut manifest = manifest::Manifest::load(&ctx.config_dir)?;
     let mut report = ImportReport::default();
 
     if opts.types.contains(ImportType::Skills) {
