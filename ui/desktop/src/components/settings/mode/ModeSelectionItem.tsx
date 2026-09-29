@@ -3,6 +3,7 @@ import { Gear } from '../../icons';
 import { ConfigureApproveMode } from './ConfigureApproveMode';
 import PermissionRulesModal from '../permission/PermissionRulesModal';
 import { defineMessages, useIntl } from '../../../i18n';
+import { cx, PEER_FOCUS } from '../../lz/tokens';
 
 const i18n = defineMessages({
   autonomousLabel: {
@@ -122,10 +123,10 @@ export const ModeSelectionItem = forwardRef<HTMLDivElement, ModeSelectionItemPro
               className="peer sr-only"
             />
             <div
-              className="h-4 w-4 rounded-full border border-border-primary 
-                    peer-checked:border-[6px] peer-checked:border-black dark:peer-checked:border-white
-                    peer-checked:bg-white dark:peer-checked:bg-black
-                    transition-all duration-200 ease-in-out group-hover:border-border-primary"
+              className={cx(
+                'h-4 w-4 rounded-full border border-border-primary peer-checked:border-[6px] peer-checked:border-black dark:peer-checked:border-white peer-checked:bg-white dark:peer-checked:bg-black transition-all duration-200 ease-in-out group-hover:border-border-primary',
+                PEER_FOCUS
+              )}
             ></div>
           </div>
         </div>

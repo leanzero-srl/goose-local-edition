@@ -255,6 +255,14 @@ export const SPACE = {
 export const FOCUS =
   'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring';
 
+/**
+ * FOCUS for a control whose real input is visually hidden (`peer sr-only` radios): keyboard focus
+ * lands on the invisible <input>, so the ring is drawn on the visible sibling that follows it
+ * (Q-477 — the settings radios focused an sr-only input and showed nothing at all).
+ */
+export const PEER_FOCUS =
+  'peer-focus-visible:outline-solid peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring';
+
 /** 120ms ease-out, colours only. */
 export const MOTION = 'transition-colors duration-120 ease-lz';
 

@@ -363,7 +363,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
             ) : (
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                <Sparkles className="w-4 h-4 text-text-info" />
+                <Sparkles className="w-4 h-4 text-lz-accent" />
               </div>
             )}
           </div>
@@ -440,17 +440,18 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
             >
               {/* Main message bubble */}
               <div
-                className={`relative flex items-center gap-3 rounded-xl px-4 py-3 border transition-all duration-300 ease-out ${
+                data-testid="queue-bubble"
+                className={`relative flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors duration-150 ease-out ${
                   isSending
                     ? 'bg-background-secondary border-dashed border-border-info cursor-wait'
                     : draggedItem === message.id
-                      ? 'bg-background-secondary border-lz-accent ring-2 ring-lz-accent scale-105 rotate-2'
+                      ? 'bg-background-secondary border-lz-accent ring-2 ring-inset ring-lz-accent'
                       : dragOverItem === message.id
-                        ? 'bg-background-secondary border-green-600 ring-2 ring-green-600 scale-102'
+                        ? 'bg-background-secondary border-green-600 ring-2 ring-inset ring-green-600'
                         : hoveredMessage === message.id
-                          ? 'bg-background-secondary border-border-primary scale-101'
+                          ? 'bg-background-tertiary border-border-primary'
                           : 'bg-background-secondary hover:bg-background-tertiary border-border-primary hover:border-border-primary'
-                } backdrop-blur-sm`}
+                }`}
               >
                 {/* Priority indicator */}
                 <div className="flex items-center gap-2">

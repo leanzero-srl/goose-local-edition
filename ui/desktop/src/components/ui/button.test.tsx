@@ -65,14 +65,14 @@ describe('ui/button (the app-wide base)', () => {
     expect(screen.getByText('destructive').className).toContain('hover:bg-lz-danger-hover');
 
     const css = readFileSync(resolve(__dirname, '../../styles/main.css'), 'utf8');
-    for (const token of ['--color-lz-inverse-hover', '--color-lz-danger-hover']) {
-      const values = [...css.matchAll(new RegExp(`${token}:\\s*(#[0-9a-f]{6});`, 'g'))].map(
-        (m) => m[1]
-      );
-      // one light (:root) and one dark (.dark) value, both solid 6-digit hex, and they differ
-      expect(values, token).toHaveLength(2);
-      expect(new Set(values).size, token).toBe(2);
-    }
+    const values = (token: string) =>
+      [...css.matchAll(new RegExp(`${token}:\\s*(#[0-9a-f]{6});`, 'g'))].map((m) => m[1]);
+    // The inverse hover: one light (:root) and one dark (.dark) value, solid hex, and they differ.
+    expect(values('--color-lz-inverse-hover')).toHaveLength(2);
+    expect(new Set(values('--color-lz-inverse-hover')).size).toBe(2);
+    // The danger hover (Q-475): ONE solid value for both themes — a darker step under white ink
+    // (solidStatus.contrast.test.ts holds it to 4.5:1), not a lighter pastel per theme.
+    expect(values('--color-lz-danger-hover')).toEqual(['#b91c1c']);
     expect(css).not.toMatch(/background-(inverse|danger)\/90/);
   });
 });

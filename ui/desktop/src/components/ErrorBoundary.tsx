@@ -68,7 +68,7 @@ export function ErrorUI({ error }: { error: string }) {
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col items-center justify-center gap-6 bg-background-primary">
       <div className="flex flex-col items-center gap-4 max-w-[600px] text-center px-6">
-        <div className="w-16 h-16 rounded-full bg-background-danger flex items-center justify-center mb-2">
+        <div className="w-16 h-16 rounded-full bg-lz-err-solid flex items-center justify-center mb-2">
           <AlertTriangle className="w-8 h-8 text-white" />
         </div>
 

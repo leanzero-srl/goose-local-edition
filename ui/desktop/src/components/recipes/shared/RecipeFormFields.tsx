@@ -426,7 +426,7 @@ export function RecipeFormFields({
           </span>
         </CollapsibleTrigger>
 
-        <CollapsibleContent className="mt-4 space-y-4 pl-6 border-l-2 border-border-primary ml-2">
+        <CollapsibleContent className="mt-2 space-y-4 rounded-lg border border-border-primary p-4">
           {/* Activities Field */}
           <form.Field name="activities">
             {(field: FormFieldApi<string[]>) => (

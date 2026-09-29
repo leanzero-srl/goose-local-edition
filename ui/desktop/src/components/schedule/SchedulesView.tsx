@@ -638,8 +638,8 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
             <ScrollArea className="h-full">
               <div className="h-full relative">
                 {apiError && (
-                  <div className="mb-4 p-4 bg-background-danger border border-border-danger rounded-md">
-                    <p className="text-text-danger text-sm">
+                  <div className="mb-4 p-4 bg-lz-err-solid rounded-md">
+                    <p className="text-white text-sm">
                       {intl.formatMessage(i18n.errorPrefix, { error: apiError })}
                     </p>
                   </div>

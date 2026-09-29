@@ -1,6 +1,10 @@
+import { createElement } from 'react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { darkTokens, lightTokens } from '../../theme/theme-tokens';
-import { contrast, studioToken } from './resolvedPaint';
+import { Button as HostButton } from '../ui/button';
+import { Button as StudioButton } from './Button';
+import { contrast, resolvedPaint, studioToken } from './resolvedPaint';
 
 const THEMES = ['light', 'dark'] as const;
 
@@ -113,6 +117,55 @@ describe('the solid replacements for the Q-457 washes hold their contrast in bot
         ),
         theme
       ).toBeGreaterThanOrEqual(3);
+    }
+  });
+});
+
+/**
+ * Q-475 — the destructive button is ONE solid token that carries white at 4.5:1 in both themes, at
+ * rest and under the pointer. The 3.0.76 walk measured the confirm buttons (Delete Session, Remove,
+ * Stop) at 2.8–3.3:1: ui/button filled with --color-background-danger (#f94b4b / #ff6b6b) and
+ * hovered to #fa6161 / #ff5252, and lz/Button hovered to the bare err token (#ef4444 in dark).
+ * Both primitives are RENDERED here and their compiled classes resolved, so a variant that drifts
+ * back to a pastel fill fails on the class it actually paints.
+ */
+describe('the destructive fill is solid and readable in both primitives (Q-475)', () => {
+  const primitives = [
+    ['ui/button', () => createElement(HostButton, { variant: 'destructive' }, 'Delete Session')],
+    ['lz/Button', () => createElement(StudioButton, { variant: 'destructive' }, 'Delete Session')],
+  ] as const;
+
+  for (const [name, make] of primitives) {
+    it(`${name} destructive: white ink at 4.5:1 at rest and under hover, light and dark`, async () => {
+      render(make());
+      const button = screen.getByRole('button', { name: 'Delete Session' });
+      const fills = new Set<string>();
+      for (const theme of THEMES) {
+        for (const hover of [false, true]) {
+          const paint = await resolvedPaint(button, theme, { hover });
+          expect(paint.missing, `${name} classes that compile to nothing`).toEqual([]);
+          expect(paint.bg, `${name} ${theme} hover=${hover} fill`).toMatch(/^#[0-9a-f]{6}$/);
+          expect(paint.text).toBe('#ffffff');
+          expect(
+            contrast(paint.bg, paint.text),
+            `${name} ${theme} hover=${hover}: white on ${paint.bg}`
+          ).toBeGreaterThanOrEqual(4.5);
+          if (!hover) fills.add(paint.bg as string);
+        }
+      }
+      expect([...fills], 'one destructive fill in both themes').toEqual([
+        studioToken('--color-lz-err-solid', 'light'),
+      ]);
+    });
+  }
+
+  it('the destructive token and its hover step are solid hexes that carry white at 4.5:1', () => {
+    for (const theme of THEMES) {
+      for (const token of ['--color-lz-err-solid', '--color-lz-danger-hover']) {
+        const fill = studioToken(token, theme);
+        expect(fill, token).toMatch(/^#[0-9a-f]{6}$/);
+        expect(contrast(fill, '#ffffff'), `${theme} ${token}`).toBeGreaterThanOrEqual(4.5);
+      }
     }
   });
 });

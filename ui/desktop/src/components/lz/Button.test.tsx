@@ -81,7 +81,7 @@ describe('lz/Button', () => {
       'border-lz-err-solid',
       'bg-lz-err-solid',
       'text-white',
-      'hover:bg-lz-err',
+      'hover:bg-lz-danger-hover',
       'rounded-lz-control',
       'h-8',
       'px-3',

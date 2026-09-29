@@ -29,9 +29,12 @@ const VARIANT: Record<ButtonVariant, string> = {
   secondary: 'border border-lz-border-strong bg-lz-surface text-lz-ink hover:bg-lz-surface-2',
   ghost:
     'border border-transparent bg-transparent text-lz-ink-2 hover:bg-lz-surface-2 hover:text-lz-ink',
-  /** TONE_FILL.err with its border; hover steps to the bare err token (a shade lighter in dark). */
+  /**
+   * TONE_FILL.err with its border; hover steps DARKER to the danger hover (Q-475: the bare err
+   * token it used to step to is #ef4444 in dark — white on it measured 3.8:1).
+   */
   destructive:
-    'border border-lz-err-solid bg-lz-err-solid text-white hover:border-lz-err hover:bg-lz-err',
+    'border border-lz-err-solid bg-lz-err-solid text-white hover:border-lz-danger-hover hover:bg-lz-danger-hover',
 };
 
 const SIZE: Record<ButtonSize, string> = {

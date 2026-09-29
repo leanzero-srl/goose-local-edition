@@ -130,7 +130,7 @@ export default function ProviderSetupActions({
         <Button
           type="button"
           onClick={onDelete}
-          className="w-full h-[60px] rounded-none border-t border-border-primary bg-transparent hover:bg-background-secondary text-red-500 font-medium text-base"
+          className="w-full h-[60px] rounded-none border-t border-border-primary bg-transparent hover:bg-lz-err-solid text-lz-err hover:text-white font-medium text-base"
         >
           <Trash2 className="h-4 w-4 mr-2" /> {intl.formatMessage(i18n.deleteProvider)}
         </Button>
