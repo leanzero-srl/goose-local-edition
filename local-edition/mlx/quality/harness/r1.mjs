@@ -12,12 +12,23 @@
 // Q-341) and at each turn end (the answer turn runs before the next brief turn). One needsyou.tsv row per card:
 // answer + source, queued, delivered, cleared, siblings still open (Q-344), the model's next words. A card
 // still there after its answer turn, or a sibling closed by a card answer, is a LIVE finding that ends the run
-// at the turn boundary.
+// at the turn boundary. The OUTCOME is recorded too (owner 2026-09-29): replyUses = does goose's answer-turn
+// reply quote or use the answer (needsyou.mjs textUse, text overlap — a reader still reads the reply column).
+// NOTES (Q-358, notes.mjs): every note goose drafts to ANOTHER chat (`send_note`) is acted on at the turn
+// boundary through its own card — Steer it now / Leave it there / Not this chat / Cancel, from the brief's
+// `notes.actions` guidance, default Leave — and its outcome PROVEN from sessions.db (read-only): in the other
+// chat's inbox; for Steer, delivered, the note's message in that chat's transcript and a reply that refers to it
+// (a Steer to a chat no window shows opens it in a NEW window — the session list's "Open in new window" — and
+// closes it after; r1's own window never leaves its chat); A's line saying what the other chat says. One
+// notes.tsv row per note; a failed proof is a LIVE finding (it does not stop the run).
+// ROUND END (owner 2026-09-29: nothing stays pending): every card still open and every note not delivered as
+// acted is a `FAIL: …` line in round.json `fails`, events.log and r1's stdout (runwatch prints them).
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
 import { mainPage } from './mainpage.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { liveCheck } from './livecheck.mjs';
-import { loadGuidance, chooseAnswer, planClick, isAnswerMessage, readDbItems, sessionIdOf, readTray, readChat, answerCard, norm } from './needsyou.mjs';
+import { loadGuidance, chooseAnswer, planClick, isAnswerMessage, readDbItems, sessionIdOf, readTray, readChat, answerCard, norm, textUseCell, openCardFails } from './needsyou.mjs';
+import { loadNoteGuidance, readNotes, actOnNote, noteFails, noteRow, NOTES_TSV_HEADER } from './notes.mjs';
 import { workDirOf, projectRowTestId, readWorkingDir, checkWorkingDir } from './workdir.mjs';
 const dir = process.argv[2];
 const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
@@ -36,6 +47,7 @@ const added = (n0) => p.evaluate((n0) => { const ms = [...document.querySelector
 const briefArg = process.argv.indexOf('--brief');
 const brief = briefArg > 0 ? JSON.parse(readFileSync(process.argv[briefArg + 1], 'utf8')) : null;
 const guidance = loadGuidance(brief);
+const noteGuidance = loadNoteGuidance(brief);
 const builtin = [
   `Work only inside ${work}. Create a Python package "ledger" with ledger/__init__.py and ledger/core.py holding a class Ledger that records (date, account, amount, memo) entries in memory. Show me the files.`,
   `Add pytest tests in ${work}/tests/test_core.py for adding entries and for the balance of one account. Run them with python3 -m pytest -q from ${work} and show the output.`,
@@ -191,7 +203,7 @@ async function runTurn(label, n0, start) {
 // State per card r1 has met: `recs`, one per item id. A rec is `done` once its row is written (answered and its
 // answer turn checked, or left unanswered with the reason).
 const nyOut = `${dir}/needsyou.tsv`;
-writeFileSync(nyOut, 'turn\titem\tquestion\toptions\tanswer\tsource\tmatch\tclick\tansweredAt\tqueued\tdeliveredAt\tdeliveredDb\tanswerFirst\tanswerTurn\tcleared\tdbStatus\tsiblings\tsiblingsOpen\treply\n');
+writeFileSync(nyOut, 'turn\titem\tquestion\toptions\tanswer\tsource\tmatch\tclick\tansweredAt\tqueued\tdeliveredAt\tdeliveredDb\tanswerFirst\tanswerTurn\tcleared\tdbStatus\tsiblings\tsiblingsOpen\treplyUses\treply\n');
 const recs = []; let nyStop = ''; const nyNotShown = new Set();
 const cell = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ');
 const nyLog = (turn, event, rec, findings = []) => appendFileSync(`${dir}/live.jsonl`, JSON.stringify({
@@ -212,7 +224,7 @@ const nyRow = (rec) => {
   const sib = Object.entries(rec.siblingState);
   appendFileSync(nyOut, [rec.turn, rec.itemId, rec.question, rec.options.join(' | '), rec.answer, rec.source, rec.match, rec.click, rec.answeredAt, rec.queued,
     rec.deliveredAt, rec.deliveredDb, rec.answerFirst, rec.answerTurn, rec.cleared, rec.dbStatus, sib.map(([k, v]) => `${k}:${v}`).join(', '),
-    sib.length ? (sib.every(([, v]) => v.startsWith('y')) ? 'y' : 'n') : '-', rec.reply].map(cell).join('\t') + '\n');
+    sib.length ? (sib.every(([, v]) => v.startsWith('y')) ? 'y' : 'n') : '-', rec.replyUses, rec.reply].map(cell).join('\t') + '\n');
 };
 const onScreen = (tray, id) => tray.cards.some((c) => c.id === id);
 
@@ -305,7 +317,7 @@ async function nyTick(turn, { mayStart }) {
 
 function nyRec(turn, { id, question, options }, chat, optionsFrom) {
   const rec = { turn, itemId: id, question, options, optionsFrom, answer: '', source: '', match: '', click: '', answeredAt: '', queued: '', deliveredAt: '', deliveredDb: '',
-    answerFirst: '', answerTurn: '', cleared: '', dbStatus: '', siblings: [], siblingState: {}, siblingsChecked: false, reply: '',
+    answerFirst: '', answerTurn: '', cleared: '', dbStatus: '', siblings: [], siblingState: {}, siblingsChecked: false, replyUses: '', reply: '',
     usersAtAnswer: chat.users.length, assistAtDelivery: chat.assistant, done: false };
   recs.push(rec);
   return rec;
@@ -367,7 +379,8 @@ async function nyFinalize(label, batch, res) {
     r.dbStatus = db.ok ? db.items.find((it) => it.id === r.itemId)?.status ?? 'missing' : `store unreadable: ${db.error}`;
     const shown = onScreen(tray, r.itemId);
     r.cleared = !shown && (r.dbStatus === 'answered' || !db.ok) ? 'y' : `n (${shown ? 'card still in the chat' : 'card gone'}; store ${r.dbStatus})`;
-    r.answerTurn = label; r.reply = res.text.slice(0, 300); r.done = true;
+    // The outcome: the whole answer-turn reply against what the card sent (the column keeps 300 chars to read).
+    r.answerTurn = label; r.replyUses = textUseCell(r.answer, res.text); r.reply = res.text.slice(0, 300); r.done = true;
     nyRow(r); nyLog(label, 'final', r);
     if (r.cleared !== 'y') await nyFinding(label, r, 'NEEDS_YOU_NOT_CLEARED', `after its answer turn ${label}: ${r.cleared}`, 'an answered question leaves the chat and reads Answered', true);
   }
@@ -390,6 +403,32 @@ async function nyTurnEnd(turn) {
     await p.waitForTimeout(3000);
   }
   return false;
+}
+
+// ---------------------------------------------------------------- notes to another chat (Q-358, notes.mjs)
+// At a turn boundary (A idle, the chat on screen r1's own): every draft still a draft in the store is acted on
+// through its card and its outcome proven. A draft is met once; its row says what was proven.
+const notesOut = `${dir}/notes.tsv`;
+writeFileSync(notesOut, NOTES_TSV_HEADER);
+const noteRecs = [];
+async function notesTurnEnd(turn) {
+  if (!chatUrl || p.url() !== chatUrl) { note(`NOTES skipped at the end of turn ${turn}: the view is not r1's chat`); return; }
+  const a = readNotes(openedSession);
+  if (!a.ok) { note(`NOTES store unreadable at the end of turn ${turn}: ${a.error}`); return; }
+  for (const d of a.state.drafts) {
+    if (d.status !== 'draft' || noteRecs.some((r) => r.noteId === d.id) || existsSync(`${dir}/STOP`)) continue;
+    const m = median();
+    const rec = await actOnNote({ browser: b, page: p, sessionA: openedSession, turn: String(turn), hangSecs: () => (m ? HANG_FACTOR * m : null), note }, d, noteGuidance);
+    noteRecs.push(rec);
+    appendFileSync(notesOut, noteRow(rec));
+    appendFileSync(`${dir}/live.jsonl`, JSON.stringify({ turn: String(turn), at: iso(), kind: 'note', ...rec, reply: rec.reply.slice(0, 600) }) + '\n');
+    note(`NOTE ${d.id} ${rec.action} → ${rec.inboxStatus || rec.draftStatus} ${rec.fails.length ? `FAIL ${rec.fails.join(' | ')}` : 'proven'}`);
+    if (rec.fails.length) {
+      const f = { kind: rec.undelivered ? 'NOTE_NOT_DELIVERED' : 'NOTE_OUTCOME_WRONG', surface: 'note to another chat', item: d.id, says: rec.fails.join(' | ').slice(0, 240), truth: 'a note acted on reaches the other chat as clicked, and both chats say so' };
+      note(`LIVE ${f.kind} ${JSON.stringify(f).slice(0, 300)}`);
+      await p.screenshot({ path: `${dir}/note-${turn}-${f.kind}.png` }).catch(() => {});
+    }
+  }
 }
 
 for (let turn = 0; turn < maxTurns; turn++) {
@@ -417,10 +456,21 @@ for (let turn = 0; turn < maxTurns; turn++) {
   // answer that never reached the chat ends the run here, with the reason.
   if (nyStop) { note(`STOPPED by needs-you finding after turn ${turn}: ${nyStop}`); break; }
   if (answerTurnFailed) break;
+  // Q-358: the notes this turn (or its answer turns) drafted are acted on before the next brief turn.
+  await notesTurnEnd(turn);
 }
 // A card met but not settled when the run ended (a stop, a hang) still gets its row, saying so.
 for (const r of recs) if (!r.done) { r.cleared = r.cleared || 'unchecked: the run ended first'; r.done = true; nyRow(r); nyLog(r.turn, 'unsettled', r); }
 // Q-390: goose can move a chat's folder itself (its "set as this chat's folder?" card) — the folder at the end is
 // recorded beside the one it started in, so a rubric reads where the chat actually was.
 { const end = readWorkingDir(openedSession); const v = checkWorkingDir(end, work); writeRound({ workingDirAtEnd: end.ok ? end.workingDir : `unreadable: ${end.error}`, workingDirAtEndIsWork: v.ok }); if (!v.ok) note(`WORKDIR_MOVED at the end: ${v.says}`); }
+// ROUND END (owner 2026-09-29: nothing stays pending): every open card and every note not delivered as acted.
+{
+  const tray = p.url() === chatUrl ? await readTray(p).catch(() => ({ cards: [] })) : { cards: [] };
+  const fails = [...openCardFails(readDbItems(openedSession), tray), ...noteFails(readNotes(openedSession), noteRecs)];
+  const notesWaiting = noteRecs.filter((r) => !r.fails.length && r.delivery === 'leave').map((r) => `${r.noteId} waits in "${r.targetName}" (${r.inboxStatus}) — Leave it there, proven`);
+  writeRound({ endedAt: iso(), fails, notesWaiting, notesActed: noteRecs.length });
+  for (const f of fails) { note(f); console.log(f); }
+  if (!fails.length) console.log(`round end: no open card, no undelivered note (${noteRecs.length} note(s) acted on)`);
+}
 await b.close(); process.exit(0);
