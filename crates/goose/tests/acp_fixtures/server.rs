@@ -476,6 +476,10 @@ impl Session for AcpServerSession {
         super::to_notifications(&self.session_updates())
     }
 
+    async fn next_notifications(&self) -> Vec<super::Notification> {
+        super::next_notifications(&self.notify, || self.notifications()).await
+    }
+
     async fn prompt(
         &mut self,
         text: &str,

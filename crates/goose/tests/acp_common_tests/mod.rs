@@ -19,7 +19,6 @@ use goose::config::GooseMode;
 use goose_test_support::{McpFixture, FAKE_CODE, TEST_IMAGE_B64, TEST_MODEL};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
-use std::time::Duration;
 
 const SHELL_TEST_CONTENT: &str = "test-shell-content-98765";
 // The fork's cache-safe assembly (affd1cea1 ADAPT) extracts the volatile turn-context from
@@ -147,15 +146,14 @@ pub async fn run_session_name_update_notification<C: Connection>() {
         .unwrap();
     assert_eq!(output.text, "2");
 
+    // The title is generated after the turn ends, so its update can land any time later; wait on
+    // the fixture's arrivals rather than a clock (Q-497: a 1 s window failed twice under load).
     let mut notifications = session.notifications();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
     while !notifications
         .iter()
         .any(|n| matches!(n, Notification::SessionInfoUpdate { .. }))
-        && tokio::time::Instant::now() < deadline
     {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        notifications.extend(session.notifications());
+        notifications.extend(session.next_notifications().await);
     }
 
     let update = notifications
