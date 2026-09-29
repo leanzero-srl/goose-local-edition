@@ -87,3 +87,19 @@
   crammed, raw-path subtitle, two "work" projects, need-you counts disagree); Q-487 ("Noticed your answer"
   after a plain instruction: `open_question` matched a relative "which").
 - Long turns: 0 (1,691 s), 3 (1,652 s), 22 (3,444 s, 122 tools), 23 (1,802 s).
+
+### E2E #3x — 3.0.78, split tensor (262,144), coffee-checkout-double-charge-postmortem, session 20260929_15 — STOPPED at turn 4 of 41 (12:02 → 15:48)
+- Why stopped: the run had stopped measuring goose-in-one-chat. The owner used a second chat (20260928_19) from 12:05,
+  and the two chats evicted each other's split prompt cache (Q-498): every switch re-read #3x's ~200k prompt cold,
+  ~11-20 min per call. Turn 1 (the memory turn) never reached the chat (Q-492), so the memory checks were void.
+  3.0.79 (Q-487..494, Q-496) was built and waiting.
+- Turn 0: 478 s, 8 tools; the notes and git repo were set up. Turn 1: LOST — an @ in the last word opened the file
+  picker, which took the Enter (Q-492); r1 counted it "done" in 5 s (harness fixed: sentLanded + SEND_LOST).
+- Turn 2: 8,349 s, 152 tools, 163k. The fake-log generator (80,712 nginx lines, app.log, orders, charges) was
+  byte-identical over two runs and passed 36/36 of its own planted facts, after a ~100-min grind on timezone/RNG
+  determinism. The model reasoned forward throughout ("Let me stop and rethink this from scratch") and never looped
+  verbatim. The goose check flagged its row counts as "years" (Q-494); right after, it re-read its file and found 3
+  real bugs.
+- Turn 3: 398 s. Turn 4: ~2 h, mostly cold prefills under Q-498; stopped from the main window at 15:48.
+- Q-481 still shows: edit calls without `path` (the Q-482 message "Call edit again with path first" is working).
+- Found: Q-492, Q-493, Q-494, Q-496, Q-498, Q-500, Q-501. Decode held 10.5–12 tok/s.
