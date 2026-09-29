@@ -21,7 +21,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 ## Agents (worktrees)
 - none running.
 
-## 3.0.77 = main 5e03efbc0 — RELEASE BUILDING (~/goose-builds/release-3.0.77.log)
+## 3.0.77 = main 5e03efbc0 — DMG BUILT 07:57 (20 min: compile, then 2 Apple notarizations; no tests in a release)
 - Gates g077 + g077b + g077c all green.
 - Holds:
   - Q-470 (secret echo), Q-471/472/473/478 (banner row, no native dialogs/selects anywhere, object config
@@ -29,7 +29,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
   - Q-457 reopen + Q-474..477 (highlight behind text, solid red, focus everywhere, no rails);
   - Q-479 (contrast 199 → 0);
   - Q-480 (several ask_user in one message; agent.rs kept only the 1st on per-chunk providers).
-- Install at an #3w turn boundary. Then walk the update/quit dialogs (now app-drawn) and the colours live.
+- Install AFTER #3w ends (decided 08:0x and told the owner): #3w is at turn 15/37, with compaction and chat search
+  at 19/21/32 still ahead, and an install mid-run kills it. Then walk the update/quit dialogs (now app-drawn) and the colours live.
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
