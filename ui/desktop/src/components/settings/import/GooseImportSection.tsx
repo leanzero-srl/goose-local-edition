@@ -126,6 +126,31 @@ async function scanRetiredLoops(
   return { loops, problem: null };
 }
 
+// Module scope on purpose (Q-512): declared inside GooseImportSection it was a new component type on
+// every render, so every row remounted when one switch toggled and the switch under the pointer was
+// replaced by a new one.
+function Row({
+  label,
+  checked,
+  onToggle,
+  status,
+}: {
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+  status?: ItemStatus;
+}) {
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm text-text-primary truncate font-mono">{label}</div>
+      </div>
+      <div className="w-6 flex justify-center shrink-0">{status ? STATUS_ICON[status] : null}</div>
+      <Switch checked={checked} onCheckedChange={onToggle} variant="mono" />
+    </div>
+  );
+}
+
 export default function GooseImportSection() {
   const intl = useIntl();
   const [sourceDir, setSourceDir] = useState<string | null>(null);
@@ -159,12 +184,13 @@ export default function GooseImportSection() {
     }
   };
 
-  const toggle = (set: Set<string>, setter: (s: Set<string>) => void, key: string) => {
-    const next = new Set(set);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    setter(next);
-  };
+  const toggleRecipe = (file: string) =>
+    setSelRecipes((prev) => {
+      const next = new Set(prev);
+      if (next.has(file)) next.delete(file);
+      else next.add(file);
+      return next;
+    });
 
   const importRecipes = async () => {
     if (!sourceDir) return;
@@ -196,26 +222,6 @@ export default function GooseImportSection() {
       toast.success(intl.formatMessage(i18n.importedRecipes, { ok }));
     }
   };
-
-  const Row = ({
-    label,
-    checked,
-    onToggle,
-    status,
-  }: {
-    label: string;
-    checked: boolean;
-    onToggle: () => void;
-    status?: ItemStatus;
-  }) => (
-    <div className="flex items-center gap-3 py-2">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm text-text-primary truncate font-mono">{label}</div>
-      </div>
-      <div className="w-6 flex justify-center shrink-0">{status ? STATUS_ICON[status] : null}</div>
-      <Switch checked={checked} onCheckedChange={onToggle} variant="mono" />
-    </div>
-  );
 
   const scheduleProblemText =
     scheduleProblem === null
@@ -270,7 +276,7 @@ export default function GooseImportSection() {
                     key={r.file}
                     label={r.name}
                     checked={selRecipes.has(r.file)}
-                    onToggle={() => toggle(selRecipes, setSelRecipes, r.file)}
+                    onToggle={() => toggleRecipe(r.file)}
                     status={results[`recipe:${r.file}`]}
                   />
                 ))}

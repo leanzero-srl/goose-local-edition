@@ -182,3 +182,34 @@ describe('GooseImportSection (Q-227/Q-228 L8: the recipe loop is retired)', () =
     expect(screen.getByText(`No recipes found under ${SOURCE}.`)).toBeInTheDocument();
   });
 });
+
+/**
+ * Q-512: Row was declared inside GooseImportSection, so every render of the section made a new
+ * component type and remounted every row. Toggling one switch re-renders the section, so the switch
+ * a person had just clicked was replaced by a new element: a second click on the one they held
+ * reached a detached node and changed nothing.
+ */
+describe('GooseImportSection rows survive a re-render (Q-512)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listSavedRecipes.mockResolvedValue([]);
+  });
+
+  it('the switch clicked stays the switch on screen, and a second click on it still toggles', async () => {
+    stubSource({}, ['triage.yaml', 'weekly.yaml']);
+    await scan();
+
+    const [held] = screen.getAllByRole('switch');
+    expect(held.getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Import 2 recipes' })).toBeInTheDocument();
+
+    fireEvent.click(held);
+    expect(screen.getByRole('button', { name: 'Import 1 recipe' })).toBeInTheDocument();
+    expect(screen.getAllByRole('switch')[0]).toBe(held);
+    expect(held.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(held);
+    expect(screen.getByRole('button', { name: 'Import 2 recipes' })).toBeInTheDocument();
+    expect(held.getAttribute('aria-checked')).toBe('true');
+  });
+});
