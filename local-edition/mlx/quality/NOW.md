@@ -24,7 +24,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 ## 3.0.80 — merge-080 GATING (/tmp/g080.out), ~/goose-targets/wt-m080 @ 57033c308
 - = main (Q-495, Q-497) + q502 (Q-498, Q-502) + q503 (Q-499, Q-503) + q507 (Q-500/501, Q-504, Q-507)
   + Q-505 65126cc51 + Q-466 e49d42e7e. No conflicts.
-- Still cutting, to go on top: Q-508 (on q502: key conversations by session id); Q-511 (RecipeItem hoist).
+- Q-508 DONE e43fc13ba (q508): g080b (chained after g080) merges it into merge-080 and runs sidecar + session_id + clippy.
+- Still cutting: Q-511 (RecipeItem hoist) → on top after.
 - Green → ff main → release 3.0.80 → install on BOTH Macs (Q-502's new spec tag) when #3y allows → prove live:
   Q-502 (two chats keep warm), Q-500/501 (second window), Q-504/507 (Stop an app-wide / scheduled turn), Q-493/495
   (the stopped lines), Q-505 (a redacted memory).
