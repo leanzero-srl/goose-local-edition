@@ -169,7 +169,9 @@ export function noteFails(stateA, recs = []) {
 
 // ---------------------------------------------------------------- IO: sessions.db, read-only
 
-const sql = (q, db) => execFileSync('sqlite3', ['-readonly', '-json', db, q], { encoding: 'utf8' });
+// maxBuffer: a compaction re-saves the whole conversation under new row ids, so "rows after X" can be the
+// whole chat (#3y: 1.1 MB after turn 25 crashed r1 on the 1 MB default).
+const sql = (q, db) => execFileSync('sqlite3', ['-readonly', '-json', db, q], { encoding: 'utf8', maxBuffer: 1 << 30 });
 const idOk = (id) => /^[\w.-]+$/.test(id ?? '');
 
 /** A chat's `chat_notes.v0`. Unreadable says so; it is never "no notes". */
@@ -187,6 +189,13 @@ export function readChatRow(sessionId, db = SESSIONS_DB) {
 }
 
 /** B's messages from rowid `after` on (id, message_id, role, content_json). */
+/** The user text rows after `after` whose content carries `needle` — the send check, filtered in SQL. */
+export function userTextRowsWith(sessionId, after, needle, db = SESSIONS_DB) {
+  if (!idOk(sessionId)) throw new Error(`no session id (${sessionId})`);
+  const lit = needle.replaceAll("'", "''");
+  return JSON.parse(sql(`select id, content_json from messages where session_id='${sessionId}' and id > ${Number(after) || 0} and role='user' and instr(content_json, '${lit}') > 0 order by id`, db) || '[]');
+}
+
 export function readMessages(sessionId, after = 0, db = SESSIONS_DB) {
   if (!idOk(sessionId)) throw new Error(`no session id (${sessionId})`);
   return JSON.parse(sql(`select id, message_id, role, content_json from messages where session_id='${sessionId}' and id > ${Number(after) || 0} order by id`, db) || '[]');

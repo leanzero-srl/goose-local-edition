@@ -103,3 +103,23 @@
 - Turn 3: 398 s. Turn 4: ~2 h, mostly cold prefills under Q-498; stopped from the main window at 15:48.
 - Q-481 still shows: edit calls without `path` (the Q-482 message "Call edit again with path first" is working).
 - Found: Q-492, Q-493, Q-494, Q-496, Q-498, Q-500, Q-501. Decode held 10.5–12 tok/s.
+
+### E2E #3y — 3.0.79, split tensor (262,144), coffee-checkout-double-charge-postmortem, session 20260929_19 — ENDED at turn 25 of 41 (16:01 → 20:12): the HARNESS crashed
+- r1 died after turn 25. A compaction re-saved the whole conversation under new row ids, so the send check read 1.1 MB
+  through a 1 MB buffer (ENOBUFS). Fixed the same hour (SQL-filtered check, 1 GiB buffer). goose itself was fine.
+- Proven live on 3.0.79:
+  - Q-492: turn 1 (the memory turn, lost in #3x) landed, and every send was verified.
+  - Needs-you (Q-376): 6 cards at turns 12, 15 (THREE at once: Q-480 PROVEN), 21 and 23. Each was answered with its
+    own guidance, cleared, and its answer turn used it.
+  - Chat search: turn 6 found the commit rule in the right earlier chat and quoted it.
+  - Compaction at turn 25: 214k → 59.8k, every call warm after (58–59k cached).
+  - Q-496: the chat followed the live turn all run.
+- Found:
+  - Q-506 (a global rule saved per project, model);
+  - Q-513 (decided a severity the brief said to ask about, model);
+  - Q-514 (a side call evicted the chat's own 196k prefix: a 16-min cold read);
+  - Q-516 (that one cold miss reopened tool-pair condensation → a second 16-min cold read; fixed 5783dd856);
+  - Q-517 (1.07 s before every provider call, the skills walk; fixed 58806267e).
+- Turn times: 2 = 1,955 s (#3x: 8,349); 7 = 1,792; 23a1 = 1,658 (a cold read); 25 = 1,694 (41 tools, the compaction).
+- Not reached: the note to the bakery chat (26), chat search 27/35, memory recall after compaction (33/39).
+  They move to #3z.

@@ -28,7 +28,7 @@ import { mainPage } from './mainpage.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { liveCheck } from './livecheck.mjs';
 import { loadGuidance, chooseAnswer, planClick, isAnswerMessage, readDbItems, sessionIdOf, readTray, readChat, answerCard, norm, textUseCell, openCardFails } from './needsyou.mjs';
-import { loadNoteGuidance, readNotes, actOnNote, noteFails, noteRow, NOTES_TSV_HEADER, readMessages, lastRowId } from './notes.mjs';
+import { loadNoteGuidance, readNotes, actOnNote, noteFails, noteRow, NOTES_TSV_HEADER, userTextRowsWith, lastRowId } from './notes.mjs';
 import { workDirOf, projectRowTestId, readWorkingDir, checkWorkingDir } from './workdir.mjs';
 const dir = process.argv[2];
 const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
@@ -150,8 +150,9 @@ const openedSession = await openChatInWork();
 // The user rows goose stored after `after` — does one carry this prompt's words?
 function sentLanded(after, prompt) {
   const head = prompt.slice(0, 80);
-  return readMessages(openedSession, after).some((row) => {
-    if (row.role !== 'user') return false;
+  // A JSON-escaped probe of the prompt's opening words narrows the rows in SQL; the exact 80-char head decides.
+  const probe = JSON.stringify(head.slice(0, 40)).slice(1, -1);
+  return userTextRowsWith(openedSession, after, probe).some((row) => {
     try { return JSON.parse(row.content_json).some((c) => c.type === 'text' && c.text.slice(0, 80) === head); } catch { return false; }
   });
 }
