@@ -44,8 +44,13 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-495 4503c521a + Q-497 23c06bb8b LANDED on main 5262589e2 (gated in the worktree: turnWorking 42/42, the full
   vitest with 6 load timeouts green alone 168/168, acp_server_test 47/47). They ride in 3.0.80.
 - Q-499 (CI red: sidecar healthy() false right after a slow start): general-purpose agent, cutting.
-- Q-498 (SEVERE perf): two chats evict each other's split prompt cache, so each switch re-reads 200k cold (~11 min).
-  mlx-backend, measure first: KV bytes per token vs real headroom (rank 0 peaks 46.6 of 128 GB).
+- Q-498 DONE a6d70abba (branch worktree-agent-afa856b427b453865, KEEP until merged): says why a prompt went cold
+  (evicted_prefix / GOOSE_RANK_PREFIX_LOST). Both prefixes need 29.07 GB vs the 17.33 GB plan, so no memory fix.
+- Q-502 (the no-memory fix: hold a side call instead of evicting another chat's kept prefix; the replay keeps #3x
+  warm at 17.33 GB): mlx-backend, cutting, ON TOP of a6d70abba.
+- Q-500/501 (a second window shows a running chat idle; the busy banner names the wrong chat): panel-surgeon,
+  cutting.
+- Q-503 (sidecar probe/machine test flakes): QUEUED behind Q-499 landing.
 
 ## #3x (running)
 - Turn 1 (the memory turn) never reached the chat (Q-492), so its memory checks at 33/39 are VOID for this run.
@@ -72,7 +77,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-500.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-504.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
