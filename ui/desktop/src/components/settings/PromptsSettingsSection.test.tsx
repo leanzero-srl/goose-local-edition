@@ -13,6 +13,14 @@ const acp = vi.hoisted(() => ({
 vi.mock('../../acp/prompts', () => acp);
 vi.mock('react-toastify', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+/**
+ * Q-466: the two long flows below walk ~20 user-event steps each through Radix dialogs (every step
+ * a pointer sequence and a role query over the page, 25–50 ms apiece, no hot spot, nothing waiting
+ * on a clock) — measured 0.4 s and 0.7 s alone, up to 4.3 s beside a full suite on a loaded Mac,
+ * against the 5 s default. They are long, not slow, so they carry a long clock.
+ */
+const LONG_FLOW_MS = 30_000;
+
 const renderSection = () =>
   render(
     <IntlTestWrapper>
@@ -43,23 +51,27 @@ describe('PromptsSettingsSection confirmations are in-app dialogs, never window.
     vi.clearAllMocks();
   });
 
-  it('Reset All: cancel resets nothing, confirm resets every customized prompt', async () => {
-    const user = userEvent.setup();
-    renderSection();
+  it(
+    'Reset All: cancel resets nothing, confirm resets every customized prompt',
+    async () => {
+      const user = userEvent.setup();
+      renderSection();
 
-    await user.click(await screen.findByRole('button', { name: /Reset All/ }));
-    let dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Reset all prompts?')).toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(acp.acpResetPrompt).not.toHaveBeenCalled();
+      await user.click(await screen.findByRole('button', { name: /Reset All/ }));
+      let dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText('Reset all prompts?')).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(acp.acpResetPrompt).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: /Reset All/ }));
-    dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: 'Reset All' }));
-    await waitFor(() => expect(acp.acpResetPrompt).toHaveBeenCalledWith('system.md'));
-    expect(nativeConfirm).not.toHaveBeenCalled();
-  });
+      await user.click(screen.getByRole('button', { name: /Reset All/ }));
+      dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Reset All' }));
+      await waitFor(() => expect(acp.acpResetPrompt).toHaveBeenCalledWith('system.md'));
+      expect(nativeConfirm).not.toHaveBeenCalled();
+    },
+    LONG_FLOW_MS
+  );
 
   it('Reset to Default on one prompt asks in-app first', async () => {
     const user = userEvent.setup();
@@ -80,39 +92,43 @@ describe('PromptsSettingsSection confirmations are in-app dialogs, never window.
     expect(nativeConfirm).not.toHaveBeenCalled();
   });
 
-  it('Restore Default over unsaved edits and Back with unsaved edits both ask in-app', async () => {
-    const user = userEvent.setup();
-    renderSection();
-    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+  it(
+    'Restore Default over unsaved edits and Back with unsaved edits both ask in-app',
+    async () => {
+      const user = userEvent.setup();
+      renderSection();
+      await user.click(await screen.findByRole('button', { name: 'Edit' }));
 
-    const editor = await screen.findByDisplayValue('custom text');
-    await user.clear(editor);
-    await user.type(editor, 'edited');
+      const editor = await screen.findByDisplayValue('custom text');
+      await user.clear(editor);
+      await user.type(editor, 'edited');
 
-    await user.click(screen.getByRole('button', { name: 'Restore Default' }));
-    let dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Replace with the default?')).toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByDisplayValue('edited')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Restore Default' }));
+      let dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText('Replace with the default?')).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.getByDisplayValue('edited')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Back to List' }));
-    dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Discard unsaved changes?')).toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByDisplayValue('edited')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Back to List' }));
+      dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText('Discard unsaved changes?')).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.getByDisplayValue('edited')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Restore Default' }));
-    dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: 'Restore Default' }));
-    expect(await screen.findByDisplayValue('default text')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Restore Default' }));
+      dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Restore Default' }));
+      expect(await screen.findByDisplayValue('default text')).toBeInTheDocument();
 
-    await user.type(screen.getByDisplayValue('default text'), '!');
-    await user.click(screen.getByRole('button', { name: 'Back to List' }));
-    dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
-    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
-    expect(nativeConfirm).not.toHaveBeenCalled();
-  });
+      await user.type(screen.getByDisplayValue('default text'), '!');
+      await user.click(screen.getByRole('button', { name: 'Back to List' }));
+      dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+      expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
+      expect(nativeConfirm).not.toHaveBeenCalled();
+    },
+    LONG_FLOW_MS
+  );
 });

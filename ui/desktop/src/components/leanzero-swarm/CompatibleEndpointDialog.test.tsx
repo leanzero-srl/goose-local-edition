@@ -51,6 +51,16 @@ function render(props: Partial<Parameters<typeof CompatibleEndpointDialog>[0]> =
   return { onClose, onSaved };
 }
 
+/**
+ * Q-466: a value arrives whole — click the field, paste the text. These tests are about what the
+ * dialog creates, lists and saves, not about typing; typing re-rendered the dialog once per key,
+ * and the new-endpoint case's 54 keys took 3.4 s under load (the default clock is 5 s).
+ */
+async function enter(field: HTMLElement, text: string) {
+  await userEvent.click(field);
+  await userEvent.paste(text);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockCreate.mockResolvedValue({ provider_name: 'custom_desk_vllm' });
@@ -70,12 +80,12 @@ describe('CompatibleEndpointDialog', () => {
     expect(screen.getByText('Base URL is required')).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
 
-    await userEvent.type(screen.getByLabelText('Name'), 'Desk vLLM');
-    await userEvent.type(screen.getByLabelText('Base URL'), 'http://10.0.0.5:8000/v1');
-    await userEvent.type(screen.getByLabelText('API key'), 'desk-key');
+    await enter(screen.getByLabelText('Name'), 'Desk vLLM');
+    await enter(screen.getByLabelText('Base URL'), 'http://10.0.0.5:8000/v1');
+    await enter(screen.getByLabelText('API key'), 'desk-key');
     await userEvent.click(screen.getByRole('button', { name: /Add header/ }));
-    await userEvent.type(screen.getByLabelText('Header name'), 'X-Team');
-    await userEvent.type(screen.getByLabelText('Value'), 'platform');
+    await enter(screen.getByLabelText('Header name'), 'X-Team');
+    await enter(screen.getByLabelText('Value'), 'platform');
     await userEvent.click(screen.getByTestId('compatible-endpoint-test'));
 
     await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
@@ -113,15 +123,15 @@ describe('CompatibleEndpointDialog', () => {
   it('a server with no model listing shows its own words and a typed id still saves; keyless means no auth', async () => {
     mockLive.mockRejectedValue(new Error('Failed to fetch provider supported models: 404'));
     render();
-    await userEvent.type(screen.getByLabelText('Name'), 'Desk llama.cpp');
-    await userEvent.type(screen.getByLabelText('Base URL'), 'http://10.0.0.6:8080');
+    await enter(screen.getByLabelText('Name'), 'Desk llama.cpp');
+    await enter(screen.getByLabelText('Base URL'), 'http://10.0.0.6:8080');
     await userEvent.click(screen.getByTestId('compatible-endpoint-test'));
 
     expect(await screen.findByTestId('compatible-endpoint-list-error')).toHaveTextContent(
       'Failed to fetch provider supported models: 404'
     );
     expect(mockCreate.mock.calls[0][0]).toMatchObject({ api_key: '', requires_auth: false });
-    await userEvent.type(screen.getByLabelText('Or type a model id'), 'qwen3-8b');
+    await enter(screen.getByLabelText('Or type a model id'), 'qwen3-8b');
     await userEvent.click(screen.getByTestId('compatible-endpoint-save'));
     await waitFor(() =>
       expect(mockSaveDefault).toHaveBeenCalledWith('custom_desk_vllm', 'qwen3-8b')
@@ -138,8 +148,8 @@ describe('CompatibleEndpointDialog', () => {
       new Error('Connection check failed; previous settings retained. not enabled for this key')
     );
     const { onClose } = render();
-    await userEvent.type(screen.getByLabelText('Name'), 'Gateway');
-    await userEvent.type(screen.getByLabelText('Base URL'), 'https://gw.example/v1');
+    await enter(screen.getByLabelText('Name'), 'Gateway');
+    await enter(screen.getByLabelText('Base URL'), 'https://gw.example/v1');
     await userEvent.click(screen.getByTestId('compatible-endpoint-test'));
     await userEvent.click(await screen.findByTestId('cloud-model-llama-4-scout'));
     await userEvent.click(screen.getByTestId('compatible-endpoint-save'));
@@ -151,8 +161,8 @@ describe('CompatibleEndpointDialog', () => {
   it('closing a new endpoint that never got a default removes it again', async () => {
     mockLive.mockResolvedValue(['m']);
     const { onClose } = render();
-    await userEvent.type(screen.getByLabelText('Name'), 'Typo');
-    await userEvent.type(screen.getByLabelText('Base URL'), 'http://10.0.0.7:1/v1');
+    await enter(screen.getByLabelText('Name'), 'Typo');
+    await enter(screen.getByLabelText('Base URL'), 'http://10.0.0.7:1/v1');
     await userEvent.click(screen.getByTestId('compatible-endpoint-test'));
     await screen.findByTestId('cloud-model-m');
     await userEvent.keyboard('{Escape}');
@@ -175,7 +185,7 @@ describe('CompatibleEndpointDialog', () => {
     expect(screen.getByLabelText('Header name')).toHaveValue('X-Team');
     expect(screen.getByText('saved — leave blank to keep')).toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText('Base URL'));
-    await userEvent.type(screen.getByLabelText('Base URL'), 'https://gw2.corp.example/v1');
+    await enter(screen.getByLabelText('Base URL'), 'https://gw2.corp.example/v1');
     await userEvent.click(screen.getByTestId('compatible-endpoint-test'));
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenCalledWith(
