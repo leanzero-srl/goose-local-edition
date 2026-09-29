@@ -45,7 +45,9 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   At 181k/262k after turn 3, compaction is near.
 - Q-494 DONE 1bea50263 (replayed 17,948 real responses: 4 count false-alarms gone, every real year catch kept),
   merged into merge-079b.
-- Q-496 (the live chat stops following its turn: 25k px above the bottom, no jump button): panel-surgeon, cutting.
+- Q-496 DONE 95ee34a44: the chat's own smooth scroll (a >200 px jump) read as the person scrolling up. Follow now
+  ends only on a real user intent, plus a "Jump to latest" button and data-following for the harness. Merged into
+  merge-079b (7088fe6eb); g079d (/tmp/g079d.out) re-runs the UI gate after g079c.
 - Q-487..491: done, all in merge-079b.
 
 ## Next
