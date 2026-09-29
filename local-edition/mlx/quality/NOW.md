@@ -24,7 +24,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - g079 (/tmp/g079.out): the full gate on merge-487-488 (1813810f2 = Q-487 204457a56 + Q-488 5a8d72d49), background
   priority.
 - g079b (/tmp/g079b.out): chained to start when g079 ends. UI gate on merge-079b (968b6b7e3 = merge-487-488
-  + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2), no conflicts.
+  + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2 + Q-492/493 4b548171d → 67b2813df), no conflicts.
 - Both green → ff main to merge-079b, push, release 3.0.79. Install when #3x ends (or is stopped).
   Then prove Q-490 live: closerepro2 must click [data-testid=confirm-close-run-stop]; expect main.log
   "close held … chat turn(s) in flight", the app alive, no exit.
@@ -32,8 +32,8 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   is not enough), then the uncaught handler threw again. goosed saw stdin EOF → the engine stopped.
 
 ## Agents (worktrees)
-- Q-492 (an "@" in the last word opens the file picker and swallows Enter, so #3x's turn 1 was LOST) and Q-493 (a
-  turn killed with the app leaves no trace): panel-surgeon, cutting.
+- Q-492/493 DONE 4b548171d, merged into merge-079b. Q-495 (a turn dead mid-tool call) QUEUED behind: merge-079b
+  landing.
   - r1 now proves every send (SEND_LOST + one resend), from #3y on.
 - #3x: turn 1 (the memory turn) never reached the chat, so its memory checks at 33/39 are VOID for this run.
 - Q-494 (the reply check calls counts "years": "Total rows: 1999"): general-purpose agent, cutting.
@@ -56,7 +56,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-495.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-496.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
