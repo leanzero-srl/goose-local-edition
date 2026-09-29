@@ -999,7 +999,26 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
     );
   });
 
+  // No turn in flight anywhere: neither this window's nor a lease of this chat on the engine.
   it('NEGATIVE CONTROL — no turn in flight: the leaving rows alone put no bar under the composer', async () => {
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async () =>
+        snapshot(
+          { clients: [], unattributed: 0, swarmRuns: [], error: null },
+          SPLIT_TURN_BEHIND_LEAVING_3M
+        ),
+    };
+    mockExtMethod.mockResolvedValue({ status: ROUTE });
+    await mlxRemoteSingleStatus();
+    wrap('swarm', 's-mine');
+    await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.queryByTestId('composer-readiness-turn-wait')).toBeNull();
+  });
+
+  // Q-501: this chat's turn lease is on the engine, sent by ANOTHER window — this composer has no
+  // turn of its own, and still says why the turn waits, exactly as the window that sent it.
+  it('Q-501: the turn another window sent is queued — this window says why too', async () => {
     (window as unknown as { electron: unknown }).electron = {
       mlxEngineActivity: async () =>
         snapshot(
@@ -1010,9 +1029,8 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
     mockExtMethod.mockResolvedValue({ status: ROUTE });
     await mlxRemoteSingleStatus();
     wrap('swarm', 's-mine');
-    await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 10));
-    expect(screen.queryByTestId('composer-readiness-turn-wait')).toBeNull();
+    const strip = await screen.findByTestId('composer-readiness');
+    await waitFor(() => expect(strip).toHaveAttribute('data-turn-wait', 'leaving'));
   });
 });
 

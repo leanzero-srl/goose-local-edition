@@ -88,24 +88,10 @@ fn dto(
 }
 
 impl GooseAcpAgent {
-    /// The busy set of this process: the ACP server's own manager and, when goose-server built
-    /// one, the process singleton (the same union LeanZero Link reads). Earliest start wins.
+    /// The busy set of this process: the ACP server's own manager, the process singleton when
+    /// one was built, and the scheduler's standalone runs (Q-507). Earliest start wins.
     async fn busy_sessions(&self) -> HashMap<String, chrono::DateTime<chrono::Utc>> {
-        let mut busy: HashMap<String, chrono::DateTime<chrono::Utc>> = HashMap::new();
-        let mut managers = vec![self.agent_manager.clone()];
-        if let Some(shared) = AgentManager::instance_if_built() {
-            if !std::sync::Arc::ptr_eq(&shared, &self.agent_manager) {
-                managers.push(shared);
-            }
-        }
-        for manager in managers {
-            for (session_id, since) in manager.busy_sessions().await {
-                busy.entry(session_id)
-                    .and_modify(|earliest| *earliest = (*earliest).min(since))
-                    .or_insert(since);
-            }
-        }
-        busy
+        AgentManager::process_busy_sessions(&self.agent_manager).await
     }
 
     /// goose's in-flight calls for user and scheduled sessions (Q-185), one row per call, oldest

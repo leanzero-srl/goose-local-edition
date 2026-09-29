@@ -11210,6 +11210,27 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose ingin memanggil {toolName}. Benarkan?"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose sedang menjawab sembang ini di luar mana-mana tetingkap — untuk ejen yang dimulakan oleh sembang lain, atau Mac yang dipautkan. Henti menamatkannya; mesej yang dihantar sekarang menunggu sehingga ia selesai."
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "Hentikan giliran yang dijalankan goose di latar belakang"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "Sedang berjalan di latar belakang"
+  },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose sedang menjawab sembang ini dalam tetingkap lain. Henti menamatkannya di sana; mesej yang dihantar sekarang menunggu sehingga ia selesai."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "Tunjukkan tetingkap itu"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Hentikan giliran yang berjalan dalam tetingkap lain"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "Sedang berjalan dalam tetingkap lain"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {Beratur di belakang # permintaan yang dihentikan dan masih keluar dari enjin} other {Beratur di belakang # permintaan yang dihentikan dan masih keluar dari enjin}}{since, select, none {} other { · dihentikan {since} lalu}}"
   },

@@ -11210,6 +11210,27 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose muốn gọi {toolName}. Cho phép?"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose đang trả lời cuộc trò chuyện này bên ngoài mọi cửa sổ — cho một tác tử do cuộc trò chuyện khác khởi động, hoặc cho một máy Mac được liên kết. Dừng sẽ kết thúc nó; tin nhắn gửi bây giờ sẽ chờ đến khi xong."
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "Dừng lượt goose đang chạy trong nền"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "Đang chạy trong nền"
+  },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose đang trả lời cuộc trò chuyện này trong một cửa sổ khác. Dừng sẽ kết thúc nó ở đó; tin nhắn gửi bây giờ sẽ chờ đến khi xong."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "Hiện cửa sổ đó"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Dừng lượt đang chạy trong cửa sổ khác"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "Đang chạy trong cửa sổ khác"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {Đang xếp hàng sau # yêu cầu đã dừng vẫn đang rời khỏi engine} other {Đang xếp hàng sau # yêu cầu đã dừng vẫn đang rời khỏi engine}}{since, select, none {} other { · đã dừng {since} trước}}"
   },

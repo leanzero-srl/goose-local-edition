@@ -11210,6 +11210,27 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose хочет вызвать {toolName}. Разрешить?"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose отвечает в этом чате вне какого-либо окна — для агента, запущенного другим чатом, или для связанного Mac. «Стоп» завершит ответ; сообщение, отправленное сейчас, дождётся его окончания."
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "Остановить ход, который goose выполняет в фоне"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "Выполняется в фоне"
+  },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose отвечает в этом чате в другом окне. «Стоп» завершит ответ там; сообщение, отправленное сейчас, дождётся его окончания."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "Показать то окно"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Остановить ход, выполняющийся в другом окне"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "Выполняется в другом окне"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {В очереди за # остановленным запросом, который ещё покидает движок} other {В очереди за остановленными запросами, которые ещё покидают движок: #}}{since, select, none {} other { · остановлен {since} назад}}"
   },

@@ -17,6 +17,12 @@ import {
 } from '../../acp/elicitationRequests';
 import { acpResolveNeedsYou, acpSessionActivity } from '../../acp/needsYou';
 import { AppEvents } from '../../constants/events';
+import {
+  RUNNING_ELSEWHERE_CHANNEL,
+  isRunningElsewhereList,
+  joinRunningRows,
+  type RunningElsewhere,
+} from '../../utils/runningElsewhere';
 
 /**
  * THE one source of what every session is doing: running / needs you / failed / idle.
@@ -30,9 +36,15 @@ import { AppEvents } from '../../constants/events';
  * Refreshed when the engine says a run started or ended (the `activeRunId` session update), when a
  * turn finishes, on focus, and on a steady poll for turns started by something other than this
  * window (a schedule, a linked Mac).
+ *
+ * `running` is THIS window's connection's read; `elsewhere` the turns the other windows'
+ * connections run (Q-500, utils/runningElsewhere.ts), pushed by main. Every running claim reads the
+ * two joined (`runningRowsOf`), never `running` alone.
  */
 export interface SessionActivitySnapshot {
   running: RunningSessionDto[];
+  /** Turns other windows' ACP connections run, each with the window holding it (main's push). */
+  elsewhere: RunningElsewhere[];
   needsYou: NeedsYouItemDto[];
   /** Sessions whose LAST turn failed (a later completed turn clears it). */
   failed: FailedSessionDto[];
@@ -70,6 +82,7 @@ export const ACTIVITY_POLL_MS = 5000;
 
 const EMPTY: SessionActivitySnapshot = {
   running: [],
+  elsewhere: [],
   needsYou: [],
   failed: [],
   stopped: [],
@@ -89,6 +102,7 @@ let refreshGeneration = 0;
 let started = false;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let unsubscribeElicitations: (() => void) | undefined;
+let unsubscribeElsewhere: (() => void) | undefined;
 const listeners = new Set<() => void>();
 
 function emit(next: SessionActivitySnapshot): void {
@@ -155,6 +169,24 @@ function syncElicitations(): void {
 
 const refreshOnEvent = () => void refreshSessionActivity();
 
+interface ElsewhereBridge {
+  on?: (channel: string, fn: (event: unknown, ...args: unknown[]) => void) => void;
+  off?: (channel: string, fn: (event: unknown, ...args: unknown[]) => void) => void;
+}
+
+/** main's push of the turns the other windows' connections run (Q-500). */
+function subscribeElsewhere(): () => void {
+  const electron = (window as unknown as { electron?: ElsewhereBridge }).electron;
+  const onPush = (_event: unknown, ...args: unknown[]) => {
+    const elsewhere = args[0];
+    if (!isRunningElsewhereList(elsewhere)) return;
+    if (JSON.stringify(elsewhere) === JSON.stringify(snapshot.elsewhere)) return;
+    emit({ ...snapshot, elsewhere });
+  };
+  electron?.on?.(RUNNING_ELSEWHERE_CHANNEL, onPush);
+  return () => electron?.off?.(RUNNING_ELSEWHERE_CHANNEL, onPush);
+}
+
 const WINDOW_EVENTS = [
   AppEvents.SESSION_ACTIVITY_CHANGED,
   AppEvents.MESSAGE_STREAM_FINISHED,
@@ -167,6 +199,7 @@ export function startSessionActivitySync(): void {
   if (started) return;
   started = true;
   unsubscribeElicitations = subscribePendingAcpElicitations(syncElicitations);
+  unsubscribeElsewhere = subscribeElsewhere();
   for (const name of WINDOW_EVENTS) {
     window.addEventListener(name, refreshOnEvent);
   }
@@ -182,6 +215,7 @@ export function resetSessionActivityForTests(next: SessionActivitySnapshot = EMP
     }
     clearInterval(pollTimer);
     unsubscribeElicitations?.();
+    unsubscribeElsewhere?.();
   }
   started = false;
   refreshGeneration = 0;
@@ -199,6 +233,15 @@ export function seedSessionActivityForTests(next: Partial<SessionActivitySnapsho
   emit({ ...EMPTY, ...next });
 }
 
+/** Every turn goosed runs, whichever window's connection runs it: THE running read (Q-500). */
+export function runningRowsOf(
+  state: Pick<SessionActivitySnapshot, 'running' | 'elsewhere'>
+): RunningSessionDto[] {
+  return state.elsewhere.length === 0
+    ? state.running
+    : joinRunningRows(state.running, state.elsewhere);
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   startSessionActivitySync();
@@ -214,6 +257,11 @@ export function useSessionActivity(): SessionActivitySnapshot {
 export interface SessionActivity {
   /** When the turn in flight began; undefined = no turn running. */
   runningSince?: string;
+  /**
+   * The other window (its webContents id) whose connection holds the running turn's prompt (Q-500);
+   * undefined = no other window holds one. Only that window can stop it or stream it.
+   */
+  turnWindow?: number;
   /** Open questions plus live elicitations. */
   needsYou: number;
   /** When the last turn failed; undefined = it did not. */
@@ -240,7 +288,10 @@ export interface SessionActivity {
 }
 
 export function activityOf(state: SessionActivitySnapshot, sessionId: string): SessionActivity {
-  const running = state.running.find((row) => row.sessionId === sessionId);
+  const running = runningRowsOf(state).find((row) => row.sessionId === sessionId);
+  const turnWindow = state.elsewhere.find(
+    (row) => row.sessionId === sessionId && row.window !== null
+  )?.window;
   const failed = state.failed.find((row) => row.sessionId === sessionId);
   const stopped = state.stopped.find((row) => row.sessionId === sessionId);
   const background = state.background.find((row) => row.sessionId === sessionId);
@@ -253,6 +304,7 @@ export function activityOf(state: SessionActivitySnapshot, sessionId: string): S
     state.elicitations.filter((request) => request.sessionId === sessionId).length;
   return {
     runningSince: running?.startedAt,
+    turnWindow: turnWindow ?? undefined,
     needsYou,
     failedAt: failed?.failedAt,
     failedReason: failed?.reason ?? undefined,
@@ -327,6 +379,10 @@ export function useActivityOf(sessionId: string): SessionActivity {
     subscribe,
     () => activityOf(snapshot, sessionId).runningSince
   );
+  const turnWindow = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).turnWindow
+  );
   const needsYou = useSyncExternalStore(subscribe, () => activityOf(snapshot, sessionId).needsYou);
   const failedAt = useSyncExternalStore(subscribe, () => activityOf(snapshot, sessionId).failedAt);
   const failedReason = useSyncExternalStore(
@@ -368,6 +424,7 @@ export function useActivityOf(sessionId: string): SessionActivity {
   const noteFrom = useSyncExternalStore(subscribe, () => activityOf(snapshot, sessionId).noteFrom);
   return {
     runningSince,
+    turnWindow,
     needsYou,
     failedAt,
     failedReason,
@@ -441,7 +498,7 @@ export function activeSessions(state: SessionActivitySnapshot): ActiveSession[] 
     r.needsYou += 1;
     r.headline ??= request.request.message;
   }
-  for (const running of state.running) {
+  for (const running of runningRowsOf(state)) {
     row(running.sessionId, running.sessionName, running.workingDir).runningSince =
       running.startedAt;
   }

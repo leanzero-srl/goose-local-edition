@@ -18,6 +18,7 @@ use crate::config::paths::Paths;
 use crate::config::{resolve_extensions_for_new_session, Config};
 use crate::conversation::message::Message;
 use crate::conversation::Conversation;
+use crate::execution::manager::StandaloneRun;
 #[cfg(feature = "telemetry")]
 use crate::posthog;
 use crate::providers::create_with_working_dir;
@@ -987,187 +988,197 @@ async fn execute_job(
         )
         .await?;
 
-    let mut extensions = resolve_extensions_for_new_session(recipe.extensions.as_deref(), None);
-    if recipe.extensions.is_none() {
-        extensions.extend(crate::plugins::mcp_servers::enabled_plugin_mcp_servers(
-            Some(&working_dir),
-        ));
-    }
-    for ext in &extensions {
-        agent.add_extension(ext.clone(), &session.id).await?;
-    }
-
-    let agent_provider = create_with_working_dir(&provider_name, extensions, working_dir).await?;
-    agent
-        .update_provider(agent_provider, model_config, &session.id)
-        .await?;
-
-    let mut jobs_guard = jobs.lock().await;
-    if let Some((_, job_def)) = jobs_guard.get_mut(job_id.as_str()) {
-        job_def.current_session_id = Some(session.id.clone());
-    }
-    drop(jobs_guard);
-
-    let start_time = std::time::Instant::now();
-
-    let recipe_display_name = recipe_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(&job.id);
-    let recipe_version = recipe.version.clone();
-
-    tracing::info!(
-        monotonic_counter.goose.session_starts = 1,
-        session_type = "schedule",
-        interface = "scheduler",
-        interactive = false,
-        "Scheduled session started"
-    );
-
-    tracing::info!(
-        monotonic_counter.goose.recipe_runs = 1,
-        recipe_name = %recipe_display_name,
-        recipe_version = %recipe_version,
-        session_type = "schedule",
-        interface = "scheduler",
-        "Recipe execution started"
-    );
-
-    #[cfg(feature = "telemetry")]
-    tokio::spawn(async move {
-        let mut props = HashMap::new();
-        props.insert(
-            "trigger".to_string(),
-            serde_json::Value::String("automated".to_string()),
-        );
-        if let Err(e) = posthog::emit_event("schedule_job_started", props).await {
-            tracing::debug!("Failed to send schedule telemetry: {}", e);
+    // The run is this session's turn for as long as it runs — setup, reply and bookkeeping — so
+    // every window lists it as Running and every window's Stop reaches it (Q-507): no window's
+    // connection sent it, and its agent is in no manager.
+    let run = StandaloneRun::register(&session.id, cancel_token.clone()).await?;
+    let result = async {
+        let mut extensions = resolve_extensions_for_new_session(recipe.extensions.as_deref(), None);
+        if recipe.extensions.is_none() {
+            extensions.extend(crate::plugins::mcp_servers::enabled_plugin_mcp_servers(
+                Some(&working_dir),
+            ));
         }
-    });
-
-    let prompt_text = recipe
-        .prompt
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            recipe
-                .instructions
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-        })
-        .ok_or_else(|| {
-            anyhow!("Recipe must specify at least one of `instructions` or `prompt`.")
-        })?;
-
-    let user_message = Message::user().with_text(prompt_text);
-    let mut conversation = Conversation::new_unvalidated(vec![user_message.clone()]);
-
-    let session_config = SessionConfig {
-        id: session.id.clone(),
-        schedule_id: Some(job.id.clone()),
-        max_turns: None,
-        retry_config: None,
-    };
-
-    let stream = agent
-        .reply(user_message, session_config, Some(cancel_token))
-        .await?;
-
-    use futures::StreamExt;
-    let mut stream = std::pin::pin!(stream);
-
-    let mut stream_error = false;
-    while let Some(message_result) = stream.next().await {
-        tokio::task::yield_now().await;
-
-        match message_result {
-            Ok(AgentEvent::Message(msg)) => {
-                conversation.push(msg);
-            }
-            Ok(AgentEvent::HistoryReplaced(updated)) => {
-                conversation = updated;
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::error!("Error in agent stream: {}", e);
-                stream_error = true;
-                break;
-            }
+        for ext in &extensions {
+            agent.add_extension(ext.clone(), &session.id).await?;
         }
-    }
 
-    agent
-        .config
-        .session_manager
-        .update(&session.id)
-        .schedule_id(Some(job.id.clone()))
-        .recipe(Some(recipe))
-        .apply()
-        .await?;
+        let agent_provider =
+            create_with_working_dir(&provider_name, extensions, working_dir).await?;
+        agent
+            .update_provider(agent_provider, model_config, &session.id)
+            .await?;
 
-    {
-        let session_duration = start_time.elapsed();
-        let exit_type = if stream_error { "error" } else { "normal" };
-        let (total_tokens, message_count) = agent
-            .config
-            .session_manager
-            .get_session(&session.id, false)
-            .await
-            .map(|s| (s.usage.total_tokens.unwrap_or(0), s.message_count))
-            .unwrap_or((0, 0));
+        let mut jobs_guard = jobs.lock().await;
+        if let Some((_, job_def)) = jobs_guard.get_mut(job_id.as_str()) {
+            job_def.current_session_id = Some(session.id.clone());
+        }
+        drop(jobs_guard);
+
+        let start_time = std::time::Instant::now();
+
+        let recipe_display_name = recipe_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&job.id);
+        let recipe_version = recipe.version.clone();
 
         tracing::info!(
-            monotonic_counter.goose.session_completions = 1,
+            monotonic_counter.goose.session_starts = 1,
             session_type = "schedule",
             interface = "scheduler",
-            exit_type,
-            duration_ms = session_duration.as_millis() as u64,
-            total_tokens,
-            message_count,
-            "Session completed"
+            interactive = false,
+            "Scheduled session started"
         );
 
         tracing::info!(
-            monotonic_counter.goose.session_duration_ms = session_duration.as_millis() as u64,
+            monotonic_counter.goose.recipe_runs = 1,
+            recipe_name = %recipe_display_name,
+            recipe_version = %recipe_version,
             session_type = "schedule",
             interface = "scheduler",
-            "Session duration"
+            "Recipe execution started"
         );
 
-        if total_tokens > 0 {
-            tracing::info!(
-                monotonic_counter.goose.session_tokens = total_tokens,
-                session_type = "schedule",
-                interface = "scheduler",
-                "Session tokens"
-            );
-        }
-    }
-
-    #[cfg(feature = "telemetry")]
-    {
-        let duration_secs = start_time.elapsed().as_secs();
+        #[cfg(feature = "telemetry")]
         tokio::spawn(async move {
             let mut props = HashMap::new();
             props.insert(
                 "trigger".to_string(),
                 serde_json::Value::String("automated".to_string()),
             );
-            props.insert(
-                "status".to_string(),
-                serde_json::Value::String("completed".to_string()),
-            );
-            props.insert(
-                "duration_seconds".to_string(),
-                serde_json::Value::Number(serde_json::Number::from(duration_secs)),
-            );
-            if let Err(e) = posthog::emit_event("schedule_job_completed", props).await {
+            if let Err(e) = posthog::emit_event("schedule_job_started", props).await {
                 tracing::debug!("Failed to send schedule telemetry: {}", e);
             }
         });
-    }
 
-    Ok(session.id)
+        let prompt_text = recipe
+            .prompt
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                recipe
+                    .instructions
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+            })
+            .ok_or_else(|| {
+                anyhow!("Recipe must specify at least one of `instructions` or `prompt`.")
+            })?;
+
+        let user_message = Message::user().with_text(prompt_text);
+        let mut conversation = Conversation::new_unvalidated(vec![user_message.clone()]);
+
+        let session_config = SessionConfig {
+            id: session.id.clone(),
+            schedule_id: Some(job.id.clone()),
+            max_turns: None,
+            retry_config: None,
+        };
+
+        let stream = agent
+            .reply(user_message, session_config, Some(cancel_token))
+            .await?;
+
+        use futures::StreamExt;
+        let mut stream = std::pin::pin!(stream);
+
+        let mut stream_error = false;
+        while let Some(message_result) = stream.next().await {
+            tokio::task::yield_now().await;
+
+            match message_result {
+                Ok(AgentEvent::Message(msg)) => {
+                    conversation.push(msg);
+                }
+                Ok(AgentEvent::HistoryReplaced(updated)) => {
+                    conversation = updated;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!("Error in agent stream: {}", e);
+                    stream_error = true;
+                    break;
+                }
+            }
+        }
+
+        agent
+            .config
+            .session_manager
+            .update(&session.id)
+            .schedule_id(Some(job.id.clone()))
+            .recipe(Some(recipe))
+            .apply()
+            .await?;
+
+        {
+            let session_duration = start_time.elapsed();
+            let exit_type = if stream_error { "error" } else { "normal" };
+            let (total_tokens, message_count) = agent
+                .config
+                .session_manager
+                .get_session(&session.id, false)
+                .await
+                .map(|s| (s.usage.total_tokens.unwrap_or(0), s.message_count))
+                .unwrap_or((0, 0));
+
+            tracing::info!(
+                monotonic_counter.goose.session_completions = 1,
+                session_type = "schedule",
+                interface = "scheduler",
+                exit_type,
+                duration_ms = session_duration.as_millis() as u64,
+                total_tokens,
+                message_count,
+                "Session completed"
+            );
+
+            tracing::info!(
+                monotonic_counter.goose.session_duration_ms = session_duration.as_millis() as u64,
+                session_type = "schedule",
+                interface = "scheduler",
+                "Session duration"
+            );
+
+            if total_tokens > 0 {
+                tracing::info!(
+                    monotonic_counter.goose.session_tokens = total_tokens,
+                    session_type = "schedule",
+                    interface = "scheduler",
+                    "Session tokens"
+                );
+            }
+        }
+
+        #[cfg(feature = "telemetry")]
+        {
+            let duration_secs = start_time.elapsed().as_secs();
+            tokio::spawn(async move {
+                let mut props = HashMap::new();
+                props.insert(
+                    "trigger".to_string(),
+                    serde_json::Value::String("automated".to_string()),
+                );
+                props.insert(
+                    "status".to_string(),
+                    serde_json::Value::String("completed".to_string()),
+                );
+                props.insert(
+                    "duration_seconds".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(duration_secs)),
+                );
+                if let Err(e) = posthog::emit_event("schedule_job_completed", props).await {
+                    tracing::debug!("Failed to send schedule telemetry: {}", e);
+                }
+            });
+        }
+
+        Ok::<_, anyhow::Error>(session.id.clone())
+    }
+    .await;
+    run.release().await;
+    result
 }
 
 #[async_trait]

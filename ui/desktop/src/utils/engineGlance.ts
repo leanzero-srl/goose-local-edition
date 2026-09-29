@@ -1,4 +1,4 @@
-import type { BackgroundWorkKind } from '@aaif/goose-sdk';
+import type { BackgroundWorkKind, RunningSessionDto } from '@aaif/goose-sdk';
 import {
   engineHeadline,
   mlxActivity,
@@ -32,6 +32,7 @@ import { leaveCause } from './leaveCause';
 import { routeContactLost, routePeerGone } from './routeContact';
 import { MLX_DISTRIBUTED_STALE_MS, snapshotPhase } from './mlxTray';
 import { isNodeSwap, swapStopsEngine, type NodeSwap } from './nodeSwap';
+import { isRunningRow } from './runningElsewhere';
 
 /**
  * THE ENGINE GLANCE — the Engine tab's live state tile made small enough to carry everywhere: the
@@ -198,6 +199,11 @@ export interface GlanceNeedsYou {
 export interface GlanceSessions {
   running: number;
   needsYou: GlanceNeedsYou[];
+  /**
+   * A window's report only: its OWN connection's goosed `running` rows (Q-500). main hands them to
+   * the other windows (utils/runningElsewhere.ts) and counts a turn two connections both list once.
+   */
+  runningRows?: RunningSessionDto[];
   /**
    * A window's report only (never the merged push): the node its goosed says serves, read when the
    * glance changed (glanceStore.ts). Absent = this window has not read it.
@@ -801,6 +807,8 @@ export function isGlanceSessions(value: unknown): value is GlanceSessions {
   return (
     (v.serving === undefined || v.serving === null || isGlanceServingReport(v.serving)) &&
     (v.swap === undefined || v.swap === null || isNodeSwap(v.swap)) &&
+    (v.runningRows === undefined ||
+      (Array.isArray(v.runningRows) && v.runningRows.every(isRunningRow))) &&
     typeof v.running === 'number' &&
     Number.isFinite(v.running) &&
     Array.isArray(v.needsYou) &&
@@ -819,20 +827,23 @@ export const NO_SESSIONS: GlanceSessions = { running: 0, needsYou: [] };
 
 /**
  * Each window reports its own ACP connection's turns (one goosed serves every window since Q-257,
- * but every connection keeps its own busy set — acp/server/needs_you.rs busy_sessions): its
- * sessions add up, a question asked twice counts once.
+ * but every connection keeps its own busy set — acp/server/needs_you.rs busy_sessions): a turn is
+ * counted once however many connections list it (the process-wide agents' turns are in every
+ * window's read), a question asked twice counts once.
  */
 export function mergeGlanceSessions(reports: Iterable<GlanceSessions>): GlanceSessions {
-  let running = 0;
+  let unlisted = 0;
+  const runningIds = new Set<string>();
   const needsYou = new Map<string, GlanceNeedsYou>();
   for (const r of reports) {
-    running += r.running;
+    if (r.runningRows) for (const row of r.runningRows) runningIds.add(row.sessionId);
+    else unlisted += r.running;
     for (const n of r.needsYou) {
       const key = `${n.sessionId}\n${n.question}`;
       if (!needsYou.has(key)) needsYou.set(key, n);
     }
   }
-  return { running, needsYou: [...needsYou.values()] };
+  return { running: runningIds.size + unlisted, needsYou: [...needsYou.values()] };
 }
 
 export function isGlancePush(value: unknown): value is GlancePush {

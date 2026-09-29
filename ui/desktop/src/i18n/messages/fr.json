@@ -11210,6 +11210,27 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose souhaite appeler {toolName}. Autoriser ?"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose répond à ce chat en dehors de toute fenêtre — pour un agent lancé par un autre chat, ou pour un Mac associé. Arrêter y met fin ; un message envoyé maintenant attend qu’il se termine."
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "Arrêter le tour que goose exécute en arrière-plan"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "En cours en arrière-plan"
+  },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose répond à ce chat dans une autre fenêtre. Arrêter y met fin ; un message envoyé maintenant attend qu’il se termine."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "Afficher cette fenêtre"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Arrêter le tour en cours dans une autre fenêtre"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "En cours dans une autre fenêtre"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {En file derrière # requête arrêtée qui quitte encore le moteur} other {En file derrière # requêtes arrêtées qui quittent encore le moteur}}{since, select, none {} other { · arrêtée il y a {since}}}"
   },

@@ -68,6 +68,14 @@ import {
   TURNS_IN_FLIGHT_CHANNEL,
 } from './utils/closeGuard';
 import type { CloseRunPayload, CloseVerdict, TurnInFlight } from './utils/closeGuard';
+import {
+  RUNNING_ELSEWHERE_CHANNEL,
+  SHOW_TURN_WINDOW_CHANNEL,
+  STOP_TURN_CHANNEL,
+  STOP_TURN_ELSEWHERE_CHANNEL,
+  runningElsewhereFor,
+  turnHolderOf,
+} from './utils/runningElsewhere';
 import { benchmarkCancellationPids } from './utils/benchReap';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
@@ -2686,11 +2694,15 @@ ipcMain.on('engine-glance-sessions', (event, report: unknown) => {
       );
       glanceSessionsByWindow.delete(sender.id);
       renderMlxTray(mlxMonitor.current());
+      publishRunningElsewhere();
     });
   }
   glanceSessionsByWindow.set(sender.id, report);
   // The report carries the loader's swap, which the tray reads too: both are redrawn (Q-254).
   renderMlxTray(mlxMonitor.current());
+  // ...and this window's goosed running rows, which the other windows' connections cannot see (Q-500).
+  // The reporter is always answered: a reloaded renderer's store starts empty under the same id.
+  publishRunningElsewhere(sender.id);
 });
 // A surface mounting after the last push asks for it; the loop is woken so a stale engine read is
 // never what it paints.
@@ -4999,9 +5011,63 @@ ipcMain.on(TURNS_IN_FLIGHT_CHANNEL, (event, turns: unknown) => {
   if (!isTurnsInFlight(turns)) return;
   const sender = event.sender;
   if (!turnsInFlightByContents.has(sender.id)) {
-    sender.once('destroyed', () => turnsInFlightByContents.delete(sender.id));
+    sender.once('destroyed', () => {
+      turnsInFlightByContents.delete(sender.id);
+      publishRunningElsewhere();
+    });
   }
   turnsInFlightByContents.set(sender.id, turns);
+  publishRunningElsewhere();
+});
+
+// A chat's turn runs whichever window shows it (Q-500, utils/runningElsewhere.ts): each window's
+// goosed read lists only its own connection's turns, so every window is handed the others' rows —
+// with the window that holds each prompt, the only one that can stop or stream it.
+const lastRunningElsewhere = new Map<number, string>();
+function publishRunningElsewhere(reporter: number | null = null): void {
+  const running = new Map<number, NonNullable<GlanceSessions['runningRows']>>();
+  for (const [id, report] of glanceSessionsByWindow) running.set(id, report.runningRows ?? []);
+  const live = new Set<number>();
+  for (const win of BrowserWindow.getAllWindows()) {
+    const contents = win.webContents;
+    if (contents.isDestroyed()) continue;
+    live.add(contents.id);
+    const key = JSON.stringify(
+      runningElsewhereFor(contents.id, running, turnsInFlightByContents)
+    );
+    if (contents.id !== reporter && lastRunningElsewhere.get(contents.id) === key) continue;
+    lastRunningElsewhere.set(contents.id, key);
+    contents.send(RUNNING_ELSEWHERE_CHANNEL, JSON.parse(key));
+  }
+  for (const id of lastRunningElsewhere.keys()) if (!live.has(id)) lastRunningElsewhere.delete(id);
+}
+
+/** The window whose connection holds `sessionId`'s prompt, other than the asking one; null = none. */
+const turnWindowFor = (sessionId: unknown, asking: number): BrowserWindow | null => {
+  if (typeof sessionId !== 'string') return null;
+  const holder = turnHolderOf(sessionId, turnsInFlightByContents, asking);
+  if (holder === null) return null;
+  const contents = webContents.fromId(holder);
+  return contents && !contents.isDestroyed() ? BrowserWindow.fromWebContents(contents) : null;
+};
+// "Show that window": the holder comes forward on the chat whose turn it runs.
+ipcMain.on(SHOW_TURN_WINDOW_CHANNEL, (event, sessionId: unknown) => {
+  const win = turnWindowFor(sessionId, event.sender.id);
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  if (!win.isVisible()) win.show();
+  win.focus();
+  win.webContents.send('set-view', 'pair', sessionId);
+});
+// Stop from a window that does not hold the turn: goosed's cancel only reaches the prompt on its own
+// connection (acp/server.rs `on_cancel`), so the holding window stops it, exactly as its own Stop.
+ipcMain.on(STOP_TURN_ELSEWHERE_CHANNEL, (event, sessionId: unknown) => {
+  const win = turnWindowFor(sessionId, event.sender.id);
+  if (!win) {
+    log.warn(`Stop asked for ${String(sessionId)}, but no other window holds its turn`);
+    return;
+  }
+  win.webContents.send(STOP_TURN_CHANNEL, sessionId);
 });
 
 // The pass-through flags of the mouse-close guard (closeGuard.ts): a window whose renderer answered
