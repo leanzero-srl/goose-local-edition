@@ -1002,7 +1002,12 @@ impl Agent {
             Ok(v) => v,
             Err(_) => {
                 let context_limit = match self.provider().await {
-                    Ok(provider) => match provider.get_context_limit(&model_config).await {
+                    Ok(provider) => match crate::session_context::with_session_id(
+                        Some(session.id.clone()),
+                        provider.get_context_limit(&model_config),
+                    )
+                    .await
+                    {
                         Ok(limit) => Some(limit),
                         Err(_) => model_config.context_limit,
                     },
