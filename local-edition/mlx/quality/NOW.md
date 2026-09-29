@@ -36,6 +36,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   turn killed with the app leaves no trace): panel-surgeon, cutting.
   - r1 now proves every send (SEND_LOST + one resend), from #3y on.
 - #3x: turn 1 (the memory turn) never reached the chat, so its memory checks at 33/39 are VOID for this run.
+- Q-494 (the reply check calls counts "years": "Total rows: 1999"): general-purpose agent, cutting.
 - Q-487..491: done, all in merge-079b.
 
 ## Next
@@ -55,7 +56,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-494.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-495.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
