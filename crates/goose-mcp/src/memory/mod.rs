@@ -1,5 +1,6 @@
 use goose_memory_store::{
-    scope_label, search_covering, search_terms, MemoryStore, RememberOutcome, STOPWORDS,
+    redact_secrets, redaction_marker, scope_label, search_covering, search_terms, MemoryStore,
+    RememberOutcome, STOPWORDS,
 };
 use indoc::formatdoc;
 use rmcp::{
@@ -113,6 +114,37 @@ fn global_memory_dir_shown(dir: &std::path::Path) -> String {
     } else {
         format!("{}/", dir.display())
     }
+}
+
+/// The key names of the secret values `MemoryStore::remember` (and a proposal) redacts from this
+/// data and these tags — the same function the store runs, so the reply names exactly what was not
+/// stored.
+fn redacted_on_save(data: &str, tags: &[String]) -> Vec<String> {
+    std::iter::once(data)
+        .chain(tags.iter().map(String::as_str))
+        .flat_map(|text| redact_secrets(text).keys)
+        .collect()
+}
+
+/// What the tool result says about redaction, so the model knows the value was never written and
+/// does not "fix" the entry by saving the value again (Q-505).
+fn redaction_note(keys: &[String]) -> String {
+    if keys.is_empty() {
+        return String::new();
+    }
+    let markers: Vec<String> = keys
+        .iter()
+        .map(|key| format!("`{}`", redaction_marker(key)))
+        .collect();
+    format!(
+        " Redacted before saving: {} secret value{} ({}) — memory is sent to the model provider, so \
+         secrets are never stored in it; the entry keeps {}. Do not save the value again; name where \
+         it lives (an env var, a secrets file) instead.",
+        keys.len(),
+        if keys.len() == 1 { "" } else { "s" },
+        keys.join(", "),
+        markers.join(", ")
+    )
 }
 
 /// Parameters for the retrieve_memories tool
@@ -443,9 +475,13 @@ impl MemoryServer {
             let Some(content) = content else {
                 return Ok(((), None));
             };
+            // The model only ever sees an entry redacted, so it may quote the marker back.
             let kept: Vec<&str> = content
                 .split("\n\n")
-                .filter(|entry| !entry.contains(memory_content))
+                .filter(|entry| {
+                    !entry.contains(memory_content)
+                        && !redact_secrets(entry).text.contains(memory_content)
+                })
                 .collect();
             Ok(((), Some(kept.join("\n\n"))))
         })
@@ -550,7 +586,15 @@ impl MemoryServer {
                 " Scope {scope} because is_global was omitted and the kind is `{kind}`."
             ));
         }
-        tracing::info!(category = %params.category, scope, ?outcome, "memory remembered");
+        let redacted = redacted_on_save(&params.data, &params.tags);
+        message.push_str(&redaction_note(&redacted));
+        tracing::info!(
+            category = %params.category,
+            scope,
+            ?outcome,
+            redacted = redacted.len(),
+            "memory remembered"
+        );
         Ok(message)
     }
 
@@ -612,6 +656,7 @@ impl MemoryServer {
         tags.extend(params.tags.iter().filter(|t| *t != "reference").cloned());
         let sources_line = format!("\nSources: {}", sources.join(", "));
         let content = format!("{}{sources_line}", params.data.trim());
+        let redacted = redaction_note(&redacted_on_save(&content, &tags));
 
         if let Some(dir) = &self.proposals_dir {
             // A card holds PROPOSAL_TEXT_MAX_CHARS; the store refuses a longer proposal rather than
@@ -668,7 +713,7 @@ impl MemoryServer {
                 }
             };
             tracing::info!(category = %params.category, ?outcome, "knowledge proposed");
-            return Ok(message);
+            return Ok(format!("{message}{redacted}"));
         }
 
         let tag_refs: Vec<&str> = tags.iter().map(String::as_str).collect();
@@ -685,7 +730,7 @@ impl MemoryServer {
         let scope = scope_label(params.is_global);
         tracing::info!(category = %params.category, scope, ?outcome, "knowledge stored");
         Ok(format!(
-            "Stored a {scope} reference entry in category \"{}\" ({outcome:?}) with its sources.",
+            "Stored a {scope} reference entry in category \"{}\" ({outcome:?}) with its sources.{redacted}",
             params.category
         ))
     }
@@ -1672,6 +1717,93 @@ mod tests {
         let entries = router.entries(true, None).unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].content.contains("four spaces"));
+    }
+
+    const FAKE_KEY: &str = "sk-test-0000000000000000000000";
+
+    /// Q-505: a runbook line carrying `CONTEXT7_API_KEY=<value>` was saved verbatim and every read
+    /// sent it to the provider. The value is never written, and the reply says so by name.
+    #[test]
+    fn remember_memory_redacts_a_secret_and_says_so() {
+        let temp_dir = tempdir().unwrap();
+        let server = server(temp_dir.path(), false);
+        let reply = server
+            .remember_memory_inner(
+                RememberMemoryParams {
+                    category: "test-loop".to_string(),
+                    data: format!(
+                        "Run the loop from the repo.\n`EXAMPLE_API_KEY={FAKE_KEY} goose swarm run`"
+                    ),
+                    tags: vec!["project".to_string()],
+                    is_global: Some(true),
+                },
+                None,
+            )
+            .unwrap();
+        assert!(
+            reply.contains("Redacted before saving: 1 secret value (EXAMPLE_API_KEY)"),
+            "{reply}"
+        );
+        assert!(reply.contains("`<redacted: EXAMPLE_API_KEY>`"), "{reply}");
+        assert!(!reply.contains(FAKE_KEY));
+        let raw = fs::read_to_string(temp_dir.path().join("memory").join("test-loop.txt")).unwrap();
+        assert!(!raw.contains(FAKE_KEY), "{raw}");
+        assert!(raw.contains("EXAMPLE_API_KEY=<redacted: EXAMPLE_API_KEY> goose swarm run"));
+
+        let plain = server
+            .remember_memory_inner(
+                RememberMemoryParams {
+                    category: "schema".to_string(),
+                    data: "The primary key of the table is the issue id.\nA token budget of 8k."
+                        .to_string(),
+                    tags: vec!["project".to_string()],
+                    is_global: Some(true),
+                },
+                None,
+            )
+            .unwrap();
+        assert!(!plain.contains("Redacted"), "{plain}");
+        let raw = fs::read_to_string(temp_dir.path().join("memory").join("schema.txt")).unwrap();
+        assert!(
+            raw.contains("The primary key of the table is the issue id.\nA token budget of 8k.")
+        );
+    }
+
+    /// An entry written before Q-505 still holds its value on disk; no tool hands it to the model.
+    #[test]
+    fn an_old_entry_holding_a_secret_never_leaves_through_a_tool() {
+        let temp_dir = tempdir().unwrap();
+        let server = server(temp_dir.path(), false);
+        let dir = temp_dir.path().join("memory");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("test-loop.txt"),
+            format!(
+                "# project\nRun the loop with EXAMPLE_API_KEY={FAKE_KEY} exported.\nDetail.\n\n"
+            ),
+        )
+        .unwrap();
+
+        assert!(!server.index(None).contains(FAKE_KEY));
+        let found = server.search_report("loop", None, None, None).unwrap();
+        assert!(found.contains("<redacted: EXAMPLE_API_KEY>"), "{found}");
+        assert!(!found.contains(FAKE_KEY));
+        let entries = server.entries(true, None).unwrap();
+        assert!(!entries[0].render().contains(FAKE_KEY));
+
+        server
+            .remove_specific_memory_internal(
+                "test-loop",
+                "EXAMPLE_API_KEY=<redacted: EXAMPLE_API_KEY> exported",
+                true,
+                None,
+            )
+            .unwrap();
+        let raw = fs::read_to_string(dir.join("test-loop.txt")).unwrap();
+        assert!(
+            !raw.contains(FAKE_KEY),
+            "the quoted marker removes the entry: {raw}"
+        );
     }
 
     fn remember(
