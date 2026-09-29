@@ -4691,19 +4691,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "未測定"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "応答あり"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "別のウィンドウで実行中"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "別の goose が起動"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "応答なし"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "ここでは読み取り専用: 開始と停止は起動したウィンドウで行います（goosed pid {pid}）。"
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "ここでは読み取り専用: goose pid {pid} が実行しています — ターミナルの goose serve か、別の goose アプリです。開始と停止はそちらで行います。"
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{nodes} 上の {model} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5357,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "エンジン設定を読み取れませんでした。"
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "準備完了 · 別のウィンドウが所有"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "準備完了 · 別の goose が起動"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "応答なし · 別のウィンドウが所有"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "応答なし · 別の goose が起動"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "詳細"
@@ -6284,8 +6284,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{where} で{phase}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{where} で{phase} · 別のウィンドウが実行中"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{where} で{phase} · 別の goose が実行中"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

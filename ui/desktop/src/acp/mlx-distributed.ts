@@ -84,8 +84,9 @@ async function call<T>(method: string, params: Record<string, unknown>): Promise
  * engine on the same fact the view saw (main has no ACP client of its own).
  */
 function reportToMain(status: MlxDistributedStatus): void {
-  // Another window's goosed supervises the run and that window reports it; this one's own
-  // "single" would flip the shared menu-bar tray back and forth.
+  // Another goose process supervises the run (a CLI goose serve, another app build — this app's
+  // windows share one goosed since Q-257); reporting this goosed's own "single" beside it would
+  // flip the menu-bar tray back and forth.
   if (foreignOwner(status)) return;
   const report = (
     window as unknown as {
@@ -96,7 +97,8 @@ function reportToMain(status: MlxDistributedStatus): void {
 }
 
 /**
- * The run ANOTHER window's goosed published and supervises (each window runs its own goosed): live
+ * The run ANOTHER goose process published and supervises — a CLI goose serve or another app build,
+ * never another window of this app (they all share one goosed since Q-257): live
  * — answering or not — never a stale or unreadable record, which name a fact but own nothing.
  */
 export function foreignOwner(
