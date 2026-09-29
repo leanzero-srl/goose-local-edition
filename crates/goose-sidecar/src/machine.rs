@@ -455,10 +455,37 @@ pub fn acquire_waiting(path: &Path, claim: &LoadClaim) -> Result<LoadLock> {
     }
 }
 
-/// The flock is ours: prove the file is still the one at `path`, displace a recorded holder only
-/// when it is proven gone, then write our record.
+/// The flock is ours: keep it with our record written, or UNLOCK it before the file closes. A
+/// close alone does not free a flock while a copy of the descriptor lives, and every child this
+/// process forks holds one until its exec (std forks whenever a command sets PATH and names its
+/// program bare — the engine and provisioning spawns do). Measured 2026-09-29: with four threads
+/// spawning `true` that way beside the reclaim test, the refusal's close left the lock held and
+/// the next take was refused over a dead holder in 14 of 200 runs; with the unlock, 0 of 200.
 #[cfg(unix)]
 fn take(file: std::fs::File, path: &Path, claim: &LoadClaim) -> Result<LoadLockAttempt> {
+    use std::os::unix::io::AsRawFd;
+    let outcome = record_or_refuse(&file, path, claim);
+    if !matches!(outcome, Ok(Ok(_))) {
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+    }
+    Ok(match outcome? {
+        Ok(holder) => LoadLockAttempt::Acquired(LoadLock {
+            file,
+            path: path.to_path_buf(),
+            holder,
+        }),
+        Err(held) => LoadLockAttempt::Held(held),
+    })
+}
+
+/// Prove the file is still the one at `path`, displace a recorded holder only when it is proven
+/// gone, then write our record: our holder, or the live holder that refuses us.
+#[cfg(unix)]
+fn record_or_refuse(
+    file: &std::fs::File,
+    path: &Path,
+    claim: &LoadClaim,
+) -> Result<std::result::Result<LoadHolder, LoadLockHeld>> {
     use std::io::Write;
     use std::os::unix::fs::MetadataExt;
     let opened = file.metadata()?;
@@ -470,11 +497,11 @@ fn take(file: std::fs::File, path: &Path, claim: &LoadClaim) -> Result<LoadLockA
         path.display()
     );
     let own = own_holder(claim)?;
-    match LoadHolder::parse_record(&read_record(&file)?) {
+    match LoadHolder::parse_record(&read_record(file)?) {
         Ok(Some(previous)) if previous.pid != own.pid => {
             match prove(previous.pid, previous.started_at) {
                 Liveness::Alive => {
-                    return Ok(LoadLockAttempt::Held(LoadLockHeld {
+                    return Ok(Err(LoadLockHeld {
                         path: path.to_path_buf(),
                         holder: Some(previous),
                         record_error: None,
@@ -496,17 +523,13 @@ fn take(file: std::fs::File, path: &Path, claim: &LoadClaim) -> Result<LoadLockA
             "reclaimed the load lock over an unreadable record: the kernel held no lock for it"
         ),
     }
-    let mut writer = &file;
+    let mut writer = file;
     file.set_len(0)?;
     use std::io::{Seek, SeekFrom};
     writer.seek(SeekFrom::Start(0))?;
     writer.write_all(own.to_record().as_bytes())?;
     file.sync_data()?;
-    Ok(LoadLockAttempt::Acquired(LoadLock {
-        file,
-        path: path.to_path_buf(),
-        holder: own,
-    }))
+    Ok(Ok(own))
 }
 
 #[cfg(not(unix))]
@@ -880,6 +903,48 @@ mod tests {
             panic!("a proven-dead holder's record is reclaimed")
         };
         assert_eq!(lock.holder().what, "mine");
+    }
+
+    /// A refusal's flock is unlocked, not just closed: a child forked while it was held keeps a
+    /// copy of the descriptor until its exec, and a close alone left the lock with that copy — the
+    /// next load was refused over a holder that had died. `try_clone` is the copy fork makes.
+    #[test]
+    fn a_refusal_unlocks_even_while_a_forked_child_holds_the_descriptor() {
+        use std::os::unix::io::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mlx-load.lock");
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let (started_at, _) = process_start(child.id()).unwrap();
+        let record = LoadHolder {
+            pid: child.id(),
+            started_at,
+            since: now_unix(),
+            what: "a live load".to_string(),
+            port: None,
+            group: None,
+            model: None,
+        };
+        std::fs::write(&path, record.to_record()).unwrap();
+        let file = open_lock(&path).unwrap();
+        assert_eq!(
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+        let forked_copy = file.try_clone().unwrap();
+        let LoadLockAttempt::Held(held) = take(file, &path, &claim("mine")).unwrap() else {
+            panic!("a live recorded holder refuses the take")
+        };
+        assert_eq!(held.liveness, Liveness::Alive);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let LoadLockAttempt::Acquired(lock) = try_acquire(&path, &claim("mine")).unwrap() else {
+            panic!("the refusal left its flock with the forked copy of the descriptor")
+        };
+        assert_eq!(lock.holder().what, "mine");
+        drop(forked_copy);
     }
 
     #[test]
