@@ -86,7 +86,12 @@ pub async fn inject_moim(
         let provider = extension_manager.get_provider().lock().await.clone();
         match provider {
             Some(provider) => {
-                crate::context_mgmt::effective_context_limit(provider.as_ref(), model_config).await
+                crate::context_mgmt::effective_context_limit(
+                    provider.as_ref(),
+                    model_config,
+                    Some(session_id),
+                )
+                .await
             }
             None => model_config.context_limit,
         }

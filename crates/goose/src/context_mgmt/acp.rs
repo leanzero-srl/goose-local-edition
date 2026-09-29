@@ -60,7 +60,8 @@ pub async fn preview(
         agent.model_config_for_session(&req.session_id).await,
     ) {
         (Ok(provider), Ok(model_config)) => {
-            super::effective_context_limit(provider.as_ref(), &model_config).await
+            super::effective_context_limit(provider.as_ref(), &model_config, Some(&req.session_id))
+                .await
         }
         _ => None,
     };

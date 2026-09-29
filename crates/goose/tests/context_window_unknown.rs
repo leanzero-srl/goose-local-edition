@@ -47,12 +47,13 @@ async fn swarm_chat_with_no_measured_pool_says_the_window_is_unknown() {
 async fn the_effective_window_is_unknown_not_a_default_and_a_declared_one_holds() {
     let provider = SwarmProvider::from_env(vec![], None).await.unwrap();
     assert_eq!(
-        goose::context_mgmt::effective_context_limit(&provider, &ModelConfig::new("swarm")).await,
+        goose::context_mgmt::effective_context_limit(&provider, &ModelConfig::new("swarm"), None)
+            .await,
         None
     );
     let declared = ModelConfig::new("swarm").with_context_limit(Some(65_536));
     assert_eq!(
-        goose::context_mgmt::effective_context_limit(&provider, &declared).await,
+        goose::context_mgmt::effective_context_limit(&provider, &declared, None).await,
         Some(65_536)
     );
 }

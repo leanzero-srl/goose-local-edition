@@ -552,11 +552,27 @@ async fn compact_core(
 /// the swarm's first turn ran on 128,000 until a pick had measured the pool) — the consumers say
 /// "unknown" (the MOIM line), skip what needs a window (proactive compaction, the skill autoload
 /// budget), and the provider's own context-length error still triggers recovery compaction.
+///
+/// `session_id` is the chat the window is for: a routed model (`strategy:<id>`, `node:<id>`)
+/// answers the window of the node that serves THAT chat (Q-463), which the provider reads from
+/// the session scope — and every consumer asks outside the reply's provider calls, where no scope
+/// is set.
 pub async fn effective_context_limit(
     provider: &dyn Provider,
     model_config: &ModelConfig,
+    session_id: Option<&str>,
 ) -> Option<usize> {
-    let context_limit = match provider.get_context_limit(model_config).await {
+    let measured = match session_id {
+        Some(session_id) => {
+            crate::session_context::with_session_id(
+                Some(session_id.to_string()),
+                provider.get_context_limit(model_config),
+            )
+            .await
+        }
+        None => provider.get_context_limit(model_config).await,
+    };
+    let context_limit = match measured {
         Ok(limit) => limit,
         Err(err) => match model_config.context_limit {
             Some(declared) => declared,
@@ -601,7 +617,9 @@ pub async fn check_if_compaction_needed(
         .model_config
         .clone()
         .unwrap_or_else(|| ModelConfig::new("unknown"));
-    let Some(context_limit) = effective_context_limit(provider, &model_config).await else {
+    let Some(context_limit) =
+        effective_context_limit(provider, &model_config, Some(&session.id)).await
+    else {
         return Ok(false);
     };
 

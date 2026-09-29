@@ -420,7 +420,12 @@ impl Agent {
         status.tokens_before = session.usage.total_tokens.map(|t| t.max(0) as u64);
 
         let provider = self.provider().await?;
-        let limit = context_mgmt::effective_context_limit(provider.as_ref(), model_config).await;
+        let limit = context_mgmt::effective_context_limit(
+            provider.as_ref(),
+            model_config,
+            Some(session_id),
+        )
+        .await;
         let trigger = match run {
             CompactionRun::Manual { .. } => CompactionTrigger::Manual,
             CompactionRun::Recovery => CompactionTrigger::Recovery,
