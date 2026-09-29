@@ -330,7 +330,7 @@ impl Session for AcpProviderSession {
     }
 
     async fn next_notifications(&self) -> Vec<super::Notification> {
-        super::next_notifications(&self.notify, || self.notifications()).await
+        super::next_arrivals(&self.notify, || self.notifications()).await
     }
 
     async fn prompt(

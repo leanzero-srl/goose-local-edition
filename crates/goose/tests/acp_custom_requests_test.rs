@@ -18,7 +18,6 @@ use goose_test_support::{EnforceSessionId, IgnoreSessionId};
 use serial_test::serial;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
 
 use common_tests::fixtures::OpenAiFixture;
 
@@ -557,6 +556,11 @@ fn test_steer_session_adds_input_to_active_prompt() {
             Arc::new(IgnoreSessionId),
         )
         .await;
+        // Q-515: the first provider response is held until the steer has landed. Racing a fast
+        // canned response with a 10 ms poll under a 3 s clock failed on CI whenever the whole
+        // first turn ended between two polls; holding the provider makes "the run is active" a
+        // fact of the test rather than a timing bet.
+        let held = openai.hold_responses();
         let mut conn = AcpServerConnection::new(TestConnectionConfig::default(), openai).await;
 
         let SessionData { session, .. } = conn.new_session().await.unwrap();
@@ -571,51 +575,50 @@ fn test_steer_session_adds_input_to_active_prompt() {
                 ))
                 .block_task(),
         );
-        let mut steer_sent = false;
-        let mut steer_message_id: Option<String> = None;
-        let mut final_response = None;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
 
-        while tokio::time::Instant::now() < deadline {
+        // The run id is announced before the reply's first provider call, so it arrives while
+        // the held provider keeps the turn open; the prompt answering first is the failure.
+        let mut updates = Vec::new();
+        let run_id = loop {
             tokio::select! {
                 response = &mut prompt => {
-                    final_response = Some(response.unwrap());
-                    break;
+                    panic!("the prompt ended before its run id was announced: {response:?}");
                 }
-                _ = tokio::time::sleep(Duration::from_millis(10)), if !steer_sent => {
-                    let updates = session.session_updates();
-                    if let Some(run_id) = updates.iter().find_map(active_run_id_from_update) {
-                        let response = send_custom(
-                            conn.cx(),
-                            "_goose/unstable/session/steer",
-                            serde_json::json!({
-                                "sessionId": session_id,
-                                "expectedRunId": run_id,
-                                "prompt": [
-                                    { "type": "text", "text": "steer while active" }
-                                ]
-                            }),
-                        )
-                        .await
-                        .unwrap();
-                        assert_eq!(response["runId"], run_id);
-                        let mid = response["messageId"].as_str();
-                        assert!(
-                            mid.is_some_and(|id| !id.is_empty()),
-                            "steer response must return a messageId for correlation, got: {response:?}"
-                        );
-                        steer_message_id = mid.map(ToString::to_string);
-                        steer_sent = true;
+                arrived = session.next_session_updates() => {
+                    let run_id = arrived.iter().find_map(active_run_id_from_update);
+                    updates.extend(arrived);
+                    if let Some(run_id) = run_id {
+                        break run_id;
                     }
                 }
             }
-        }
+        };
 
-        let response = final_response.expect("prompt did not complete");
+        let response = send_custom(
+            conn.cx(),
+            "_goose/unstable/session/steer",
+            serde_json::json!({
+                "sessionId": session_id,
+                "expectedRunId": run_id,
+                "prompt": [
+                    { "type": "text", "text": "steer while active" }
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response["runId"], run_id);
+        let steer_message_id = response["messageId"].as_str().map(ToString::to_string);
+        assert!(
+            steer_message_id.as_ref().is_some_and(|id| !id.is_empty()),
+            "steer response must return a messageId for correlation, got: {response:?}"
+        );
+
+        held.release();
+        let response = prompt.await.unwrap();
         assert_eq!(response.stop_reason, StopReason::EndTurn);
-        assert!(steer_sent, "test never observed an active run id");
 
-        let updates = session.session_updates();
+        updates.extend(session.session_updates());
         let agent_text = collect_agent_text(&updates);
         assert!(
             agent_text.contains("saw steer"),
