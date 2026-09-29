@@ -16,12 +16,12 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-494 (counts not years: watch #3y);
   - Q-496 (the chat follows the turn: watch #3y, data-following);
   - Q-486.
-- E2E #3y RUNNING since 16:01 — COMPACTED at turn 25 (214k → 59.8k); post-compaction calls warm (58–59k from cache) (turn 2: 1,955 s / 9 tools, against #3x's 8,349 s / 152): RU-2026-09-29-3y-split-tensor-coffee, session 20260929_19, the coffee brief (41 turns).
+- E2E #3y ENDED at turn 25 (a harness crash after compaction, fixed 9d2bf826a; E2E-RUNS). Was: RUNNING since 16:01 — COMPACTED at turn 25 (214k → 59.8k); post-compaction calls warm (58–59k from cache) (turn 2: 1,955 s / 9 tools, against #3x's 8,349 s / 152): RU-2026-09-29-3y-split-tensor-coffee, session 20260929_19, the coffee brief (41 turns).
   r1 proves every send (SEND_LOST). Turn 1 LANDED (Q-492 proven under the brief) and saved both memories, but
   narrowed the privacy rule to this project (Q-506, model). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
 - E2E #3x STOPPED at turn 4 (E2E-RUNS): the Q-498 cache thrash with the owner's second chat; its memory turn was lost.
 
-## 3.0.80 — DMG BUILT 18:4x (RELEASE-EXIT=0), main 8368ce115 — install after #3y ends
+## 3.0.80 — INSTALLED on BOTH Macs 20:2x (split serving "OK."), main 8368ce115
 - Carries:
   - Q-495, Q-497;
   - Q-498/502/508 (the split's cache across chats: say why + keep every chat's prefix + name chats by session id;
