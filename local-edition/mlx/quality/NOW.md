@@ -44,10 +44,16 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-511/512;
   - Q-505 (scan-secrets).
 
-## Toward 3.0.81 — main b661ce43b carries Q-515 + Q-516 (g081 green: goose lib 2196, agent 38, acp_* all, clippy)
-- Q-517 (the 1.2–1.6 s before every provider call) is cutting; it joins, then release 3.0.81.
-- The plan: install 3.0.80 now-built OR 3.0.81 (whichever is ready) when #3y ends; both need BOTH Macs.
-- Q-514 (a side call evicting one chat's prefix) waits on the 3.0.80+ live measurement.
+## 3.0.81 — RELEASE BUILDING (~/goose-builds/release-3.0.81.log), main bd5913103
+- Carries Q-515 (the steer test), Q-516 (condensation after one cold miss), Q-517 (1.07 → 0.36 s before each provider
+  call). Gates g081 + g081b green (goose lib 2197, agent 38, every acp_*, devgates 11, clippy).
+- Q-518 (cache the skills listing) is cutting on 58806267e.
+- Then: install 3.0.81 on BOTH Macs → E2E #3z (the coffee brief from the start, or from turn 26 on #3y's chat).
+
+## Live proofs on 3.0.80 (PROVE-3.0.80/prove.log, prove080.mjs)
+- A (the #3y chat, 110k): A1 cold after the restart (0 of 110,492), then warm (109,792 of 110,566). B (Harbourline, 85k) is
+  running cold. A3 must be WARM → Q-502/508.
+- The Q-500/501 check was INVALID (A's turn ended before the second window opened). Redo it with a long turn.
 
 ## CI
 - Red 13:18Z: the RecipesView delete test hit its 5 s timeout (the vitest-under-load class). Q-466 is cutting
