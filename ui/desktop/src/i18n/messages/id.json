@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Bagikan data penggunaan anonim"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Mulai satu di folder jendela ini, atau pilih sesi dari bilah samping."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "Tidak ada sesi yang terbuka"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "Tidak dapat memulai sesi di {folder}"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "Sesi baru di {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Memulai sesi di {folder}"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Nilai Default"
   },

@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "分享匿名使用資料"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "在此視窗的資料夾中新增一個，或從側邊欄選擇工作階段。"
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "沒有開啟的工作階段"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "無法在 {folder} 中啟動工作階段"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "在 {folder} 中新增工作階段"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "重試"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "正在 {folder} 中啟動工作階段"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "預設值"
   },

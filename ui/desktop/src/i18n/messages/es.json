@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Compartir datos de uso anónimos"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Inicia una en la carpeta de esta ventana o elige una sesión en la barra lateral."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "No hay ninguna sesión abierta"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "No se pudo iniciar una sesión en {folder}"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "Nueva sesión en {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Iniciando una sesión en {folder}"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Valor por defecto"
   },

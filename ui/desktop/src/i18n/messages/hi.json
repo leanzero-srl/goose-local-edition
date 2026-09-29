@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "अनाम उपयोग डेटा साझा करें"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "इस विंडो के फ़ोल्डर में एक शुरू करें, या साइडबार से कोई सत्र चुनें।"
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "कोई सत्र खुला नहीं है"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "{folder} में सत्र शुरू नहीं हो सका"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "{folder} में नया सत्र"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "फिर से कोशिश करें"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "{folder} में सत्र शुरू हो रहा है"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "डिफ़ॉल्ट मान"
   },

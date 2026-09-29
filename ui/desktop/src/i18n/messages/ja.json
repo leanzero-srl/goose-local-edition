@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "匿名の使用データを共有"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "このウィンドウのフォルダーで開始するか、サイドバーからセッションを選択してください。"
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "開いているセッションはありません"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "{folder} でセッションを開始できませんでした"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "{folder} で新しいセッション"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "再試行"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "{folder} でセッションを開始しています"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "デフォルト値"
   },

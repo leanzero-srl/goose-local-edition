@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Поделиться анонимными данными об использовании"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Начните её в папке этого окна или выберите сеанс на боковой панели."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "Нет открытого сеанса"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "Не удалось начать сеанс в {folder}"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "Новый сеанс в {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Запуск сеанса в {folder}"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Значение по умолчанию"
   },

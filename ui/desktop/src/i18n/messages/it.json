@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Condividi dati di utilizzo anonimi"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Avviane una nella cartella di questa finestra o scegli una sessione dalla barra laterale."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "Nessuna sessione aperta"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "Impossibile avviare una sessione in {folder}"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "Nuova sessione in {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Riprova"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Avvio di una sessione in {folder}"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Valore predefinito"
   },

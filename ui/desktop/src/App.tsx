@@ -13,24 +13,17 @@ import { importNostrSessionFromDeepLink } from './sessionLinks';
 import { ErrorUI } from './components/ErrorBoundary';
 import { ExtensionInstallModal } from './components/ExtensionInstallModal';
 import RecipeParamsModalContainer from './components/RecipeParamsModalContainer';
-import { isRecipeParamsCancelled } from './acp/errors';
 import { toast, ToastContainer } from 'react-toastify';
 import { renderStudioCloseButton } from './toasts';
 import AnnouncementModal from './components/AnnouncementModal';
 import TelemetryConsentPrompt from './components/TelemetryConsentPrompt';
 import OnboardingGuard from './components/onboarding/OnboardingGuard';
-import { createSession } from './sessions';
 import { acpListSessions, acpDeleteSession } from './acp/sessions';
 
 import { ChatType } from './types/chat';
 import ProjectLanding from './components/ProjectLanding';
 import { UserInput } from './types/message';
 
-interface PairRouteState {
-  resumeSessionId?: string;
-  initialMessage?: UserInput;
-  noAutoSubmit?: boolean;
-}
 import SettingsView, { SettingsViewOptions } from './components/settings/SettingsView';
 import SessionsView from './components/sessions/SessionsView';
 import SchedulesView from './components/schedule/SchedulesView';
@@ -45,6 +38,7 @@ import ProviderSettings from './components/settings/providers/ProviderSettingsPa
 import { AppLayout } from './components/Layout/AppLayout';
 import { ChatProvider, DEFAULT_CHAT_TITLE } from './contexts/ChatContext';
 import LauncherView from './components/LauncherView';
+import PairRoute from './components/PairRoute';
 
 import 'react-toastify/dist/ReactToastify.css';
 import { useConfig } from './components/ConfigContext';
@@ -68,7 +62,6 @@ import { useLinkTrayReporter } from './hooks/useLinkTrayReporter';
 import { useMlxRestore } from './hooks/useMlxRestore';
 import { useFeatures } from './contexts/FeaturesContext';
 import { errorMessage } from './utils/conversionUtils';
-import { getInitialWorkingDir } from './utils/workingDir';
 import { usePageViewTracking } from './hooks/useAnalytics';
 import { trackErrorWithContext } from './utils/analytics';
 import { AppEvents } from './constants/events';
@@ -153,118 +146,6 @@ function PageViewTracker() {
 // start from a project). Hub stays in code but nothing routes to it.
 const HubRouteWrapper = () => {
   return <ProjectLanding />;
-};
-
-export function resolveSessionInitialMessage(
-  session: { recipe?: { prompt?: string | null } | null },
-  initialMessage?: UserInput
-): UserInput | undefined {
-  return (
-    initialMessage ??
-    (session.recipe?.prompt ? { msg: session.recipe.prompt, images: [] } : undefined)
-  );
-}
-
-const PairRouteWrapper = ({
-  activeSessions,
-}: {
-  activeSessions: Array<{
-    sessionId: string;
-    initialMessage?: UserInput;
-    noAutoSubmit?: boolean;
-  }>;
-  setActiveSessions: (
-    sessions: Array<{ sessionId: string; initialMessage?: UserInput; noAutoSubmit?: boolean }>
-  ) => void;
-}) => {
-  const { extensionsList } = useConfig();
-  const location = useLocation();
-  const routeState =
-    (location.state as PairRouteState) || (window.history.state as PairRouteState) || {};
-  const [searchParams, setSearchParams] = useSearchParams();
-  const isCreatingSessionRef = useRef(false);
-  const navigate = useNavigate();
-
-  const resumeSessionId = searchParams.get('resumeSessionId') ?? undefined;
-  const recipeDeeplinkFromConfig = window.appConfig?.get('recipeDeeplink') as string | undefined;
-  const recipeIdFromConfig = window.appConfig?.get('recipeId') as string | undefined;
-  const initialMessage = routeState.initialMessage;
-  const noAutoSubmit = routeState.noAutoSubmit;
-
-  // Create session if we have an initialMessage, recipeDeeplink, or recipeId but no sessionId
-  useEffect(() => {
-    if (
-      (initialMessage || recipeDeeplinkFromConfig || recipeIdFromConfig) &&
-      !resumeSessionId &&
-      !isCreatingSessionRef.current
-    ) {
-      isCreatingSessionRef.current = true;
-
-      (async () => {
-        try {
-          const newSession = await createSession(getInitialWorkingDir(), {
-            recipeDeeplink: recipeDeeplinkFromConfig,
-            recipeId: recipeIdFromConfig,
-            allExtensions: extensionsList,
-          });
-          const sessionInitialMessage = resolveSessionInitialMessage(newSession, initialMessage);
-
-          window.dispatchEvent(
-            new CustomEvent(AppEvents.ADD_ACTIVE_SESSION, {
-              detail: {
-                sessionId: newSession.id,
-                initialMessage: sessionInitialMessage,
-                noAutoSubmit,
-              },
-            })
-          );
-
-          setSearchParams((prev) => {
-            prev.set('resumeSessionId', newSession.id);
-            return prev;
-          });
-        } catch (error) {
-          if (isRecipeParamsCancelled(error)) {
-            navigate('/');
-            return;
-          }
-          console.error('Failed to create session:', error);
-          trackErrorWithContext(error, {
-            component: 'PairRouteWrapper',
-            action: 'create_session',
-            recoverable: true,
-          });
-        } finally {
-          isCreatingSessionRef.current = false;
-        }
-      })();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    initialMessage,
-    recipeDeeplinkFromConfig,
-    recipeIdFromConfig,
-    resumeSessionId,
-    setSearchParams,
-    extensionsList,
-  ]);
-
-  // Add resumed session to active sessions if not already there
-  useEffect(() => {
-    if (resumeSessionId && !activeSessions.some((s) => s.sessionId === resumeSessionId)) {
-      window.dispatchEvent(
-        new CustomEvent(AppEvents.ADD_ACTIVE_SESSION, {
-          detail: {
-            sessionId: resumeSessionId,
-            initialMessage: initialMessage,
-            noAutoSubmit,
-          },
-        })
-      );
-    }
-  }, [resumeSessionId, activeSessions, initialMessage, noAutoSubmit]);
-
-  return null;
 };
 
 const SettingsRoute = () => {
@@ -797,15 +678,7 @@ export function AppInner() {
               }
             >
               <Route index element={<HubRouteWrapper />} />
-              <Route
-                path="pair"
-                element={
-                  <PairRouteWrapper
-                    activeSessions={activeSessions}
-                    setActiveSessions={setActiveSessions}
-                  />
-                }
-              />
+              <Route path="pair" element={<PairRoute activeSessions={activeSessions} />} />
               <Route path="settings" element={<SettingsRoute />} />
               <Route
                 path="extensions"

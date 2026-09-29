@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Anonim kullanım verilerini paylaşın"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Bu pencerenin klasöründe bir tane başlatın veya kenar çubuğundan bir oturum seçin."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "Açık oturum yok"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "{folder} içinde oturum başlatılamadı"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "{folder} içinde yeni oturum"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Tekrar dene"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "{folder} içinde oturum başlatılıyor"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Varsayılan Değer"
   },

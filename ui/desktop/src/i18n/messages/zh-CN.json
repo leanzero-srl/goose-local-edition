@@ -7598,6 +7598,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "分享匿名使用数据"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "在此窗口的文件夹中新建一个，或从侧边栏选择会话。"
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "没有打开的会话"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "无法在 {folder} 中启动会话"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "在 {folder} 中新建会话"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "重试"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "正在 {folder} 中启动会话"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "默认值"
   },
