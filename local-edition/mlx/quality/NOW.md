@@ -24,7 +24,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
   proving arrival and read in B from sessions.db). Open cards/notes at round end → FAIL.
   - Then run `node harness/deliver-pending.mjs` on session 20260929_12 to deliver #3w's Harbourline note
     (Steer), with evidence.
-- 3.0.78 = /tmp/merge-078: Q-482 (missing-argument error names the field and the retry); gate g078 → /tmp/g078.out.
+- 3.0.78 = main 183c1f7b4 (3.0.77 + Q-482; gate green): RELEASE BUILDING (~/goose-builds/release-3.0.78.log).
+  Install 3.0.78 (not 3.0.77) after #3w ends.
 - Owner rule (memory e2e-acts-on-every-card-and-note): nothing an E2E raises stays pending.
 
 ## 3.0.77 = main 5e03efbc0 — DMG BUILT 07:57 (20 min: compile, then 2 Apple notarizations; no tests in a release)
