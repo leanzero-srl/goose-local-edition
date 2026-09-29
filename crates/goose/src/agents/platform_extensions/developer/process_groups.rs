@@ -98,16 +98,24 @@ fn live() -> &'static Mutex<HashSet<i32>> {
 /// signal; in a group of its own only goose serve's teardown reaches it. The leader is gone by then
 /// and a group id is reusable once the group empties, so each member is stamped with its start
 /// time: the teardown signals the group only while a stamped member is provably the same process.
+///
+/// The session that ran the command rides along (Q-520): closing or deleting that session stops
+/// what its commands left behind, without waiting for goose to quit.
 #[cfg(unix)]
 pub struct Lingering {
     leader: i32,
     stamps: Vec<(i32, String)>,
+    session: Option<String>,
 }
 
 #[cfg(unix)]
 impl Lingering {
     pub(super) fn new(leader: i32, stamps: Vec<(i32, String)>) -> Self {
-        Self { leader, stamps }
+        Self {
+            leader,
+            stamps,
+            session: None,
+        }
     }
 
     pub(super) fn leader(&self) -> i32 {
@@ -251,11 +259,12 @@ pub struct CommandProcesses {
     group: i32,
     seen: Vec<i32>,
     armed: bool,
+    session: Option<String>,
 }
 
 #[cfg(unix)]
 impl CommandProcesses {
-    pub fn spawned(leader: i32, own_group: bool) -> Self {
+    pub fn spawned(leader: i32, own_group: bool, session: Option<&str>) -> Self {
         if own_group {
             live()
                 .lock()
@@ -273,6 +282,7 @@ impl CommandProcesses {
             },
             seen: vec![leader],
             armed: true,
+            session: session.map(str::to_string),
         }
     }
 
@@ -310,6 +320,7 @@ impl CommandProcesses {
         let recorded = Lingering {
             leader: self.leader,
             stamps,
+            session: self.session.clone(),
         };
         super::shell_watchdog::note_ended(&recorded);
         let emptied: Vec<i32> = {
@@ -336,6 +347,7 @@ impl CommandProcesses {
             group: leader,
             seen: Vec::new(),
             armed: false,
+            session: None,
         }
     }
 
@@ -428,6 +440,7 @@ impl Drop for CommandProcesses {
             group: self.group,
             seen: std::mem::take(&mut self.seen),
             armed: false,
+            session: None,
         };
         std::thread::spawn(move || {
             std::thread::sleep(EXIT_GRACE);
@@ -492,6 +505,127 @@ pub(crate) fn take_lingering_with(pid: i32) -> Option<Lingering> {
 #[cfg(all(test, unix))]
 pub(crate) async fn terminate_ended_for_test(ended: Lingering) -> String {
     terminate_command_groups(Vec::new(), vec![ended]).await
+}
+
+/// Q-520: a session was closed or deleted — stop what its ENDED commands left running (a script or
+/// server started with `&`). Each group only while a stamped member is provably the same process
+/// and still in it, then per pid (`terminate_command_groups`, the teardown's and the watchdog's
+/// proof). Never at the command's own end: a person may start a server with `&` on purpose, and it
+/// is theirs for as long as the chat lives. `None` when the session left nothing behind.
+pub async fn stop_session_leftovers(session_id: &str) -> Option<String> {
+    #[cfg(unix)]
+    {
+        let taken: Vec<Lingering> = {
+            let mut lingering = lingering().lock().unwrap_or_else(|e| e.into_inner());
+            let (taken, kept): (Vec<Lingering>, Vec<Lingering>) = lingering
+                .drain(..)
+                .partition(|l| l.session.as_deref() == Some(session_id));
+            *lingering = kept;
+            taken
+        };
+        if taken.is_empty() {
+            return None;
+        }
+        let leaders: Vec<i32> = taken.iter().map(|l| l.leader).collect();
+        let outcome = terminate_command_groups(Vec::new(), taken).await;
+        for leader in leaders {
+            super::shell_watchdog::note_gone(leader);
+        }
+        Some(outcome)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = session_id;
+        None
+    }
+}
+
+/// Q-520: the processes still in an ended command's group, each confirmed a member by its own
+/// `pgid` in the same `ps` snapshot that reads its command line, CPU and age. Zombies are not
+/// running and are left out. An empty list means the group has no running member; a failure to
+/// read is an error, never an empty list.
+#[cfg(unix)]
+pub(super) async fn running_members(group: i32) -> Result<Vec<RunningMember>, String> {
+    if !group_alive(group) {
+        return Ok(Vec::new());
+    }
+    let pids = group_members(group).map_err(|e| e.to_string())?;
+    if pids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = pids
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    // LC_ALL=C: under a comma-decimal locale ps prints `98,5` for the CPU column.
+    let out = tokio::process::Command::new("ps")
+        .args(["-o", "pid=,pgid=,stat=,pcpu=,etime=,args=", "-p", &list])
+        .env("LC_ALL", "C")
+        .output()
+        .await
+        .map_err(|e| format!("ps: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // ps exits 1 when a listed pid is gone by the time it looks; the rows it printed stay true.
+    // Printing none while the group still exists is a failure to read, not an answer.
+    if stdout.trim().is_empty() && group_alive(group) {
+        return Err(format!(
+            "ps listed none of {list}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let mut running = Vec::new();
+    for line in stdout.lines().filter(|l| !l.trim().is_empty()) {
+        let (pgid, stat, member) =
+            parse_ps_row(line).ok_or_else(|| format!("unreadable ps row: {line:?}"))?;
+        if pgid == group && !stat.starts_with('Z') {
+            running.push(member);
+        }
+    }
+    Ok(running)
+}
+
+/// One `pid pgid stat pcpu etime args…` row: the pgid, the state, and the member.
+#[cfg(unix)]
+fn parse_ps_row(line: &str) -> Option<(i32, String, RunningMember)> {
+    let mut parts = line.split_whitespace();
+    let pid = parts.next()?.parse().ok()?;
+    let pgid = parts.next()?.parse().ok()?;
+    let stat = parts.next()?.to_string();
+    let cpu_percent = parts.next()?.parse().ok()?;
+    let running_secs = parse_etime(parts.next()?)?;
+    let command = parts.collect::<Vec<_>>().join(" ");
+    Some((
+        pgid,
+        stat,
+        RunningMember {
+            pid,
+            command,
+            cpu_percent,
+            running_secs,
+        },
+    ))
+}
+
+#[cfg(unix)]
+pub(super) struct RunningMember {
+    pub pid: i32,
+    pub command: String,
+    pub cpu_percent: f32,
+    pub running_secs: u64,
+}
+
+/// `ps`'s elapsed time, `[[dd-]hh:]mm:ss`, in seconds.
+#[cfg(unix)]
+fn parse_etime(etime: &str) -> Option<u64> {
+    let (days, clock) = match etime.split_once('-') {
+        Some((d, rest)) => (d.parse::<u64>().ok()?, rest),
+        None => (0, etime),
+    };
+    let secs = clock
+        .split(':')
+        .try_fold(0u64, |acc, part| Some(acc * 60 + part.parse::<u64>().ok()?))?;
+    Some(days * 86_400 + secs)
 }
 
 /// In-flight groups by their live leader (the proof-gated killpg), ended groups only after their
@@ -740,7 +874,7 @@ mod tests {
         );
         assert!(alive(orphans[0]), "the refused signal must not have landed");
         // The per-pid leg still reaches it: confirmed in the group, killed by pid.
-        let mut command = CommandProcesses::spawned(leader, true);
+        let mut command = CommandProcesses::spawned(leader, true, None);
         command.finished();
         assert_eq!(command.sigkill_survivors(), orphans);
         assert!(wait_for(|| !group_alive(leader)));
@@ -766,21 +900,99 @@ mod tests {
             .map(|m| m.len() == 1)
             .unwrap_or(false)));
         let member = pgrep(&["-g", &leader.to_string()]).unwrap()[0];
-        let forged = Lingering {
+        let forged = Lingering::new(
             leader,
-            stamps: vec![(member, "Thu Jan  1 00:00:00 1970".to_string())],
-        };
+            vec![(member, "Thu Jan  1 00:00:00 1970".to_string())],
+        );
         assert!(!forged.still_the_same_group());
         let outcome = terminate_command_groups(Vec::new(), vec![forged]).await;
         assert!(outcome.contains("already gone"), "{outcome}");
         assert!(alive(member), "an unproven group must not be signalled");
-        let genuine = Lingering {
-            leader,
-            stamps: vec![(member, start_time(member).unwrap())],
-        };
+        let genuine = Lingering::new(leader, vec![(member, start_time(member).unwrap())]);
         assert!(genuine.still_the_same_group());
         terminate_command_groups(Vec::new(), vec![genuine]).await;
         assert!(wait_for(|| !group_alive(leader)));
+    }
+
+    #[test]
+    fn ps_elapsed_time_reads_as_seconds() {
+        assert_eq!(parse_etime("00:07"), Some(7));
+        assert_eq!(parse_etime("02:03"), Some(123));
+        assert_eq!(parse_etime("01:02:03"), Some(3_723));
+        assert_eq!(parse_etime("2-01:02:03"), Some(2 * 86_400 + 3_723));
+        assert_eq!(parse_etime("soon"), None);
+    }
+
+    #[test]
+    fn a_ps_row_reads_whole_and_a_mangled_one_does_not() {
+        let (pgid, stat, member) = parse_ps_row(
+            "95770 95768 R    98.5    02:03 python3 -X faulthandler tools/make_fake_logs.py",
+        )
+        .expect("the E2E #3z survivor's row");
+        assert_eq!((pgid, stat.as_str()), (95768, "R"));
+        assert_eq!(member.pid, 95770);
+        assert_eq!(member.cpu_percent, 98.5);
+        assert_eq!(member.running_secs, 123);
+        assert_eq!(
+            member.command,
+            "python3 -X faulthandler tools/make_fake_logs.py"
+        );
+        assert!(parse_ps_row("95770 95768 R 98,5 02:03 python3").is_none());
+    }
+
+    /// An own-group command that ended leaving `marker` running in its group, recorded under
+    /// `session` exactly as the shell tool records it. Returns the survivor's pid.
+    async fn ended_command_leaving(marker: &str, session: &str) -> i32 {
+        use std::os::unix::process::CommandExt;
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", &format!("{marker} &")])
+            .process_group(0)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn");
+        let leader = child.id() as i32;
+        let mut command = CommandProcesses::spawned(leader, true, Some(session));
+        let _ = child.wait();
+        command.ended();
+        let members = running_members(leader).await.expect("list the group");
+        assert_eq!(members.len(), 1, "one survivor of `{marker}`");
+        assert_eq!(members[0].command, marker);
+        members[0].pid
+    }
+
+    /// Q-520: closing a session stops what its ended commands left running, per pid under the
+    /// stamp proof, and nothing another session's commands left.
+    #[tokio::test]
+    async fn closing_a_session_stops_only_its_own_leftovers() {
+        struct PkillOnDrop(&'static str);
+        impl Drop for PkillOnDrop {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new("pkill")
+                    .args(["-f", self.0])
+                    .status();
+            }
+        }
+        let _mine = PkillOnDrop("sleep 520011");
+        let _theirs = PkillOnDrop("sleep 520012");
+        let mine = ended_command_leaving("sleep 520011", "q520-session-a").await;
+        let theirs = ended_command_leaving("sleep 520012", "q520-session-b").await;
+        let outcome = stop_session_leftovers("q520-session-a")
+            .await
+            .expect("session a left a process behind");
+        assert!(wait_for(|| !alive(mine)), "{outcome}");
+        assert!(
+            alive(theirs),
+            "another session's leftover was stopped: {outcome}"
+        );
+        assert!(
+            stop_session_leftovers("q520-session-a").await.is_none(),
+            "a second close finds nothing"
+        );
+        stop_session_leftovers("q520-session-b")
+            .await
+            .expect("session b left a process behind");
+        assert!(wait_for(|| !alive(theirs)));
     }
 
     /// goose serve's teardown step on a group this test made: a pipeline leader plus its members

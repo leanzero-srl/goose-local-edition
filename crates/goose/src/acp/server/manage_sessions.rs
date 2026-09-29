@@ -108,6 +108,14 @@ impl GooseAcpAgent {
             .remove_session_if_loaded(&req.session_id)
             .await
             .internal_err_ctx("Failed to remove in-memory agent")?;
+        if let Some(outcome) =
+            crate::agents::platform_extensions::developer::process_groups::stop_session_leftovers(
+                &req.session_id,
+            )
+            .await
+        {
+            tracing::info!(session_id = %req.session_id, %outcome, "session deleted: stopped what its shell commands left running");
+        }
         crate::nodes::acp::forget_chat(&req.session_id).await;
         Ok(EmptyResponse {})
     }

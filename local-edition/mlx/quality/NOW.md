@@ -40,8 +40,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 ## 3.0.81 — INSTALLED 20:5x, main bd5913103
 - Carries Q-515 (the steer test), Q-516 (condensation after one cold miss), Q-517 (1.07 → 0.36 s before each provider
   call). Gates g081 + g081b green (goose lib 2197, agent 38, every acp_*, devgates 11, clippy).
-- Q-518 DONE baf0ea64b (q518): a skills scan costs 3–4 ms on an unchanged tree. Q-519 (stop-and-close loses the
-  partial) cutting. Both → 3.0.82.
+- 3.0.82: merge-082 (af61240e8 = main + Q-518 baf0ea64b + Q-519 45cdce3de) is GATING (/tmp/g082.out, Rust at background
+  priority). Q-519 must be proven live by stopping a multi-tool turn (the agent's lower-confidence case).
 - Then: install 3.0.81 on BOTH Macs → E2E #3z (the coffee brief from the start, or from turn 26 on #3y's chat).
 
 ## Live proofs on 3.0.80 (PROVE-3.0.80/prove.log) — PROVEN
