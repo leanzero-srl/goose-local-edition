@@ -304,6 +304,216 @@ const i18n = defineMessages({
   },
 });
 
+function getReadableCron(cron: string): string {
+  try {
+    const cronWithoutSeconds = cron.split(' ').slice(1).join(' ');
+    return cronstrue.toString(cronWithoutSeconds).toLowerCase();
+  } catch {
+    return cron;
+  }
+}
+
+interface RecipeItemProps {
+  recipeManifestResponse: RecipeManifest;
+  onOpenSlashCommand: (recipeManifest: RecipeManifest) => void;
+  onStart: (recipeId: string) => Promise<void>;
+  onStartInNewWindow: (recipeId: string) => Promise<void>;
+  onEdit: (recipeManifest: RecipeManifest) => Promise<void>;
+  onCopyDeeplink: (recipeManifest: RecipeManifest) => Promise<void>;
+  onCopyYaml: (recipeManifest: RecipeManifest) => Promise<void>;
+  onExportFile: (recipeManifest: RecipeManifest) => Promise<void>;
+  onOpenSchedule: (recipeManifest: RecipeManifest) => void;
+  onDelete: (recipeManifest: RecipeManifest) => void;
+}
+
+// Q-511: module scope — declared inside RecipesView, every view render was a new component type and
+// remounted every card, detaching a Delete button found before the 50 ms fade-in step.
+function RecipeItem({
+  recipeManifestResponse,
+  onOpenSlashCommand,
+  onStart,
+  onStartInNewWindow,
+  onEdit,
+  onCopyDeeplink,
+  onCopyYaml,
+  onExportFile,
+  onOpenSchedule,
+  onDelete,
+}: RecipeItemProps) {
+  const intl = useIntl();
+  const {
+    recipe,
+    last_modified: lastModified,
+    schedule_cron,
+    slash_command,
+  } = recipeManifestResponse;
+  return (
+    <Card className="py-2 px-4 mb-2 bg-background-primary border-none hover:bg-background-secondary transition-all duration-150">
+      <div className="flex justify-between items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="text-base truncate max-w-[50vw]">{recipe.title}</h3>
+          </div>
+          <p className="text-text-secondary text-sm mb-2 line-clamp-2">{recipe.description}</p>
+          <div className="flex flex-col gap-1 text-xs text-text-secondary">
+            <div className="flex items-center">
+              <Calendar className="w-3 h-3 mr-1" />
+              {convertToLocaleDateString(lastModified)}
+            </div>
+            {(schedule_cron || slash_command) && (
+              <div className="flex items-center gap-3">
+                {schedule_cron && (
+                  <div className="flex items-center text-lz-accent">
+                    <Clock className="w-3 h-3 mr-1" />
+                    {intl.formatMessage(i18n.runs, { schedule: getReadableCron(schedule_cron) })}
+                  </div>
+                )}
+                {slash_command && (
+                  <div className="flex items-center text-purple-600 dark:text-purple-400">
+                    /{slash_command}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <Button
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenSlashCommand(recipeManifestResponse);
+          }}
+          variant={slash_command ? 'default' : 'outline'}
+          size="sm"
+          className="h-8 w-8 p-0"
+          title={
+            slash_command
+              ? intl.formatMessage(i18n.editSlashCommand)
+              : intl.formatMessage(i18n.addSlashCommand)
+          }
+        >
+          <Terminal className="w-4 h-4" />
+        </Button>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            onClick={async (e) => {
+              e.stopPropagation();
+              await onStart(recipeManifestResponse.id);
+            }}
+            size="sm"
+            className="h-8 w-8 p-0"
+            title={intl.formatMessage(i18n.useRecipe)}
+          >
+            <Play className="w-4 h-4" />
+          </Button>
+          <Button
+            onClick={async (e) => {
+              e.stopPropagation();
+              await onStartInNewWindow(recipeManifestResponse.id);
+            }}
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0"
+            title={intl.formatMessage(i18n.openInNewWindow)}
+          >
+            <ExternalLink className="w-4 h-4" />
+          </Button>
+          <Button
+            onClick={async (e) => {
+              e.stopPropagation();
+              await onEdit(recipeManifestResponse);
+            }}
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0"
+            title={intl.formatMessage(i18n.editRecipe)}
+          >
+            <Edit className="w-4 h-4" />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                onClick={(e) => e.stopPropagation()}
+                variant="outline"
+                size="sm"
+                className="h-8 w-8 p-0"
+                title={intl.formatMessage(i18n.shareRecipe)}
+              >
+                <Share2 className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuItem onClick={() => onCopyDeeplink(recipeManifestResponse)}>
+                <Link className="w-4 h-4" />
+                {intl.formatMessage(i18n.copyDeeplink)}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onCopyYaml(recipeManifestResponse)}>
+                <Copy className="w-4 h-4" />
+                {intl.formatMessage(i18n.copyYaml)}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => onExportFile(recipeManifestResponse)}>
+                <Download className="w-4 h-4" />
+                {intl.formatMessage(i18n.exportToFile)}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenSchedule(recipeManifestResponse);
+            }}
+            variant={schedule_cron ? 'default' : 'outline'}
+            size="sm"
+            className="h-8 w-8 p-0"
+            title={
+              schedule_cron
+                ? intl.formatMessage(i18n.editSchedule)
+                : intl.formatMessage(i18n.addSchedule)
+            }
+          >
+            <Clock className="w-4 h-4" />
+          </Button>
+          <Button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(recipeManifestResponse);
+            }}
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0 text-lz-err hover:bg-lz-err-solid hover:text-white"
+            title={intl.formatMessage(i18n.deleteRecipe)}
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function RecipeSkeleton() {
+  return (
+    <Card className="p-2 mb-2 bg-background-primary">
+      <div className="flex justify-between items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <Skeleton className="h-5 w-3/4 mb-2" />
+          <Skeleton className="h-4 w-full mb-2" />
+          <Skeleton className="h-4 w-24" />
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Skeleton className="h-8 w-8" />
+          <Skeleton className="h-8 w-8" />
+          <Skeleton className="h-8 w-8" />
+          <Skeleton className="h-8 w-8" />
+          <Skeleton className="h-8 w-8" />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function RecipesView() {
   const intl = useIntl();
   const setView = useNavigation();
@@ -666,184 +876,6 @@ export default function RecipesView() {
     }
   };
 
-  const getReadableCron = (cron: string): string => {
-    try {
-      const cronWithoutSeconds = cron.split(' ').slice(1).join(' ');
-      return cronstrue.toString(cronWithoutSeconds).toLowerCase();
-    } catch {
-      return cron;
-    }
-  };
-
-  const RecipeItem = ({
-    recipeManifestResponse,
-    recipeManifestResponse: { recipe, last_modified: lastModified, schedule_cron, slash_command },
-  }: {
-    recipeManifestResponse: RecipeManifest;
-  }) => (
-    <Card className="py-2 px-4 mb-2 bg-background-primary border-none hover:bg-background-secondary transition-all duration-150">
-      <div className="flex justify-between items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <h3 className="text-base truncate max-w-[50vw]">{recipe.title}</h3>
-          </div>
-          <p className="text-text-secondary text-sm mb-2 line-clamp-2">{recipe.description}</p>
-          <div className="flex flex-col gap-1 text-xs text-text-secondary">
-            <div className="flex items-center">
-              <Calendar className="w-3 h-3 mr-1" />
-              {convertToLocaleDateString(lastModified)}
-            </div>
-            {(schedule_cron || slash_command) && (
-              <div className="flex items-center gap-3">
-                {schedule_cron && (
-                  <div className="flex items-center text-lz-accent">
-                    <Clock className="w-3 h-3 mr-1" />
-                    {intl.formatMessage(i18n.runs, { schedule: getReadableCron(schedule_cron) })}
-                  </div>
-                )}
-                {slash_command && (
-                  <div className="flex items-center text-purple-600 dark:text-purple-400">
-                    /{slash_command}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <Button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleOpenSlashCommandDialog(recipeManifestResponse);
-          }}
-          variant={slash_command ? 'default' : 'outline'}
-          size="sm"
-          className="h-8 w-8 p-0"
-          title={
-            slash_command
-              ? intl.formatMessage(i18n.editSlashCommand)
-              : intl.formatMessage(i18n.addSlashCommand)
-          }
-        >
-          <Terminal className="w-4 h-4" />
-        </Button>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <Button
-            onClick={async (e) => {
-              e.stopPropagation();
-              await handleStartRecipeChat(recipeManifestResponse.id);
-            }}
-            size="sm"
-            className="h-8 w-8 p-0"
-            title={intl.formatMessage(i18n.useRecipe)}
-          >
-            <Play className="w-4 h-4" />
-          </Button>
-          <Button
-            onClick={async (e) => {
-              e.stopPropagation();
-              await handleStartRecipeChatInNewWindow(recipeManifestResponse.id);
-            }}
-            variant="outline"
-            size="sm"
-            className="h-8 w-8 p-0"
-            title={intl.formatMessage(i18n.openInNewWindow)}
-          >
-            <ExternalLink className="w-4 h-4" />
-          </Button>
-          <Button
-            onClick={async (e) => {
-              e.stopPropagation();
-              await handleEditRecipe(recipeManifestResponse);
-            }}
-            variant="outline"
-            size="sm"
-            className="h-8 w-8 p-0"
-            title={intl.formatMessage(i18n.editRecipe)}
-          >
-            <Edit className="w-4 h-4" />
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                onClick={(e) => e.stopPropagation()}
-                variant="outline"
-                size="sm"
-                className="h-8 w-8 p-0"
-                title={intl.formatMessage(i18n.shareRecipe)}
-              >
-                <Share2 className="w-4 h-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-              <DropdownMenuItem onClick={() => handleCopyDeeplink(recipeManifestResponse)}>
-                <Link className="w-4 h-4" />
-                {intl.formatMessage(i18n.copyDeeplink)}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleCopyYaml(recipeManifestResponse)}>
-                <Copy className="w-4 h-4" />
-                {intl.formatMessage(i18n.copyYaml)}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => handleExportFile(recipeManifestResponse)}>
-                <Download className="w-4 h-4" />
-                {intl.formatMessage(i18n.exportToFile)}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleOpenScheduleDialog(recipeManifestResponse);
-            }}
-            variant={schedule_cron ? 'default' : 'outline'}
-            size="sm"
-            className="h-8 w-8 p-0"
-            title={
-              schedule_cron
-                ? intl.formatMessage(i18n.editSchedule)
-                : intl.formatMessage(i18n.addSchedule)
-            }
-          >
-            <Clock className="w-4 h-4" />
-          </Button>
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDeleteRecipe(recipeManifestResponse);
-            }}
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0 text-lz-err hover:bg-lz-err-solid hover:text-white"
-            title={intl.formatMessage(i18n.deleteRecipe)}
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
-        </div>
-      </div>
-    </Card>
-  );
-
-  const RecipeSkeleton = () => (
-    <Card className="p-2 mb-2 bg-background-primary">
-      <div className="flex justify-between items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <Skeleton className="h-5 w-3/4 mb-2" />
-          <Skeleton className="h-4 w-full mb-2" />
-          <Skeleton className="h-4 w-24" />
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Skeleton className="h-8 w-8" />
-          <Skeleton className="h-8 w-8" />
-          <Skeleton className="h-8 w-8" />
-          <Skeleton className="h-8 w-8" />
-          <Skeleton className="h-8 w-8" />
-        </div>
-      </div>
-    </Card>
-  );
-
   const renderContent = () => {
     if (loading || showSkeleton) {
       return (
@@ -900,6 +932,15 @@ export default function RecipesView() {
           <RecipeItem
             key={recipeManifestResponse.id}
             recipeManifestResponse={recipeManifestResponse}
+            onOpenSlashCommand={handleOpenSlashCommandDialog}
+            onStart={handleStartRecipeChat}
+            onStartInNewWindow={handleStartRecipeChatInNewWindow}
+            onEdit={handleEditRecipe}
+            onCopyDeeplink={handleCopyDeeplink}
+            onCopyYaml={handleCopyYaml}
+            onExportFile={handleExportFile}
+            onOpenSchedule={handleOpenScheduleDialog}
+            onDelete={handleDeleteRecipe}
           />
         ))}
       </div>
