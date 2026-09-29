@@ -3,23 +3,16 @@
 Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every tick (READ the PNG)
 
 ## Live
-- Installed: 3.0.79 on BOTH Macs at 15:5x. Split serving ("OK.").
-- 3.0.79 proven live 16:00 (PROVE-3.0.79/, prove079.mjs):
-  - Q-490: closing mid-turn asks (app-drawn dialog), Stop-and-close, app + engine alive.
-  - Q-491: a folder-only window gets a chat.
-  - Q-492: an email at the end sends.
-  - Q-483/484/485: the sidebar.
-- Still to prove on 3.0.79:
-  - Q-488 (a Steer note to an idle chat: #3y turn 26);
-  - Q-489 (the need-you menu);
-  - Q-493 (an unanswered prompt line);
-  - Q-494 (counts not years: watch #3y);
-  - Q-496 (the chat follows the turn: watch #3y, data-following);
-  - Q-486.
-- E2E #3y ENDED at turn 25 (a harness crash after compaction, fixed 9d2bf826a; E2E-RUNS). Was: RUNNING since 16:01 — COMPACTED at turn 25 (214k → 59.8k); post-compaction calls warm (58–59k from cache) (turn 2: 1,955 s / 9 tools, against #3x's 8,349 s / 152): RU-2026-09-29-3y-split-tensor-coffee, session 20260929_19, the coffee brief (41 turns).
-  r1 proves every send (SEND_LOST). Turn 1 LANDED (Q-492 proven under the brief) and saved both memories, but
-  narrowed the privacy rule to this project (Q-506, model). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
-- E2E #3x STOPPED at turn 4 (E2E-RUNS): the Q-498 cache thrash with the owner's second chat; its memory turn was lost.
+- Installed: 3.0.81 on BOTH Macs 20:5x (Q-515/516/517 plus everything in 3.0.80). Split serving "OK".
+- E2E #3z RUNNING since 20:58: RU-2026-09-29-3z-split-tensor-coffee, session 20260929_22, the coffee brief from
+  turn 0 (41 turns). Watch for:
+  - Q-514/516 (no cold re-reads mid-turn);
+  - Q-488 (the Steer note at 26);
+  - chat search 25/27/35;
+  - memory recall after compaction 33/39;
+  - Q-513/506 model behaviour;
+  - Q-517 turn starts.
+- #3y ENDED at turn 25 on a harness crash (fixed); #3x stopped at turn 4.
 
 ## 3.0.80 — INSTALLED on BOTH Macs 20:2x (split serving "OK."), main 8368ce115
 - Carries:
@@ -44,10 +37,11 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-511/512;
   - Q-505 (scan-secrets).
 
-## 3.0.81 — RELEASE BUILDING (~/goose-builds/release-3.0.81.log), main bd5913103
+## 3.0.81 — INSTALLED 20:5x, main bd5913103
 - Carries Q-515 (the steer test), Q-516 (condensation after one cold miss), Q-517 (1.07 → 0.36 s before each provider
   call). Gates g081 + g081b green (goose lib 2197, agent 38, every acp_*, devgates 11, clippy).
-- Q-518 (cache the skills listing) is cutting on 58806267e.
+- Q-518 DONE baf0ea64b (q518): a skills scan costs 3–4 ms on an unchanged tree. Q-519 (stop-and-close loses the
+  partial) cutting. Both → 3.0.82.
 - Then: install 3.0.81 on BOTH Macs → E2E #3z (the coffee brief from the start, or from turn 26 on #3y's chat).
 
 ## Live proofs on 3.0.80 (PROVE-3.0.80/prove.log) — PROVEN
