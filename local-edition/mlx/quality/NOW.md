@@ -22,8 +22,10 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 
 ## Gate / merge → 3.0.79
 - g079 (/tmp/g079.out): the full gate on merge-487-488 (1813810f2 = Q-487 204457a56 + Q-488 5a8d72d49), background
-  priority. UI part: 61 vitest reds across unrelated files (load at `taskpolicy -b`), superseded by g079b's UI run.
-  Its Rust part is running.
+  priority. RUST GREEN (goose lib, every acp_*/needs_you/chat_search test, sidecar, providers, link, server,
+  mcp+cli 948+98, clippy, dev gates 11, the ACP schema, the Windows check). One timing flake:
+  test_session_name_update_notification failed twice in-file and passed 3/3 alone → Q-497. Its UI part (61 load
+  reds) is superseded by g079b.
 - g079b (/tmp/g079b.out): chained to start when g079 ends, relaunched at NORMAL priority (background priority starved
   vitest). UI gate on merge-079b (968b6b7e3 = merge-487-488
   + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2 + Q-492/493 4b548171d + Q-494 1bea50263 → 15af6c730), no conflicts.
@@ -64,7 +66,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-497.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-498.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
