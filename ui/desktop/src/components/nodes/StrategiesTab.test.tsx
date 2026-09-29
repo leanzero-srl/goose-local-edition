@@ -465,7 +465,9 @@ describe('the strategy editor', () => {
     await userEvent.click(screen.getByTestId('strategies-new'));
     const name = screen.getByTestId('strategy-name');
     await userEvent.clear(name);
-    await userEvent.type(name, 'Studio chat, split for heavy work');
+    // Q-466: the name arrives whole — this is about the id a saved name earns, not typing, and 33
+    // keystrokes re-rendered the editor 33 times (9.2 s under load; the default clock is 5 s).
+    await userEvent.paste('Studio chat, split for heavy work');
     await userEvent.click(screen.getByTestId('strategy-save'));
     await waitFor(() => expect(mockWrite).toHaveBeenCalledTimes(1));
     const first = (mockWrite.mock.calls[0][0] as NodesConfig).strategies?.[3];
@@ -477,7 +479,7 @@ describe('the strategy editor', () => {
     // A name whose id another strategy holds gets the next free one.
     await userEvent.click(screen.getByTestId('strategies-new'));
     await userEvent.clear(screen.getByTestId('strategy-name'));
-    await userEvent.type(screen.getByTestId('strategy-name'), 'Quick!');
+    await userEvent.paste('Quick!');
     await userEvent.click(screen.getByTestId('strategy-save'));
     await waitFor(() => expect(mockWrite).toHaveBeenCalledTimes(2));
     const ids = (mockWrite.mock.calls[1][0] as NodesConfig).strategies?.map((s) => s.id);

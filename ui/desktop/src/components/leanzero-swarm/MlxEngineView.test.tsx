@@ -338,7 +338,26 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
+
+/**
+ * Q-466: the Macs shell polls a running download or copy once a second (setInterval). A test that
+ * needs the NEXT poll moves the interval clock to it instead of sleeping a real second per poll
+ * (the Thunderbolt copy slept 2 of its 2.2 s). Only the intervals are faked, and their clock still
+ * advances with real time, so every other timer — and every wait — behaves as before.
+ */
+function fakePolls() {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'], shouldAdvanceTime: true });
+}
+
+/** Fires the intervals in the order they are due until `poll` has been asked once more. */
+async function nextPoll(poll: ReturnType<typeof vi.fn>) {
+  const asked = poll.mock.calls.length;
+  while (poll.mock.calls.length === asked) {
+    await act(() => vi.advanceTimersToNextTimerAsync());
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The honest-payload contract, now per model: a cleared field is ABSENT from the
@@ -1374,11 +1393,33 @@ const ALL_SAMPLING_LABELS = [
   'Context limit (tokens)',
 ];
 
-async function openSamplingTab() {
-  await waitFor(() => {
-    expect(screen.getByRole('radio', { name: 'Sampling' })).toBeInTheDocument();
+/**
+ * One of the engine's own sections (Engine · My Macs · Models · Sampling), asked of its switch.
+ * Q-466: a whole-screen radio query computes the accessible name of every radio on the page, on
+ * every poll of the wait — the tab helpers were 13% of this file's CPU profile (6.6 of 51 s), 3%
+ * once asked of the switch. The switch's own radios are the same elements.
+ */
+function sectionTab(name: string | RegExp): HTMLElement {
+  return within(screen.getByRole('radiogroup', { name: 'Engine sections' })).getByRole('radio', {
+    name,
   });
-  await userEvent.click(screen.getByRole('radio', { name: 'Sampling' }));
+}
+
+async function openSamplingTab() {
+  await userEvent.click(await waitFor(() => sectionTab('Sampling')));
+}
+
+/**
+ * The model profile's Save, asked of the profile panel's own header. Q-466: a whole-screen button
+ * query named every button on the sampling form (a Clear per field) — ~150 ms a Save, measured,
+ * and these tests press it up to three times; the header holds this one button.
+ */
+function profileSave(): HTMLElement {
+  const header = screen
+    .getByText('Model profile')
+    .closest<HTMLElement>('[data-testid="lz-section-header"]');
+  if (!header) throw new Error('the "Model profile" panel has no section header');
+  return within(header).getByRole('button', { name: 'Save' });
 }
 
 describe('MlxEngineView sampling tab', () => {
@@ -1392,7 +1433,7 @@ describe('MlxEngineView sampling tab', () => {
     for (const label of ALL_SAMPLING_LABELS) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(profileSave()).toBeInTheDocument();
     // The honest caption: per-model profiles, per-request values win.
     expect(screen.getByText(/per-request values sent by goose override them/)).toBeInTheDocument();
     expect(screen.getByText(/Profiles apply at\s+mount, per model/)).toBeInTheDocument();
@@ -1485,7 +1526,7 @@ describe('MlxEngineView sampling tab', () => {
     });
 
     // Save writes the whole settings object with ONLY this model's profile rebuilt.
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(profileSave());
     await waitFor(() => {
       expect(mockSettingsUpdate).toHaveBeenCalledTimes(1);
     });
@@ -1532,7 +1573,7 @@ describe('MlxEngineView sampling tab', () => {
     await userEvent.type(screen.getByLabelText('LoRA adapter folder'), '~/lora');
     expect(screen.getByText('unsaved')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(profileSave());
     await waitFor(() => {
       expect(mockSettingsUpdate).toHaveBeenCalledTimes(1);
     });
@@ -1548,7 +1589,7 @@ describe('MlxEngineView sampling tab', () => {
     // Switching the lane back on drops the key rather than sending true — auto and true
     // are the same argv, and absent is the honest form.
     await userEvent.click(screen.getByRole('switch', { name: 'Text-only lane' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(profileSave());
     await waitFor(() => {
       expect(mockSettingsUpdate).toHaveBeenCalledTimes(2);
     });
@@ -1594,7 +1635,7 @@ describe('MlxEngineView sampling tab', () => {
 
     await userEvent.click(within(thinking).getByRole('radio', { name: 'On' }));
     await userEvent.click(within(effort).getByRole('radio', { name: 'low' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(profileSave());
     await waitFor(() => {
       expect(mockSettingsUpdate).toHaveBeenCalledTimes(1);
     });
@@ -1613,7 +1654,7 @@ describe('MlxEngineView sampling tab', () => {
     ).toBeInTheDocument();
     await userEvent.click(within(thinking).getByRole('radio', { name: 'Auto' }));
     await userEvent.click(within(effort).getByRole('radio', { name: 'Model default (xhigh)' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(profileSave());
     await waitFor(() => {
       expect(mockSettingsUpdate).toHaveBeenCalledTimes(2);
     });
@@ -1727,7 +1768,7 @@ describe('MlxEngineView sampling tab', () => {
     expect(screen.getByText(/Quality not measured on this model/)).toBeInTheDocument();
 
     await userEvent.click(within(kv).getByRole('radio', { name: '8-bit' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(profileSave());
     await waitFor(() => {
       expect(mockSettingsUpdate).toHaveBeenCalledTimes(1);
     });
@@ -1830,16 +1871,20 @@ const HIT_C: MlxBrowseHit = {
 };
 
 async function openModelsTab() {
-  await waitFor(() => {
-    expect(screen.getByRole('radio', { name: /^Models/ })).toBeInTheDocument();
+  await userEvent.click(await waitFor(() => sectionTab(/^Models/)));
+}
+
+/** A pane of the Models tab, asked of its own switch (Q-466, as sectionTab). */
+function modelsPane(name: string | RegExp): HTMLElement {
+  return within(screen.getByRole('radiogroup', { name: 'Models view' })).getByRole('radio', {
+    name,
   });
-  await userEvent.click(screen.getByRole('radio', { name: /^Models/ }));
 }
 
 /** The browser is the Models tab's second pane; the first is every Mac's models. */
 async function openHfTab() {
   await openModelsTab();
-  await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
+  await userEvent.click(modelsPane('Hugging Face'));
 }
 
 describe('MlxEngineView models tab', () => {
@@ -2102,6 +2147,7 @@ describe('MlxEngineView models tab', () => {
   });
 
   it('a running download is visible from BOTH panes: inline in the browser, a cell in the table', async () => {
+    fakePolls();
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     mockDownloadProgress.mockResolvedValue({
       state: 'downloading',
@@ -2119,7 +2165,8 @@ describe('MlxEngineView models tab', () => {
     });
 
     // The table shows the SAME download as the model arriving on this Mac.
-    await userEvent.click(screen.getByRole('radio', { name: /^On your Macs/ }));
+    await userEvent.click(modelsPane(/^On your Macs/));
+    await nextPoll(mockDownloadProgress);
     await waitFor(() => {
       expect(screen.getByTestId(`model-cell-self-${HIT_A.id}`)).toHaveTextContent(
         'Downloading 25%'
@@ -2127,7 +2174,7 @@ describe('MlxEngineView models tab', () => {
     });
 
     // And back on Hugging Face it is inline again, exactly once.
-    await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
+    await userEvent.click(modelsPane('Hugging Face'));
     await waitFor(() => {
       expect(screen.getAllByTestId(`mlx-download-${HIT_A.id}`)).toHaveLength(1);
     });
@@ -2455,6 +2502,7 @@ describe('MlxEngineView download lifecycle', () => {
   });
 
   it('switching tabs mid-download keeps the row live and the poll running', async () => {
+    fakePolls();
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     mockDownloadProgress.mockResolvedValue({
       state: 'downloading',
@@ -2472,21 +2520,22 @@ describe('MlxEngineView download lifecycle', () => {
     });
 
     // Leave for the Engine tab: the rows unmount but the SHELL keeps polling.
-    await userEvent.click(screen.getByRole('radio', { name: 'Engine' }));
+    await userEvent.click(sectionTab('Engine'));
     await waitFor(() => {
       expect(screen.queryByTestId(`mlx-download-${HIT_A.id}`)).not.toBeInTheDocument();
     });
     mockDownloadProgress.mockClear();
+    await nextPoll(mockDownloadProgress);
     await waitFor(() => expect(mockDownloadProgress).toHaveBeenCalledWith(HIT_A.id, undefined));
 
     // Back on the Models tab the download is still there with the last REAL bytes.
-    await userEvent.click(screen.getByRole('radio', { name: /^Models/ }));
+    await userEvent.click(sectionTab(/^Models/));
     await waitFor(() => {
       expect(screen.getByTestId(`model-cell-self-${HIT_A.id}`)).toHaveTextContent(
         'Downloading 25%'
       );
     });
-    await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
+    await userEvent.click(modelsPane('Hugging Face'));
     await waitFor(() => {
       expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
     });
@@ -2700,6 +2749,7 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
   });
 
   it('every Mac is a column under ONE name; "Copy from · Thunderbolt" fills the gap and the cell follows the receiver to done', async () => {
+    fakePolls();
     withMesh([peerNode({ computer_name: STUDIO })], ME);
     let landed = false;
     mockModelsList.mockImplementation(async (nodeId?: string) =>
@@ -2761,6 +2811,7 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
 
     await userEvent.click(within(gap).getByRole('button', { name: /^Copy from / }));
     expect(mockReplicate).toHaveBeenCalledWith(QWEN, PEER, undefined);
+    await nextPoll(mockReplicaProgress);
     await waitFor(() =>
       expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveTextContent('Copying 24%')
     );
@@ -2769,6 +2820,7 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
     expect(detail).toHaveTextContent(`Copying to ${STUDIO} over Thunderbolt`);
     expect(detail).toHaveTextContent('1 of 4 files');
     expect(detail).toHaveTextContent('2.00 GB/s');
+    await nextPoll(mockReplicaProgress);
     await waitFor(() =>
       expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveAttribute(
         'data-cell',
@@ -2915,6 +2967,7 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
   });
 
   it('Download to: the browser downloads onto the Mac you pick', async () => {
+    fakePolls();
     withMesh([peerNode({ computer_name: STUDIO })], ME);
     peerHolds([]);
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
@@ -2931,7 +2984,8 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
     await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
     await waitFor(() => expect(mockDownload).toHaveBeenCalledWith(HIT_A.id, PEER));
     // The table shows it arriving on the Studio, not on this Mac.
-    await userEvent.click(screen.getByRole('radio', { name: /^On your Macs/ }));
+    await userEvent.click(modelsPane(/^On your Macs/));
+    await nextPoll(mockDownloadProgress);
     await waitFor(() =>
       expect(screen.getByTestId(`model-cell-${PEER}-${HIT_A.id}`)).toHaveTextContent(
         'Downloading 25%'
