@@ -2,6 +2,7 @@ import React from 'react';
 import { AlertTriangle, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { Parameter } from '../../recipe';
 import { defineMessages, useIntl } from '../../i18n';
+import { StudioSelect } from '../leanzero-swarm/studio';
 
 const i18n = defineMessages({
   unusedWarningTitle: {
@@ -103,6 +104,16 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
   const intl = useIntl();
   const { key, description, requirement } = parameter;
   const defaultValue = parameter.default || '';
+  const inputTypeOptions: { value: Parameter['input_type']; label: string }[] = [
+    { value: 'string', label: intl.formatMessage(i18n.typeString) },
+    { value: 'select', label: intl.formatMessage(i18n.typeSelect) },
+    { value: 'number', label: intl.formatMessage(i18n.typeNumber) },
+    { value: 'boolean', label: intl.formatMessage(i18n.typeBoolean) },
+  ];
+  const requirementOptions: { value: Parameter['requirement']; label: string }[] = [
+    { value: 'required', label: intl.formatMessage(i18n.required) },
+    { value: 'optional', label: intl.formatMessage(i18n.optional) },
+  ];
 
   const handleToggleExpanded = (e: React.MouseEvent) => {
     // Only toggle if we're not clicking on the delete button
@@ -195,34 +206,33 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
                 <label className="block text-base text-text-primary mb-2 font-semibold">
                   {intl.formatMessage(i18n.inputType)}
                 </label>
-                <select
-                  className="w-full p-3 border rounded-lg bg-background-primary text-text-primary"
-                  value={parameter.input_type || 'string'}
-                  onChange={(e) =>
-                    onChange(key, { input_type: e.target.value as Parameter['input_type'] })
+                <StudioSelect
+                  aria-label={intl.formatMessage(i18n.inputType)}
+                  options={inputTypeOptions}
+                  value={
+                    inputTypeOptions.find((o) => o.value === (parameter.input_type || 'string')) ??
+                    null
                   }
-                >
-                  <option value="string">{intl.formatMessage(i18n.typeString)}</option>
-                  <option value="select">{intl.formatMessage(i18n.typeSelect)}</option>
-                  <option value="number">{intl.formatMessage(i18n.typeNumber)}</option>
-                  <option value="boolean">{intl.formatMessage(i18n.typeBoolean)}</option>
-                </select>
+                  placeholder={intl.formatMessage(i18n.inputType)}
+                  onChange={(o) => {
+                    if (o) onChange(key, { input_type: o.value });
+                  }}
+                />
               </div>
 
               <div>
                 <label className="block text-base text-text-primary mb-2 font-semibold">
                   {intl.formatMessage(i18n.requirement)}
                 </label>
-                <select
-                  className="w-full p-3 border rounded-lg bg-background-primary text-text-primary"
-                  value={requirement}
-                  onChange={(e) =>
-                    onChange(key, { requirement: e.target.value as Parameter['requirement'] })
-                  }
-                >
-                  <option value="required">{intl.formatMessage(i18n.required)}</option>
-                  <option value="optional">{intl.formatMessage(i18n.optional)}</option>
-                </select>
+                <StudioSelect
+                  aria-label={intl.formatMessage(i18n.requirement)}
+                  options={requirementOptions}
+                  value={requirementOptions.find((o) => o.value === requirement) ?? null}
+                  placeholder={intl.formatMessage(i18n.requirement)}
+                  onChange={(o) => {
+                    if (o) onChange(key, { requirement: o.value });
+                  }}
+                />
               </div>
 
               {/* The default value input is only shown for optional parameters */}

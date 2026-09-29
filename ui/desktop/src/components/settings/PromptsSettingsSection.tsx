@@ -9,6 +9,7 @@ import {
 } from '../../acp/prompts';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
+import { useConfirmDialog } from '../ui/useConfirmDialog';
 import { AlertTriangle, RotateCcw, ArrowLeft } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { defineMessages, useIntl } from '../../i18n';
@@ -21,6 +22,30 @@ const i18n = defineMessages({
   failedToLoadPrompt: {
     id: 'promptsSettings.failedToLoadPrompt',
     defaultMessage: 'Failed to load prompt',
+  },
+  confirmResetAllTitle: {
+    id: 'promptsSettings.confirmResetAllTitle',
+    defaultMessage: 'Reset all prompts?',
+  },
+  confirmResetOneTitle: {
+    id: 'promptsSettings.confirmResetOneTitle',
+    defaultMessage: 'Reset this prompt?',
+  },
+  confirmReplaceWithDefaultTitle: {
+    id: 'promptsSettings.confirmReplaceWithDefaultTitle',
+    defaultMessage: 'Replace with the default?',
+  },
+  confirmUnsavedBackTitle: {
+    id: 'promptsSettings.confirmUnsavedBackTitle',
+    defaultMessage: 'Discard unsaved changes?',
+  },
+  discardChanges: {
+    id: 'promptsSettings.discardChanges',
+    defaultMessage: 'Discard changes',
+  },
+  cancel: {
+    id: 'promptsSettings.cancel',
+    defaultMessage: 'Cancel',
   },
   confirmResetAll: {
     id: 'promptsSettings.confirmResetAll',
@@ -131,6 +156,7 @@ export default function PromptsSettingsSection() {
   const [promptData, setPromptData] = useState<PromptContent | null>(null);
   const [content, setContent] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   const fetchPrompts = useCallback(async () => {
     try {
@@ -169,7 +195,14 @@ export default function PromptsSettingsSection() {
   }, [content, promptData]);
 
   const handleResetAll = async () => {
-    if (!window.confirm(intl.formatMessage(i18n.confirmResetAll))) {
+    const confirmed = await confirm({
+      title: intl.formatMessage(i18n.confirmResetAllTitle),
+      message: intl.formatMessage(i18n.confirmResetAll),
+      confirmLabel: intl.formatMessage(i18n.resetAll),
+      cancelLabel: intl.formatMessage(i18n.cancel),
+      confirmVariant: 'destructive',
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -201,7 +234,14 @@ export default function PromptsSettingsSection() {
 
   const handleReset = async () => {
     if (!selectedPrompt) return;
-    if (!window.confirm(intl.formatMessage(i18n.confirmResetOne))) {
+    const confirmed = await confirm({
+      title: intl.formatMessage(i18n.confirmResetOneTitle),
+      message: intl.formatMessage(i18n.confirmResetOne),
+      confirmLabel: intl.formatMessage(i18n.resetToDefault),
+      cancelLabel: intl.formatMessage(i18n.cancel),
+      confirmVariant: 'destructive',
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -219,10 +259,17 @@ export default function PromptsSettingsSection() {
     }
   };
 
-  const handleRestoreDefault = () => {
+  const handleRestoreDefault = async () => {
     if (promptData) {
       if (hasChanges) {
-        if (!window.confirm(intl.formatMessage(i18n.confirmReplaceWithDefault))) {
+        const confirmed = await confirm({
+          title: intl.formatMessage(i18n.confirmReplaceWithDefaultTitle),
+          message: intl.formatMessage(i18n.confirmReplaceWithDefault),
+          confirmLabel: intl.formatMessage(i18n.restoreDefault),
+          cancelLabel: intl.formatMessage(i18n.cancel),
+          confirmVariant: 'destructive',
+        });
+        if (!confirmed) {
           return;
         }
       }
@@ -230,9 +277,16 @@ export default function PromptsSettingsSection() {
     }
   };
 
-  const handleBack = () => {
+  const handleBack = async () => {
     if (hasChanges) {
-      if (!window.confirm(intl.formatMessage(i18n.confirmUnsavedBack))) {
+      const confirmed = await confirm({
+        title: intl.formatMessage(i18n.confirmUnsavedBackTitle),
+        message: intl.formatMessage(i18n.confirmUnsavedBack),
+        confirmLabel: intl.formatMessage(i18n.discardChanges),
+        cancelLabel: intl.formatMessage(i18n.cancel),
+        confirmVariant: 'destructive',
+      });
+      if (!confirmed) {
         return;
       }
     }
@@ -246,6 +300,7 @@ export default function PromptsSettingsSection() {
   if (selectedPrompt) {
     return (
       <div className="space-y-4 pr-4 pb-8 mt-1">
+        {confirmDialog}
         <Card className="pb-2 rounded-lg">
           <CardHeader className="pb-4">
             <div className="flex items-center justify-between mb-4">
@@ -334,6 +389,7 @@ export default function PromptsSettingsSection() {
 
   return (
     <div className="space-y-4 pr-4 pb-8 mt-1">
+      {confirmDialog}
       <Card className="pb-2 rounded-lg border border-lz-warn">
         <CardHeader className="pb-2">
           <div className="flex items-start gap-3">

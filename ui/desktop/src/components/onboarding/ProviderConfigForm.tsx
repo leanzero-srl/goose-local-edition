@@ -10,6 +10,7 @@ import { SecureStorageNotice } from '../settings/providers/modal/subcomponents/S
 import { Button } from '../ui/button';
 import { LogIn, ChevronRight } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
+import { errorMessage } from '../../utils/conversionUtils';
 
 const i18n = defineMessages({
   browserWindowOpen: {
@@ -20,6 +21,10 @@ const i18n = defineMessages({
     id: 'providerConfigForm.deviceCodeFlowHint',
     defaultMessage:
       'A browser window will open and the verification code will be copied to your clipboard. Paste it in the browser to complete sign-in.',
+  },
+  signInFailed: {
+    id: 'providerConfigForm.signInFailed',
+    defaultMessage: 'Sign-in failed: {reason}',
   },
   signingIn: {
     id: 'providerConfigForm.signingIn',
@@ -81,7 +86,7 @@ function OAuthForm({
       await acpAuthenticateProvider(provider.name);
       onConfigured(provider.name);
     } catch (err) {
-      onError(`Sign-in failed: ${err instanceof Error ? err.message : String(err)}`);
+      onError(intl.formatMessage(i18n.signInFailed, { reason: errorMessage(err) }));
     } finally {
       setIsLoading(false);
     }
@@ -159,13 +164,9 @@ function ApiKeyForm({
       await providerConfigSubmitHandler(provider, toSubmit);
       onConfigured(provider.name);
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : typeof err === 'object' && err !== null && 'message' in err
-            ? String((err as Record<string, unknown>).message)
-            : JSON.stringify(err);
-      onError(msg);
+      // Q-478: an ACP error's `message` is the JSON-RPC code's name ("Invalid params"); what goose
+      // and the provider actually said (a refused key, its status, the provider's words) is `data`.
+      onError(errorMessage(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -243,7 +244,11 @@ export default function ProviderConfigForm({ provider, onConfigured }: ProviderC
         {renderForm()}
 
         {error && (
-          <div className="mt-3 p-3 rounded-lg bg-lz-err-solid text-white font-medium text-sm">
+          <div
+            role="alert"
+            data-testid="provider-config-error"
+            className="mt-3 p-3 rounded-lg bg-lz-err-solid text-white font-medium text-sm break-words"
+          >
             {error}
           </div>
         )}

@@ -260,6 +260,36 @@ pub fn http_failure_text(what: &str, url: &str, said: &str) -> String {
     ))
 }
 
+/// A refused credential as goose frames it (a 401/403 answer): the URL, the status and the
+/// provider's own words, in the shape [`split_authentication_failure_text`] reads back (Q-478).
+pub fn authentication_failure_text(
+    url: &str,
+    status: impl std::fmt::Display,
+    said: &str,
+) -> String {
+    format!("{AUTH_FAILURE_FOR}{url}{AUTH_FAILURE_STATUS}{status}{AUTH_FAILURE_SAID}{said}")
+}
+
+const AUTH_FAILURE_FOR: &str = "Authentication failed for ";
+const AUTH_FAILURE_STATUS: &str = ". Status: ";
+const AUTH_FAILURE_SAID: &str = ". Response: ";
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct AuthenticationFailureParts<'a> {
+    pub url: &'a str,
+    pub status: &'a str,
+    pub said: &'a str,
+}
+
+/// `authentication_failure_text` read back; `None` for any other text (an `Authentication`
+/// error a provider built itself, with no status).
+pub fn split_authentication_failure_text(text: &str) -> Option<AuthenticationFailureParts<'_>> {
+    let rest = text.strip_prefix(AUTH_FAILURE_FOR)?;
+    let (url, rest) = rest.split_once(AUTH_FAILURE_STATUS)?;
+    let (status, said) = rest.split_once(AUTH_FAILURE_SAID)?;
+    Some(AuthenticationFailureParts { url, status, said })
+}
+
 const HTTP_FAILURE_AT: &str = " at ";
 const HTTP_FAILURE_SAID: &str = ": ";
 
@@ -403,6 +433,29 @@ impl GoogleErrorCode {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn an_authentication_failure_reads_back_into_its_parts() {
+        let text = authentication_failure_text(
+            "http://127.0.0.1:8899/v1/models",
+            StatusCode::UNAUTHORIZED,
+            "Incorrect API key provided: sk-bad. You can find your API key at https://x.y/keys.",
+        );
+        assert_eq!(
+            text,
+            "Authentication failed for http://127.0.0.1:8899/v1/models. Status: 401 Unauthorized. \
+             Response: Incorrect API key provided: sk-bad. You can find your API key at https://x.y/keys."
+        );
+        assert_eq!(
+            split_authentication_failure_text(&text),
+            Some(AuthenticationFailureParts {
+                url: "http://127.0.0.1:8899/v1/models",
+                status: "401 Unauthorized",
+                said: "Incorrect API key provided: sk-bad. You can find your API key at https://x.y/keys.",
+            })
+        );
+        assert_eq!(split_authentication_failure_text("invalid x-api-key"), None);
+    }
 
     #[test]
     fn an_http_failure_reads_back_into_its_parts() {

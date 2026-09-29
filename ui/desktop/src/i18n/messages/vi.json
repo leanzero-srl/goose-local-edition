@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "Không tìm thấy cài đặt cấu hình nào."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "\"{name}\" phải là true hoặc false nên chưa được lưu."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "\"{name}\" phải là một số nên chưa được lưu."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Đặt lại thay đổi"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "Đang lưu..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "Một danh sách hoặc nhóm cài đặt, hiển thị ở chế độ chỉ đọc để việc lưu ở đây không bao giờ làm phẳng nó. Hãy sửa trong config.yaml."
   },
   "configSettings.title": {
     "defaultMessage": "Cấu hình"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Không thể lưu nhà cung cấp. Vui lòng kiểm tra cấu hình của bạn và thử lại."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Không lưu được nhà cung cấp: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "Nhà cung cấp hỗ trợ phản hồi theo luồng (streaming)"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "Đang hoạt động"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Xóa"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Xóa mô hình này? Bạn có thể tải lại sau."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "Xóa {model}?"
   },
   "localModelManager.download": {
     "defaultMessage": "Tải xuống"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Ghi chú đang chờ bạn"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "OK"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Quay lại danh sách"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "Hủy"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Thay thế nội dung hiện tại bằng mặc định? Các thay đổi của bạn sẽ bị mất."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Thay bằng mặc định?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Bạn có chắc chắn muốn đặt lại tất cả lời nhắc về mặc định không? Thao tác này không thể hoàn tác."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Đặt lại tất cả prompt?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Bạn có chắc chắn muốn đặt lại lời nhắc này về mặc định không? Thao tác này không thể hoàn tác."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Đặt lại prompt này?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "Bạn có các thay đổi chưa lưu. Bạn có chắc chắn muốn quay lại không?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Bỏ các thay đổi chưa lưu?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Đã tùy chỉnh"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Bỏ thay đổi"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Chỉnh sửa"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "Bạn chưa có khóa API?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Đăng nhập thất bại: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "Đăng nhập bằng {providerName}"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "Bạn có chắc chắn muốn xóa \"{title}\" không?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Xóa"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "Tệp công thức sẽ bị xóa."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "Hủy"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Chọn thư mục"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Xóa lịch trình \"{id}\"? Công thức sẽ được giữ lại."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Xóa lịch?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Tạo lịch trình"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "Đang làm mới..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Xóa"
   },
   "schedulesView.resume": {
     "defaultMessage": "Tiếp tục"

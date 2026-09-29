@@ -14,6 +14,7 @@ import {
 import { ScrollArea } from '../ui/scroll-area';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
+import { useConfirmDialog } from '../ui/useConfirmDialog';
 import { TrashIcon } from '../icons/TrashIcon';
 import {
   Plus,
@@ -63,6 +64,12 @@ const i18n = defineMessages({
     id: 'schedulesView.scheduleUpdatedMsg',
     defaultMessage: 'Successfully updated schedule "{id}"',
   },
+  confirmDeleteTitle: {
+    id: 'schedulesView.confirmDeleteTitle',
+    defaultMessage: 'Remove schedule?',
+  },
+  remove: { id: 'schedulesView.remove', defaultMessage: 'Remove' },
+  cancel: { id: 'schedulesView.cancel', defaultMessage: 'Cancel' },
   confirmDelete: {
     id: 'schedulesView.confirmDelete',
     defaultMessage: 'Remove schedule "{id}"? The recipe will be kept.',
@@ -279,6 +286,7 @@ const ScheduleCard: React.FC<{
               onDelete(job.id);
             }}
             disabled={actionInProgress}
+            aria-label={intl.formatMessage(i18n.remove)}
             variant="ghost"
             size="sm"
             className="h-8 text-lz-err hover:bg-lz-err-solid hover:text-white"
@@ -305,6 +313,7 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
   const [pendingDeepLink, setPendingDeepLink] = useState<string | null>(null);
   const [actionsInProgress, setActionsInProgress] = useState<Set<string>>(new Set());
   const [viewingScheduleId, setViewingScheduleId] = useState<string | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   const fetchSchedules = async () => {
     setIsLoading(true);
@@ -393,7 +402,14 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
   };
 
   const handleDeleteSchedule = async (id: string) => {
-    if (!window.confirm(intl.formatMessage(i18n.confirmDelete, { id }))) return;
+    const confirmed = await confirm({
+      title: intl.formatMessage(i18n.confirmDeleteTitle),
+      message: intl.formatMessage(i18n.confirmDelete, { id }),
+      confirmLabel: intl.formatMessage(i18n.remove),
+      cancelLabel: intl.formatMessage(i18n.cancel),
+      confirmVariant: 'destructive',
+    });
+    if (!confirmed) return;
 
     setActionsInProgress((prev) => new Set(prev).add(id));
     if (viewingScheduleId === id) setViewingScheduleId(null);
@@ -672,6 +688,8 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
           </div>
         </div>
       </MainPanelLayout>
+
+      {confirmDialog}
 
       <ScheduleModal
         isOpen={isModalOpen}

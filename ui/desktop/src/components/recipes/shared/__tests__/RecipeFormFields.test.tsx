@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, type RenderOptions, screen } from '@testing-library/react';
+import { render, type RenderOptions, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from '@tanstack/react-form';
 
@@ -486,26 +486,13 @@ describe('RecipeFormFields', () => {
       );
       expect(descriptionInput).toBeInTheDocument();
 
-      // Check for parameter type select within the parameter container
-      const selects = parameterContainer?.querySelectorAll('select');
-      expect(selects?.length).toBeGreaterThanOrEqual(2);
-
-      const inputTypeSelect = selects
-        ? Array.from(selects).find((select) =>
-            Array.from(select.options).some((option) => option.text === 'String')
-          )
-        : null;
-      expect(inputTypeSelect).toBeInTheDocument();
-      expect(inputTypeSelect?.value).toBe('string');
-
-      // Check for requirement select
-      const requirementSelect = selects
-        ? Array.from(selects).find((select) =>
-            Array.from(select.options).some((option) => option.text === 'Required')
-          )
-        : null;
-      expect(requirementSelect).toBeInTheDocument();
-      expect(requirementSelect?.value).toBe('required');
+      // The type and requirement pickers are the app's listbox, never a native <select> (Q-472).
+      expect(parameterContainer?.querySelector('select')).toBeNull();
+      const container = within(parameterContainer as HTMLElement);
+      const inputTypeSelect = container.getByRole('combobox', { name: 'Input Type' });
+      expect(inputTypeSelect).toHaveTextContent('String');
+      const requirementSelect = container.getByRole('combobox', { name: 'Requirement' });
+      expect(requirementSelect).toHaveTextContent('Required');
 
       // Verify we can interact with the parameter form fields
       // First clear the existing value, then type the new one
@@ -516,9 +503,10 @@ describe('RecipeFormFields', () => {
       }
 
       // Test changing the requirement
-      if (requirementSelect) {
-        await user.selectOptions(requirementSelect, 'optional');
-        expect(requirementSelect.value).toBe('optional');
+      {
+        await user.click(requirementSelect);
+        await user.click(screen.getByRole('option', { name: 'Optional' }));
+        expect(requirementSelect).toHaveTextContent('Optional');
 
         // After changing to optional, a default value field should appear
         const defaultValueInput = parameterContainer?.querySelector(

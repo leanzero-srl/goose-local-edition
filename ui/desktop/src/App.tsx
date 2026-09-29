@@ -359,7 +359,7 @@ const ConfigureProvidersRoute = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="w-screen h-screen bg-background-primary">
+    <div className="w-full h-full bg-background-primary">
       <ProviderSettings
         onClose={() => navigate('/settings', { state: { section: 'models' } })}
         isOnboarding={false}
@@ -776,10 +776,12 @@ export function AppInner() {
       <ExtensionInstallModal addExtension={addExtension} setView={setView} />
       <RecipeParamsModalContainer />
       <BenchmarkAutoOpen />
-      <UnreadableConfigBanner />
       <div className="relative w-screen h-screen overflow-hidden bg-background-secondary flex flex-col">
         <div className="titlebar-drag-region" />
-        <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+        {/* Q-471: the banner is a row of this column, so it pushes every route down instead of
+            covering it; the routes below fill what is left (h-full, never h-screen). */}
+        <UnreadableConfigBanner />
+        <div data-testid="app-route-area" className="relative w-full min-h-0 flex-1">
           <Routes>
             <Route path="launcher" element={<LauncherView />} />
             <Route path="configure-providers" element={<ConfigureProvidersRoute />} />

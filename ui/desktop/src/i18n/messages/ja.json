@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "設定項目が見つかりません。"
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "「{name}」は true または false である必要があるため、保存されませんでした。"
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "「{name}」は数値である必要があるため、保存されませんでした。"
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "変更をリセット"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "保存中..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "設定のリストまたはグループです。ここでの保存で平坦化されないよう読み取り専用で表示しています。config.yaml で編集してください。"
   },
   "configSettings.title": {
     "defaultMessage": "設定"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "プロバイダーの保存に失敗しました。設定を確認してもう一度お試しください。"
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "プロバイダーを保存できませんでした: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "プロバイダーはストリーミング応答に対応しています"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "アクティブ"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "削除"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "このモデルを削除しますか？後で再ダウンロードできます。"
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "{model} を削除しますか?"
   },
   "localModelManager.download": {
     "defaultMessage": "ダウンロード"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "あなたを待っているメモ"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "OK"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "一覧に戻る"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "キャンセル"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "現在の内容をデフォルトに置き換えますか？変更は失われます。"
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "デフォルトに置き換えますか?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "すべてのプロンプトをデフォルトにリセットしてもよろしいですか？この操作は元に戻せません。"
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "すべてのプロンプトをリセットしますか?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "このプロンプトをデフォルトにリセットしてもよろしいですか？この操作は元に戻せません。"
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "このプロンプトをリセットしますか?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "未保存の変更があります。戻ってもよろしいですか？"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "保存されていない変更を破棄しますか?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "カスタマイズ済み"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "変更を破棄"
   },
   "promptsSettings.edit": {
     "defaultMessage": "編集"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "APIキーをお持ちでないですか？"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "サインインに失敗しました: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "{providerName}でサインイン"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "\"{title}\"を削除してもよろしいですか？"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "削除"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "レシピファイルが削除されます。"
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "キャンセル"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "フォルダーを選択"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "スケジュール「{id}」を削除しますか？レシピは保持されます。"
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "スケジュールを削除しますか?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "スケジュールを作成"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "更新中..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "削除"
   },
   "schedulesView.resume": {
     "defaultMessage": "再開"

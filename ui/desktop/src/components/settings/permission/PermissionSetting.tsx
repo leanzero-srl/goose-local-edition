@@ -99,7 +99,7 @@ export default function PermissionSettingsView({ onClose }: { onClose: () => voi
   }, []);
 
   return (
-    <div className="bg-background-primary h-screen w-full animate-[fadein_200ms_ease-in_forwards]">
+    <div className="bg-background-primary h-full w-full animate-[fadein_200ms_ease-in_forwards]">
       <ScrollArea className="h-full w-full">
         <div className="flex flex-col pb-24">
           <div className="px-8 pt-6 pb-4">

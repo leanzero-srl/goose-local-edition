@@ -154,6 +154,10 @@ fn an_openai_compatible_endpoint_is_created_listed_proven_and_selectable() {
             rejected.contains("not enabled for this key"),
             "the endpoint's own words reach the dialog: {rejected}"
         );
+        assert!(
+            rejected.contains("Team Gateway rejected the key (401 Unauthorized)"),
+            "the refusal leads with its status, never only the JSON-RPC code (Q-478): {rejected}"
+        );
 
         send_custom(
             conn.cx(),

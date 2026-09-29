@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::conversation::message::Message;
 use crate::providers::base::ProviderMetadata;
 use anyhow::{anyhow, Result};
+use goose_providers::errors::{split_authentication_failure_text, ProviderError};
 use goose_providers::model::ModelConfig;
 
 /// The providers whose saved settings must be proven before they stick: the supported cloud
@@ -108,10 +109,77 @@ pub async fn list_models(
     provider: &dyn crate::providers::base::Provider,
     label: &str,
 ) -> Result<Vec<String>> {
-    provider
-        .fetch_supported_models()
-        .await
-        .map_err(|error| anyhow!("{} could not list models: {}", label, error))
+    provider.fetch_supported_models().await.map_err(|error| {
+        ProviderRefusal {
+            label: label.to_string(),
+            model: None,
+            error,
+        }
+        .into()
+    })
+}
+
+/// The provider's own answer to a check, kept typed so the save can say what it was (Q-478).
+/// Displays exactly as the plain text it replaced: `"<label> could not list models: <error>"` /
+/// `"<label> could not run model '<model>': <error>"`.
+#[derive(Debug)]
+pub struct ProviderRefusal {
+    label: String,
+    model: Option<String>,
+    error: ProviderError,
+}
+
+impl std::fmt::Display for ProviderRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.model {
+            Some(model) => write!(
+                f,
+                "{} could not run model '{}': {}",
+                self.label, model, self.error
+            ),
+            None => write!(f, "{} could not list models: {}", self.label, self.error),
+        }
+    }
+}
+
+impl std::error::Error for ProviderRefusal {}
+
+/// What a failed save tells the person. A refused key leads with the refusal, its HTTP status and
+/// the provider's own words — onboarding once showed only the JSON-RPC code's "Invalid params" for
+/// a 401 (Q-478); every other failure keeps the check's full text.
+pub(crate) fn save_failure_text(error: &anyhow::Error) -> String {
+    const KEPT: &str = "Your previous settings were kept.";
+    if let Some(refusal) = error.downcast_ref::<ProviderRefusal>() {
+        if let ProviderError::Authentication(detail) = &refusal.error {
+            let label = &refusal.label;
+            return match split_authentication_failure_text(detail) {
+                Some(parts) => {
+                    let said = parts.said.trim().trim_end_matches('.');
+                    let refused = if parts.status.starts_with("401") {
+                        "rejected the key"
+                    } else {
+                        "refused access with this key"
+                    };
+                    if said.is_empty() {
+                        format!(
+                            "{label} {refused} ({}) at {}. {KEPT}",
+                            parts.status, parts.url
+                        )
+                    } else {
+                        format!(
+                            "{label} {refused} ({}) at {}: {said}. {KEPT}",
+                            parts.status, parts.url
+                        )
+                    }
+                }
+                None => format!(
+                    "{label} rejected the key: {}. {KEPT}",
+                    detail.trim().trim_end_matches('.')
+                ),
+            };
+        }
+    }
+    format!("Connection check failed; previous settings retained. {error}")
 }
 
 async fn probe(
@@ -126,7 +194,11 @@ async fn probe(
         provider.complete(&model_config, "Respond briefly.", &messages, &[]),
     )
     .await
-    .map_err(|error| anyhow!("{} could not run model '{}': {}", label, model, error))?;
+    .map_err(|error| ProviderRefusal {
+        label: label.to_string(),
+        model: Some(model.to_string()),
+        error,
+    })?;
     if message.as_concat_text().trim().is_empty() {
         return Err(anyhow!(
             "{} returned no visible response for model '{}'",
@@ -285,6 +357,78 @@ impl Drop for PendingConfig<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn refusal(model: Option<&str>, error: ProviderError) -> anyhow::Error {
+        ProviderRefusal {
+            label: "OpenAI".into(),
+            model: model.map(str::to_string),
+            error,
+        }
+        .into()
+    }
+
+    #[test]
+    fn a_refused_key_is_named_with_its_status_and_the_providers_words() {
+        let detail = goose_providers::errors::authentication_failure_text(
+            "http://127.0.0.1:8899/v1/models",
+            reqwest::StatusCode::UNAUTHORIZED,
+            "Incorrect API key provided: sk-bad.",
+        );
+        let error = refusal(None, ProviderError::Authentication(detail.clone()));
+        assert_eq!(
+            error.to_string(),
+            format!("OpenAI could not list models: Authentication error: {detail}"),
+            "the check's own text (recorded as the connection error) is unchanged"
+        );
+        assert_eq!(
+            save_failure_text(&error),
+            "OpenAI rejected the key (401 Unauthorized) at http://127.0.0.1:8899/v1/models: \
+             Incorrect API key provided: sk-bad. Your previous settings were kept."
+        );
+
+        let forbidden = goose_providers::errors::authentication_failure_text(
+            "https://api.example/v1/chat/completions",
+            reqwest::StatusCode::FORBIDDEN,
+            "",
+        );
+        assert_eq!(
+            save_failure_text(&refusal(
+                Some("gpt-5"),
+                ProviderError::Authentication(forbidden)
+            )),
+            "OpenAI refused access with this key (403 Forbidden) at \
+             https://api.example/v1/chat/completions. Your previous settings were kept."
+        );
+
+        assert_eq!(
+            save_failure_text(&refusal(
+                None,
+                ProviderError::Authentication("invalid x-api-key".into())
+            )),
+            "OpenAI rejected the key: invalid x-api-key. Your previous settings were kept."
+        );
+    }
+
+    #[test]
+    fn a_failure_that_is_not_a_refused_key_keeps_the_checks_full_text() {
+        let error = refusal(
+            Some("gpt-5"),
+            ProviderError::NetworkError("connection refused".into()),
+        );
+        assert_eq!(
+            error.to_string(),
+            "OpenAI could not run model 'gpt-5': Network error: connection refused"
+        );
+        assert_eq!(
+            save_failure_text(&error),
+            "Connection check failed; previous settings retained. \
+             OpenAI could not run model 'gpt-5': Network error: connection refused"
+        );
+        assert_eq!(
+            save_failure_text(&anyhow!("OpenAI requires OPENAI_API_KEY")),
+            "Connection check failed; previous settings retained. OpenAI requires OPENAI_API_KEY"
+        );
+    }
     #[tokio::test]
     async fn all_supported_cloud_providers_have_native_key_configuration() {
         for (provider, key) in [

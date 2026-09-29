@@ -6,7 +6,6 @@ import {
   Tray,
   shell,
   app,
-  dialog,
   Menu,
   MenuItemConstructorOptions,
   Notification,
@@ -18,6 +17,7 @@ import { githubUpdater } from './githubUpdater';
 import { loadRecentDirs } from './recentDirs';
 import { getBrandName } from './mainBrand';
 import { errorMessage } from './conversionUtils';
+import { showAppDialog } from '../appDialogWindow';
 import {
   trackUpdateCheckStarted,
   trackUpdateCheckCompleted,
@@ -271,7 +271,7 @@ export function registerUpdateIpcHandlers() {
     }
   });
 
-  ipcMain.handle('install-update', async () => {
+  ipcMain.handle('install-update', async (event) => {
     if (isUsingGitHubFallback) {
       // For GitHub fallback, we need to handle the installation differently
       log.info('Installing update from GitHub fallback...');
@@ -292,17 +292,18 @@ export function registerUpdateIpcHandlers() {
         }
 
         // Improved dialog with clearer instructions
-        const dialogResult = (await dialog.showMessageBox({
-          type: 'info',
+        const response = await showAppDialog({
+          tone: 'info',
+          parent: BrowserWindow.fromWebContents(event.sender),
           title: 'Update Ready to Install',
           message: `Version ${githubUpdateInfo.latestVersion} is ready to install.`,
           detail: `The update has been downloaded and extracted. To complete the installation:\n\n1. Click "Open Folder" to view the new Goose.app\n2. Quit Goose (this app will close)\n3. Drag the new Goose.app to your Applications folder\n4. Replace the existing app when prompted\n\nThe update will be available the next time you launch Goose.`,
           buttons: ['Open Folder & Quit', 'Open Folder Only', 'Cancel'],
           defaultId: 0,
           cancelId: 2,
-        })) as unknown as { response: number };
+        });
 
-        if (dialogResult.response === 0) {
+        if (response === 0) {
           trackUpdateInstallInitiated(
             githubUpdateInfo.latestVersion || 'unknown',
             'github-fallback',
@@ -313,7 +314,7 @@ export function registerUpdateIpcHandlers() {
           setTimeout(() => {
             app.quit();
           }, 1500); // Give user time to see the folder open
-        } else if (dialogResult.response === 1) {
+        } else if (response === 1) {
           trackUpdateInstallInitiated(
             githubUpdateInfo.latestVersion || 'unknown',
             'github-fallback',

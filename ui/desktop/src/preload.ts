@@ -66,20 +66,6 @@ interface NotificationData {
   body: string;
 }
 
-interface MessageBoxOptions {
-  type?: 'none' | 'info' | 'error' | 'question' | 'warning';
-  buttons?: string[];
-  defaultId?: number;
-  title?: string;
-  message: string;
-  detail?: string;
-}
-
-interface MessageBoxResponse {
-  response: number;
-  checkboxChecked?: boolean;
-}
-
 interface SaveDialogOptions {
   title?: string;
   defaultPath?: string;
@@ -164,7 +150,6 @@ type ElectronAPI = {
   createChatWindow: (options?: CreateChatWindowOptions) => void;
   logInfo: (txt: string) => void;
   showNotification: (data: NotificationData) => void;
-  showMessageBox: (options: MessageBoxOptions) => Promise<MessageBoxResponse>;
   showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResponse>;
   openInChrome: (url: string) => void;
   reloadApp: () => void;
@@ -553,7 +538,6 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.send('create-chat-window', options || {}),
   logInfo: (txt: string) => ipcRenderer.send('logInfo', txt),
   showNotification: (data: NotificationData) => ipcRenderer.send('notify', data),
-  showMessageBox: (options: MessageBoxOptions) => ipcRenderer.invoke('show-message-box', options),
   showSaveDialog: (options: SaveDialogOptions) => ipcRenderer.invoke('show-save-dialog', options),
   openInChrome: (url: string) => ipcRenderer.send('open-in-chrome', url),
   reloadApp: () => ipcRenderer.send('reload-app'),

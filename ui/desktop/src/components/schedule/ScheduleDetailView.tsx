@@ -365,7 +365,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
 
   if (!scheduleId) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-gray-900 text-text-primary p-8">
+      <div className="h-full w-full flex flex-col items-center justify-center bg-white dark:bg-gray-900 text-text-primary p-8">
         <BackButton onClick={onNavigateBack} />
         <h1 className="text-2xl font-medium text-text-primary mt-4">
           {intl.formatMessage(i18n.scheduleNotFound)}
@@ -386,7 +386,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
     : '';
 
   return (
-    <div className="h-screen w-full flex flex-col bg-background-primary text-text-primary">
+    <div className="h-full w-full flex flex-col bg-background-primary text-text-primary">
       <div className="px-8 pt-6 pb-4 border-b border-border-primary flex-shrink-0">
         <BackButton onClick={onNavigateBack} />
         <h1 className="text-4xl font-light mt-1 mb-1 pt-8">

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, type RenderOptions } from '@testing-library/react';
-import { screen, waitFor } from '@testing-library/dom';
+import { screen, waitFor, within } from '@testing-library/dom';
+import userEvent from '@testing-library/user-event';
 import MarkdownContent from './MarkdownContent';
 import { IntlTestWrapper } from '../i18n/test-utils';
 
@@ -535,6 +536,47 @@ for the result.`;
       await waitFor(() => {
         expect(container).toHaveTextContent('x^2');
       });
+    });
+  });
+
+  describe('Unknown-protocol links confirm and fail in-app, never in a native box', () => {
+    it('asks before opening, and names the link in an app dialog when nothing can open it', async () => {
+      const user = userEvent.setup();
+      const electron = window.electron as unknown as Record<string, unknown>;
+      const nativeBox = vi.fn(() => Promise.resolve({ response: 0 }));
+      const openExternal = vi.fn(() => Promise.reject(new Error('no handler')));
+      const previous = {
+        showMessageBox: electron.showMessageBox,
+        openExternal: electron.openExternal,
+      };
+      Object.assign(electron, { showMessageBox: nativeBox, openExternal });
+
+      try {
+        renderWithIntl(<MarkdownContent content="[launch](myapp://open/item)" />);
+        await user.click(await screen.findByText('launch'));
+
+        let dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('Open myapp: link?')).toBeInTheDocument();
+        await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+        expect(openExternal).not.toHaveBeenCalled();
+
+        await user.click(screen.getByText('launch'));
+        dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: 'Open' }));
+        expect(openExternal).toHaveBeenCalledWith('myapp://open/item');
+
+        const failure = await screen.findByRole('dialog', { name: 'Failed to Open Link' });
+        expect(
+          within(failure).getByText('No application found to open this link.')
+        ).toBeInTheDocument();
+        expect(within(failure).getByText('myapp://open/item')).toBeInTheDocument();
+        await user.click(within(failure).getByRole('button', { name: 'OK' }));
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+        expect(nativeBox).not.toHaveBeenCalled();
+      } finally {
+        Object.assign(electron, previous);
+      }
     });
   });
 });

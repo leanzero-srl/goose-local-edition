@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "Aucun paramètre de configuration trouvé."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "« {name} » doit valoir true ou false, il n’a donc pas été enregistré."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "« {name} » doit être un nombre, il n’a donc pas été enregistré."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Réinitialiser les modifications"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "Enregistrement..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "Une liste ou un groupe de réglages, affiché en lecture seule pour qu’un enregistrement ici ne l’aplatisse jamais. Modifiez-le dans config.yaml."
   },
   "configSettings.title": {
     "defaultMessage": "Configuration"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Échec de l'enregistrement du fournisseur. Veuillez vérifier votre configuration et réessayer."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Impossible d’enregistrer le fournisseur : {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "Le fournisseur prend en charge les réponses en streaming"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "Actif"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Supprimer"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Supprimer ce modèle ? Vous pourrez le retélécharger plus tard."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "Supprimer {model} ?"
   },
   "localModelManager.download": {
     "defaultMessage": "Télécharger"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Notes qui t'attendent"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "OK"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Retour à la liste"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "Annuler"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Remplacer le contenu actuel par celui par défaut ? Vos modifications seront perdues."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Remplacer par la valeur par défaut ?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Voulez-vous vraiment réinitialiser toutes les invites à leurs valeurs par défaut ? Cette action est irréversible."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Réinitialiser tous les prompts ?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Voulez-vous vraiment réinitialiser cette invite à sa valeur par défaut ? Cette action est irréversible."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Réinitialiser ce prompt ?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "Vous avez des modifications non enregistrées. Voulez-vous vraiment revenir en arrière ?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Abandonner les modifications non enregistrées ?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Personnalisé"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Abandonner les modifications"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Modifier"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "Vous n'avez pas de clé API ?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Échec de la connexion : {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "Se connecter avec {providerName}"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "Voulez-vous vraiment supprimer « {title} » ?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Supprimer"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "Le fichier de la recette sera supprimé."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "Annuler"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Choisir un dossier"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Supprimer la planification « {id} » ? La recette sera conservée."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Supprimer la planification ?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Créer une planification"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "Actualisation..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Supprimer"
   },
   "schedulesView.resume": {
     "defaultMessage": "Reprendre"

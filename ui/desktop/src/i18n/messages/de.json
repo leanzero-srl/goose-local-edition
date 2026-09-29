@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "Keine Konfigurationseinstellungen gefunden."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "„{name}“ muss true oder false sein, daher wurde es nicht gespeichert."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "„{name}“ muss eine Zahl sein, daher wurde es nicht gespeichert."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Änderungen zurücksetzen"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "Wird gespeichert..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "Eine Liste oder Gruppe von Einstellungen, schreibgeschützt angezeigt, damit ein Speichern hier sie nie plattmacht. Bearbeite sie in config.yaml."
   },
   "configSettings.title": {
     "defaultMessage": "Konfiguration"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Anbieter konnte nicht gespeichert werden. Bitte überprüfen Sie Ihre Konfiguration und versuchen Sie es erneut."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Anbieter konnte nicht gespeichert werden: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "Anbieter unterstützt Streaming-Antworten"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "Aktiv"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Löschen"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Dieses Modell löschen? Sie können es später erneut herunterladen."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "{model} löschen?"
   },
   "localModelManager.download": {
     "defaultMessage": "Herunterladen"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Notizen, die auf dich warten"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "OK"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Der Server startet möglicherweise gerade oder ist vorübergehend nicht verfügbar."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Zurück zur Liste"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Aktuellen Inhalt durch den Standard ersetzen? Ihre Änderungen gehen verloren."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Durch den Standard ersetzen?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Möchten Sie wirklich alle Prompts auf ihre Standardwerte zurücksetzen? Dies kann nicht rückgängig gemacht werden."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Alle Prompts zurücksetzen?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Möchten Sie diesen Prompt wirklich auf seinen Standard zurücksetzen? Dies kann nicht rückgängig gemacht werden."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Diesen Prompt zurücksetzen?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "Sie haben nicht gespeicherte Änderungen. Möchten Sie wirklich zurückgehen?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Nicht gespeicherte Änderungen verwerfen?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Angepasst"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Änderungen verwerfen"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Bearbeiten"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "Sie haben keinen API-Schlüssel?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Anmeldung fehlgeschlagen: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "Anmelden mit {providerName}"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "Möchten Sie \"{title}\" wirklich löschen?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Löschen"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "Die Rezeptdatei wird gelöscht."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Ordner wählen"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Zeitplan \"{id}\" entfernen? Das Rezept bleibt erhalten."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Zeitplan entfernen?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Zeitplan erstellen"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "Wird aktualisiert..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Entfernen"
   },
   "schedulesView.resume": {
     "defaultMessage": "Fortsetzen"

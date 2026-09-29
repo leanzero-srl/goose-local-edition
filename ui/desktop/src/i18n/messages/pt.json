@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "Nenhuma definição de configuração encontrada."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "\"{name}\" deve ser true ou false, por isso não foi salvo."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "\"{name}\" deve ser um número, por isso não foi salvo."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Repor alterações"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "A guardar..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "Uma lista ou grupo de configurações, exibido somente leitura para que salvar aqui nunca o achate. Edite em config.yaml."
   },
   "configSettings.title": {
     "defaultMessage": "Configuração"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Falha ao guardar o fornecedor. Verifique a sua configuração e tente novamente."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Falha ao salvar o provedor: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "O provedor suporta respostas em streaming"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "Ativo"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Excluir"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Excluir este modelo? Você poderá baixá-lo novamente mais tarde."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "Excluir {model}?"
   },
   "localModelManager.download": {
     "defaultMessage": "Baixar"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Notas à tua espera"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "OK"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "O servidor pode estar a iniciar ou temporariamente indisponível."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Voltar à lista"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "Cancelar"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Substituir o conteúdo atual pelo predefinido? As suas alterações serão perdidas."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Substituir pelo padrão?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Tem a certeza de que pretende repor todos os prompts para as respetivas predefinições? Esta ação não pode ser anulada."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Redefinir todos os prompts?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Tem a certeza de que pretende repor este prompt para a predefinição? Esta ação não pode ser anulada."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Redefinir este prompt?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "Tem alterações por guardar. Tem a certeza de que pretende voltar?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Descartar alterações não salvas?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Personalizado"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Descartar alterações"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Editar"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "Não tem uma chave de API?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Falha no login: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "Iniciar sessão com {providerName}"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "Tem a certeza de que pretende eliminar \"{title}\"?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Excluir"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "O ficheiro da receita será eliminado."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "Cancelar"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Escolher pasta"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Remover o agendamento \"{id}\"? A receita será mantida."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Remover agendamento?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Criar agendamento"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "A atualizar..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Remover"
   },
   "schedulesView.resume": {
     "defaultMessage": "Retomar"
