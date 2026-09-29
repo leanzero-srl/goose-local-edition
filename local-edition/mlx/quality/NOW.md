@@ -39,13 +39,15 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 
 ## Agents (worktrees)
 - Q-495 (a turn dead mid-tool call) + Q-497 (the 1 s title-notification test wait): general-purpose agent, cutting.
+- Q-498 (SEVERE perf): two chats evict each other's split prompt cache, so each switch re-reads 200k cold (~11 min).
+  mlx-backend, measure first: KV bytes per token vs real headroom (rank 0 peaks 46.6 of 128 GB).
 
 ## #3x (running)
 - Turn 1 (the memory turn) never reached the chat (Q-492), so its memory checks at 33/39 are VOID for this run.
 - Turn 2 ran 8,349 s (152 tools): a determinism/timezone grind in the fake-log generator, ending 36/36 verified.
 - Past 181k/262k after turn 3, compaction is near.
-- 12:05Z: the main window moved to 20260928_19 (the stale needs-you chat), not by me. Maybe the owner. r1 holds
-  (VIEW_AWAY) and returns when the engine is idle. Hands off.
+- 12:05:47Z: the owner answered 20260928_19's folder card ("Yes"), and that chat is working now (so the stale
+  needs-you leftover is being handled by him). r1 holds (VIEW_AWAY). Each chat's calls evict the other's cache (Q-498).
 - r1 proves every send from #3y on (SEND_LOST + one resend).
 
 ## Next
@@ -65,7 +67,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-498.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-499.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
