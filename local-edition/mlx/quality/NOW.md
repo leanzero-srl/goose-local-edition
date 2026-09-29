@@ -40,8 +40,11 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   landing.
   - r1 now proves every send (SEND_LOST + one resend), from #3y on.
 - #3x: turn 1 (the memory turn) never reached the chat, so its memory checks at 33/39 are VOID for this run.
+  Turn 2 ran 8,349 s (152 tools): a determinism/timezone grind in the fake-log generator, ending 36/36 verified.
+  At 181k/262k after turn 3, compaction is near.
 - Q-494 DONE 1bea50263 (replayed 17,948 real responses: 4 count false-alarms gone, every real year catch kept),
   merged into merge-079b.
+- Q-496 (the live chat stops following its turn: 25k px above the bottom, no jump button): panel-surgeon, cutting.
 - Q-487..491: done, all in merge-079b.
 
 ## Next
@@ -61,7 +64,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-496.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-497.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
