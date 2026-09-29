@@ -28,7 +28,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   replay keeps #3x warm at 17.33 GB.
 - Q-499 DONE 6b4e8fcfb (branch worktree-agent-aec73c85bddb00a5e, KEEP): readiness requires the engine's own listener.
   The CI collision came from a sibling test's port.
-- Q-503 cutting ON 6b4e8fcfb: the sidecar probe/machine test flakes.
+- Q-503 DONE 43f3431e1 (branch q503, contains Q-499): two PRODUCT bugs. The memory reading was rate-limited stale
+  (host_statistics64 → sysctl live), and a refused load lock stayed held by a forked child (explicit unlock).
 - Q-500/501 DONE c900ee4ea (branch worktree-agent-adf3890d8dcce9f43, KEEP): running rows shared across windows, Stop
   from a second window, the banner reads the engine's request list. Full vitest 4,638 green.
 - Q-504 (a loop/schedule turn that no window sent cannot be stopped): general-purpose, cutting ON c900ee4ea.
