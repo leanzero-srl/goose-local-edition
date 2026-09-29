@@ -715,7 +715,7 @@ export default function BaseChat({
               {/* Q-301: the turn has produced nothing yet — say it works, and how far its prompt is read. */}
               {turnProducedNothing(chatState, messages) && <TurnWorkingRow sessionId={sessionId} />}
 
-              {/* Q-493: the prompt no turn is answering (the app closed mid-turn) — said, with a Resend. */}
+              {/* Q-493/Q-495: a turn no one runs any more (the app closed mid-turn) — said, with Resend or Continue. */}
               <UnansweredPromptLine
                 sessionId={sessionId}
                 sendBlocked={queueProcessingBlocked}

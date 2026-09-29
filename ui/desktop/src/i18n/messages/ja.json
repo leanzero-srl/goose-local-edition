@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose はこれに答える前に止まりました"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "続行"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "中断したところから続けてください。"
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose は途中で止まりました"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose は途中で止まりました — 作業中にアプリが閉じました"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "キャンセル"
   },

@@ -11255,11 +11255,23 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "The turn ended without a reply — the app may have closed while goose was working."
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Continue"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Continue where you left off."
+  },
   "unansweredPrompt.failed": {
     "defaultMessage": "The turn failed before a reply."
   },
   "unansweredPrompt.failedWithReason": {
     "defaultMessage": "The turn failed before a reply: {reason}"
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose stopped mid-way"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose stopped mid-way — the app closed while it was working"
   },
   "unansweredPrompt.resend": {
     "defaultMessage": "Resend"

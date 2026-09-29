@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose가 이 질문에 답하기 전에 멈췄습니다"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "계속"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "멈춘 곳부터 계속해 주세요."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose가 도중에 멈췄습니다"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose가 도중에 멈췄습니다 — 작업하는 동안 앱이 닫혔습니다"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "취소"
   },

@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "O goose parou antes de responder a isto"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Continuar"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Continue de onde parou."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "O goose parou no meio do caminho"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "O goose parou no meio do caminho — o app fechou enquanto ele trabalhava"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Cancelar"
   },

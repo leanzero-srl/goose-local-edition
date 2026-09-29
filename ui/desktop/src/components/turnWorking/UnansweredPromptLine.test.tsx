@@ -10,7 +10,7 @@ const acp = vi.hoisted(() => ({
 vi.mock('../../acp/needsYou', () => acp);
 
 import { UnansweredPromptLine } from './UnansweredPromptLine';
-import { unansweredPromptOf, type TurnLiveness } from './unansweredPrompt';
+import { stoppedTurnOf, type TurnLiveness } from './unansweredPrompt';
 import { acpChatSessionActions } from '../../acp/chatSessionStore';
 import {
   refreshSessionActivity,
@@ -240,7 +240,159 @@ describe('Q-493: a prompt no turn answers is said, with a Resend', () => {
   }, 30_000);
 });
 
-describe('unansweredPromptOf — every live fact must say no turn runs', () => {
+/**
+ * Q-495, receipt: the #3w note turn Q-490 killed at req-1130 was between tool calls — the last rows
+ * are the model's tool call and its result, with no reply after them. Reopened, the chat showed a
+ * Completed tool card and nothing else, as if goose were about to continue.
+ */
+function toolCall(id: string, callId: string, words = ''): Message {
+  return {
+    id,
+    role: 'assistant',
+    created: 1_790_000_020,
+    content: [
+      ...(words ? [{ type: 'text', text: words }] : []),
+      {
+        type: 'toolRequest',
+        id: callId,
+        toolCall: { status: 'success', value: { name: 'developer__shell', arguments: {} } },
+      },
+    ],
+    metadata: { userVisible: true, agentVisible: true },
+  } as unknown as Message;
+}
+
+function toolResult(id: string, callId: string): Message {
+  return {
+    id,
+    role: 'user',
+    created: 1_790_000_030,
+    content: [{ type: 'toolResponse', id: callId, toolResult: { status: 'success', value: [] } }],
+    metadata: { userVisible: true, agentVisible: true },
+  } as unknown as Message;
+}
+
+function reasoning(id: string): Message {
+  return {
+    id,
+    role: 'assistant',
+    created: 1_790_000_040,
+    content: [{ type: 'thinking', thinking: 'Now let me read the notes file…', signature: '' }],
+    metadata: { userVisible: true, agentVisible: true },
+  } as unknown as Message;
+}
+
+function stoppedNotice(id: string): Message {
+  return {
+    id,
+    role: 'assistant',
+    created: 1_790_000_050,
+    content: [
+      {
+        type: 'systemNotification',
+        notificationType: 'inlineMessage',
+        msg: 'You stopped this answer after 6 min',
+        data: { kind: 'turnStopped', elapsedMs: 372_000 },
+      },
+    ],
+    metadata: { userVisible: true, agentVisible: false },
+  } as unknown as Message;
+}
+
+const MIDWAY_ROWS = [
+  userText('m1', 'Deliver the note to the other chat.'),
+  toolCall('m2', 'call-1', 'Let me find that chat first.'),
+  toolResult('m3', 'call-1'),
+];
+
+describe('Q-495: a turn that died between tool calls is said, with a Continue', () => {
+  it('the receipt: "goose stopped mid-way", and Continue sends a short continue through the door', async () => {
+    seedSessionActivityForTests({});
+    loadChat(MIDWAY_ROWS);
+    const onResend = vi.fn();
+    const { container } = renderLine(onResend);
+
+    const line = await screen.findByTestId('unanswered-prompt');
+    expect(line).toHaveTextContent('goose stopped mid-way — the app closed while it was working');
+    expect(line).not.toHaveTextContent('goose stopped before answering this');
+    expect(screen.queryByRole('button', { name: 'Resend' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(onResend).toHaveBeenCalledWith({ msg: 'Continue where you left off.', images: [] });
+    assertStudioClean(container);
+  });
+
+  it('a chat that ends on the tool call itself (no result yet) is mid-way too', async () => {
+    seedSessionActivityForTests({});
+    loadChat(MIDWAY_ROWS.slice(0, 2));
+    renderLine();
+    const line = await screen.findByTestId('unanswered-prompt');
+    expect(line).toHaveTextContent('goose stopped mid-way');
+    expect(line).toHaveAttribute('data-kind', 'midway');
+  });
+
+  it('a turn starting hides it at once', async () => {
+    seedSessionActivityForTests({});
+    loadChat(MIDWAY_ROWS);
+    renderLine();
+    await screen.findByTestId('unanswered-prompt');
+    act(() => {
+      acpChatSessionActions.startPromptAttempt(SESSION, 'continue-1');
+    });
+    expect(screen.queryByTestId('unanswered-prompt')).toBeNull();
+  });
+
+  it('never while the engine lists the turn running (it is between tool calls, not dead)', async () => {
+    seedSessionActivityForTests({
+      running: [{ sessionId: SESSION, startedAt: '2026-09-28T18:04:00Z' }] as never,
+    });
+    loadChat(MIDWAY_ROWS);
+    renderLine();
+    await act(async () => {});
+    expect(screen.queryByTestId('unanswered-prompt')).toBeNull();
+  });
+
+  it('a failed turn says it failed and why — never "the app closed"', async () => {
+    seedSessionActivityForTests({
+      failed: [
+        { sessionId: SESSION, failedAt: '2026-09-28T18:05:00Z', reason: 'model unloaded' },
+      ] as never,
+    });
+    loadChat(MIDWAY_ROWS);
+    renderLine();
+    const line = await screen.findByTestId('unanswered-prompt');
+    expect(line).toHaveTextContent('goose stopped mid-way');
+    expect(line).toHaveTextContent('The turn failed before a reply: model unloaded');
+    expect(line).not.toHaveTextContent('the app closed');
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+  });
+
+  it('Continue is disabled while a stop is still being cancelled', async () => {
+    seedSessionActivityForTests({});
+    loadChat(MIDWAY_ROWS);
+    renderLine(vi.fn(), true);
+    await screen.findByTestId('unanswered-prompt');
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+  });
+
+  it('a turn the person stopped ends on its notice, and one that replied on words: nothing', async () => {
+    seedSessionActivityForTests({});
+    loadChat([...MIDWAY_ROWS, stoppedNotice('m4')]);
+    renderLine();
+    await act(async () => {});
+    expect(screen.queryByTestId('unanswered-prompt')).toBeNull();
+
+    act(() => {
+      acpChatSessionActions.setMessages(SESSION, [
+        ...MIDWAY_ROWS,
+        assistantText('m4', 'Delivered.'),
+      ]);
+    });
+    await act(async () => {});
+    expect(screen.queryByTestId('unanswered-prompt')).toBeNull();
+  });
+});
+
+describe('stoppedTurnOf — every live fact must say no turn runs', () => {
   const idle: TurnLiveness = {
     chatState: ChatState.Idle,
     activePromptAttemptId: null,
@@ -252,8 +404,12 @@ describe('unansweredPromptOf — every live fact must say no turn runs', () => {
   };
   const rows = RECEIPT_ROWS;
 
-  it('the receipt is unanswered', () => {
-    expect(unansweredPromptOf(rows, idle)?.id).toBe('m3');
+  it('the receipt is an unanswered prompt', () => {
+    expect(stoppedTurnOf(rows, idle)).toEqual({ kind: 'prompt', message: rows[2] });
+  });
+
+  it('the Q-495 receipt is mid-way, on the tool result', () => {
+    expect(stoppedTurnOf(MIDWAY_ROWS, idle)).toEqual({ kind: 'midway', message: MIDWAY_ROWS[2] });
   });
 
   it.each<[string, Partial<TurnLiveness>]>([
@@ -268,22 +424,42 @@ describe('unansweredPromptOf — every live fact must say no turn runs', () => {
     ['a failed submit (the banner says it)', { submitError: 'Submit error: closed' }],
     ['the engine not read yet', { engineRead: false }],
     ['the engine running it', { engineRunning: true }],
-  ])('%s: not unanswered', (_label, over) => {
-    expect(unansweredPromptOf(rows, { ...idle, ...over })).toBeNull();
+  ])('%s: neither unanswered nor mid-way', (_label, over) => {
+    expect(stoppedTurnOf(rows, { ...idle, ...over })).toBeNull();
+    expect(stoppedTurnOf(MIDWAY_ROWS, { ...idle, ...over })).toBeNull();
   });
 
-  it('a tool result riding a user message is no prompt', () => {
-    const toolResult: Message = {
-      id: 't1',
-      role: 'user',
-      created: 1,
-      content: [{ type: 'toolResponse', id: 'x', toolResult: { status: 'success', value: [] } }],
-      metadata: { userVisible: true, agentVisible: true },
-    } as unknown as Message;
-    expect(unansweredPromptOf([...rows.slice(0, 2), toolResult], idle)).toBeNull();
+  it('a tool result riding a user message is no prompt — it is a turn stopped mid-way', () => {
+    const result = toolResult('t1', 'x');
+    expect(stoppedTurnOf([...rows.slice(0, 2), result], idle)).toEqual({
+      kind: 'midway',
+      message: result,
+    });
+  });
+
+  it('a tool call as the last row is mid-way', () => {
+    const call = toolCall('t1', 'x', 'Checking the file.');
+    expect(stoppedTurnOf([rows[0], call], idle)).toEqual({ kind: 'midway', message: call });
+  });
+
+  it('reasoning after the tool result is no reply: still mid-way', () => {
+    expect(stoppedTurnOf([...MIDWAY_ROWS, reasoning('m4')], idle)).toEqual({
+      kind: 'midway',
+      message: MIDWAY_ROWS[2],
+    });
+  });
+
+  it('words after the tool result, or the stopped notice, end the turn: nothing', () => {
+    expect(stoppedTurnOf([...MIDWAY_ROWS, assistantText('m4', 'Done.')], idle)).toBeNull();
+    expect(stoppedTurnOf([...MIDWAY_ROWS, stoppedNotice('m4')], idle)).toBeNull();
+  });
+
+  it('a hidden last row says nothing', () => {
+    const hidden = { ...toolResult('t1', 'x'), metadata: { userVisible: false, agentVisible: true } };
+    expect(stoppedTurnOf([...rows.slice(0, 2), hidden], idle)).toBeNull();
   });
 
   it('an empty chat has nothing unanswered', () => {
-    expect(unansweredPromptOf([], idle)).toBeNull();
+    expect(stoppedTurnOf([], idle)).toBeNull();
   });
 });

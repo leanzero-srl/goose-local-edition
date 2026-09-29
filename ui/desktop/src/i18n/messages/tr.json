@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose buna yanıt vermeden durdu"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Devam et"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Kaldığın yerden devam et."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose yarı yolda durdu"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose yarı yolda durdu — çalışırken uygulama kapandı"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "İptal"
   },

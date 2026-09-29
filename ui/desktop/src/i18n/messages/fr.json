@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose s’est arrêté avant de répondre à ceci"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Continuer"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Reprends là où tu t’es arrêté."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose s’est arrêté en cours de route"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose s’est arrêté en cours de route — l’app s’est fermée pendant qu’il travaillait"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Annuler"
   },

@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose 在回答這則之前停止了"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "繼續"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "從剛才停下的地方繼續。"
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose 中途停止了"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose 中途停止了——應用程式在它工作時被關閉了"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "取消"
   },

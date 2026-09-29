@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose इसका उत्तर देने से पहले रुक गया"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "जारी रखें"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "जहाँ छोड़ा था वहीं से जारी रखें।"
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose बीच में ही रुक गया"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose बीच में ही रुक गया — काम करते समय ऐप बंद हो गया"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "रद्द करें"
   },

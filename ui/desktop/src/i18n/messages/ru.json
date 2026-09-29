@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose остановился, не ответив на это"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Продолжить"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Продолжи с того места, где остановился."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose остановился на полпути"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose остановился на полпути — приложение закрылось, пока он работал"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Отмена"
   },

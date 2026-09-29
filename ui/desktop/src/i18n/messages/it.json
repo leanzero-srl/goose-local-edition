@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose si è fermato prima di rispondere a questo"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Continua"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Continua da dove eri rimasto."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose si è fermato a metà"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose si è fermato a metà — l’app si è chiusa mentre lavorava"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Annulla"
   },

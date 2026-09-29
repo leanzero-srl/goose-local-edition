@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose đã dừng trước khi trả lời điều này"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Tiếp tục"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Hãy tiếp tục từ chỗ đã dừng."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose đã dừng giữa chừng"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose đã dừng giữa chừng — ứng dụng đã đóng khi goose đang làm việc"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Hủy"
   },
