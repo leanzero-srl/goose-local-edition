@@ -26,8 +26,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   mcp+cli 948+98, clippy, dev gates 11, the ACP schema, the Windows check). One timing flake:
   test_session_name_update_notification failed twice in-file and passed 3/3 alone → Q-497. Its UI part (61 load
   reds) is superseded by g079b.
-- g079b (/tmp/g079b.out): chained to start when g079 ends, relaunched at NORMAL priority (background priority starved
-  vitest). UI gate on merge-079b (968b6b7e3 = merge-487-488
+- g079b GREEN: UI gate on merge-079b 15af6c730. tsc 0, vitest 4589 passed / 1 skipped, eslint 0, i18n 3810. UI gate on merge-079b (968b6b7e3 = merge-487-488
   + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2 + Q-492/493 4b548171d + Q-494 1bea50263 → 15af6c730), no conflicts.
 - g079c (/tmp/g079c.out): chained after g079b. goose lib + acp_cross_note + recall_wording + clippy -p goose on
   merge-079b (Q-494's claim_check change).
