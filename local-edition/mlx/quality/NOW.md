@@ -21,7 +21,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   narrowed the privacy rule to this project (Q-506, model). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
 - E2E #3x STOPPED at turn 4 (E2E-RUNS): the Q-498 cache thrash with the owner's second chat; its memory turn was lost.
 
-## 3.0.80 — RELEASE BUILDING (~/goose-builds/release-3.0.80.log), main 8368ce115
+## 3.0.80 — DMG BUILT 18:4x (RELEASE-EXIT=0), main 8368ce115 — install after #3y ends
 - Carries:
   - Q-495, Q-497;
   - Q-498/502/508 (the split's cache across chats: say why + keep every chat's prefix + name chats by session id;
