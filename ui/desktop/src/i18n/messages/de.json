@@ -7595,6 +7595,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Anonyme Nutzungsdaten teilen"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Starte eine im Ordner dieses Fensters oder wähle eine Sitzung in der Seitenleiste."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "Keine Sitzung geöffnet"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "Sitzung in {folder} konnte nicht gestartet werden"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "Neue Sitzung in {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Erneut versuchen"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Sitzung in {folder} wird gestartet"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Standardwert"
   },

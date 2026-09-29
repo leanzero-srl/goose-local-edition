@@ -7595,6 +7595,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Partager des données d'utilisation anonymes"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Démarrez-en une dans le dossier de cette fenêtre, ou choisissez une session dans la barre latérale."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "Aucune session ouverte"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "Impossible de démarrer une session dans {folder}"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "Nouvelle session dans {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Réessayer"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Démarrage d’une session dans {folder}"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Valeur par défaut"
   },

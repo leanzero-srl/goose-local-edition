@@ -56,6 +56,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import { eventsGeneration, readEvents, readTail } from './utils/swarmIncrementalRead';
 import { resolveSwarmDir } from './utils/swarmRunDir';
+import { chatWindowRoute } from './utils/chatWindowRoute';
 import { SwarmWatchRegistry } from './utils/swarmWatch';
 import type { SwarmWatchTarget } from './utils/swarmWatch';
 import {
@@ -973,7 +974,8 @@ async function handleFileOpen(filePath: string) {
     addRecentDir(targetDir);
 
     // Create new window for the directory
-    const newWindow = await createChat(app, { dir: targetDir });
+    // Q-491: the folder opens as a new chat bound to it, as "New session here" does.
+    const newWindow = await createChat(app, { dir: targetDir, viewType: 'pair' });
 
     // Focus the new window
     if (newWindow) {
@@ -1623,39 +1625,14 @@ const createChat = async (
   const windowId = mainWindow.id;
   const url = getAppUrl();
 
-  let appPath = '/';
-  const routeMap: Record<string, string> = {
-    chat: '/',
-    pair: '/pair',
-    settings: '/settings',
-    sessions: '/sessions',
-    schedules: '/schedules',
-    recipes: '/recipes',
-    skills: '/skills',
-    permission: '/permission',
-    ConfigureProviders: '/configure-providers',
-  };
-
-  if (viewType) {
-    appPath = routeMap[viewType] || '/';
-  }
-  if (
-    appPath === '/' &&
-    (recipeDeeplink !== undefined || recipeId !== undefined || initialMessage)
-  ) {
-    appPath = '/pair';
-  }
-
-  let searchParams = new URLSearchParams();
-  if (resumeSessionId) {
-    searchParams.set('resumeSessionId', resumeSessionId);
-    if (appPath === '/') {
-      appPath = '/pair';
-    }
-  }
-
   // Goose's react app uses HashRouter, so the path + search params follow a #/
-  url.hash = `${appPath}?${searchParams.toString()}`;
+  url.hash = chatWindowRoute({
+    viewType,
+    resumeSessionId,
+    initialMessage,
+    recipeDeeplink,
+    recipeId,
+  });
   let formattedUrl = formatUrl(url);
   log.info('Opening URL: ', formattedUrl);
   mainWindow.once('ready-to-show', () => {

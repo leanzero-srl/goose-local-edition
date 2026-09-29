@@ -7619,6 +7619,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Share anonymous usage data"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Start one in this window’s folder, or pick a session from the sidebar."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "No session is open"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "Could not start a session in {folder}"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "New session in {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Try again"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Starting a session in {folder}"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Default Value"
   },

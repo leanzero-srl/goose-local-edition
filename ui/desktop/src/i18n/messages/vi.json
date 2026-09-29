@@ -7595,6 +7595,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Chia sẻ dữ liệu sử dụng ẩn danh"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Bắt đầu một phiên trong thư mục của cửa sổ này, hoặc chọn một phiên ở thanh bên."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "Chưa mở phiên nào"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "Không thể bắt đầu phiên trong {folder}"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "Phiên mới trong {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Đang bắt đầu phiên trong {folder}"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Giá trị mặc định"
   },

@@ -7595,6 +7595,24 @@
   "onboardingSuccess.shareUsageData": {
     "defaultMessage": "Kongsi data penggunaan tanpa nama"
   },
+  "pairRoute.emptyBody": {
+    "defaultMessage": "Mulakan satu dalam folder tetingkap ini, atau pilih sesi daripada bar sisi."
+  },
+  "pairRoute.emptyTitle": {
+    "defaultMessage": "Tiada sesi dibuka"
+  },
+  "pairRoute.failedTitle": {
+    "defaultMessage": "Tidak dapat memulakan sesi dalam {folder}"
+  },
+  "pairRoute.newSessionIn": {
+    "defaultMessage": "Sesi baharu dalam {folder}"
+  },
+  "pairRoute.retry": {
+    "defaultMessage": "Cuba lagi"
+  },
+  "pairRoute.startingTitle": {
+    "defaultMessage": "Memulakan sesi dalam {folder}"
+  },
   "parameterInput.defaultValue": {
     "defaultMessage": "Nilai Lalai"
   },

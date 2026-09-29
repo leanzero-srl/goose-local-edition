@@ -6,7 +6,8 @@
 import React from 'react';
 import { act, fireEvent, screen, render, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { AppInner, resolveSessionInitialMessage } from './App';
+import { AppInner } from './App';
+import { resolveSessionInitialMessage } from './components/PairRoute';
 import { IntlTestWrapper } from './i18n/test-utils';
 import { FeaturesProvider } from './contexts/FeaturesContext';
 import { EditionProvider } from './contexts/EditionContext';
