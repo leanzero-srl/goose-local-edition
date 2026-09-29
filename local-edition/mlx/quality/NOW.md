@@ -39,6 +39,36 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-511/512;
   - Q-505 (scan-secrets).
 
+## 3.0.82 — RELEASE BUILDING (~/goose-builds/release-3.0.82.log), main 7b90a1789
+- Carries Q-518 (skills cache), Q-519 (a stop keeps its partial words), Q-520 (the shell tool names survivors, and chat
+  close reaps them), Q-509 (Link Busy during schedules).
+- Gates: g082 + g082b + g082c green. Two starvation reds re-ran green alone → Q-521, cutting.
+- Install when #3z allows (it's at turn 4/41 on 3.0.81). Prove live: Q-519 by stopping a multi-tool turn both ways, Q-520
+  with a `( … &)` command.
+
+## 3.0.80 — INSTALLED on BOTH Macs 20:2x (split serving "OK."), main 8368ce115
+- Carries:
+  - Q-495, Q-497;
+  - Q-498/502/508 (the split's cache across chats: say why + keep every chat's prefix + name chats by session id;
+    NEW SPEC TAG, so BOTH Macs need 3.0.80);
+  - Q-499/503 (sidecar readiness, live memory reads, lock unlock);
+  - Q-500/501/504/507 (running state and Stop across windows, app-wide turns, schedules);
+  - Q-505 (secrets redacted);
+  - Q-466 (test races);
+  - Q-511/512 (nested components).
+- Gates:
+  - g080 full: UI 4647, goose lib 2195, every acp test, clippy, dev gates 11, schema, Windows;
+  - g080b: sidecar 427 + session_id 5 + clippy;
+  - g080c: tsc + 199 + eslint.
+- Install when #3y reaches a boundary we can stop at (it's at turn 10/41; the note turn 26 needs Q-488, already in
+  3.0.79). Plan: let #3y run to its end on 3.0.79, then install 3.0.80 and prove live.
+- Then prove live:
+  - Q-502/508 (two chats, then a compaction);
+  - Q-500/501/504/507;
+  - Q-493/495;
+  - Q-511/512;
+  - Q-505 (scan-secrets).
+
 ## 3.0.81 — INSTALLED 20:5x, main bd5913103
 - Carries Q-515 (the steer test), Q-516 (condensation after one cold miss), Q-517 (1.07 → 0.36 s before each provider
   call). Gates g081 + g081b green (goose lib 2197, agent 38, every acp_*, devgates 11, clippy).
@@ -67,7 +97,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-521.
+- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-522.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
