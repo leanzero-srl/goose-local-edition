@@ -12,6 +12,9 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - memory recall after compaction 33/39;
   - Q-513/506 model behaviour;
   - Q-517 turn starts.
+  - Turn 2 (40+ min): the model is debugging an infinite loop in its own generator. Two orphaned python pids (95770,
+    99202, PPID 1, ~99% CPU) came from its `( … &)` commands → Q-520 (the shell tool never names survivors). Leave
+    them during the run and reap them per pid at the end if still alive.
 - #3y ENDED at turn 25 on a harness crash (fixed); #3x stopped at turn 4.
 
 ## 3.0.80 — INSTALLED on BOTH Macs 20:2x (split serving "OK."), main 8368ce115
@@ -65,7 +68,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-520.
+- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-521.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.

@@ -133,21 +133,33 @@ pub fn standalone_runs() -> &'static RunRegistry {
 /// [`Self::release`] ends it on every path the turn returns through; the drop covers a turn whose
 /// future is dropped mid-await, so it never reads Running after it is gone.
 pub struct StandaloneRun {
+    registry: &'static RunRegistry,
     session_id: String,
     released: bool,
 }
 
 impl StandaloneRun {
     pub async fn register(session_id: &str, token: CancellationToken) -> Result<Self> {
-        standalone_runs().register(session_id, token, false).await?;
+        Self::register_in(standalone_runs(), session_id, token).await
+    }
+
+    /// [`Self::register`] into a registry other than the process's — a test's own, so a turn it
+    /// registers is not in the busy set of every other test in the binary (Q-509).
+    pub async fn register_in(
+        registry: &'static RunRegistry,
+        session_id: &str,
+        token: CancellationToken,
+    ) -> Result<Self> {
+        registry.register(session_id, token, false).await?;
         Ok(Self {
+            registry,
             session_id: session_id.to_string(),
             released: false,
         })
     }
 
     pub async fn release(mut self) {
-        standalone_runs().unregister(&self.session_id).await;
+        self.registry.unregister(&self.session_id).await;
         self.released = true;
     }
 }
@@ -158,10 +170,11 @@ impl Drop for StandaloneRun {
             return;
         }
         let session_id = std::mem::take(&mut self.session_id);
+        let registry = self.registry;
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
                 runtime.spawn(async move {
-                    standalone_runs().unregister(&session_id).await;
+                    registry.unregister(&session_id).await;
                 });
             }
             Err(error) => {
@@ -252,9 +265,20 @@ impl AgentManager {
 
     /// Every turn running in this process as `own`'s connection sees it: `own`'s, the
     /// process-wide manager's when [`Self::instance`] built it, and the standalone turns (the
-    /// scheduler's, Q-507). Earliest start wins.
+    /// scheduler's, Q-507). Earliest start wins. The one busy rule: every window's Running list
+    /// and the LeanZero Link node status (Q-509) read it.
     pub async fn process_busy_sessions(
         own: &Arc<Self>,
+    ) -> HashMap<String, chrono::DateTime<chrono::Utc>> {
+        Self::process_busy_sessions_with(own, standalone_runs()).await
+    }
+
+    /// [`Self::process_busy_sessions`] with the standalone turns read from `standalone` — the
+    /// process's [`standalone_runs`] in every production caller, a test's own registry where
+    /// the scheduler jobs other tests run in the same binary must not reach it (Q-509).
+    pub async fn process_busy_sessions_with(
+        own: &Arc<Self>,
+        standalone: &RunRegistry,
     ) -> HashMap<String, chrono::DateTime<chrono::Utc>> {
         let mut busy: HashMap<String, chrono::DateTime<chrono::Utc>> = HashMap::new();
         let mut runs = own.busy_sessions().await;
@@ -263,7 +287,7 @@ impl AgentManager {
                 runs.extend(shared.busy_sessions().await);
             }
         }
-        runs.extend(standalone_runs().busy_sessions().await);
+        runs.extend(standalone.busy_sessions().await);
         for (session_id, since) in runs {
             busy.entry(session_id)
                 .and_modify(|earliest| *earliest = (*earliest).min(since))
