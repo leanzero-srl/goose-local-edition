@@ -44,6 +44,12 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-511/512;
   - Q-505 (scan-secrets).
 
+## Toward 3.0.81 — merge-081 GATING (/tmp/g081.out), ~/goose-targets/wt-m081 @ 4bb4f18c6
+- Q-516 5783dd856: one cold miss no longer reopens tool-pair condensation (the chat's accumulated cache reads).
+- Q-515 b1e077f31: the steer test holds its provider, no clock (test-only).
+- Q-517 cutting: the unexplained 1.2–1.6 s before every provider call.
+- Q-514 (a side call evicting one chat's prefix) waits on 3.0.80 live.
+
 ## CI
 - Red 13:18Z: the RecipesView delete test hit its 5 s timeout (the vitest-under-load class). Q-466 is cutting
   (general-purpose): make the slow tests cheap, or give each its measured wait; never the global timeout.
@@ -56,7 +62,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-514.
+- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-518.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
