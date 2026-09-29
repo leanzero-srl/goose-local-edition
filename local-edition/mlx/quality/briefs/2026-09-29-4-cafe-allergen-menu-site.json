@@ -48,6 +48,22 @@
       "answer": "Oat milk, in both shops, since August. The buttermilk version is gone. Butter still comes on the side with every slice, and the soup and the salmon come with buttered soda bread too."
     },
     {
+      "match": "mince sulphite",
+      "answer": "The peel is in the mincemeat, so the mince pie has sulphites. Tag it."
+    },
+    {
+      "match": "mince sulphites",
+      "answer": "The peel is in the mincemeat, so the mince pie has sulphites. Tag it."
+    },
+    {
+      "match": "mincemeat sulphites",
+      "answer": "The peel is in the mincemeat, so the mince pie has sulphites. Tag it."
+    },
+    {
+      "match": "mincemeat sulphite",
+      "answer": "The peel is in the mincemeat, so the mince pie has sulphites. Tag it."
+    },
+    {
       "match": "mince",
       "answer": "€2.50 each, or four for €9.00. Same in both shops."
     },
