@@ -586,23 +586,26 @@ describe('RecipeFormFields', () => {
       // At minimum, we should have some SVG elements for the icons
       expect(warningIcons.length).toBeGreaterThan(0);
 
-      // Verify the unused parameters are marked with orange styling
+      // Verify the unused parameters are marked with the solid warn pill (white on warn-solid)
       const parameterContainers = document.querySelectorAll('.parameter-input');
       expect(parameterContainers.length).toBe(2);
 
-      // Check that each parameter container has an unused indicator with orange text
+      // Check that each parameter container has an unused indicator
       let unusedIndicatorsFound = 0;
       parameterContainers.forEach((container) => {
-        const unusedIndicator = container.querySelector('.text-orange-500');
+        const unusedIndicator = container.querySelector('[data-testid="parameter-unused"]');
         if (unusedIndicator) {
           unusedIndicatorsFound++;
         }
       });
       expect(unusedIndicatorsFound).toBe(2); // Both parameters should be marked as unused
 
-      // Verify the unused text appears with the warning styling
+      // Verify the unused text sits in the solid warning pill
       unusedTexts.forEach((unusedText) => {
-        expect(unusedText).toHaveClass('text-orange-500');
+        expect(unusedText.closest('[data-testid="parameter-unused"]')).toHaveClass(
+          'bg-lz-warn-solid',
+          'text-white'
+        );
       });
     });
 
@@ -667,14 +670,14 @@ describe('RecipeFormFields', () => {
         container.textContent?.includes('count')
       );
 
-      expect(usernameContainer?.querySelector('.text-orange-500')).not.toBeInTheDocument();
-      expect(countContainer?.querySelector('.text-orange-500')).not.toBeInTheDocument();
+      expect(usernameContainer?.querySelector('[data-testid="parameter-unused"]')).not.toBeInTheDocument();
+      expect(countContainer?.querySelector('[data-testid="parameter-unused"]')).not.toBeInTheDocument();
 
       // But unused_param should have the unused indicator
       const unusedContainer = Array.from(parameterContainers).find((container) =>
         container.textContent?.includes('unused_param')
       );
-      expect(unusedContainer?.querySelector('.text-orange-500')).toBeInTheDocument();
+      expect(unusedContainer?.querySelector('[data-testid="parameter-unused"]')).toBeInTheDocument();
     });
 
     it('shows delete button for parameters', async () => {

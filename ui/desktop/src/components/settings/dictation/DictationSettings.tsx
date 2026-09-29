@@ -230,7 +230,7 @@ export const DictationSettings = () => {
                   {intl.formatMessage(i18n.configureApiKey, { settingsPath: providerStatuses[provider].settingsPath, b: (chunks: React.ReactNode) => <b>{chunks}</b> })}
                 </p>
               ) : (
-                <p className="text-xs text-green-600">
+                <p className="text-xs text-green-700 dark:text-green-400">
                   {intl.formatMessage(i18n.configuredIn, { settingsPath: providerStatuses[provider].settingsPath })}
                 </p>
               )}
@@ -242,7 +242,7 @@ export const DictationSettings = () => {
                 <p className="text-xs text-text-secondary mt-[2px]">
                   {intl.formatMessage(i18n.requiredForTranscription)}
                   {providerStatuses[provider]?.configured && (
-                    <span className="text-green-600 ml-2">{intl.formatMessage(i18n.configured)}</span>
+                    <span className="text-green-700 dark:text-green-400 ml-2">{intl.formatMessage(i18n.configured)}</span>
                   )}
                 </p>
               </div>

@@ -219,7 +219,7 @@ export const TreeContextMenu: React.FC<{
             {item.danger && item.confirmLabel && confirming === item.key ? (
               <button
                 role="menuitem"
-                className={cx(itemBase, TONE_FILL.err, 'hover:bg-lz-err')}
+                className={cx(itemBase, TONE_FILL.err, 'hover:bg-lz-danger-hover')}
                 onClick={item.onClick}
               >
                 <Check className="size-3.5" strokeWidth={3} /> {item.confirmLabel}

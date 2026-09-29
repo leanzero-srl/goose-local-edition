@@ -191,7 +191,7 @@ export default function JsonSchemaForm({
           value={String(value ?? '')}
           onChange={(e) => handleChange(key, e.target.value)}
           disabled={disabled}
-          className="flex h-9 w-full rounded-md border focus:border-border-secondary hover:border-border-secondary bg-background-primary px-3 py-1 text-base transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3 md:text-sm"
+          className="flex h-9 w-full rounded-md border focus:border-border-secondary hover:border-border-secondary bg-background-primary px-3 py-1 text-base transition-colors focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3 md:text-sm"
         >
           {!isRequired && <option value="">{intl.formatMessage(i18n.selectPlaceholder)}</option>}
           {prop.enum.map((option) => (

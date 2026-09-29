@@ -247,7 +247,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
               }}
               disabled={alert.compactButtonDisabled}
               className={cn(
-                'flex items-center justify-center gap-1.5 text-[11px] outline-none',
+                'flex items-center justify-center gap-1.5 text-[11px]',
                 alert.compactButtonDisabled
                   ? 'line-through cursor-not-allowed'
                   : 'hover:underline cursor-pointer'
@@ -265,17 +265,17 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-[11px] break-words whitespace-pre-line">{alert.message}</span>
               {alert.action && (
-                <a
-                  role="button"
+                <button
+                  type="button"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     alert.action?.onClick();
                   }}
-                  className="text-[11px] text-left underline hover:decoration-2 cursor-pointer outline-none"
+                  className="text-[11px] text-left underline hover:decoration-2 cursor-pointer"
                 >
                   {alert.action.text}
-                </a>
+                </button>
               )}
             </div>
           </div>

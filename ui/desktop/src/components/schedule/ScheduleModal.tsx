@@ -371,10 +371,10 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                           <p className="text-xs text-white font-medium">
                             ✓ {intl.formatMessage(i18n.recipeParsed)}
                           </p>
-                          <p className="text-xs text-green-600 dark:text-green-400">
+                          <p className="text-xs text-white">
                             {intl.formatMessage(i18n.recipeTitle, { title: parsedRecipe.title })}
                           </p>
-                          <p className="text-xs text-green-600 dark:text-green-400">
+                          <p className="text-xs text-white">
                             {intl.formatMessage(i18n.recipeDescription, {
                               description: parsedRecipe.description,
                             })}
@@ -433,7 +433,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
             variant="ghost"
             onClick={onClose}
             disabled={isLoadingExternally}
-            className="flex-1 text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800"
+            className="flex-1 text-text-primary hover:bg-background-tertiary"
           >
             {intl.formatMessage(i18n.cancel)}
           </Button>

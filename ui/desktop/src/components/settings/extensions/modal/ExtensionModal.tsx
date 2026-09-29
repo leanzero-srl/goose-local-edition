@@ -409,7 +409,7 @@ export default function ExtensionModal({
               {formData.installation_notes && (
                 <div className="bg-background-secondary border border-border-primary rounded-lg p-4">
                   <div className="flex items-start gap-2">
-                    <Info className="h-5 w-5 text-blue-400 shrink-0 mt-0.5" />
+                    <Info className="h-5 w-5 text-lz-accent shrink-0 mt-0.5" />
                     <div>
                       <h4 className="text-sm font-medium text-text-primary mb-1">
                         {intl.formatMessage(i18n.installationNotes)}

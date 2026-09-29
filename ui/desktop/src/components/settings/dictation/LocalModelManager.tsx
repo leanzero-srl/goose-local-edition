@@ -228,7 +228,7 @@ export const LocalModelManager = () => {
                       </span>
                     )}
                     {isSelected && (
-                      <span className="text-xs bg-background-inverse text-white px-2 py-0.5 rounded">
+                      <span className="text-xs bg-background-inverse text-text-inverse px-2 py-0.5 rounded">
                         {intl.formatMessage(i18n.active)}
                       </span>
                     )}

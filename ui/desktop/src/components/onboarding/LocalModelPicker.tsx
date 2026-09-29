@@ -309,7 +309,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
               <div>
                 <button
                   onClick={() => setShowAllModels(!showAllModels)}
-                  className="text-sm text-blue-500 hover:text-blue-400 transition-colors flex items-center gap-1"
+                  className="text-sm text-lz-accent hover:underline transition-colors flex items-center gap-1"
                 >
                   {showAllModels
                     ? intl.formatMessage(i18n.hideOtherSizes)

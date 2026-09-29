@@ -142,11 +142,12 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
             </span>
             {isUnused && (
               <div
-                className="flex items-center gap-1"
+                data-testid="parameter-unused"
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 bg-lz-warn-solid text-white"
                 title={intl.formatMessage(i18n.unusedWarningTitle)}
               >
-                <AlertTriangle className="w-4 h-4 text-orange-500" />
-                <span className="text-xs text-orange-500 font-normal">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-xs font-medium">
                   {intl.formatMessage(i18n.unused)}
                 </span>
               </div>
