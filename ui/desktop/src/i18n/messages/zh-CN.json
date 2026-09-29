@@ -377,6 +377,9 @@
   "baseChat.goHome": {
     "defaultMessage": "回到首页"
   },
+  "baseChat.jumpToLatest": {
+    "defaultMessage": "跳到最新"
+  },
   "baseChat.promptFailed": {
     "defaultMessage": "That message did not go through"
   },

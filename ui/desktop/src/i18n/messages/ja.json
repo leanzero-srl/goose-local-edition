@@ -377,6 +377,9 @@
   "baseChat.goHome": {
     "defaultMessage": "ホームへ"
   },
+  "baseChat.jumpToLatest": {
+    "defaultMessage": "最新へ移動"
+  },
   "baseChat.promptFailed": {
     "defaultMessage": "That message did not go through"
   },

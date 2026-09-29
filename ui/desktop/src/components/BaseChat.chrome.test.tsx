@@ -1,6 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { SessionBrand, SessionLoadErrorPanel, SubmitErrorBanner } from './BaseChat';
+import {
+  JumpToLatestButton,
+  SessionBrand,
+  SessionLoadErrorPanel,
+  SubmitErrorBanner,
+} from './BaseChat';
 import { IntlTestWrapper } from '../i18n/test-utils';
 import { LEANZERO_WEBSITE_URL } from '../branding';
 import { allClasses, assertStudioClean } from './lz/assertStudioClean';
@@ -132,6 +137,7 @@ describe('BaseChat chrome — notifications', () => {
         <SessionBrand isLocal={false} />
         <SubmitErrorBanner error="e" onDismiss={() => {}} />
         <SessionLoadErrorPanel error="e" onGoHome={() => {}} />
+        <JumpToLatestButton onJump={() => {}} />
       </>
     );
     const classes = allClasses(container).filter(
@@ -140,4 +146,27 @@ describe('BaseChat chrome — notifications', () => {
     expect(classes.length).toBeGreaterThan(20);
     expect(await missingUtilities(classes)).toEqual([]);
   }, 30_000);
+});
+
+describe('BaseChat chrome — Jump to latest (Q-496)', () => {
+  it('a solid outlined button over the transcript that takes the chat back to its live edge', async () => {
+    const onJump = vi.fn();
+    const { container } = wrap(<JumpToLatestButton onJump={onJump} />);
+    const button = screen.getByRole('button', { name: 'Jump to latest' });
+    expect(button.getAttribute('data-testid')).toBe('jump-to-latest');
+    expect(button.getAttribute('data-variant')).toBe('secondary');
+    // Solid: the surface fill and the strong outline, lifted by the overlay shadow — no tint, no rail.
+    expect(button.className).toContain('bg-lz-surface');
+    expect(button.className).toContain('border-lz-border-strong');
+    expect(button.className).toContain('shadow-lz-overlay');
+    expect(button.className).not.toMatch(/border-l-|bg-opacity|\/\d0\b/);
+    expect(button.className).toContain('pointer-events-auto');
+    // The overlay row lets clicks through to the transcript everywhere but the button.
+    const row = container.firstElementChild as HTMLElement;
+    expect(row.className).toContain('pointer-events-none');
+    expect(row.className).toContain('h-0');
+    fireEvent.click(button);
+    await waitFor(() => expect(onJump).toHaveBeenCalledTimes(1));
+    assertStudioClean(container);
+  });
 });

@@ -377,6 +377,9 @@
   "baseChat.goHome": {
     "defaultMessage": "Về trang chủ"
   },
+  "baseChat.jumpToLatest": {
+    "defaultMessage": "Chuyển đến mới nhất"
+  },
   "baseChat.promptFailed": {
     "defaultMessage": "That message did not go through"
   },

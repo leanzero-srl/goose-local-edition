@@ -9,6 +9,7 @@ import type { MessageDescriptor } from 'react-intl';
 import { currentLocale } from '../../i18n';
 import type { Message } from '../../types/message';
 import { formatClockTime } from '../../utils/timeUtils';
+import { revealAsUser } from '../../utils/userScroll';
 import type { Tone } from '../lz';
 import { loopWords as w } from './loopWords';
 import {
@@ -389,7 +390,7 @@ export function tickMarkerDomId(messageId: string): string {
 
 export function revealTickMarker(messageId: string): boolean {
   const marker = document.getElementById(tickMarkerDomId(messageId));
-  marker?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  revealAsUser(marker, { block: 'center', behavior: 'smooth' });
   return !!marker;
 }
 
