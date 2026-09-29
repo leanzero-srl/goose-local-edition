@@ -252,10 +252,8 @@
   --color-secondary-local: #0891b2;
   --color-tertiary-local: #7c3aed;
 
-  /* Route the accent into real chrome: focus rings turn LeanZero blue when Local Edition is active. The
-     theme applies --color-ring-primary as an INLINE style on <html>, so !important is required here. */
-  --color-ring-primary: #1d4ed8 !important;
-  --color-ring: #1d4ed8 !important;
+  /* The focus ring is the LeanZero blue in EVERY edition since Q-334: theme-tokens.ts owns
+     --color-ring-primary (#1d4ed8 / #60a5fa), so no edition override is needed here. */
 
   /* Node-identity formation ramp — 6 solid, distinct hues, disjoint enough that two adjacent node chips
      are never confusable. Drawn from the LeanZero hue family (blue / cyan / violet / orange / pink / green). */
@@ -298,8 +296,6 @@
   --color-action-solid: #1d4ed8;
   --color-secondary-local: #06b6d4;
   --color-tertiary-local: #a855f7;
-  --color-ring-primary: #3b82f6 !important;
-  --color-ring: #3b82f6 !important;
 
   --color-node-1: #3b82f6;
   --color-node-2: #06b6d4;

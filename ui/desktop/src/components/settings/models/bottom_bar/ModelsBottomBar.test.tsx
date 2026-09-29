@@ -532,7 +532,7 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     expect(screen.queryByText('Change Provider')).toBeNull();
   });
 
-  it('the split names both Macs; another window’s run says so', () => {
+  it('the split names both Macs; another goose’s run says so (Q-269)', () => {
     renderChip({
       ...STUDIO,
       engine: 'split',
@@ -543,7 +543,9 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     expect(screen.getByTestId('model-chip-served')).toHaveTextContent(
       'Qwen3.8-27B-Atlassian-Q8-mlx · Mihai Macbook and Work’s Mac Studio'
     );
-    expect(screen.getByTestId('model-menu-served')).toHaveTextContent('run by another window');
+    expect(screen.getByTestId('model-menu-served')).toHaveTextContent('run by another goose');
+    // Q-269: the other owner is another goose process, never a window of this app.
+    expect(screen.getByTestId('model-menu-served').textContent).not.toMatch(/window/i);
   });
 
   it('Q-71: a split whose window was sized from free memory says so, and how to grow it', () => {

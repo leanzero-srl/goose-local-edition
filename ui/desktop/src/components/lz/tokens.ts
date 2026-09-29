@@ -254,3 +254,9 @@ export const TNUM = 'tnum';
 /** Disabled is a SOLID neutral (surface-2 fill, ink-3 text), never an opacity. */
 export const DISABLED =
   'disabled:pointer-events-none disabled:border-lz-border disabled:bg-lz-surface-2 disabled:text-lz-ink-3';
+
+/**
+ * DISABLED for an element disabled by a PROP rather than the `disabled` attribute (a react-select
+ * option, a click-to-edit div): the same solid fill and ink, applied unconditionally by the caller.
+ */
+export const DISABLED_NOW = 'cursor-not-allowed border-lz-border bg-lz-surface-2 text-lz-ink-3';

@@ -748,7 +748,7 @@ fn distributed_target(
     match record {
         OwnerRecord::Other(engine) => Ok(DistributedTarget::At {
             diagnostic: format!(
-                "the distributed MLX engine of another window (goosed pid {}) owns this Mac",
+                "the distributed MLX engine of another goose (pid {}) owns this Mac",
                 engine.pid
             ),
             base: engine.base_url,
@@ -4928,7 +4928,7 @@ devices:
             DistributedTarget::At { base, diagnostic } => {
                 assert_eq!(base, "http://127.0.0.1:8191");
                 assert!(
-                    diagnostic.contains("another window (goosed pid 4242)"),
+                    diagnostic.contains("another goose (pid 4242)"),
                     "{diagnostic}"
                 );
             }

@@ -1035,7 +1035,7 @@ export default function McpAppRenderer({
                 'linear-gradient(90deg, transparent 0%, rgba(128,128,128,0.08) 40%, rgba(128,128,128,0.12) 50%, rgba(128,128,128,0.08) 60%, transparent 100%)',
             }}
           />
-          <FlyingBird className="relative z-10 scale-200 opacity-30" cycleInterval={120} />
+          <FlyingBird className="relative z-10 scale-200 text-text-secondary" cycleInterval={120} />
         </div>
       );
     }

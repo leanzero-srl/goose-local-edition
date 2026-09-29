@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactSelect from 'react-select';
+import { DISABLED_NOW } from '../lz/tokens';
 
 export const Select = (props: React.ComponentProps<typeof ReactSelect>) => {
   return (
@@ -21,7 +22,7 @@ export const Select = (props: React.ComponentProps<typeof ReactSelect>) => {
           let classes = 'py-2 px-4 text-sm cursor-pointer';
 
           if (isDisabled) {
-            classes += ' opacity-50 cursor-not-allowed pointer-events-none';
+            classes += ` ${DISABLED_NOW} pointer-events-none`;
           } else if (isSelected) {
             classes += ' bg-background-inverse text-text-inverse pointer-events-auto';
           } else if (isFocused) {

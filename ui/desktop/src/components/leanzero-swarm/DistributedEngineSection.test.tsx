@@ -1052,9 +1052,11 @@ describe('DistributedEngineSection — macOS local network privacy', () => {
   });
 });
 
-describe('DistributedEngineSection — a run another window supervises', () => {
-  // 9d45fa088: this window's goosed supervises nothing; the record another window's goosed
-  // published is `status.owner`, and distributedStart refuses `ownedByAnotherWindow`.
+describe('DistributedEngineSection — a run another goose process supervises', () => {
+  // 9d45fa088: this goosed supervises nothing; the record another goosed published is
+  // `status.owner`, and distributedStart refuses `ownedByAnotherWindow`. Since Q-257 every window
+  // of the app shares ONE goosed, so that other goosed is a CLI `goose serve` or another app build
+  // — never another window (Q-269): the card names the goose and its pid, and no window.
   const OTHER = {
     ...STOPPED_WITH_CONFIG,
     owner: {
@@ -1070,15 +1072,17 @@ describe('DistributedEngineSection — a run another window supervises', () => {
 
   it('is read-only here: what it serves, where, and Start/Stop disabled with the reason', async () => {
     const { container } = section({ status: { ...OTHER, state: 'failed' } });
-    const run = screen.getByTestId('mlx-dist-other-window');
+    const run = screen.getByTestId('mlx-dist-other-goose');
     expect(run).toHaveAttribute('data-state', 'answering');
-    expect(run).toHaveTextContent('Running in another window');
+    expect(run).toHaveTextContent('Started by another goose');
     expect(run).toHaveTextContent(
       'mihai-qwen3.8-27b-atlassian-q8-mlx on Mihai Macbook · Work’s Mac Studio · JACCL · answering'
     );
     expect(run).toHaveTextContent(
-      'Read-only here: Start and Stop belong to the window that started it (goosed pid 51234).'
+      'Read-only here: goose pid 51234 runs it — a goose serve in a terminal, or another goose app. Start and Stop it there.'
     );
+    // Q-269: no window to go looking for — the owner is another goose process.
+    expect(run.textContent).not.toMatch(/window/i);
     expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
     await expectDesigned(container);
@@ -1095,30 +1099,31 @@ describe('DistributedEngineSection — a run another window supervises', () => {
         },
       },
     });
-    expect(screen.getByTestId('mlx-dist-other-window')).toHaveTextContent(
+    expect(screen.getByTestId('mlx-dist-other-goose')).toHaveTextContent(
       'JACCL · not answering — GET http://127.0.0.1:8191/v1/models failed'
     );
   });
 
   it('a stale record owns nothing: Start stays available', () => {
     section({ status: { ...OTHER, owner: { ...OTHER.owner, state: 'stale' } } });
-    expect(screen.queryByTestId('mlx-dist-other-window')).toBeNull();
+    expect(screen.queryByTestId('mlx-dist-other-goose')).toBeNull();
     expect(screen.getByRole('button', { name: 'Start' })).toBeEnabled();
   });
 
-  it('a start that raced the other window is named as such, not as a generic refusal', async () => {
+  it('a start that raced the other goose is named as such, not as a generic refusal', async () => {
     mockStart.mockResolvedValue({
       started: false,
       refusal: {
         code: 'ownedByAnotherWindow',
         message:
-          "the distributed MLX engine serving 'mihai-qwen3.8-27b-atlassian-q8-mlx' at http://127.0.0.1:8191 is owned by another window (goosed pid 51234); start and stop it from that window",
+          "the distributed MLX engine serving 'mihai-qwen3.8-27b-atlassian-q8-mlx' at http://127.0.0.1:8191 was started by another goose (pid 51234) — a goose serve in a terminal, or another goose app; start and stop it there",
       },
     });
     section({ status: STOPPED_WITH_CONFIG });
     await userEvent.click(screen.getByRole('button', { name: 'Start' }));
     const refusal = await screen.findByTestId('mlx-dist-refusal');
-    expect(refusal).toHaveTextContent('Running in another window');
+    expect(refusal).toHaveTextContent('Started by another goose');
+    expect(refusal.textContent).not.toMatch(/window/i);
     expect(refusal).not.toHaveTextContent('Start refused');
     expect(refusal).toHaveAttribute('data-tone', 'warn');
   });
