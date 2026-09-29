@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Cambio in corso"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "Sessione senza titolo"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} in attesa"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "In corso ora"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "Sessione senza titolo"
   },
   "sessionIndicators.error": {
     "defaultMessage": "La sessione ha riscontrato un errore"

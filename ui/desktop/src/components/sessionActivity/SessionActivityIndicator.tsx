@@ -9,11 +9,10 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { FOCUS, MOTION, PHASE_FILL, RADIUS, TNUM, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
-import { displaySessionListName } from '../../sessions';
 import { useNow } from './ActivityPills';
 import { noteWords } from '../notes/noteWords';
 import { projectLabel, useProjectNames } from '../../utils/projectNames';
-import { needsYouCountLabel } from './needsYouWords';
+import { activeRowDetail, activeRowName, needsYouCountLabel, questionGist } from './needsYouWords';
 import {
   activeSessions,
   elapsedLabel,
@@ -29,7 +28,6 @@ const i18n = defineMessages({
   },
   needsYouMenu: { id: 'sessionActivityIndicator.needsYouMenu', defaultMessage: 'Waiting for you' },
   runningMenu: { id: 'sessionActivityIndicator.runningMenu', defaultMessage: 'Running now' },
-  unnamed: { id: 'sessionActivityIndicator.unnamed', defaultMessage: 'Untitled session' },
   runningFor: { id: 'sessionActivityIndicator.runningFor', defaultMessage: 'running · {elapsed}' },
 });
 
@@ -58,7 +56,13 @@ interface GroupProps {
   fill: string;
   icon: React.ReactNode;
   sessions: ActiveSession[];
-  detail: (session: ActiveSession) => string;
+  /** The item's state line, given the chat's folder as the list shows it ('' when none). */
+  detail: (session: ActiveSession, project: string) => string;
+  /**
+   * What the chat asks, whole: the item shows its gist on one line and keeps it all as the
+   * line's tooltip (Q-489) — never the paragraph itself in the list.
+   */
+  question?: (session: ActiveSession) => string | undefined;
 }
 
 /** One solid pill per state. One session: the pill jumps straight there. More: it lists them. */
@@ -71,12 +75,14 @@ function ActivityGroup({
   icon,
   sessions,
   detail,
+  question,
 }: GroupProps) {
   const intl = useIntl();
   const navigate = useNavigate();
   const projectName = useProjectNames(sessions.map((s) => s.workingDir).filter(Boolean));
-  const nameOf = (s: ActiveSession) =>
-    s.sessionName ? displaySessionListName(s.sessionName) : intl.formatMessage(i18n.unnamed);
+  const nameOf = (s: ActiveSession) => activeRowName(intl, s.sessionName);
+  const lineOf = (s: ActiveSession) =>
+    detail(s, s.workingDir ? projectLabel(projectName(s.workingDir)) : '');
 
   const face = (
     <>
@@ -96,7 +102,7 @@ function ActivityGroup({
       <button
         type="button"
         data-testid={testId}
-        title={`${nameOf(only)} — ${detail(only)}`}
+        title={[`${nameOf(only)} — ${lineOf(only)}`, question?.(only)].filter(Boolean).join('\n')}
         aria-label={label}
         onClick={() => navigate(sessionHref(only.sessionId))}
         className={cx(PILL_BUTTON, fill)}
@@ -119,23 +125,40 @@ function ActivityGroup({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-80" data-testid={`${testId}-menu`}>
         <DropdownMenuLabel className={TYPE.zone}>{menuLabel}</DropdownMenuLabel>
-        {sessions.map((s) => (
-          <DropdownMenuItem
-            key={s.sessionId}
-            data-testid={`${testId}-item`}
-            onSelect={() => navigate(sessionHref(s.sessionId))}
-            className="flex flex-col items-start gap-0.5"
-          >
-            <span className={cx('w-full truncate text-lz-body text-lz-ink', WEIGHT.semibold)}>
-              {nameOf(s)}
-            </span>
-            <span className="w-full truncate text-lz-meta text-lz-ink-2">
-              {[s.workingDir ? projectLabel(projectName(s.workingDir)) : '', detail(s)]
-                .filter(Boolean)
-                .join(' · ')}
-            </span>
-          </DropdownMenuItem>
-        ))}
+        {sessions.map((s) => {
+          const asked = question?.(s);
+          const gist = asked ? questionGist(asked) : '';
+          return (
+            <DropdownMenuItem
+              key={s.sessionId}
+              data-testid={`${testId}-item`}
+              onSelect={() => navigate(sessionHref(s.sessionId))}
+              className="flex min-w-0 flex-col items-start gap-0.5"
+            >
+              <span
+                data-testid={`${testId}-item-name`}
+                className={cx('w-full truncate text-lz-body text-lz-ink', WEIGHT.semibold)}
+              >
+                {nameOf(s)}
+              </span>
+              <span
+                data-testid={`${testId}-item-detail`}
+                className="w-full truncate text-lz-meta text-lz-ink-2"
+              >
+                {lineOf(s)}
+              </span>
+              {gist && (
+                <span
+                  data-testid={`${testId}-item-question`}
+                  title={asked}
+                  className="w-full truncate text-lz-meta text-lz-ink"
+                >
+                  {gist}
+                </span>
+              )}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -167,7 +190,8 @@ export default function SessionActivityIndicator() {
           fill={TONE_FILL.warn}
           icon={<Hand aria-hidden />}
           sessions={waiting}
-          detail={(s) => s.headline ?? ''}
+          detail={(s, project) => activeRowDetail(intl, s, project)}
+          question={(s) => s.headline}
         />
       )}
       {running.length > 0 && (
@@ -179,10 +203,17 @@ export default function SessionActivityIndicator() {
           fill={PHASE_FILL.writing}
           icon={<span aria-hidden className="size-2 animate-lz-live rounded-full bg-current" />}
           sessions={running}
-          detail={(s) =>
-            s.runningSince
-              ? intl.formatMessage(i18n.runningFor, { elapsed: elapsedLabel(s.runningSince, now) })
-              : ''
+          detail={(s, project) =>
+            [
+              project,
+              s.runningSince
+                ? intl.formatMessage(i18n.runningFor, {
+                    elapsed: elapsedLabel(s.runningSince, now),
+                  })
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
           }
         />
       )}
@@ -195,8 +226,13 @@ export default function SessionActivityIndicator() {
           fill={TONE_FILL.secondary}
           icon={<Mail aria-hidden />}
           sessions={noted}
-          detail={(s) =>
-            s.noteFrom ? intl.formatMessage(noteWords.waitingFrom, { from: s.noteFrom }) : ''
+          detail={(s, project) =>
+            [
+              project,
+              s.noteFrom ? intl.formatMessage(noteWords.waitingFrom, { from: s.noteFrom }) : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
           }
         />
       )}

@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Değiştiriliyor"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "Adsız oturum"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} bekliyor"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "Şu an çalışanlar"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "Başlıksız oturum"
   },
   "sessionIndicators.error": {
     "defaultMessage": "Oturum bir hatayla karşılaştı"

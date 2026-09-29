@@ -385,7 +385,7 @@ export interface ActiveSession {
   workingDir: string;
   runningSince?: string;
   needsYou: number;
-  /** The first open question, or a live elicitation's message. */
+  /** The oldest open question (the one `waitingSince` dates), else a live elicitation's message. */
   headline?: string;
   /** When the oldest open question was asked (a live elicitation carries no time). */
   waitingSince?: string;
@@ -411,11 +411,14 @@ export function activeSessions(state: SessionActivitySnapshot): ActiveSession[] 
     const r = row(item.sessionId, item.sessionName, item.workingDir);
     r.needsYou += 1;
     r.headline ??= item.question;
+    // The headline is the question "waiting since" dates (Q-489): the top bar's menu shows the
+    // two on one item, so they name the same question.
     if (
       Number.isFinite(Date.parse(item.createdAt)) &&
       (!r.waitingSince || Date.parse(item.createdAt) < Date.parse(r.waitingSince))
     ) {
       r.waitingSince = item.createdAt;
+      r.headline = item.question;
     }
   }
   for (const request of state.elicitations) {

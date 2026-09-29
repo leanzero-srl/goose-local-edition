@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Wechselt"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "Unbenannte Sitzung"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} wartend"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "Läuft gerade"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "Unbenannte Sitzung"
   },
   "sessionIndicators.error": {
     "defaultMessage": "In der Sitzung ist ein Fehler aufgetreten"

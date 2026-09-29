@@ -1,51 +1,14 @@
-import type { IntlShape } from 'react-intl';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { defineMessages, useIntl } from '../../i18n';
 import { FOCUS, MOTION, RADIUS, SURFACE, SectionHeader, TYPE, WEIGHT, cx } from '../lz';
-import { displaySessionListName } from '../../sessions';
 import { NeedsYouPill, NotePill, RunningPill } from './ActivityPills';
-import { noteWords } from '../notes/noteWords';
-import {
-  activeSessions,
-  sessionHref,
-  useSessionActivity,
-  type ActiveSession,
-} from './sessionActivityStore';
+import { activeSessions, sessionHref, useSessionActivity } from './sessionActivityStore';
+import { activeRowDetail, activeRowName } from './needsYouWords';
 import { projectLabel, useProjectNames } from '../../utils/projectNames';
 
 const i18n = defineMessages({
   title: { id: 'activeNowSection.title', defaultMessage: 'Active now' },
-  unnamed: { id: 'activeNowSection.unnamed', defaultMessage: 'Untitled session' },
-  startedAt: { id: 'activeNowSection.startedAt', defaultMessage: 'started {time}' },
-  waitingSince: {
-    id: 'activeNowSection.waitingSince',
-    defaultMessage: 'waiting for your answer since {time}',
-  },
-  waiting: { id: 'activeNowSection.waiting', defaultMessage: 'waiting for your answer' },
 });
-
-const clock = (intl: IntlShape, iso: string) =>
-  intl.formatTime(Date.parse(iso), { hour: '2-digit', minute: '2-digit' });
-
-/**
- * THE one derivation of an Active now row's second line (Q-484): the folder, then what the chat is
- * doing — waiting for the person's answer (since when the oldest question was asked) or running a
- * turn (since when it started) — then any notes waiting. Never the question's own words: they are
- * the chat's content, a raw excerpt with paths in it, and the card in the chat shows them whole.
- */
-export function activeRowDetail(intl: IntlShape, row: ActiveSession, project: string): string {
-  const doing =
-    row.needsYou > 0
-      ? row.waitingSince
-        ? intl.formatMessage(i18n.waitingSince, { time: clock(intl, row.waitingSince) })
-        : intl.formatMessage(i18n.waiting)
-      : row.runningSince
-        ? intl.formatMessage(i18n.startedAt, { time: clock(intl, row.runningSince) })
-        : '';
-  const notes =
-    row.notesWaiting > 0 ? intl.formatMessage(noteWords.waiting, { count: row.notesWaiting }) : '';
-  return [project, doing, notes].filter(Boolean).join(' · ');
-}
 
 export default function ActiveNowSection({ className }: { className?: string }) {
   const intl = useIntl();
@@ -64,9 +27,7 @@ export default function ActiveNowSection({ className }: { className?: string }) 
           ring sit on its neighbour. */}
       <div data-testid="active-now-rows" className="flex flex-col gap-1.5">
         {rows.map((row) => {
-          const name = row.sessionName
-            ? displaySessionListName(row.sessionName)
-            : intl.formatMessage(i18n.unnamed);
+          const name = activeRowName(intl, row.sessionName);
           const detail = activeRowDetail(
             intl,
             row,

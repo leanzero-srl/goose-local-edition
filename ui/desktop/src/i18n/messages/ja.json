@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "切り替え中"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "無題のセッション"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} 件待機中"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "実行中"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "無題のセッション"
   },
   "sessionIndicators.error": {
     "defaultMessage": "セッションでエラーが発生しました"
