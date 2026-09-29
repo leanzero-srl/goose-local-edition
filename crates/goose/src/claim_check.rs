@@ -40,8 +40,154 @@ static PATH_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
         .expect("static regex")
 });
 
+/// A number 1900–2099 (group 1), bare or in a fiscal-year form ("FY2025"). Whether the text states
+/// it as a year or as a count is read from the words around it: `stated_as_count`.
 static YEAR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b(?:19|20)\d{2}\b").expect("static regex"));
+    LazyLock::new(|| Regex::new(r"(?:\b|FY)((?:19|20)\d{2})\b").expect("static regex"));
+
+// ---- A year, or a count that falls in 1900–2099 (Q-494) ----------------------------------------
+//
+// E2E #3x (session 20260929_15, reply 777183): "- **Total rows: 1999. Total charges: 1998.**" —
+// counts the reply had just summed — drew "the years 1998, 1999 come from none of this turn's 1
+// tool result(s)". A four-digit number is read as a count when the words around it bind it to what
+// was counted (a plural noun straight after it, a label ending in one before it, arithmetic, a
+// currency sign, a percent, or a decimal point before it), unless a date says otherwise: a month or weekday a few words away,
+// a digit date or a year range around it, a time noun or a fiscal quarter before it, or since /
+// until / during. "in", "of", "by", "from", "before" and "after" take a quantity as often as a year
+// ("a total of 1999 rows", "grew by 2000 users"), so they date the number only where their phrase
+// opens a clause, as a time phrase does: "In 2029 servers retire", "…said that by 2029 customers
+// must move". A number with no context either way is still read as a year, as before.
+
+/// A date right after the number: a year range ("–2024", "-24") or the rest of a digit date
+/// ("-09-29", "/09").
+static DATE_AFTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:\s*[-–—]\s*(?:19|20)\d{2}\b|[-/]\d{1,2}\b)").expect("static regex")
+});
+
+/// A date right before the number: the start of a year range, a digit date ("13/09/", "13.09."),
+/// a fiscal year or quarter, a time noun ("the year", "Year:"), or a preposition that takes only a
+/// time ("since", "until", "during").
+static DATE_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:(?:19|20)\d{2}\s*[-–—]\s*|\b\d{1,2}[-/.]\d{1,2}[-/.]|FY|(?i:\b(?:Q[1-4]|H[12]|(?:year|date|month|decade|quarter)s?|since|until|till|during|circa)\W{0,3}))$")
+        .expect("static regex")
+});
+
+/// A preposition that takes a year or a quantity, opening a clause right before the number — the
+/// start of a sentence, line or bullet, after a comma, colon or parenthesis, or after a conjunction.
+static TIME_PHRASE_OPENING: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|[.!?;:,(\n]|\b(?:and|but|or|so|that|when|while|because|if|then))[\s*_•-]*\b(?:in|by|from|of|before|after)[ \t]+$")
+        .expect("static regex")
+});
+
+/// Month and weekday names as a date writes them: capitalised, full or abbreviated.
+static CALENDAR_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?|Mon(?:day)?|Tue(?:s(?:day)?)?|Wed(?:nesday)?|Thu(?:r(?:s(?:day)?)?)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\b")
+        .expect("static regex")
+});
+
+/// How far a month or weekday name may sit from the number and still date it: "March 28, 2029",
+/// "Monday, 13 September 2026" — the day number and a comma sit between.
+const CALENDAR_REACH_WORDS: usize = 3;
+
+/// The word straight after the number, and the word after that.
+static WORD_AFTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[ \t]+([A-Za-z]+)\b(?:[ \t]+([A-Za-z]+))?").expect("static regex")
+});
+
+/// A label that ends right before the number: "rows: ", "**Orders:** ", "Count = ".
+static LABEL_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b([A-Za-z]+)[*_`]{0,2}[ \t]*[:=][ \t]*[*_`]{0,2}[ \t]*$").expect("static regex")
+});
+
+/// A number that is an operand ("1850 + 149 = 1999"), an amount ("€2000", "2000%"), or the digits of
+/// a fraction ("≈ 2.2046").
+static AMOUNT_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:\d[ \t]*[+×*÷=][ \t]*|[$€£¥][ \t]*|\d\.)$").expect("static regex")
+});
+static AMOUNT_AFTER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:[ \t]*[+×*÷=][ \t]*\d|[ \t]*%)").expect("static regex"));
+
+/// A determiner right before the number: "the 2019 releases" is a year describing its noun, not a
+/// count of it.
+static DETERMINER_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:\b(?:the|this|that|these|those|its|their|our|your|his|her|my)|'s)[ \t]+$")
+        .expect("static regex")
+});
+
+const DETERMINERS: &[&str] = &[
+    "the", "a", "an", "this", "that", "these", "those", "its", "their", "our", "your", "his",
+    "her", "my",
+];
+
+/// Words that end in -s without being a plural noun.
+const S_ENDING_FUNCTION_WORDS: &[&str] = &[
+    "was", "has", "does", "goes", "its", "yes", "whereas", "always", "perhaps", "besides",
+];
+
+/// Words that name how much there is: "Total:", "Count =".
+const QUANTITY_LABELS: &[&str] = &["total", "count", "number", "sum", "amount", "quantity"];
+
+fn is_plural_noun(word: &str) -> bool {
+    let word = word.to_lowercase();
+    word.len() >= 3
+        && word.ends_with('s')
+        && !["ss", "us", "is"].iter().any(|end| word.ends_with(end))
+        && !S_ENDING_FUNCTION_WORDS.contains(&word.as_str())
+}
+
+fn dated(text: &str, start: usize, end: usize) -> bool {
+    let before = text.get(..start).unwrap_or_default();
+    let after = text.get(end..).unwrap_or_default();
+    if DATE_BEFORE.is_match(before)
+        || DATE_AFTER.is_match(after)
+        || TIME_PHRASE_OPENING.is_match(before)
+    {
+        return true;
+    }
+    let sentence_before = before
+        .rsplit(['.', '!', '?', ';', '\n'])
+        .next()
+        .unwrap_or_default();
+    let sentence_after = after
+        .split(['.', '!', '?', ';', '\n'])
+        .next()
+        .unwrap_or_default();
+    let near: Vec<&str> = sentence_before
+        .split_whitespace()
+        .rev()
+        .take(CALENDAR_REACH_WORDS)
+        .chain(sentence_after.split_whitespace().take(CALENDAR_REACH_WORDS))
+        .collect();
+    near.iter().any(|word| CALENDAR_NAME.is_match(word))
+}
+
+fn counted(text: &str, start: usize, end: usize) -> bool {
+    let before = text.get(..start).unwrap_or_default();
+    let after = text.get(end..).unwrap_or_default();
+    if AMOUNT_BEFORE.is_match(before) || AMOUNT_AFTER.is_match(after) {
+        return true;
+    }
+    let labelled = LABEL_BEFORE.captures(before).is_some_and(|c| {
+        let label = c[1].to_lowercase();
+        is_plural_noun(&label) || QUANTITY_LABELS.contains(&label.as_str())
+    });
+    if labelled {
+        return true;
+    }
+    // "1999 rows" counts rows; "2029 marks the end" is a year doing something, and "the 2019
+    // releases" a year describing its noun.
+    WORD_AFTER.captures(after).is_some_and(|c| {
+        let followed_by_determiner = c
+            .get(2)
+            .is_some_and(|w| DETERMINERS.contains(&w.as_str().to_lowercase().as_str()));
+        is_plural_noun(&c[1]) && !followed_by_determiner && !DETERMINER_BEFORE.is_match(before)
+    })
+}
+
+/// The number at `start..end` of `text` is bound to what was counted, and nothing around it dates it.
+fn stated_as_count(text: &str, start: usize, end: usize) -> bool {
+    counted(text, start, end) && !dated(text, start, end)
+}
 
 fn is_human_message(message: &Message) -> bool {
     message.role == Role::User
@@ -209,7 +355,8 @@ fn unwritten_files(
 
 /// Years the new text states that nothing in the session supports: no tool output, no message from
 /// the user, no earlier reply. Only asked of a turn that made tool calls — a turn with none answered
-/// from the model's own knowledge on purpose.
+/// from the model's own knowledge on purpose. A number the text states as a count is not a year; any
+/// 1900–2099 number in the session still supports one.
 fn unsourced_years(
     texts: &str,
     tools: &[ToolFact],
@@ -224,10 +371,15 @@ fn unsourced_years(
         support.push('\n');
         support.push_str(&tool.output);
     }
-    let supported: std::collections::HashSet<&str> =
-        YEAR.find_iter(&support).map(|m| m.as_str()).collect();
+    let supported: std::collections::HashSet<&str> = YEAR
+        .captures_iter(&support)
+        .filter_map(|c| c.get(1))
+        .map(|m| m.as_str())
+        .collect();
     let mut years: Vec<&str> = YEAR
-        .find_iter(texts)
+        .captures_iter(texts)
+        .filter_map(|c| c.get(1))
+        .filter(|m| !stated_as_count(texts, m.start(), m.end()))
         .map(|m| m.as_str())
         .filter(|y| !supported.contains(y) && y.parse::<i32>().ok() != Some(current_year))
         .collect();
@@ -1054,6 +1206,80 @@ mod tests {
             Message::assistant().with_text("End of sale 30 Mar 2026; end of life 28 Mar 2029."),
         ];
         assert!(check_new_text(&messages, 3, Path::new("/w"), &|_: &Path| false, 2026).is_empty());
+    }
+
+    const Q494_COUNTS: &str = include_str!("claim_check_fixtures/q494_counts.json");
+
+    /// E2E #3x (session 20260929_15, reply 777183, Q-494): "Total rows: 1999. Total charges: 1998."
+    /// are counts the reply worked out, and the check named them as years nothing supported.
+    #[test]
+    fn counts_the_reply_worked_out_are_not_years() {
+        let messages = census(Q494_COUNTS);
+        assert!(text_of(&messages[1]).contains("- **Total rows: 1999. Total charges: 1998.**"));
+        assert_eq!(
+            check_new_text(&messages, 1, Path::new("/w"), &|_: &Path| true, 2026),
+            Vec::<String>::new()
+        );
+    }
+
+    fn years_named(reply: &str) -> Vec<String> {
+        let searched = ToolFact {
+            name: "search".to_string(),
+            arguments: "Atlassian Data Center end of support".to_string(),
+            output: "Search completed with 0 results".to_string(),
+            succeeded: true,
+        };
+        unsourced_years(reply, &[searched], &[], 2026)
+    }
+
+    #[test]
+    fn a_number_is_a_year_by_its_date_context_and_a_labelled_count_is_not() {
+        for (reply, year) in [
+            (
+                "Atlassian ended Data Center support in February 2025.",
+                "2025",
+            ),
+            ("Support has been shrinking since 2019.", "2019"),
+            ("Tuesday, 3 March 2019 was the cut-over.", "2019"),
+            ("It was cut over on 2019-03-03.", "2019"),
+            ("The export is dated 13/09/2019.", "2019"),
+            ("The export is dated 13.09.2019.", "2019"),
+            ("Revenue peaked in Q3 2019.", "2019"),
+            ("FY2019 closed high.", "2019"),
+            ("The year: 2019.", "2019"),
+            ("In 2029 servers stop getting security fixes.", "2029"),
+            ("Atlassian said that by 2029 customers must move.", "2029"),
+            ("- after 2029 licences lapse", "2029"),
+            // No context either way: named, as before Q-494.
+            ("The 2019 upgrade broke it.", "2019"),
+            ("The 2019 releases dropped it.", "2019"),
+            ("2029 marks the end of Data Center support.", "2029"),
+        ] {
+            assert_eq!(
+                years_named(reply),
+                vec![format!("the year {year} comes from none of this turn's 1 tool result(s), the user's messages, or earlier replies.")],
+                "{reply}"
+            );
+        }
+        assert_eq!(
+            years_named("Data Center was supported for the 2019–2024 range."),
+            vec!["the years 2019, 2024 come from none of this turn's 1 tool result(s), the user's messages, or earlier replies."]
+        );
+        for reply in [
+            "1999 rows",
+            "It wrote 1998 charges.",
+            "- **Total rows: 1999. Total charges: 1998.**",
+            "**Orders:** 1999",
+            "Count = 2019",
+            "a total of 1999 rows",
+            "12 out of 2000 requests failed.",
+            "The index grew by 2000 entries.",
+            "1 kilogram → pound ≈ 2.2046",
+            "1850 + 149 = 1999.",
+            "The refund was €2000.",
+        ] {
+            assert!(years_named(reply).is_empty(), "{reply}");
+        }
     }
 
     #[test]
