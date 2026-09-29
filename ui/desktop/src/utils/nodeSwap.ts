@@ -80,6 +80,38 @@ export function swapWayOf(node: ResolvedNodeDef): SwapWay | null {
   return 'split';
 }
 
+/** A node pinned to a way names it (0) before one that follows this Mac's engine (1). */
+function followsRank(node: ResolvedNodeDef): number {
+  return swapWayOf(node) != null ? 0 : 1;
+}
+
+/**
+ * THE ONE NAME of a way goosed reports by the nodes that name it (`wayNodes`, `servingNodes`): the
+ * Nodes page's name of a node pinned to it before one that follows this Mac's engine, so the split
+ * the person made reads "… · both Macs", never "This Mac's engine" it is also served through
+ * (Q-459). Ids the read no longer lists are skipped; none left = goosed's own words.
+ */
+export function wayNodeName(
+  read: NodesReadResponse_unstable,
+  ids: readonly string[] | null | undefined,
+  words: string
+): string {
+  const named = (ids ?? [])
+    .map((id) => read.nodes.find((n) => n.def.id === id))
+    .filter((n): n is ResolvedNodeDef => n != null)
+    .map((node, i) => ({ node, i }))
+    .sort((a, b) => followsRank(a.node) - followsRank(b.node) || a.i - b.i)[0];
+  return named ? named.node.def.name : words;
+}
+
+/** goosed's serving-other facts with the serving node named by `wayNodeName` (Q-459). */
+export function servingOtherNamed(
+  read: NodesReadResponse_unstable,
+  other: NodeServingOtherDto
+): NodeServingOtherDto {
+  return { ...other, serving: wayNodeName(read, other.servingNodes, other.serving) };
+}
+
 function targetOf(node: ResolvedNodeDef): SwapTarget {
   return {
     id: node.def.id,
@@ -111,7 +143,7 @@ export function nodeSwapOf(
   }
   if (loading.size === 0) return null;
   const rank = (node: ResolvedNodeDef): number =>
-    prefer.includes(node.def.id) ? 0 : swapWayOf(node) != null ? 1 : 2;
+    prefer.includes(node.def.id) ? 0 : 1 + followsRank(node);
   const found = read.nodes
     .filter((n) => n.def.kind === 'mlx' && loading.has(n.def.id))
     .map((node, i) => ({ node, i }))
@@ -123,6 +155,24 @@ export function nodeSwapOf(
     phase: mark?.phase ?? null,
     load: measuredLoadOf(residency, found.node.def.id),
     demandedBy: mark?.demandedBy ?? [],
+  };
+}
+
+/**
+ * A switch to `nodeId` that no residency mark shows yet (Q-462): this chat's turn is in flight,
+ * its chain loads `nodeId` next, and the engine it faced is down or coming up — the loader is between
+ * its marks (a take-over leaves `waiting` before its `loading` is read). No phase is claimed.
+ */
+export function pendingSwapOf(
+  read: NodesReadResponse_unstable,
+  residency: NodesResidencyResponse_unstable,
+  nodeId: string
+): NodeSwap {
+  return {
+    target: nodeTarget(read, nodeId),
+    phase: null,
+    load: measuredLoadOf(residency, nodeId),
+    demandedBy: [],
   };
 }
 
@@ -194,18 +244,17 @@ export function nodeWaitOf(
   );
   if (!row || row.residency.kind !== 'waiting') return null;
   const { reason, replies, servingOther } = row.residency;
-  const wayNode = replies?.wayNodes?.find((id) => read.nodes.some((n) => n.def.id === id));
   return {
     target: nodeTarget(read, row.node),
     reason,
     replies: replies
       ? {
-          way: wayNode ? nodeTarget(read, wayNode).name : replies.way,
+          way: wayNodeName(read, replies.wayNodes, replies.way),
           count: replies.count,
           chats: replies.chats ?? [],
         }
       : null,
-    servingOther: servingOther ?? null,
+    servingOther: servingOther ? servingOtherNamed(read, servingOther) : null,
     behind: null,
     load: measuredLoadOf(residency, row.node),
   };
@@ -225,10 +274,14 @@ export function nodeRefusalOf(
 ): NodeRefusal | null {
   const row = residency.nodes.find((r) => r.node === nodeId);
   if (row?.residency.kind !== 'refusedLastTime') return null;
+  const facts = row.residency.facts ?? null;
   return {
     target: nodeTarget(read, nodeId),
     reason: row.residency.reason,
-    facts: row.residency.facts ?? null,
+    facts:
+      facts?.kind === 'servingOther'
+        ? { ...facts, serving: wayNodeName(read, facts.servingNodes, facts.serving) }
+        : facts,
   };
 }
 

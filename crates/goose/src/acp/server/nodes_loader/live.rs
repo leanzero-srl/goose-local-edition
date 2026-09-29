@@ -20,7 +20,7 @@ use super::switch::{
 use super::{agent, NamedNode, Prepared, Refusal, Residency, Start, Ways, LOOK_AGAIN};
 use crate::config::Config;
 use crate::nodes::residency;
-use crate::nodes::{NodeDef, NodeDefKind, ResolvedNodeDef};
+use crate::nodes::{NodeDef, NodeDefKind, NodePlacement, ResolvedNodeDef};
 use crate::providers::{mlx_distributed_owner as owner, mlx_remote};
 
 pub(super) struct AgentWays;
@@ -41,6 +41,14 @@ async fn nodes() -> Result<Vec<ResolvedNodeDef>, Refusal> {
     let read = crate::nodes::read(Config::global(), mac_name().await)
         .map_err(|e| unknown(format!("the nodes config could not be read: {e:#}")))?;
     Ok(read.nodes)
+}
+
+/// The nodes that name one way, a node pinned to it before one that follows this Mac's engine
+/// (Q-459: the split "… · both Macs" was named "This Mac's engine", the follows node the split
+/// also serves). Stable: the read's order stands within each kind.
+fn pinned_first(mut named: Vec<ResolvedNodeDef>) -> Vec<ResolvedNodeDef> {
+    named.sort_by_key(|n| matches!(n.def.placement, None | Some(NodePlacement::Follows)));
+    named
 }
 
 /// A stop as the residency rule's serving way, for `names_way`.
@@ -174,10 +182,13 @@ impl Ways for AgentWays {
 
     async fn named_by(&self, stop: &Stop) -> Result<Vec<NamedNode>, Refusal> {
         let way = as_serving_way(stop);
-        Ok(nodes()
+        let named = nodes()
             .await?
             .into_iter()
             .filter(|n| n.def.kind == NodeDefKind::Mlx && residency::names_way(n, &way))
+            .collect();
+        Ok(pinned_first(named)
+            .into_iter()
             .map(|n| NamedNode {
                 id: n.def.id,
                 name: n.def.name,
@@ -552,5 +563,49 @@ async fn follow_split() -> Result<(), String> {
                 tokio::time::sleep(LOOK_AGAIN).await
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pinned_first;
+    use crate::nodes::{
+        NodeDef, NodeDefKind, NodeModelFrom, NodeOrigin, NodePlacement, ResolvedNodeDef,
+    };
+
+    fn mlx(id: &str, placement: Option<NodePlacement>) -> ResolvedNodeDef {
+        ResolvedNodeDef {
+            def: NodeDef {
+                id: id.to_string(),
+                name: id.to_string(),
+                kind: NodeDefKind::Mlx,
+                model: Some("Qwen3.8-27B".to_string()),
+                placement,
+                goal: None,
+                provider: None,
+                keep_loaded: false,
+                pool_device: None,
+                origin: NodeOrigin::User,
+            },
+            model: Some("Qwen3.8-27B".to_string()),
+            provider: None,
+            model_from: NodeModelFrom::Own,
+            pending_adoption: false,
+        }
+    }
+
+    #[test]
+    fn a_node_pinned_to_the_way_names_it_before_the_node_that_follows_this_mac() {
+        let split = NodePlacement::Tensor {
+            macs: vec!["local".to_string(), "link:studio".to_string()],
+            link: None,
+        };
+        let named = pinned_first(vec![
+            mlx("this-macs-engine", Some(NodePlacement::Follows)),
+            mlx("pool-follows", None),
+            mlx("both-macs", Some(split)),
+        ]);
+        let ids: Vec<&str> = named.iter().map(|n| n.def.id.as_str()).collect();
+        assert_eq!(ids, ["both-macs", "this-macs-engine", "pool-follows"]);
     }
 }

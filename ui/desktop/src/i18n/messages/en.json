@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "A message sent now goes to {node} — it does not wait for that answer."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "A message sent now goes to {node} — {passed} is not loaded, so nothing that answer runs on is stopped."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "A message sent now waits for that answer to finish, then loads {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "A message sent now waits until the engine has room for it."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "A message sent now waits until that chat is closed or moved to another node, then loads {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "A message sent now goes first: goose sets this check aside and runs it again after."

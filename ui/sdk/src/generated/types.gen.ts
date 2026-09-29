@@ -6603,6 +6603,12 @@ export type NodeServingOtherDto = {
      */
     serving: string;
     /**
+     * The nodes that name the way serving now (ids), a node pinned to that way before one that
+     * follows this Mac's engine (Q-459), so a surface names it as the Nodes page does: the split
+     * the person made, never the follows node it is also served through.
+     */
+    servingNodes?: Array<string>;
+    /**
      * The chats it serves, by name: running a reply on it, or last served on it and still open.
      */
     chats: Array<string>;
@@ -6639,6 +6645,7 @@ export type NodeRefusalFactsDto = {
 } | {
     mac: string;
     serving: string;
+    servingNodes?: Array<string>;
     chats: Array<string>;
     replies: number;
     kind: 'servingOther';

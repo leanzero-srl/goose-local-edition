@@ -6676,6 +6676,7 @@ export const zNodeRepliesWaitDto = z.object({
 export const zNodeServingOtherDto = z.object({
     mac: z.string(),
     serving: z.string(),
+    servingNodes: z.array(z.string()).optional().default([]),
     chats: z.array(z.string()),
     replies: z.number().int().gte(0)
 });
@@ -6706,6 +6707,7 @@ export const zNodeRefusalFactsDto = z.union([
     z.object({
         mac: z.string(),
         serving: z.string(),
+        servingNodes: z.array(z.string()).optional().default([]),
         chats: z.array(z.string()),
         replies: z.number().int().gte(0),
         kind: z.literal('servingOther')

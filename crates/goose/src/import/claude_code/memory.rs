@@ -131,7 +131,24 @@ pub fn apply_memory(
             .collect();
 
         let file = memory_dir.join(format!("{category}.txt"));
-        let existing = fs::read_to_string(&file).unwrap_or_default();
+        // An unreadable memory file holds the person's own entries; reading it as empty would
+        // write only the imported ones over it (Q-465).
+        let existing = match fs::read_to_string(&file) {
+            Ok(existing) => existing,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                report.record(
+                    ImportType::Memory,
+                    &category,
+                    ApplyOutcome::Failed,
+                    Some(format!(
+                        "{} could not be read ({e}); it was left untouched",
+                        file.display()
+                    )),
+                );
+                continue;
+            }
+        };
         let had_imported = existing.contains(IMPORT_TAG);
 
         if had_imported && ctx.conflict == ConflictPolicy::Skip {
@@ -389,6 +406,27 @@ mod tests {
             "user entry preserved: {add}"
         );
         assert!(add.contains("imported:claude-code"), "imported entry added");
+    }
+
+    #[test]
+    fn an_unreadable_memory_file_is_never_overwritten() {
+        let (tmp, opts) = memory_fixture();
+        let ctx = ctx_for(&tmp);
+        fs::create_dir_all(ctx.memory_dir()).unwrap();
+        let file = ctx.memory_dir().join("add-depth.txt");
+        let original: &[u8] = b"# mine\nmy own memory \xff\xfe line";
+        fs::write(&file, original).unwrap();
+
+        let p = plan(&opts).unwrap();
+        let mut m = Manifest::default();
+        let mut r = ImportReport::default();
+        apply_memory(&p, &ctx, &mut m, &mut r).unwrap();
+
+        assert_eq!(fs::read(&file).unwrap(), original);
+        assert_eq!(
+            r.count_type_outcome(ImportType::Memory, ApplyOutcome::Failed),
+            1
+        );
     }
 
     /// Mirror goose's memory reader entry-split for the assertion.

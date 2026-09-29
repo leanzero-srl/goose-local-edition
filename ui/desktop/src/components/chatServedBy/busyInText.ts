@@ -29,9 +29,21 @@ const i18n = defineMessages({
     id: 'busyIn.sendGoesTo',
     defaultMessage: 'A message sent now goes to {node} — it does not wait for that answer.',
   },
+  // Q-458: the role's "Use the next node" leaves {passed} to the answer running on this Mac.
+  sendGoesToNext: {
+    id: 'busyIn.sendGoesToNext',
+    defaultMessage:
+      'A message sent now goes to {node} — {passed} is not loaded, so nothing that answer runs on is stopped.',
+  },
   sendLoadsAfter: {
     id: 'busyIn.sendLoadsAfter',
     defaultMessage: 'A message sent now waits for that answer to finish, then loads {node}.',
+  },
+  // Q-458: the role's "Wait" holds the turn until that chat is closed or moved, not only answered.
+  sendWaitsForChat: {
+    id: 'busyIn.sendWaitsForChat',
+    defaultMessage:
+      'A message sent now waits until that chat is closed or moved to another node, then loads {node}.',
   },
   sendShares: {
     id: 'busyIn.sendShares',
@@ -67,11 +79,16 @@ export function busyInHeadline(intl: IntlShape, busy: ChatBusyIn): string {
 export function busyInSendText(intl: IntlShape, busy: ChatBusyIn): string {
   // The chat's own chain decides first (Q-431): a turn that goes elsewhere, or loads its node
   // after the busy answer, never shares the engine with it.
-  if (busy.next?.kind === 'goesTo') {
-    return intl.formatMessage(i18n.sendGoesTo, { node: busy.next.node });
-  }
-  if (busy.next?.kind === 'loadsAfter') {
-    return intl.formatMessage(i18n.sendLoadsAfter, { node: busy.next.node });
+  const next = busy.next;
+  switch (next?.kind) {
+    case 'goesTo':
+      return intl.formatMessage(i18n.sendGoesTo, { node: next.node });
+    case 'goesToNext':
+      return intl.formatMessage(i18n.sendGoesToNext, { node: next.node, passed: next.passed });
+    case 'loadsAfter':
+      return intl.formatMessage(i18n.sendLoadsAfter, { node: next.node });
+    case 'waitsForChat':
+      return intl.formatMessage(i18n.sendWaitsForChat, { node: next.node });
   }
   if (busy.work && YIELDS_TO_A_TURN.has(busy.work)) return intl.formatMessage(i18n.sendYields);
   return intl.formatMessage(busy.waits ? i18n.sendWaits : i18n.sendShares);

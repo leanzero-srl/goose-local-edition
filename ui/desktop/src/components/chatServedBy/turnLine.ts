@@ -8,6 +8,7 @@ import type {
 import { defineMessages } from '../../i18n';
 import { ROLE_WORD } from '../nodes/NodeChips';
 import { nodeNamesById } from '../nodes/model';
+import { servingOtherNamed } from '../../utils/nodeSwap';
 
 const i18n = defineMessages({
   // DESIGN-NODES-AND-STRATEGIES.md §8.7 `nodes.fellBack`, as the table words it.
@@ -99,7 +100,7 @@ export function fellBackOf(
     primaryId: primary.node,
     reason: record.reason,
     asked: record.askedForThisTurn === true,
-    servingOther: record.servingOther ?? null,
+    servingOther: record.servingOther ? servingOtherNamed(read, record.servingOther) : null,
   };
 }
 

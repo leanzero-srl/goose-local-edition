@@ -77,8 +77,9 @@ pub(super) const LOOK_AGAIN: Duration = Duration::from_secs(2);
 pub(crate) struct Refusal {
     pub code: NodeLoadRefusalCode,
     pub reason: String,
-    /// What the refusal names, for the refusals the composer words (design §8.7).
-    pub facts: Option<NodeRefusalFactsDto>,
+    /// What the refusal names, for the refusals the composer words (design §8.7). Boxed: every
+    /// loader step returns `Result<_, Refusal>`, and the facts are the rare, large part.
+    pub facts: Option<Box<NodeRefusalFactsDto>>,
 }
 
 impl Refusal {
@@ -91,7 +92,7 @@ impl Refusal {
     }
 
     fn with_facts(mut self, facts: NodeRefusalFactsDto) -> Self {
-        self.facts = Some(facts);
+        self.facts = Some(Box::new(facts));
         self
     }
 }
@@ -189,7 +190,7 @@ enum Look {
         wake: Wake,
         replies: Option<NodeRepliesWaitDto>,
         /// The role says `wait` and the Mac serves another node for chats between replies.
-        serving_other: Option<NodeServingOtherDto>,
+        serving_other: Option<Box<NodeServingOtherDto>>,
         /// This demand waits for the other node's chats to be done (the `wait` setting): it is
         /// no switch those chats' next replies wait behind, nor one other demands queue behind.
         yields: bool,
@@ -613,13 +614,14 @@ impl Core {
         first: &mut Option<oneshot::Sender<NodeEnsureServing>>,
     ) -> Answer {
         let refused = |r: Refusal| {
+            let facts = r.facts.map(|f| *f);
             (
                 NodeEnsureServing::Refused {
                     code: r.code,
                     reason: r.reason,
-                    facts: r.facts.clone(),
+                    facts: facts.clone(),
                 },
-                r.facts,
+                facts,
             )
         };
         let asked = demand.if_serving_other;
@@ -705,7 +707,7 @@ impl Core {
                         node: node.def.id.clone(),
                         reason: reason.clone(),
                         replies,
-                        serving_other,
+                        serving_other: serving_other.map(|o| *o),
                     });
                     tell_first(first, &reason);
                     wait(notified, wake).await;
@@ -981,7 +983,7 @@ impl Core {
         // Q-428: the Mac serves another node for other chats — the role's setting decides. A way
         // no one uses is not "serving another node": it is switched under every setting.
         let mut yields = false;
-        let mut resting: Option<NodeServingOtherDto> = None;
+        let mut resting: Option<Box<NodeServingOtherDto>> = None;
         if setting != NodeIfServingOther::TakeOver {
             match self.serving_other(node, &plan, own, seq).await {
                 Err(r) => return Look::Refused(r),
@@ -1004,7 +1006,7 @@ impl Core {
                             ),
                             wake: Wake::LookAgain,
                             replies: None,
-                            serving_other: Some(other),
+                            serving_other: Some(Box::new(other)),
                             yields: true,
                             behind: None,
                         };
@@ -1014,7 +1016,7 @@ impl Core {
                     // closing or moving, never "loading when they finish" (Q-443).
                     _ => {
                         yields = true;
-                        resting = Some(other);
+                        resting = Some(Box::new(other));
                     }
                 },
             }
@@ -1333,16 +1335,14 @@ impl Core {
             .map(|b| b.way().to_string())
             .or(idle_way)
             .expect("a chat was found on a way that would stop");
-        let serving = match plan.stops.iter().find(|s| s.way.words() == way) {
-            Some(stop) => self
-                .ways
-                .named_by(stop)
-                .await?
-                .into_iter()
-                .next()
-                .map_or_else(|| way.clone(), |n| n.name),
-            None => way,
+        // `named_by` lists a node pinned to the way before one that follows this Mac's engine
+        // (Q-459): the split the person made names it, never "This Mac's engine" it runs as.
+        let named = match plan.stops.iter().find(|s| s.way.words() == way) {
+            Some(stop) => self.ways.named_by(stop).await?,
+            None => Vec::new(),
         };
+        let serving = named.first().map_or(way, |n| n.name.clone());
+        let serving_nodes = named.into_iter().map(|n| n.id).collect();
         let mut chats = Vec::new();
         for root in &roots {
             chats.push(self.chat_words(root).await);
@@ -1350,6 +1350,7 @@ impl Core {
         Ok(Some(NodeServingOtherDto {
             mac: self.ways.shared_mac(node).await?,
             serving,
+            serving_nodes,
             chats,
             replies: running.len() as u32,
         }))
@@ -1370,6 +1371,7 @@ impl Core {
             &NodeServingOtherDto {
                 mac,
                 serving: ahead.node_name.clone(),
+                serving_nodes: vec![ahead.node.clone()],
                 chats,
                 replies: 0,
             },

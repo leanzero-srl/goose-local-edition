@@ -269,8 +269,9 @@ static REGISTRY: OnceLock<Mutex<LocalModelRegistry>> = OnceLock::new();
 
 pub fn get_registry() -> &'static Mutex<LocalModelRegistry> {
     REGISTRY.get_or_init(|| {
-        let registry = LocalModelRegistry::load().unwrap_or_default();
-        Mutex::new(registry)
+        Mutex::new(LocalModelRegistry::load_or_set_aside(
+            &LocalModelRegistry::registry_path(),
+        ))
     })
 }
 
@@ -470,6 +471,10 @@ pub enum ModelDownloadStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LocalModelRegistry {
     pub models: Vec<LocalModelEntry>,
+    /// Set when the file on disk could not be read AND could not be moved aside: every save is
+    /// refused so the unreadable bytes are never replaced by an empty registry (Q-465).
+    #[serde(skip)]
+    save_refused: Option<String>,
 }
 
 impl LocalModelRegistry {
@@ -478,12 +483,56 @@ impl LocalModelRegistry {
     }
 
     pub fn load() -> Result<Self> {
-        let path = Self::registry_path();
+        Self::load_from(&Self::registry_path())
+    }
+
+    /// An unreadable registry is the person's download list, not an empty one. It is moved to
+    /// `registry.json.corrupt-<utc>` and the move is logged as an error, so the next save cannot
+    /// overwrite it; if the move itself fails, saves are refused instead.
+    fn load_or_set_aside(path: &std::path::Path) -> Self {
+        let error = match Self::load_from(path) {
+            Ok(registry) => return registry,
+            Err(e) => e,
+        };
+        let refused = |reason: String| {
+            tracing::error!("{reason}");
+            Self {
+                save_refused: Some(reason),
+                ..Self::default()
+            }
+        };
+        if error.downcast_ref::<serde_json::Error>().is_none() {
+            return refused(format!(
+                "{} could not be read ({error:#}); it was left untouched and nothing will be saved over it",
+                path.display()
+            ));
+        }
+        let aside = path.with_extension(format!(
+            "json.corrupt-{}",
+            chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
+        ));
+        match std::fs::rename(path, &aside) {
+            Ok(()) => {
+                tracing::error!(
+                    "local model registry {} could not be read ({error:#}); moved it to {} and started an empty registry",
+                    path.display(),
+                    aside.display()
+                );
+                Self::default()
+            }
+            Err(move_error) => refused(format!(
+                "{} could not be parsed ({error:#}) and could not be moved aside ({move_error}); it was left untouched and nothing will be saved over it",
+                path.display()
+            )),
+        }
+    }
+
+    fn load_from(path: &std::path::Path) -> Result<Self> {
         if path.exists() {
             let lock_path = path.with_extension("json.lock");
             let lock_file = std::fs::File::create(&lock_path)?;
             fs2::FileExt::lock_shared(&lock_file)?;
-            let contents = std::fs::read_to_string(&path)?;
+            let contents = std::fs::read_to_string(path)?;
             fs2::FileExt::unlock(&lock_file)?;
             let registry: LocalModelRegistry = serde_json::from_str(&contents)?;
             Ok(registry)
@@ -493,7 +542,13 @@ impl LocalModelRegistry {
     }
 
     pub fn save(&self) -> Result<()> {
-        let path = Self::registry_path();
+        self.save_to(&Self::registry_path())
+    }
+
+    fn save_to(&self, path: &std::path::Path) -> Result<()> {
+        if let Some(reason) = &self.save_refused {
+            anyhow::bail!("{reason}");
+        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -505,7 +560,7 @@ impl LocalModelRegistry {
         let mut tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
         let contents = serde_json::to_string_pretty(self)?;
         std::io::Write::write_all(&mut tmp, contents.as_bytes())?;
-        tmp.persist(&path)?;
+        tmp.persist(path)?;
 
         fs2::FileExt::unlock(&lock_file)?;
         Ok(())
@@ -675,6 +730,39 @@ pub fn model_id_from_repo(repo_id: &str, quantization: &str) -> String {
 mod tests {
     use super::*;
     use crate::download_manager::DownloadProgress;
+
+    #[test]
+    fn an_unparseable_registry_is_moved_aside_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("registry.json");
+        let original = "{\"models\": [ {\"id\": \"my-download\" ";
+        std::fs::write(&path, original).unwrap();
+
+        let registry = LocalModelRegistry::load_or_set_aside(&path);
+        assert!(registry.models.is_empty());
+        let aside: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.to_string_lossy().contains("registry.json.corrupt-"))
+            .collect();
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), original);
+
+        registry.save_to(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), original);
+    }
+
+    #[test]
+    fn an_unreadable_registry_refuses_every_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("registry.json");
+        std::fs::create_dir(&path).unwrap();
+
+        let registry = LocalModelRegistry::load_or_set_aside(&path);
+        let err = registry.save_to(&path).unwrap_err().to_string();
+        assert!(err.contains("nothing will be saved"), "{err}");
+        assert!(path.is_dir());
+    }
 
     fn test_entry(id: &str) -> LocalModelEntry {
         LocalModelEntry {
