@@ -21,15 +21,28 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   narrowed the privacy rule to this project (Q-506, model). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
 - E2E #3x STOPPED at turn 4 (E2E-RUNS): the Q-498 cache thrash with the owner's second chat; its memory turn was lost.
 
-## 3.0.80 — merge-080 GATING (/tmp/g080.out), ~/goose-targets/wt-m080 @ 57033c308
-- = main (Q-495, Q-497) + q502 (Q-498, Q-502) + q503 (Q-499, Q-503) + q507 (Q-500/501, Q-504, Q-507)
-  + Q-505 65126cc51 + Q-466 e49d42e7e. No conflicts.
-- Q-508 DONE e43fc13ba (q508): g080b (chained after g080) merges it into merge-080 and runs sidecar + session_id + clippy.
-- Q-511 b26645498 + Q-512 8756d4c4f DONE (q512, full vitest 4651 green on the merge-080 base). g080c (chained after
-  g080b) merges q512 and runs tsc + the touched dirs + eslint.
-- Green → ff main → release 3.0.80 → install on BOTH Macs (Q-502's new spec tag) when #3y allows → prove live:
-  Q-502 (two chats keep warm), Q-500/501 (second window), Q-504/507 (Stop an app-wide / scheduled turn), Q-493/495
-  (the stopped lines), Q-505 (a redacted memory).
+## 3.0.80 — RELEASE BUILDING (~/goose-builds/release-3.0.80.log), main 8368ce115
+- Carries:
+  - Q-495, Q-497;
+  - Q-498/502/508 (the split's cache across chats: say why + keep every chat's prefix + name chats by session id;
+    NEW SPEC TAG, so BOTH Macs need 3.0.80);
+  - Q-499/503 (sidecar readiness, live memory reads, lock unlock);
+  - Q-500/501/504/507 (running state and Stop across windows, app-wide turns, schedules);
+  - Q-505 (secrets redacted);
+  - Q-466 (test races);
+  - Q-511/512 (nested components).
+- Gates:
+  - g080 full: UI 4647, goose lib 2195, every acp test, clippy, dev gates 11, schema, Windows;
+  - g080b: sidecar 427 + session_id 5 + clippy;
+  - g080c: tsc + 199 + eslint.
+- Install when #3y reaches a boundary we can stop at (it's at turn 10/41; the note turn 26 needs Q-488, already in
+  3.0.79). Plan: let #3y run to its end on 3.0.79, then install 3.0.80 and prove live.
+- Then prove live:
+  - Q-502/508 (two chats, then a compaction);
+  - Q-500/501/504/507;
+  - Q-493/495;
+  - Q-511/512;
+  - Q-505 (scan-secrets).
 
 ## CI
 - Red 13:18Z: the RecipesView delete test hit its 5 s timeout (the vitest-under-load class). Q-466 is cutting
@@ -43,7 +56,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-513.
+- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-514.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
