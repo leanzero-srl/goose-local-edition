@@ -183,6 +183,17 @@ fn a_stopped_turn_is_recorded_with_its_time_and_tokens_and_a_chat_line() {
             .expect("the chat line is stored where the answer would be");
         assert_eq!(line, turn_outcome::stopped_line(stopped));
         assert!(line.starts_with("You stopped this answer after "), "{line}");
+        // Q-519: the words the answer had streamed stay above the line, as the model's own reply.
+        let messages = conversation.messages();
+        let partial = &messages[messages.len() - 2];
+        assert_eq!(partial.role, rmcp::model::Role::Assistant);
+        assert!(partial.is_user_visible() && partial.is_agent_visible());
+        assert_eq!(
+            partial.as_concat_text(),
+            WRITTEN,
+            "the streamed words are stored"
+        );
+        assert_eq!(partial.id.as_deref(), Some("stopped-1"));
 
         store
             .add_message(&rows[0].session_id, &Message::user().with_text("go on"))
@@ -254,4 +265,95 @@ async fn the_meter_counts_what_no_reported_usage_covers() {
         meter.stopped().await.output_tokens,
         Some(120 + unreported as u64)
     );
+}
+
+/// Q-519: a stop keeps only the words the agent had not stored. The agent stores a call's
+/// messages when its iteration ends, so a stop in a later call must not store an earlier call
+/// again: a message the model reads that is not its own (a tool's result) ends an iteration, and
+/// the same id with the same words already stored is the net for an iteration that ended without
+/// one. Reasoning with no text is kept for the person and never sent back to the model.
+#[tokio::test]
+async fn a_stop_stores_only_the_words_the_agent_had_not() {
+    use goose::session::SessionType;
+    use turn_outcome::StreamedReply;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = SessionManager::new(root.path().to_path_buf());
+    let session = store
+        .create_session(
+            root.path().to_path_buf(),
+            "stopped".to_string(),
+            SessionType::Acp,
+            goose::config::GooseMode::default(),
+        )
+        .await
+        .unwrap();
+    let chunk = |id: &str, text: &str| Message::assistant().with_id(id).with_text(text);
+
+    let prompt = Message::user().with_text("Find the config and fix it");
+    store.add_message(&session.id, &prompt).await.unwrap();
+    let mut streamed = StreamedReply::default();
+
+    // Call 1 streams, asks a tool, and the agent stores its iteration.
+    let first = [chunk("call-1", "Let me "), chunk("call-1", "look.")];
+    let tool_result = Message::user().with_text("config.yaml: port: 80");
+    for message in first.iter().chain([&tool_result]) {
+        streamed.on_message(message);
+    }
+    store
+        .add_message(&session.id, &chunk("call-1", "Let me look."))
+        .await
+        .unwrap();
+    store.add_message(&session.id, &tool_result).await.unwrap();
+
+    // Call 2 ends with no message between it and call 3; the agent stored it.
+    streamed.on_message(&chunk("call-2", "The port is wrong."));
+    store
+        .add_message(&session.id, &chunk("call-2", "The port is wrong."))
+        .await
+        .unwrap();
+
+    // Call 3 is stopped mid-answer, and call 4 had only begun to reason.
+    streamed.on_message(&chunk("call-3", "Setting it to "));
+    streamed.on_message(&chunk("call-3", "8080 in"));
+    streamed.on_message(
+        &Message::assistant()
+            .with_id("call-4")
+            .with_thinking("the user wants", ""),
+    );
+    streamed.store(&store, &session.id).await.unwrap();
+
+    let stored = store
+        .get_session(&session.id, true)
+        .await
+        .unwrap()
+        .conversation
+        .unwrap();
+    let rows: Vec<_> = stored
+        .messages()
+        .iter()
+        .map(|m| (m.id.clone(), m.as_concat_text(), m.is_agent_visible()))
+        .collect();
+    let texts: Vec<_> = rows.iter().map(|(_, text, _)| text.as_str()).collect();
+    assert_eq!(
+        texts,
+        [
+            "Find the config and fix it",
+            "Let me look.",
+            "config.yaml: port: 80",
+            "The port is wrong.",
+            "Setting it to 8080 in",
+            "",
+        ],
+        "{rows:#?}"
+    );
+    assert_eq!(rows[4].0.as_deref(), Some("call-3"));
+    assert!(rows[4].2, "the stopped words are the model's own reply");
+    let reasoning = &stored.messages()[5];
+    assert_eq!(reasoning.id.as_deref(), Some("call-4"));
+    assert!(reasoning.is_user_visible() && !reasoning.is_agent_visible());
+    assert!(matches!(
+        reasoning.content.as_slice(),
+        [MessageContent::Thinking(thinking)] if thinking.thinking == "the user wants"
+    ));
 }
