@@ -11225,6 +11225,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "En attente des premiers mots du modèle · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "Le tour s’est terminé sans réponse — l’app s’est peut-être fermée pendant que goose travaillait."
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Le tour a échoué avant une réponse."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Le tour a échoué avant une réponse : {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Renvoyer"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose s’est arrêté avant de répondre à ceci"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Annuler"
   },

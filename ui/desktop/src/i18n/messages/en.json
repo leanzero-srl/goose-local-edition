@@ -11249,6 +11249,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Waiting for the model’s first words · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "The turn ended without a reply — the app may have closed while goose was working."
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "The turn failed before a reply."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "The turn failed before a reply: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Resend"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose stopped before answering this"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Cancel"
   },

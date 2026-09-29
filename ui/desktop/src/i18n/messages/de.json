@@ -11225,6 +11225,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Wartet auf die ersten Worte des Modells · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "Der Durchgang endete ohne Antwort – die App wurde womöglich geschlossen, während goose arbeitete."
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Der Durchgang ist vor einer Antwort fehlgeschlagen."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Der Durchgang ist vor einer Antwort fehlgeschlagen: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Erneut senden"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose hat aufgehört, bevor es hierauf geantwortet hat"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Abbrechen"
   },

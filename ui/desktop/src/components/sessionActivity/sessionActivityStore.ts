@@ -80,6 +80,11 @@ const EMPTY: SessionActivitySnapshot = {
 };
 
 let snapshot: SessionActivitySnapshot = EMPTY;
+/**
+ * Whether the engine's answer has been read at least once. Before it, `running: []` is "not asked
+ * yet", never "nothing runs" — a surface that claims a turn is NOT running waits for this.
+ */
+let engineRead = false;
 let refreshGeneration = 0;
 let started = false;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -111,8 +116,11 @@ export async function refreshSessionActivity(): Promise<void> {
     // An engine older than Q-358 carries no notes between chats.
     const notesWaiting = activity.notesWaiting ?? [];
     if (generation !== refreshGeneration) return;
+    const firstRead = !engineRead;
+    engineRead = true;
     // The poll re-reads every few seconds; an unchanged answer must not re-render every list.
     if (
+      !firstRead &&
       JSON.stringify(running) === JSON.stringify(snapshot.running) &&
       JSON.stringify(needsYou) === JSON.stringify(snapshot.needsYou) &&
       JSON.stringify(failed) === JSON.stringify(snapshot.failed) &&
@@ -177,6 +185,7 @@ export function resetSessionActivityForTests(next: SessionActivitySnapshot = EMP
   }
   started = false;
   refreshGeneration = 0;
+  engineRead = false;
   snapshot = next;
   for (const listener of listeners) {
     listener();
@@ -186,6 +195,7 @@ export function resetSessionActivityForTests(next: SessionActivitySnapshot = EMP
 /** Tests seed the store without starting the engine sync. */
 export function seedSessionActivityForTests(next: Partial<SessionActivitySnapshot>): void {
   started = true;
+  engineRead = true;
   emit({ ...EMPTY, ...next });
 }
 
@@ -304,6 +314,11 @@ export function isActive(
   activity: Pick<SessionActivity, 'needsYou' | 'runningSince' | 'notesWaiting'>
 ): boolean {
   return activity.needsYou > 0 || activity.runningSince !== undefined || activity.notesWaiting > 0;
+}
+
+/** True once the engine's activity has been read: until then no session is known NOT to run. */
+export function useSessionActivityRead(): boolean {
+  return useSyncExternalStore(subscribe, () => engineRead);
 }
 
 /** Selector hooks: a row re-renders only when ITS session's answer changes. */

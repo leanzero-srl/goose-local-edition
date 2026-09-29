@@ -11225,6 +11225,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Đang chờ những từ đầu tiên của mô hình · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "Lượt này kết thúc mà không có trả lời — có thể ứng dụng đã đóng khi goose đang làm việc."
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Lượt này thất bại trước khi có trả lời."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Lượt này thất bại trước khi có trả lời: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Gửi lại"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose đã dừng trước khi trả lời điều này"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Hủy"
   },

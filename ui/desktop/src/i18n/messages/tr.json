@@ -11225,6 +11225,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Modelin ilk sözcükleri bekleniyor · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "Tur yanıtsız bitti — goose çalışırken uygulama kapanmış olabilir."
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Tur bir yanıttan önce başarısız oldu."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Tur bir yanıttan önce başarısız oldu: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Yeniden gönder"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose buna yanıt vermeden durdu"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "İptal"
   },

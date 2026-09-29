@@ -11225,6 +11225,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "正在等待模型的第一個字 · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "這一輪沒有回覆就結束了——可能是 goose 工作時應用程式被關閉了。"
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "這一輪在回覆之前失敗了。"
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "這一輪在回覆之前失敗了：{reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "重新傳送"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose 在回答這則之前停止了"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "取消"
   },

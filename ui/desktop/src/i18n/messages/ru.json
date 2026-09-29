@@ -11225,6 +11225,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Ожидание первых слов модели · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "Ход завершился без ответа — возможно, приложение закрылось, пока goose работал."
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Ход завершился ошибкой до ответа."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Ход завершился ошибкой до ответа: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Отправить снова"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose остановился, не ответив на это"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Отмена"
   },

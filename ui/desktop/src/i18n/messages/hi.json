@@ -11225,6 +11225,21 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "मॉडल के पहले शब्दों की प्रतीक्षा · {elapsed}"
   },
+  "unansweredPrompt.appClosed": {
+    "defaultMessage": "यह बारी बिना उत्तर के समाप्त हुई — हो सकता है goose के काम करते समय ऐप बंद हो गया हो।"
+  },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "यह बारी उत्तर से पहले विफल हो गई।"
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "यह बारी उत्तर से पहले विफल हो गई: {reason}"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "फिर से भेजें"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose इसका उत्तर देने से पहले रुक गया"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "रद्द करें"
   },
