@@ -17,13 +17,13 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 ## Agents (worktrees)
 - none running.
 
-## 3.0.75 = main 49f7a7fd1 — RELEASE BUILDING (~/goose-builds/release-3.0.75.log, own session)
-- Gate g075 all green: vitest 4,399, clippy, schema, wincheck.
-- DMG → install BOTH Macs at an #3v turn boundary (Q-459 changes goosed's wire words) → split-start smoke →
-  live-walk the solid colours (Q-334/335/457 screens) + Q-458..462 + Q-455's context line.
+## 3.0.75 = main 49f7a7fd1 — DMG BUILT 05:0x (~/goose-builds/dmg)
+- On #3v's turn-8 end: stop r1 (per pid), then install.sh 3.0.75 on BOTH Macs → split-start smoke → E2E #3w on
+  the café brief (needs-you cards, chat search/notes).
+- Then live-walk the solid colours (Q-334/335/457), Q-458..462 and Q-455's context line.
 
-## 3.0.76 — /tmp/merge-076 09078f1fd = main + Q-467 (served-node window in the counter, incl. node:<id>) + Q-468
-  (corrupt-config banner + move aside). Full gate g076 → /tmp/g076.out (own session).
+## 3.0.76 — /tmp/merge-076 41e69d9cf = main + Q-467 + Q-468 + Q-469
+- g076 full gate GREEN at 09078f1fd. g076b delta for Q-469 → /tmp/g076b.out.
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
