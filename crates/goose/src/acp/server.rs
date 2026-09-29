@@ -1032,6 +1032,7 @@ impl GooseAcpAgent {
         tokio::spawn(async move {
             let _ = storage_clone.pool().await;
         });
+        crate::token_counter::warm_tokenizer();
 
         let permission_manager = Arc::new(PermissionManager::new(options.config_dir.clone()));
         let provider_inventory = ProviderInventoryService::new(session_manager.storage().clone());

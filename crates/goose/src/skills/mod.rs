@@ -538,21 +538,53 @@ fn should_skip_dir(path: &Path) -> bool {
     )
 }
 
+/// Whether a directory entry is a directory and whether it is a file, symlinks followed — what
+/// `path.is_dir()` / `path.is_file()` answer, without their two `stat` calls per entry: the kind comes
+/// with the directory listing, and only a symlink is stat'ed to see what it points at. Q-517, measured
+/// on a real `~/.claude/skills` (37,002 files — skills keep state and ledgers beside SKILL.md): one
+/// scan took ~330 ms in a release build, ~98 ms with this and ~77 ms with [`dir_id`]; the skills
+/// extension's instructions and recall each scan before a turn's first provider call, and recall again
+/// before every later one.
+fn entry_kind(entry: &std::fs::DirEntry, path: &Path) -> (bool, bool) {
+    match entry.file_type() {
+        Ok(kind) if !kind.is_symlink() => (kind.is_dir(), kind.is_file()),
+        _ => (path.is_dir(), path.is_file()),
+    }
+}
+
+/// The identity a walk remembers a directory by, so a symlink cycle or a second route to the same
+/// directory is walked once. On unix it is the directory's device and inode — one `stat` — where the
+/// canonical path costs `realpath`'s walk of every component for every directory (Q-517).
+#[cfg(unix)]
+type DirId = (u64, u64);
+#[cfg(not(unix))]
+type DirId = PathBuf;
+
+#[cfg(unix)]
+fn dir_id(dir: &Path) -> Option<DirId> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(dir).ok().map(|m| (m.dev(), m.ino()))
+}
+
+#[cfg(not(unix))]
+fn dir_id(dir: &Path) -> Option<DirId> {
+    std::fs::canonicalize(dir).ok()
+}
+
 fn walk_files_recursively<F, G>(
     dir: &Path,
-    visited_dirs: &mut HashSet<PathBuf>,
+    visited_dirs: &mut HashSet<DirId>,
     should_descend: &mut G,
     visit_file: &mut F,
 ) where
     F: FnMut(&Path),
     G: FnMut(&Path) -> bool,
 {
-    let canonical_dir = match std::fs::canonicalize(dir) {
-        Ok(path) => path,
-        Err(_) => return,
+    let Some(id) = dir_id(dir) else {
+        return;
     };
 
-    if !visited_dirs.insert(canonical_dir) {
+    if !visited_dirs.insert(id) {
         return;
     }
 
@@ -563,11 +595,12 @@ fn walk_files_recursively<F, G>(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        let (is_dir, is_file) = entry_kind(&entry, &path);
+        if is_dir {
             if should_descend(&path) {
                 walk_files_recursively(&path, visited_dirs, should_descend, visit_file);
             }
-        } else if path.is_file() {
+        } else if is_file {
             visit_file(&path);
         }
     }
@@ -988,5 +1021,67 @@ mod tests {
             (project.path().join(".agents").join("skills"), false)
         );
         assert!(dirs.iter().any(|(_, global)| *global));
+    }
+
+    /// Q-517: the walk reads each entry's kind from the directory listing and remembers directories by
+    /// inode instead of stat'ing every entry and canonicalising every directory. What it finds must not
+    /// move: symlinked files and directories are followed, a broken link is skipped, a link back into
+    /// the skill is walked once, dependency trees and nested skills stay out of the manifest.
+    #[cfg(unix)]
+    #[test]
+    fn the_skill_walk_follows_links_once_and_finds_what_it_always_found() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("skills");
+        let alpha = root.join("alpha");
+        let shared = tmp.path().join("shared");
+        std::fs::create_dir_all(alpha.join("node_modules")).unwrap();
+        std::fs::create_dir_all(alpha.join("nested")).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(
+            alpha.join("SKILL.md"),
+            "---\nname: alpha\ndescription: a\n---\nA",
+        )
+        .unwrap();
+        std::fs::write(alpha.join("notes.md"), "n").unwrap();
+        std::fs::write(alpha.join("node_modules").join("dep.js"), "d").unwrap();
+        std::fs::write(
+            alpha.join("nested").join("SKILL.md"),
+            "---\nname: nested\ndescription: n\n---\nN",
+        )
+        .unwrap();
+        std::fs::write(alpha.join("nested").join("inner.md"), "i").unwrap();
+        std::fs::write(shared.join("data.txt"), "s").unwrap();
+        symlink(&shared, alpha.join("linked_dir")).unwrap();
+        symlink(shared.join("data.txt"), alpha.join("linked_file.txt")).unwrap();
+        symlink(tmp.path().join("missing"), alpha.join("broken")).unwrap();
+        symlink(&alpha, alpha.join("loop")).unwrap();
+
+        let mut scan = SkillScan::default();
+        scan_skills_from_dir(&root, true, &mut HashSet::new(), &mut scan);
+
+        let mut names: Vec<&str> = scan.skills.iter().map(|s| s.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["alpha", "nested"]);
+        let files_of = |name: &str| -> Vec<String> {
+            let skill = scan.skills.iter().find(|s| s.name == name).unwrap();
+            skill
+                .supporting_files
+                .iter()
+                .map(|f| {
+                    Path::new(f)
+                        .strip_prefix(&skill.path)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect()
+        };
+        assert_eq!(
+            files_of("alpha"),
+            ["linked_dir/data.txt", "linked_file.txt", "notes.md"]
+        );
+        assert_eq!(files_of("nested"), ["inner.md"]);
+        assert!(scan.unreadable.is_empty());
     }
 }
