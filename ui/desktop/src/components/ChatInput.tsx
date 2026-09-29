@@ -39,6 +39,7 @@ import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
+import { strategyChatWindow } from './chatServedBy/strategyWindow';
 import { promptRead } from './leanzero-swarm/engineFigures';
 import { usePublishTurnRead } from './turnWorking/turnReadStore';
 import { usePublishTurnHeld } from './turnWorking/turnHeldStore';
@@ -719,6 +720,21 @@ export default function ChatInput({
         return;
       }
 
+      // A strategy chat's window is the node that served its last turn (Q-467), the one compaction
+      // reads (Q-463) — never the pool's engines. A node that did not report one leaves the window
+      // unknown, and the counter says so; the window an earlier node served with is not held.
+      const routed = strategyChatWindow(model, chatServing.servedRecord);
+      if (routed?.kind === 'known' || routed?.kind === 'unread') {
+        holdMeasuredLimit(provider, model, routed.kind === 'known' ? routed.window : null);
+        return;
+      }
+      if (routed?.kind === 'unknown') {
+        knownWindowRef.current = null;
+        setTokenLimit(0);
+        setIsTokenLimitLoaded(true);
+        return;
+      }
+
       // Swarm: the local fleet. Its context window is whatever the resident models were loaded with —
       // LM Studio reports it per model, the LeanZero MLX engine reports it on its status — read live from
       // every engine the POOL runs on and take the min (an MLX-only pool used to fall to the 128k default).
@@ -785,13 +801,17 @@ export default function ChatInput({
   // Where chat is served moves the window (this Mac, a linked Mac, the split): the limit is read
   // again when the serving engine, its model or its window changes, not only when the model does.
   const served = chatServing.served;
+  const servedRecord = chatServing.servedRecord;
   const servedAt = [
     served.engine,
     served.peerNodeId,
     served.model,
     served.readiness.kind,
     served.contextWindow,
+    servedRecord === undefined ? 'unread' : (servedRecord?.node ?? 'none'),
+    servedRecord?.contextWindow ?? '',
   ].join('|');
+  const windowUnknown = strategyChatWindow(effectiveModel, servedRecord)?.kind === 'unknown';
   useEffect(() => {
     loadProviderDetails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1969,6 +1989,7 @@ export default function ChatInput({
               <ContextWindowIndicator
                 totalTokens={shownTokens}
                 tokenLimit={tokenLimit}
+                windowUnknown={windowUnknown}
                 alerts={alerts}
                 liveTokens={chatServing.served.turnRequest?.completionTokens ?? 0}
               />

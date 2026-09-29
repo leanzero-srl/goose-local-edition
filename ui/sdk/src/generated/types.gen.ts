@@ -6865,6 +6865,12 @@ export type NodeServedTurnDto = {
      * says `useNext` (Q-428): what the turn line names.
      */
     servingOther?: NodeServingOtherDto | null;
+    /**
+     * The window the serving node's probe read when it took this turn: the one compaction reads
+     * for this chat (Q-463) and the composer's counter shows (Q-467). Absent = the node did not
+     * report one (a cloud model its catalog does not carry) — never a stand-in number.
+     */
+    contextWindow?: number | null;
 };
 
 /**

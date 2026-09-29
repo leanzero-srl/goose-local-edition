@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} token konteks + {live} sedang ditulis, dari jendela {limit} token"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "terpakai · jendela tidak diketahui"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} token konteks. Node yang menjawab giliran terakhir obrolan ini tidak melaporkan jendela konteksnya."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Batas Percakapan"
   },

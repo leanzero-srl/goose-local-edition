@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} token konteks + {live} sedang ditulis, daripada tetingkap {limit} token"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "digunakan · tetingkap tidak diketahui"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} token konteks. Nod yang menjawab giliran terakhir sembang ini tidak melaporkan tetingkap konteksnya."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Had Perbualan"
   },

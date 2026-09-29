@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} token bağlam + şu anda yazılan {live}, {limit} tokenlik pencereden"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "kullanıldı · pencere bilinmiyor"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} token bağlam. Bu sohbetin son turunu yanıtlayan düğüm bağlam penceresini bildirmedi."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Konuşma Sınırları"
   },
