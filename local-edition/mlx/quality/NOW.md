@@ -38,7 +38,8 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   - Q-489.
 
 ## Agents (worktrees)
-- Q-495 (a turn dead mid-tool call) + Q-497 (the 1 s title-notification test wait): general-purpose agent, cutting.
+- Q-495 4503c521a + Q-497 23c06bb8b LANDED on main 5262589e2 (gated in the worktree: turnWorking 42/42, the full
+  vitest with 6 load timeouts green alone 168/168, acp_server_test 47/47). They ride in 3.0.80.
 - Q-498 (SEVERE perf): two chats evict each other's split prompt cache, so each switch re-reads 200k cold (~11 min).
   mlx-backend, measure first: KV bytes per token vs real headroom (rank 0 peaks 46.6 of 128 GB).
 
