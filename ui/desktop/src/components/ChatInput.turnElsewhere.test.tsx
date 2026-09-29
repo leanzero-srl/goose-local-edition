@@ -56,6 +56,13 @@ vi.mock('./chatServedBy/useChatServedBy', () => ({
     };
   },
 }));
+const { acpCancelPrompt } = vi.hoisted(() => ({
+  acpCancelPrompt: vi.fn(async (_sessionId: string) => {}),
+}));
+vi.mock('../acp/prompt', async (original) => ({
+  ...(await original<typeof import('../acp/prompt')>()),
+  acpCancelPrompt,
+}));
 vi.mock('./swarm/swarmContextLimit', () => ({ fetchSwarmPoolContextLimit: async () => null }));
 vi.mock('./noNodeNotice/ComposerReadiness', () => ({ ComposerReadinessStrip: () => null }));
 vi.mock('./bottom_menu/ContextWindowIndicator', () => ({ ContextWindowIndicator: () => null }));
@@ -141,6 +148,7 @@ const coffeeComposer = (chatState = ChatState.Idle) => (
 
 beforeEach(() => {
   turnInFlightSeen.length = 0;
+  acpCancelPrompt.mockClear();
   bridge.stopTurnElsewhere.mockReset();
   bridge.showTurnWindow.mockReset();
   (window as unknown as { electron: unknown }).electron = { ...original, ...bridge };
@@ -226,5 +234,78 @@ describe('Q-500: a chat whose turn another window runs reads RUNNING here', () =
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
     expect(screen.queryByTestId('turn-elsewhere')).toBeNull();
     expect(turnInFlightSeen[turnInFlightSeen.length - 1]).toBe(false);
+  });
+});
+
+/**
+ * Q-504: a turn goosed runs on its process-wide agents — one NO window sent, like the Jira chat at
+ * 15:48 — is in every window's own read, with no window holding its prompt. The composer was idle
+ * (sendable, no Stop), and even a relayed Stop had nowhere to go: goosed's cancel reached only a
+ * connection's own prompts. Now the composer is busy and Stop cancels through this window's own
+ * connection, which reaches the process-wide agents.
+ */
+describe('Q-504: a chat whose turn no window sent reads RUNNING, and Stop stops it', () => {
+  const jiraComposer = (onStop = vi.fn()) => (
+    <IntlTestWrapper>
+      <ChatInput
+        sessionId={JIRA}
+        handleSubmit={vi.fn()}
+        chatState={ChatState.Idle}
+        onStop={onStop}
+        setView={vi.fn()}
+        sessionModel="swarm"
+        sessionProvider="swarm"
+        sessionLoaded
+        workingDir="/w"
+      />
+    </IntlTestWrapper>
+  );
+
+  it('the composer: Stop, not Send, and it says the turn runs in the background', () => {
+    secondWindow();
+    render(jiraComposer());
+    const stop = screen.getByRole('button', { name: 'Stop' });
+    expect(stop).toHaveAttribute('title', 'Stop the turn goose is running in the background');
+    expect(screen.getByTestId('turn-elsewhere')).toHaveTextContent('Running in the background');
+    // No window holds it, so there is no window to show.
+    expect(screen.queryByRole('button', { name: 'Show that window' })).toBeNull();
+    expect(turnInFlightSeen[turnInFlightSeen.length - 1]).toBe(true);
+  });
+
+  it('Stop cancels through this window’s own connection, never a relay to a window', () => {
+    secondWindow();
+    const onStop = vi.fn();
+    render(jiraComposer(onStop));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(acpCancelPrompt).toHaveBeenCalledWith(JIRA);
+    expect(bridge.stopTurnElsewhere).not.toHaveBeenCalled();
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
+  it('a row another window lists that no window holds (a linked Mac’s run) stops the same way', () => {
+    seedSessionActivityForTests({
+      running: [],
+      elsewhere: [
+        {
+          sessionId: JIRA,
+          sessionName: 'Jira DC to Cloud migration assessment',
+          workingDir: '/w',
+          startedAt: JIRA_STARTED,
+          window: null,
+        },
+      ],
+    });
+    render(jiraComposer());
+    expect(screen.getByTestId('turn-elsewhere')).toHaveTextContent('Running in the background');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(acpCancelPrompt).toHaveBeenCalledWith(JIRA);
+    expect(bridge.stopTurnElsewhere).not.toHaveBeenCalled();
+  });
+
+  it('once the turn ends, the composer is idle again', () => {
+    seedSessionActivityForTests({ running: [], elsewhere: [] });
+    render(jiraComposer());
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(screen.queryByTestId('turn-elsewhere')).toBeNull();
   });
 });

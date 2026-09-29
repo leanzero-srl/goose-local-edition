@@ -11198,6 +11198,15 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose ingin memanggil {toolName}. Izinkan?"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose sedang menjawab chat ini di luar jendela mana pun — untuk agen yang dimulai chat lain, atau untuk Mac yang ditautkan. Hentikan akan mengakhirinya; pesan yang dikirim sekarang menunggu hingga selesai."
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "Hentikan giliran yang dijalankan goose di latar belakang"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "Berjalan di latar belakang"
+  },
   "turnElsewhere.detail": {
     "defaultMessage": "goose sedang menjawab chat ini di jendela lain. Hentikan akan mengakhirinya di sana; pesan yang dikirim sekarang menunggu hingga selesai."
   },

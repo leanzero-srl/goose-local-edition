@@ -11198,6 +11198,15 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose 想调用 {toolName}，允许吗？"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose 正在任何窗口之外回答此聊天——为另一个聊天启动的代理，或为已关联的 Mac。停止会结束它；现在发送的消息会等到它完成。"
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "停止 goose 在后台运行的回合"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "正在后台运行"
+  },
   "turnElsewhere.detail": {
     "defaultMessage": "goose 正在另一个窗口中回答此聊天。停止会在那里结束它；现在发送的消息会等到它完成。"
   },

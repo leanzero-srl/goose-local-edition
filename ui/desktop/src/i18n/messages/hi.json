@@ -11198,6 +11198,15 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose {toolName} को कॉल करना चाहेंगे। अनुमति दें?"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose इस चैट का जवाब किसी भी विंडो के बाहर दे रहा है — किसी दूसरी चैट द्वारा शुरू किए गए एजेंट के लिए, या किसी लिंक किए गए Mac के लिए। रोकें उसे समाप्त करता है; अभी भेजा गया संदेश उसके पूरा होने तक प्रतीक्षा करता है।"
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "goose द्वारा पृष्ठभूमि में चलाया जा रहा टर्न रोकें"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "पृष्ठभूमि में चल रहा है"
+  },
   "turnElsewhere.detail": {
     "defaultMessage": "goose इस चैट का जवाब दूसरी विंडो में दे रहा है। रोकें उसे वहीं समाप्त करता है; अभी भेजा गया संदेश उसके पूरा होने तक प्रतीक्षा करता है।"
   },

@@ -11198,6 +11198,15 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Gooseが{toolName}を実行しようとしています。許可しますか？"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose はどのウィンドウでもない場所でこのチャットに回答しています（別のチャットが開始したエージェント、またはリンクされた Mac のため）。停止すると終了します。今送信したメッセージは完了するまで待機します。"
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "goose がバックグラウンドで実行中のターンを停止"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "バックグラウンドで実行中"
+  },
   "turnElsewhere.detail": {
     "defaultMessage": "goose は別のウィンドウでこのチャットに回答しています。停止するとそこで終了します。今送信したメッセージは完了するまで待機します。"
   },

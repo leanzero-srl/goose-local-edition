@@ -2620,7 +2620,7 @@ impl GooseAcpAgent {
         // refuse, never run two replies on one session.
         if let Err(error) = self
             .agent_manager
-            .try_register_cancel_token(session_id, cancel_token.clone())
+            .try_register_connection_prompt(session_id, cancel_token.clone())
             .await
         {
             return Err(agent_client_protocol::Error::invalid_params()
@@ -3575,11 +3575,35 @@ impl GooseAcpAgent {
         if let Some(token) = token {
             info!(session_id = %session_id, "prompt cancelled");
             token.cancel();
+        } else if self.cancel_turn_no_connection_holds(&session_id).await {
+            info!(session_id = %session_id, "a turn no window sent cancelled");
         } else if !self.sessions.lock().await.contains_key(&session_id) {
             warn!(session_id = %session_id, "cancel request for unknown session");
         }
 
         Ok(())
+    }
+
+    /// Q-504: a turn no ACP connection sent — an orchestrator subagent's on the process-wide
+    /// agents, a linked Mac's remote run on the link's managers — reads Running in every window
+    /// (`busy_sessions`, and Q-500's relay), so a window's cancel must reach it. Every manager this
+    /// process runs such turns on is asked; a connection's own prompt is never cancelled here,
+    /// since only its connection stops it (Q-500 relays another window's Stop there).
+    async fn cancel_turn_no_connection_holds(&self, session_id: &str) -> bool {
+        let mut managers = vec![self.agent_manager.clone()];
+        let shared = AgentManager::instance_if_built();
+        let linked = link_serve::bound_agent_manager();
+        for manager in shared.into_iter().chain(linked) {
+            if !managers.iter().any(|seen| Arc::ptr_eq(seen, &manager)) {
+                managers.push(manager);
+            }
+        }
+        for manager in managers {
+            if manager.cancel_run_no_connection_holds(session_id).await {
+                return true;
+            }
+        }
+        false
     }
 
     async fn on_set_model(
@@ -5280,7 +5304,7 @@ print(\"hello, world\")
             async move {
                 let token = CancellationToken::new();
                 manager
-                    .try_register_cancel_token("chat", token.clone())
+                    .try_register_connection_prompt("chat", token.clone())
                     .await
                     .unwrap();
                 runs.lock().await.insert(

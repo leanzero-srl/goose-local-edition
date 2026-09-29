@@ -36,6 +36,9 @@ pub struct AgentManagerGetResult {
 struct BusyRun {
     token: CancellationToken,
     since: chrono::DateTime<chrono::Utc>,
+    /// An ACP connection's own prompt (`start_active_run`): that connection's `session/cancel`
+    /// stops it, and no other connection may (Q-504).
+    connection_prompt: bool,
 }
 
 pub struct AgentManager {
@@ -388,6 +391,25 @@ impl AgentManager {
         session_id: &str,
         token: CancellationToken,
     ) -> Result<()> {
+        self.register_run(session_id, token, false).await
+    }
+
+    /// [`Self::try_register_cancel_token`] for an ACP connection's own prompt, which only that
+    /// connection's `session/cancel` stops.
+    pub async fn try_register_connection_prompt(
+        &self,
+        session_id: &str,
+        token: CancellationToken,
+    ) -> Result<()> {
+        self.register_run(session_id, token, true).await
+    }
+
+    async fn register_run(
+        &self,
+        session_id: &str,
+        token: CancellationToken,
+        connection_prompt: bool,
+    ) -> Result<()> {
         let mut tokens = self.cancel_tokens.write().await;
         if tokens.contains_key(session_id) {
             anyhow::bail!("Session '{}' is currently busy", session_id);
@@ -397,6 +419,7 @@ impl AgentManager {
             BusyRun {
                 token,
                 since: chrono::Utc::now(),
+                connection_prompt,
             },
         );
         Ok(())
@@ -416,6 +439,19 @@ impl AgentManager {
             .ok_or_else(|| anyhow::anyhow!("No active operation for session {}", session_id))?;
         token.cancel();
         Ok(())
+    }
+
+    /// Cancel the session's turn when no ACP connection's prompt holds it — an orchestrator
+    /// subagent's turn, a linked Mac's remote run, goose-server's reply route (Q-504). A
+    /// connection's own prompt is left to that connection. True when a turn was cancelled.
+    pub async fn cancel_run_no_connection_holds(&self, session_id: &str) -> bool {
+        match self.cancel_tokens.read().await.get(session_id) {
+            Some(run) if !run.connection_prompt => {
+                run.token.cancel();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Check if a session has an active reply in progress
@@ -549,6 +585,34 @@ mod tests {
         manager.remove_session_if_loaded(&session).await.unwrap();
         assert!(!manager.has_session(&session).await);
         manager.remove_session_if_loaded(&session).await.unwrap();
+    }
+
+    /// Q-504: a window's cancel reaches a turn no connection sent, and never a connection's own
+    /// prompt — that one only its connection stops.
+    #[tokio::test]
+    async fn cancel_run_no_connection_holds_leaves_a_connections_prompt_alone() {
+        let temp_dir = TempDir::new().unwrap();
+        let manager = create_test_manager(&temp_dir).await;
+        let prompt = tokio_util::sync::CancellationToken::new();
+        let subagent = tokio_util::sync::CancellationToken::new();
+        manager
+            .try_register_connection_prompt("window-chat", prompt.clone())
+            .await
+            .unwrap();
+        manager
+            .try_register_cancel_token("subagent-chat", subagent.clone())
+            .await
+            .unwrap();
+
+        assert!(!manager.cancel_run_no_connection_holds("window-chat").await);
+        assert!(!prompt.is_cancelled());
+        assert!(
+            manager
+                .cancel_run_no_connection_holds("subagent-chat")
+                .await
+        );
+        assert!(subagent.is_cancelled());
+        assert!(!manager.cancel_run_no_connection_holds("idle-chat").await);
     }
 
     #[tokio::test]

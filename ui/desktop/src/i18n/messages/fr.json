@@ -11198,6 +11198,15 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose souhaite appeler {toolName}. Autoriser ?"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose répond à ce chat en dehors de toute fenêtre — pour un agent lancé par un autre chat, ou pour un Mac associé. Arrêter y met fin ; un message envoyé maintenant attend qu’il se termine."
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "Arrêter le tour que goose exécute en arrière-plan"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "En cours en arrière-plan"
+  },
   "turnElsewhere.detail": {
     "defaultMessage": "goose répond à ce chat dans une autre fenêtre. Arrêter y met fin ; un message envoyé maintenant attend qu’il se termine."
   },

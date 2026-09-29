@@ -11222,6 +11222,15 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
   },
+  "turnElsewhere.backgroundDetail": {
+    "defaultMessage": "goose is answering this chat outside any window — for an agent another chat started, or a linked Mac. Stop ends it; a message sent now waits until it finishes."
+  },
+  "turnElsewhere.backgroundStop": {
+    "defaultMessage": "Stop the turn goose is running in the background"
+  },
+  "turnElsewhere.backgroundTitle": {
+    "defaultMessage": "Running in the background"
+  },
   "turnElsewhere.detail": {
     "defaultMessage": "goose is answering this chat in another window. Stop ends it there; a message sent now waits until it finishes."
   },

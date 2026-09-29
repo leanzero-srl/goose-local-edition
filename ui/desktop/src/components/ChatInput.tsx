@@ -295,9 +295,10 @@ export default function ChatInput({
   // window's connection runs for this chat (Q-500) is busy here too: Stop, and a send that waits.
   const turnElsewhere = useTurnElsewhere(sessionId, chatState !== ChatState.Idle);
   const isLoading = chatState !== ChatState.Idle || turnElsewhere !== null;
-  // Only the window whose connection sent the prompt can cancel it (goosed's `on_cancel`).
+  // Another window's prompt is stopped by that window; a turn no window sent, through this window's
+  // own connection (goosed's `on_cancel`, Q-504).
   const stopTurn = () => {
-    if (turnElsewhere && sessionId) stopTurnElsewhere(sessionId);
+    if (turnElsewhere && sessionId) stopTurnElsewhere(sessionId, turnElsewhere);
     else onStop?.();
   };
   const isLoadingRef = useRef(isLoading);
@@ -1752,9 +1753,7 @@ export default function ChatInput({
         sessionId={sessionId}
         onModelChanged={setModelOverride}
       />
-      {turnElsewhere && sessionId && (
-        <TurnElsewhereBar sessionId={sessionId} since={turnElsewhere.since} />
-      )}
+      {turnElsewhere && sessionId && <TurnElsewhereBar sessionId={sessionId} turn={turnElsewhere} />}
       {/* Message Queue Display */}
       {queuedMessages.length > 0 && (
         <MessageQueue
@@ -2143,7 +2142,11 @@ export default function ChatInput({
               tickHere !== null
                 ? intl.formatMessage(composerWords.stopTick, { n: tickHere })
                 : turnElsewhere
-                  ? intl.formatMessage(turnElsewhereWords.stop)
+                  ? intl.formatMessage(
+                      turnElsewhere.window === null
+                        ? turnElsewhereWords.backgroundStop
+                        : turnElsewhereWords.stop
+                    )
                   : undefined
             }
             icon={<Stop />}

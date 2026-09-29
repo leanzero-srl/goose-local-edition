@@ -30,8 +30,10 @@ export const STOP_TURN_CHANNEL = 'stop-turn-for-another-window';
 
 export interface RunningElsewhere extends RunningSessionDto {
   /**
-   * The window (its webContents id) whose connection holds this turn's prompt; null = no other
-   * window holds one — goosed's process-wide agents run it (a loop tick, a schedule).
+   * The window (its webContents id) whose connection holds this turn's prompt; null = no window
+   * holds one — goosed runs it for no window (an orchestrator subagent's turn, a linked Mac's remote
+   * run), and any window's own `session/cancel` stops it (Q-504). A loop tick is not one of these:
+   * the window whose tick door took it sends it, so it has a holder.
    */
   window: number | null;
 }

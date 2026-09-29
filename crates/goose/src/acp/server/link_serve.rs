@@ -84,6 +84,12 @@ fn bound_run_managers() -> Option<RunManagers> {
     RUN_MANAGERS.read().unwrap().clone()
 }
 
+/// The manager a linked Mac's remote runs register on, when one is bound — a window's cancel
+/// reaches those runs through it (Q-504).
+pub(super) fn bound_agent_manager() -> Option<Arc<AgentManager>> {
+    bound_run_managers().map(|managers| managers.agent_manager)
+}
+
 /// Runs a same-account peer's prompt on this node over the ACP server's own agent
 /// machinery. Stateless beyond its construction inputs; the managers come from the slot
 /// [`bind_run_managers`] fills.
