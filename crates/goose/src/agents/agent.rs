@@ -2364,9 +2364,11 @@ impl Agent {
                         break;
                     };
 
-                    if exit_chat {
-                        break;
-                    }
+                    // A turn-ending result (`ask_user`, END_TURN_META_KEY) ends the turn after the
+                    // WHOLE message, never mid-message (Q-480): a provider that streams each tool
+                    // call as its own item (Anthropic yields one per content block) would otherwise
+                    // drop every call after the first — the second and third questions of one
+                    // message never raised, their requests never answered.
 
                     match next {
                         Ok((response, usage)) => {

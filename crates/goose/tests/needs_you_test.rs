@@ -280,6 +280,197 @@ async fn ask_user_pins_a_durable_item_and_ends_the_turn() -> Result<()> {
     Ok(())
 }
 
+/// Q-480: the person asked for every remaining question at once. The model answers with ONE
+/// message carrying three `ask_user` calls — as one streamed item (OpenAI-style formats assemble
+/// every call before yielding) or as one item per call (Anthropic yields each tool-use block on
+/// its own).
+const THREE_QUESTIONS: [&str; 3] = [
+    "Is the scone 3.50 in both shops?",
+    "Does the flapjack use oats from a gluten-free mill?",
+    "Should the menu list the soup of the day?",
+];
+
+struct ManyAsksProvider {
+    calls: AtomicUsize,
+    one_item_per_call: bool,
+}
+
+impl ProviderDescriptor for ManyAsksProvider {
+    fn metadata() -> ProviderMetadata {
+        ProviderMetadata {
+            name: "many-asks-mock".to_string(),
+            display_name: "Many Asks Mock".to_string(),
+            description: "Asks three questions in one message".to_string(),
+            default_model: "mock-model".to_string(),
+            known_models: vec![],
+            model_doc_link: String::new(),
+            config_keys: vec![],
+            setup_steps: vec![],
+            model_selection_hint: None,
+            fast_model: None,
+        }
+    }
+}
+
+impl ProviderDef for ManyAsksProvider {
+    type Provider = Self;
+
+    fn from_env(
+        _extensions: Vec<goose::config::ExtensionConfig>,
+        _tls_config: Option<goose::providers::api_client::TlsConfig>,
+    ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
+        unimplemented!()
+    }
+}
+
+fn ask_call(index: usize) -> (String, CallToolRequestParams) {
+    (
+        format!("call_ask_{index}"),
+        CallToolRequestParams::new("ask_user").with_arguments(object!({
+            "question": THREE_QUESTIONS[index],
+            "why": WHY,
+            "recommended_answer": RECOMMENDED,
+        })),
+    )
+}
+
+type StreamItem = Result<(Option<Message>, Option<ProviderUsage>), ProviderError>;
+
+#[async_trait]
+impl Provider for ManyAsksProvider {
+    async fn stream(
+        &self,
+        _model_config: &ModelConfig,
+        _system_prompt: &str,
+        _messages: &[Message],
+        _tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        let usage = ProviderUsage::new(
+            "mock-model".to_string(),
+            Usage::new(Some(10), Some(5), Some(15)),
+        );
+        let items: Vec<StreamItem> = if call > 0 {
+            vec![Ok((
+                Some(Message::assistant().with_text("the turn went on after the questions")),
+                Some(usage),
+            ))]
+        } else if self.one_item_per_call {
+            (0..THREE_QUESTIONS.len())
+                .map(|index| {
+                    let (id, params) = ask_call(index);
+                    Ok((
+                        Some(Message::assistant().with_tool_request(id, Ok(params))),
+                        None,
+                    ))
+                })
+                .chain(std::iter::once(Ok((None, Some(usage)))))
+                .collect()
+        } else {
+            let message =
+                (0..THREE_QUESTIONS.len()).fold(Message::assistant(), |message, index| {
+                    let (id, params) = ask_call(index);
+                    message.with_tool_request(id, Ok(params))
+                });
+            vec![Ok((Some(message), Some(usage)))]
+        };
+        Ok(Box::pin(futures::stream::iter(items)))
+    }
+
+    fn get_name(&self) -> &str {
+        "many-asks-mock"
+    }
+}
+
+async fn three_questions_in_one_message(one_item_per_call: bool) -> Result<()> {
+    let label = if one_item_per_call {
+        "one streamed item per call"
+    } else {
+        "one streamed item for the message"
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
+    let (agent, session_id) = agent_with_needs_you(
+        &session_manager,
+        GoosePlatform::GooseDesktop,
+        SessionType::User,
+        false,
+    )
+    .await?;
+    let provider = Arc::new(ManyAsksProvider {
+        calls: AtomicUsize::new(0),
+        one_item_per_call,
+    });
+    agent
+        .update_provider(
+            provider.clone(),
+            ModelConfig::new("mock-model"),
+            &session_id,
+        )
+        .await?;
+
+    run_turn(
+        &agent,
+        &session_id,
+        "Ask me every remaining question now, all at once, one separate question for each",
+    )
+    .await?;
+
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        1,
+        "{label}: the turn ends once, after the message, without calling the model again"
+    );
+    let mut asked: Vec<String> = needs_you::open_items(&session_manager)
+        .await?
+        .into_iter()
+        .map(|open| open.item.question)
+        .collect();
+    asked.sort();
+    let mut expected: Vec<String> = THREE_QUESTIONS.iter().map(|q| q.to_string()).collect();
+    expected.sort();
+    assert_eq!(asked, expected, "{label}: every call raised its own card");
+
+    let conversation = session_manager
+        .get_session(&session_id, true)
+        .await?
+        .conversation
+        .expect("conversation");
+    let answered: Vec<String> = conversation
+        .messages()
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|content| match content {
+            MessageContent::ToolResponse(response) if response.tool_result.is_ok() => {
+                Some(response.id.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        answered,
+        vec!["call_ask_0", "call_ask_1", "call_ask_2"],
+        "{label}: every request of the message has its result"
+    );
+    let last = conversation.messages().last().expect("a last message");
+    assert_eq!(
+        last.role,
+        Role::User,
+        "{label}: the turn ends on the results"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn several_asks_in_one_message_all_run_and_end_the_turn_once() -> Result<()> {
+    three_questions_in_one_message(false).await
+}
+
+#[tokio::test]
+async fn several_asks_streamed_one_per_item_all_run_and_end_the_turn_once() -> Result<()> {
+    three_questions_in_one_message(true).await
+}
+
 #[tokio::test]
 async fn ask_user_is_registered_only_where_a_person_answers() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;

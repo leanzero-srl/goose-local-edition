@@ -43,13 +43,17 @@ export function loadGuidance(brief) {
   return { answers: list, defaultStance: stance?.trim() ?? '' };
 }
 
-/** The first entry whose every word appears in the question (word match, case and punctuation free). */
+/** The MOST SPECIFIC entry whose every word appears in the question (word match, case and punctuation
+ * free): the one with the most match words, ties to the earlier entry. E2E #3w (2026-09-29): first-match let
+ * "mince" (the price entry) answer "is the sulphite on the peel only, or the whole mincemeat?" with a price, twice. */
 export function matchGuidance(question, answers = []) {
   const q = new Set(words(question));
+  let best = null;
   for (let i = 0; i < answers.length; i++) {
-    if (words(answers[i].match).every((w) => q.has(w))) return { index: i, entry: answers[i] };
+    const w = words(answers[i].match);
+    if (w.every((x) => q.has(x)) && (!best || w.length > best.size)) best = { index: i, entry: answers[i], size: w.length };
   }
-  return null;
+  return best && { index: best.index, entry: best.entry };
 }
 
 /**

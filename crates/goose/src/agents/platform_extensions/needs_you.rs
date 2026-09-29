@@ -19,7 +19,8 @@ pub const ASK_USER_TOOL_NAME: &str = "ask_user";
 /// The fields the card shows. Descriptions are what the model reads in the tool schema.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AskUserParams {
-    /// The question, worded for the person: one decision or one piece of information.
+    /// The question, worded for the person: one decision or one piece of information. Several
+    /// questions are several calls in the same message.
     pub question: String,
     /// Why you need it: what it unblocks, and what changes with the answer.
     pub why: String,
@@ -53,10 +54,16 @@ impl NeedsYouClient {
                 Always fill `recommended_answer` with what you would choose, and `why` with what the
                 answer unblocks. Add `options` when the answer is one of a few choices.
                 Do not ask for anything you can find out yourself by reading files, running commands
-                or searching. Ask one question per call, and only when you cannot sensibly proceed.
-                Calling `ask_user` ends your turn. If the person answers on the card, their next
-                message says it is the answer to your question; if they write to you instead, the
-                question closes as superseded and you are told so, with their message quoted.
+                or searching, and ask only when you cannot sensibly proceed.
+                Each call asks ONE question. When you have several questions, or the person asks you
+                to put them all to them at once, make several `ask_user` calls in the SAME message,
+                one question per call: each gets its own card, the person answers them in any order,
+                and your turn ends once, after that message. Do not ask one and hold back the others
+                you already have; only a question that depends on an earlier answer waits for it.
+                Calling `ask_user` ends your turn. Each answer given on a card reaches you as a
+                message saying which question it answers, and the other cards stay open until they
+                are answered; if the person writes to you instead, every open question closes as
+                superseded and you are told so, with their message quoted.
             "#}
                 .to_string(),
             );
@@ -71,10 +78,12 @@ impl NeedsYouClient {
         vec![Tool::new(
             ASK_USER_TOOL_NAME.to_string(),
             indoc! {r#"
-                Ask the person a question you cannot answer yourself. It is pinned in their app
+                Ask the person one question you cannot answer yourself. It is pinned in their app
                 until they answer or dismiss it, with your recommended answer offered as a
-                one-click choice. Your turn ends when you call this. The person's next message
-                either answers it on the card or, when they write to you instead, closes it as
+                one-click choice. For several questions, call this several times in the same
+                message, one question per call: each gets its own card, and your turn ends once,
+                after that message. Each answer on a card reaches you as a message naming its
+                question; when the person writes to you instead, every open question closes as
                 superseded — you are told which.
             "#}
             .to_string(),
@@ -113,10 +122,11 @@ impl NeedsYouClient {
         .map_err(|e| e.to_string())?;
 
         let result = CallToolResult::success(vec![Content::text(format!(
-            "The question is pinned in the person's app as item {}. Your turn ends now; do not \
-             repeat the question in text. Their next message either answers it on the card or, \
-             when they write to you instead, closes it as superseded; you will be told which, \
-             with their message quoted.",
+            "The question is pinned in the person's app as item {}. Your turn ends after this \
+             message; do not repeat the question in text. Its answer on the card reaches you as a \
+             message naming this question, while any other open cards stay open; if the person \
+             writes to you instead, every open question closes as superseded and you will be \
+             told so, with their message quoted.",
             item.id
         ))]);
         let mut params = serde_json::Map::new();

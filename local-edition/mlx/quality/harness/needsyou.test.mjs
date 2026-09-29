@@ -53,6 +53,9 @@ test('the first matching entry wins, and every word of match must be in the ques
   assert.equal(matchGuidance('Which lead owns FRT?', g.answers).entry.answer, 'B');
   assert.equal(matchGuidance('An INACTIVE project lead?', g.answers).entry.answer, 'A');
   assert.equal(matchGuidance('Leads of inactive projects?', g.answers), null, 'words, not substrings: "leads" is not "lead"');
+  const mp = [{ match: 'mince', answer: 'price' }, { match: 'mince sulphite', answer: 'tag it' }];
+  assert.equal(matchGuidance('Is the sulphite note on the mince pie peel only?', mp).entry.answer, 'tag it', 'the more specific entry wins over an earlier one-word match');
+  assert.equal(matchGuidance('What does the mince pie cost?', mp).entry.answer, 'price');
   assert.equal(matchGuidance("Set as this chat’s folder?", [{ match: "this chat's folder", answer: 'Yes' }]).entry.answer, 'Yes', 'curly apostrophe');
 });
 
