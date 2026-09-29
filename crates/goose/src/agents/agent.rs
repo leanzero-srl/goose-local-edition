@@ -2103,12 +2103,13 @@ impl Agent {
             .flat_map(|m| m.content.iter())
             .filter(|c| matches!(c, MessageContent::ToolRequest(_)))
             .count();
-        // Q-294: whether the provider serves this conversation's prompt from its cache, as the
-        // latest call reported it — the swarm's workers keep their golden-measured condensation.
+        // Q-294/Q-516: whether the provider serves this chat's prompt from its cache, as its agent
+        // calls reported it — a single cold call does not reopen condensation. The swarm's workers
+        // keep their golden-measured condensation.
         let mut cached_prompt = if self.is_swarm_worker() {
             None
         } else {
-            crate::context_mgmt::prompt_cache_read(&session.usage)
+            crate::context_mgmt::chat_prompt_cache_read(&session.usage, &session.accumulated_usage)
         };
 
         let working_dir = session.working_dir.clone();
@@ -2386,7 +2387,9 @@ impl Agent {
                             if let Some(ref usage) = usage {
                                 self.update_session_metrics(&session_config.id, session_config.schedule_id.clone(), usage, false).await?;
                                 if !self.is_swarm_worker() {
-                                    cached_prompt = crate::context_mgmt::prompt_cache_read(&usage.usage);
+                                    if let Some(read) = crate::context_mgmt::prompt_cache_read(&usage.usage) {
+                                        cached_prompt = Some(read);
+                                    }
                                 }
                                 yield AgentEvent::Usage(usage.clone());
                             }

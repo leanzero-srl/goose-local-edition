@@ -1411,10 +1411,24 @@ pub fn prompt_cache_read(last_call: &Usage) -> Option<i32> {
     last_call.cache_read_input_tokens.filter(|read| *read > 0)
 }
 
+/// Q-516: whether the provider serves THIS chat's prompt from its cache — the last agent call's
+/// cache read, or, when that call read nothing, what the chat's agent calls have read in total
+/// (`Session::accumulated_usage`, which only agent and compaction calls add to). One cold call on a
+/// caching provider is a miss, not a provider without a cache: it re-read the prompt and so put
+/// it back in the cache, and the next call reads it warm — unless the pairs were condensed in the
+/// meantime. E2E #3y (27B split, session 20260929_19): turn 22's only agent call re-read 196,384
+/// tokens from 0 after a side call evicted its prefix (Q-514), so turn 23 started with a last-call
+/// read of 0 and condensed 10 pairs into the stored conversation; turn 23's own calls still read
+/// 195,011–195,875 warm, and the needs-you answer turn that loaded the condensed conversation
+/// re-read ~195k cold. A chat whose agent calls never read from a cache is condensed as before.
+pub fn chat_prompt_cache_read(last_agent_call: &Usage, chat_agent_calls: &Usage) -> Option<i32> {
+    prompt_cache_read(last_agent_call).or_else(|| prompt_cache_read(chat_agent_calls))
+}
+
 /// `faithful_records`: chat agents get `record_tool_call` (facts only, no model call); the swarm's
 /// workers keep the model-written summary their golden benchmark was measured with.
-/// `cached_prompt`: `prompt_cache_read` of the latest call — when the provider serves the prompt
-/// from its cache, the pairs stay as they are (Q-294).
+/// `cached_prompt`: `chat_prompt_cache_read` of the chat's agent calls — when the provider serves
+/// the prompt from its cache, the pairs stay as they are (Q-294, Q-516).
 #[allow(clippy::too_many_arguments)]
 pub fn maybe_summarize_tool_pairs(
     provider: Arc<dyn Provider>,
@@ -2720,6 +2734,40 @@ mod tests {
         assert!(condense(prompt_cache_read(&turn4_last)).is_none());
         let condensed = condense(None).unwrap().await.unwrap();
         assert_eq!(condensed.len(), TOOLCALL_SUMMARIZATION_BATCH_SIZE);
+    }
+
+    /// Q-516, E2E #3y's own calls (session 20260929_19): turn 22's only agent call re-read
+    /// 196,384 prompt tokens from 0 after a side call evicted its prefix, and the chat's agent
+    /// calls had read 19,236,521 tokens from cache by then. A caching chat keeps its pairs through
+    /// that one cold call; a chat whose agent calls never read from a cache is condensed as before.
+    #[test]
+    fn a_cold_call_on_a_caching_chat_does_not_reopen_condensation() {
+        let turn22_cold =
+            Usage::new(Some(196_384), Some(154), None).with_cache_tokens(Some(0), None);
+        let chat_so_far =
+            Usage::new(Some(19_500_000), None, None).with_cache_tokens(Some(19_236_521), None);
+        assert_eq!(
+            chat_prompt_cache_read(&turn22_cold, &chat_so_far),
+            Some(19_236_521)
+        );
+
+        let turn23_first =
+            Usage::new(Some(195_660), Some(197), None).with_cache_tokens(Some(195_011), None);
+        assert_eq!(
+            chat_prompt_cache_read(&turn23_first, &chat_so_far),
+            Some(195_011)
+        );
+
+        let never_cached = Usage::new(Some(41_020), None, None).with_cache_tokens(Some(0), None);
+        assert_eq!(
+            chat_prompt_cache_read(&never_cached, &never_cached),
+            None,
+            "a chat whose agent calls never read from a cache is condensed as before"
+        );
+        assert_eq!(
+            chat_prompt_cache_read(&Usage::default(), &Usage::default()),
+            None
+        );
     }
 
     #[test]

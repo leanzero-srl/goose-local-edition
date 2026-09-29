@@ -990,24 +990,229 @@ mod tests {
             // Q-88: a chat agent condenses pairs into records built from their facts; a swarm
             // worker keeps the model-written summary. Both run here, one after the other, because
             // the cutoff override is process-global.
-            let chat =
-                batch_condensation(false, goose::context_mgmt::TOOL_RECORD_HEADER, false).await;
-            let swarm = batch_condensation(true, "Summary of tool call #", false).await;
+            // Q-516: E2E #3y's needs-you answer turn, run end to end through two replies.
+            let answer_turn = a_needs_you_answer_turn_reads_the_prompt_its_turn_sent().await;
+            let record = goose::context_mgmt::TOOL_RECORD_HEADER;
+            let summary = "Summary of tool call #";
+            let chat = batch_condensation(false, record, ChatCache::NeverRead).await;
+            let swarm = batch_condensation(true, summary, ChatCache::NeverRead).await;
             // Q-294: a chat whose last call was served from the provider's prompt cache keeps its
             // pairs (condensing them made E2E #3o's next turns re-read the whole conversation); a
             // swarm worker condenses as its golden benchmark was measured.
-            let cached_chat =
-                batch_condensation(false, goose::context_mgmt::TOOL_RECORD_HEADER, true).await;
-            let cached_swarm = batch_condensation(true, "Summary of tool call #", true).await;
+            let cached_chat = batch_condensation(false, record, ChatCache::LastCallWarm).await;
+            let cached_swarm = batch_condensation(true, summary, ChatCache::LastCallWarm).await;
+            // Q-516: one cold call on a chat the provider caches does not reopen condensation.
+            let missed_chat = batch_condensation(false, record, ChatCache::LastCallMissed).await;
+            let missed_swarm = batch_condensation(true, summary, ChatCache::LastCallMissed).await;
             Config::global().delete("GOOSE_TOOL_CALL_CUTOFF").unwrap();
-            chat.and(swarm).and(cached_chat).and(cached_swarm)
+            chat.and(swarm)
+                .and(cached_chat)
+                .and(cached_swarm)
+                .and(missed_chat)
+                .and(missed_swarm)
+                .and(answer_turn)
+        }
+
+        const FACT_CHECK_SYSTEM: &str = "You check a reply against the turn's tool results.";
+
+        /// Answers every call with plain text. An agent call — the one that carries the chat's
+        /// tool pairs — gets the next scripted usage and is kept; a side call (the fact check,
+        /// a title) reads nothing from the cache, as E2E #3y's did.
+        struct CacheScriptProvider {
+            agent_usages: std::sync::Mutex<std::collections::VecDeque<Usage>>,
+            agent_requests: std::sync::Mutex<Vec<Vec<Message>>>,
+        }
+
+        #[async_trait]
+        impl Provider for CacheScriptProvider {
+            async fn stream(
+                &self,
+                _model_config: &ModelConfig,
+                system_prompt: &str,
+                messages: &[Message],
+                _tools: &[Tool],
+            ) -> Result<MessageStream, ProviderError> {
+                let agent_call =
+                    system_prompt != FACT_CHECK_SYSTEM && messages.iter().any(|m| m.is_tool_call());
+                let usage = if agent_call {
+                    self.agent_requests.lock().unwrap().push(messages.to_vec());
+                    self.agent_usages
+                        .lock()
+                        .unwrap()
+                        .pop_front()
+                        .expect("a usage is scripted for every agent call")
+                } else {
+                    Usage::new(Some(900), Some(30), None).with_cache_tokens(Some(0), None)
+                };
+                Ok(stream_from_single_message(
+                    Message::assistant().with_text("Done processing."),
+                    ProviderUsage::new("mock-model".to_string(), usage),
+                ))
+            }
+
+            fn get_name(&self) -> &str {
+                "mock-cache-script"
+            }
+        }
+
+        /// Q-516, E2E #3y's 19:11–19:14 sequence: turn 22's only agent call re-read its prompt
+        /// from 0 (a side call had evicted it, Q-514); turn 23's agent calls read it warm and the
+        /// turn ended on a needs-you card; the end-of-turn fact check ran as a side call that
+        /// read nothing from the cache; the card's answer started the next turn. That turn's
+        /// request must carry the conversation turn 23 sent, pair for pair — on 3.0.79 turn 23
+        /// had condensed the oldest pairs into the stored conversation, and the answer turn's
+        /// request diverged at message 1 and re-read ~195k tokens cold.
+        async fn a_needs_you_answer_turn_reads_the_prompt_its_turn_sent() -> Result<()> {
+            let temp_dir = tempfile::tempdir()?;
+            let session_manager = Arc::new(SessionManager::new(temp_dir.path().join("data")));
+            let agent = Agent::with_config(AgentConfig::new(
+                Arc::clone(&session_manager),
+                Arc::new(PermissionManager::new(temp_dir.path().join("config"))),
+                None,
+                GooseMode::Auto,
+                true,
+                GoosePlatform::GooseCli,
+            ));
+            let warm =
+                || Usage::new(Some(1_200), Some(20), None).with_cache_tokens(Some(1_150), None);
+            let provider = Arc::new(CacheScriptProvider {
+                agent_usages: std::sync::Mutex::new([warm(), warm()].into()),
+                agent_requests: std::sync::Mutex::new(Vec::new()),
+            });
+            let session = session_manager
+                .create_session(
+                    PathBuf::from("."),
+                    "answer-turn-test".to_string(),
+                    SessionType::Hidden,
+                    GooseMode::Auto,
+                )
+                .await?;
+            agent
+                .update_provider(
+                    provider.clone(),
+                    ModelConfig::new("mock-model"),
+                    &session.id,
+                )
+                .await?;
+
+            let base_ts = chrono::Utc::now().timestamp() - 100;
+            let mut initial_msg = Message::user().with_text("help me read some files");
+            initial_msg.created = base_ts;
+            session_manager
+                .add_message(&session.id, &initial_msg)
+                .await?;
+            for i in 0..13 {
+                let call_id = format!("precall_{}", i);
+                let mut req_msg = Message::assistant()
+                    .with_tool_request(&call_id, Ok(CallToolRequestParams::new("read_file")))
+                    .with_generated_id();
+                req_msg.created = base_ts + i as i64 + 1;
+                session_manager.add_message(&session.id, &req_msg).await?;
+                let mut resp_msg = Message::user()
+                    .with_tool_response(
+                        &call_id,
+                        Ok(CallToolResult::success(vec![RawContent::text(format!(
+                            "content of file {}",
+                            i
+                        ))
+                        .no_annotation()])),
+                    )
+                    .with_generated_id();
+                resp_msg.created = base_ts + i as i64 + 1;
+                session_manager.add_message(&session.id, &resp_msg).await?;
+            }
+            let seeded = 1 + 13 * 2;
+            // Turn 22's agent call: 0 of 196,384 from cache, after 19,236,521 read by the chat.
+            session_manager
+                .update(&session.id)
+                .usage(Usage::new(Some(1_200), Some(20), None).with_cache_tokens(Some(0), None))
+                .accumulated_usage(
+                    Usage::new(Some(12_000), Some(200), None).with_cache_tokens(Some(10_500), None),
+                )
+                .apply()
+                .await?;
+
+            let session_config = || SessionConfig {
+                id: session.id.clone(),
+                schedule_id: None,
+                max_turns: Some(1),
+                retry_config: None,
+            };
+            let drain = |text: &'static str| {
+                let agent = &agent;
+                let session_config = session_config();
+                async move {
+                    let reply = agent
+                        .reply(Message::user().with_text(text), session_config, None)
+                        .await?;
+                    tokio::pin!(reply);
+                    while let Some(event) = reply.next().await {
+                        event?;
+                    }
+                    anyhow::Ok(())
+                }
+            };
+
+            drain("draft the post-mortem, and ask me whether names go in it").await?;
+            let (_, side_usage) = provider
+                .complete(
+                    &ModelConfig::new("mock-model"),
+                    FACT_CHECK_SYSTEM,
+                    &[Message::user().with_text("the reply and its tool results")],
+                    &[],
+                )
+                .await?;
+            assert_eq!(side_usage.usage.cache_read_input_tokens, Some(0));
+            drain("No names in the post-mortem, just roles.").await?;
+
+            let requests = provider.agent_requests.lock().unwrap().clone();
+            assert_eq!(requests.len(), 2, "one agent call per turn");
+            let sent = |request: &[Message]| {
+                request
+                    .iter()
+                    .take(seeded)
+                    .map(|m| serde_json::to_value(m).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                sent(&requests[1]),
+                sent(&requests[0]),
+                "the answer turn sends the conversation its turn sent, so the provider reads it from cache"
+            );
+            let stored = session_manager
+                .get_session(&session.id, true)
+                .await?
+                .conversation
+                .expect("Session should have a conversation");
+            assert!(
+                stored.messages().iter().all(|m| (m.metadata.agent_visible
+                    || !(m.is_tool_call() || m.is_tool_response()))
+                    && !m
+                        .as_concat_text()
+                        .starts_with(goose::context_mgmt::TOOL_RECORD_HEADER)),
+                "no pair condensed on a chat the provider caches"
+            );
+            Ok(())
+        }
+
+        /// What the chat's agent calls reported about the provider's prompt cache before the
+        /// reply under test.
+        #[derive(Clone, Copy, PartialEq)]
+        enum ChatCache {
+            NeverRead,
+            /// E2E #3o's turn 4: the last call read most of its prompt from the cache.
+            LastCallWarm,
+            /// E2E #3y's turn 22: earlier agent calls read from the cache, the last one re-read
+            /// its whole prompt from 0 after a side call evicted it (Q-514).
+            LastCallMissed,
         }
 
         async fn batch_condensation(
             swarm_worker: bool,
             marker: &str,
-            served_from_cache: bool,
+            chat_cache: ChatCache,
         ) -> Result<()> {
+            let served_from_cache = chat_cache != ChatCache::NeverRead;
             let temp_dir = tempfile::tempdir()?;
             let session_manager = Arc::new(SessionManager::new(temp_dir.path().join("data")));
             let agent = Agent::with_config(AgentConfig::new(
@@ -1068,17 +1273,35 @@ mod tests {
                 session_manager.add_message(&session.id, &resp_msg).await?;
             }
 
-            if served_from_cache {
-                // The last call read most of its prompt from the provider's cache (E2E #3o's turn 4
-                // read 112,257 of 113,451); sized inside this mock's window so no compaction runs.
-                session_manager
-                    .update(&session.id)
-                    .usage(
-                        Usage::new(Some(1_200), Some(20), None)
-                            .with_cache_tokens(Some(1_100), None),
-                    )
-                    .apply()
-                    .await?;
+            // Sized inside this mock's window so no compaction runs.
+            match chat_cache {
+                ChatCache::NeverRead => {}
+                ChatCache::LastCallWarm => {
+                    // E2E #3o's turn 4 read 112,257 of 113,451.
+                    session_manager
+                        .update(&session.id)
+                        .usage(
+                            Usage::new(Some(1_200), Some(20), None)
+                                .with_cache_tokens(Some(1_100), None),
+                        )
+                        .apply()
+                        .await?;
+                }
+                ChatCache::LastCallMissed => {
+                    // E2E #3y's turn 22 read 0 of 196,384; the chat had read 19,236,521 by then.
+                    session_manager
+                        .update(&session.id)
+                        .usage(
+                            Usage::new(Some(1_200), Some(20), None)
+                                .with_cache_tokens(Some(0), None),
+                        )
+                        .accumulated_usage(
+                            Usage::new(Some(12_000), Some(200), None)
+                                .with_cache_tokens(Some(10_500), None),
+                        )
+                        .apply()
+                        .await?;
+                }
             }
 
             // Send a user message to trigger the reply loop
