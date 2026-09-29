@@ -16,7 +16,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-494 (counts not years: watch #3y);
   - Q-496 (the chat follows the turn: watch #3y, data-following);
   - Q-486.
-- E2E #3y RUNNING since 16:01 (turn 2: 1,955 s / 9 tools, against #3x's 8,349 s / 152): RU-2026-09-29-3y-split-tensor-coffee, session 20260929_19, the coffee brief (41 turns).
+- E2E #3y RUNNING since 16:01 — COMPACTED at turn 25 (214k → 59.8k); post-compaction calls warm (58–59k from cache) (turn 2: 1,955 s / 9 tools, against #3x's 8,349 s / 152): RU-2026-09-29-3y-split-tensor-coffee, session 20260929_19, the coffee brief (41 turns).
   r1 proves every send (SEND_LOST). Turn 1 LANDED (Q-492 proven under the brief) and saved both memories, but
   narrowed the privacy rule to this project (Q-506, model). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
 - E2E #3x STOPPED at turn 4 (E2E-RUNS): the Q-498 cache thrash with the owner's second chat; its memory turn was lost.
@@ -44,11 +44,10 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-511/512;
   - Q-505 (scan-secrets).
 
-## Toward 3.0.81 — merge-081 GATING (/tmp/g081.out), ~/goose-targets/wt-m081 @ 4bb4f18c6
-- Q-516 5783dd856: one cold miss no longer reopens tool-pair condensation (the chat's accumulated cache reads).
-- Q-515 b1e077f31: the steer test holds its provider, no clock (test-only).
-- Q-517 cutting: the unexplained 1.2–1.6 s before every provider call.
-- Q-514 (a side call evicting one chat's prefix) waits on 3.0.80 live.
+## Toward 3.0.81 — main b661ce43b carries Q-515 + Q-516 (g081 green: goose lib 2196, agent 38, acp_* all, clippy)
+- Q-517 (the 1.2–1.6 s before every provider call) is cutting; it joins, then release 3.0.81.
+- The plan: install 3.0.80 now-built OR 3.0.81 (whichever is ready) when #3y ends; both need BOTH Macs.
+- Q-514 (a side call evicting one chat's prefix) waits on the 3.0.80+ live measurement.
 
 ## CI
 - Red 13:18Z: the RecipesView delete test hit its 5 s timeout (the vitest-under-load class). Q-466 is cutting
