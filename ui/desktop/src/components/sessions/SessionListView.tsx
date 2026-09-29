@@ -793,7 +793,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
               <button
                 onClick={handleShareClick}
                 disabled={isSharing}
-                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer disabled:cursor-wait disabled:opacity-60"
+                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer disabled:cursor-wait"
                 title={intl.formatMessage(i18n.shareNostrSession)}
               >
                 {isSharing ? (

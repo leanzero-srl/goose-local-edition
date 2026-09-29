@@ -237,7 +237,7 @@ export default function GooseImportSection() {
         <button
           onClick={() => void chooseAndScan()}
           disabled={scanning}
-          className="flex items-center gap-1 text-xs border border-border-primary px-2 py-1 text-text-primary hover:border-text-secondary transition-colors disabled:opacity-50"
+          className="flex items-center gap-1 text-xs border border-border-primary px-2 py-1 text-text-primary hover:border-text-secondary transition-colors disabled:cursor-not-allowed disabled:border-lz-border disabled:bg-lz-surface-2 disabled:text-lz-ink-3"
           style={{ borderRadius: 3 }}
         >
           <FolderOpen className="h-3.5 w-3.5" /> {intl.formatMessage(i18n.chooseSource)}
@@ -279,8 +279,8 @@ export default function GooseImportSection() {
                 <button
                   onClick={() => void importRecipes()}
                   disabled={busy || selRecipes.size === 0}
-                  className="text-xs font-semibold px-3 py-1.5 text-white disabled:opacity-50"
-                  style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                  className="text-xs font-semibold px-3 py-1.5 bg-lz-accent text-lz-accent-ink hover:bg-lz-accent-hover disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3"
+                  style={{ borderRadius: 3 }}
                 >
                   {intl.formatMessage(i18n.importRecipes, { count: selRecipes.size })}
                 </button>

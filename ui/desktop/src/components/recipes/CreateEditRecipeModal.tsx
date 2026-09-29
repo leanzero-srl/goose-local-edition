@@ -547,7 +547,7 @@ export default function CreateEditRecipeModal({
                   disabled={
                     !deeplink || isGeneratingDeeplink || deeplink === 'Error generating deeplink'
                   }
-                  className="ml-4 p-2 hover:bg-background-primary rounded-lg transition-colors flex items-center disabled:opacity-50 disabled:hover:bg-transparent"
+                  className="ml-4 p-2 hover:bg-background-primary rounded-lg transition-colors flex items-center disabled:cursor-not-allowed disabled:text-lz-ink-3 disabled:hover:bg-transparent"
                 >
                   {copied ? (
                     <Check className="w-4 h-4 text-green-500" />

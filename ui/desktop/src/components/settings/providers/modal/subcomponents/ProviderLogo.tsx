@@ -47,7 +47,7 @@ export default function ProviderLogo({ providerName }: ProviderLogoProps) {
 
   // Special handling for xAI logo
   const isXai = logoKey === 'xai';
-  const imageStyle = isXai ? { filter: 'invert(1)', opacity: 0.9 } : {};
+  const imageStyle = isXai ? { filter: 'invert(1)' } : {};
 
   // Use smaller size for xAI logo to fit better in circle
   const imageClassName = isXai
