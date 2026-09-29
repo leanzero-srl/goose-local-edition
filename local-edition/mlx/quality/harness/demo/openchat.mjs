@@ -1,0 +1,22 @@
+import { page, shot, DIR } from './lib.mjs';
+const { p } = await page();
+const work = DIR;
+const reg = await p.evaluate(async (dir) => {
+  const was = await window.electron.listProjects();
+  if (was.some((x) => x.path === dir)) return { added: false, listed: true };
+  const projects = await window.electron.addProject(dir);
+  const added = projects.filter((x) => !was.some((w) => w.path === x.path));
+  window.dispatchEvent(new CustomEvent('projects-changed', { detail: { projects, added } }));
+  return { added: added.length > 0, listed: projects.some((x) => x.path === dir) };
+}, work);
+console.log('project', JSON.stringify(reg));
+const fold = p.getByTestId('projects-fold');
+if ((await fold.getAttribute('aria-expanded')) === 'false') await fold.click();
+const row = p.getByTestId(`project-row-${work}`);
+await row.waitFor({ state: 'attached' });
+await row.locator('button[aria-expanded]').first().hover();
+await row.locator('button[aria-label^="New session here"]').first().click();
+await p.waitForTimeout(4000);
+console.log('url', p.url());
+await shot(p, '30-new-chat-opened');
+process.exit(0);
