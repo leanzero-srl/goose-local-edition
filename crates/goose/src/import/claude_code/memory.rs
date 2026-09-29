@@ -109,6 +109,9 @@ pub fn apply_memory(
 ) -> Result<()> {
     // Convert every note into (category, entry), grouping collisions.
     let mut by_category: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Q-505: a Claude note carried a runbook line with a live API key into the goose store, which
+    // hands memory to the chat's provider. The value is redacted on the way in, like every save.
+    let mut redacted: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for action in plan.by_type(ImportType::Memory) {
         let Some(src) = action.source.as_ref() else {
             continue;
@@ -118,7 +121,14 @@ pub fn apply_memory(
         if category.is_empty() || entry.trim().is_empty() {
             continue;
         }
-        by_category.entry(category).or_default().push(entry);
+        let entry = goose_memory_store::redact_secrets(&entry);
+        if !entry.keys.is_empty() {
+            redacted
+                .entry(category.clone())
+                .or_default()
+                .extend(entry.keys);
+        }
+        by_category.entry(category).or_default().push(entry.text);
     }
 
     let memory_dir = ctx.memory_dir();
@@ -191,7 +201,15 @@ pub fn apply_memory(
             &file.display().to_string(),
             &content_hash(new_content.as_bytes()),
         );
-        report.record(ImportType::Memory, &category, outcome, None);
+        let detail = redacted.get(&category).map(|keys| {
+            format!(
+                "redacted {} secret value{}: {}",
+                keys.len(),
+                if keys.len() == 1 { "" } else { "s" },
+                keys.join(", ")
+            )
+        });
+        report.record(ImportType::Memory, &category, outcome, detail);
     }
     Ok(())
 }
@@ -382,6 +400,38 @@ mod tests {
         let mut r2 = ImportReport::default();
         apply_memory(&p, &ctx, &mut m, &mut r2).unwrap();
         assert!(r2.count_outcome(ApplyOutcome::Unchanged) >= 1);
+    }
+
+    /// Q-505: the imported `evolve-goose-test-loop` note carried a runbook line with a live API
+    /// key. The import writes the marker, never the value, and its report names the key.
+    #[test]
+    fn apply_redacts_a_secret_value_and_reports_its_name() {
+        let (tmp, opts) = memory_fixture();
+        let fake = "sk-test-0000000000000000000000";
+        fs::write(
+            opts.from
+                .join("projects")
+                .join("p2")
+                .join("memory")
+                .join("runbook.md"),
+            format!(
+                "---\nname: test-loop\ndescription: how the loop runs\nmetadata:\n  type: project\n---\n`EXAMPLE_API_KEY={fake} goose run`"
+            ),
+        )
+        .unwrap();
+        let ctx = ctx_for(&tmp);
+        let p = plan(&opts).unwrap();
+        let mut m = Manifest::default();
+        let mut r = ImportReport::default();
+        apply_memory(&p, &ctx, &mut m, &mut r).unwrap();
+
+        let written = fs::read_to_string(ctx.memory_dir().join("test-loop.txt")).unwrap();
+        assert!(!written.contains(fake), "{written}");
+        assert!(written.contains("EXAMPLE_API_KEY=<redacted: EXAMPLE_API_KEY> goose run"));
+        assert!(r.applied.iter().any(|a| a.name == "test-loop"
+            && a.detail.as_deref() == Some("redacted 1 secret value: EXAMPLE_API_KEY")));
+        let add = fs::read_to_string(ctx.memory_dir().join("add-depth.txt")).unwrap();
+        assert!(add.contains("research first"), "{add}");
     }
 
     #[test]

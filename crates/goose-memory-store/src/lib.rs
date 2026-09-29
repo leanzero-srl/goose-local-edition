@@ -11,18 +11,25 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub mod proposals;
+pub mod secrets;
 pub use proposals::{
     working_dir_key, MemoryProposal, Polarity, ProposalKind, ProposalState, ProposalStore,
     ProposeOutcome,
 };
+pub use secrets::{redact_secrets, redaction_marker, secret_hits, Redacted, SecretHit};
 
-/// One memory as stored on disk: an optionally tagged entry inside a category file.
+/// One memory as read from disk: an optionally tagged entry inside a category file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryEntry {
     pub is_global: bool,
     pub category: String,
     pub tags: Vec<String>,
+    /// The entry as it may leave the store: every secret value replaced by `<redacted: NAME>`
+    /// ([`secrets::redact_secrets`]), whatever the file still holds.
     pub content: String,
+    /// How many secret values the file still held in this entry and were redacted as it was read —
+    /// entries written before save-time redaction (Q-505). Zero for an entry saved since.
+    pub redacted_values: usize,
 }
 
 impl MemoryEntry {
@@ -596,11 +603,16 @@ impl MemoryStore {
             }
             let content = fs::read_to_string(file.path())?;
             for (tags, body) in parse_entries(&content) {
+                let body = redact_secrets(&body);
+                let tags: Vec<Redacted> = tags.iter().map(|tag| redact_secrets(tag)).collect();
+                let redacted_values =
+                    body.keys.len() + tags.iter().map(|tag| tag.keys.len()).sum::<usize>();
                 entries.push(MemoryEntry {
                     is_global,
                     category: category.to_string(),
-                    tags,
-                    content: body,
+                    tags: tags.into_iter().map(|tag| tag.text).collect(),
+                    content: body.text,
+                    redacted_values,
                 });
             }
         }
@@ -821,7 +833,9 @@ impl MemoryStore {
     }
 
     /// Append an entry, or replace the entry in the same category and scope whose headline matches
-    /// the new content's headline. An entry identical to one already stored is left alone.
+    /// the new content's headline. An entry identical to one already stored is left alone. Secret
+    /// values are redacted before anything is compared or written ([`secrets::redact_secrets`]); a
+    /// caller that tells the model what was redacted runs the same function on its input.
     pub fn remember(
         &self,
         category: &str,
@@ -830,7 +844,10 @@ impl MemoryStore {
         is_global: bool,
     ) -> io::Result<RememberOutcome> {
         let path = self.category_file(category, is_global)?;
-        let content = content.trim_matches('\n');
+        let content = redact_secrets(content.trim_matches('\n')).text;
+        let content = content.as_str();
+        let tags: Vec<String> = tags.iter().map(|tag| redact_secrets(tag).text).collect();
+        let tags = tags.as_slice();
         let incoming_headline = headline(content);
         update_file_locked(&path, |existing| {
             let mut entries = parse_entries(existing.unwrap_or_default());
@@ -859,6 +876,44 @@ impl MemoryStore {
             Ok((outcome, Some(serialized)))
         })
     }
+
+    /// Every secret value the store's category files still hold, both scopes, by file, line and
+    /// key NAME — never the value. It reads the raw files, what is on disk, not what a reader is
+    /// handed; nothing is changed (Q-505: which entries to rewrite is the owner's call).
+    pub fn secret_scan(&self) -> io::Result<Vec<StoredSecret>> {
+        let mut found = Vec::new();
+        for is_global in [true, false] {
+            let dir = self.scope_dir(is_global);
+            if !dir.exists() {
+                continue;
+            }
+            let mut files = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
+            files.sort_by_key(|entry| entry.file_name());
+            for file in files {
+                let path = file.path();
+                if !file.file_type()?.is_file()
+                    || path.extension().and_then(|ext| ext.to_str()) != Some("txt")
+                {
+                    continue;
+                }
+                let text = fs::read_to_string(&path)?;
+                found.extend(secret_hits(&text).into_iter().map(|hit| StoredSecret {
+                    path: path.clone(),
+                    line: hit.line,
+                    key: hit.key,
+                }));
+            }
+        }
+        Ok(found)
+    }
+}
+
+/// A secret value still on disk: the category file, the 1-based line, the key name. No value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredSecret {
+    pub path: PathBuf,
+    pub line: usize,
+    pub key: String,
 }
 
 /// What `MemoryStore::remember` did with the entry.
@@ -2084,5 +2139,79 @@ mod tests {
         }
         assert!(entries.iter().all(|e| e.category == "working-agents"));
         assert!(store.index().contains("(16 entries, is_global=true)"));
+    }
+
+    const FAKE_KEY: &str = "sk-test-0000000000000000000000";
+
+    #[test]
+    fn remember_writes_a_secret_value_as_its_redaction_marker() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        store
+            .remember(
+                "runbook",
+                &format!(
+                    "Launch the loop with the docs key.\n`EXAMPLE_API_KEY={FAKE_KEY} goose run`"
+                ),
+                &tags(&["project"]),
+                false,
+            )
+            .unwrap();
+        let raw = fs::read_to_string(store.category_file("runbook", false).unwrap()).unwrap();
+        assert!(!raw.contains(FAKE_KEY), "{raw}");
+        assert!(
+            raw.contains("`EXAMPLE_API_KEY=<redacted: EXAMPLE_API_KEY> goose run`"),
+            "{raw}"
+        );
+    }
+
+    #[test]
+    fn an_entry_written_before_redaction_is_read_redacted_and_counted() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        let dir = store.scope_dir(true).to_path_buf();
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("runbook.txt"),
+            format!(
+                "# project\nThe loop runs with EXAMPLE_API_KEY={FAKE_KEY} set.\nsecond line\n\n"
+            ),
+        )
+        .unwrap();
+
+        let entries = store.entries(true).unwrap();
+        assert_eq!(entries[0].redacted_values, 1);
+        assert!(!entries[0].content.contains(FAKE_KEY));
+        assert!(
+            !store.index().contains(FAKE_KEY),
+            "the index carries the headline"
+        );
+        let hits = store.search("loop runs", None).unwrap();
+        assert!(!hits[0].entry.render().contains(FAKE_KEY));
+    }
+
+    #[test]
+    fn the_secret_scan_names_file_line_and_key_and_changes_nothing() {
+        let temp_dir = tempdir().unwrap();
+        let store = store_in(&temp_dir);
+        let dir = store.scope_dir(true).to_path_buf();
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("runbook.txt");
+        let original = format!(
+            "# project\nThe primary key of the table is the issue id.\n\nRun it.\n`EXAMPLE_API_KEY={FAKE_KEY} goose run`\n\n"
+        );
+        fs::write(&file, &original).unwrap();
+
+        let found = store.secret_scan().unwrap();
+        assert_eq!(
+            found,
+            vec![StoredSecret {
+                path: file.clone(),
+                line: 5,
+                key: "EXAMPLE_API_KEY".to_string()
+            }]
+        );
+        assert!(!format!("{found:?}").contains(FAKE_KEY));
+        assert_eq!(fs::read_to_string(&file).unwrap(), original);
     }
 }

@@ -221,7 +221,7 @@ impl ProposalStore {
         is_global: bool,
         sources: &[String],
     ) -> io::Result<ProposeOutcome> {
-        let text = text.trim().to_string();
+        let text = crate::redact_secrets(text.trim()).text;
         if text.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

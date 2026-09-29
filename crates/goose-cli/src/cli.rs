@@ -751,6 +751,16 @@ enum SkillsCommand {
 }
 
 #[derive(Subcommand)]
+enum MemoryCommand {
+    /// Report memory files that still hold a secret value (file:line and key name, never the value)
+    #[command(
+        name = "scan-secrets",
+        about = "Report memory files that still hold a secret value (file:line and key name, never the value)"
+    )]
+    ScanSecrets,
+}
+
+#[derive(Subcommand)]
 enum ImportCommand {
     /// Import your Claude Code setup (skills, memory, hints, MCP servers) into goose
     #[command(
@@ -1035,6 +1045,13 @@ enum Command {
     Skills {
         #[command(subcommand)]
         command: SkillsCommand,
+    },
+
+    /// Memory store utilities
+    #[command(about = "Memory store utilities")]
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommand,
     },
 
     /// Show which memories and skills recall would inject for a request
@@ -1435,6 +1452,7 @@ fn get_command_name(command: &Option<Command>) -> &'static str {
         Some(Command::Recipe { .. }) => "recipe",
         Some(Command::Import { .. }) => "import",
         Some(Command::Skills { .. }) => "skills",
+        Some(Command::Memory { .. }) => "memory",
         Some(Command::Recall { .. }) => "recall",
         Some(Command::Plugin { .. }) => "plugin",
         Some(Command::Term { .. }) => "term",
@@ -2619,6 +2637,9 @@ pub async fn cli() -> anyhow::Result<()> {
             ImportCommand::ClaudeCode(args) => crate::commands::import::run_claude_code(args).await,
         },
         Some(Command::Skills { command }) => handle_skills_subcommand(command).await,
+        Some(Command::Memory { command }) => match command {
+            MemoryCommand::ScanSecrets => crate::commands::memory::scan_secrets(),
+        },
         Some(Command::Recall { text, session }) => {
             crate::commands::recall::run(&text, session.as_deref()).await
         }
@@ -2819,6 +2840,17 @@ mod tests {
             }) => {}
             _ => panic!("expected skills list command"),
         }
+    }
+
+    #[test]
+    fn memory_command_accepts_scan_secrets() {
+        let cli = Cli::try_parse_from(["goose", "memory", "scan-secrets"]).expect("parse failed");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Memory {
+                command: MemoryCommand::ScanSecrets
+            })
+        ));
     }
 
     /// A TRIPWIRE, not the proof (the proof is `goose::acp::server::link`'s wiring test and

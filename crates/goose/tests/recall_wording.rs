@@ -35,6 +35,7 @@ fn memory(category: &str) -> SearchHit {
             category: category.to_string(),
             tags: vec!["user".to_string()],
             content: format!("{category} headline\nbody"),
+            redacted_values: 0,
         },
     }
 }

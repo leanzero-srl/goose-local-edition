@@ -17,8 +17,8 @@ use crate::session::session_manager::SessionType;
 use anyhow::Result;
 use async_trait::async_trait;
 use goose_memory_store::{
-    covering, headline, rarity_weight, said_together, search_terms, term_occurrences, tokenize,
-    MemoryStore, SearchHit, STOPWORDS,
+    covering, headline, rarity_weight, redact_secrets, said_together, search_terms,
+    term_occurrences, tokenize, MemoryStore, SearchHit, STOPWORDS,
 };
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
 use rmcp::model::{
@@ -1234,6 +1234,16 @@ pub struct Extras {
     pub history_tool: Option<String>,
 }
 
+/// A recalled memory as the turn context carries it, and how many secret values were redacted from
+/// it on the way — the ones the file still held when read (`MemoryEntry::redacted_values`) plus any
+/// the rendered text still carried. The store reads entries redacted; this is the second check at
+/// the one place a memory body enters a provider's prompt every turn (Q-505).
+pub fn injected_memory(hit: &SearchHit) -> (String, usize) {
+    let rendered = redact_secrets(&hit.entry.render());
+    let count = hit.entry.redacted_values + rendered.keys.len();
+    (rendered.text, count)
+}
+
 /// The turn-context part. None when there is nothing to say.
 pub fn render(
     memories: &[SearchHit],
@@ -1266,7 +1276,7 @@ pub fn render_with(
         );
         for hit in memories {
             block.push('\n');
-            block.push_str(&hit.entry.render());
+            block.push_str(&injected_memory(hit).0);
         }
         block.push_str("</recalled-memories>");
         sections.push(block);
@@ -1526,11 +1536,13 @@ impl McpClientTrait for RecallClient {
             .map(|hit| format!("{}({:.1})", hit.entry.category, hit.score))
             .collect();
         let suggested: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
+        let redacted: usize = memories.iter().map(|hit| injected_memory(hit).1).sum();
         tracing::info!(
             session_id,
             terms = terms.len(),
             memories = memories.len(),
             recalled = ?recalled,
+            redacted,
             skills = skills.len(),
             suggested = ?suggested,
             past_session = past.as_ref().map(|p| p.session_id.as_str()),
@@ -1609,8 +1621,60 @@ mod tests {
                 category: category.to_string(),
                 tags: vec!["project".to_string()],
                 content: format!("{category} headline\nbody"),
+                redacted_values: 0,
             },
         }
+    }
+
+    const FAKE_KEY: &str = "sk-test-0000000000000000000000";
+
+    /// Q-505: a memory body is sent to the chat's provider every turn it is recalled. An entry that
+    /// reaches the injection still carrying a value — built by any path, not only the store's
+    /// redacting read — goes in redacted and is counted; a real entry's words are untouched.
+    #[test]
+    fn a_recalled_memory_never_carries_a_secret_value_into_the_turn() {
+        let mut leaking = hit("test-loop", 9.0, 2);
+        leaking.entry.content =
+            format!("Run the loop.\n`EXAMPLE_API_KEY={FAKE_KEY} goose swarm run`");
+        let plain = hit("schema", 8.0, 2);
+        let (text, count) = injected_memory(&leaking);
+        assert!(!text.contains(FAKE_KEY), "{text}");
+        assert!(text.contains("EXAMPLE_API_KEY=<redacted: EXAMPLE_API_KEY> goose swarm run"));
+        assert_eq!(count, 1);
+        assert_eq!(injected_memory(&plain), (plain.entry.render(), 0));
+
+        let part = render(&[leaking, plain], &[], None).unwrap();
+        assert!(!part.contains(FAKE_KEY), "{part}");
+        assert!(part.contains("<redacted: EXAMPLE_API_KEY>"));
+    }
+
+    /// The same from the real store: an entry written before save-time redaction, recalled by the
+    /// extension's own search and selection.
+    #[test]
+    fn a_legacy_entry_recalled_from_the_store_is_redacted_and_counted() {
+        let temp = tempfile::tempdir().unwrap();
+        let global = temp.path().join("memory");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join("context7-docs.txt"),
+            format!(
+                "# reference\nContext7 docs lookups need the key exported.\n`EXAMPLE_API_KEY={FAKE_KEY} goose run`\n\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            global.join("editor.txt"),
+            "# user\nIndentation is tabs.\n\n# user\nLine width is 100.\n\n",
+        )
+        .unwrap();
+        let store = MemoryStore::new(global, &temp.path().join("project"));
+        let terms = query_terms("How do Context7 docs lookups work?");
+        let hits = select_hits(store.search(&terms.join(" "), None).unwrap(), terms.len());
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(injected_memory(&hits[0]).1, 1);
+        let part = render(&hits, &[], None).unwrap();
+        assert!(!part.contains(FAKE_KEY), "{part}");
+        assert!(part.contains("EXAMPLE_API_KEY=<redacted: EXAMPLE_API_KEY> goose run"));
     }
 
     fn skill(name: &str, description: &str) -> SourceEntry {
