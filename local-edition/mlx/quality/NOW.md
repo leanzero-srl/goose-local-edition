@@ -20,35 +20,33 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   cards from yesterday's run. Answer them through the UI and prove the outcome (owner rule: nothing stays
   pending). Not done during #3x, because its turn would share the split with the run.
 
-## Gate / merge → 3.0.79
-- g079 (/tmp/g079.out): the full gate on merge-487-488 (1813810f2 = Q-487 204457a56 + Q-488 5a8d72d49), background
-  priority. RUST GREEN (goose lib, every acp_*/needs_you/chat_search test, sidecar, providers, link, server,
-  mcp+cli 948+98, clippy, dev gates 11, the ACP schema, the Windows check). One timing flake:
-  test_session_name_update_notification failed twice in-file and passed 3/3 alone → Q-497. Its UI part (61 load
-  reds) is superseded by g079b.
-- g079b GREEN: UI gate on merge-079b 15af6c730. tsc 0, vitest 4589 passed / 1 skipped, eslint 0, i18n 3810. UI gate on merge-079b (968b6b7e3 = merge-487-488
-  + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2 + Q-492/493 4b548171d + Q-494 1bea50263 → 15af6c730), no conflicts.
-- g079c (/tmp/g079c.out): chained after g079b. goose lib + acp_cross_note + recall_wording + clippy -p goose on
-  merge-079b (Q-494's claim_check change).
-- Both green → ff main to merge-079b, push, release 3.0.79. Install when #3x ends (or is stopped).
-  Then prove Q-490 live: closerepro2 must click [data-testid=confirm-close-run-stop]; expect main.log
-  "close held … chat turn(s) in flight", the app alive, no exit.
-- Q-490's cause: the main process exit(7). A broadcast threw on the closing window (Electron 41: isDestroyed()
-  is not enough), then the uncaught handler threw again. goosed saw stdin EOF → the engine stopped.
+## 3.0.79 — RELEASE BUILDING (~/goose-builds/release-3.0.79.log), main 97d1e6f54
+- Carries Q-483..486 (the sidebar), Q-487 (the question test), Q-488 (a Steer note to an idle chat), Q-489 (the
+  need-you menu), Q-490 (a window close killed the app), Q-491 (a folder-only window), Q-492 (an in-word @
+  swallowed Enter), Q-493 (a dead turn leaves a line), Q-494 (counts are not years), Q-496 (the chat follows the turn).
+- Gates:
+  - g079 Rust green; the one flake is Q-497.
+  - g079b + g079d UI green (4603 passed).
+  - g079c Rust green on the merged tree (lib 2190, cross_note, recall_wording, clippy).
+- Install when #3x ends (or is stopped), then prove live:
+  - Q-490: closerepro2, clicking [data-testid=confirm-close-run-stop]; the app stays up;
+  - Q-488: a Steer note to an idle chat is taken;
+  - Q-492: an email at the end of a message sends;
+  - Q-496: a long chat keeps following;
+  - Q-491: a folder-only window;
+  - Q-493;
+  - Q-489.
 
 ## Agents (worktrees)
-- Q-492/493 DONE 4b548171d, merged into merge-079b. Q-495 (a turn dead mid-tool call) QUEUED behind: merge-079b
-  landing.
-  - r1 now proves every send (SEND_LOST + one resend), from #3y on.
-- #3x: turn 1 (the memory turn) never reached the chat, so its memory checks at 33/39 are VOID for this run.
-  Turn 2 ran 8,349 s (152 tools): a determinism/timezone grind in the fake-log generator, ending 36/36 verified.
-  At 181k/262k after turn 3, compaction is near.
-- Q-494 DONE 1bea50263 (replayed 17,948 real responses: 4 count false-alarms gone, every real year catch kept),
-  merged into merge-079b.
-- Q-496 DONE 95ee34a44: the chat's own smooth scroll (a >200 px jump) read as the person scrolling up. Follow now
-  ends only on a real user intent, plus a "Jump to latest" button and data-following for the harness. Merged into
-  merge-079b (7088fe6eb); g079d (/tmp/g079d.out) re-runs the UI gate after g079c.
-- Q-487..491: done, all in merge-079b.
+- Q-495 (a turn dead mid-tool call) + Q-497 (the 1 s title-notification test wait): general-purpose agent, cutting.
+
+## #3x (running)
+- Turn 1 (the memory turn) never reached the chat (Q-492), so its memory checks at 33/39 are VOID for this run.
+- Turn 2 ran 8,349 s (152 tools): a determinism/timezone grind in the fake-log generator, ending 36/36 verified.
+- Past 181k/262k after turn 3, compaction is near.
+- 12:05Z: the main window moved to 20260928_19 (the stale needs-you chat), not by me. Maybe the owner. r1 holds
+  (VIEW_AWAY) and returns when the engine is idle. Hands off.
+- r1 proves every send from #3y on (SEND_LOST + one resend).
 
 ## Next
 1. Every tick: read #3x's words (r1.out, events.log, turns.tsv, the latest turn PNG) + a vigil screenshot.
