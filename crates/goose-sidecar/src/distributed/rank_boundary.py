@@ -438,43 +438,77 @@ class Conversation:
     """One conversation the prompt cache keeps: its stable prefix (a `KeptEntry` each of its
     requests cuts anew — the newer key, once inserted, replaces the older, which is then a stale
     entry like any other), the key of its stable head (the entry lives in `Conversations.heads`,
-    shared by every conversation whose head is the same tokens), and the cut that last named it
-    (a count, the same on every rank)."""
+    shared by every conversation whose head is the same tokens), the cut that last named it (a
+    count, the same on every rank), and the client's own name for it (Q-508: goose's session id;
+    None = a client that names none, told apart by its tokens)."""
 
-    def __init__(self, used):
+    def __init__(self, used, name=None):
         self.prefix = KeptEntry()
         self.head = None
         self.used = used
+        self.name = name
+
+
+# Q-508: told apart by tokens alone, a chat that COMPACTED left its pre-compaction prefix behind as
+# a conversation of its own — nothing in the post-compaction prompt (the same head, a summary, no
+# old message) extends it — kept and reserved for as if another chat would read it again. At E2E
+# #3w's sizes (rank0 ...1790649911215: the head 1,453,850,624 B = 42,019 tokens, the last
+# pre-compaction prefix 6,946,553,856 B = 209,643 tokens at 08:12:56Z; the compacted chat's calls
+# 49,189 → 77,686 tokens) every side call joining the compacted chat's row waits for that row (the
+# orphan's 6.95 GB counted as another conversation's; by the chat's own entries alone it joins up to
+# 87,396 tokens), and once a lone row needs the room (134,265 tokens) the shared head — kept after
+# every prefix — goes before the orphan (156,449). goose names its chat on every request (the
+# `agent-session-id` header, `session_context::session_id_request_builder` on the omlx provider):
+# a request carrying that name continues ITS conversation whatever its tokens, so a compacted
+# chat's older prefix is the same conversation's stale entry — evicted before anything kept — the
+# moment its request is cut. Every rank decides alike: rank 0's handler reads the header onto the
+# request it shares (pickled whole, as the transient tail rides), and every rank's `_tokenize`
+# passes it here. A request naming no conversation (another client) is told apart by its tokens
+# among the unnamed ones, and the rank log says so once per such client
+# (GOOSE_RANK_CONVERSATION_UNNAMED).
 
 
 class Conversations:
-    """Every conversation's kept entries on a rank (Q-502)."""
+    """Every conversation's kept entries on a rank (Q-502), named by the client where it names
+    them (Q-508)."""
 
     def __init__(self):
         self.all = []
         self.heads = {}
         self.cuts = 0
 
-    def cut(self, prompt, boundary, head):
+    def cut(self, prompt, boundary, head, name=None):
         """A request naming its transient tail cut its stable prefix at `boundary` and its head at
-        `head` (0 = none). It continues the conversation whose kept prefix its prompt extends (the
-        longest), else one holding no prefix — none held, none awaited — whose head it shares (its
-        prefix went and the chat goes on), else it opens one. Only a conversation's newest cut is
-        awaited: an earlier request of it that never inserted its prefix never will."""
+        `head` (0 = none). A request carrying the client's `name` for its conversation continues
+        the conversation of that name — and a held prefix its prompt does not extend (a
+        compaction, a rewritten history) is that conversation's past, no longer kept — else opens
+        one of that name. An unnamed request continues the unnamed conversation whose kept prefix
+        its prompt extends (the longest), else an unnamed one holding no prefix — none held, none
+        awaited — whose head it shares (its prefix went and the chat goes on), else it opens one.
+        Only a conversation's newest cut is awaited: an earlier request of it that never inserted
+        its prefix never will."""
         self.cuts += 1
         head_key = prefix_key(prompt[:head]) if head else None
-        conversation = self.extended_by(prompt)
-        if conversation is None and head_key is not None:
-            conversation = next(
-                (
-                    c
-                    for c in self.all
-                    if c.head == head_key and c.prefix.tokens is None and not c.prefix.cut_keys
-                ),
-                None,
-            )
+        if name is not None:
+            conversation = next((c for c in self.all if c.name == name), None)
+            if conversation is not None and not extends(prompt, conversation.prefix.tokens):
+                conversation.prefix.forget()
+        else:
+            conversation = self.extended_by(prompt)
+            if conversation is None and head_key is not None:
+                conversation = next(
+                    (
+                        c
+                        for c in self.all
+                        if c.name is None
+                        and c.head == head_key
+                        and c.prefix.tokens is None
+                        and not c.prefix.cut_keys
+                    ),
+                    None,
+                )
         if conversation is None:
-            conversation = Conversation(self.cuts)
+            conversation = Conversation(self.cuts, name)
             self.all.append(conversation)
         conversation.used = self.cuts
         if boundary:
@@ -488,14 +522,15 @@ class Conversations:
         return conversation
 
     def extended_by(self, prompt):
+        """The unnamed conversation whose held prefix `prompt` extends (the longest), or None."""
         found = None
         for c in self.all:
             tokens = c.prefix.tokens
-            if tokens is None or len(tokens) > len(prompt):
+            if c.name is not None or tokens is None:
                 continue
             if found is not None and len(tokens) <= len(found.prefix.tokens):
                 continue
-            if prompt[: len(tokens)] == tokens:
+            if extends(prompt, tokens):
                 found = c
         return found
 
@@ -562,6 +597,11 @@ class Conversations:
             or (c.head in self.heads and self.heads[c.head].tokens is not None)
         )
         return prefix, head, other, holding
+
+
+def extends(prompt, tokens):
+    """Whether `prompt` starts with the held key `tokens` (None = nothing held: False)."""
+    return tokens is not None and len(tokens) <= len(prompt) and prompt[: len(tokens)] == tokens
 
 
 def keep_conversations(cache_order, conversations):

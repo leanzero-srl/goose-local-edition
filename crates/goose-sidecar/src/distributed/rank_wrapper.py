@@ -195,6 +195,12 @@
 #   batch drains enough. #3x's side call then waits 42.4 s for the second chat's row and #3x's next
 #   call reads 199,798 tokens from the cache instead of re-reading 200,456 for 18 minutes. A prefix
 #   the plan still cannot keep is named as Q-498 names it.
+# - a conversation is the one the client names (Q-508, on a spec that asks for
+#   `name_conversations`): goose sends its session id on every request (`agent-session-id`), rank
+#   0's handler puts it on the request every rank receives, and a compacted chat's older prefix is
+#   then its own conversation's past — evicted before anything kept — where by tokens alone it was
+#   another chat's, kept and reserved for. A client that names none is told apart by its tokens,
+#   said once per client (GOOSE_RANK_CONVERSATION_UNNAMED).
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -865,6 +871,11 @@ server.LRUPromptCache = LookupPromptCache
 # prefix and head (the head is still cut where `keep_stable_head` asks).
 keeps_heads = bool(spec.get("keep_stable_head"))
 conversations = Conversations() if spec.get("keep_every_conversation") else None
+# Q-508 (rank_boundary.py `Conversations.cut`'s `name`): the conversation a request belongs to is
+# the one its client names, read by rank 0 from the request's `agent-session-id` header and shared
+# with the request. It changes what every rank evicts, so it rides its own ask
+# (`name_conversations`), and a peer that told conversations apart by tokens alone refuses the spec.
+names_conversations = conversations is not None and bool(spec.get("name_conversations"))
 conversation_prefix = (
     KeptEntry() if spec.get("keep_conversation_prefix") and conversations is None else None
 )
@@ -1575,7 +1586,7 @@ def _tokenize(self, tokenizer, request, args):
     except TailIgnored as ignored:
         if group.rank() == 0:
             emit("RANK_TRANSIENT_TAIL_IGNORED", {"why": str(ignored), "tail_chars": len(tail)})
-        record_cuts(prompt, 0, head)
+        record_cuts(prompt, 0, head, getattr(request, "conversation", None))
         segments, segment_types = cut_at_head(segments, segment_types, head)
         return prompt, segments, segment_types, initial_state
     future = tokenizer.apply_chat_template(
@@ -1586,19 +1597,25 @@ def _tokenize(self, tokenizer, request, args):
         **template_args,
     )
     boundary = stable_boundary(prompt, future)
-    record_cuts(prompt, boundary if 0 < boundary < len(prompt) else 0, head)
+    record_cuts(
+        prompt,
+        boundary if 0 < boundary < len(prompt) else 0,
+        head,
+        getattr(request, "conversation", None),
+    )
     segments, segment_types = cut_at_boundary(segments, segment_types, boundary)
     segments, segment_types = cut_at_head(segments, segment_types, head)
     return prompt, segments, segment_types, initial_state
 
 
-def record_cuts(prompt, boundary, head):
+def record_cuts(prompt, boundary, head, conversation):
     """The entries this request cut for the cache to keep: its stable prefix ends at `boundary`
-    and its head at `head` (0 = not cut) — one conversation's (Q-502), or the single kept prefix
-    and head (Q-294, Q-347)."""
+    and its head at `head` (0 = not cut) — one conversation's (Q-502), the one the client named
+    (`conversation`, Q-508: None = named none, or a spec that does not ask), or the single kept
+    prefix and head (Q-294, Q-347)."""
     if conversations is not None:
         if boundary or head:
-            conversations.cut(prompt, boundary, head)
+            conversations.cut(prompt, boundary, head, conversation)
         return
     if conversation_prefix is not None and boundary:
         conversation_prefix.cut(prompt[:boundary])
@@ -1624,11 +1641,38 @@ def cut_stable_head(tokenizer, messages, tools, template_args, prompt):
 original_chat_request = server.APIHandler.handle_chat_completions
 
 
+CONVERSATION_HEADER = "agent-session-id"
+unnamed_clients = set()
+unnamed_lock = threading.Lock()
+
+
 def handle_chat_completions(self):
-    # The tail rides the request every rank receives (`_share_request` pickles it whole).
+    # The tail and the conversation's name ride the request every rank receives
+    # (`_share_request` pickles it whole).
     request = original_chat_request(self)
     request.transient_tail = self.body.get(TRANSIENT_TAIL)
+    if names_conversations:
+        request.conversation = self.headers.get(CONVERSATION_HEADER) or None
+        if request.conversation is None and request.transient_tail:
+            unnamed_client(self.headers.get("User-Agent"))
     return request
+
+
+def unnamed_client(client):
+    """Rank 0's handler: a request naming its transient tail and no conversation is told apart
+    from the others by its tokens alone (Q-508's fallback). Said once per client."""
+    with unnamed_lock:
+        if client in unnamed_clients:
+            return
+        unnamed_clients.add(client)
+    emit(
+        "RANK_CONVERSATION_UNNAMED",
+        {
+            "header": CONVERSATION_HEADER,
+            "user_agent": client,
+            "told_apart_by": "tokens",
+        },
+    )
 
 
 if transient_tail_boundary:

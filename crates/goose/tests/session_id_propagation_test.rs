@@ -254,3 +254,81 @@ async fn test_different_sessions_have_different_ids() {
         ]
     );
 }
+
+/// Q-508: the omlx provider — the declarative definition goose's chat reaches the MLX split
+/// through, built by `openai_def::from_custom_config` as the provider registry and the remote
+/// route both build it — names the session on an agent request that carries its transient tail:
+/// the `agent-session-id` header the split's rank 0 tells kept conversations apart by
+/// (goose-sidecar rank_boundary.py `Conversations`). Outside any session scope it names none,
+/// which the rank tells apart by tokens and says so.
+#[tokio::test]
+async fn the_omlx_provider_names_the_session_on_the_requests_the_split_keeps_by() {
+    use futures::StreamExt;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{"id": "served", "request_extensions": ["rapid_mlx_transient_tail"]}],
+        })))
+        .mount(&server)
+        .await;
+    let sse = format!(
+        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        json!({"choices": [{"delta": {"content": "ok", "role": "assistant"}, "index": 0}],
+               "created": 1790650000, "id": "chatcmpl-q508", "model": "served"}),
+        json!({"choices": [], "usage": {"completion_tokens": 1, "prompt_tokens": 8, "total_tokens": 9}})
+    );
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(sse)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let mut config = goose::config::declarative_providers::load_provider("omlx")
+        .unwrap()
+        .config;
+    config.base_url = format!("{}/v1/chat/completions", server.uri());
+    config.env_vars = None;
+    let provider = goose::providers::openai_def::from_custom_config(config, None).unwrap();
+    let messages = vec![Message::user().with_text("find the handler").with_text(
+        "<turn-context>\n<current-time>2026-09-29 12:00:00</current-time>\n\
+         <working-directory>/w</working-directory>\n</turn-context>",
+    )];
+    let model_config = ModelConfig::new("served");
+    let turn = || async {
+        let mut stream = provider
+            .stream(&model_config, "system", &messages, &[])
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+    };
+    goose::session_context::with_session_id(Some("20260929_12".to_string()), turn()).await;
+    turn().await;
+
+    let posts: Vec<Request> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "POST")
+        .collect();
+    assert_eq!(posts.len(), 2);
+    let body: serde_json::Value = serde_json::from_slice(&posts[0].body).unwrap();
+    assert!(
+        body["rapid_mlx_transient_tail"].is_string(),
+        "an agent request, naming its tail: {body}"
+    );
+    let session = |r: &Request| {
+        r.headers
+            .get(SESSION_ID_HEADER)
+            .map(|v| v.to_str().unwrap().to_string())
+    };
+    assert_eq!(session(&posts[0]), Some("20260929_12".to_string()));
+    assert_eq!(session(&posts[1]), None, "outside a session: no name");
+}
