@@ -22,8 +22,10 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 
 ## Gate / merge → 3.0.79
 - g079 (/tmp/g079.out): the full gate on merge-487-488 (1813810f2 = Q-487 204457a56 + Q-488 5a8d72d49), background
-  priority.
-- g079b (/tmp/g079b.out): chained to start when g079 ends. UI gate on merge-079b (968b6b7e3 = merge-487-488
+  priority. UI part: 61 vitest reds across unrelated files (load at `taskpolicy -b`), superseded by g079b's UI run.
+  Its Rust part is running.
+- g079b (/tmp/g079b.out): chained to start when g079 ends, relaunched at NORMAL priority (background priority starved
+  vitest). UI gate on merge-079b (968b6b7e3 = merge-487-488
   + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2 + Q-492/493 4b548171d → 67b2813df), no conflicts.
 - Both green → ff main to merge-079b, push, release 3.0.79. Install when #3x ends (or is stopped).
   Then prove Q-490 live: closerepro2 must click [data-testid=confirm-close-run-stop]; expect main.log
