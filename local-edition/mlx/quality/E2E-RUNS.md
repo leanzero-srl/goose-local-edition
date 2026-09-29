@@ -68,3 +68,22 @@
   line as the person's rule; the model refused). Fixed in 3.0.76.
 - Model: turn 7 declared a design without writing it (caught itself in turn 8); several assert-then-retract
   loops on its own wrapper (Q-451 class).
+
+### E2E #3w — 3.0.76, split tensor (262,144), cafe-allergen-menu-site, session 20260929_12 — COMPLETE, 37/37 brief turns (02:45 → 08:38 UTC, 350 min)
+- 46 turn rows (brief turns + needs-you answer turns), 1,125 tool calls, no hang, no 503. Peak context 79k/262k,
+  so compaction was not reached.
+- Split decode held for the whole run: 482 calls ≥50 tokens, median 10.7 tok/s, p10 9.0, min 7.8 (Q-447 stays
+  fixed; before 3.0.74 this was 4).
+- Needs-you (Q-376 PROVEN LIVE): 9 cards across turns 4/7/9/10/30. Every answer was delivered, the card cleared
+  and the reply used the answer. 4 of the 9 answers were WRONG, and that was the harness: the "mince" guidance
+  answered a sulphite question with the price. Fixed after the run (needsyou.mjs, most specific match). goose
+  handled it well: "That answers the price, not the sulphites" → a safe sulphites tag, and it stopped
+  re-asking after the fourth.
+- Chat search + note (Q-358): search_chats found the Harbourline PDF recipe; turn 20 drafted a note to
+  "Harbourline Jira Migration Assessment". The run never clicked it (r1 did not act on notes then). It was
+  delivered after the run with deliver-pending.mjs; the evidence is in notes.tsv / deliver-pending.json of this
+  round.
+- Found: Q-481 (edit calls without `path`, model; parked) → Q-482 mitigation; Q-483..486 (sidebar: Active now
+  crammed, raw-path subtitle, two "work" projects, need-you counts disagree); Q-487 ("Noticed your answer"
+  after a plain instruction: `open_question` matched a relative "which").
+- Long turns: 0 (1,691 s), 3 (1,652 s), 22 (3,444 s, 122 tools), 23 (1,802 s).

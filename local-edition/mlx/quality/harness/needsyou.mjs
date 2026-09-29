@@ -103,6 +103,61 @@ export function isAnswerMessage(text, { question, answer }) {
     && t.includes(words(answer).slice(0, 12).join(' '));
 }
 
+// ---------------------------------------------------------------- did the reply USE what was said?
+// Owner 2026-09-29: every E2E proves the OUTCOME of an answer (and of a note), not only its delivery. The
+// check is text overlap between what the person said and goose's next reply, recorded, never a verdict on its
+// own: a READER still reads the reply column. E2E #3w's mince rows are the negative it must catch — the
+// price answer to a sulphite question, and a reply "That answers the price, not the sulphites".
+const QUOTE_WORDS = 5; // algorithm constant: five words in a row, in order, is a quote rather than a coincidence
+// ratio: shared content words over the SMALLER text's content words (the overlap coefficient) — a long note
+// read back in a short reply shares a small part of the note but a large part of the reply.
+const USE_SHARE = 0.3;
+const MIN_CONTENT = 2; // algorithm constant: below two content words (or two shared) overlap cannot tell use from chance
+const STOP = new Set('that this with from have your there their them they then than what when where which will would could should about into onto just only also some more most very been were does done here each such other these those make made same both over under after before because while being'.split(' '));
+/** The words that carry meaning: numbers kept whole ("3.50", "1"), words of four letters or more, no stopwords. */
+export const contentWords = (s) => [...new Set((norm(s).match(/[a-z0-9]+(?:[.,][0-9]+)*/g) ?? [])
+  .filter((w) => (/[0-9]/.test(w) ? true : w.length >= 4 && !STOP.has(w))))];
+
+/**
+ * Does `reply` quote or use `said`? → { verdict: 'quote' | 'uses' | 'no' | 'unmeasurable', share, hits, of, quote }.
+ * quote = five of the said words in a row appear in the reply; uses = at least two content words shared and
+ * they are USE_SHARE of the smaller side's content words; unmeasurable = the said text has too few content
+ * words ("Yes") to tell use from chance. `of` = that smaller side's count.
+ */
+export function textUse(said, reply) {
+  const s = words(said); const r = ` ${words(reply).join(' ')} `;
+  let quote = '';
+  for (let i = 0; i + QUOTE_WORDS <= s.length && !quote; i++) {
+    const run = s.slice(i, i + QUOTE_WORDS).join(' ');
+    if (r.includes(` ${run} `)) quote = run;
+  }
+  const content = contentWords(said); const replyWords = contentWords(reply); const inReply = new Set(replyWords);
+  const hits = content.filter((w) => inReply.has(w) || (w.endsWith('s') && inReply.has(w.slice(0, -1))) || inReply.has(`${w}s`));
+  const of = Math.min(content.length, replyWords.length);
+  const share = of ? hits.length / of : 0;
+  const verdict = quote ? 'quote' : content.length < MIN_CONTENT ? 'unmeasurable' : hits.length >= MIN_CONTENT && share >= USE_SHARE ? 'uses' : 'no';
+  return { verdict, share: Number(share.toFixed(2)), hits: hits.length, of: verdict === 'unmeasurable' ? content.length : of, quote };
+}
+/** The TSV cell: `quote "<words>"` · `uses 0.42 (5/12)` · `no 0.08 (1/12)` · `unmeasurable (1 content word)` · `no reply`. */
+export function textUseCell(said, reply) {
+  if (!norm(reply)) return 'no reply';
+  const u = textUse(said, reply);
+  if (u.verdict === 'quote') return `quote "${u.quote}"`;
+  if (u.verdict === 'unmeasurable') return `unmeasurable (${u.of} content word${u.of === 1 ? '' : 's'})`;
+  return `${u.verdict} ${u.share} (${u.hits}/${u.of})`;
+}
+
+/** Round end (owner 2026-09-29: nothing stays pending): every question of the chat still open, from the store
+ * and from the tray on screen, is one `FAIL: open card <id> <question>` line. */
+export function openCardFails(db, tray = { cards: [] }) {
+  const open = new Map();
+  if (db?.ok) for (const it of db.items) if (it.status === 'open') open.set(it.id, it.question);
+  for (const c of tray?.cards ?? []) if (!open.has(c.id)) open.set(c.id, c.question);
+  const lines = [...open].map(([id, q]) => `FAIL: open card ${id} ${String(q ?? '').replace(/\s+/g, ' ').slice(0, 160)}`);
+  if (db && !db.ok) lines.push(`FAIL: open cards unknown — the store could not be read: ${db.error}`);
+  return lines;
+}
+
 export function parseDbItems(out) {
   const s = String(out ?? '').trim();
   if (!s) return { ok: true, absent: true, items: [] };

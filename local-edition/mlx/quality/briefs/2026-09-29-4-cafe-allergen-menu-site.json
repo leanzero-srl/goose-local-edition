@@ -27,7 +27,14 @@
       "Falafel wrap": "cereals containing gluten, sesame",
       "Smoked salmon on soda bread": "cereals containing gluten, milk, fish",
       "never present on the core menu": "crustaceans, molluscs, peanuts (except as may-contain); crustaceans appear only with the crab claws special"
-    }
+    },
+    "actions": [
+      {
+        "match": "harbourline pdf",
+        "action": "steer",
+        "why": "Turn 20's note to the Harbourline Jira chat (20260928_47) points it at docs/HOW-TO-PDF.md. Maeve wants the other chat to pick it up now: Steer it now. That chat is idle and open in no window, so the harness opens it the way a person does (Open in new window) and proves the note ran as that chat's own turn, its reply refers to the file, and this chat's line reads 'read in its turn'."
+      }
+    ]
   },
   "defaultStance": "Go with the recipe sheet and my shop notes. If neither says, don't guess an allergen: mark it as being checked and tell me what you assumed.",
   "needsYou": [

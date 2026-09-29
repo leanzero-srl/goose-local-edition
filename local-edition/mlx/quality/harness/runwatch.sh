@@ -13,7 +13,18 @@ while true; do
     echo "STOP: a turn ended notice/hang"; awk -F'\t' 'NR>1 {print $1, $4, $5, $8}' $d/turns.tsv | tail -3; exit 0; fi
   now_live=$(cat $d/events.log 2>/dev/null | grep -c ' LIVE ')
   if [ "$now_live" -gt "$seen_live" ]; then echo "LIVE finding:"; grep ' LIVE ' $d/events.log | tail -1 | cut -c1-300; exit 0; fi
-  if ! pgrep -f "(r1.mjs|load.py) $d" >/dev/null; then echo "driver gone"; tail -3 $d/turns.tsv 2>/dev/null; exit 0; fi
+  # The round's end: r1 writes every card still open and every note not delivered as acted into round.json
+  # `fails` (owner 2026-09-29: nothing stays pending) — printed here so the wake carries them.
+  if ! pgrep -f "(r1.mjs|load.py) $d" >/dev/null; then echo "driver gone"; tail -3 $d/turns.tsv 2>/dev/null
+    python3 -c "
+import json,sys
+try: r=json.load(open('$d/round.json'))
+except Exception as e: print('round.json unreadable:', e); sys.exit()
+if 'fails' not in r: print('round.json has no fails list: r1 did not reach its round end'); sys.exit()
+for f in r['fails']: print(f)
+if not r['fails']: print('round end: no open card, no undelivered note')
+for w in r.get('notesWaiting', []): print('WAITING:', w)"
+    exit 0; fi
   if ! curl -s -m 5 127.0.0.1:8091/v1/models >/dev/null 2>&1 && ! curl -s -m 5 127.0.0.1:8090/v1/models >/dev/null 2>&1; then
     echo "engine unreachable while the driver runs"; exit 0; fi
   run=$(curl -s -m 5 127.0.0.1:8091/v1/status 2>/dev/null | python3 -c "
