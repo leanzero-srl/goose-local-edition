@@ -50,10 +50,14 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-518 (cache the skills listing) is cutting on 58806267e.
 - Then: install 3.0.81 on BOTH Macs → E2E #3z (the coffee brief from the start, or from turn 26 on #3y's chat).
 
-## Live proofs on 3.0.80 (PROVE-3.0.80/prove.log, prove080.mjs)
-- A (the #3y chat, 110k): A1 cold after the restart (0 of 110,492), then warm (109,792 of 110,566). B (Harbourline, 85k) is
-  running cold. A3 must be WARM → Q-502/508.
-- The Q-500/501 check was INVALID (A's turn ended before the second window opened). Redo it with a long turn.
+## Live proofs on 3.0.80 (PROVE-3.0.80/prove.log) — PROVEN
+- Q-502/508: chat A stayed WARM across chat B (109,866 of 110,638 cached).
+- Q-500/501: a second window mid-turn shows Running + Stop, and that Stop ended the turn.
+- Q-493: the stopped-before-answering line.
+- Q-505: scan-secrets.
+- New: Q-519 (a stop-and-close loses the partial answer), cutting.
+- Still to prove: Q-504/507 (a scheduled run: needs a schedule), Q-511/512 (UI remount), Q-514 (a side call vs one
+  chat's prefix: #3z), Q-488 (Steer note: #3z turn 26), Q-509.
 
 ## CI
 - Red 13:18Z: the RecipesView delete test hit its 5 s timeout (the vitest-under-load class). Q-466 is cutting
@@ -67,7 +71,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-518.
+- Check CI, agents, disk ≥ 30 GB (tight during release builds: g-targets and finished worktrees go first). Take a vigil screenshot and READ it. The next free id is Q-520.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
