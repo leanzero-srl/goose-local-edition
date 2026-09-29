@@ -19,7 +19,13 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- none running.
+- DONE, merge AFTER #3w ends (it replaces runwatch.sh, which is running): worktree-agent-a0cabecc174fecd30
+  afb7f3295. r1 now proves card outcomes (replyUses) and DELIVERS notes (notes.mjs, per brief notes.actions,
+  proving arrival and read in B from sessions.db). Open cards/notes at round end → FAIL.
+  - Then run `node harness/deliver-pending.mjs` on session 20260929_12 to deliver #3w's Harbourline note
+    (Steer), with evidence.
+- 3.0.78 = /tmp/merge-078: Q-482 (missing-argument error names the field and the retry); gate g078 → /tmp/g078.out.
+- Owner rule (memory e2e-acts-on-every-card-and-note): nothing an E2E raises stays pending.
 
 ## 3.0.77 = main 5e03efbc0 — DMG BUILT 07:57 (20 min: compile, then 2 Apple notarizations; no tests in a release)
 - Gates g077 + g077b + g077c all green.
@@ -41,6 +47,6 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-481. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-483. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
