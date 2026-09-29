@@ -34,7 +34,7 @@ export default function LauncherView() {
   };
 
   return (
-    <div className="h-screen w-screen flex bg-transparent overflow-hidden">
+    <div className="h-full w-full flex bg-transparent overflow-hidden">
       <form
         onSubmit={handleSubmit}
         className="w-full h-full bg-background-primary border border-border-primary"

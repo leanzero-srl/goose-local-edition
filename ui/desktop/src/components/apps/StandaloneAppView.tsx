@@ -110,8 +110,8 @@ export default function StandaloneAppView() {
     return (
       <div
         style={{
-          width: '100vw',
-          height: '100vh',
+          width: '100%',
+          height: '100%',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -132,8 +132,8 @@ export default function StandaloneAppView() {
     return (
       <div
         style={{
-          width: '100vw',
-          height: '100vh',
+          width: '100%',
+          height: '100%',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -148,7 +148,7 @@ export default function StandaloneAppView() {
 
   if (cachedHtml || sessionId) {
     return (
-      <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      <div style={{ width: '100%', height: '100%', overflow: 'hidden' }}>
         <McpAppRenderer
           resourceUri={resourceUri!}
           extensionName={extensionName!}
@@ -163,8 +163,8 @@ export default function StandaloneAppView() {
   return (
     <div
       style={{
-        width: '100vw',
-        height: '100vh',
+        width: '100%',
+        height: '100%',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',

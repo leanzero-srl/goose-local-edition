@@ -68,7 +68,8 @@ describe('ParameterInputModal', () => {
       renderWithIntl(<ParameterInputModal {...defaultProps} />);
 
       await user.type(screen.getByLabelText(/test parameter 1/i), 'test value');
-      await user.selectOptions(screen.getByLabelText(/test parameter 2/i), 'option2');
+      await user.click(screen.getByRole('combobox', { name: /test parameter 2/i }));
+      await user.click(screen.getByRole('option', { name: 'option2' }));
 
       const submitButton = screen.getByText('Start Recipe');
       await user.click(submitButton);
@@ -116,6 +117,51 @@ describe('ParameterInputModal', () => {
         expect(screen.getByText('Topic is required')).toBeInTheDocument();
       });
       expect(defaultProps.onSubmit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Choice fields (never a native <select>)', () => {
+    it('renders select and boolean parameters as the Studio listbox, not a native select', () => {
+      const { container } = renderWithIntl(<ParameterInputModal {...defaultProps} />);
+
+      expect(container.querySelector('select')).toBeNull();
+      expect(screen.getAllByRole('combobox')).toHaveLength(2);
+    });
+
+    it('picks a boolean through the listbox and submits it', async () => {
+      const user = userEvent.setup();
+      renderWithIntl(<ParameterInputModal {...defaultProps} />);
+
+      await user.type(screen.getByLabelText(/test parameter 1/i), 'x');
+      await user.click(screen.getByRole('combobox', { name: /boolean parameter/i }));
+      expect(screen.getByRole('option', { name: 'Select...' })).toBeInTheDocument();
+      await user.click(screen.getByRole('option', { name: 'False' }));
+      await user.click(screen.getByText('Start Recipe'));
+
+      expect(defaultProps.onSubmit).toHaveBeenCalledWith({
+        param1: 'x',
+        param2: 'option1',
+        param3: 'false',
+      });
+    });
+
+    it('keeps the empty "Select an option..." row, which clears the value', async () => {
+      const user = userEvent.setup();
+      renderWithIntl(<ParameterInputModal {...defaultProps} />);
+
+      await user.type(screen.getByLabelText(/test parameter 1/i), 'x');
+      await user.click(screen.getByRole('combobox', { name: /test parameter 2/i }));
+      await user.click(screen.getByRole('option', { name: 'Select an option...' }));
+      expect(screen.getByRole('combobox', { name: /test parameter 2/i })).toHaveTextContent(
+        'Select an option...'
+      );
+      await user.click(screen.getByText('Start Recipe'));
+
+      expect(defaultProps.onSubmit).toHaveBeenCalledWith({
+        param1: 'x',
+        param2: '',
+        param3: 'true',
+      });
     });
   });
 
@@ -180,7 +226,12 @@ describe('ParameterInputModal', () => {
     it('pre-fills form with default values from parameters', () => {
       renderWithIntl(<ParameterInputModal {...defaultProps} />);
 
-      expect((screen.getByLabelText(/boolean parameter/i) as HTMLSelectElement).value).toBe('true');
+      expect(screen.getByRole('combobox', { name: /boolean parameter/i })).toHaveTextContent(
+        'True'
+      );
+      expect(screen.getByRole('combobox', { name: /test parameter 2/i })).toHaveTextContent(
+        'option1'
+      );
     });
   });
 });

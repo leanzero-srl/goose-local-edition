@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "Hiçbir yapılandırma ayarı bulunamadı."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "\"{name}\" true veya false olmalı, bu yüzden kaydedilmedi."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "\"{name}\" bir sayı olmalı, bu yüzden kaydedilmedi."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Değişiklikleri Sıfırla"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "Kaydediliyor..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "Bir ayar listesi veya grubu; burada kaydetmek onu asla düzleştiremesin diye salt okunur gösterilir. config.yaml içinde düzenleyin."
   },
   "configSettings.title": {
     "defaultMessage": "Yapılandırma"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Sağlayıcı kaydedilemedi. Lütfen yapılandırmanızı kontrol edip tekrar deneyin."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Sağlayıcı kaydedilemedi: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "Sağlayıcı akış yanıtlarını destekler"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "Aktif"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Sil"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Bu model silinsin mi? Daha sonra tekrar indirebilirsiniz."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "{model} silinsin mi?"
   },
   "localModelManager.download": {
     "defaultMessage": "İndir"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Seni bekleyen notlar"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "Tamam"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Listeye Geri Dön"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "İptal"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Mevcut içerik varsayılanla değiştirilsin mi? Değişiklikleriniz kaybolacak."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Varsayılanla değiştirilsin mi?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Tüm istemleri varsayılan değerlerine sıfırlamak istediğinizden emin misiniz? Bu geri alınamaz."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Tüm istemler sıfırlansın mı?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Bu istemi varsayılan değerine sıfırlamak istediğinizden emin misiniz? Bu geri alınamaz."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Bu istem sıfırlansın mı?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "Kaydedilmemiş değişiklikleriniz var. Geri dönmek istediğinden emin misin?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Kaydedilmemiş değişiklikler atılsın mı?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Özelleştirilmiş"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Değişiklikleri at"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Düzenle"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "API anahtarınız yok mu?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Oturum açılamadı: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "{providerName} ile oturum açın"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "\"{title}\"yi silmek istediğinizden emin misiniz?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Sil"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "Tarif dosyası silinecek."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "İptal"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Klasör seç"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "\"{id}\" programı kaldırılsın mı? Tarif saklanacak."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Zamanlama kaldırılsın mı?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Program Oluştur"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "Yenileniyor..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Kaldır"
   },
   "schedulesView.resume": {
     "defaultMessage": "Devam et"

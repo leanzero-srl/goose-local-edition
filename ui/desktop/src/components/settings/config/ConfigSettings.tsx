@@ -6,7 +6,6 @@ import { cn } from '../../../utils';
 import { Save, RotateCcw, FileText, Settings } from 'lucide-react';
 import { toastSuccess, toastError } from '../../../toasts';
 import { getUiNames, providerPrefixes } from '../../../utils/configUtils';
-import type { ConfigData, ConfigValue } from '../../../types/config';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
 import {
   Dialog,
@@ -85,21 +84,84 @@ const i18n = defineMessages({
     id: 'configSettings.configResetMsg',
     defaultMessage: 'All changes have been reverted',
   },
+  structuredReadOnly: {
+    id: 'configSettings.structuredReadOnly',
+    defaultMessage:
+      'A list or group of settings, shown read-only so a save here can never flatten it. Edit it in config.yaml.',
+  },
+  notANumber: {
+    id: 'configSettings.notANumber',
+    defaultMessage: '"{name}" must be a number, so it was not saved.',
+  },
+  notABoolean: {
+    id: 'configSettings.notABoolean',
+    defaultMessage: '"{name}" must be true or false, so it was not saved.',
+  },
 });
+
+type FieldKind = 'text' | 'number' | 'boolean' | 'structured';
+
+/**
+ * Q-473: the config holds more than strings. `String(value || '')` showed "[object Object]" for
+ * a nested value (and blanked `false` and `0`), and a save wrote that text over the real value.
+ * Each value keeps its kind: scalars are edited as text and saved back as their own type; lists
+ * and groups are shown as their JSON and are never saved from here.
+ */
+export function describeConfigValue(value: unknown): { kind: FieldKind; text: string } {
+  if (value === null || value === undefined) return { kind: 'text', text: '' };
+  if (typeof value === 'number') return { kind: 'number', text: String(value) };
+  if (typeof value === 'boolean') return { kind: 'boolean', text: String(value) };
+  if (typeof value === 'object')
+    return { kind: 'structured', text: JSON.stringify(value, null, 2) };
+  return { kind: 'text', text: String(value) };
+}
+
+export function parseConfigDraft(
+  kind: FieldKind,
+  draft: string
+): { ok: true; value: unknown } | { ok: false } {
+  switch (kind) {
+    case 'number': {
+      const trimmed = draft.trim();
+      const parsed = Number(trimmed);
+      return trimmed !== '' && Number.isFinite(parsed)
+        ? { ok: true, value: parsed }
+        : { ok: false };
+    }
+    case 'boolean': {
+      const lowered = draft.trim().toLowerCase();
+      if (lowered === 'true') return { ok: true, value: true };
+      if (lowered === 'false') return { ok: true, value: false };
+      return { ok: false };
+    }
+    case 'structured':
+      return { ok: false };
+    default:
+      return { ok: true, value: draft };
+  }
+}
 
 export default function ConfigSettings() {
   const intl = useIntl();
   const { config, upsert } = useConfig();
-  const typedConfig = config as ConfigData;
-  const [configValues, setConfigValues] = useState<ConfigData>({});
-  const [modifiedKeys, setModifiedKeys] = useState<Set<string>>(new Set());
+  const typedConfig = config as Record<string, unknown>;
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [originalKeyOrder, setOriginalKeyOrder] = useState<string[]>([]);
 
+  const modifiedKeys = useMemo(
+    () =>
+      new Set(
+        Object.keys(drafts).filter(
+          (key) => drafts[key] !== describeConfigValue(typedConfig[key]).text
+        )
+      ),
+    [drafts, typedConfig]
+  );
+
   useEffect(() => {
-    setConfigValues(typedConfig);
-    setModifiedKeys(new Set());
+    setDrafts({});
 
     // Capture the original key order only on first load or when new keys are added
     const currentKeys = Object.keys(typedConfig);
@@ -118,36 +180,35 @@ export default function ConfigSettings() {
   }, [typedConfig]);
 
   const handleChange = (key: string, value: string) => {
-    setConfigValues((prev: ConfigData) => ({
-      ...prev,
-      [key]: value,
-    }));
-
-    setModifiedKeys((prev) => {
-      const newSet = new Set(prev);
-      if (value !== String(typedConfig[key] || '')) {
-        newSet.add(key);
-      } else {
-        newSet.delete(key);
-      }
-      return newSet;
-    });
+    setDrafts((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSave = async (key: string) => {
+    const draft = drafts[key];
+    if (draft === undefined) return;
+    const kind = describeConfigValue(typedConfig[key]).kind;
+    const parsed = parseConfigDraft(kind, draft);
+    if (!parsed.ok) {
+      toastError({
+        title: intl.formatMessage(i18n.saveFailed),
+        msg: intl.formatMessage(kind === 'boolean' ? i18n.notABoolean : i18n.notANumber, {
+          name: getUiNames(key),
+        }),
+      });
+      return;
+    }
     setSaving(key);
     try {
-      await upsert(key, configValues[key], false);
+      await upsert(key, parsed.value, false);
       toastSuccess({
         title: intl.formatMessage(i18n.configUpdated),
         msg: intl.formatMessage(i18n.configUpdatedMsg, { name: getUiNames(key) }),
       });
 
-      // Remove this key from modified keys since it's now saved
-      setModifiedKeys((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(key);
-        return newSet;
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
       });
     } catch (error) {
       console.error('Failed to save config:', error);
@@ -162,8 +223,7 @@ export default function ConfigSettings() {
   };
 
   const handleReset = () => {
-    setConfigValues(typedConfig);
-    setModifiedKeys(new Set());
+    setDrafts({});
     toastSuccess({
       title: intl.formatMessage(i18n.configReset),
       msg: intl.formatMessage(i18n.configResetMsg),
@@ -171,39 +231,34 @@ export default function ConfigSettings() {
   };
 
   const handleModalClose = (open: boolean) => {
-    if (!open && modifiedKeys.size > 0) {
-      // Reset any unsaved changes when closing the modal
-      setConfigValues(typedConfig);
-      setModifiedKeys(new Set());
+    if (!open) {
+      setDrafts({});
     }
     setIsModalOpen(open);
   };
 
-  const currentProvider = typedConfig.GOOSE_PROVIDER || '';
+  const currentProvider =
+    typeof typedConfig.GOOSE_PROVIDER === 'string' ? typedConfig.GOOSE_PROVIDER : '';
 
-  const configEntries: [string, ConfigValue][] = useMemo(() => {
+  const configKeys: string[] = useMemo(() => {
     const currentProviderPrefixes = providerPrefixes[currentProvider] || [];
     const allProviderPrefixes = Object.values(providerPrefixes).flat();
 
-    return originalKeyOrder
-      .filter((key) => {
-        // skip secrets
-        if (key === 'extensions' || key.includes('_KEY') || key.includes('_TOKEN')) {
-          return false;
-        }
+    return originalKeyOrder.filter((key) => {
+      // skip secrets
+      if (key === 'extensions' || key.includes('_KEY') || key.includes('_TOKEN')) {
+        return false;
+      }
 
-        // Only show provider-specific entries for the current provider
-        const providerSpecific = allProviderPrefixes.some((prefix: string) =>
-          key.startsWith(prefix)
-        );
-        if (providerSpecific) {
-          return currentProviderPrefixes.some((prefix: string) => key.startsWith(prefix));
-        }
+      // Only show provider-specific entries for the current provider
+      const providerSpecific = allProviderPrefixes.some((prefix: string) => key.startsWith(prefix));
+      if (providerSpecific) {
+        return currentProviderPrefixes.some((prefix: string) => key.startsWith(prefix));
+      }
 
-        return true;
-      })
-      .map((key) => [key, configValues[key]]);
-  }, [originalKeyOrder, configValues, currentProvider]);
+      return true;
+    });
+  }, [originalKeyOrder, currentProvider]);
 
   return (
     <Card className="rounded-lg">
@@ -241,38 +296,66 @@ export default function ConfigSettings() {
 
             <div className="flex-1 max-h-[60vh] overflow-auto pr-4">
               <div className="space-y-4">
-                {configEntries.length === 0 ? (
+                {configKeys.length === 0 ? (
                   <p className="text-text-secondary">{intl.formatMessage(i18n.noSettings)}</p>
                 ) : (
-                  configEntries.map(([key, _value]) => (
-                    <div key={key} className="grid grid-cols-[200px_1fr_auto] gap-3 items-center">
-                      <label className="text-sm font-medium text-text-primary" title={key}>
-                        {getUiNames(key)}
-                      </label>
-                      <Input
-                        value={String(configValues[key] || '')}
-                        onChange={(e) => handleChange(key, e.target.value)}
-                        className={cn(
-                          'text-text-primary border-border-primary hover:border-border-primary transition-colors',
-                          modifiedKeys.has(key) && 'border-lz-accent-line focus:ring-ring'
-                        )}
-                        placeholder={intl.formatMessage(i18n.enterValue, { name: getUiNames(key) })}
-                      />
-                      <Button
-                        onClick={() => handleSave(key)}
-                        disabled={!modifiedKeys.has(key) || saving === key}
-                        variant="ghost"
-                        size="sm"
-                        className="min-w-[60px]"
-                      >
-                        {saving === key ? (
-                          <span className="text-xs">{intl.formatMessage(i18n.saving)}</span>
-                        ) : (
-                          <Save className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-                  ))
+                  configKeys.map((key) => {
+                    const field = describeConfigValue(typedConfig[key]);
+                    if (field.kind === 'structured') {
+                      return (
+                        <div
+                          key={key}
+                          data-testid={`config-structured-${key}`}
+                          className="grid grid-cols-[200px_1fr_auto] gap-3 items-start"
+                        >
+                          <label className="text-sm font-medium text-text-primary" title={key}>
+                            {getUiNames(key)}
+                          </label>
+                          <div className="flex min-w-0 flex-col gap-1.5">
+                            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border-primary bg-background-secondary px-3 py-2 font-mono text-xs text-text-primary">
+                              {field.text}
+                            </pre>
+                            <p className="text-xs text-text-secondary">
+                              {intl.formatMessage(i18n.structuredReadOnly)}
+                            </p>
+                          </div>
+                          <span className="min-w-[60px]" />
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={key} className="grid grid-cols-[200px_1fr_auto] gap-3 items-center">
+                        <label className="text-sm font-medium text-text-primary" title={key}>
+                          {getUiNames(key)}
+                        </label>
+                        <Input
+                          aria-label={getUiNames(key)}
+                          value={drafts[key] ?? field.text}
+                          onChange={(e) => handleChange(key, e.target.value)}
+                          className={cn(
+                            'text-text-primary border-border-primary hover:border-border-primary transition-colors',
+                            modifiedKeys.has(key) && 'border-lz-accent-line focus:ring-ring'
+                          )}
+                          placeholder={intl.formatMessage(i18n.enterValue, {
+                            name: getUiNames(key),
+                          })}
+                        />
+                        <Button
+                          onClick={() => handleSave(key)}
+                          disabled={!modifiedKeys.has(key) || saving === key}
+                          variant="ghost"
+                          size="sm"
+                          className="min-w-[60px]"
+                        >
+                          {saving === key ? (
+                            <span className="text-xs">{intl.formatMessage(i18n.saving)}</span>
+                          ) : (
+                            <Save className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>

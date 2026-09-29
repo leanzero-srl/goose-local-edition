@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "No configuration settings found."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "\"{name}\" must be true or false, so it was not saved."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "\"{name}\" must be a number, so it was not saved."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Reset Changes"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "Saving..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "A list or group of settings, shown read-only so a save here can never flatten it. Edit it in config.yaml."
   },
   "configSettings.title": {
     "defaultMessage": "Configuration"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Failed to save provider. Please check your configuration and try again."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Failed to save provider: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "Provider supports streaming responses"
@@ -3152,8 +3164,17 @@
   "localModelManager.active": {
     "defaultMessage": "Active"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Delete"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Delete this model? You can re-download it later."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "Delete {model}?"
   },
   "localModelManager.download": {
     "defaultMessage": "Download"
@@ -7547,6 +7568,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Notes waiting for you"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "OK"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."
   },
@@ -8303,20 +8327,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Back to List"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "Cancel"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Replace current content with default? Your changes will be lost."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Replace with the default?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Are you sure you want to reset all prompts to their defaults? This cannot be undone."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Reset all prompts?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Are you sure you want to reset this prompt to its default? This cannot be undone."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Reset this prompt?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "You have unsaved changes. Are you sure you want to go back?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Discard unsaved changes?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Customized"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Discard changes"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Edit"
@@ -8434,6 +8476,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "Don't have an API key?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Sign-in failed: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "Sign in with {providerName}"
@@ -8854,6 +8899,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "Are you sure you want to delete \"{title}\"?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Delete"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "Recipe file will be deleted."
@@ -9323,11 +9371,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "Cancel"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Choose folder"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Remove schedule \"{id}\"? The recipe will be kept."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Remove schedule?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Create Schedule"
@@ -9391,6 +9445,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "Refreshing..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Remove"
   },
   "schedulesView.resume": {
     "defaultMessage": "Resume"

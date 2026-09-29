@@ -994,9 +994,8 @@ impl GooseAcpAgent {
                 pending
                     .restore()
                     .internal_err_ctx("Failed to restore previous provider settings")?;
-                return Err(agent_client_protocol::Error::invalid_params().data(format!(
-                    "Connection check failed; previous settings retained. {error}"
-                )));
+                return Err(agent_client_protocol::Error::invalid_params()
+                    .data(crate::providers::key_connection::save_failure_text(error)));
             }
             crate::providers::key_connection::record(&req.provider_id, &verification);
         }

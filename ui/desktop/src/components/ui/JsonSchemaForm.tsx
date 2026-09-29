@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Input } from './input';
 import { Button } from './button';
 import { defineMessages, useIntl } from '../../i18n';
+import { StudioSelect, type StudioSelectOption } from '../leanzero-swarm/studio';
 
 const i18n = defineMessages({
   submit: {
@@ -185,21 +186,23 @@ export default function JsonSchemaForm({
     const isRequired = schema.required?.includes(key);
 
     if (prop.enum) {
+      const placeholder = intl.formatMessage(i18n.selectPlaceholder);
+      // An optional enum keeps the old native "Select…" row, so the choice can be cleared back to ''.
+      const options: StudioSelectOption[] = [
+        ...(isRequired ? [] : [{ value: '', label: placeholder }]),
+        ...prop.enum.map((option) => ({ value: option, label: option })),
+      ];
+      const current = String(value ?? '');
       return (
-        <select
-          id={key}
-          value={String(value ?? '')}
-          onChange={(e) => handleChange(key, e.target.value)}
+        <StudioSelect
+          aria-label={key}
+          options={options}
+          value={options.find((o) => o.value !== '' && o.value === current) ?? null}
+          placeholder={placeholder}
+          onChange={(o) => handleChange(key, o?.value ?? '')}
           disabled={disabled}
-          className="flex h-9 w-full rounded-md border focus:border-border-secondary hover:border-border-secondary bg-background-primary px-3 py-1 text-base transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3 md:text-sm"
-        >
-          {!isRequired && <option value="">{intl.formatMessage(i18n.selectPlaceholder)}</option>}
-          {prop.enum.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+          className={error ? 'rounded-md ring-2 ring-red-500' : undefined}
+        />
       );
     }
 
@@ -274,7 +277,10 @@ export default function JsonSchemaForm({
 
         return (
           <div key={key} className="flex flex-col gap-1">
-            <label htmlFor={key} className="text-sm font-medium text-text-primary">
+            <label
+              htmlFor={prop.enum ? undefined : key}
+              className="text-sm font-medium text-text-primary"
+            >
               {key}
               {isRequired && <span className="text-red-500 ml-1">*</span>}
             </label>

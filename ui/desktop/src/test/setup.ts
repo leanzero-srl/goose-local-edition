@@ -107,7 +107,6 @@ Object.defineProperty(window, 'electron', {
       return Promise.resolve();
     }),
     reloadApp: vi.fn(),
-    showMessageBox: vi.fn(() => Promise.resolve({ response: 0 })),
     getIsFullScreen: vi.fn(() => Promise.resolve(false)),
     on: vi.fn(),
     off: vi.fn(),

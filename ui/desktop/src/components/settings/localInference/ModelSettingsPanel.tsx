@@ -12,6 +12,7 @@ import {
   type ToolCallingMode,
 } from '../../../acp/local-inference';
 import { defineMessages, useIntl } from '../../../i18n';
+import { StudioSelect } from '../../leanzero-swarm/studio';
 
 const i18n = defineMessages({
   loadingSettings: {
@@ -341,17 +342,16 @@ function SelectField<T extends string>({
         <div className="text-xs font-medium text-text-primary">{label}</div>
         {description && <span className="text-xs text-text-secondary">{description}</span>}
       </div>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value as T)}
-        className="rounded border border-border-primary bg-background-primary px-2 py-1 text-xs text-text-primary"
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
+      <StudioSelect
+        aria-label={label}
+        options={options}
+        value={options.find((opt) => opt.value === value) ?? null}
+        placeholder={label}
+        onChange={(opt) => {
+          if (opt) onChange(opt.value);
+        }}
+        className="w-44 shrink-0"
+      />
     </div>
   );
 }
@@ -515,14 +515,27 @@ export const ModelSettingsPanel = ({ modelId }: { modelId: string }) => {
     : [builtinTemplateDraft, ...builtinTemplateOptions].filter(Boolean);
 
   if (loading) {
-    return <div className="py-2 text-xs text-text-secondary">{intl.formatMessage(i18n.loadingSettings)}</div>;
+    return (
+      <div className="py-2 text-xs text-text-secondary">
+        {intl.formatMessage(i18n.loadingSettings)}
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end">
-        {saving && <span className="text-xs text-text-secondary mr-auto">{intl.formatMessage(i18n.saving)}</span>}
-        <Button variant="ghost" size="sm" onClick={resetDefaults} title={intl.formatMessage(i18n.resetToDefaults)}>
+        {saving && (
+          <span className="text-xs text-text-secondary mr-auto">
+            {intl.formatMessage(i18n.saving)}
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={resetDefaults}
+          title={intl.formatMessage(i18n.resetToDefaults)}
+        >
           <RotateCcw className="w-3.5 h-3.5 mr-1" />
           <span className="text-xs">{intl.formatMessage(i18n.reset)}</span>
         </Button>
@@ -530,7 +543,9 @@ export const ModelSettingsPanel = ({ modelId }: { modelId: string }) => {
 
       {/* Context & Generation */}
       <div className="space-y-2">
-        <h5 className="text-xs font-medium text-text-primary">{intl.formatMessage(i18n.contextAndGeneration)}</h5>
+        <h5 className="text-xs font-medium text-text-primary">
+          {intl.formatMessage(i18n.contextAndGeneration)}
+        </h5>
         <div className="grid grid-cols-2 gap-3">
           <NumberField
             label={intl.formatMessage(i18n.contextSize)}
@@ -640,7 +655,9 @@ export const ModelSettingsPanel = ({ modelId }: { modelId: string }) => {
 
       {/* Repetition Penalty */}
       <div className="space-y-2">
-        <h5 className="text-xs font-medium text-text-primary">{intl.formatMessage(i18n.repetitionPenalty)}</h5>
+        <h5 className="text-xs font-medium text-text-primary">
+          {intl.formatMessage(i18n.repetitionPenalty)}
+        </h5>
         <div className="grid grid-cols-2 gap-3">
           <NumberField
             label={intl.formatMessage(i18n.repeatPenalty)}
@@ -680,7 +697,9 @@ export const ModelSettingsPanel = ({ modelId }: { modelId: string }) => {
 
       {/* Performance */}
       <div className="space-y-2">
-        <h5 className="text-xs font-medium text-text-primary">{intl.formatMessage(i18n.performance)}</h5>
+        <h5 className="text-xs font-medium text-text-primary">
+          {intl.formatMessage(i18n.performance)}
+        </h5>
         <div className="grid grid-cols-2 gap-3">
           <NumberField
             label={intl.formatMessage(i18n.batchSize)}

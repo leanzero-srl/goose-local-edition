@@ -26,6 +26,7 @@ import {
 import { ScrollArea } from '../ui/scroll-area';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
+import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { Skeleton } from '../ui/skeleton';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import { toastSuccess, toastError } from '../../toasts';
@@ -75,6 +76,10 @@ const i18n = defineMessages({
   deleteRecipeDetail: {
     id: 'recipesView.deleteRecipeDetail',
     defaultMessage: 'Recipe file will be deleted.',
+  },
+  deleteRecipeConfirmButton: {
+    id: 'recipesView.deleteRecipeConfirmButton',
+    defaultMessage: 'Delete',
   },
   recipeDeletedSuccess: {
     id: 'recipesView.recipeDeletedSuccess',
@@ -324,6 +329,8 @@ export default function RecipesView() {
   const [scheduleValid, setScheduleIsValid] = useState(true);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<RecipeManifest | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const filteredRecipes = useMemo(() => {
     if (!searchTerm) return savedRecipes;
@@ -419,20 +426,15 @@ export default function RecipesView() {
     }
   };
 
-  const handleDeleteRecipe = async (recipeManifest: RecipeManifest) => {
-    const result = await window.electron.showMessageBox({
-      type: 'warning',
-      buttons: [intl.formatMessage(i18n.cancel), 'Delete'],
-      defaultId: 0,
-      title: intl.formatMessage(i18n.deleteRecipeTitle),
-      message: intl.formatMessage(i18n.deleteRecipeConfirm, { title: recipeManifest.recipe.title }),
-      detail: intl.formatMessage(i18n.deleteRecipeDetail),
-    });
+  // Q-472: the app's own ConfirmationModal. The native message box this replaced hung the app.
+  const handleDeleteRecipe = (recipeManifest: RecipeManifest) => {
+    setPendingDelete(recipeManifest);
+  };
 
-    if (result.response !== 1) {
-      return;
-    }
-
+  const confirmDeleteRecipe = async () => {
+    const recipeManifest = pendingDelete;
+    if (!recipeManifest) return;
+    setDeleting(true);
     try {
       await deleteRecipe(recipeManifest.id);
       trackRecipeDeleted(true);
@@ -446,6 +448,9 @@ export default function RecipesView() {
       const errorMsg = errorMessage(err, 'Failed to delete recipe');
       trackRecipeDeleted(false, getErrorType(err));
       setError(errorMsg);
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
     }
   };
 
@@ -955,6 +960,21 @@ export default function RecipesView() {
           recipeId={selectedRecipe.id}
         />
       )}
+
+      <ConfirmationModal
+        isOpen={pendingDelete !== null}
+        title={intl.formatMessage(i18n.deleteRecipeTitle)}
+        message={intl.formatMessage(i18n.deleteRecipeConfirm, {
+          title: pendingDelete?.recipe.title ?? '',
+        })}
+        detail={intl.formatMessage(i18n.deleteRecipeDetail)}
+        confirmLabel={intl.formatMessage(i18n.deleteRecipeConfirmButton)}
+        cancelLabel={intl.formatMessage(i18n.cancel)}
+        confirmVariant="destructive"
+        isSubmitting={deleting}
+        onConfirm={() => void confirmDeleteRecipe()}
+        onCancel={() => setPendingDelete(null)}
+      />
 
       <ImportRecipeForm
         isOpen={showImportDialog}

@@ -4,7 +4,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import type { UnreadableConfigFile } from '../../acp/config';
 import { useConfig } from '../ConfigContext';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
-import { Button, LAYER, SPACE, SURFACE, TONE_FILL, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
+import { Button, SPACE, SURFACE, TONE_FILL, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 
 const i18n = defineMessages({
   headline: {
@@ -150,16 +150,18 @@ export default function UnreadableConfigBanner() {
   const { unreadableFiles } = useConfig();
   if (unreadableFiles.length === 0) return null;
   return (
+    // Q-471: a row of the app's column, never an overlay — it pushes the route down so nothing it
+    // would cover (onboarding's cards, its own reason text) is hidden. pt-8 clears the 32px
+    // titlebar drag strip; the height cap keeps the route below reachable when both files fail.
     <div
       data-testid="unreadable-config-banners"
-      className={cx(
-        LAYER.chrome,
-        'fixed left-1/2 top-12 flex w-[min(640px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-2'
-      )}
+      className="relative w-full shrink-0 overflow-y-auto px-4 pb-2 pt-8 max-h-[50%]"
     >
-      {unreadableFiles.map((file) => (
-        <UnreadableFileCard key={file.path} file={file} />
-      ))}
+      <div className="mx-auto flex w-full max-w-[640px] flex-col gap-2">
+        {unreadableFiles.map((file) => (
+          <UnreadableFileCard key={file.path} file={file} />
+        ))}
+      </div>
     </div>
   );
 }

@@ -1217,6 +1217,12 @@
   "configSettings.noSettings": {
     "defaultMessage": "Tiada tetapan konfigurasi ditemui."
   },
+  "configSettings.notABoolean": {
+    "defaultMessage": "\"{name}\" mesti true atau false, jadi ia tidak disimpan."
+  },
+  "configSettings.notANumber": {
+    "defaultMessage": "\"{name}\" mesti nombor, jadi ia tidak disimpan."
+  },
   "configSettings.resetChanges": {
     "defaultMessage": "Tetapkan Semula Perubahan"
   },
@@ -1228,6 +1234,9 @@
   },
   "configSettings.saving": {
     "defaultMessage": "Menyimpan..."
+  },
+  "configSettings.structuredReadOnly": {
+    "defaultMessage": "Senarai atau kumpulan tetapan, dipaparkan baca sahaja supaya simpanan di sini tidak sekali-kali meratakannya. Sunting dalam config.yaml."
   },
   "configSettings.title": {
     "defaultMessage": "Konfigurasi"
@@ -1852,6 +1861,9 @@
   },
   "customProviderForm.submitError": {
     "defaultMessage": "Gagal menyimpan pembekal. Sila semak konfigurasi anda dan cuba lagi."
+  },
+  "customProviderForm.submitErrorWithReason": {
+    "defaultMessage": "Gagal menyimpan pembekal: {reason}"
   },
   "customProviderForm.supportsStreaming": {
     "defaultMessage": "Pembekal menyokong respons penstriman"
@@ -3128,8 +3140,17 @@
   "localModelManager.active": {
     "defaultMessage": "Aktif"
   },
+  "localModelManager.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "localModelManager.deleteButton": {
+    "defaultMessage": "Padam"
+  },
   "localModelManager.deleteConfirm": {
     "defaultMessage": "Padam model ini? Anda boleh memuat turunnya semula kemudian."
+  },
+  "localModelManager.deleteConfirmTitle": {
+    "defaultMessage": "Padam {model}?"
   },
   "localModelManager.download": {
     "defaultMessage": "Muat turun"
@@ -7523,6 +7544,9 @@
   "notes.waitingMenu": {
     "defaultMessage": "Nota yang menunggu anda"
   },
+  "noticeDialog.ok": {
+    "defaultMessage": "OK"
+  },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Pelayan mungkin sedang dimulakan atau tidak tersedia buat sementara waktu."
   },
@@ -8279,20 +8303,38 @@
   "promptsSettings.backToList": {
     "defaultMessage": "Kembali ke Senarai"
   },
+  "promptsSettings.cancel": {
+    "defaultMessage": "Batal"
+  },
   "promptsSettings.confirmReplaceWithDefault": {
     "defaultMessage": "Gantikan kandungan semasa dengan lalai? Perubahan anda akan hilang."
+  },
+  "promptsSettings.confirmReplaceWithDefaultTitle": {
+    "defaultMessage": "Gantikan dengan lalai?"
   },
   "promptsSettings.confirmResetAll": {
     "defaultMessage": "Adakah anda pasti mahu menetapkan semula semua gesaan kepada lalainya? Tindakan ini tidak boleh dibuat asal."
   },
+  "promptsSettings.confirmResetAllTitle": {
+    "defaultMessage": "Tetapkan semula semua prompt?"
+  },
   "promptsSettings.confirmResetOne": {
     "defaultMessage": "Adakah anda pasti mahu menetapkan semula gesaan ini kepada lalainya? Tindakan ini tidak boleh dibuat asal."
+  },
+  "promptsSettings.confirmResetOneTitle": {
+    "defaultMessage": "Tetapkan semula prompt ini?"
   },
   "promptsSettings.confirmUnsavedBack": {
     "defaultMessage": "Anda mempunyai perubahan yang belum disimpan. Adakah anda pasti mahu kembali?"
   },
+  "promptsSettings.confirmUnsavedBackTitle": {
+    "defaultMessage": "Buang perubahan yang belum disimpan?"
+  },
   "promptsSettings.customized": {
     "defaultMessage": "Disesuaikan"
+  },
+  "promptsSettings.discardChanges": {
+    "defaultMessage": "Buang perubahan"
   },
   "promptsSettings.edit": {
     "defaultMessage": "Edit"
@@ -8410,6 +8452,9 @@
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "Tidak mempunyai kunci API?"
+  },
+  "providerConfigForm.signInFailed": {
+    "defaultMessage": "Log masuk gagal: {reason}"
   },
   "providerConfigForm.signInWith": {
     "defaultMessage": "Log masuk dengan {providerName}"
@@ -8830,6 +8875,9 @@
   },
   "recipesView.deleteRecipeConfirm": {
     "defaultMessage": "Adakah anda pasti mahu memadamkan \"{title}\"?"
+  },
+  "recipesView.deleteRecipeConfirmButton": {
+    "defaultMessage": "Padam"
   },
   "recipesView.deleteRecipeDetail": {
     "defaultMessage": "Fail resipi akan dipadamkan."
@@ -9299,11 +9347,17 @@
   "scheduleModal.yaml": {
     "defaultMessage": "YAML"
   },
+  "schedulesView.cancel": {
+    "defaultMessage": "Batal"
+  },
   "schedulesView.chooseFolder": {
     "defaultMessage": "Pilih folder"
   },
   "schedulesView.confirmDelete": {
     "defaultMessage": "Alih keluar jadual \"{id}\"? Resipi akan dikekalkan."
+  },
+  "schedulesView.confirmDeleteTitle": {
+    "defaultMessage": "Alih keluar jadual?"
   },
   "schedulesView.createSchedule": {
     "defaultMessage": "Cipta Jadual"
@@ -9367,6 +9421,9 @@
   },
   "schedulesView.refreshing": {
     "defaultMessage": "Memuat semula..."
+  },
+  "schedulesView.remove": {
+    "defaultMessage": "Alih keluar"
   },
   "schedulesView.resume": {
     "defaultMessage": "Sambung Semula"
