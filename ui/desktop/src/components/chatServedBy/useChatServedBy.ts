@@ -17,6 +17,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import { MLX_STATUS_POLL_MS } from '../leanzero-swarm/mlxLiveStats';
 import { routeNodeIds, turnCanWaitInLoader } from '../../utils/nodeSwap';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
+import { createSharedPoll, useSharedPoll } from '../leanzero-swarm/sharedStatusPoll';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmConfig } from '../settings/swarm/golden';
 import {
@@ -36,33 +37,43 @@ const i18n = defineMessages({
 
 const readSwarm = () => acpReadConfig('swarm', false) as Promise<SwarmConfig | null>;
 
+function mainEngineActivity(): (() => Promise<MlxEngineSnapshot>) | undefined {
+  return (
+    window as unknown as { electron?: { mlxEngineActivity?: () => Promise<MlxEngineSnapshot> } }
+  ).electron?.mlxEngineActivity;
+}
+
+/**
+ * ONE ask of main per tick for every composer in this window (Q-208): every open chat keeps its
+ * composer mounted, and each used to run this timer of its own.
+ */
+const mainSnapshotPoll = createSharedPoll<MlxEngineSnapshot>(() => {
+  const bridge = mainEngineActivity();
+  return bridge ? bridge() : Promise.reject(new Error('this build has no engine-activity bridge'));
+});
+
 /**
  * main's latest read of the engine that serves chat (utils/mlxEngineMonitor.ts): what it is doing
  * and who it serves. main reads it the whole time it answers; this only asks main, every poll,
  * while `enabled`. null = no bridge, or the read failed — never an assumed idle engine.
  */
-function useMainEngineSnapshot(enabled: boolean): MlxEngineSnapshot | null {
+export function useMainEngineSnapshot(enabled: boolean): MlxEngineSnapshot | null {
   const [snapshot, setSnapshot] = useState<MlxEngineSnapshot | null>(null);
+  const hasBridge = mainEngineActivity() != null;
+  const polled = useSharedPoll(
+    mainSnapshotPoll,
+    enabled && hasBridge ? { intervalMs: MLX_STATUS_POLL_MS } : null
+  );
   useEffect(() => {
-    if (!enabled) {
-      setSnapshot(null);
-      return undefined;
-    }
-    const bridge = (
-      window as unknown as { electron?: { mlxEngineActivity?: () => Promise<MlxEngineSnapshot> } }
-    ).electron?.mlxEngineActivity;
-    if (!bridge) return undefined;
+    if (!enabled) setSnapshot(null);
+  }, [enabled]);
+  useEffect(() => {
+    if (!polled || polled.reads === 0) return;
+    setSnapshot(polled.failed ? null : polled.value);
+  }, [polled]);
+  useEffect(() => {
+    if (!enabled || !hasBridge) return undefined;
     let alive = true;
-    const read = async () => {
-      try {
-        const next = await bridge();
-        if (alive) setSnapshot(next);
-      } catch {
-        if (alive) setSnapshot(null);
-      }
-    };
-    void read();
-    const timer = setInterval(() => void read(), MLX_STATUS_POLL_MS);
     // main pushes each read as it lands (Q-59); the poll stays for a main without the push.
     const electron = (
       window as unknown as {
@@ -78,10 +89,9 @@ function useMainEngineSnapshot(enabled: boolean): MlxEngineSnapshot | null {
     electron?.on?.(MLX_ENGINE_SNAPSHOT_CHANNEL, onPush);
     return () => {
       alive = false;
-      clearInterval(timer);
       electron?.off?.(MLX_ENGINE_SNAPSHOT_CHANNEL, onPush);
     };
-  }, [enabled]);
+  }, [enabled, hasBridge]);
   return snapshot;
 }
 

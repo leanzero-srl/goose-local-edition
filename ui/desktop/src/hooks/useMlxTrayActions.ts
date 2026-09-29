@@ -13,7 +13,9 @@ import {
   mlxDistributedStatus,
   mlxDistributedStop,
   subscribeMlxDistributedStatus,
+  type MlxDistributedStatus,
 } from '../acp/mlx-distributed';
+import { distributedStatusPoll } from '../components/leanzero-swarm/useMlxDistributedStatus';
 import { dropRoute, type PeerReach } from '../components/leanzero-swarm/routeSwitch';
 import { latestMlxRemoteSingleStatus } from '../acp/mlx-remote-single';
 import { leaveCause } from '../utils/leaveCause';
@@ -160,61 +162,63 @@ export async function runMlxTrayAction(action: MlxTrayRendererAction): Promise<v
 
 /**
  * Keep MAIN's copy of the distributed engine current for the tray. One read on start and on every
- * tray-menu open (`mlx-distributed-wake`); while the run owns this Mac, one read per view poll.
- * Each read reaches main inside `mlxDistributedStatus`. A failed read reports nothing — main's copy
- * then ages into "stale" in the menu instead of being shown as live — and the loop keeps trying
- * while the last good read said the run owns the Mac.
+ * tray-menu open (`mlx-distributed-wake`); while the run owns this Mac, the reporter WATCHES the
+ * window's one split-status store (Q-208) — hidden windows included, since the tray reads it — so
+ * the Engine tab and My Macs beside it ride the same read instead of a second timer. Each read
+ * reaches main inside `mlxDistributedStatus`. A failed read reports nothing — main's copy then ages
+ * into "stale" in the menu instead of being shown as live — and the watch keeps going while the
+ * last good read said the run owns the Mac.
  */
 export function useMlxDistributedReporter(enabled: boolean): void {
   useEffect(() => {
     if (!enabled) return undefined;
     let disposed = false;
-    let reading = false;
-    let owned = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let unwatch: (() => void) | null = null;
+    // Another window's run is followed too, so its stop reaches this window's readiness; so is a
+    // rank this Mac serves for another Mac, so the tray follows it until it ends.
+    const owns = (status: MlxDistributedStatus | null) =>
+      status != null &&
+      (status.mode === 'distributed' || foreignOwner(status) != null || status.hosting != null);
+    const onWatchedRead = () => {
+      const read = distributedStatusPoll.snapshot();
+      if (read.value != null && !owns(read.value)) {
+        unwatch?.();
+        unwatch = null;
+      }
+    };
+    const watch = () => {
+      if (disposed || unwatch) return;
+      unwatch = distributedStatusPoll.subscribe(onWatchedRead, {
+        intervalMs: MLX_STATUS_POLL_MS,
+        whileHidden: true,
+      });
+    };
     const read = async () => {
-      if (reading || disposed) return;
-      reading = true;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
+      if (disposed) return;
+      if (unwatch) {
+        await distributedStatusPoll.refresh();
+        return;
       }
       try {
-        const status = await mlxDistributedStatus();
-        // Another window's run is followed too, so its stop reaches this window's readiness; so is a
-        // rank this Mac serves for another Mac, so the tray follows it until it ends.
-        owned =
-          status.mode === 'distributed' || foreignOwner(status) != null || status.hosting != null;
+        if (owns(await mlxDistributedStatus())) watch();
       } catch {
-        // Nothing to report; `owned` keeps the last good read's word.
-      } finally {
-        reading = false;
+        // Nothing to report, and no run claimed.
       }
-      if (!disposed && owned) timer = setTimeout(() => void read(), MLX_STATUS_POLL_MS);
     };
     void read();
     const onWake = () => void read();
     window.electron.on('mlx-distributed-wake', onWake);
     // Another window may have started a run while this one was in the background.
     window.addEventListener('focus', onWake);
-    // A run started from the Engine tab is first seen by ITS read: join the loop then, so the
+    // A run started from the Engine tab is first seen by ITS read: join the watch then, so the
     // latest status (the composer's readiness reads it) stays current after that view closes.
     const unsubscribe = subscribeMlxDistributedStatus(() => {
-      const latest = latestMlxDistributedStatus();
-      if (
-        disposed ||
-        reading ||
-        timer ||
-        (latest?.mode !== 'distributed' && foreignOwner(latest) == null && latest?.hosting == null)
-      ) {
-        return;
-      }
-      owned = true;
-      timer = setTimeout(() => void read(), MLX_STATUS_POLL_MS);
+      if (owns(latestMlxDistributedStatus())) watch();
     });
     return () => {
       disposed = true;
-      if (timer) clearTimeout(timer);
+      unwatch?.();
+      unwatch = null;
       unsubscribe();
       window.removeEventListener('focus', onWake);
       window.electron.off('mlx-distributed-wake', onWake);
