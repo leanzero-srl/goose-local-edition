@@ -31,6 +31,8 @@ pub enum Answer {
     Hold,
     /// Asks for one tool call — `(tool, JSON arguments)` — and finishes the answer.
     ToolCall(&'static str, &'static str),
+    /// Asks for several tool calls in ONE message — each `(tool, JSON arguments)` — and finishes.
+    ToolCalls(Vec<(&'static str, String)>),
     /// 503 as goose's distributed engine answers while its watchdog holds admission for memory
     /// (Q-397): the `memory_hold` code, the watchdog's words and the path to wait on. A
     /// `GET /goose/admission` then waits until [`Model::admit`].
@@ -42,6 +44,9 @@ pub enum Answer {
 /// The words goose's side requests open with: the tool-call label (acp/server/tool_labels.rs) and
 /// the end-of-turn fact checker (turn_assessment.rs).
 const TOOL_LABEL_REQUEST: &str = "Summarize this tool call in a short lowercase phrase";
+/// The label for a message that asked several tools at once.
+const TOOL_SEQUENCE_LABEL_REQUEST: &str =
+    "Summarize this sequence of tool calls in a short lowercase phrase";
 const FACT_CHECK_REQUEST: &str = "You are goose's end-of-turn fact checker";
 
 /// A scripted OpenAI-compatible endpoint: each completion request takes the next [`Answer`];
@@ -147,7 +152,10 @@ impl Model {
                 let apart = serving
                     .side_requests_apart
                     .load(std::sync::atomic::Ordering::Relaxed);
-                let answer = if apart && request.contains(TOOL_LABEL_REQUEST) {
+                let answer = if apart
+                    && (request.contains(TOOL_LABEL_REQUEST)
+                        || request.contains(TOOL_SEQUENCE_LABEL_REQUEST))
+                {
                     Answer::Finish("running a tool")
                 } else if apart && request.contains(FACT_CHECK_REQUEST) {
                     Answer::Hold
@@ -189,14 +197,34 @@ impl Model {
                         let _ = socket.flush().await;
                         unfinished.push(socket);
                     }
-                    Answer::ToolCall(tool, arguments) => {
+                    Answer::ToolCall(..) | Answer::ToolCalls(_) => {
+                        let calls = match answer {
+                            Answer::ToolCall(tool, arguments) => {
+                                vec![(tool, arguments.to_string())]
+                            }
+                            Answer::ToolCalls(calls) => calls,
+                            _ => unreachable!(),
+                        };
                         let _ = socket.write_all(head.as_bytes()).await;
-                        let call = json!({"role": "assistant", "tool_calls": [{
-                            "index": 0,
-                            "id": format!("call_{}", serving.requests.lock().unwrap().len()),
-                            "type": "function",
-                            "function": {"name": tool, "arguments": arguments},
-                        }]});
+                        let request = serving.requests.lock().unwrap().len();
+                        let tool_calls: Vec<Value> = calls
+                            .iter()
+                            .enumerate()
+                            .map(|(index, (tool, arguments))| {
+                                let id = if index == 0 {
+                                    format!("call_{request}")
+                                } else {
+                                    format!("call_{request}_{index}")
+                                };
+                                json!({
+                                    "index": index,
+                                    "id": id,
+                                    "type": "function",
+                                    "function": {"name": tool, "arguments": arguments},
+                                })
+                            })
+                            .collect();
+                        let call = json!({"role": "assistant", "tool_calls": tool_calls});
                         let body = [
                             chunk(call, None),
                             chunk(json!({}), Some("tool_calls")),

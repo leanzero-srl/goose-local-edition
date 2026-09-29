@@ -138,10 +138,16 @@ sees it until they answer.
 Always fill `recommended_answer` with what you would choose, and `why` with what the
 answer unblocks. Add `options` when the answer is one of a few choices.
 Do not ask for anything you can find out yourself by reading files, running commands
-or searching. Ask one question per call, and only when you cannot sensibly proceed.
-Calling `ask_user` ends your turn. If the person answers on the card, their next
-message says it is the answer to your question; if they write to you instead, the
-question closes as superseded and you are told so, with their message quoted.
+or searching, and ask only when you cannot sensibly proceed.
+Each call asks ONE question. When you have several questions, or the person asks you
+to put them all to them at once, make several `ask_user` calls in the SAME message,
+one question per call: each gets its own card, the person answers them in any order,
+and your turn ends once, after that message. Do not ask one and hold back the others
+you already have; only a question that depends on an earlier answer waits for it.
+Calling `ask_user` ends your turn. Each answer given on a card reaches you as a
+message saying which question it answers, and the other cards stay open until they
+are answered; if the person writes to you instead, every open question closes as
+superseded and you are told so, with their message quoted.
 
 ## notes
 
