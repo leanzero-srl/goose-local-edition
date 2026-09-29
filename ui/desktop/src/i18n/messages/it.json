@@ -11126,6 +11126,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "In attesa delle prime parole del modello · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Annulla"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Mettilo da parte"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose lo rinomina in {fileName}.corrupt- seguito da data e ora, nella stessa cartella, quindi non viene eliminato nulla del suo contenuto, poi riparte senza chiavi salvate. Puoi ricopiare ciò che ti serve dal file rinominato.} other{goose lo rinomina in {fileName}.corrupt- seguito da data e ora, nella stessa cartella, quindi non viene eliminato nulla del suo contenuto, poi riparte con un nuovo file delle impostazioni. Puoi ricopiare ciò che ti serve dal file rinominato.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "Mettere da parte {fileName}?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Finché non viene corretto, goose funziona senza le chiavi salvate al suo interno, quindi i provider che ne hanno bisogno sembrano disconnessi. Finché il file non è leggibile, non viene salvato nulla sopra di esso.} other{Finché non viene corretto, goose usa i valori predefiniti, quindi i tuoi provider, modelli ed estensioni possono sembrare spariti. Finché il file non è leggibile, non viene salvato nulla sopra di esso.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose non è riuscito a leggere il file che contiene le tue chiavi} other{goose non è riuscito a leggere il tuo file delle impostazioni}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Mettilo da parte e ricomincia"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose non è riuscito a metterlo da parte: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Riga {line}, colonna {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Mostra nel Finder"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose scaricherà l'aggiornamento in background e lo installerà al prossimo arresto o riavvio."
   },

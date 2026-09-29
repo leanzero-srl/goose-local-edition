@@ -11126,6 +11126,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Menunggu perkataan pertama model · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Ketepikan"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose menamakannya semula kepada {fileName}.corrupt- diikuti tarikh dan masa, dalam folder yang sama, jadi tiada kandungannya dipadam, kemudian bermula tanpa kunci yang disimpan. Anda boleh menyalin semula apa yang anda perlukan daripada fail yang dinamakan semula.} other{goose menamakannya semula kepada {fileName}.corrupt- diikuti tarikh dan masa, dalam folder yang sama, jadi tiada kandungannya dipadam, kemudian bermula dengan fail tetapan baharu. Anda boleh menyalin semula apa yang anda perlukan daripada fail yang dinamakan semula.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "Ketepikan {fileName}?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Sehingga ia dibaiki, goose berjalan tanpa kunci yang disimpan di dalamnya, jadi penyedia yang memerlukannya kelihatan terlog keluar. Tiada apa disimpan menimpa fail selagi ia tidak boleh dibaca.} other{Sehingga ia dibaiki, goose berjalan dengan nilai lalainya, jadi penyedia, model dan sambungan anda boleh kelihatan hilang. Tiada apa disimpan menimpa fail selagi ia tidak boleh dibaca.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose tidak dapat membaca fail yang menyimpan kunci anda} other{goose tidak dapat membaca fail tetapan anda}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Ketepikannya dan mula semula"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose tidak dapat mengetepikannya: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Baris {line}, lajur {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Tunjukkan dalam Finder"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan memuat turun kemas kini di latar belakang dan memasangnya pada kali seterusnya anda keluar atau mula semula."
   },

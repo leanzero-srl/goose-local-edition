@@ -11150,6 +11150,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Waiting for the model’s first words · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Move it aside"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose renames it to {fileName}.corrupt- followed by the date and time, in the same folder, so nothing in it is deleted, then starts with no saved keys. You can copy what you need back from the renamed file.} other{goose renames it to {fileName}.corrupt- followed by the date and time, in the same folder, so nothing in it is deleted, then starts a fresh settings file. You can copy what you need back from the renamed file.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "Move {fileName} aside?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Until it is fixed, goose runs without the keys saved in it, so providers that need one look signed out. Nothing is saved over the file while it cannot be read.} other{Until it is fixed, goose runs on its defaults, so your providers, models and extensions can look gone. Nothing is saved over the file while it cannot be read.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose could not read the file that holds your keys} other{goose could not read your settings file}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Move it aside and start fresh"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose could not move it aside: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Line {line}, column {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Reveal in Finder"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose will download the update in the background and install it the next time you quit or restart."
   },

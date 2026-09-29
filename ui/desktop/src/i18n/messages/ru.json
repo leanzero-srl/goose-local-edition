@@ -11126,6 +11126,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Ожидание первых слов модели · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Отложить"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose переименует его в {fileName}.corrupt- с датой и временем в той же папке, поэтому из него ничего не удаляется, а затем начнёт без сохранённых ключей. Всё нужное можно скопировать обратно из переименованного файла.} other{goose переименует его в {fileName}.corrupt- с датой и временем в той же папке, поэтому из него ничего не удаляется, а затем начнёт с новым файлом настроек. Всё нужное можно скопировать обратно из переименованного файла.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "Отложить {fileName}?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Пока он не исправлен, goose работает без сохранённых в нём ключей, поэтому провайдеры, которым нужен ключ, выглядят отключёнными. Пока файл не читается, поверх него ничего не сохраняется.} other{Пока он не исправлен, goose работает с настройками по умолчанию, поэтому ваши провайдеры, модели и расширения могут выглядеть пропавшими. Пока файл не читается, поверх него ничего не сохраняется.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose не удалось прочитать файл с вашими ключами} other{goose не удалось прочитать ваш файл настроек}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Отложить его и начать заново"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose не удалось его отложить: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Строка {line}, столбец {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Показать в Finder"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Обновление будет автоматически скачано в фоновом режиме."
   },

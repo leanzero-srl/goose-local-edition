@@ -17,6 +17,21 @@ fn mask_secret(secret: serde_json::Value) -> String {
     format!("{}{}", visible, mask)
 }
 
+fn unreadable_config_file_dto(
+    file: crate::config::base::UnreadableSettingsFile,
+) -> UnreadableConfigFile {
+    UnreadableConfigFile {
+        path: file.path.to_string_lossy().into_owned(),
+        role: match file.role {
+            crate::config::base::SettingsFileRole::Config => ConfigFileRole::Config,
+            crate::config::base::SettingsFileRole::Secrets => ConfigFileRole::Secrets,
+        },
+        reason: file.reason,
+        line: file.line.map(|line| line as u64),
+        column: file.column.map(|column| column as u64),
+    }
+}
+
 impl GooseAcpAgent {
     pub(super) async fn on_preferences_read(
         &self,
@@ -166,7 +181,32 @@ impl GooseAcpAgent {
     ) -> Result<ConfigReadAllResponse, agent_client_protocol::Error> {
         let config = self.config()?;
         let values = config.all_values().internal_err()?;
-        Ok(ConfigReadAllResponse { config: values })
+        Ok(ConfigReadAllResponse {
+            config: values,
+            unreadable_files: config
+                .unreadable_files()
+                .into_iter()
+                .map(unreadable_config_file_dto)
+                .collect(),
+        })
+    }
+
+    pub(super) async fn on_config_move_aside(
+        &self,
+        req: ConfigMoveAsideRequest,
+    ) -> Result<ConfigMoveAsideResponse, agent_client_protocol::Error> {
+        let config = self.config()?;
+        let moved_to = config
+            .move_aside_unreadable(std::path::Path::new(&req.path))
+            .map_err(|e| match e {
+                crate::config::ConfigError::NotUnreadable { .. } => {
+                    agent_client_protocol::Error::invalid_params().data(e.to_string())
+                }
+                other => agent_client_protocol::Error::internal_error().data(other.to_string()),
+            })?;
+        Ok(ConfigMoveAsideResponse {
+            moved_to: moved_to.to_string_lossy().into_owned(),
+        })
     }
 
     pub(super) async fn on_defaults_read(

@@ -11126,6 +11126,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Menunggu kata pertama model · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Sisihkan"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose mengganti namanya menjadi {fileName}.corrupt- diikuti tanggal dan waktu, di folder yang sama, jadi tidak ada isinya yang dihapus, lalu mulai tanpa kunci tersimpan. Anda dapat menyalin kembali yang Anda perlukan dari file yang diganti namanya.} other{goose mengganti namanya menjadi {fileName}.corrupt- diikuti tanggal dan waktu, di folder yang sama, jadi tidak ada isinya yang dihapus, lalu mulai dengan file pengaturan baru. Anda dapat menyalin kembali yang Anda perlukan dari file yang diganti namanya.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "Sisihkan {fileName}?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Sampai diperbaiki, goose berjalan tanpa kunci yang tersimpan di dalamnya, jadi penyedia yang membutuhkannya tampak keluar. Tidak ada yang disimpan menimpa file selama file tidak dapat dibaca.} other{Sampai diperbaiki, goose berjalan dengan nilai bawaannya, jadi penyedia, model, dan ekstensi Anda bisa tampak hilang. Tidak ada yang disimpan menimpa file selama file tidak dapat dibaca.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose tidak dapat membaca file yang menyimpan kunci Anda} other{goose tidak dapat membaca file pengaturan Anda}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Sisihkan dan mulai dari awal"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose tidak dapat menyisihkannya: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Baris {line}, kolom {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Tampilkan di Finder"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan mengunduh pembaruan di latar belakang dan menginstalnya saat Anda keluar atau memulai ulang berikutnya."
   },

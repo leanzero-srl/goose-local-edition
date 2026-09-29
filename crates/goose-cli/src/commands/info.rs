@@ -139,6 +139,19 @@ pub async fn handle_info(verbose: bool, check: bool) -> Result<()> {
         );
     }
 
+    let unreadable = config.unreadable_files();
+    if !unreadable.is_empty() {
+        println!("\n{}", style("Unreadable settings files:").red().bold());
+        for file in &unreadable {
+            let place = match (file.line, file.column) {
+                (Some(line), Some(column)) => format!(" (line {line}, column {column})"),
+                _ => String::new(),
+            };
+            println!("  {}{place}: {}", file.path.display(), file.reason);
+        }
+        println!("  goose runs without what these files hold and will not save over them; fix or move them aside.");
+    }
+
     if verbose {
         println!("\n{}", style("goose Configuration:").cyan().bold());
         let values = config.all_values()?;

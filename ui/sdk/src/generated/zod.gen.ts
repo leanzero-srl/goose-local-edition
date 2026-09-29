@@ -1348,8 +1348,37 @@ export const zConfigRemoveRequest_unstable = z.object({
 
 export const zConfigReadAllRequest_unstable = z.record(z.unknown());
 
+export const zConfigFileRole = z.enum(['config', 'secrets']);
+
+export const zUnreadableConfigFile = z.object({
+    path: z.string(),
+    role: zConfigFileRole,
+    reason: z.string(),
+    line: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    column: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
 export const zConfigReadAllResponse_unstable = z.object({
-    config: z.record(z.unknown())
+    config: z.record(z.unknown()),
+    unreadableFiles: z.array(zUnreadableConfigFile).optional().default([])
+});
+
+/**
+ * Rename an unreadable settings file (one listed in `unreadableFiles`) to
+ * `<name>.corrupt-<utc>` so goose starts that file fresh; any other path is refused.
+ */
+export const zConfigMoveAsideRequest_unstable = z.object({
+    path: z.string()
+});
+
+export const zConfigMoveAsideResponse_unstable = z.object({
+    movedTo: z.string()
 });
 
 /**
@@ -8090,6 +8119,7 @@ export const zExtRequest = z.object({
             zConfigUpsertRequest_unstable,
             zConfigRemoveRequest_unstable,
             zConfigReadAllRequest_unstable,
+            zConfigMoveAsideRequest_unstable,
             zDefaultsReadRequest_unstable,
             zDefaultsSaveRequest_unstable,
             zDefaultsClearRequest_unstable,
@@ -8282,6 +8312,7 @@ export const zExtResponse = z.union([
                 zPreferencesReadResponse_unstable,
                 zConfigReadResponse_unstable,
                 zConfigReadAllResponse_unstable,
+                zConfigMoveAsideResponse_unstable,
                 zDefaultsReadResponse_unstable,
                 zOnboardingImportScanResponse_unstable,
                 zOnboardingImportApplyResponse_unstable,

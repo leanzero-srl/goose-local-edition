@@ -11126,6 +11126,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Wartet auf die ersten Worte des Modells · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Beiseitelegen"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose benennt sie im selben Ordner in {fileName}.corrupt- gefolgt von Datum und Uhrzeit um, sodass nichts darin gelöscht wird, und beginnt dann ohne gespeicherte Schlüssel. Was du brauchst, kannst du aus der umbenannten Datei zurückkopieren.} other{goose benennt sie im selben Ordner in {fileName}.corrupt- gefolgt von Datum und Uhrzeit um, sodass nichts darin gelöscht wird, und beginnt dann mit einer neuen Einstellungsdatei. Was du brauchst, kannst du aus der umbenannten Datei zurückkopieren.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "{fileName} beiseitelegen?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Bis sie repariert ist, läuft goose ohne die darin gespeicherten Schlüssel, daher wirken Anbieter, die einen brauchen, abgemeldet. Solange die Datei nicht lesbar ist, wird nichts darüber gespeichert.} other{Bis sie repariert ist, läuft goose mit seinen Standardwerten, daher können deine Anbieter, Modelle und Erweiterungen verschwunden wirken. Solange die Datei nicht lesbar ist, wird nichts darüber gespeichert.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose konnte die Datei mit deinen Schlüsseln nicht lesen} other{goose konnte deine Einstellungsdatei nicht lesen}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Beiseitelegen und neu beginnen"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose konnte sie nicht beiseitelegen: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Zeile {line}, Spalte {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Im Finder anzeigen"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose lädt das Update im Hintergrund herunter und installiert es beim nächsten Beenden oder Neustart."
   },

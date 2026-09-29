@@ -3230,6 +3230,14 @@
         "config": {
           "type": "object",
           "additionalProperties": {}
+        },
+        "unreadableFiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnreadableConfigFile"
+          },
+          "description": "Settings files that exist but could not be read. `config` was read without them, and every\nsave refuses to write over them until they are fixed or moved aside.",
+          "default": []
         }
       },
       "required": [
@@ -3237,6 +3245,75 @@
       ],
       "x-side": "agent",
       "x-method": "_goose/unstable/config/read-all"
+    },
+    "UnreadableConfigFile": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/ConfigFileRole"
+        },
+        "reason": {
+          "type": "string",
+          "description": "The reader's own error, verbatim."
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "1-based, when the parser reported a place.",
+          "minimum": 0
+        },
+        "column": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "path",
+        "role",
+        "reason"
+      ]
+    },
+    "ConfigFileRole": {
+      "type": "string",
+      "enum": [
+        "config",
+        "secrets"
+      ]
+    },
+    "ConfigMoveAsideRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "description": "Rename an unreadable settings file (one listed in `unreadableFiles`) to\n`<name>.corrupt-<utc>` so goose starts that file fresh; any other path is refused.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/move-aside"
+    },
+    "ConfigMoveAsideResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "movedTo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "movedTo"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/move-aside"
     },
     "DefaultsReadRequest_unstable": {
       "type": "object",
@@ -19994,6 +20071,15 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/ConfigMoveAsideRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/config/move-aside",
+                  "title": "ConfigMoveAsideRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/DefaultsReadRequest_unstable"
                     }
                   ],
@@ -21596,6 +21682,14 @@
                         }
                       ],
                       "title": "ConfigReadAllResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/ConfigMoveAsideResponse_unstable"
+                        }
+                      ],
+                      "title": "ConfigMoveAsideResponse_unstable"
                     },
                     {
                       "allOf": [

@@ -14,7 +14,7 @@ vi.mock('../acp/extensions', () => ({
   setConfigExtensionEnabled: vi.fn(),
 }));
 vi.mock('../acp/config', () => ({
-  acpReadAllConfig: vi.fn(async () => ({})),
+  acpReadAllConfig: vi.fn(async () => ({ config: {}, unreadableFiles: [] })),
   acpReadConfig: vi.fn(),
   acpRemoveConfig: vi.fn(),
   acpUpsertConfig: vi.fn(),

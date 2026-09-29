@@ -251,6 +251,11 @@
       "responseType": "ConfigReadAllResponse_unstable"
     },
     {
+      "method": "_goose/unstable/config/move-aside",
+      "requestType": "ConfigMoveAsideRequest_unstable",
+      "responseType": "ConfigMoveAsideResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/defaults/read",
       "requestType": "DefaultsReadRequest_unstable",
       "responseType": "DefaultsReadResponse_unstable"

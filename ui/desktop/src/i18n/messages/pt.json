@@ -11126,6 +11126,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Aguardando as primeiras palavras do modelo · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Deixar de lado"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{O goose renomeia o arquivo para {fileName}.corrupt- seguido da data e da hora, na mesma pasta, então nada do conteúdo é apagado, e depois começa sem chaves salvas. Você pode copiar de volta o que precisar do arquivo renomeado.} other{O goose renomeia o arquivo para {fileName}.corrupt- seguido da data e da hora, na mesma pasta, então nada do conteúdo é apagado, e depois começa com um novo arquivo de configurações. Você pode copiar de volta o que precisar do arquivo renomeado.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "Deixar {fileName} de lado?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Até ser corrigido, o goose funciona sem as chaves salvas nele, então os provedores que precisam de uma parecem desconectados. Nada é salvo por cima do arquivo enquanto ele não puder ser lido.} other{Até ser corrigido, o goose funciona com os valores padrão, então seus provedores, modelos e extensões podem parecer ter sumido. Nada é salvo por cima do arquivo enquanto ele não puder ser lido.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{O goose não conseguiu ler o arquivo que guarda suas chaves} other{O goose não conseguiu ler seu arquivo de configurações}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Deixar de lado e começar do zero"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "O goose não conseguiu deixá-lo de lado: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Linha {line}, coluna {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Mostrar no Finder"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "O Goose transferirá a atualização em segundo plano e instalá-la-á da próxima vez que sair ou reiniciar."
   },

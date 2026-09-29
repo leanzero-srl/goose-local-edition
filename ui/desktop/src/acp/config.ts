@@ -1,4 +1,7 @@
+import type { UnreadableConfigFile } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
+
+export type { UnreadableConfigFile };
 
 export type ConfigReadValue = unknown;
 
@@ -31,8 +34,21 @@ export async function acpRemoveConfig(key: string, isSecret: boolean): Promise<v
   await client.goose.configRemove_unstable({ key, isSecret });
 }
 
-export async function acpReadAllConfig(): Promise<Record<string, unknown>> {
+export interface ConfigReadAll {
+  config: Record<string, unknown>;
+  /** Settings files goosed skipped because it could not read them (Q-468). */
+  unreadableFiles: UnreadableConfigFile[];
+}
+
+export async function acpReadAllConfig(): Promise<ConfigReadAll> {
   const client = await getAcpClient();
-  const { config } = await client.goose.configReadAll_unstable({});
-  return config;
+  const { config, unreadableFiles } = await client.goose.configReadAll_unstable({});
+  return { config, unreadableFiles: unreadableFiles ?? [] };
+}
+
+/** Renames an unreadable settings file to `<name>.corrupt-<utc>`; returns where it went. */
+export async function acpMoveConfigAside(path: string): Promise<string> {
+  const client = await getAcpClient();
+  const { movedTo } = await client.goose.configMoveAside_unstable({ path });
+  return movedTo;
 }
