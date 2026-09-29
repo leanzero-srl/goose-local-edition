@@ -16,7 +16,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - Q-494 (counts not years: watch #3y);
   - Q-496 (the chat follows the turn: watch #3y, data-following);
   - Q-486.
-- E2E #3y RUNNING since 16:01: RU-2026-09-29-3y-split-tensor-coffee, session 20260929_19, the coffee brief (41 turns).
+- E2E #3y RUNNING since 16:01 (turn 2: 1,955 s / 9 tools, against #3x's 8,349 s / 152): RU-2026-09-29-3y-split-tensor-coffee, session 20260929_19, the coffee brief (41 turns).
   r1 proves every send (SEND_LOST). Turn 1 LANDED (Q-492 proven under the brief) and saved both memories, but
   narrowed the privacy rule to this project (Q-506, model). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
 - E2E #3x STOPPED at turn 4 (E2E-RUNS): the Q-498 cache thrash with the owner's second chat; its memory turn was lost.
@@ -37,8 +37,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-505 SECURITY: a plaintext CONTEXT7 key sits in goose memory evolve-goose-test-loop.txt, which recall injects into
   prompts. memory-skills-surgeon is cutting save/recall redaction plus a no-values scan. The OWNER decides on the existing
   entry: tell him, never print the value.
-- When the agents land: one scratch branch (Q-502 includes Q-498; Q-503 includes Q-499; Q-500/501) → full gate → ff main
-  → release 3.0.80 → install when #3y allows.
+- 3.0.80 merge set (branches): q508 (⊃ q502 ⊃ Q-498), q503 (⊃ Q-499), q507 (⊃ Q-504 ⊃ Q-500/501), Q-505's branch,
+  Q-466's branch → one scratch → full gate → ff main → release → install when #3y allows (BOTH Macs: new spec tag).
 
 ## CI
 - Red 13:18Z: the RecipesView delete test hit its 5 s timeout (the vitest-under-load class). Q-466 is cutting
@@ -52,7 +52,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (72 GB). Take a vigil screenshot and READ it. The next free id is Q-509.
+- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-509.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
