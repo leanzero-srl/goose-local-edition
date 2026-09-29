@@ -81,8 +81,8 @@ export default function ProviderSetupActions({
     if (isActiveProvider) {
       return (
         <div className="w-full">
-          <div className="w-full px-6 py-4 bg-yellow-600/20 border-t border-yellow-500/30">
-            <p className="text-yellow-500 text-sm mb-2 flex items-start">
+          <div className="w-full px-6 py-4 bg-lz-warn-solid">
+            <p className="text-white font-medium text-sm mb-2 flex items-start">
               <AlertTriangle className="h-4 w-4 mr-2 mt-0.5 flex-shrink-0" />
               <span>{intl.formatMessage(i18n.cannotDeleteActive, { providerName })}</span>
             </p>
@@ -101,14 +101,14 @@ export default function ProviderSetupActions({
     // Normal delete confirmation
     return (
       <div className="w-full">
-        <div className="w-full px-6 py-4 bg-red-900/20 border-t border-red-500/30">
-          <p className="text-red-400 text-sm mb-2">
+        <div className="w-full px-6 py-4 bg-lz-err-solid">
+          <p className="text-white font-medium text-sm mb-2">
             {intl.formatMessage(i18n.confirmDeleteMessage, { providerName })}
           </p>
         </div>
         <Button
           onClick={onConfirmDelete}
-          className="w-full h-[60px] rounded-none border-b border-border-primary bg-transparent hover:bg-red-900/20 text-red-500 font-medium text-base"
+          className="w-full h-[60px] rounded-none border-b border-border-primary bg-transparent hover:bg-lz-err-solid text-lz-err hover:text-white font-medium text-base"
         >
           <Trash2 className="h-4 w-4 mr-2" /> {intl.formatMessage(i18n.confirmDelete)}
         </Button>

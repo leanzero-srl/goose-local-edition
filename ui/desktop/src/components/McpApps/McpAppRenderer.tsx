@@ -1017,24 +1017,12 @@ export default function McpAppRenderer({
 
   const renderContent = () => {
     if (isError) {
-      return (
-        <div className="p-4 text-red-700 dark:text-red-300">
-          Failed to load MCP app: {state.message}
-        </div>
-      );
+      return <div className="p-4 text-white">Failed to load MCP app: {state.message}</div>;
     }
 
     if (!isReady) {
       return (
-        <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded bg-black/[0.03] dark:bg-white/[0.03]">
-          <div
-            className="absolute inset-0 animate-shimmer"
-            style={{
-              animationDuration: '2s',
-              background:
-                'linear-gradient(90deg, transparent 0%, rgba(128,128,128,0.08) 40%, rgba(128,128,128,0.12) 50%, rgba(128,128,128,0.08) 60%, transparent 100%)',
-            }}
-          />
+        <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded bg-background-secondary">
           <FlyingBird className="relative z-10 scale-200 text-text-secondary" cycleInterval={120} />
         </div>
       );
@@ -1085,7 +1073,7 @@ export default function McpAppRenderer({
         {appSupportsPip && (
           <button
             onClick={() => changeDisplayMode('pip')}
-            className="no-drag cursor-pointer rounded-md p-1.5 text-text-secondary transition-colors hover:bg-black/10 hover:text-text-primary dark:hover:bg-white/10"
+            className="no-drag cursor-pointer rounded-md p-1.5 text-text-secondary transition-colors hover:bg-background-tertiary hover:text-text-primary"
             title={intl.formatMessage(i18n.pictureInPicture)}
             aria-label={intl.formatMessage(i18n.pictureInPicture)}
           >
@@ -1095,7 +1083,7 @@ export default function McpAppRenderer({
         <button
           ref={fullscreenCloseRef}
           onClick={() => changeDisplayMode('inline')}
-          className="no-drag cursor-pointer rounded-md p-1.5 text-text-secondary transition-colors hover:bg-black/10 hover:text-text-primary dark:hover:bg-white/10"
+          className="no-drag cursor-pointer rounded-md p-1.5 text-text-secondary transition-colors hover:bg-background-tertiary hover:text-text-primary"
           title={intl.formatMessage(i18n.exitFullscreenTitle)}
           aria-label={intl.formatMessage(i18n.exitFullscreen)}
         >
@@ -1117,7 +1105,7 @@ export default function McpAppRenderer({
           {appSupportsFullscreen && (
             <button
               onClick={() => changeDisplayMode('fullscreen')}
-              className="cursor-pointer rounded-md bg-black/50 p-1 text-white backdrop-blur-sm transition-opacity hover:bg-black/70"
+              className="cursor-pointer rounded-md bg-background-inverse p-1 text-text-inverse transition-colors hover:bg-lz-inverse-hover"
               title={intl.formatMessage(i18n.fullscreen)}
               aria-label={intl.formatMessage(i18n.fullscreen)}
             >
@@ -1126,7 +1114,7 @@ export default function McpAppRenderer({
           )}
           <button
             onClick={() => changeDisplayMode('inline')}
-            className="cursor-pointer rounded-md bg-black/50 p-1 text-white backdrop-blur-sm transition-opacity hover:bg-black/70"
+            className="cursor-pointer rounded-md bg-background-inverse p-1 text-text-inverse transition-colors hover:bg-lz-inverse-hover"
             title={intl.formatMessage(i18n.close)}
             aria-label={intl.formatMessage(i18n.close)}
           >
@@ -1142,7 +1130,7 @@ export default function McpAppRenderer({
         {appSupportsFullscreen && (
           <button
             onClick={() => changeDisplayMode('fullscreen')}
-            className="cursor-pointer rounded-md bg-black/40 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/60"
+            className="cursor-pointer rounded-md bg-background-inverse p-1.5 text-text-inverse transition-colors hover:bg-lz-inverse-hover"
             title={intl.formatMessage(i18n.fullscreen)}
             aria-label={intl.formatMessage(i18n.fullscreen)}
           >
@@ -1152,7 +1140,7 @@ export default function McpAppRenderer({
         {appSupportsPip && (
           <button
             onClick={() => changeDisplayMode('pip')}
-            className="cursor-pointer rounded-md bg-black/40 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/60"
+            className="cursor-pointer rounded-md bg-background-inverse p-1.5 text-text-inverse transition-colors hover:bg-lz-inverse-hover"
             title={intl.formatMessage(i18n.pictureInPicture)}
             aria-label={intl.formatMessage(i18n.pictureInPicture)}
           >
@@ -1173,7 +1161,7 @@ export default function McpAppRenderer({
     isInline && 'group/mcp-app relative overflow-hidden',
     isInline && !isError && 'mt-6 mb-2',
     isInline && !isError && meta.prefersBorder && 'border border-border-primary rounded-lg',
-    isError && 'border border-red-500 rounded-lg bg-red-50 dark:bg-red-900/20'
+    isError && 'rounded-lg bg-lz-err-solid text-white'
   );
 
   const containerStyle: React.CSSProperties = {
@@ -1203,12 +1191,12 @@ export default function McpAppRenderer({
       )}
       {isPip && (
         <div
-          className="mt-6 mb-2 flex items-center justify-center rounded-lg border border-dashed border-border-primary bg-black/[0.02] dark:bg-white/[0.02]"
+          className="mt-6 mb-2 flex items-center justify-center rounded-lg border border-dashed border-border-primary bg-background-secondary"
           style={{ width: '100%', height: `${inlineHeight}px` }}
         >
           <button
             onClick={() => changeDisplayMode('inline')}
-            className="cursor-pointer flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-black/5 hover:text-text-primary dark:hover:bg-white/5"
+            className="cursor-pointer flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-background-tertiary hover:text-text-primary"
           >
             <PictureInPicture2 size={14} />
             <span>{intl.formatMessage(i18n.playingInPip)}</span>
@@ -1229,7 +1217,7 @@ export default function McpAppRenderer({
               role="button"
               tabIndex={0}
               aria-label={intl.formatMessage(i18n.movePipWindow)}
-              className="pointer-events-auto cursor-grab rounded-md bg-black/50 p-1 text-white backdrop-blur-sm hover:bg-black/70 active:cursor-grabbing"
+              className="pointer-events-auto cursor-grab rounded-md bg-background-inverse p-1 text-text-inverse hover:bg-lz-inverse-hover active:cursor-grabbing"
               onPointerDown={pipHandlers.onPointerDown}
               onPointerMove={pipHandlers.onPointerMove}
               onPointerUp={pipHandlers.onPointerUp}

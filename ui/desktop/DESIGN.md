@@ -184,7 +184,7 @@ Import from `./components/lz` (the barrel). All are function components, typed, 
 
 `tokens.ts` helpers: `cx(...)` (plain join), `toneClasses(tone, 'fill'|'text'|'dot')`,
 `nodeClasses(node, register)`, and the constant maps `TONE_*`, `NODE_*`, `TYPE`, `SURFACE`,
-`RADIUS`, `ROW`, `SPACE`, `WEIGHT`, `FOCUS`, `MOTION`, `DISABLED`, `TNUM`.
+`RADIUS`, `ROW`, `SPACE`, `WEIGHT`, `FOCUS`, `MOTION`, `DISABLED`, `TNUM`, and `CALLOUT` (a status box of prose: a solid edge in the tone, page ink, no fill — a box that is ONE status line takes `TONE_FILL` instead).
 
 **Never run Studio classes through `cn()` / tailwind-merge.** Measured:
 `twMerge('text-lz-display text-lz-ink')` returns `text-lz-ink` — it classifies both as a text
@@ -202,7 +202,7 @@ colour and deletes the size step. Use `cx`.
 5. No hand-written colour: every hue is a token utility through `tokens.ts`.
 
 `src/components/lz/assertStudioClean.ts` refuses 1–3 on rendered output; `lz/fadedOpacity.test.ts` refuses
-`opacity-5..95` and inline `opacity: 0.x` anywhere in the host source (Q-335) and ratchets `/NN` colour washes; `studioGallery.test.tsx`
+`opacity-5..95` and inline `opacity: 0.x` anywhere in the host source (Q-335) and refuses every `/NN` colour modifier except a listed full-viewport `bg-black/NN` scrim (Q-457); `studioGallery.test.tsx`
 compiles every emitted class against the real pipeline so a dead utility cannot ship.
 
 ## How the website can follow it

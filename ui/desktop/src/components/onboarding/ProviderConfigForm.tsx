@@ -243,7 +243,7 @@ export default function ProviderConfigForm({ provider, onConfigured }: ProviderC
         {renderForm()}
 
         {error && (
-          <div className="mt-3 p-3 rounded-lg bg-red-50 text-red-800 border border-red-200 dark:bg-red-900/20 dark:text-red-200 dark:border-red-800 text-sm">
+          <div className="mt-3 p-3 rounded-lg bg-lz-err-solid text-white font-medium text-sm">
             {error}
           </div>
         )}

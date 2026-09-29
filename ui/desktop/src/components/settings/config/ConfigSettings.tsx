@@ -254,7 +254,7 @@ export default function ConfigSettings() {
                         onChange={(e) => handleChange(key, e.target.value)}
                         className={cn(
                           'text-text-primary border-border-primary hover:border-border-primary transition-colors',
-                          modifiedKeys.has(key) && 'border-blue-500 focus:ring-blue-500/20'
+                          modifiedKeys.has(key) && 'border-lz-accent-line focus:ring-ring'
                         )}
                         placeholder={intl.formatMessage(i18n.enterValue, { name: getUiNames(key) })}
                       />

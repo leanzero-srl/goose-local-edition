@@ -979,13 +979,13 @@ export const SwitchModelModal = ({
                       .flatMap((g) => g.options)
                       .filter((o) => o.value !== 'custom').length === 0 ? (
                     /* Show special UI for local provider when no models are downloaded */
-                    <div className="rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-4">
+                    <div className="rounded-md border border-lz-accent-line p-4">
                       <div className="flex flex-col gap-3">
                         <div>
-                          <h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                          <h3 className="text-sm font-semibold text-lz-ink">
                             {intl.formatMessage(i18n.localModelsTitle)}
                           </h3>
-                          <div className="mt-1 text-sm text-blue-700 dark:text-blue-300">
+                          <div className="mt-1 text-sm text-lz-ink-2">
                             {intl.formatMessage(i18n.localModelsDescription)}
                           </div>
                         </div>
@@ -996,7 +996,7 @@ export const SwitchModelModal = ({
                             setView('settings');
                             onClose();
                           }}
-                          className="self-start border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40"
+                          className="self-start border-lz-accent-line text-lz-accent hover:bg-lz-accent hover:text-lz-accent-ink"
                         >
                           {intl.formatMessage(i18n.goToSettings)}
                         </Button>
@@ -1005,16 +1005,16 @@ export const SwitchModelModal = ({
                   ) : providerErrors[provider] ? (
                     /* Show error with custom model input so users aren't stuck */
                     <div className="flex flex-col gap-2">
-                      <div className="rounded-md bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3">
+                      <div className="rounded-md border border-lz-warn p-3">
                         <div className="flex items-start">
                           <div className="flex-1">
-                            <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                            <h3 className="text-sm font-semibold text-lz-ink">
                               {intl.formatMessage(i18n.couldNotContactProvider)}
                             </h3>
-                            <div className="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
+                            <div className="mt-1 text-sm text-lz-ink">
                               {providerErrors[provider]}
                             </div>
-                            <div className="mt-2 text-xs text-yellow-600 dark:text-yellow-400">
+                            <div className="mt-2 text-xs text-lz-ink-2">
                               {intl.formatMessage(i18n.checkProviderConfig)}
                             </div>
                           </div>
@@ -1065,8 +1065,8 @@ export const SwitchModelModal = ({
                         <div className="text-red-500 text-sm mt-1">{validationErrors.model}</div>
                       )}
                       {provider && providerWarnings[provider] && (
-                        <div className="rounded-md bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 mt-2">
-                          <div className="text-sm text-yellow-700 dark:text-yellow-300">
+                        <div className="rounded-md bg-lz-warn-solid p-3 mt-2">
+                          <div className="text-sm font-medium text-white">
                             {providerWarnings[provider]}
                           </div>
                         </div>

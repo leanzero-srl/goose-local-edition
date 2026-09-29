@@ -101,27 +101,67 @@ function fadedOpacities(
 
 /**
  * The same ban's other spelling: an alpha modifier on a colour (`bg-background-danger/10`,
- * `text-text-inverse/70`). Backdrop scrims (`bg-black/50` under a dialog) are legitimately
- * translucent and share the syntax, so this is a RATCHET, not a refusal: the count may only fall.
- * Measured 2026-09-29 after Q-335 converted the washes on the lines it touched.
+ * `text-text-inverse/70`, `hover:bg-red-900/20`). Q-457 replaced every content, accent, badge,
+ * hover and state use with a solid token and took this to ZERO. The one legitimate use is a SCRIM —
+ * the translucent black a modal lays over the page behind it — so the allow-list takes only a
+ * `bg-black/NN` on a full-viewport layer (`fixed inset-0` on the same line), keyed by file and
+ * token, each with a one-word reason. A listed token anywhere else is still refused.
  */
-const ALPHA_WASH_BASELINE = 127;
-const ALPHA_WASH =
-  /^(bg|text|border|ring|outline|fill|stroke|from|via|to|divide|decoration|shadow|placeholder|caret|accent)-[a-z0-9-]+\/(\d{1,2}|\[[^\]]+\])$/;
+const ALLOWED_SCRIMS: Record<string, string> = {
+  'components/lz-dialogs/ConfirmCloseRunDialog.tsx bg-black/60': 'backdrop',
+  'components/recipes/CreateEditRecipeModal.tsx bg-black/50': 'backdrop',
+  'components/recipes/ImportRecipeForm.tsx bg-black/50': 'backdrop',
+  'components/recipes/shared/CreateSubRecipeInline.tsx bg-black/50': 'backdrop',
+  'components/recipes/shared/InstructionsEditor.tsx bg-black/50': 'backdrop',
+  'components/recipes/shared/JsonSchemaEditor.tsx bg-black/50': 'backdrop',
+  'components/recipes/shared/SubRecipeModal.tsx bg-black/50': 'backdrop',
+  'components/schedule/ScheduleModal.tsx bg-black/50': 'backdrop',
+  'components/sessions/SessionListView.tsx bg-black/50': 'backdrop',
+  'components/settings/mode/ConfigureApproveMode.tsx bg-black/30': 'backdrop',
+  'components/settings/models/bottom_bar/ModelsBottomBar.tsx bg-black/50': 'backdrop',
+  'components/swarm/Clipped.tsx bg-black/60': 'backdrop',
+  'components/swarm/SwarmRunPanel.tsx bg-black/60': 'backdrop',
+  'components/ui/BaseModal.tsx bg-black/20': 'backdrop',
+  'components/ui/dialog.tsx bg-black/50': 'backdrop',
+  'components/ui/sheet.tsx bg-black/50': 'backdrop',
+};
 
-function alphaWashes(root: string = SRC): string[] {
+const SCRIM_TOKEN = /^bg-black\/\d{1,2}$/;
+const FULL_VIEWPORT = /\bfixed\b.*\binset-0\b|\binset-0\b.*\bfixed\b/;
+const ALPHA_WASH =
+  /^(bg|text|border|ring|outline|fill|stroke|from|via|to|divide|decoration|shadow|placeholder|caret|accent)-([a-z0-9-]+|\[[^\]]+\]|\([^)]+\))\/(\d{1,2}|\[[^\]]+\]|\([^)]+\))$/;
+
+function isListedScrim(file: string, token: string, text: string, allow: Record<string, string>) {
+  return `${file} ${token}` in allow && SCRIM_TOKEN.test(token) && FULL_VIEWPORT.test(text);
+}
+
+function alphaWashes(root: string = SRC, allow: Record<string, string> = ALLOWED_SCRIMS): string[] {
   return tokens(root)
     .filter(({ token }) => ALPHA_WASH.test(utilityOf(token)))
+    .filter(({ file, token, text }) => !isListedScrim(file, token, text, allow))
     .map(({ file, line, token }) => `${file}:${line} ${token}`);
 }
 
-describe('no faded content or control (Q-335)', () => {
+describe('no faded content or control (Q-335, Q-457)', () => {
   it('no source file fades content with opacity-5..95 or an inline opacity below 1', () => {
     expect(fadedOpacities()).toEqual([]);
   });
 
-  it('alpha-modifier washes only shrink (scrims share the syntax)', () => {
-    expect(alphaWashes().length).toBeLessThanOrEqual(ALPHA_WASH_BASELINE);
+  it('no colour carries an alpha modifier except a listed full-viewport scrim (Q-457)', () => {
+    expect(alphaWashes()).toEqual([]);
+  });
+
+  it('every listed scrim is a black backdrop still drawn on a full-viewport layer', () => {
+    const live = new Set(
+      tokens(SRC)
+        .filter(({ file, token, text }) => isListedScrim(file, token, text, ALLOWED_SCRIMS))
+        .map(({ file, token }) => `${file} ${token}`)
+    );
+    for (const [key, reason] of Object.entries(ALLOWED_SCRIMS)) {
+      expect(SCRIM_TOKEN.test(key.split(' ')[1] ?? ''), key).toBe(true);
+      expect(reason, key).toMatch(/^[a-z]+$/);
+      expect(live.has(key), `${key} is listed but no longer drawn — drop it`).toBe(true);
+    }
   });
 
   it('every allow-list entry is a disabled state, never content', () => {
@@ -145,6 +185,9 @@ describe('no faded content or control (Q-335)', () => {
           'export const D = () => <i style={{ opacity: 0.9 }} className="text-[10px]" />;',
           'export const E = () => <i className="data-[disabled]:opacity-[0.4]!" />;',
           'export const F = () => <i className="bg-black/50 text-lz-ink-3" />;',
+          'export const G = () => <div className="fixed inset-0 z-50 bg-black/50" />;',
+          "export const H = ({ on }: { on: boolean }) => <i className={on ? 'bg-red-500/10' : 'hover:bg-white/10'} />;",
+          'export const I = () => <i className="text-[#fff]/60 border-(--x)/20 bg-lz-err-solid" />;',
         ].join('\n')
       );
       const refused = [
@@ -161,7 +204,23 @@ describe('no faded content or control (Q-335)', () => {
         'Fixture.tsx opacity-60': 'a fixture: content cannot be licensed by the list',
       };
       expect(fadedOpacities(dir, allow)).toEqual(refused.slice(1));
-      expect(alphaWashes(dir)).toEqual(['Fixture.tsx:7 bg-black/50']);
+      const washes = [
+        'Fixture.tsx:7 bg-black/50',
+        'Fixture.tsx:8 bg-black/50',
+        'Fixture.tsx:9 bg-red-500/10',
+        'Fixture.tsx:9 hover:bg-white/10',
+        'Fixture.tsx:10 text-[#fff]/60',
+        'Fixture.tsx:10 border-(--x)/20',
+      ];
+      expect(alphaWashes(dir, {})).toEqual(washes);
+      // A listed scrim passes ONLY on its full-viewport line; a listed content wash never passes.
+      const scrims = {
+        'Fixture.tsx bg-black/50': 'backdrop',
+        'Fixture.tsx bg-red-500/10': 'content',
+      };
+      expect(alphaWashes(dir, scrims)).toEqual(
+        washes.filter((w) => w !== 'Fixture.tsx:8 bg-black/50')
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
