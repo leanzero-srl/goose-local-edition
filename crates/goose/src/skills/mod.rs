@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::SystemTime;
 use tracing::warn;
 
@@ -480,17 +480,25 @@ type SkillRead = Result<SourceEntry, String>;
 /// the slash-command list, the Skills page — and it used to re-parse every file and re-log every failure
 /// each time: measured 2026-09-25, session log 20260925_222121, 40 "Failed to parse skill frontmatter"
 /// lines in 22 minutes from 4 files × 10 scans (2 per turn). A file is now parsed, and its failure
-/// logged, once per change of its modification time or length.
-static SKILL_READS: LazyLock<Mutex<HashMap<PathBuf, (FileStamp, SkillRead)>>> =
+/// logged, once per change of its modification time or length — and again while that time is not yet
+/// [`settled`] against the read, where an edit can leave both unchanged.
+static SKILL_READS: LazyLock<Mutex<HashMap<PathBuf, StampedRead>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// A SKILL.md's stamp, when it was read, and what it read as.
+type StampedRead = (FileStamp, Option<StampTime>, SkillRead);
+
 fn read_skill_file(skill_md: &Path, skill_dir: &Path, global: bool) -> SkillRead {
+    let read_at = stamp_time(SystemTime::now());
     let stamp: FileStamp = std::fs::metadata(skill_md)
         .ok()
         .map(|m| (m.modified().ok(), m.len()));
+    let modified = stamp
+        .and_then(|(modified, _)| modified)
+        .and_then(stamp_time);
     let mut reads = SKILL_READS.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((seen, read)) = reads.get(skill_md) {
-        if *seen == stamp {
+    if let Some((seen, seen_at, read)) = reads.get(skill_md) {
+        if *seen == stamp && settled(modified, *seen_at) {
             return read.clone().map(|mut skill| {
                 skill.global = global;
                 skill
@@ -503,7 +511,7 @@ fn read_skill_file(skill_md: &Path, skill_dir: &Path, global: bool) -> SkillRead
     if let Err(reason) = &read {
         warn!("couldn't read skill {}: {}", skill_md.display(), reason);
     }
-    reads.insert(skill_md.to_path_buf(), (stamp, read.clone()));
+    reads.insert(skill_md.to_path_buf(), (stamp, read_at, read.clone()));
     read
 }
 
@@ -542,49 +550,153 @@ fn should_skip_dir(path: &Path) -> bool {
 /// `path.is_dir()` / `path.is_file()` answer, without their two `stat` calls per entry: the kind comes
 /// with the directory listing, and only a symlink is stat'ed to see what it points at. Q-517, measured
 /// on a real `~/.claude/skills` (37,002 files — skills keep state and ledgers beside SKILL.md): one
-/// scan took ~330 ms in a release build, ~98 ms with this and ~77 ms with [`dir_id`]; the skills
-/// extension's instructions and recall each scan before a turn's first provider call, and recall again
-/// before every later one.
-fn entry_kind(entry: &std::fs::DirEntry, path: &Path) -> (bool, bool) {
+/// scan took ~330 ms in a release build, ~98 ms with this and ~77 ms with [`dir_stamp`]'s identity.
+/// A followed link's answer is recorded: a link whose target appears or goes changes no directory the
+/// walk read (Q-518).
+fn entry_kind(entry: &std::fs::DirEntry, path: &Path, stamps: &mut WalkStamps) -> (bool, bool) {
     match entry.file_type() {
         Ok(kind) if !kind.is_symlink() => (kind.is_dir(), kind.is_file()),
-        _ => (path.is_dir(), path.is_file()),
+        _ => {
+            let kind = link_kind(path);
+            stamps.keep_link(path, kind);
+            kind
+        }
     }
+}
+
+fn link_kind(path: &Path) -> (bool, bool) {
+    std::fs::metadata(path)
+        .map(|m| (m.is_dir(), m.is_file()))
+        .unwrap_or((false, false))
 }
 
 /// The identity a walk remembers a directory by, so a symlink cycle or a second route to the same
 /// directory is walked once. On unix it is the directory's device and inode — one `stat` — where the
 /// canonical path costs `realpath`'s walk of every component for every directory (Q-517).
 #[cfg(unix)]
-type DirId = (u64, u64);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DirId(u64, u64);
 #[cfg(not(unix))]
-type DirId = PathBuf;
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DirId(PathBuf);
+
+/// Seconds and nanoseconds since the epoch.
+type StampTime = (i64, i64);
+
+/// What `stat` says about a directory a walk listed: which directory it is, when an entry was last
+/// added, removed or renamed in it (mtime), and when its inode last changed at all (ctime —
+/// permissions, a replacement at the same path). Equal stamps mean the listing is the one the walk read.
+#[derive(Debug, Clone, PartialEq)]
+struct DirStamp {
+    id: DirId,
+    modified: Option<StampTime>,
+    changed: Option<StampTime>,
+}
 
 #[cfg(unix)]
-fn dir_id(dir: &Path) -> Option<DirId> {
+fn dir_stamp(dir: &Path) -> Option<DirStamp> {
     use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(dir).ok().map(|m| (m.dev(), m.ino()))
+    let m = std::fs::metadata(dir).ok()?;
+    Some(DirStamp {
+        id: DirId(m.dev(), m.ino()),
+        modified: Some((m.mtime(), m.mtime_nsec())),
+        changed: Some((m.ctime(), m.ctime_nsec())),
+    })
 }
 
 #[cfg(not(unix))]
-fn dir_id(dir: &Path) -> Option<DirId> {
-    std::fs::canonicalize(dir).ok()
+fn dir_stamp(dir: &Path) -> Option<DirStamp> {
+    let modified = std::fs::metadata(dir)
+        .ok()?
+        .modified()
+        .ok()
+        .and_then(stamp_time);
+    Some(DirStamp {
+        id: DirId(std::fs::canonicalize(dir).ok()?),
+        modified,
+        changed: modified,
+    })
+}
+
+fn stamp_time(t: SystemTime) -> Option<StampTime> {
+    let since = t.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((since.as_secs() as i64, since.subsec_nanos() as i64))
+}
+
+/// Whether a stamp taken at `observed_at` can be trusted to move if its path changes afterward. A
+/// filesystem stamps a change with its own clock's tick — the kernel tick on ext4, a whole second on
+/// HFS+ — so a change made in the same tick as the read can leave the stamp equal to the one read.
+/// Any tick of a second or less lies inside one second of the wall clock, so a stamp from an earlier
+/// second than the read is settled, and one from the read's own second is not (git's "racily clean"
+/// rule): what was read with it is read again on the next call.
+fn settled(stamp: Option<StampTime>, observed_at: Option<StampTime>) -> bool {
+    #[cfg(test)]
+    if TRUST_FRESH_STAMPS.with(|trust| trust.get()) {
+        return stamp.is_some();
+    }
+    matches!((stamp, observed_at), (Some((stamp_secs, _)), Some((read_secs, _))) if stamp_secs < read_secs)
+}
+
+/// Everything one walk of a skill root read, as `stat` can re-check it without listing anything:
+/// every directory it listed (or found missing) and what every symlink it followed pointed at. A
+/// directory is kept once, under the first path that reached it: a second route to it runs through a
+/// link, and re-pointing the link changes the directory that holds it.
+#[derive(Debug, Default)]
+struct WalkStamps {
+    dirs: Vec<(PathBuf, Option<DirStamp>)>,
+    links: Vec<(PathBuf, (bool, bool))>,
+    kept_dirs: HashSet<DirId>,
+    kept_links: HashSet<PathBuf>,
+}
+
+impl WalkStamps {
+    fn keep_dir(&mut self, dir: &Path, stamp: Option<&DirStamp>) {
+        if stamp.is_none_or(|stamp| self.kept_dirs.insert(stamp.id.clone())) {
+            self.dirs.push((dir.to_path_buf(), stamp.cloned()));
+        }
+    }
+
+    fn keep_link(&mut self, link: &Path, kind: (bool, bool)) {
+        if self.kept_links.insert(link.to_path_buf()) {
+            self.links.push((link.to_path_buf(), kind));
+        }
+    }
+
+    fn settled(&self, walked_at: Option<StampTime>) -> bool {
+        self.dirs.iter().all(|(_, stamp)| match stamp {
+            Some(stamp) => settled(stamp.modified, walked_at) && settled(stamp.changed, walked_at),
+            None => true,
+        })
+    }
+
+    fn unchanged(&self) -> bool {
+        self.dirs
+            .iter()
+            .all(|(dir, stamp)| dir_stamp(dir) == *stamp)
+            && self
+                .links
+                .iter()
+                .all(|(link, kind)| link_kind(link) == *kind)
+    }
 }
 
 fn walk_files_recursively<F, G>(
     dir: &Path,
     visited_dirs: &mut HashSet<DirId>,
+    stamps: &mut WalkStamps,
     should_descend: &mut G,
     visit_file: &mut F,
 ) where
     F: FnMut(&Path),
     G: FnMut(&Path) -> bool,
 {
-    let Some(id) = dir_id(dir) else {
+    let stamp = dir_stamp(dir);
+    stamps.keep_dir(dir, stamp.as_ref());
+    let Some(stamp) = stamp else {
         return;
     };
 
-    if !visited_dirs.insert(id) {
+    if !visited_dirs.insert(stamp.id) {
         return;
     }
 
@@ -595,15 +707,115 @@ fn walk_files_recursively<F, G>(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let (is_dir, is_file) = entry_kind(&entry, &path);
+        let (is_dir, is_file) = entry_kind(&entry, &path, stamps);
         if is_dir {
             if should_descend(&path) {
-                walk_files_recursively(&path, visited_dirs, should_descend, visit_file);
+                walk_files_recursively(&path, visited_dirs, stamps, should_descend, visit_file);
             }
         } else if is_file {
             visit_file(&path);
         }
     }
+}
+
+/// One skill root as a walk found it: every SKILL.md in walk order, and the stamps that tell a later
+/// call whether a walk would find the same. A skill's supporting files are walked the first time a
+/// scan lists that skill — never for a SKILL.md that cannot be read or whose name an earlier one took,
+/// as before the walk was remembered — and kept with it. The stamps already cover that walk: every
+/// directory under a skill is a directory the root's walk listed, by the same inode.
+#[derive(Debug)]
+struct RootWalk {
+    skill_files: Vec<(PathBuf, std::sync::OnceLock<Vec<String>>)>,
+    stamps: WalkStamps,
+    settled: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The roots this thread walked in full, in order — the walks the stamps are there to spare.
+    static ROOTS_WALKED: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Trust a stamp taken in the same second as its read, so a test need not wait out the clock to
+    /// see whether the stamps themselves catch a change.
+    static TRUST_FRESH_STAMPS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn walk_root(dir: &Path) -> RootWalk {
+    #[cfg(test)]
+    ROOTS_WALKED.with(|walked| walked.borrow_mut().push(dir.to_path_buf()));
+    let walked_at = stamp_time(SystemTime::now());
+    let mut stamps = WalkStamps::default();
+    let mut found = Vec::new();
+
+    walk_files_recursively(
+        dir,
+        &mut HashSet::new(),
+        &mut stamps,
+        &mut |path| !should_skip_dir(path),
+        &mut |path| {
+            if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
+                found.push(path.to_path_buf());
+            }
+        },
+    );
+
+    let settled = stamps.settled(walked_at);
+    RootWalk {
+        skill_files: found
+            .into_iter()
+            .map(|skill_file| (skill_file, std::sync::OnceLock::new()))
+            .collect(),
+        stamps,
+        settled,
+    }
+}
+
+fn supporting_files(skill_dir: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    walk_files_recursively(
+        skill_dir,
+        &mut HashSet::new(),
+        &mut WalkStamps::default(),
+        &mut |path| !should_skip_dir(path) && !path.join("SKILL.md").is_file(),
+        &mut |path| {
+            if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
+                files.push(path.to_string_lossy().into_owned());
+            }
+        },
+    );
+    // read_dir order is the filesystem's; a loaded skill must render the same text on every load for
+    // load_skill to recognise the copy already in the conversation (Q-297).
+    files.sort();
+    files
+}
+
+/// The last walk of every skill root, by path. Q-518: a scan runs in the skills extension's
+/// instructions and in recall's turn context before a turn's first provider call, and in recall again
+/// before every later one; on the owner's `~/.claude/skills` (109 SKILL.md in 1,230 directories, 36,022
+/// supporting files listed) each walk cost ~80 ms release to find the same skills. A root is walked again
+/// only when a directory its last walk listed, or a link it followed, no longer stats the same — every
+/// SKILL.md or supporting file added, removed or renamed anywhere in the tree moves its directory's
+/// mtime — so an unchanged tree costs one `stat` per directory. SKILL.md contents are not part of the
+/// walk: [`read_skill_file`] re-checks each file's own stamp on every scan.
+static ROOT_WALKS: LazyLock<Mutex<HashMap<PathBuf, Arc<RootWalk>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn root_walk(dir: &Path) -> Arc<RootWalk> {
+    let last = ROOT_WALKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(dir)
+        .cloned();
+    if let Some(last) = last {
+        if last.settled && last.stamps.unchanged() {
+            return last;
+        }
+    }
+    let walk = Arc::new(walk_root(dir));
+    ROOT_WALKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(dir.to_path_buf(), walk.clone());
+    walk
 }
 
 fn scan_skills_from_dir(
@@ -612,48 +824,24 @@ fn scan_skills_from_dir(
     seen: &mut HashSet<String>,
     scan: &mut SkillScan,
 ) {
-    let mut skill_files = Vec::new();
-    let mut visited_dirs = HashSet::new();
+    scan_walk(&root_walk(dir), global, seen, scan);
+}
 
-    walk_files_recursively(
-        dir,
-        &mut visited_dirs,
-        &mut |path| !should_skip_dir(path),
-        &mut |path| {
-            if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
-                skill_files.push(path.to_path_buf());
-            }
-        },
-    );
-
-    for skill_file in skill_files {
+fn scan_walk(walk: &RootWalk, global: bool, seen: &mut HashSet<String>, scan: &mut SkillScan) {
+    for (skill_file, supporting) in &walk.skill_files {
         let Some(skill_dir) = skill_file.parent() else {
             continue;
         };
-        match read_skill_file(&skill_file, skill_dir, global) {
+        match read_skill_file(skill_file, skill_dir, global) {
             Err(reason) => scan.unreadable.push(UnreadableSkill {
                 skill_md: skill_file.clone(),
                 reason,
                 global,
             }),
             Ok(mut source) if !seen.contains(&source.name) => {
-                let mut files = Vec::new();
-                let mut visited_support_dirs = HashSet::new();
-                walk_files_recursively(
-                    skill_dir,
-                    &mut visited_support_dirs,
-                    &mut |path| !should_skip_dir(path) && !path.join("SKILL.md").is_file(),
-                    &mut |path| {
-                        if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
-                            files.push(path.to_string_lossy().into_owned());
-                        }
-                    },
-                );
-                // read_dir order is the filesystem's; a loaded skill must render the same text on
-                // every load for load_skill to recognise the copy already in the conversation (Q-297).
-                files.sort();
-                source.supporting_files = files;
-
+                source.supporting_files = supporting
+                    .get_or_init(|| supporting_files(skill_dir))
+                    .clone();
                 seen.insert(source.name.clone());
                 scan.skills.push(source);
             }
@@ -1083,5 +1271,287 @@ mod tests {
         );
         assert_eq!(files_of("nested"), ["inner.md"]);
         assert!(scan.unreadable.is_empty());
+    }
+
+    fn walks_of(root: &Path) -> usize {
+        ROOTS_WALKED.with(|walked| walked.borrow().iter().filter(|r| *r == root).count())
+    }
+
+    /// Trusts stamps taken in the same second as their walk while held, so a test sees what the
+    /// stamps themselves catch instead of waiting out the clock.
+    struct TrustFreshStamps;
+
+    impl TrustFreshStamps {
+        fn hold() -> Self {
+            TRUST_FRESH_STAMPS.with(|trust| trust.set(true));
+            TrustFreshStamps
+        }
+    }
+
+    impl Drop for TrustFreshStamps {
+        fn drop(&mut self) {
+            TRUST_FRESH_STAMPS.with(|trust| trust.set(false));
+        }
+    }
+
+    fn write(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn skill_md(name: &str, description: &str) -> String {
+        format!("---\nname: {name}\ndescription: {description}\n---\nBody of {name}.")
+    }
+
+    fn scan_root(root: &Path) -> SkillScan {
+        let mut scan = SkillScan::default();
+        scan_skills_from_dir(root, false, &mut HashSet::new(), &mut scan);
+        scan
+    }
+
+    fn described(scan: &SkillScan) -> Vec<(String, String)> {
+        let mut skills: Vec<_> = scan
+            .skills
+            .iter()
+            .map(|s| (s.name.clone(), s.description.clone()))
+            .collect();
+        skills.sort();
+        skills
+    }
+
+    fn files_of(scan: &SkillScan, name: &str) -> Vec<String> {
+        let skill = scan.skills.iter().find(|s| s.name == name).unwrap();
+        skill
+            .supporting_files
+            .iter()
+            .map(|f| {
+                Path::new(f)
+                    .strip_prefix(&skill.path)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    /// Q-518: the scan a remembered walk answers is the scan a fresh walk of the same tree gives —
+    /// every skill, every field, every supporting file, every unreadable SKILL.md — and the second
+    /// call walks nothing.
+    #[test]
+    fn a_remembered_walk_answers_what_a_fresh_walk_finds() {
+        let _trust = TrustFreshStamps::hold();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("skills");
+        write(&root.join("alpha/SKILL.md"), &skill_md("alpha", "first"));
+        write(&root.join("alpha/scripts/run.sh"), "echo");
+        write(&root.join("alpha/references/deep/notes.md"), "n");
+        write(&root.join("alpha/node_modules/dep/index.js"), "d");
+        write(
+            &root.join("alpha/inner/SKILL.md"),
+            &skill_md("inner", "nested"),
+        );
+        write(&root.join("alpha/inner/inner.md"), "i");
+        write(
+            &root.join("group/beta/SKILL.md"),
+            &skill_md("beta", "grouped"),
+        );
+        write(
+            &root.join("shadow/SKILL.md"),
+            &skill_md("alpha", "a second alpha"),
+        );
+        write(
+            &root.join("broken/SKILL.md"),
+            "---\nname: x\nmetadata:\n  - [unclosed\n---\nx",
+        );
+
+        let first = scan_root(&root);
+        let remembered = scan_root(&root);
+        assert_eq!(walks_of(&root), 1, "the unchanged tree was walked again");
+
+        let mut fresh = SkillScan::default();
+        scan_walk(&walk_root(&root), false, &mut HashSet::new(), &mut fresh);
+        for scan in [&first, &remembered] {
+            assert_eq!(
+                serde_json::to_value(&scan.skills).unwrap(),
+                serde_json::to_value(&fresh.skills).unwrap()
+            );
+            assert_eq!(scan.unreadable, fresh.unreadable);
+        }
+        let names: Vec<String> = described(&fresh)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(
+            names,
+            ["alpha", "beta", "inner"],
+            "one alpha: the first found"
+        );
+        assert_eq!(files_of(&fresh, "beta"), Vec::<String>::new());
+        assert_eq!(files_of(&fresh, "inner"), ["inner.md"]);
+        assert_eq!(fresh.unreadable.len(), 1);
+    }
+
+    /// Q-518: every change the listing exposes is seen on the very next call — a SKILL.md added,
+    /// edited or removed, a supporting file added or removed at any depth, a folder becoming a nested
+    /// skill, a link's target appearing, the root itself going and coming back — and a call after an
+    /// unchanged tree walks nothing.
+    #[test]
+    fn a_change_to_the_skill_tree_is_seen_on_the_next_call() {
+        let _trust = TrustFreshStamps::hold();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("skills");
+        write(&root.join("alpha/SKILL.md"), &skill_md("alpha", "first"));
+        write(&root.join("alpha/scripts/run.sh"), "echo");
+        write(&root.join("alpha/sub/notes.md"), "n");
+        write(&root.join("beta/SKILL.md"), &skill_md("beta", "second"));
+
+        let scan = scan_root(&root);
+        assert_eq!(described(&scan).len(), 2);
+        assert_eq!(files_of(&scan, "alpha"), ["scripts/run.sh", "sub/notes.md"]);
+        scan_root(&root);
+        assert_eq!(walks_of(&root), 1, "the unchanged tree was walked again");
+
+        write(&root.join("gamma/SKILL.md"), &skill_md("gamma", "added"));
+        let scan = scan_root(&root);
+        assert!(described(&scan).contains(&("gamma".into(), "added".into())));
+
+        std::fs::write(root.join("alpha/SKILL.md"), skill_md("alpha", "edited")).unwrap();
+        let walks = walks_of(&root);
+        let scan = scan_root(&root);
+        assert!(described(&scan).contains(&("alpha".into(), "edited".into())));
+        assert_eq!(
+            walks_of(&root),
+            walks,
+            "an edited SKILL.md is re-read, not re-walked"
+        );
+
+        std::fs::remove_file(root.join("beta/SKILL.md")).unwrap();
+        let scan = scan_root(&root);
+        assert!(!scan.skills.iter().any(|s| s.name == "beta"));
+
+        write(&root.join("alpha/scripts/deep/new.sh"), "new");
+        let scan = scan_root(&root);
+        assert_eq!(
+            files_of(&scan, "alpha"),
+            ["scripts/deep/new.sh", "scripts/run.sh", "sub/notes.md"]
+        );
+
+        std::fs::remove_file(root.join("alpha/scripts/run.sh")).unwrap();
+        let scan = scan_root(&root);
+        assert_eq!(
+            files_of(&scan, "alpha"),
+            ["scripts/deep/new.sh", "sub/notes.md"]
+        );
+
+        write(&root.join("alpha/sub/SKILL.md"), &skill_md("sub", "nested"));
+        let scan = scan_root(&root);
+        assert_eq!(files_of(&scan, "alpha"), ["scripts/deep/new.sh"]);
+        assert_eq!(files_of(&scan, "sub"), ["notes.md"]);
+
+        #[cfg(unix)]
+        {
+            let outside = tmp.path().join("outside");
+            std::os::unix::fs::symlink(outside.join("target.txt"), root.join("alpha/link.txt"))
+                .unwrap();
+            let scan = scan_root(&root);
+            assert_eq!(files_of(&scan, "alpha"), ["scripts/deep/new.sh"]);
+            write(&outside.join("target.txt"), "t");
+            let scan = scan_root(&root);
+            assert_eq!(
+                files_of(&scan, "alpha"),
+                ["link.txt", "scripts/deep/new.sh"],
+                "a link whose target appeared"
+            );
+        }
+
+        let walks = walks_of(&root);
+        scan_root(&root);
+        assert_eq!(
+            walks_of(&root),
+            walks,
+            "the unchanged tree was walked again"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(scan_root(&root).skills.is_empty());
+        write(&root.join("delta/SKILL.md"), &skill_md("delta", "back"));
+        assert_eq!(
+            described(&scan_root(&root)),
+            [("delta".to_string(), "back".to_string())]
+        );
+    }
+
+    /// Q-518: a directory stamped in the same second as the walk that read it may carry the same stamp
+    /// after a later change on a coarse-clock filesystem, so that walk is not reused; the first walk
+    /// in a later second is.
+    #[test]
+    fn a_walk_in_the_second_its_tree_changed_is_not_reused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("skills");
+        write(&root.join("alpha/SKILL.md"), &skill_md("alpha", "first"));
+        let created = stamp_time(SystemTime::now()).unwrap().0;
+
+        scan_root(&root);
+        scan_root(&root);
+        if stamp_time(SystemTime::now()).unwrap().0 == created {
+            assert_eq!(walks_of(&root), 2, "a same-second walk was reused");
+        }
+
+        let into_next_second = 1_000_000_000
+            - SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos();
+        std::thread::sleep(std::time::Duration::from_nanos(u64::from(into_next_second)));
+        scan_root(&root);
+        let walks = walks_of(&root);
+        scan_root(&root);
+        assert_eq!(walks_of(&root), walks, "a settled walk was not reused");
+    }
+
+    /// The instrument behind Q-517/Q-518's numbers: the per-call cost of a scan over the owner's real
+    /// global skill roots (`~/.claude/skills` and the rest), from a folder with no project skills.
+    /// `cargo test --release -p goose --lib -- --ignored --nocapture skills_scan_cost_on_the_real_tree`
+    #[test]
+    #[ignore]
+    fn skills_scan_cost_on_the_real_tree() {
+        let project = tempfile::tempdir().unwrap();
+        let mut times = Vec::new();
+        let mut last = SkillScan::default();
+        for _ in 0..21 {
+            let started = std::time::Instant::now();
+            last = scan_skills(Some(project.path()));
+            times.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        let first = times[0];
+        let mut rest = times[1..].to_vec();
+        rest.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let files: usize = last.skills.iter().map(|s| s.supporting_files.len()).sum();
+        eprintln!(
+            "skills scan: {} skills, {} supporting files, {} unreadable; first call {:.1} ms; \
+             next 20 calls median {:.2} ms (min {:.2}, max {:.2})",
+            last.skills.len(),
+            files,
+            last.unreadable.len(),
+            first,
+            rest[rest.len() / 2],
+            rest[0],
+            rest[rest.len() - 1]
+        );
+        for (root, _) in all_skill_dirs(Some(project.path())) {
+            let walk = root_walk(&root);
+            let started = std::time::Instant::now();
+            let unchanged = walk.stamps.unchanged();
+            eprintln!(
+                "  {}: {} SKILL.md, {} directories and {} links stamped, settled {}, \
+                 unchanged {unchanged} (checked in {:.2} ms)",
+                root.display(),
+                walk.skill_files.len(),
+                walk.stamps.dirs.len(),
+                walk.stamps.links.len(),
+                walk.settled,
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
     }
 }

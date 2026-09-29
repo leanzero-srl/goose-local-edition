@@ -643,6 +643,51 @@ mod tests {
         assert!(again.contains("Step one, step two, step three."), "{again}");
     }
 
+    /// Q-518: the listing and load_skill answer from remembered walks of the skill tree; a skill
+    /// added or edited between two calls, a supporting file added, and a supporting file's new text
+    /// are what the next call sees.
+    #[tokio::test]
+    async fn a_skill_changed_between_two_calls_is_what_the_next_call_sees() {
+        let temp_dir = TempDir::new().unwrap();
+        let (client, sessions, session_id, skill_dir) = session_with_skill(&temp_dir).await;
+        let listing = client.get_instructions().unwrap();
+        assert!(listing.contains("big-skill - A large skill"), "{listing}");
+        let file = load(&client, &sessions, &session_id, "big-skill/template.md").await;
+        assert!(file.contains("A template."), "{file}");
+
+        fs::write(skill_dir.join("template.md"), "A new template.").unwrap();
+        let file = load(&client, &sessions, &session_id, "big-skill/template.md").await;
+        assert!(file.contains("A new template."), "{file}");
+
+        let late = skill_dir.with_file_name("late-skill");
+        fs::create_dir_all(&late).unwrap();
+        fs::write(
+            late.join("SKILL.md"),
+            "---\nname: late-skill\ndescription: Added between calls\n---\nLate.",
+        )
+        .unwrap();
+        let listing = client.get_instructions().unwrap();
+        assert!(
+            listing.contains("late-skill - Added between calls"),
+            "{listing}"
+        );
+
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: big-skill\ndescription: A changed purpose\n---\nStep three.",
+        )
+        .unwrap();
+        let listing = client.get_instructions().unwrap();
+        assert!(
+            listing.contains("big-skill - A changed purpose"),
+            "{listing}"
+        );
+
+        fs::write(skill_dir.join("extra.md"), "An extra file.").unwrap();
+        let extra = load(&client, &sessions, &session_id, "big-skill/extra.md").await;
+        assert!(extra.contains("An extra file."), "{extra}");
+    }
+
     /// Q-297: a history goose cannot read proves nothing about an earlier copy — the skill loads
     /// in full.
     #[tokio::test]
