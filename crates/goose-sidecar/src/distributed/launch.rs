@@ -1928,6 +1928,13 @@ assert cached["cached_tokens"] == 48647 and cached["prefilled_tokens"] == 50695
 restored_whole = live_request("r", 0.0, 1.0, prompt_tokens=48648, cached_tokens=48647,
                               prefill_started=0.5, prefilled=48647)
 assert restored_whole["prompt_tokens_per_second"] is None, "nothing read yet: no rate"
+# Q-498: what the lookup lost to an eviction rides the row as rank 0 named it; nothing = null.
+assert queued["evicted_prefix"] is None and cached["evicted_prefix"] is None
+lost = {"tokens": 199798, "while_keeping": "another_conversation", "rows": 2, "width": 77683,
+        "requests": ["req-424", "req-425"], "ago_s": 42.93}
+cold = live_request("r", 0.0, 653.0, prompt_tokens=200456, cached_tokens=0, prefill_started=292.3,
+                    prefilled=91689, evicted_prefix=lost)
+assert cold["evicted_prefix"] == lost and cold["cached_tokens"] == 0, cold
 # Q-231, E2E #3m: a fact check goose dropped (POST 20:16:14.250Z, its stop named 3.642 s later)
 # still holds the batch; the user's call waits behind it without being held for room.
 dropped = row_handling("127.0.0.1:50003", {"reason": "cancelled_by_client"}, 3.892, True, 0.25, False)
@@ -3415,6 +3422,199 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// Q-498, rank_boundary.py's `EvictionLog` under a real interpreter: an evicted entry is named
+    /// by the prompt that extends it past what the cache supplied — by its key's digest, never its
+    /// length alone — with the conversation the cache kept at that eviction (this prompt's own,
+    /// another's, or none), the batch the room was made for and how long ago; a prompt that
+    /// extends nothing evicted, or read all of it, names nothing.
+    #[test]
+    fn an_evicted_prefix_is_named_with_the_conversation_it_lost_to() {
+        let checks = r#"
+a_head = list(range(40))
+a_prefix = a_head + list(range(1000, 1060))
+b_prefix = [-1] * 50 + list(range(2000, 2030))
+prompt = a_prefix + [7] * 20
+log = EvictionLog(3)
+log.evicted(a_prefix, b_prefix, 2, 77, ["req-424", "req-425"], 10.0)
+log.evicted(a_head, b_prefix, 2, 77, ["req-424", "req-425"], 10.0)
+lost = log.lost_prefix(prompt, 0, 41.5)
+assert lost == {"tokens": 100, "while_keeping": "another_conversation", "rows": 2, "width": 77,
+                "requests": ["req-424", "req-425"], "ago_s": 31.5}, lost
+assert log.lost_prefix(prompt, 40, 41.5)["tokens"] == 100, "the head read, the prefix still lost"
+assert log.lost_prefix(prompt, 100, 41.5) is None, "nothing lost past what the cache supplied"
+assert log.lost_prefix(b_prefix + [1], 0, 41.5) is None, "another conversation extends none of it"
+assert log.lost_prefix([5] * 120, 0, 41.5) is None, "the same lengths, other tokens: no match"
+assert log.lost_prefix(a_prefix[:99], 0, 41.5)["tokens"] == 40, "a shorter prompt: the head only"
+
+# Evicted while this conversation's own prefix was kept (its end entry, for its own side calls).
+own = EvictionLog(4)
+end = a_prefix + [9] * 10
+own.evicted(end, a_prefix, 1, 110, ["req-9"], 5.0)
+seen = own.lost_prefix(end + [3], 100, 6.0)
+assert (seen["tokens"], seen["while_keeping"]) == (110, "this_conversation"), seen
+# A launch that keeps no conversation prefix: none was kept.
+bare = EvictionLog(4)
+bare.evicted(a_prefix, None, 0, 0, [], 1.0)
+assert bare.lost_prefix(prompt, 0, 2.0)["while_keeping"] is None
+# The longest lost entry is named; the cache's entry bound drops the oldest record.
+bounded = EvictionLog(2)
+bounded.evicted(a_head, None, 0, 0, [], 1.0)
+bounded.evicted(a_prefix, None, 0, 0, [], 2.0)
+assert bounded.lost_prefix(prompt, 0, 3.0)["tokens"] == 100
+bounded.evicted([-3] * 5, None, 0, 0, [], 3.0)
+bounded.evicted([-4] * 5, None, 0, 0, [], 4.0)
+assert bounded.lost_prefix(prompt, 0, 5.0) is None, "two newer evictions pushed both records out"
+# The kept key is hashed once per key list, not once per eviction.
+kept = list(b_prefix)
+log.evicted([-6] * 3, kept, 1, 3, [], 11.0)
+digest = log.kept[1]
+log.evicted([-7] * 3, kept, 1, 3, [], 12.0)
+assert log.kept[0] is kept and log.kept[1] is digest
+print("ok")
+"#;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_boundary.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// Q-498 through the REAL mlx_lm 0.31.3 `LRUPromptCache`: E2E #3x's 15:05:47 → 15:10:59
+    /// (local) replayed with the rank logs' sizes (GOOSE_RANK_ADMISSION bytes back to tokens at
+    /// 32,768 B per token + 76,972,032 B of state): #3x's head 42,537 tokens and conversation
+    /// prefix 199,798 beside its 200,210-token call's end entry; the second chat's 77,683-token call
+    /// read cold, its head 41,266 and prefix 76,816 inserted; then its 84-token side call joins its
+    /// row. The replay meets the cache the rank printed at 15:10:16 (user 3 sequences, system 4)
+    /// and, at the plan's 17,333,813,248 B, #3x's next call reads 0 of 200,456 — the run's own
+    /// outcome — and names why: 199,798 tokens lost 42.93 s earlier to a batch of the second
+    /// chat's two rows at 77,683 while the cache kept ANOTHER conversation's prefix. The decision's
+    /// number: under mlx_lm's type-count eviction the smallest bound that keeps #3x's prefix through
+    /// this sequence is 29,065,870,330 B (±1 MiB) — 11.73 GB more per rank than the plan, which
+    /// the MacBook rank did not have.
+    #[test]
+    fn a_second_chat_evicting_the_first_is_named_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models.cache import LRUPromptCache
+
+p = {"kv_bytes_per_token": 32768, "sequence_state_bytes": 76972032, "batch_transient_ratio": 2.2}
+PLAN_LIMIT = 17333813248
+
+
+class Layer:
+    def __init__(self, tokens):
+        self.nbytes = batch_kv_charge(p, 1, tokens)
+
+    def is_trimmable(self):
+        return False
+
+
+A_HEAD, A_PREFIX, A_CALL, A_NEXT, A_OUT = 42537, 199798, 200210, 200456, 80
+B_HEAD, B_PREFIX, B_CALL, SIDE, SMALL = 41266, 76816, 77683, 84, 84
+upstream_pop = LRUPromptCache.CacheOrder.pop
+
+
+def replay(limit):
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    prefix, head = KeptEntry(), KeptEntry()
+    keep_entries(LRUPromptCache.CacheOrder, prefix, head)
+    entries = limit // batch_kv_charge(p, 1, 256)
+    log = EvictionLog(entries)
+    ordered_pop = LRUPromptCache.CacheOrder.pop
+    batch = {"rows": 0, "width": 0, "requests": [], "at": 0.0}
+
+    def recorded_pop(self):
+        item = ordered_pop(self)
+        log.evicted(item[1], prefix.tokens, batch["rows"], batch["width"], batch["requests"],
+                    batch["at"])
+        return item
+
+    LRUPromptCache.CacheOrder.pop = recorded_pop
+    cache = LRUPromptCache(max_size=entries, max_bytes=limit)
+
+    def insert(tokens, cache_type, room):
+        layers = [Layer(len(tokens))]
+        prefix.inserted(tokens, layers[0].nbytes)
+        head.inserted(tokens, layers[0].nbytes)
+        cache.insert_cache("m", tokens, layers, cache_type=cache_type)
+        cache.trim_to(n_bytes=room)
+
+    a = list(range(A_NEXT))
+    b = [-(k + 1) for k in range(B_CALL)]
+    small = [[-(10_000_000 + 1000 * i + k) for k in range(SMALL)] for i in range(3)]
+    # #3x's 15:05:47 call left its head, its prefix and its end entry (the tail the next request
+    # drops, then the answer: never a prefix of the next prompt), beside three helper entries.
+    room = limit - batch_kv_charge(p, 1, A_CALL)
+    head.cut(a[:A_HEAD])
+    insert(a[:A_HEAD], "system", room)
+    insert(small[0], "system", room)
+    prefix.cut(a[:A_PREFIX])
+    insert(a[:A_PREFIX], "user", room)
+    insert(small[1], "user", room)
+    insert(small[2], "system", room)
+    end = a[:A_PREFIX] + [-(20_000_000 + k) for k in range(A_CALL - A_PREFIX + A_OUT)]
+    insert(end, "assistant", limit - batch_kv_charge(p, 1, A_CALL + A_OUT))
+    # 15:05:57.94: the second chat's call, alone.
+    batch.update(rows=1, width=B_CALL, requests=["req-424"], at=54357.94)
+    found, rest = cache.fetch_nearest_cache("m", b)
+    b_read = B_CALL - len(rest) if found is not None else 0
+    room = limit - batch_kv_charge(p, 1, B_CALL)
+    cache.trim_to(n_bytes=room)
+    head.cut(b[:B_HEAD])
+    insert(b[:B_HEAD], "system", room)
+    prefix.cut(b[:B_PREFIX])
+    insert(b[:B_PREFIX], "user", room)
+    held = ([len(t) for _, t in cache._lru._lrus["user"]],
+            [len(t) for _, t in cache._lru._lrus["system"]])
+    # 15:10:16.87: its 84-token side call joins its row (rank 0 leaves room for ITS prefix + head).
+    joins = admits(p, limit, 1, B_CALL, SIDE, prefix.nbytes, head.nbytes)
+    rows = 2 if joins else 1
+    batch.update(rows=rows, width=B_CALL, requests=["req-424", "req-425"][:rows], at=54616.87)
+    cache.trim_to(n_bytes=limit - batch_kv_charge(p, rows, B_CALL))
+    # 15:10:59.80: #3x's next call.
+    found, rest = cache.fetch_nearest_cache("m", a)
+    a_read = A_NEXT - len(rest) if found is not None else 0
+    lost = log.lost_prefix(a, a_read, 54659.80)
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    return b_read, joins, held, a_read, lost
+
+
+b_read, joins, held, a_read, lost = replay(PLAN_LIMIT)
+assert (b_read, joins) == (0, True), (b_read, joins)
+assert held == ([A_PREFIX, SMALL, B_PREFIX], [A_HEAD, SMALL, SMALL, B_HEAD]), held
+assert a_read == 0, a_read
+assert lost == {"tokens": A_PREFIX, "while_keeping": "another_conversation", "rows": 2,
+                "width": B_CALL, "requests": ["req-424", "req-425"], "ago_s": 42.93}, lost
+KEEPS_BOTH = 29065870330
+assert replay(KEEPS_BOTH)[3:] == (A_PREFIX, None)
+assert replay(KEEPS_BOTH - (1 << 20))[3] == 0
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_boundary.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
     /// Q-142 through the REAL mlx_lm 0.31.3 on the CPU: its HTTP handler, its generation loop,
     /// its BatchGenerator and LRU prompt cache under the wrapper, serving a tiny random qwen3_5 —
     /// the 27B's architecture, GatedDeltaNet layers whose ArraysCache cannot be trimmed beside
@@ -4269,6 +4469,133 @@ os._exit(0)
              compacted chat reads nothing — #3p's shape: {control}"
         );
         assert_eq!(control["head"], serde_json::Value::Null);
+    }
+
+    /// Q-498 through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5, the wrapper's own hooks
+    /// installed (rank 0): chat A takes two agent steps, a second chat B (another system prompt)
+    /// takes two while the prompt cache holds only a few entries, and A's next step finds its
+    /// conversation prefix gone. The rank names it — GOOSE_RANK_PREFIX_LOST, the very key A's
+    /// next step would have extended, evicted while the cache kept B's prefix — and the request's
+    /// row carries it while it reads. The NEGATIVE CONTROL is the same A without B: A's step reads
+    /// that prefix from the cache, and no loss is named.
+    #[test]
+    fn a_prefix_another_chat_evicted_is_named_through_the_real_server() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 4,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
+        };
+        let mut spec = rank_specs(
+            &config,
+            &ServedNames::only("node-alias"),
+            &[tensor, tensor],
+            141_568,
+            2.0,
+        )
+        .remove(0);
+        if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
+            *doorbell = false;
+        }
+        spec.load_lock = Some(launch_load_lock());
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+def send(messages, tail):
+    body = {"model": served, "messages": messages, "max_tokens": 2, "temperature": 0.0,
+            "tools": TOOLS, TRANSIENT_TAIL: tail}
+    status, reply = call("/v1/chat/completions", body)
+    assert status == 200, reply
+    return [reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]]
+
+# The row A's last step carries while it reads (`note_lost_prefix` writes it at the lookup).
+rows = []
+noted = note_lost_prefix
+
+
+def noting(prompt, cached):
+    noted(prompt, cached)
+    with lock:
+        rows.extend(live_request(request_id, now=0.0, **entry) for request_id, entry in live.items())
+
+
+note_lost_prefix = noting
+a = conversation("A. " + "You are goose, a general-purpose agent. " * 40, 2)
+b = conversation("B. " + "You are goose, reviewing a pull request line by line. " * 40, 1)
+reads = [send(*a[0]), send(*a[1])]
+if OTHER_CHAT:
+    reads += [send(*step) for step in b]
+rows.clear()
+reads.append(send(*a[2]))
+print("GOOSE_TEST " + json.dumps({
+    "reads": reads,
+    "row": rows[-1]["evicted_prefix"] if rows else "no lookup",
+}), flush=True)
+os._exit(0)
+"#;
+        let run = |other_chat: bool| {
+            let program = format!(
+                "{}\
+                 class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+                 group = _Group()\n{}QWEN38 = {qwen}\nOTHER_CHAT = {other}\n{TINY_QWEN35_SERVER}{checks}",
+                tensor_modules(),
+                &wrapper[start..end],
+                qwen = serde_json::to_string(QWEN38).unwrap(),
+                other = if other_chat { "True" } else { "False" },
+            );
+            run_against_real_packages_printing(&python, &program, &spec)
+        };
+        let lost_lines = |stdout: &str| -> Vec<serde_json::Value> {
+            stdout
+                .lines()
+                .filter_map(|l| l.strip_prefix("GOOSE_RANK_PREFIX_LOST "))
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect()
+        };
+
+        let (control, control_out) = run(false);
+        let control_reads: Vec<(u64, u64)> =
+            serde_json::from_value(control["reads"].clone()).unwrap();
+        let prefix = control_reads[2].1;
+        assert!(
+            prefix > 0,
+            "NEGATIVE CONTROL: A's step reads its prefix from the cache: {control}"
+        );
+        assert!(
+            lost_lines(&control_out).is_empty(),
+            "and no loss is named: {control_out}"
+        );
+        assert_eq!(control["row"], serde_json::Value::Null, "{control}");
+
+        let (seen, stdout) = run(true);
+        let reads: Vec<(u64, u64)> = serde_json::from_value(seen["reads"].clone()).unwrap();
+        let (_, cached) = reads[4];
+        assert!(
+            cached < prefix,
+            "B's steps pushed A's prefix out: A read {cached} of the {prefix} it read alone: {seen}"
+        );
+        let lost = lost_lines(&stdout);
+        let named = lost
+            .last()
+            .unwrap_or_else(|| panic!("the loss is named: {stdout}"));
+        assert_eq!(named["tokens"].as_u64(), Some(prefix), "{named}");
+        assert_eq!(named["cached"].as_u64(), Some(cached), "{named}");
+        assert_eq!(named["while_keeping"], "another_conversation", "{named}");
+        assert_eq!(seen["row"]["tokens"].as_u64(), Some(prefix), "{seen}");
+        assert_eq!(
+            seen["row"]["while_keeping"], "another_conversation",
+            "{seen}"
+        );
     }
 
     /// Q-447 through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5 in bfloat16 (the 27B's

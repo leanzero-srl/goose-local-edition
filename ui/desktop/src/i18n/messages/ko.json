@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "새 토큰 {fresh} 중 {done} 읽음"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "다른 채팅이 이 대화의 {evicted}을(를) 엔진 메모리에서 밀어냈습니다"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "다른 채팅이 {evicted}을(를) 메모리에서 밀어냈습니다"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted}이(가) 캐시에 있었지만 엔진 메모리에서 밀려났습니다"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted}이(가) 메모리에서 밀려났습니다"
+  },
   "promptRead.soFar": {
     "defaultMessage": "지금까지 {elapsed}"
   },

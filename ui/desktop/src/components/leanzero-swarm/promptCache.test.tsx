@@ -12,6 +12,8 @@ import {
   SINGLE_UNLOOKED_READ,
   SINGLE_WARM_READ,
   SPLIT_COLD_READ,
+  SPLIT_EVICTED_FOR_ROOM_READ,
+  SPLIT_EVICTED_READ,
   SPLIT_PARTLY_CACHED_READ,
   SPLIT_UNKNOWN_READ,
   SPLIT_WARM_READ,
@@ -65,7 +67,13 @@ describe('Q-337: the split, as the engine reports it (engineFigures.ts, the one 
   it('WARM: 113.8K cached, 1,124 new, 576 of them read — the bar, and the time left over the new part only', () => {
     const lead = leadOf(SPLIT_WARM_READ);
     const cache = promptCacheOf(lead)!;
-    expect(cache).toEqual({ total: 114_948, cached: 113_824, fresh: 1_124, freshDone: 576 });
+    expect(cache).toEqual({
+      total: 114_948,
+      cached: 113_824,
+      fresh: 1_124,
+      freshDone: 576,
+      evicted: null,
+    });
     expect(readBarOf(readProgressOf(lead), cache)).toEqual({
       cached: 113_824 / 114_948,
       read: 576 / 114_948,
@@ -78,7 +86,13 @@ describe('Q-337: the split, as the engine reports it (engineFigures.ts, the one 
   it('PARTLY CACHED (#3o turn 6): 40.2K cached, 22.5K of the 62K new read — the cached part then the read part', () => {
     const lead = leadOf(SPLIT_PARTLY_CACHED_READ);
     const cache = promptCacheOf(lead)!;
-    expect(cache).toEqual({ total: 102_210, cached: 40_244, fresh: 61_966, freshDone: 22_528 });
+    expect(cache).toEqual({
+      total: 102_210,
+      cached: 40_244,
+      fresh: 61_966,
+      freshDone: 22_528,
+      evicted: null,
+    });
     expect(readBarOf(readProgressOf(lead), cache)).toEqual({
       cached: 40_244 / 102_210,
       read: 22_528 / 102_210,
@@ -103,6 +117,7 @@ describe('Q-337: the split, as the engine reports it (engineFigures.ts, the one 
       cached: 0,
       fresh: 109_655,
       freshDone: 45_056,
+      evicted: null,
     });
     expect(readBarOf(readProgressOf(cold), promptCacheOf(cold))).toEqual({
       cached: 0,
@@ -120,6 +135,7 @@ describe('Q-337: the split, as the engine reports it (engineFigures.ts, the one 
       cached: 113_824,
       fresh: 1_124,
       freshDone: null,
+      evicted: null,
     });
     // No position: no bar, no time left — the split is a fact, a share would be a guess.
     expect(readBarOf(readProgressOf(single), promptCacheOf(single))).toBeNull();
@@ -385,6 +401,96 @@ describe('Q-337: the tray', () => {
 });
 
 /**
+ * Q-498 — two chats on the split evict each other's prompt cache: E2E #3x's 200,456-token call read
+ * cold for ~11 minutes after a second chat's side call pushed its 199,798-token prefix out, and
+ * every surface said only "nothing cached — reading all of it". rank 0 names the eviction
+ * (`evicted_prefix`); every read surface says it after the split, and the tray too.
+ */
+describe('Q-498: a prefix another chat pushed out is named, on every read surface', () => {
+  beforeEach(() => {
+    resetNowForTests(Date.parse('2026-09-29T12:17:00Z'));
+    acp.acpSessionActivity.mockResolvedValue({ running: [], needsYou: [], failed: [] });
+    rememberLocalMlxEngineStatus({
+      state: 'running',
+      modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+      restartRequired: false,
+      availableMemoryGb: 0,
+      totalMemoryGb: 0,
+    });
+  });
+  afterEach(() => {
+    resetTurnReadForTests();
+    resetSessionActivityForTests();
+  });
+
+  it('the parser and the split: 199.8K evicted while another chat was kept — absent everywhere else', () => {
+    const lead = leadOf(SPLIT_EVICTED_READ);
+    expect(lead.evictedPrefix).toEqual({
+      tokens: 199_798,
+      whileKeeping: 'anotherConversation',
+      rows: 2,
+      width: 77_683,
+      agoS: 42.93,
+    });
+    expect(promptCacheOf(lead)!.evicted).toEqual(lead.evictedPrefix);
+    expect(leadOf(SPLIT_EVICTED_FOR_ROOM_READ).evictedPrefix!.whileKeeping).toBeNull();
+    for (const body of [SPLIT_COLD_READ, SPLIT_WARM_READ, SPLIT_UNKNOWN_READ, SINGLE_WARM_READ]) {
+      expect(leadOf(body).evictedPrefix).toBeNull();
+    }
+    // What the cache supplied already covers it: nothing is said to be lost.
+    expect(promptCacheOf({ ...lead, cachedTokens: 199_798 })!.evicted).toBeNull();
+  });
+
+  it('the chat’s working row: the reason after the split, the cold bar unchanged', () => {
+    renderRow(SPLIT_EVICTED_READ);
+    const figures = screen.getByTestId('turn-working-figures').textContent!;
+    expect(figures).toMatch(
+      /^200\.5K tokens · nothing cached — reading all of it · another chat pushed 199\.8K of this conversation out of the engine’s memory · 91\.7K of 200\.5K tokens read · /
+    );
+    expect(screen.getByTestId('prompt-read-evicted').textContent).toBe(
+      'another chat pushed 199.8K of this conversation out of the engine’s memory'
+    );
+    expectSegments(screen.getByTestId('turn-working-progress'), null, pct(91_689, 200_456));
+  });
+
+  it('no other chat kept: the prefix was pushed out, and nothing blames another chat', () => {
+    renderRow(SPLIT_EVICTED_FOR_ROOM_READ);
+    expect(screen.getByTestId('prompt-read-evicted').textContent).toBe(
+      '199.8K of it was cached, then pushed out of the engine’s memory'
+    );
+  });
+
+  it('the sidebar glance and the Engine tile say it short', () => {
+    const glance = renderGlance(SPLIT_EVICTED_READ);
+    expect(screen.getByTestId('engine-glance-cache').textContent).toBe(
+      'nothing cached — reading all of it · another chat pushed 199.8K of it out of memory'
+    );
+    glance.unmount();
+    renderTile(SPLIT_EVICTED_READ);
+    const [row] = screen.getAllByTestId('mlx-live-request');
+    expect(within(row).getByTestId('mlx-live-request-cache').textContent).toBe(
+      'nothing cached — reading all of it · another chat pushed 199.8K of it out of memory'
+    );
+  });
+
+  it('the tray', () => {
+    const line = labels(
+      buildMlxTrayModel(runningSnapshot(SPLIT_EVICTED_READ), {
+        canAct: true,
+        mountModelId: null,
+        distributed: null,
+      }).items
+    ).find((l) => l.startsWith('Reading a '));
+    expect(line).toBe(
+      'Reading a 200k-token prompt for 10m 53s: nothing cached, 92k read — another chat pushed 200k of it out of memory'
+    );
+  });
+});
+
+const labels = (items: MlxTrayItem[]) =>
+  items.map((i) => (i.type === 'separator' ? '---' : i.label));
+
+/**
  * Both parts hold 3:1 against the track they sit in, in both themes, through the compiled CSS
  * (Q-247's resolvedPaint): on a surface the track is its own solid fill; on a phase fill the track
  * is hollow, so the fill behind it is the ground — reading, and the writing / held fills a request
@@ -392,7 +498,7 @@ describe('Q-337: the tray', () => {
  */
 describe('Q-337: both parts are solid and contrast with the track', () => {
   const bar = { cached: 0.6, read: 0.2 };
-  const cache = { total: 100, cached: 60, fresh: 40, freshDone: 20 };
+  const cache = { total: 100, cached: 60, fresh: 40, freshDone: 20, evicted: null };
 
   function renderBar(paint: 'surface' | 'fill') {
     render(

@@ -2,10 +2,12 @@
 # own `/v1/status` shape (rapid_mlx/routes/health.py: `status`, `generation_tps`, `requests[]` with
 # `request_id`, `status`, `phase` = queued | prefill | generation, `elapsed_s`, `prompt_tokens`,
 # `completion_tokens`, `max_tokens`, `tokens_per_second`, `ttft_s`, `cached_tokens`), so the desktop
-# reads a split engine with the parser it reads the single engine with. Two fields Rapid-MLX lacks:
+# reads a split engine with the parser it reads the single engine with. Fields Rapid-MLX lacks:
 # `prefilled_tokens` (how far into the prompt the prefill is) and `prompt_tokens_per_second` (the
 # prefill's own rate) — the split is slow enough at reading that "reading" and "writing" must be
-# told apart. Pure stdlib; concatenated after rank_env.py, before the rank program.
+# told apart — and `evicted_prefix` (Q-498, rank_boundary.py `EvictionLog.lost_prefix`: what of the
+# prompt the cache had held and evicted before this request looked it up, and why). Pure stdlib;
+# concatenated after rank_env.py, before the rank program.
 
 
 def live_request(
@@ -20,6 +22,7 @@ def live_request(
     first_token=None,
     last_token=None,
     completion=0,
+    evicted_prefix=None,
 ):
     """One in-flight request from its measured instants (monotonic seconds). A rate is None until
     it has a span to divide by: the prefill's from its first processed token, decode's from its
@@ -54,6 +57,7 @@ def live_request(
         "tokens_per_second": None if decode_rate is None else round(decode_rate, 2),
         "ttft_s": None if first_token is None else round(first_token - arrived, 3),
         "cached_tokens": cached_tokens,
+        "evicted_prefix": evicted_prefix,
     }
 
 

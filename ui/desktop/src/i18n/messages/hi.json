@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "{fresh} नए में से {done} पढ़े गए"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "किसी दूसरी चैट ने इस बातचीत के {evicted} इंजन की मेमोरी से बाहर कर दिए"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "किसी दूसरी चैट ने इसके {evicted} मेमोरी से बाहर कर दिए"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "इसके {evicted} कैश में थे, फिर इंजन की मेमोरी से बाहर कर दिए गए"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "इसके {evicted} मेमोरी से बाहर कर दिए गए"
+  },
   "promptRead.soFar": {
     "defaultMessage": "अब तक {elapsed}"
   },

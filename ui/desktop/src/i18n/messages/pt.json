@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "{done} de {fresh} novos lidos"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "outro chat tirou {evicted} desta conversa da memória do motor"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "outro chat tirou {evicted} da memória"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted} estavam em cache e depois saíram da memória do motor"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted} saíram da memória"
+  },
   "promptRead.soFar": {
     "defaultMessage": "{elapsed} até agora"
   },

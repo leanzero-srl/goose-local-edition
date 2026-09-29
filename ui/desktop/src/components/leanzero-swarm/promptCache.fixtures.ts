@@ -59,6 +59,50 @@ export const SPLIT_COLD_READ = splitBody(
   })
 );
 
+/**
+ * Q-498, E2E #3x (rank 0's log, 2026-09-29 15:17:00 local): #3x's next call, 200,456 tokens, read
+ * cold — 91,689 read, 653 s after it arrived — because the second chat's 84-token side call joined
+ * that chat's 77,683-token row at 15:10:16 and the cache was trimmed below #3x's 199,798-token
+ * prefix while it kept the second chat's. rank 0 names it (`evicted_prefix`, rank_boundary.py
+ * `EvictionLog.lost_prefix`: 42.93 s before the lookup, a batch of 2 rows at 77,683).
+ */
+export const SPLIT_EVICTED_READ = splitBody(
+  splitRow({
+    elapsed_s: 653.0,
+    prompt_tokens: 200456,
+    cached_tokens: 0,
+    prefilled_tokens: 91689,
+    prompt_tokens_per_second: 254.1,
+    evicted_prefix: {
+      tokens: 199798,
+      while_keeping: 'another_conversation',
+      rows: 2,
+      width: 77683,
+      requests: ['req-424', 'req-425'],
+      ago_s: 42.93,
+    },
+  })
+);
+
+/** The same miss where the cache kept no other chat's prefix (no conversation kept at all). */
+export const SPLIT_EVICTED_FOR_ROOM_READ = splitBody(
+  splitRow({
+    elapsed_s: 653.0,
+    prompt_tokens: 200456,
+    cached_tokens: 0,
+    prefilled_tokens: 91689,
+    prompt_tokens_per_second: 254.1,
+    evicted_prefix: {
+      tokens: 199798,
+      while_keeping: null,
+      rows: 1,
+      width: 150,
+      requests: ['req-430'],
+      ago_s: 12.5,
+    },
+  })
+);
+
 /** The same read before rank 0 has looked the prompt up: nothing is known of the cache. */
 export const SPLIT_UNKNOWN_READ = splitBody(
   splitRow({ cached_tokens: null, prefilled_tokens: 0, prompt_tokens_per_second: null })

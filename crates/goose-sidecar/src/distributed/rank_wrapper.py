@@ -180,6 +180,14 @@
 #   and the call's text; a streamed answer is untouched (its streamer already leaves the refused
 #   call's arguments unterminated). Q-177's 500 now covers every failure before a byte reached the
 #   client, a buffered-but-unsent status line included.
+# - a request whose prefix the cache HAD held says so (Q-498, rank_boundary.py `EvictionLog`):
+#   rank 0 records every entry the prompt cache evicts (the key's digest, the conversation prefix
+#   kept at that moment, the batch the room was made for), and a request that extends an evicted
+#   entry past what the cache supplied carries `evicted_prefix` on its /v1/status row and a
+#   GOOSE_RANK_PREFIX_LOST line. E2E #3x: a second chat's side call joined its 77,683-token row,
+#   the cache was trimmed below #3x's 6.62 GB prefix (the kept entries were the newer chat's), and
+#   #3x's next call read 200,456 tokens again while every surface said only "nothing cached".
+#   Recording only — what every rank evicts is unchanged, so the ranks still evict alike.
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -799,7 +807,16 @@ class LookupPromptCache(server.LRUPromptCache):
     # prompt minus its last token. Any other lookup is upstream's, unchanged. Every rank runs this
     # on its own cache over the same shared requests — the same decision, the same segments —
     # exactly as it runs mlx_lm's own lookup.
+    #
+    # Q-498: rank 0 then says what the lookup missed of an entry the cache had held and evicted
+    # (`note_lost_prefix`) — here, where the cached count is exactly what the request will read.
     def fetch_nearest_cache(self, model, tokens):
+        cache, rest = self.nearest_cache(model, tokens)
+        if evictions is not None:
+            note_lost_prefix(tokens, len(tokens) - len(rest))
+        return cache, rest
+
+    def nearest_cache(self, model, tokens):
         try:
             entry = self._trie.get(model, tokens) if tokens else None
         except KeyError:
@@ -845,6 +862,65 @@ if kept_entries:
     keep_entries(server.LRUPromptCache.CacheOrder, *kept_entries)
 elif spec.get("keep_newest_prefix"):
     keep_newest_prefix(server.LRUPromptCache.CacheOrder)
+
+# Q-498 (rank_boundary.py `EvictionLog`): rank 0 records every entry its prompt cache evicts,
+# through whichever eviction order is installed above, and never changes the entry it returns —
+# so the ranks still evict alike. As many records as the cache holds entries at most. Both hooks
+# run in the generation thread, where an exception is RANK_FATAL: a record that cannot be kept is
+# named (GOOSE_RANK_EVICTION_UNRECORDED, the error and the request) and the eviction goes on.
+evictions = (
+    EvictionLog(int(spec["prompt_cache_entries"]))
+    if group.rank() == 0 and "prompt_cache_entries" in spec
+    else None
+)
+if evictions is not None:
+    ordered_pop = server.LRUPromptCache.CacheOrder.pop
+
+    def recorded_pop(self):
+        item = ordered_pop(self)
+        try:
+            batch = live_batch[0] if live_batch else None
+            rows, width = batch_shape(batch) if batch is not None else (0, 0)
+            evictions.evicted(
+                item[1],
+                conversation_prefix.tokens if conversation_prefix is not None else None,
+                rows,
+                width,
+                sorted(request for request in batch_rows.values() if request is not None),
+                time.monotonic(),
+            )
+        except Exception as failure:
+            unrecorded("evicted", failure)
+        return item
+
+    server.LRUPromptCache.CacheOrder.pop = recorded_pop
+
+
+def unrecorded(step, failure):
+    emit(
+        "RANK_EVICTION_UNRECORDED",
+        {"step": step, "request_id": arriving[0], "error": f"{type(failure).__name__}: {failure}"},
+    )
+
+
+def note_lost_prefix(prompt, cached):
+    """Rank 0's generation thread, at the lookup of the request `_next_request` handed the loop
+    (`arriving`): what it lost to an eviction goes on its /v1/status row, and in the rank's log."""
+    request_id = arriving[0]
+    try:
+        lost = evictions.lost_prefix(prompt, cached, time.monotonic())
+    except Exception as failure:
+        unrecorded("lookup", failure)
+        return
+    with lock:
+        entry = live.get(request_id)
+        if entry is not None:
+            entry["evicted_prefix"] = lost
+    if lost is not None:
+        emit(
+            "RANK_PREFIX_LOST",
+            {"request_id": request_id, "prompt_tokens": len(prompt), "cached": cached, **lost},
+        )
 
 
 def cache_inserting(tokens, prompt_cache):
@@ -1242,6 +1318,7 @@ def generate(
             "first_token": None,
             "last_token": None,
             "completion": 0,
+            "evicted_prefix": None,
         }
         live[request_id] = entry
         if getattr(posting, "before_row", False):

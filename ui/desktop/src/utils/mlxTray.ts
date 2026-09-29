@@ -10,6 +10,7 @@ import {
   measuredPrefillTps,
   mlxActivity,
   readingNowTps,
+  type EvictedPrefix,
   type LeavingRows,
   type MlxLiveRequest,
 } from '../components/leanzero-swarm/mlxLiveStats';
@@ -369,7 +370,8 @@ function leavingLine(leaving: LeavingRows): string {
  * The prompt being read, in the tray's words — the split the Engine tile and the glance draw
  * (engineFigures.ts `promptCacheOf`, Q-337): "Reading a 115k-token prompt for 4s: 114k from cache,
  * 1.1k new (576 of it read)"; "…: nothing cached, 45k read" when the cache supplied none; the plain
- * size and position while the engine has not looked the prompt up.
+ * size and position while the engine has not looked the prompt up. When the engine names part of
+ * the prompt as evicted before its lookup (Q-498), why: "… — another chat pushed 200k of it out".
  */
 function readingLine(reading: MlxLiveRequest, promptTokens: number): string {
   const cache = promptCacheOf(reading);
@@ -378,12 +380,22 @@ function readingLine(reading: MlxLiveRequest, promptTokens: number): string {
   const size = `Reading a ${compactTokens(promptTokens)}-token prompt`;
   const read = progress ? `${compactTokens(progress.done)} read` : null;
   if (!cache) return `${size}${read ? `, ${read}` : ''}${elapsed}`;
-  if (cache.cached === 0) return `${size}${elapsed}: nothing cached${read ? `, ${read}` : ''}`;
+  const lost = cache.evicted ? ` — ${evictedLine(cache.evicted)}` : '';
+  if (cache.cached === 0) {
+    return `${size}${elapsed}: nothing cached${read ? `, ${read}` : ''}${lost}`;
+  }
   const freshRead =
     cache.freshDone != null
       ? ` (${compactTokens(Math.min(cache.fresh, cache.freshDone))} of it read)`
       : '';
-  return `${size}${elapsed}: ${compactTokens(cache.cached)} from cache, ${compactTokens(cache.fresh)} new${freshRead}`;
+  return `${size}${elapsed}: ${compactTokens(cache.cached)} from cache, ${compactTokens(cache.fresh)} new${freshRead}${lost}`;
+}
+
+function evictedLine(evicted: EvictedPrefix): string {
+  const tokens = compactTokens(evicted.tokens);
+  return evicted.whileKeeping === 'anotherConversation'
+    ? `another chat pushed ${tokens} of it out of memory`
+    : `${tokens} of it was pushed out of memory`;
 }
 
 export function mlxTrayTitle(snapshot: MlxEngineSnapshot): string {

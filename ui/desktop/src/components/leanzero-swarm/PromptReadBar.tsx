@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
 import { PHASE_DOT, RADIUS, cx } from '../lz';
-import { formatElapsed } from './mlxLiveStats';
+import { formatElapsed, type EvictedPrefix } from './mlxLiveStats';
 import type { PromptCache, ReadBar } from './engineFigures';
 
 /**
@@ -41,6 +41,23 @@ export const promptReadMessages = defineMessages({
   barText: {
     id: 'promptRead.barText',
     defaultMessage: '{cached} from cache, {done} of {fresh} new read',
+  },
+  // Q-498: why a prompt the cache had held is read again — the engine names the eviction.
+  lostToOtherChat: {
+    id: 'promptRead.lostToOtherChat',
+    defaultMessage: 'another chat pushed {evicted} of this conversation out of the engine’s memory',
+  },
+  lostToOtherChatShort: {
+    id: 'promptRead.lostToOtherChatShort',
+    defaultMessage: 'another chat pushed {evicted} of it out of memory',
+  },
+  lostToRoom: {
+    id: 'promptRead.lostToRoom',
+    defaultMessage: '{evicted} of it was cached, then pushed out of the engine’s memory',
+  },
+  lostToRoomShort: {
+    id: 'promptRead.lostToRoomShort',
+    defaultMessage: '{evicted} of it was pushed out of memory',
   },
 });
 
@@ -137,9 +154,43 @@ function Swatch({ paint, part }: { paint: ReadPaint; part: 'cached' | 'read' }) 
 /**
  * The split in words: "114.9K tokens · 113.8K from cache · 1.1K new — reading the new part" (each
  * part after its swatch), "114.9K tokens · nothing cached — reading all of it" when the cache
- * supplied none. `short` leaves the size out where the surface already leads with it.
+ * supplied none, and — when the engine names part of the prompt as evicted before its lookup
+ * (Q-498) — why: "… · another chat pushed 199.8K of this conversation out of the engine’s memory".
+ * `short` leaves the size out where the surface already leads with it.
  */
 export function promptCacheWords(
+  intl: IntlShape,
+  cache: PromptCache,
+  paint: ReadPaint,
+  short: boolean
+): ReactNode {
+  const split = splitWords(intl, cache, paint, short);
+  const lost = cache.evicted ? evictedWords(intl, cache.evicted, short) : null;
+  return lost ? (
+    <>
+      {split}
+      {' · '}
+      <span data-testid="prompt-read-evicted">{lost}</span>
+    </>
+  ) : (
+    split
+  );
+}
+
+/** Why the cache no longer held what it had held of this prompt, as the engine names it (Q-498). */
+export function evictedWords(intl: IntlShape, evicted: EvictedPrefix, short: boolean): string {
+  const message =
+    evicted.whileKeeping === 'anotherConversation'
+      ? short
+        ? promptReadMessages.lostToOtherChatShort
+        : promptReadMessages.lostToOtherChat
+      : short
+        ? promptReadMessages.lostToRoomShort
+        : promptReadMessages.lostToRoom;
+  return intl.formatMessage(message, { evicted: compact(intl, evicted.tokens) });
+}
+
+function splitWords(
   intl: IntlShape,
   cache: PromptCache,
   paint: ReadPaint,

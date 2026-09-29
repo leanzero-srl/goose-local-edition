@@ -46,6 +46,7 @@ function reading(over: Partial<MlxLiveRequest> = {}): MlxLiveRequest {
     cachedTokens: null,
     prefilledTokens: 22_862,
     promptTps: 322,
+    evictedPrefix: null,
     client: null,
     heldForRoom: null,
     stopped: null,

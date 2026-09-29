@@ -49,6 +49,7 @@ function readingRequest(): MlxLiveRequest {
     cachedTokens: 141_700,
     prefilledTokens: 141_900,
     promptTps: 300,
+    evictedPrefix: null,
     client: null,
     heldForRoom: null,
     stopped: null,

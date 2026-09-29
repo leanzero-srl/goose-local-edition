@@ -317,3 +317,103 @@ def cut_at_head(segments, segment_types, head):
             types.append(kind)
         start = end
     return cut, types
+
+
+# Q-498 (E2E #3x, 2026-09-29, the 27B tensor split at 262,144 tokens, its 17,333,813,248 B KV
+# plan): the owner used a second chat while #3x's ~200k-token chat worked. At 15:10:16 local the
+# cache still held both chats' prefixes (user 3 sequences 9.30 GB, system 4 3.06 GB: #3x's 6.62 GB
+# conversation prefix and 1.47 GB head, the second chat's 2.59 GB and 1.43 GB); then an 84-token
+# side call joined the second chat's 77,683-token row, the two rows padded to 77,683 charged
+# 11.54 GB, the cache was trimmed to the 5.79 GB left, and the kept entries were the NEWEST
+# conversation's — the second chat's (15:10:28: 4.34 GB). #3x's next call read all 200,456 tokens
+# again, ~11 minutes. Keeping both needs 23.66 GB of KV charge where the plan has 17.33, and the
+# MacBook rank had no ~7 GB more to give (Q-498's measurement), so the engine SAYS it: rank 0
+# records every entry the cache evicts, and a request that extends an evicted entry past what the
+# cache supplied carries it on its /v1/status row — how long it was, and whether the conversation
+# the cache kept at that eviction was this one or another. Recording only: nothing here changes
+# what is evicted, so every rank still evicts alike.
+import hashlib  # noqa: E402
+import threading  # noqa: E402
+from array import array  # noqa: E402
+from collections import deque  # noqa: E402
+
+
+def tokens_bytes(tokens):
+    return array("q", tokens).tobytes()
+
+
+def key_digest(tokens):
+    return hashlib.blake2b(tokens_bytes(tokens), digest_size=16).digest()
+
+
+class EvictionLog:
+    """Rank 0's record of the prompt-cache entries evicted: each key's length and digest, the
+    conversation prefix the cache kept at that moment (its length and digest, or None), the batch
+    the room was made for, and when. At most `capacity` records, the oldest dropped first — the
+    cache's own entry bound (`prompt_cache_entries`)."""
+
+    def __init__(self, capacity):
+        self.records = deque(maxlen=max(1, capacity))
+        self.lock = threading.Lock()
+        self.kept = (None, None)
+
+    def kept_key(self, kept):
+        """(length, digest) of the kept conversation prefix, hashed once per key list."""
+        if kept is None:
+            return None
+        if self.kept[0] is not kept:
+            self.kept = (kept, key_digest(kept))
+        return len(kept), self.kept[1]
+
+    def evicted(self, tokens, kept, rows, width, requests, at):
+        """The cache evicted the entry keyed `tokens` while it kept `kept` (a key list, or None),
+        making room for a batch of `rows` rows at `width` serving `requests`, at `at`."""
+        record = {
+            "tokens": len(tokens),
+            "digest": key_digest(tokens),
+            "kept": self.kept_key(kept),
+            "rows": rows,
+            "width": width,
+            "requests": list(requests),
+            "at": at,
+        }
+        with self.lock:
+            self.records.append(record)
+
+    def lost_prefix(self, prompt, cached, at):
+        """What `prompt` lost to an eviction, looked up at `at`: the longest evicted entry whose
+        key is a prefix of it and longer than the `cached` tokens the cache supplied — its length,
+        whether the conversation the cache kept at that eviction is this prompt's own
+        (`this_conversation`), another's (`another_conversation`) or none was kept (None), the
+        batch the room was made for and how long ago — or None when nothing it extends was
+        evicted. One pass over the prompt, hashed at each length a record names."""
+        with self.lock:
+            records = [r for r in self.records if cached < r["tokens"] <= len(prompt)]
+        if not records:
+            return None
+        lengths = {r["tokens"] for r in records}
+        lengths |= {r["kept"][0] for r in records if r["kept"] and r["kept"][0] <= len(prompt)}
+        digests, running, done = {}, hashlib.blake2b(digest_size=16), 0
+        for length in sorted(lengths):
+            running.update(tokens_bytes(prompt[done:length]))
+            done = length
+            digests[length] = running.copy().digest()
+        lost = [r for r in records if digests[r["tokens"]] == r["digest"]]
+        if not lost:
+            return None
+        record = max(lost, key=lambda r: (r["tokens"], r["at"]))
+        kept = record["kept"]
+        if kept is None:
+            keeping = None
+        elif digests.get(kept[0]) == kept[1]:
+            keeping = "this_conversation"
+        else:
+            keeping = "another_conversation"
+        return {
+            "tokens": record["tokens"],
+            "while_keeping": keeping,
+            "rows": record["rows"],
+            "width": record["width"],
+            "requests": record["requests"],
+            "ago_s": round(at - record["at"], 3),
+        }

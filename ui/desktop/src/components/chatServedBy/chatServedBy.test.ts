@@ -320,7 +320,7 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
       requests: 1,
       readingTokens: PREFILL_STATUS.requests[0].prompt_tokens,
       // Q-337: the single engine looked it up (a miss) — nothing cached, all of it is read.
-      readingCache: { total: 32277, cached: 0, fresh: 32277, freshDone: null },
+      readingCache: { total: 32277, cached: 0, fresh: 32277, freshDone: null, evicted: null },
     });
   });
 

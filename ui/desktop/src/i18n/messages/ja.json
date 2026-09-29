@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "新規 {fresh} のうち {done} を読み込み済み"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "別のチャットがこの会話の {evicted} をエンジンのメモリから押し出しました"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "別のチャットが {evicted} をメモリから押し出しました"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted} はキャッシュにありましたが、エンジンのメモリから押し出されました"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted} がメモリから押し出されました"
+  },
   "promptRead.soFar": {
     "defaultMessage": "ここまで {elapsed}"
   },

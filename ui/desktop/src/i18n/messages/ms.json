@@ -8330,6 +8330,18 @@
   "promptRead.freshOf": {
     "defaultMessage": "{done} daripada {fresh} baharu telah dibaca"
   },
+  "promptRead.lostToOtherChat": {
+    "defaultMessage": "sembang lain menolak {evicted} daripada perbualan ini keluar dari memori enjin"
+  },
+  "promptRead.lostToOtherChatShort": {
+    "defaultMessage": "sembang lain menolak {evicted} daripadanya keluar dari memori"
+  },
+  "promptRead.lostToRoom": {
+    "defaultMessage": "{evicted} daripadanya pernah dalam cache, kemudian ditolak keluar dari memori enjin"
+  },
+  "promptRead.lostToRoomShort": {
+    "defaultMessage": "{evicted} daripadanya ditolak keluar dari memori"
+  },
   "promptRead.soFar": {
     "defaultMessage": "setakat ini {elapsed}"
   },
