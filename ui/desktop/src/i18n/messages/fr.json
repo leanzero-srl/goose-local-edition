@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Un message envoyé maintenant va à {node} — il n’attend pas cette réponse."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Un message envoyé maintenant va vers {node} — {passed} n’est pas chargé, donc rien de ce qu’utilise cette réponse n’est arrêté."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Un message envoyé maintenant attend la fin de cette réponse, puis charge {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Un message envoyé maintenant attend que le moteur ait de la place pour lui."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Un message envoyé maintenant attend que cette conversation soit fermée ou passe à un autre nœud, puis charge {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Un message envoyé maintenant passe en premier : goose met cette vérification de côté et la relance ensuite."
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "non mesuré"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "répond"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "En cours dans une autre fenêtre"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "Lancé par un autre goose"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "ne répond pas"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "Lecture seule ici : Démarrer et Arrêter appartiennent à la fenêtre qui l’a lancé (PID goosed {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "Lecture seule ici : le goose de pid {pid} le fait tourner — un goose serve dans un terminal, ou une autre app goose. Démarrez-le et arrêtez-le là-bas."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{model} sur {nodes} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "Les réglages du moteur n’ont pas pu être lus."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "Prêt · appartient à une autre fenêtre"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "Prêt · lancé par un autre goose"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "Ne répond pas · appartient à une autre fenêtre"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "Ne répond pas · lancé par un autre goose"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "Détails"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} sur {where}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{phase} sur {where} · géré par une autre fenêtre"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{phase} sur {where} · géré par un autre goose"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

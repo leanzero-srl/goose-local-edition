@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Şimdi gönderilen bir mesaj {node} düğümüne gider — o yanıtı beklemez."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Şimdi gönderilen mesaj {node} düğümüne gider — {passed} yüklü değil, bu yüzden o yanıtın çalıştığı hiçbir şey durdurulmaz."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Şimdi gönderilen bir mesaj o yanıtın bitmesini bekler, sonra {node} yüklenir."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Şimdi gönderilen bir mesaj, motorda yer açılana kadar bekler."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Şimdi gönderilen mesaj, o sohbet kapatılana veya başka bir düğüme geçene kadar bekler, ardından {node} yüklenir."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Şimdi gönderilen mesaj önce gider: goose bu kontrolü bir kenara bırakır ve sonra yeniden çalıştırır."
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "ölçülmedi"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "yanıt veriyor"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "Başka bir pencerede çalışıyor"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "Başka bir goose başlattı"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "yanıt vermiyor"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "Burada salt okunur: Başlat ve Durdur, onu başlatan pencereye aittir (goosed pid {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "Burada salt okunur: onu goose pid {pid} çalıştırıyor — bir terminaldeki goose serve ya da başka bir goose uygulaması. Onu oradan başlatıp durdurun."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{nodes} üzerinde {model} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "Motor ayarları okunamadı."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "Hazır · başka bir pencereye ait"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "Hazır · başka bir goose başlattı"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "Yanıt vermiyor · başka bir pencereye ait"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "Yanıt vermiyor · başka bir goose başlattı"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "Ayrıntılar"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{where} üzerinde {phase}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{where} üzerinde {phase} · başka bir pencere çalıştırıyor"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{where} üzerinde {phase} · başka bir goose çalıştırıyor"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

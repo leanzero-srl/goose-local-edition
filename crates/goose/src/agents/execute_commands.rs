@@ -247,7 +247,12 @@ impl Agent {
     async fn handle_status_command(&self, session_id: &str) -> Result<Option<Message>> {
         let provider = self.provider().await?;
         let model_config = self.model_config_for_session(session_id).await?;
-        let window = match provider.get_context_limit(&model_config).await {
+        let window = match crate::session_context::with_session_id(
+            Some(session_id.to_string()),
+            provider.get_context_limit(&model_config),
+        )
+        .await
+        {
             Ok(limit) => Ok(limit),
             Err(err) => model_config.context_limit.ok_or(err),
         };

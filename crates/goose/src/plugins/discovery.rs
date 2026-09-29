@@ -107,8 +107,18 @@ fn discover_enabled_plugins_with_config(
 /// to the map with `enabled: true`; plugins explicitly set to `enabled: false`
 /// are dropped.
 fn filter_by_config(plugins: Vec<DiscoveredPlugin>, config: &Config) -> Vec<DiscoveredPlugin> {
-    let mut entries: HashMap<String, PluginConfigEntry> =
-        config.get_param(PLUGINS_CONFIG_KEY).unwrap_or_default();
+    let (mut entries, persist): (HashMap<String, PluginConfigEntry>, bool) = match config
+        .get_param_for_update(PLUGINS_CONFIG_KEY)
+    {
+        Ok(entries) => (entries, true),
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "plugin enable/disable choices could not be read; every discovered plugin is enabled for this session and the unreadable value is not saved over"
+            );
+            (HashMap::new(), false)
+        }
+    };
 
     let mut dirty = false;
     let mut enabled = Vec::new();
@@ -128,7 +138,7 @@ fn filter_by_config(plugins: Vec<DiscoveredPlugin>, config: &Config) -> Vec<Disc
         }
     }
 
-    if dirty {
+    if dirty && persist {
         if let Err(e) = config.set_param(PLUGINS_CONFIG_KEY, entries) {
             tracing::warn!(error = %e, "Failed to persist plugin config entries");
         }

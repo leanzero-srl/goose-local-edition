@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "अभी भेजा गया संदेश {node} पर जाता है — वह उस उत्तर की प्रतीक्षा नहीं करता।"
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "अभी भेजा गया संदेश {node} पर जाता है — {passed} लोड नहीं है, इसलिए वह उत्तर जिस पर चल रहा है, उसमें से कुछ भी रोका नहीं जाता।"
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "अभी भेजा गया संदेश उस उत्तर के पूरा होने की प्रतीक्षा करता है, फिर {node} लोड करता है।"
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "अभी भेजा गया संदेश तब तक प्रतीक्षा करेगा जब तक इंजन के पास उसके लिए जगह न हो।"
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "अभी भेजा गया संदेश तब तक प्रतीक्षा करता है जब तक वह चैट बंद न हो या किसी और नोड पर न जाए, फिर {node} लोड करता है।"
   },
   "busyIn.sendYields": {
     "defaultMessage": "अभी भेजा गया संदेश पहले जाएगा: goose इस जाँच को अलग रखकर बाद में फिर से चलाता है।"
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "मापा नहीं गया"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "जवाब दे रहा है"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "दूसरी विंडो में चल रहा है"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "किसी दूसरे goose ने शुरू किया"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "जवाब नहीं दे रहा"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "यहाँ केवल पढ़ने के लिए: शुरू और बंद करना उस विंडो का काम है जिसने इसे शुरू किया (goosed pid {pid})।"
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "यहाँ केवल पढ़ने के लिए: goose pid {pid} इसे चला रहा है — किसी टर्मिनल में goose serve, या कोई दूसरा goose ऐप। इसे वहीं शुरू और बंद करें।"
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{nodes} पर {model} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "इंजन सेटिंग पढ़ी नहीं जा सकीं।"
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "तैयार · दूसरी विंडो के स्वामित्व में"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "तैयार · किसी दूसरे goose ने शुरू किया"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "जवाब नहीं दे रहा · दूसरी विंडो के स्वामित्व में"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "जवाब नहीं दे रहा · किसी दूसरे goose ने शुरू किया"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "विवरण"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{where} पर {phase}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{where} पर {phase} · किसी दूसरी विंडो द्वारा चलाया गया"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{where} पर {phase} · किसी दूसरे goose द्वारा चलाया गया"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

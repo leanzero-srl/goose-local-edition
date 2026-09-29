@@ -3,7 +3,7 @@ import { defineMessages } from '../../../../i18n';
 import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
 import { peerGoneOf, peerGoneText } from '../../../chatServedBy/peerGoneText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
-import { displacedText, loaderText } from '../../../chatServedBy/loaderText';
+import { displacedText, loaderText, type ChatLoader } from '../../../chatServedBy/loaderText';
 import { fellBackText } from '../../../chatServedBy/turnLine';
 
 const i18n = defineMessages({
@@ -36,6 +36,17 @@ export interface ServedChipWords {
   fellBackWords: string | null;
   /** The chip's label; null = the chip keeps the model it was given. */
   chipLabel: string | null;
+}
+
+/**
+ * The node this chat's in-flight turn waits on the loader for: the node its wait loads, or the load
+ * that is for this chat. A behind-switch wait (Q-442) carries on on the chat's own node — its
+ * target. null = the loader holds no turn of this chat's (a refusal, another chat's load).
+ */
+function loaderNodeOfThisTurn(loader: ChatLoader | null): string | null {
+  if (loader?.kind === 'waiting') return loader.wait.target.name;
+  if (loader?.kind === 'loading' && loader.forThisChat) return loader.swap.target.name;
+  return null;
 }
 
 /**
@@ -75,12 +86,16 @@ export function servedChipWords(
   // A chat's own node set is "This chat's nodes", never the name goosed generates for it (Q-379).
   const routeName =
     route?.kind === 'strategy' && route.own ? intl.formatMessage(i18n.ownNodes) : route?.name;
+  // While this chat's turn waits on the loader, it goes to the node the loader is for — never the
+  // node its last turn ran on (Q-460, 3.0.74: "… · deepseek" while the turn waited for the Studio).
+  const routeNode =
+    route?.kind === 'strategy' ? (loaderNodeOfThisTurn(loader) ?? route.node) : null;
   const routeLabel =
     route == null
       ? null
-      : route.kind === 'node' || route.node == null
+      : routeNode == null
         ? (routeName ?? null)
-        : intl.formatMessage(i18n.routeChip, { route: routeName, node: route.node });
+        : intl.formatMessage(i18n.routeChip, { route: routeName, node: routeNode });
   const engineLabel =
     servedModel == null
       ? null

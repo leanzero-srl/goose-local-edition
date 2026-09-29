@@ -509,7 +509,7 @@ export default function ImportView() {
         <button
           onClick={() => void rescan()}
           disabled={loading || importing}
-          className="shrink-0 flex items-center gap-1 text-xs border border-border-primary px-2 py-1 text-text-primary hover:border-text-secondary transition-colors disabled:opacity-50"
+          className="shrink-0 flex items-center gap-1 text-xs border border-border-primary px-2 py-1 text-text-primary hover:border-text-secondary transition-colors disabled:cursor-not-allowed disabled:border-lz-border disabled:bg-lz-surface-2 disabled:text-lz-ink-3"
           style={{ borderRadius: 3 }}
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Rescan
@@ -617,8 +617,8 @@ export default function ImportView() {
                 <button
                   onClick={() => void importSelectedSkills()}
                   disabled={importing || selectedCount === 0}
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                  style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 bg-lz-accent text-lz-accent-ink transition-colors hover:bg-lz-accent-hover disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3"
+                  style={{ borderRadius: 3 }}
                 >
                   {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                   Import {selectedCount} skill{selectedCount === 1 ? '' : 's'}
@@ -684,8 +684,8 @@ export default function ImportView() {
                 <button
                   onClick={() => void importSelectedMcp()}
                   disabled={importing || selectedMcpCount === 0}
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                  style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 bg-lz-accent text-lz-accent-ink transition-colors hover:bg-lz-accent-hover disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3"
+                  style={{ borderRadius: 3 }}
                 >
                   {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                   Add {selectedMcpCount} server{selectedMcpCount === 1 ? '' : 's'}
@@ -711,8 +711,8 @@ export default function ImportView() {
                   <button
                     onClick={() => void importMemory()}
                     disabled={importing}
-                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                    style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 bg-lz-accent text-lz-accent-ink transition-colors hover:bg-lz-accent-hover disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3"
+                    style={{ borderRadius: 3 }}
                   >
                     {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                     Import memory

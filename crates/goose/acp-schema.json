@@ -16089,6 +16089,14 @@
           "type": "string",
           "description": "The node serving now, as the Nodes page names it (the way's words when no node names it)."
         },
+        "servingNodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The nodes that name the way serving now (ids), a node pinned to that way before one that\nfollows this Mac's engine (Q-459), so a surface names it as the Nodes page does: the split\nthe person made, never the follows node it is also served through.",
+          "default": []
+        },
         "chats": {
           "type": "array",
           "items": {
@@ -16202,6 +16210,13 @@
             },
             "serving": {
               "type": "string"
+            },
+            "servingNodes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
             },
             "chats": {
               "type": "array",

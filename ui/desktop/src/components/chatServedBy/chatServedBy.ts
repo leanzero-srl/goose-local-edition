@@ -35,7 +35,7 @@ import {
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { splitStopAt, type SplitStop } from './splitStop';
-import { busyNextOf, type BusyNext } from './busyNext';
+import { busyNextOf, chainLoadOf, type BusyNext } from './busyNext';
 import type { ChatLoader } from './loaderText';
 import { effectiveEntry, nodeNameOfDevice, nodeNamesById } from '../nodes/model';
 import {
@@ -45,6 +45,7 @@ import {
   nodeRefusalOf,
   nodeSwapOf,
   nodeWaitOf,
+  pendingSwapOf,
   routeNodeIds,
   swapStopsEngine,
   type NodeDisplaced,
@@ -838,7 +839,8 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
     facts,
     given.model
   );
-  const loader = chatLoaderOf(facts, routeIds, route, given);
+  const loader =
+    chatLoaderOf(facts, routeIds, route, given) ?? switchBetweenMarks(facts, named, given);
   const own = route?.nodeId ?? null;
   // Between turns only: while a turn is in flight the loader's own line says what happens.
   const displaced =
@@ -1030,6 +1032,50 @@ function chatLoaderOf(
   return refusal ? { kind: 'refused', refusal } : null;
 }
 
+/**
+ * Q-462 (live 3.0.74, a take-over click): "No model is mounted — This Mac's engine" read for ~8 s
+ * while the switch ran — the split was already stopping, and no residency read yet showed the
+ * loader's `loading` (the take-over's `waiting` mark had gone). While this chat's turn is in flight
+ * and the engine it faced is down or coming up, the chain's own next load IS the switch in progress:
+ * said as "Swapping to {node}" (no phase claimed), never as "no model". A chain that serves as
+ * things stand, a failure, or a turn not in flight is not a switch.
+ */
+function switchBetweenMarks(
+  facts: ChatNodesFacts,
+  served: ChatServedBy,
+  inputs: ChatServedInputs
+): ChatLoader | null {
+  if (!inputs.turnInFlight || !engineComingOrGone(served.readiness)) return null;
+  const node = chainLoadOf(facts, inputs.model);
+  if (node == null) return null;
+  return {
+    kind: 'loading',
+    swap: pendingSwapOf(facts.read, facts.residency, node),
+    forThisChat: true,
+  };
+}
+
+const SPLIT_COMING_OR_GONE: ReadonlySet<string> = new Set([
+  'preflight',
+  'starting',
+  'stopping',
+  'stopped',
+]);
+
+/** Down, stopping or starting — never a failure, which is said as one. */
+function engineComingOrGone(readiness: ComposerReadiness): boolean {
+  switch (readiness.kind) {
+    case 'unmounted':
+      return readiness.fact === 'down' || readiness.fact === 'mounting';
+    case 'distributed':
+      return SPLIT_COMING_OR_GONE.has(readiness.status.state);
+    case 'remote':
+      return readiness.status.state === 'mounting';
+    default:
+      return false;
+  }
+}
+
 /** The engine this chat faces is down, and the swap is why (a split stopping, an engine stopped). */
 function engineStoppedBy(swap: NodeSwap, inputs: ChatServedInputs): boolean {
   const { distributed, single } = inputs;
@@ -1211,6 +1257,18 @@ export function servedReady(served: ChatServedBy): boolean {
     readiness.kind === 'ready' ||
     (readiness.kind === 'remote' && readiness.status.state === 'ready')
   );
+}
+
+/**
+ * This chat's turn is held before the model with the composer's bar saying why (Q-461): the loader
+ * waits for it or loads for it, or the engine queues it and names the reason (`turnWait`). The
+ * working row's "Waiting for the model's first words" then stays silent — one status at a time.
+ */
+export function turnHeldBeforeModel(served: ChatServedBy): boolean {
+  const { loader } = served;
+  if (loader?.kind === 'waiting') return true;
+  if (loader?.kind === 'loading' && loader.forThisChat) return true;
+  return served.turnWait != null;
 }
 
 /** The Mac chat waits on while contact with it is lost, by its one name; null otherwise. */

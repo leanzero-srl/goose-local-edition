@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Tin nhắn gửi bây giờ sẽ đến {node} — không chờ câu trả lời đó."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Tin nhắn gửi bây giờ sẽ đến {node} — {passed} chưa được tải, nên không có gì mà câu trả lời đó đang dùng bị dừng."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Tin nhắn gửi bây giờ chờ câu trả lời đó xong, rồi nạp {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Tin nhắn gửi bây giờ sẽ chờ cho tới khi engine có chỗ cho nó."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Tin nhắn gửi bây giờ sẽ chờ đến khi cuộc trò chuyện đó được đóng hoặc chuyển sang nút khác, rồi tải {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Tin nhắn gửi bây giờ được ưu tiên: goose tạm gác lần kiểm tra này và chạy lại sau."
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "chưa đo"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "đang phản hồi"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "Đang chạy trong cửa sổ khác"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "Do một goose khác khởi động"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "không phản hồi"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "Chỉ đọc ở đây: Bắt đầu và Dừng thuộc về cửa sổ đã khởi chạy nó (pid goosed {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "Chỉ đọc ở đây: goose pid {pid} đang chạy nó — một goose serve trong terminal, hoặc một ứng dụng goose khác. Hãy bắt đầu và dừng nó ở đó."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{model} trên {nodes} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "Không đọc được cài đặt động cơ."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "Sẵn sàng · thuộc cửa sổ khác"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "Sẵn sàng · do một goose khác khởi động"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "Không phản hồi · thuộc cửa sổ khác"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "Không phản hồi · do một goose khác khởi động"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "Chi tiết"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} trên {where}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{phase} trên {where} · do cửa sổ khác chạy"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{phase} trên {where} · do một goose khác chạy"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

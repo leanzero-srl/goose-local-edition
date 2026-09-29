@@ -115,7 +115,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
     <div className="parameter-input my-4 border rounded-lg bg-background-secondary relative">
       {/* Collapsed header - always visible */}
       <div
-        className={`flex items-center justify-between p-4 ${onToggleExpanded ? 'cursor-pointer hover:bg-background-primary/50' : ''} transition-colors`}
+        className={`flex items-center justify-between p-4 ${onToggleExpanded ? 'cursor-pointer hover:bg-background-tertiary' : ''} transition-colors`}
         onClick={handleToggleExpanded}
       >
         <div className="flex items-center gap-2 flex-1">
@@ -146,7 +146,9 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
                 title={intl.formatMessage(i18n.unusedWarningTitle)}
               >
                 <AlertTriangle className="w-4 h-4 text-orange-500" />
-                <span className="text-xs text-orange-500 font-normal">{intl.formatMessage(i18n.unused)}</span>
+                <span className="text-xs text-orange-500 font-normal">
+                  {intl.formatMessage(i18n.unused)}
+                </span>
               </div>
             )}
           </div>

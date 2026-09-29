@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "A message sent now goes to {node} — it does not wait for that answer."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "A message sent now goes to {node} — {passed} is not loaded, so nothing that answer runs on is stopped."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "A message sent now waits for that answer to finish, then loads {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "A message sent now waits until the engine has room for it."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "A message sent now waits until that chat is closed or moved to another node, then loads {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "A message sent now goes first: goose sets this check aside and runs it again after."
@@ -4715,19 +4721,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "not measured"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "answering"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "Running in another window"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "Started by another goose"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "not answering"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "Read-only here: Start and Stop belong to the window that started it (goosed pid {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "Read-only here: goose pid {pid} runs it — a goose serve in a terminal, or another goose app. Start and Stop it there."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{model} on {nodes} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5381,11 +5387,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "The engine settings could not be read."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "Ready · owned by another window"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "Ready · started by another goose"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "Not answering · owned by another window"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "Not answering · started by another goose"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "Details"
@@ -6308,8 +6314,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} on {where}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{phase} on {where} · run by another window"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{phase} on {where} · run by another goose"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

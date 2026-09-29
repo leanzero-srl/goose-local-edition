@@ -41,6 +41,7 @@ import {
   type ReplicaTargets,
 } from '../../acp/mlx-replica';
 import { mlxErrorMessage } from './mlxErrorMessage';
+import { refreshLocalEngineStatus, useLocalEngineStatus } from './useMlxEngineStatus';
 import { liveDecodeTps, mlxActivity, readMlxLiveStatus, type MlxActivity } from './mlxLiveStats';
 import { touchLocalNetwork } from './LocalNetworkNotice';
 import {
@@ -325,10 +326,46 @@ export function MacsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ---- per-Mac engine status and models ---------------------------------------------------
+  // THIS Mac's status is the window's one engine-status store (Q-208) — the Engine tab beside this
+  // provider reads the same answer — so it is never asked for here; the other Macs are read per Mac.
+  // A failed read keeps the card's last status and says why, as every Mac's read here does.
+  const selfReadLive = useRef<{ busy: boolean; at: number }>({ busy: false, at: -Infinity });
+  const readSelfLive = useCallback(
+    async (status: MlxEngineStatus) => {
+      if (status.state !== 'running' || !status.baseUrl) {
+        patchFacts(SELF_KEY, { activity: null, decodeTps: null });
+        return;
+      }
+      // The store may read faster than this card's own cadence (the Engine tab asks for 2 s, and
+      // reads its own live figures on each): the card's live read keeps to about its own cadence.
+      // ratio: half of STATUS_POLL_MS, so a store read landing a little early is never skipped.
+      const now = Date.now();
+      if (selfReadLive.current.busy || now - selfReadLive.current.at < STATUS_POLL_MS / 2) return;
+      selfReadLive.current = { busy: true, at: now };
+      try {
+        const read = await readMlxLiveStatus(status.baseUrl);
+        if (disposed.current) return;
+        patchFacts(
+          SELF_KEY,
+          read.ok
+            ? { activity: mlxActivity(read.stats), decodeTps: liveDecodeTps(read.stats) }
+            : { activity: null, decodeTps: null }
+        );
+      } finally {
+        selfReadLive.current = { ...selfReadLive.current, busy: false };
+      }
+    },
+    [patchFacts]
+  );
+
   const refreshStatus = useCallback(
     async (key: string) => {
       const mac = macByKey(key);
       if (!mac || !mac.online || peerRefuses(mac, 'manage')) return;
+      if (mac.isSelf) {
+        await refreshLocalEngineStatus();
+        return;
+      }
       let status: MlxEngineStatus;
       try {
         status = await mlxEngineStatus(macTarget(mac));
@@ -341,19 +378,6 @@ export function MacsProvider({ children }: { children: ReactNode }) {
       }
       if (disposed.current) return;
       patchFacts(key, { status, statusError: null });
-      if (!mac.isSelf) return;
-      if (status.state !== 'running' || !status.baseUrl) {
-        patchFacts(key, { activity: null, decodeTps: null });
-        return;
-      }
-      const read = await readMlxLiveStatus(status.baseUrl);
-      if (disposed.current) return;
-      patchFacts(
-        key,
-        read.ok
-          ? { activity: mlxActivity(read.stats), decodeTps: liveDecodeTps(read.stats) }
-          : { activity: null, decodeTps: null }
-      );
     },
     [intl, macByKey, patchFacts]
   );
@@ -384,9 +408,24 @@ export function MacsProvider({ children }: { children: ReactNode }) {
     .filter((m) => m.online && !peerRefuses(m, 'manage'))
     .map((m) => m.key)
     .join(',');
+  const selfWatched = macKeys.split(',').includes(SELF_KEY);
+  const selfRead = useLocalEngineStatus(selfWatched ? { intervalMs: STATUS_POLL_MS } : null);
+  useEffect(() => {
+    if (!selfRead || selfRead.reads === 0 || disposed.current) return;
+    if (selfRead.failed) {
+      patchFacts(SELF_KEY, {
+        statusError: mlxErrorMessage(selfRead.error, intl.formatMessage(i18n.statusFailed)),
+      });
+      return;
+    }
+    const status = selfRead.value;
+    if (!status) return;
+    patchFacts(SELF_KEY, { status, statusError: null });
+    void readSelfLive(status);
+  }, [selfRead, intl, patchFacts, readSelfLive]);
   useVisibleInterval(
     () => {
-      for (const key of macKeys.split(',')) void refreshStatus(key);
+      for (const key of macKeys.split(',')) if (key !== SELF_KEY) void refreshStatus(key);
     },
     STATUS_POLL_MS,
     true
@@ -401,7 +440,7 @@ export function MacsProvider({ children }: { children: ReactNode }) {
   // A Mac joining the roster (or turning its switch on) is read at once, not at the next tick.
   useEffect(() => {
     for (const key of macKeys.split(',')) {
-      void refreshStatus(key);
+      if (key !== SELF_KEY) void refreshStatus(key);
       void refreshModels(key);
     }
   }, [macKeys, refreshStatus, refreshModels]);

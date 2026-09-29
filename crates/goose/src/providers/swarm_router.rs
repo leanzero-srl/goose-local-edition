@@ -748,7 +748,7 @@ fn distributed_target(
     match record {
         OwnerRecord::Other(engine) => Ok(DistributedTarget::At {
             diagnostic: format!(
-                "the distributed MLX engine of another window (goosed pid {}) owns this Mac",
+                "the distributed MLX engine of another goose (pid {}) owns this Mac",
                 engine.pid
             ),
             base: engine.base_url,
@@ -803,14 +803,25 @@ impl NodeProbe for LiveProbe {
             NodeKind::LmStudio { endpoint } => self.probe_lmstudio(endpoint, &node.model_id).await,
             NodeKind::MlxSidecar => self.probe_mlx(node).await,
             NodeKind::MlxRemote(target) => self.probe_remote(target, &node.model_id).await,
-            NodeKind::Cloud { .. } => self
-                .providers
-                .provider_for(node)
-                .await
-                .map(|_| Servable::default()),
+            NodeKind::Cloud { registry } => {
+                self.providers.provider_for(node).await.map(|_| Servable {
+                    context_window: cloud_catalog_window(registry, &node.model_id),
+                    ..Servable::default()
+                })
+            }
         };
         probed.map_err(|reason| redact_relay_capability(&reason))
     }
+}
+
+/// A cloud node's window: the one its provider's model catalog declares — what the provider
+/// itself runs a session of that model on. A model the catalog does not carry has no window here
+/// (`None`); it is never the default for an unknown model name.
+fn cloud_catalog_window(registry: &str, model: &str) -> Option<u64> {
+    ModelConfig::new(model)
+        .with_canonical_limits(registry)
+        .context_limit
+        .and_then(|window| u64::try_from(window).ok())
 }
 
 /// A probed, servable node: the node, its slots, its free slots and its context window.
@@ -843,6 +854,11 @@ pub(crate) struct Router {
     /// Whether a pick or a measurement has read a servable pool at all — so "no node said" is
     /// told apart from "nobody has looked yet".
     pool_measured: std::sync::atomic::AtomicBool,
+    /// Session → the node that served its last routed turn on a node or strategy route, and the
+    /// window that node's probe read at that pick (`None` = it did not say). What
+    /// [`route_window`] reads first: the window of the node that serves the chat, not the
+    /// smallest of every chain entry that happens to be loaded now (Q-463).
+    served_windows: StdMutex<HashMap<String, (String, Option<u64>)>>,
 }
 
 impl Router {
@@ -854,7 +870,23 @@ impl Router {
             queued: AtomicUsize::new(0),
             last_pool_context_limit: AtomicU32::new(0),
             pool_measured: std::sync::atomic::AtomicBool::new(false),
+            served_windows: StdMutex::new(HashMap::new()),
         }
+    }
+
+    fn note_served_window(&self, session: &str, node: &str, window: Option<u64>) {
+        self.served_windows
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(session.to_string(), (node.to_string(), window));
+    }
+
+    fn served_window(&self, session: &str) -> Option<(String, Option<u64>)> {
+        self.served_windows
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(session)
+            .cloned()
     }
 
     /// The pool's context limit as of the last pick, `None` until a servable node has reported one.
@@ -1703,17 +1735,49 @@ fn live_route_load() -> &'static dyn RouteLoad {
     }
 }
 
-/// The context window goose compacts against for `model`: the pool's for Auto (unchanged), the
-/// node's own for `node:<id>`, the smallest in the chain for `strategy:<id>[@role]` — so goose
-/// compacts before the smallest node's wall. `Err` names why no window is known; never a number
-/// standing in for one.
+/// The context window goose compacts against for `model`: the pool's for Auto (unchanged); for
+/// `node:<id>` and `strategy:<id>[@role]`, the window of the node that serves this session's chat
+/// ([`route_window`]). `Err` names why no window is known; never a number standing in for one.
 pub(crate) async fn route_context_window(model: &str) -> Result<usize, String> {
     let Some(route) = nodes_route(model)? else {
         return pool_context_window().await;
     };
-    let plan = live_plan(&route).await?;
+    let read = crate::nodes::read(Config::global(), this_mac_name().await)
+        .map_err(|e| format!("{e:#}"))?;
+    let session = crate::session_context::current_session_id();
+    // The window is the chain's, not one turn's: an "answer on {next} for now" ask reorders one
+    // turn and is not read here.
+    let plan = chain_plan(&route, &read, session.as_deref(), None)?;
     let members = LiveMembers::read(crate::nodes::seam::loader_installed()).await;
-    chain_window(&plan, &members, &*PROBE).await
+    route_window(&ROUTER, &plan, session.as_deref(), &members, &*PROBE).await
+}
+
+/// A chain route's window (Q-463). First the node that served this session's last turn on this
+/// chain: its window as its probe reads it now, else as it read at the pick that served — a
+/// measurement of the node the chat runs on, which is not loaded at this moment only because the
+/// Mac serves another node until the turn's own load. Without such a node (the session's first
+/// turn, a call outside any session, a served node that never said its window), the smallest
+/// window the chain's nodes report now ([`chain_window`]).
+async fn route_window(
+    router: &Router,
+    plan: &ChainPlan,
+    session: Option<&str>,
+    members: &dyn ChainMembers,
+    probe: &dyn NodeProbe,
+) -> Result<usize, String> {
+    let served = session
+        .and_then(|session| router.served_window(session))
+        .filter(|(node, _)| plan.entry.chain.iter().any(|link| &link.node == node));
+    if let Some((node, at_pick)) = served {
+        if let Some(window) = node_window(plan, &node, members, probe)
+            .await
+            .ok()
+            .or(at_pick)
+        {
+            return Ok(usize::try_from(window).unwrap_or(usize::MAX));
+        }
+    }
+    chain_window(plan, members, probe).await
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2698,8 +2762,12 @@ pub(crate) async fn route_chain(
             .slots
             .get(&lease.node.id)
             .and_then(|(_, way)| way.clone());
+        let window = lease.context_window;
         match stream_on(lease, providers, kwargs_source, &turn).await? {
             Streamed::Served(stream, node) => {
+                if let Some(session) = crate::session_context::current_session_id() {
+                    router.note_served_window(&session, &node.id, window);
+                }
                 let way = way.or_else(|| pool_lease_way(seam, &node));
                 note_served(seam, &node, way, || {
                     chain_record(
@@ -2732,24 +2800,7 @@ async fn chain_window(
     let mut known: Vec<u64> = Vec::new();
     let mut unknown: Vec<String> = Vec::new();
     for link in &plan.entry.chain {
-        let window = match plan.defs.get(&link.node) {
-            None => Err(format!("there is no node '{}'", link.node)),
-            Some(def) => match members.member(def).await {
-                Err(EntryFact::CantRun { reason }) => Err(reason),
-                Err(EntryFact::LoadFailed { words }) => Err(words),
-                Err(_) => Err("not loaded".to_string()),
-                Ok(member) => match probe.probe(&member.node).await {
-                    Err(reason) => Err(reason),
-                    Ok(facts) if member.pinned && facts.follows.is_some() => {
-                        Err("not loaded".to_string())
-                    }
-                    Ok(facts) => facts
-                        .context_window
-                        .ok_or_else(|| "it does not report its context window".to_string()),
-                },
-            },
-        };
-        match window {
+        match node_window(plan, &link.node, members, probe).await {
             Ok(window) => known.push(window),
             Err(reason) => unknown.push(format!("{}: {reason}", link.node)),
         }
@@ -2771,6 +2822,31 @@ async fn chain_window(
         );
     }
     Ok(usize::try_from(smallest).unwrap_or(usize::MAX))
+}
+
+/// One chain node's window as its probe reads it now; `Err` = why it cannot say.
+async fn node_window(
+    plan: &ChainPlan,
+    node: &str,
+    members: &dyn ChainMembers,
+    probe: &dyn NodeProbe,
+) -> Result<u64, String> {
+    let def = plan
+        .defs
+        .get(node)
+        .ok_or_else(|| format!("there is no node '{node}'"))?;
+    let member = match members.member(def).await {
+        Ok(member) => member,
+        Err(EntryFact::CantRun { reason }) => return Err(reason),
+        Err(EntryFact::LoadFailed { words }) => return Err(words),
+        Err(_) => return Err("not loaded".to_string()),
+    };
+    match probe.probe(&member.node).await? {
+        facts if member.pinned && facts.follows.is_some() => Err("not loaded".to_string()),
+        facts => facts
+            .context_window
+            .ok_or_else(|| "it does not report its context window".to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -4928,7 +5004,7 @@ devices:
             DistributedTarget::At { base, diagnostic } => {
                 assert_eq!(base, "http://127.0.0.1:8191");
                 assert!(
-                    diagnostic.contains("another window (goosed pid 4242)"),
+                    diagnostic.contains("another goose (pid 4242)"),
                     "{diagnostic}"
                 );
             }
@@ -5613,6 +5689,7 @@ devices:
         NodeServingOtherDto {
             mac: "Work’s Mac Studio".into(),
             serving: "27B · both Macs".into(),
+            serving_nodes: vec!["split".into()],
             chats: vec!["Kickoff notes".into()],
             replies: 0,
         }
@@ -6165,6 +6242,111 @@ devices:
         let err = chain_window(&only_c, &members, &probe).await.unwrap_err();
         assert!(err.contains("c: not loaded"), "{err}");
         assert!(err.starts_with("no node of the strategy"), "{err}");
+    }
+
+    /// Q-463, the 3.0.74 log: `strategy:new-strategy` = [the Studio's MLX node, a cloud node],
+    /// and every turn warned `context_window_unknown` — "qwen3-8-27b-…-work-s-mac-studio: not
+    /// loaded; deepseek-v4-1-flash-openrouter: it does not report its context window" — because
+    /// the check ran while the split held the Mac, though the Studio had served the chat at
+    /// 262,144. The window is the node that serves the session's chat; unknown only when nothing
+    /// has measured it.
+    #[tokio::test]
+    async fn a_strategy_chats_window_is_its_served_nodes_and_unknown_only_when_unmeasured() {
+        let plan = chain(role(
+            &[("studio", 1), ("cloud", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::Load,
+        ));
+        let map = members(vec![
+            ("studio", Ok(member("studio"))),
+            ("cloud", Ok(member("cloud"))),
+        ]);
+        let probe = FakeProbe(HashMap::from([
+            ("studio".to_string(), window(262_144)),
+            ("cloud".to_string(), Ok(Servable::default())),
+        ]));
+        let router = Router::new();
+        let seam = RecordingSeam::default();
+        let members = FakeMembers(map.clone());
+        let stream = chain_turn(&router, &plan, &members, &probe, &AllAnswer, &seam, "hi")
+            .await
+            .unwrap();
+        drop(stream);
+        assert_eq!(seam.last().node, "studio");
+
+        // The split takes the Mac: the Studio's way is not loaded until the chat's next turn
+        // loads it again.
+        map.lock()
+            .unwrap()
+            .insert("studio".to_string(), Err(EntryFact::NotLoaded));
+        assert_eq!(
+            route_window(&router, &plan, Some(SESSION), &members, &probe).await,
+            Ok(262_144)
+        );
+
+        // A session no node has served yet: nothing that reports can say — the warning's case.
+        let err = route_window(&router, &plan, Some("20260929_3"), &members, &probe)
+            .await
+            .unwrap_err();
+        assert!(err.contains("studio: not loaded"), "{err}");
+        assert!(
+            err.contains("cloud: it does not report its context window"),
+            "{err}"
+        );
+        assert!(route_window(&router, &plan, None, &members, &probe)
+            .await
+            .is_err());
+
+        // Served on the cloud node, which never said its window: still unknown, never the
+        // Studio's number from another session.
+        router.note_served_window("20260929_3", "cloud", None);
+        assert!(
+            route_window(&router, &plan, Some("20260929_3"), &members, &probe)
+                .await
+                .is_err()
+        );
+
+        // A delegate's `@build` chain reads its own session the same way.
+        let mut build = chain(role(
+            &[("studio", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::Load,
+        ));
+        build.role = Some(NodeRole::Build);
+        build.share_key = "strategy:test@build".to_string();
+        router.note_served_window("20260929_4", "studio", Some(262_144));
+        assert_eq!(
+            route_window(&router, &build, Some("20260929_4"), &members, &probe).await,
+            Ok(262_144)
+        );
+        // A served node this chain does not carry says nothing about it.
+        assert!(
+            route_window(&router, &build, Some("20260929_3"), &members, &probe)
+                .await
+                .is_err()
+        );
+
+        // While the served node is loaded, its window is read now, not remembered.
+        map.lock()
+            .unwrap()
+            .insert("studio".to_string(), Ok(member("studio")));
+        let remounted = FakeProbe(HashMap::from([("studio".to_string(), window(131_072))]));
+        assert_eq!(
+            route_window(&router, &plan, Some(SESSION), &members, &remounted).await,
+            Ok(131_072)
+        );
+    }
+
+    #[test]
+    fn a_cloud_nodes_window_is_its_catalogs_or_none() {
+        assert_eq!(
+            cloud_catalog_window("openrouter", "deepseek/deepseek-v4-flash"),
+            Some(1_048_576)
+        );
+        assert_eq!(
+            cloud_catalog_window("openrouter", "no-such-vendor/no-such-model"),
+            None
+        );
     }
 
     #[test]

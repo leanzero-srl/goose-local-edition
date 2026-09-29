@@ -64,7 +64,6 @@ import {
   mlxEngineMount,
   mlxEngineSettingsRead,
   mlxEngineSettingsUpdate,
-  mlxEngineStatus,
   mlxEngineUnmount,
   MlxMountRefusedError,
   type MlxBrowseFilters,
@@ -133,6 +132,7 @@ import {
   type MlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
+import { refreshLocalEngineStatus, useLocalEngineStatus } from './useMlxEngineStatus';
 import { PeerHeldLine } from './PeerHeldLine';
 import { StrayListenerBanner, unmountReclaims } from './StrayListenerBanner';
 import { dropRoute } from './routeSwitch';
@@ -2645,52 +2645,40 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
     }
   }, []);
 
-  const refreshStatus = useCallback(async () => {
-    let next: MlxEngineStatus;
-    try {
-      next = await mlxEngineStatus(undefined, mountModelId);
-      setStatus(next);
-      setStatusError(null);
-    } catch (error) {
-      setStatusError(mlxErrorMessage(error, 'Could not read the engine status.'));
+  // THIS Mac's status comes from the window's one engine-status store (Q-208): the Engine tab asks
+  // for the 2-second cadence and its picker's fit, and every other surface reads the same answer.
+  // A failed read keeps the tile's last status and says why beside it, as this view always did.
+  const statusRead = useLocalEngineStatus({
+    intervalMs: MLX_STATUS_POLL_MS,
+    fitModelId: mountModelId,
+  });
+  const onStatusRead = useCallback(
+    async (next: MlxEngineStatus) => {
+      if (next.state === 'mounting' && next.modelId) {
+        const modelId = next.modelId;
+        const baseline = settledFreeGb.current;
+        setMountWatch((w) => advanceMountWatch(w, modelId, next.availableMemoryGb, baseline));
+      } else {
+        settledFreeGb.current = next.availableMemoryGb;
+        setMountWatch(null);
+      }
+      await refreshLive(next);
+    },
+    [refreshLive]
+  );
+  useEffect(() => {
+    if (!statusRead || statusRead.reads === 0) return;
+    if (statusRead.failed) {
+      setStatusError(mlxErrorMessage(statusRead.error, 'Could not read the engine status.'));
       return;
     }
-    if (next.state === 'mounting' && next.modelId) {
-      const modelId = next.modelId;
-      const baseline = settledFreeGb.current;
-      setMountWatch((w) => advanceMountWatch(w, modelId, next.availableMemoryGb, baseline));
-    } else {
-      settledFreeGb.current = next.availableMemoryGb;
-      setMountWatch(null);
-    }
-    await refreshLive(next);
-  }, [refreshLive, mountModelId]);
-
-  // Poll status every 2s while this window is actually visible; stop when hidden.
-  useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      if (timer != null) return;
-      void refreshStatus();
-      timer = setInterval(() => void refreshStatus(), MLX_STATUS_POLL_MS);
-    };
-    const stop = () => {
-      if (timer != null) {
-        clearInterval(timer);
-        timer = null;
-      }
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') start();
-      else stop();
-    };
-    onVisibility();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      stop();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [refreshStatus]);
+    const next = statusRead.value;
+    if (!next) return;
+    setStatus(next);
+    setStatusError(null);
+    void onStatusRead(next);
+  }, [statusRead, onStatusRead]);
+  const refreshStatus = useCallback(() => refreshLocalEngineStatus(), []);
 
   // Filter vocabularies load once per view-open (cached backend-side), on the first visit to the
   // Models tab; a failure leaves free text working and says so.

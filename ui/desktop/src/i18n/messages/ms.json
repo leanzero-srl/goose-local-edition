@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Mesej yang dihantar sekarang pergi ke {node} — ia tidak menunggu jawapan itu."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Mesej yang dihantar sekarang pergi ke {node} — {passed} tidak dimuatkan, jadi tiada apa yang digunakan oleh jawapan itu dihentikan."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Mesej yang dihantar sekarang menunggu jawapan itu selesai, kemudian memuatkan {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Mesej yang dihantar sekarang menunggu sehingga enjin ada ruang untuknya."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Mesej yang dihantar sekarang menunggu sehingga sembang itu ditutup atau beralih ke nod lain, kemudian memuatkan {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Mesej yang dihantar sekarang didahulukan: goose mengetepikan semakan ini dan menjalankannya semula selepas itu."
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "tidak diukur"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "menjawab"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "Berjalan dalam tetingkap lain"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "Dimulakan oleh goose lain"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "tidak menjawab"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "Baca sahaja di sini: Mula dan Henti milik tetingkap yang memulakannya (pid goosed {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "Baca sahaja di sini: goose pid {pid} menjalankannya — goose serve dalam terminal, atau apl goose lain. Mula dan hentikannya di sana."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{model} pada {nodes} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "Tetapan enjin tidak dapat dibaca."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "Sedia · dimiliki tetingkap lain"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "Sedia · dimulakan oleh goose lain"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "Tidak menjawab · dimiliki tetingkap lain"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "Tidak menjawab · dimulakan oleh goose lain"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "Butiran"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} di {where}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{phase} di {where} · dijalankan oleh tetingkap lain"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{phase} di {where} · dijalankan oleh goose lain"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

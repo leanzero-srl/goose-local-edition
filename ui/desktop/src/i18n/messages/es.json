@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Un mensaje enviado ahora va a {node}: no espera a esa respuesta."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Un mensaje enviado ahora va a {node}: {passed} no está cargado, así que no se detiene nada de lo que usa esa respuesta."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Un mensaje enviado ahora espera a que termine esa respuesta y luego carga {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Un mensaje enviado ahora espera hasta que el motor tenga espacio para él."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Un mensaje enviado ahora espera hasta que ese chat se cierre o pase a otro nodo, y luego carga {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Un mensaje enviado ahora va primero: goose aparta esta comprobación y la vuelve a ejecutar después."
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "sin medir"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "responde"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "En ejecución en otra ventana"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "Iniciado por otro goose"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "no responde"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "Solo lectura aquí: Iniciar y Detener pertenecen a la ventana que lo inició (PID de goosed {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "Solo lectura aquí: lo ejecuta el goose con pid {pid} — un goose serve en una terminal u otra app de goose. Inícialo y detenlo allí."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{model} en {nodes} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "No se pudo leer la configuración del motor."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "Listo · pertenece a otra ventana"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "Listo · iniciado por otro goose"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "No responde · pertenece a otra ventana"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "No responde · iniciado por otro goose"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "Detalles"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} en {where}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{phase} en {where} · lo ejecuta otra ventana"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{phase} en {where} · lo ejecuta otro goose"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

@@ -72,7 +72,7 @@ export function ExtensionMenu({
     >
       <DropdownMenuTrigger asChild>
         <button
-          className={`flex items-center [&_svg]:size-4 text-text-primary/70 hover:text-text-primary hover:scale-100 hover:bg-transparent text-xs cursor-pointer ${hidden ? 'invisible' : ''}`}
+          className={`flex items-center [&_svg]:size-4 text-text-secondary hover:text-text-primary hover:scale-100 hover:bg-transparent text-xs cursor-pointer ${hidden ? 'invisible' : ''}`}
           title={title}
         >
           <Puzzle className="mr-1 h-4 w-4" />
@@ -96,15 +96,15 @@ export function ExtensionMenu({
             className="h-8 text-sm"
             autoFocus
           />
-          <p className="text-xs text-text-primary/60 mt-1.5">{description}</p>
+          <p className="text-xs text-text-secondary mt-1.5">{description}</p>
         </div>
         <div
           className={`max-h-[400px] overflow-y-auto transition-opacity duration-300 ${
-            isTransitioning && isSortPending ? 'opacity-50' : 'opacity-100'
+            isTransitioning && isSortPending ? 'cursor-wait' : ''
           }`}
         >
           {sortedExtensions.length === 0 ? (
-            <div className="px-2 py-4 text-center text-sm text-text-primary/70">
+            <div className="px-2 py-4 text-center text-sm text-text-secondary">
               {searchQuery ? noResultsMessage : emptyMessage}
             </div>
           ) : (
@@ -114,7 +114,7 @@ export function ExtensionMenu({
                 <div
                   key={extension.name}
                   className={`flex items-center justify-between px-2 py-2 transition-all duration-300 ${
-                    isToggling ? 'cursor-wait opacity-70' : 'cursor-pointer'
+                    isToggling ? 'cursor-wait bg-background-secondary' : 'cursor-pointer'
                   }`}
                   onClick={() => !isToggling && onToggle(extension)}
                   title={extension.description || extension.name}

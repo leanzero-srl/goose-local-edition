@@ -12,37 +12,70 @@ import { defineMessages, useIntl } from '../../i18n';
 
 const i18n = defineMessages({
   editSchedule: { id: 'scheduleModal.editSchedule', defaultMessage: 'Edit Schedule' },
-  createNewSchedule: { id: 'scheduleModal.createNewSchedule', defaultMessage: 'Create New Schedule' },
+  createNewSchedule: {
+    id: 'scheduleModal.createNewSchedule',
+    defaultMessage: 'Create New Schedule',
+  },
   nameLabel: { id: 'scheduleModal.nameLabel', defaultMessage: 'Name:' },
-  namePlaceholder: { id: 'scheduleModal.namePlaceholder', defaultMessage: 'e.g., daily-summary-job' },
+  namePlaceholder: {
+    id: 'scheduleModal.namePlaceholder',
+    defaultMessage: 'e.g., daily-summary-job',
+  },
   sourceLabel: { id: 'scheduleModal.sourceLabel', defaultMessage: 'Source:' },
   yaml: { id: 'scheduleModal.yaml', defaultMessage: 'YAML' },
   deepLink: { id: 'scheduleModal.deepLink', defaultMessage: 'Deep link' },
   browseYaml: { id: 'scheduleModal.browseYaml', defaultMessage: 'Browse for YAML file...' },
   selected: { id: 'scheduleModal.selected', defaultMessage: 'Selected: {path}' },
-  deepLinkPlaceholder: { id: 'scheduleModal.deepLinkPlaceholder', defaultMessage: 'Paste goose://recipe link here...' },
+  deepLinkPlaceholder: {
+    id: 'scheduleModal.deepLinkPlaceholder',
+    defaultMessage: 'Paste goose://recipe link here...',
+  },
   recipeParsed: { id: 'scheduleModal.recipeParsed', defaultMessage: 'Recipe parsed successfully' },
   recipeTitle: { id: 'scheduleModal.recipeTitle', defaultMessage: 'Title: {title}' },
-  recipeDescription: { id: 'scheduleModal.recipeDescription', defaultMessage: 'Description: {description}' },
+  recipeDescription: {
+    id: 'scheduleModal.recipeDescription',
+    defaultMessage: 'Description: {description}',
+  },
   scheduleLabel: { id: 'scheduleModal.scheduleLabel', defaultMessage: 'Schedule:' },
   cancel: { id: 'scheduleModal.cancel', defaultMessage: 'Cancel' },
   updating: { id: 'scheduleModal.updating', defaultMessage: 'Updating...' },
   creating: { id: 'scheduleModal.creating', defaultMessage: 'Creating...' },
   updateSchedule: { id: 'scheduleModal.updateSchedule', defaultMessage: 'Update Schedule' },
   createSchedule: { id: 'scheduleModal.createSchedule', defaultMessage: 'Create Schedule' },
-  invalidDeepLink: { id: 'scheduleModal.invalidDeepLink', defaultMessage: 'Invalid deep link. Please use a goose://recipe link.' },
-  failedReadFile: { id: 'scheduleModal.failedReadFile', defaultMessage: 'Failed to read the selected file.' },
-  failedParseRecipe: { id: 'scheduleModal.failedParseRecipe', defaultMessage: 'Failed to parse recipe from file.' },
-  invalidFileType: { id: 'scheduleModal.invalidFileType', defaultMessage: 'Invalid file type: Please select a YAML file (.yaml or .yml)' },
-  scheduleIdRequired: { id: 'scheduleModal.scheduleIdRequired', defaultMessage: 'Schedule ID is required.' },
-  provideValidRecipe: { id: 'scheduleModal.provideValidRecipe', defaultMessage: 'Please provide a valid recipe source.' },
+  invalidDeepLink: {
+    id: 'scheduleModal.invalidDeepLink',
+    defaultMessage: 'Invalid deep link. Please use a goose://recipe link.',
+  },
+  failedReadFile: {
+    id: 'scheduleModal.failedReadFile',
+    defaultMessage: 'Failed to read the selected file.',
+  },
+  failedParseRecipe: {
+    id: 'scheduleModal.failedParseRecipe',
+    defaultMessage: 'Failed to parse recipe from file.',
+  },
+  invalidFileType: {
+    id: 'scheduleModal.invalidFileType',
+    defaultMessage: 'Invalid file type: Please select a YAML file (.yaml or .yml)',
+  },
+  scheduleIdRequired: {
+    id: 'scheduleModal.scheduleIdRequired',
+    defaultMessage: 'Schedule ID is required.',
+  },
+  provideValidRecipe: {
+    id: 'scheduleModal.provideValidRecipe',
+    defaultMessage: 'Please provide a valid recipe source.',
+  },
   folderLabel: { id: 'scheduleModal.folderLabel', defaultMessage: 'Runs in folder:' },
   chooseFolder: { id: 'scheduleModal.chooseFolder', defaultMessage: 'Choose folder...' },
   noFolder: {
     id: 'scheduleModal.noFolder',
     defaultMessage: 'No folder yet. This schedule does not run until you choose one.',
   },
-  folderRequired: { id: 'scheduleModal.folderRequired', defaultMessage: 'Choose the folder this schedule runs in.' },
+  folderRequired: {
+    id: 'scheduleModal.folderRequired',
+    defaultMessage: 'Choose the folder this schedule runs in.',
+  },
 });
 
 // Q-282: every schedule runs in a folder its owner chose — this window's by default. goose serves
@@ -103,26 +136,29 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
     setScheduleId(cleanId);
   };
 
-  const handleDeepLinkChange = useCallback(async (value: string) => {
-    setDeepLinkInput(value);
-    setInternalValidationError(null);
+  const handleDeepLinkChange = useCallback(
+    async (value: string) => {
+      setDeepLinkInput(value);
+      setInternalValidationError(null);
 
-    if (value.trim()) {
-      try {
-        const recipe = await parseDeeplink(value.trim());
-        if (!recipe) throw new Error();
-        setParsedRecipe(recipe);
-        if (recipe.title) {
-          setScheduleIdFromTitle(recipe.title);
+      if (value.trim()) {
+        try {
+          const recipe = await parseDeeplink(value.trim());
+          if (!recipe) throw new Error();
+          setParsedRecipe(recipe);
+          if (recipe.title) {
+            setScheduleIdFromTitle(recipe.title);
+          }
+        } catch {
+          setParsedRecipe(null);
+          setInternalValidationError(intl.formatMessage(i18n.invalidDeepLink));
         }
-      } catch {
+      } else {
         setParsedRecipe(null);
-        setInternalValidationError(intl.formatMessage(i18n.invalidDeepLink));
       }
-    } else {
-      setParsedRecipe(null);
-    }
-  }, [intl]);
+    },
+    [intl]
+  );
 
   useEffect(() => {
     if (isOpen) {
@@ -232,7 +268,9 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
             <img src={ClockIcon} alt="Clock" className="w-8 h-8" />
             <div className="flex-1">
               <h2 className="text-base font-semibold text-text-primary">
-                {isEditMode ? intl.formatMessage(i18n.editSchedule) : intl.formatMessage(i18n.createNewSchedule)}
+                {isEditMode
+                  ? intl.formatMessage(i18n.editSchedule)
+                  : intl.formatMessage(i18n.createNewSchedule)}
               </h2>
               {isEditMode && <p className="text-sm text-text-secondary">{schedule.id}</p>}
             </div>
@@ -273,7 +311,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
 
               <div>
                 <label className={modalLabelClassName}>
-                    {intl.formatMessage(i18n.sourceLabel)} <span className="text-red-500">*</span>
+                  {intl.formatMessage(i18n.sourceLabel)} <span className="text-red-500">*</span>
                 </label>
                 <div className="space-y-2">
                   <div className="flex bg-gray-100 dark:bg-gray-700 rounded-full p-1">
@@ -329,15 +367,17 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                         className="rounded-full"
                       />
                       {parsedRecipe && (
-                        <div className="mt-2 p-2 bg-green-100 dark:bg-green-900/30 rounded-md border border-green-500/50">
-                          <p className="text-xs text-green-700 dark:text-green-300 font-medium">
+                        <div className="mt-2 p-2 bg-lz-ok-solid rounded-md">
+                          <p className="text-xs text-white font-medium">
                             ✓ {intl.formatMessage(i18n.recipeParsed)}
                           </p>
                           <p className="text-xs text-green-600 dark:text-green-400">
                             {intl.formatMessage(i18n.recipeTitle, { title: parsedRecipe.title })}
                           </p>
                           <p className="text-xs text-green-600 dark:text-green-400">
-                            {intl.formatMessage(i18n.recipeDescription, { description: parsedRecipe.description })}
+                            {intl.formatMessage(i18n.recipeDescription, {
+                              description: parsedRecipe.description,
+                            })}
                           </p>
                         </div>
                       )}

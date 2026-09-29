@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Pesan yang dikirim sekarang pergi ke {node} — tidak menunggu jawaban itu."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Pesan yang dikirim sekarang masuk ke {node} — {passed} tidak dimuat, jadi tidak ada yang dipakai jawaban itu yang dihentikan."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Pesan yang dikirim sekarang menunggu jawaban itu selesai, lalu memuat {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Pesan yang dikirim sekarang menunggu sampai mesin punya ruang untuknya."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Pesan yang dikirim sekarang menunggu sampai obrolan itu ditutup atau pindah ke node lain, lalu memuat {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Pesan yang dikirim sekarang didahulukan: goose menyisihkan pemeriksaan ini dan menjalankannya lagi setelahnya."
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "tidak terukur"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "menjawab"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "Berjalan di jendela lain"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "Dimulai oleh goose lain"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "tidak menjawab"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "Hanya-baca di sini: Mulai dan Hentikan milik jendela yang memulainya (pid goosed {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "Hanya-baca di sini: goose pid {pid} menjalankannya — goose serve di terminal, atau aplikasi goose lain. Mulai dan hentikan di sana."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{model} di {nodes} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "Pengaturan mesin tidak dapat dibaca."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "Siap · dimiliki jendela lain"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "Siap · dimulai oleh goose lain"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "Tidak menjawab · dimiliki jendela lain"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "Tidak menjawab · dimulai oleh goose lain"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "Detail"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} di {where}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{phase} di {where} · dijalankan oleh jendela lain"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{phase} di {where} · dijalankan oleh goose lain"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

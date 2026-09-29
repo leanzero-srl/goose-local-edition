@@ -511,7 +511,10 @@ fn swarm_rs_line_count_only_decreases() {
     // lane rows' `lookups` stamp and the grounded-research filing at the splice point.
     // Tightened to 33,586 (Q-211): `tool_result_text` moved to commands/swarm/tool_output.rs with
     // its byte-identity test, now reading the model-visible text of a tool result.
-    const SWARM_RS_LINE_BASELINE: usize = 33_586;
+    // Tightened to 33,439 (Q-207): the config load/save cluster (merge_json, CONFIG_PARSE_ERROR,
+    // load_config, merge_config_over_defaults, save_config + the two merge tests) moved to
+    // commands/swarm/config_store.rs, where the save now keeps every field it does not own.
+    const SWARM_RS_LINE_BASELINE: usize = 33_439;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

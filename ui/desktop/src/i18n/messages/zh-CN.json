@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "现在发送的消息会发往 {node}——不等待那个回答。"
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "现在发送的消息会发往 {node} — {passed} 未加载，因此那个回答所用的一切都不会被停止。"
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "现在发送的消息会等那个回答结束，然后加载 {node}。"
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "现在发送的消息会等待，直到引擎有空间处理它。"
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "现在发送的消息会等到该对话关闭或切换到其他节点后，再加载 {node}。"
   },
   "busyIn.sendYields": {
     "defaultMessage": "现在发送的消息优先：goose 会暂时搁置这次检查，之后再重新运行。"
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "未测量"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "有响应"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "正在另一个窗口中运行"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "由另一个 goose 启动"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "无响应"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "此处只读：启动和停止由启动它的窗口负责（goosed pid {pid}）。"
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "此处只读：goose pid {pid} 正在运行它 — 终端里的 goose serve，或另一个 goose 应用。请在那里启动和停止。"
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{model}，位于 {nodes} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "无法读取引擎设置。"
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "就绪 · 由另一个窗口拥有"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "就绪 · 由另一个 goose 启动"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "无响应 · 由另一个窗口拥有"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "无响应 · 由另一个 goose 启动"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "详情"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "在 {where} 上{phase}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "在 {where} 上{phase} · 由另一个窗口运行"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "在 {where} 上{phase} · 由另一个 goose 运行"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

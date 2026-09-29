@@ -93,13 +93,13 @@ impl DistributedNode for GoosedDistributedNode {
         match op {
             LinkOp::Discover => discover_here(request).await,
             LinkOp::RankStart => {
-                // Another window's goosed on this Mac runs a distributed engine (the sidecar's own
+                // Another goose process on this Mac runs a distributed engine (the sidecar's own
                 // check sees only this process's run).
                 if let OwnerRecord::Other(engine) = owner_record::read() {
                     return Err(DistributedNodeError::Refused {
                         code: "distributedEngineActive".to_string(),
                         message: format!(
-                            "another goose window on this Mac (goosed pid {}) runs a distributed \
+                            "another goose on this Mac (pid {}) runs a distributed \
                              engine ('{}' at {}); one engine owns a Mac at a time",
                             engine.pid, engine.served_model_id, engine.base_url
                         ),
@@ -384,7 +384,7 @@ fn record_refusal(path: &std::path::Path) -> Option<String> {
     match serde_json::from_slice::<HostingRecord>(&bytes) {
         Ok(record) if record.pid == std::process::id() => None,
         Ok(record) if pid_alive(record.pid) => Some(format!(
-            "hostingRank: another goose window on this Mac (goosed pid {}) serves rank {} of {}'s \
+            "hostingRank: another goose on this Mac (pid {}) serves rank {} of {}'s \
              distributed engine ('{}'); one engine owns a Mac at a time",
             record.pid, record.rank, record.requester, record.model_id
         )),
@@ -703,6 +703,6 @@ mod tests {
             "a supervised rank is left alone"
         );
         let refusal = record_refusal(&path).unwrap();
-        assert!(refusal.contains("another goose window"), "{refusal}");
+        assert!(refusal.contains("another goose on this Mac"), "{refusal}");
     }
 }

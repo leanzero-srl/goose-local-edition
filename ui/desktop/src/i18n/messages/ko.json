@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "지금 보내는 메시지는 {node}(으)로 갑니다 — 그 답변을 기다리지 않습니다."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "지금 보낸 메시지는 {node}(으)로 갑니다 — {passed}이(가) 로드되지 않았으므로 그 답변이 사용하는 것은 아무것도 중지되지 않습니다."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "지금 보내는 메시지는 그 답변이 끝나기를 기다린 뒤 {node}을(를) 로드합니다."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "지금 보낸 메시지는 엔진에 여유가 생길 때까지 기다립니다."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "지금 보낸 메시지는 그 채팅이 닫히거나 다른 노드로 옮길 때까지 기다린 다음 {node}을(를) 불러옵니다."
   },
   "busyIn.sendYields": {
     "defaultMessage": "지금 보낸 메시지가 먼저 처리됩니다. goose는 이 확인을 잠시 미뤘다가 나중에 다시 실행합니다."
@@ -4691,19 +4697,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "측정 안 됨"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "응답 중"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "다른 창에서 실행 중"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "다른 goose가 시작함"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "응답 없음"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "여기서는 읽기 전용: 시작과 중지는 이를 시작한 창에서 합니다(goosed pid {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "여기서는 읽기 전용: goose pid {pid}이(가) 실행 중입니다 — 터미널의 goose serve 또는 다른 goose 앱입니다. 시작과 중지는 그곳에서 하세요."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{nodes}의 {model} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5363,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "엔진 설정을 읽지 못했습니다."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "준비됨 · 다른 창이 소유"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "준비됨 · 다른 goose가 시작함"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "응답 없음 · 다른 창이 소유"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "응답 없음 · 다른 goose가 시작함"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "세부 정보"
@@ -6284,8 +6290,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{where}에서 {phase}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{where}에서 {phase} · 다른 창에서 실행 중"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{where}에서 {phase} · 다른 goose에서 실행 중"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

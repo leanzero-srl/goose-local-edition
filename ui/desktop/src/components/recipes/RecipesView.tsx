@@ -810,7 +810,7 @@ export default function RecipesView() {
             }}
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+            className="h-8 w-8 p-0 text-lz-err hover:bg-lz-err-solid hover:text-white"
             title={intl.formatMessage(i18n.deleteRecipe)}
           >
             <Trash2 className="w-4 h-4" />

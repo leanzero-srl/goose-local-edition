@@ -45,7 +45,8 @@ const i18n = defineMessages({
   },
   activeProviderWarning: {
     id: 'authSettings.activeProviderWarning',
-    defaultMessage: 'This is the active provider. New requests may fail until you configure another credential.',
+    defaultMessage:
+      'This is the active provider. New requests may fail until you configure another credential.',
   },
   delete: {
     id: 'authSettings.delete',
@@ -118,9 +119,9 @@ function expiryLabel(secret: ProviderSecretDto, intl: ReturnType<typeof useIntl>
 
 function expiryClass(secret: ProviderSecretDto) {
   if (secret.status === 'expired') {
-    return 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300';
+    return 'border-transparent bg-lz-err-solid text-white';
   }
-  return 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300';
+  return 'border-transparent bg-lz-ok-solid text-white';
 }
 
 export default function AuthSettingsSection() {

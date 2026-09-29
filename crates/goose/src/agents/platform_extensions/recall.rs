@@ -1181,6 +1181,7 @@ impl McpClientTrait for RecallClient {
                         crate::context_mgmt::effective_context_limit(
                             provider.as_ref(),
                             &model_config,
+                            Some(session_id),
                         )
                         .await
                     }
