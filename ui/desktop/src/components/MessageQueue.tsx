@@ -337,8 +337,8 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
         {/* Paused state indicator */}
         {isPaused && (
-          <div className="px-4 py-1.5 bg-amber-50/60 dark:bg-amber-900/20 border-b border-amber-200/30 dark:border-amber-800/30">
-            <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+          <div className={cx('px-4 py-1.5', TONE_FILL.warn)}>
+            <div className="flex items-center gap-2 text-xs font-medium">
               <Zap className="w-3 h-3" />
               <span>{intl.formatMessage(i18n.queuePausedCompact)}</span>
             </div>
@@ -412,8 +412,8 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
       {/* Status Banner for Paused State */}
       {isPaused && (
-        <div className="px-4 py-2 bg-amber-50/80 dark:bg-amber-900/20 border-b border-amber-200/50 dark:border-amber-800/50">
-          <div className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-200">
+        <div className={cx('px-4 py-2', TONE_FILL.warn)}>
+          <div className="flex items-center gap-2 text-sm font-medium">
             <Zap className="w-4 h-4" />
             <span>{intl.formatMessage(i18n.queuePausedExpanded)}</span>
           </div>
@@ -484,7 +484,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                         value={editContent}
                         onChange={(e) => setEditContent(e.target.value)}
                         disabled={isSending}
-                        className="w-full text-sm bg-background-primary border border-border-primary rounded-md px-2 py-1 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                        className="w-full text-sm bg-background-primary border border-border-primary rounded-md px-2 py-1 resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring"
                         rows={Math.min(Math.ceil(editContent.length / 60), 4)}
                         autoFocus
                       />
@@ -605,7 +605,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
               {/* Drop indicator with enhanced visuals */}
               {dragOverItem === message.id && draggedItem !== message.id && (
-                <div className="absolute inset-0 border-2 border-green-400 rounded-xl pointer-events-none animate-pulse bg-green-100/20 dark:bg-green-900/20" />
+                <div className="absolute inset-0 border-2 border-lz-ok rounded-xl pointer-events-none" />
               )}
 
               {/* Next up indicator */}

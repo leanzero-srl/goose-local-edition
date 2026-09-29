@@ -10,8 +10,8 @@ import { LAYER } from '../lz/tokens';
  * panel is announced as a modal dialog. Q-21: the Report a problem and Set up overlays were
  * hand-rolled fixed divs — Escape did nothing and focus walked out behind them.
  *
- * `panelClassName` is the panel's own look (size, surface); it is centred over a `bg-black/50`
- * backdrop. Put the heading in `OverlayDialogTitle` so the dialog is named by it.
+ * `panelClassName` is the panel's own look (size, surface); it is centred over the dialog
+ * primitive's black backdrop (DialogOverlay). Put the heading in `OverlayDialogTitle` so the dialog is named by it.
  */
 export function OverlayDialog({
   open,

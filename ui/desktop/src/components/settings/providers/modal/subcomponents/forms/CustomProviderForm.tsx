@@ -706,7 +706,9 @@ export default function CustomProviderForm({
             onChange={(e) => setBasePath(e.target.value)}
             placeholder={intl.formatMessage(i18n.apiBasePathPlaceholder)}
           />
-          <p className="text-xs text-text-secondary mt-1">{intl.formatMessage(i18n.apiBasePathHint)}</p>
+          <p className="text-xs text-text-secondary mt-1">
+            {intl.formatMessage(i18n.apiBasePathHint)}
+          </p>
         </div>
       )}
 
@@ -794,17 +796,17 @@ export default function CustomProviderForm({
           {selectedTemplate && templateModelCapabilities && (
             <div className="flex gap-2 mt-2">
               {templateModelCapabilities.tool_call && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-lz-accent text-lz-accent-ink">
                   {intl.formatMessage(i18n.toolCalling)}
                 </span>
               )}
               {templateModelCapabilities.reasoning && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-lz-secondary text-lz-secondary-ink">
                   {intl.formatMessage(i18n.reasoning)}
                 </span>
               )}
               {templateModelCapabilities.attachment && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-lz-ok-solid text-white">
                   {intl.formatMessage(i18n.attachments)}
                 </span>
               )}
@@ -912,15 +914,17 @@ export default function CustomProviderForm({
       {showDeleteConfirmation ? (
         <div className="pt-4 space-y-3">
           {isActiveProvider ? (
-            <div className="px-4 py-3 bg-yellow-600/20 border border-yellow-500/30 rounded">
-              <p className="text-yellow-500 text-sm flex items-start">
+            <div className="px-4 py-3 bg-lz-warn-solid rounded">
+              <p className="text-white font-medium text-sm flex items-start">
                 <AlertTriangle className="h-4 w-4 mr-2 mt-0.5 flex-shrink-0" />
                 <span>{intl.formatMessage(i18n.cannotDeleteActive)}</span>
               </p>
             </div>
           ) : (
-            <div className="px-4 py-3 bg-red-900/20 border border-red-500/30 rounded">
-              <p className="text-red-400 text-sm">{intl.formatMessage(i18n.deleteConfirmation)}</p>
+            <div className="px-4 py-3 bg-lz-err-solid rounded">
+              <p className="text-white font-medium text-sm">
+                {intl.formatMessage(i18n.deleteConfirmation)}
+              </p>
             </div>
           )}
           <div className="flex justify-end space-x-2">

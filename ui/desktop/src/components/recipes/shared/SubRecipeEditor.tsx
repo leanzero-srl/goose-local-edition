@@ -22,7 +22,8 @@ const i18n = defineMessages({
   },
   description: {
     id: 'subRecipeEditor.description',
-    defaultMessage: 'Subrecipes are recipes that can be called as tools during execution. They enable multi-step workflows and reusable components.',
+    defaultMessage:
+      'Subrecipes are recipes that can be called as tools during execution. They enable multi-step workflows and reusable components.',
   },
   sequential: {
     id: 'subRecipeEditor.sequential',
@@ -118,7 +119,9 @@ export default function SubRecipeEditor({ subRecipes, onChange }: SubRecipeEdito
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <label className="block text-base text-text-primary font-bold">{intl.formatMessage(i18n.label)}</label>
+        <label className="block text-base text-text-primary font-bold">
+          {intl.formatMessage(i18n.label)}
+        </label>
         <div className="flex gap-2">
           <Button
             type="button"
@@ -143,9 +146,7 @@ export default function SubRecipeEditor({ subRecipes, onChange }: SubRecipeEdito
         </div>
       </div>
 
-      <p className="text-text-secondary text-sm mb-4">
-        {intl.formatMessage(i18n.description)}
-      </p>
+      <p className="text-text-secondary text-sm mb-4">{intl.formatMessage(i18n.description)}</p>
 
       {subRecipes.length > 0 && (
         <div className="space-y-2">
@@ -159,7 +160,7 @@ export default function SubRecipeEditor({ subRecipes, onChange }: SubRecipeEdito
                   <div className="flex items-center gap-2 mb-1">
                     <h4 className="text-sm font-semibold text-text-primary">{subRecipe.name}</h4>
                     {subRecipe.sequential_when_repeated && (
-                      <span className="text-xs px-2 py-0.5 bg-background-info/10 text-text-info rounded">
+                      <span className="text-xs font-medium px-2 py-0.5 bg-lz-accent text-lz-accent-ink rounded">
                         {intl.formatMessage(i18n.sequential)}
                       </span>
                     )}
@@ -170,7 +171,9 @@ export default function SubRecipeEditor({ subRecipes, onChange }: SubRecipeEdito
                   )}
                   {subRecipe.values && Object.keys(subRecipe.values).length > 0 && (
                     <div className="mt-2">
-                      <p className="text-xs text-text-secondary mb-1">{intl.formatMessage(i18n.preconfiguredValues)}</p>
+                      <p className="text-xs text-text-secondary mb-1">
+                        {intl.formatMessage(i18n.preconfiguredValues)}
+                      </p>
                       <div className="flex flex-wrap gap-1">
                         {Object.entries(subRecipe.values).map(([key, value]) => (
                           <span
@@ -203,7 +206,7 @@ export default function SubRecipeEditor({ subRecipes, onChange }: SubRecipeEdito
                     onClick={() => handleDeleteSubRecipe(index)}
                     variant="ghost"
                     size="sm"
-                    className="p-2 hover:bg-background-danger/10 hover:text-text-danger"
+                    className="p-2 hover:bg-lz-err-solid hover:text-white"
                     aria-label={intl.formatMessage(i18n.deleteSubrecipe, { name: subRecipe.name })}
                     title={intl.formatMessage(i18n.deleteSubrecipe, { name: subRecipe.name })}
                   >

@@ -107,10 +107,10 @@ export function RecipeWarningModal({
 
           {hasSecurityWarnings && (
             <div className="px-6">
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+              <div className="border border-lz-warn rounded-lg p-4">
                 <div className="flex items-start">
                   <div className="ml-3">
-                    <div className="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
+                    <div className="mt-2 text-sm text-lz-ink">
                       <p>{intl.formatMessage(i18n.hiddenCharsWarning)}</p>
                     </div>
                   </div>
