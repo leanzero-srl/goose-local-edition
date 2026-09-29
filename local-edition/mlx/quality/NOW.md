@@ -20,7 +20,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   cards from yesterday's run. Answer them through the UI and prove the outcome (owner rule: nothing stays
   pending). Not done during #3x, because its turn would share the split with the run.
 
-## 3.0.79 — RELEASE BUILDING (~/goose-builds/release-3.0.79.log), main 97d1e6f54
+## 3.0.79 — DMG BUILT 15:3x (RELEASE-EXIT=0), main 97d1e6f54
 - Carries Q-483..486 (the sidebar), Q-487 (the question test), Q-488 (a Steer note to an idle chat), Q-489 (the
   need-you menu), Q-490 (a window close killed the app), Q-491 (a folder-only window), Q-492 (an in-word @
   swallowed Enter), Q-493 (a dead turn leaves a line), Q-494 (counts are not years), Q-496 (the chat follows the turn).
@@ -28,7 +28,10 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   - g079 Rust green; the one flake is Q-497.
   - g079b + g079d UI green (4603 passed).
   - g079c Rust green on the merged tree (lib 2190, cross_note, recall_wording, clippy).
-- Install when #3x ends (or is stopped), then prove live:
+- INSTALL PLAN: #3x is now measuring Q-498's cache thrash (turn 4 has run 2 h of 200k cold reads between the owner's
+  Jira chat and #3x; turn 1 was lost). jiradone.sh (scratchpad) fires when the owner's turn in 20260928_19 ends →
+  kill r1 (per pid) → install 3.0.79 on both Macs → split-start → E2E #3y with the same coffee brief (r1 proves
+  each send). Then prove live:
   - Q-490: closerepro2, clicking [data-testid=confirm-close-run-stop]; the app stays up;
   - Q-488: a Steer note to an idle chat is taken;
   - Q-492: an email at the end of a message sends;
@@ -40,6 +43,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 ## Agents (worktrees)
 - Q-495 4503c521a + Q-497 23c06bb8b LANDED on main 5262589e2 (gated in the worktree: turnWorking 42/42, the full
   vitest with 6 load timeouts green alone 168/168, acp_server_test 47/47). They ride in 3.0.80.
+- Q-499 (CI red: sidecar healthy() false right after a slow start): general-purpose agent, cutting.
 - Q-498 (SEVERE perf): two chats evict each other's split prompt cache, so each switch re-reads 200k cold (~11 min).
   mlx-backend, measure first: KV bytes per token vs real headroom (rank 0 peaks 46.6 of 128 GB).
 
@@ -68,7 +72,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-499.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-500.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
