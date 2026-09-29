@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use goose::agents::platform_extensions::recall::{
-    history_tool, recall_line_of, render, render_with, Extras, PastSession,
+    history_tool, recall_line_of, render, render_with, CorrectionNote, Extras, NoticedCorrection,
+    PastSession,
 };
 use goose::agents::{Agent, AgentConfig, ExtensionConfig, GoosePlatform};
 use goose::config::permission::PermissionManager;
@@ -84,7 +85,12 @@ fn the_recall_line_says_what_goose_used_in_plain_words() {
 
     let extras = Extras {
         autoloaded: Some(("jira-api".to_string(), "BODY".to_string())),
-        correction_of: Some("Deleted the tests".to_string()),
+        correction: Some(NoticedCorrection {
+            action: "Deleted the tests".to_string(),
+            note: CorrectionNote::Saved {
+                first_line: "Correction: That's not what I asked for.".to_string(),
+            },
+        }),
         answered: Some(("Which config?".to_string(), "prod".to_string())),
         history_tool: None,
     };

@@ -38,26 +38,99 @@ const RECALL_MAX_SKILLS: usize = 3;
 // on the 171-entry store, the slots below that line were filled by entries sharing six common words.
 const RECALL_MIN_SHARE_OF_TOP: f64 = 0.5;
 
-/// Words that open a correction. Read at the head of the message (the first REACTION_WINDOW tokens),
-/// where a reaction lives; deeper in a long request they are ordinary words.
-const CORRECTION_MARKERS: &[&str] = &[
-    "no", "nope", "don't", "dont", "never", "stop", "wrong", "not", "instead", "again", "undo",
-    "revert", "why",
-];
-const CORRECTION_PHRASES: &[&str] = &[
+/// A correction is a REACTION SHAPE, not a word (Q-469), read in the first REACTION_WINDOW tokens.
+/// The old rule counted any of no / not / why / again / instead among the first three tokens:
+/// "Quick one, no need to open anything: in plain words, why is vendoring a copy riskier…" (session
+/// 20260929_5, msg 773772) read as a correction and the model was told to save its own previous line
+/// as the person's rule. Measured read-only 2026-09-29 over 855 goose user-session requests and 1,565
+/// prompts typed into Claude Code: the old rule hit 10 and 93; the 10 goose hits were all false, and a
+/// read sample of 40 weak + 20 strong Claude Code hits was 30/60 true. This rule: 0 and 53 hits, 47
+/// of the 53 read true; strong 45 → 4, all four true.
+///
+/// STRONG — the words say the last act was not what was asked; saved verbatim.
+const STRONG_REACTIONS: &[&str] = &[
     "not what i",
+    "that's not what",
+    "thats not what",
+    "that is not what",
     "i said",
     "i told you",
-    "that's not",
-    "thats not",
+    "i've told you",
+    "i have told you",
     "i didn't ask",
     "i did not ask",
-    "please don't",
-    "do not",
+    "i never asked",
+    "i asked you not",
     "you should have",
-    "should not have",
-    "shouldn't have",
+    "you shouldn't have",
+    "you should not have",
 ];
+/// WEAK — a reproach or a push-back aimed at what was just done or said; nothing is written. "why did
+/// you" reproaches, "why is" asks about the world; "don't just" reproaches, "don't" alone instructs.
+const WEAK_REACTIONS: &[&str] = &[
+    "why did you",
+    "why didn't you",
+    "why would you",
+    "why are you",
+    "why have you",
+    "why'd you",
+    "you keep",
+    "how many times",
+    "that's wrong",
+    "thats wrong",
+    "that is wrong",
+    "this is wrong",
+    "you're wrong",
+    "you are wrong",
+    "that's not",
+    "thats not",
+    "wtf",
+    "don't just",
+    "dont just",
+    "don't need",
+    "dont need",
+    "are you not",
+    "aren't you",
+    "what do you mean",
+];
+/// Said before a reaction without being one: "ok no, the thumbnails…", "wait, don't just do it".
+const REACTION_INTERJECTIONS: &[&str] =
+    &["ok", "okay", "oh", "uh", "uhm", "um", "hmm", "wait", "well"];
+const NEGATIVE_OPENERS: &[&str] = &["no", "nope", "nah"];
+const PROHIBITIVES: &[&str] = &["don't", "dont", "never", "stop"];
+/// "no" as a quantifier, not a refusal: "no need to open anything", "no worries", "no rush".
+const NO_IDIOMS: &[&str] = &[
+    "need", "worries", "worry", "problem", "problems", "rush", "hurry", "pressure", "thanks",
+    "thank",
+];
+/// "no" that settles: "no we're good", "no, that's fine".
+const NO_REASSURANCES: &[&[&str]] = &[
+    &["we're", "good"],
+    &["were", "good"],
+    &["all", "good"],
+    &["that's", "fine"],
+    &["thats", "fine"],
+    &["it's", "fine"],
+    &["its", "fine"],
+    &["that's", "ok"],
+    &["that's", "okay"],
+    &["all", "set"],
+];
+/// "not" that qualifies the request: "Not urgent, but…", "not sure whether…", "not now".
+const NOT_IDIOMS: &[&str] = &[
+    "urgent",
+    "sure",
+    "important",
+    "now",
+    "yet",
+    "necessarily",
+    "really",
+    "much",
+];
+/// "don't worry", "never mind" reassure.
+const PROHIBITIVE_IDIOMS: &[&str] = &["worry", "mind"];
+/// "undo that", "revert your change" point at what was done; "revert the migration in X" is a task.
+const UNDO_OBJECTS: &[&str] = &["that", "it", "this", "those", "these", "your", "what"];
 // ratio: a reaction is said in the first breath — a dozen words; a request that only mentions "no"
 // or "instead" later is a request.
 const REACTION_WINDOW: usize = 12;
@@ -125,37 +198,92 @@ pub fn previous_assistant_text(messages: &[Message]) -> Option<String> {
     Some(parts.join("\n"))
 }
 
-/// How surely the request is a correction of what was just done. Strong: an unambiguous phrase
-/// ("don't", "never", "that's not what I", "stop") in the head — captured as a memory without waiting
-/// for the model. Weak: a marker word that also opens ordinary requests ("why", "not", "again") —
-/// the model is nudged, nothing is written.
+/// How surely the request is a correction of what was just done. Strong: the words say the last act
+/// was not what was asked ("that's not what I asked", "I said…", "No, don't…") — captured as a memory
+/// without waiting for the model. Weak: a reproach or push-back shape ("why did you", "No, the other
+/// one.", "not X but Y") — the model is told it MAY be a correction; nothing is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Correction {
     Strong,
     Weak,
 }
 
-const STRONG_MARKERS: &[&str] = &[
-    "don't", "dont", "never", "stop", "wrong", "nope", "undo", "revert",
-];
+fn has_phrase(head: &[&str], phrase: &str) -> bool {
+    let words: Vec<&str> = phrase.split(' ').collect();
+    head.windows(words.len()).any(|w| w == words.as_slice())
+}
 
+/// "no", "nope", "nah", "nooo".
+fn is_negative(token: &str) -> bool {
+    NEGATIVE_OPENERS.contains(&token)
+        || token
+            .strip_prefix("no")
+            .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c == 'o'))
+}
+
+/// The reaction the message's first word makes, past interjections: a refusal ("No, …", "Nope"), a
+/// contrast ("not the same branch — a new one"), a prohibition ("don't …", "never …"), "stop" + a
+/// gerund, "undo/revert that". A refusal followed by a prohibition ("No, don't …") is strong.
+fn opener_reaction(head: &[&str]) -> Option<Correction> {
+    let start = head
+        .iter()
+        .position(|t| !REACTION_INTERJECTIONS.contains(t))?;
+    let first = head[start];
+    let mut after = &head[start + 1..];
+    let next_in = |after: &[&str], set: &[&str]| after.first().is_some_and(|t| set.contains(t));
+    if is_negative(first) {
+        while after.first().is_some_and(|t| is_negative(t)) {
+            after = &after[1..];
+        }
+        if next_in(after, PROHIBITIVES) {
+            return Some(Correction::Strong);
+        }
+        if next_in(after, NO_IDIOMS) || NO_REASSURANCES.iter().any(|r| after.starts_with(r)) {
+            return None;
+        }
+        return Some(Correction::Weak);
+    }
+    let weak = match first {
+        "not" => !next_in(after, NOT_IDIOMS),
+        "don't" | "dont" | "never" => !next_in(after, PROHIBITIVE_IDIOMS),
+        "stop" => after.first().is_some_and(|t| t.ends_with("ing")),
+        "undo" | "revert" => next_in(after, UNDO_OBJECTS),
+        "instead" | "wrong" => true,
+        _ => false,
+    };
+    weak.then_some(Correction::Weak)
+}
+
+/// The correction a request carries after a turn that did not end on a question.
 pub fn correction_strength(user_text: &str) -> Option<Correction> {
-    let lower = user_text.to_lowercase();
+    correction_strength_after(user_text, false)
+}
+
+/// The correction a request carries. When the assistant's last line asked a question, an opener
+/// ("No, the other one.") is the ANSWER, not a correction; only the phrases that name the last act as
+/// wrong still count.
+pub fn correction_strength_after(user_text: &str, assistant_asked: bool) -> Option<Correction> {
+    let lower = user_text.to_lowercase().replace('\u{2019}', "'");
     let head: Vec<&str> = lower
         .split(|c: char| !c.is_alphanumeric() && c != '\'')
         .filter(|t| !t.is_empty())
         .take(REACTION_WINDOW)
         .collect();
-    let head_text = head.join(" ");
-    if CORRECTION_PHRASES.iter().any(|p| head_text.contains(p))
-        || head.iter().take(3).any(|t| STRONG_MARKERS.contains(t))
-    {
+    if STRONG_REACTIONS.iter().any(|p| has_phrase(&head, p)) {
         return Some(Correction::Strong);
     }
-    if head.iter().take(3).any(|t| CORRECTION_MARKERS.contains(t)) {
+    let opener = if assistant_asked {
+        None
+    } else {
+        opener_reaction(&head)
+    };
+    if opener == Some(Correction::Strong) {
+        return opener;
+    }
+    if WEAK_REACTIONS.iter().any(|p| has_phrase(&head, p)) {
         return Some(Correction::Weak);
     }
-    None
+    opener
 }
 
 /// Does the request open like a correction of what was just done?
@@ -972,8 +1100,11 @@ pub fn recall_line(
     if let Some((name, _)) = &extras.autoloaded {
         parts.push(format!("loaded skill {name}"));
     }
-    if extras.correction_of.is_some() {
-        parts.push("noticed a correction".to_string());
+    if let Some(correction) = &extras.correction {
+        parts.push(match correction.note {
+            CorrectionNote::Possible => "noticed a possible correction".to_string(),
+            _ => "noticed a correction".to_string(),
+        });
     }
     if extras.answered.is_some() {
         parts.push("noticed your answer".to_string());
@@ -993,12 +1124,30 @@ pub fn recall_line_of(text: &str) -> Option<&str> {
     Some(line)
 }
 
+/// What recall did with a correction it noticed; the `<correction>` block says exactly this and no more.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CorrectionNote {
+    /// Strong, and the user's words are in local memory under this first line.
+    Saved { first_line: String },
+    /// Strong, and the write failed.
+    NotSaved,
+    /// Weak: it may be a correction; nothing was written.
+    Possible,
+}
+
+/// A correction noticed on this turn: what the assistant had just done, and what recall did about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticedCorrection {
+    pub action: String,
+    pub note: CorrectionNote,
+}
+
 /// What else the turn carries besides matches: a loaded skill body, a correction to capture, an
 /// answered question to capture.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Extras {
     pub autoloaded: Option<(String, String)>,
-    pub correction_of: Option<String>,
+    pub correction: Option<NoticedCorrection>,
     pub answered: Option<(String, String)>,
     /// The tool that opens a past session, as this session lists it (`history_tool`) — `None` when
     /// chatrecall is not enabled, and then the `<past-session>` block names no tool.
@@ -1024,7 +1173,7 @@ pub fn render_with(
         && skills.is_empty()
         && past.is_none()
         && extras.autoloaded.is_none()
-        && extras.correction_of.is_none()
+        && extras.correction.is_none()
         && extras.answered.is_none()
     {
         return None;
@@ -1075,12 +1224,29 @@ pub fn render_with(
             "<loaded-skill name=\"{name}\">\nThis skill matches the request by name, so goose loaded it for you — follow it as if you had called load_skill({name}):\n{body}\n</loaded-skill>"
         ));
     }
-    if let Some(action) = &extras.correction_of {
+    if let Some(NoticedCorrection { action, note }) = &extras.correction {
+        let said = match note {
+            CorrectionNote::Saved { first_line } => format!(
+                "The user's message corrects what you just did (\"{action}\"). goose saved their words \
+                 verbatim as a local memory, category \"corrections\", first line \"{first_line}\". \
+                 Rewrite that memory as the RULE and the REASON with remember_memory — category \
+                 \"corrections\", is_global false, the same first line, tags feedback first — so it says \
+                 what to do, not only what was said."
+            ),
+            CorrectionNote::NotSaved => format!(
+                "The user's message corrects what you just did (\"{action}\"). goose could not save it to \
+                 memory. If their words carry a rule for next time, save the RULE and the REASON with \
+                 remember_memory (tags feedback first)."
+            ),
+            CorrectionNote::Possible => format!(
+                "The user's message may be a reaction to what you just did (\"{action}\"); goose saved \
+                 nothing. If it does correct you, save the rule it implies and the reason with \
+                 remember_memory (tags feedback first), from the user's words, never your own. If it is a \
+                 new request or a question, this note does not apply."
+            ),
+        };
         sections.push(format!(
-            "<correction>\nThe user's message reads as a correction of what you just did (\"{action}\"). \
-             A strong correction is already saved verbatim in local memory (category \"corrections\"); \
-             restate it as the RULE and the REASON with remember_memory — same first line, tags feedback first — \
-             so the saved memory says what to do, not only what was said. Then continue.\n</correction>"
+            "<correction>\n{said} Then continue.\n</correction>"
         ));
     }
     if let Some((question, answer)) = &extras.answered {
@@ -1198,27 +1364,34 @@ impl McpClientTrait for RecallClient {
         let messages = session.conversation.as_ref()?.messages();
         if self.extension_enabled("memory").await {
             if let Some(assistant) = previous_assistant_text(messages) {
-                if let Some(strength) = correction_strength(&text) {
+                let question = open_question(&assistant);
+                if let Some(strength) = correction_strength_after(&text, question.is_some()) {
                     let action = headline(&assistant);
-                    if strength == Correction::Strong {
-                        let store = MemoryStore::new(
-                            Paths::config_dir().join("memory"),
-                            &session.working_dir,
-                        );
-                        let (content, tags) = correction_memory(&text, &action);
-                        match store.remember("corrections", &content, &tags, false) {
-                            Ok(outcome) => {
-                                tracing::info!(?outcome, "correction captured as a memory")
+                    let note = match strength {
+                        Correction::Strong => {
+                            let store = MemoryStore::new(
+                                Paths::config_dir().join("memory"),
+                                &session.working_dir,
+                            );
+                            let (content, tags) = correction_memory(&text, &action);
+                            match store.remember("corrections", &content, &tags, false) {
+                                Ok(outcome) => {
+                                    tracing::info!(?outcome, "correction captured as a memory");
+                                    CorrectionNote::Saved {
+                                        first_line: headline(&content),
+                                    }
+                                }
+                                Err(err) => {
+                                    tracing::warn!(%err, "correction not captured");
+                                    CorrectionNote::NotSaved
+                                }
                             }
-                            Err(err) => tracing::warn!(%err, "correction not captured"),
                         }
-                    }
-                    extras.correction_of = Some(action);
-                }
-                if extras.correction_of.is_none() {
-                    if let Some(question) = open_question(&assistant) {
-                        extras.answered = Some((question, headline(&text)));
-                    }
+                        Correction::Weak => CorrectionNote::Possible,
+                    };
+                    extras.correction = Some(NoticedCorrection { action, note });
+                } else if let Some(question) = question {
+                    extras.answered = Some((question, headline(&text)));
                 }
             }
         }
@@ -1284,7 +1457,11 @@ impl McpClientTrait for RecallClient {
             history_ms = history_started.elapsed().as_millis(),
             history_missing = history_index.map(|index| index.missing()),
             autoloaded = extras.autoloaded.as_ref().map(|(n, _)| n.as_str()),
-            correction = extras.correction_of.is_some(),
+            correction = extras.correction.as_ref().map(|c| match c.note {
+                CorrectionNote::Saved { .. } => "saved",
+                CorrectionNote::NotSaved => "not_saved",
+                CorrectionNote::Possible => "possible",
+            }),
             answered = extras.answered.is_some(),
             "recall"
         );
@@ -1855,8 +2032,8 @@ mod tests {
         );
         assert_eq!(
             correction_strength("Why is the sky blue?"),
-            Some(Correction::Weak),
-            "a weak marker only nudges, never writes"
+            None,
+            "a question about the world is not a reaction (Q-469)"
         );
         let (content, tags) = correction_memory(
             "No — don't use the shell for reading files here.",
@@ -1865,6 +2042,105 @@ mod tests {
         assert!(content.starts_with("Correction: No — don't use the shell for reading files here."));
         assert!(content.contains("Said after goose did: Ran cat on queries.txt"));
         assert_eq!(tags, vec!["feedback", "correction"]);
+    }
+
+    /// Q-469 (session 20260929_5, msg 773772): a request that says "no" and "why" in passing is not a
+    /// reaction; a reaction is a shape — a refusal or contrast as the opener, a reproach phrase.
+    #[test]
+    fn a_correction_is_a_reaction_shape_not_a_word() {
+        let none = [
+            "Quick one, no need to open anything: in plain words, why is vendoring a copy riskier than depending on a package, and what do we owe ourselves to keep a vendored copy safe? A short paragraph.",
+            "Not urgent, but can you tidy the README?",
+            "Again, the same three tables, now for March.",
+            "No worries, take the second option.",
+            "no we're good. Do a review on these 2 before i open PRs",
+            "Don't worry about it, just rebuild it all on the website after it's done",
+            "Stop the list immediately. Reply with exactly the words STEER RECEIVED.",
+            "Make a real call to the delegate tool now (do not answer from memory).",
+            "Revert the migration in crates/goose/src/db.rs to the v2 schema.",
+            "Can you check if anything that is not part of the 4.3.0 build shipped?",
+        ];
+        for text in none {
+            assert_eq!(correction_strength(text), None, "{text}");
+        }
+        let weak = [
+            "not the same branch we need it in a new branch please",
+            "ok no the thumbnail images really suck!",
+            "NOOO",
+            "wait don't just do it, design it carefully please first",
+            "so we're going to lose now 60-90 minutes?! Why didn't you fix it before resuming?",
+            "undo that",
+            "Stop adding comments to every line.",
+            "Nope.",
+        ];
+        for text in weak {
+            assert_eq!(correction_strength(text), Some(Correction::Weak), "{text}");
+        }
+        assert_eq!(
+            correction_strength("No, don’t touch the scheduler."),
+            Some(Correction::Strong),
+            "a typographic apostrophe is an apostrophe"
+        );
+        for text in ["no no don't cap anything!", "without diacritics I said!"] {
+            assert_eq!(
+                correction_strength(text),
+                Some(Correction::Strong),
+                "{text}"
+            );
+        }
+        assert_eq!(
+            correction_strength_after("No, the other one.", true),
+            None,
+            "after a question an opener is the answer"
+        );
+        assert_eq!(
+            correction_strength_after("That's not what I asked for.", true),
+            Some(Correction::Strong)
+        );
+    }
+
+    /// The block says only what happened: a weak reaction saved nothing, a failed write is not a save.
+    #[test]
+    fn the_correction_block_states_only_what_was_saved() {
+        let render_note = |note: CorrectionNote| {
+            let extras = Extras {
+                correction: Some(NoticedCorrection {
+                    action: "Committed 4197d31".to_string(),
+                    note,
+                }),
+                ..Extras::default()
+            };
+            render_with(&[], &[], None, &extras).unwrap()
+        };
+        let weak = render_note(CorrectionNote::Possible);
+        assert!(
+            weak.starts_with("<recall-line>Noticed a possible correction</recall-line>"),
+            "{weak}"
+        );
+        assert!(weak.contains("may be a reaction to what you just did (\"Committed 4197d31\"); goose saved nothing."), "{weak}");
+        assert!(weak.contains("never your own"), "{weak}");
+        assert!(!weak.contains("saved verbatim"), "{weak}");
+        assert!(!weak.contains("already saved"), "{weak}");
+
+        let saved = render_note(CorrectionNote::Saved {
+            first_line: "Correction: No, don't touch the scheduler.".to_string(),
+        });
+        assert!(
+            saved.starts_with("<recall-line>Noticed a correction</recall-line>"),
+            "{saved}"
+        );
+        assert!(saved.contains("goose saved their words verbatim as a local memory, category \"corrections\", first line \"Correction: No, don't touch the scheduler.\""), "{saved}");
+        assert!(
+            saved.contains("is_global false, the same first line"),
+            "{saved}"
+        );
+
+        let failed = render_note(CorrectionNote::NotSaved);
+        assert!(
+            failed.contains("goose could not save it to memory"),
+            "{failed}"
+        );
+        assert!(!failed.contains("saved verbatim"), "{failed}");
     }
 
     #[test]
@@ -2394,14 +2670,19 @@ mod tests {
     fn extras_render_their_sections_and_the_line() {
         let extras = Extras {
             autoloaded: Some(("jira-api".to_string(), "BODY".to_string())),
-            correction_of: Some("Deleted the tests".to_string()),
+            correction: Some(NoticedCorrection {
+                action: "Deleted the tests".to_string(),
+                note: CorrectionNote::Saved {
+                    first_line: "Correction: Why did you delete the tests?".to_string(),
+                },
+            }),
             answered: Some(("Which config?".to_string(), "prod".to_string())),
             history_tool: None,
         };
         let out = render_with(&[], &[], None, &extras).unwrap();
         assert!(out.starts_with("<recall-line>Loaded skill jira-api · noticed a correction · noticed your answer</recall-line>"), "{out}");
         assert!(out.contains("<loaded-skill name=\"jira-api\">"));
-        assert!(out.contains("correction of what you just did (\"Deleted the tests\")"));
+        assert!(out.contains("corrects what you just did (\"Deleted the tests\")"));
         assert!(out.contains("You asked \"Which config?\" and the user answered \"prod\""));
     }
 
