@@ -5689,6 +5689,7 @@ devices:
         NodeServingOtherDto {
             mac: "Work’s Mac Studio".into(),
             serving: "27B · both Macs".into(),
+            serving_nodes: vec!["split".into()],
             chats: vec!["Kickoff notes".into()],
             replies: 0,
         }

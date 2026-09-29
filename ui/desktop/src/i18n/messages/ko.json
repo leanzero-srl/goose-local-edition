@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "지금 보내는 메시지는 {node}(으)로 갑니다 — 그 답변을 기다리지 않습니다."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "지금 보낸 메시지는 {node}(으)로 갑니다 — {passed}이(가) 로드되지 않았으므로 그 답변이 사용하는 것은 아무것도 중지되지 않습니다."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "지금 보내는 메시지는 그 답변이 끝나기를 기다린 뒤 {node}을(를) 로드합니다."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "지금 보낸 메시지는 엔진에 여유가 생길 때까지 기다립니다."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "지금 보낸 메시지는 그 채팅이 닫히거나 다른 노드로 옮길 때까지 기다린 다음 {node}을(를) 불러옵니다."
   },
   "busyIn.sendYields": {
     "defaultMessage": "지금 보낸 메시지가 먼저 처리됩니다. goose는 이 확인을 잠시 미뤘다가 나중에 다시 실행합니다."

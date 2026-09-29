@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Tin nhắn gửi bây giờ sẽ đến {node} — không chờ câu trả lời đó."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Tin nhắn gửi bây giờ sẽ đến {node} — {passed} chưa được tải, nên không có gì mà câu trả lời đó đang dùng bị dừng."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Tin nhắn gửi bây giờ chờ câu trả lời đó xong, rồi nạp {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Tin nhắn gửi bây giờ sẽ chờ cho tới khi engine có chỗ cho nó."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Tin nhắn gửi bây giờ sẽ chờ đến khi cuộc trò chuyện đó được đóng hoặc chuyển sang nút khác, rồi tải {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Tin nhắn gửi bây giờ được ưu tiên: goose tạm gác lần kiểm tra này và chạy lại sau."

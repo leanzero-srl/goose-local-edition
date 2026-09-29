@@ -14,6 +14,7 @@ import { PHASE_FILL, RADIUS, TNUM, TONE_FILL, TYPE, cx } from '../lz';
 import { useNow } from '../sessionActivity/ActivityPills';
 import { elapsedLabel, useActivityOf } from '../sessionActivity/sessionActivityStore';
 import { useTurnReadOf } from './turnReadStore';
+import { useTurnHeldOf } from './turnHeldStore';
 
 const i18n = defineMessages({
   reading: { id: 'turnWorking.reading', defaultMessage: 'Reading your prompt' },
@@ -49,11 +50,15 @@ const PILL = 'inline-flex h-6 items-center gap-1.5 px-2 text-lz-meta font-lz-sem
 export function TurnWorkingRow({ sessionId }: { sessionId: string }) {
   const intl = useIntl();
   const read = useTurnReadOf(sessionId);
+  const held = useTurnHeldOf(sessionId);
   const { runningSince } = useActivityOf(sessionId);
   const now = useNow();
   const compact = (n: number) =>
     intl.formatNumber(n, { notation: 'compact', maximumFractionDigits: 1 });
 
+  // The loader or the engine holds the turn and the composer's bar says why (Q-461): the model has
+  // not been asked yet, so "Waiting for the model's first words" would be a second, wrong status.
+  if (!read && held) return null;
   if (!read) {
     return (
       <div data-testid="turn-working-row" data-stage="waiting" className="py-2">

@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Eine jetzt gesendete Nachricht geht an {node} — sie wartet nicht auf diese Antwort."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Eine jetzt gesendete Nachricht geht an {node} — {passed} ist nicht geladen, also wird nichts gestoppt, worauf diese Antwort läuft."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Eine jetzt gesendete Nachricht wartet, bis diese Antwort fertig ist, und lädt dann {node}."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Eine jetzt gesendete Nachricht wartet, bis die Engine Platz dafür hat."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Eine jetzt gesendete Nachricht wartet, bis dieser Chat geschlossen wird oder zu einem anderen Knoten wechselt, und lädt dann {node}."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Eine jetzt gesendete Nachricht hat Vorrang: goose legt diese Prüfung beiseite und führt sie danach erneut aus."

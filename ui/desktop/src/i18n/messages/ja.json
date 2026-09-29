@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "今送信したメッセージは {node} に送られます — その回答を待ちません。"
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "今送ったメッセージは {node} に送られます — {passed} は読み込まれていないため、その回答が使っているものは何も停止されません。"
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "今送信したメッセージはその回答が終わるのを待ってから {node} を読み込みます。"
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "今送信したメッセージは、エンジンに空きができるまで待機します。"
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "今送ったメッセージは、そのチャットが閉じられるか別のノードに移るまで待ち、その後 {node} を読み込みます。"
   },
   "busyIn.sendYields": {
     "defaultMessage": "今送信したメッセージが優先されます。goose はこの確認をいったん中断し、後でもう一度実行します。"

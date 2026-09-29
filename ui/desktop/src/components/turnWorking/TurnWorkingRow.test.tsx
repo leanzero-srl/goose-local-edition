@@ -10,6 +10,7 @@ vi.mock('../../acp/needsYou', () => acp);
 
 import { TurnWorkingRow } from './TurnWorkingRow';
 import { resetTurnReadForTests, usePublishTurnRead } from './turnReadStore';
+import { resetTurnHeldForTests, usePublishTurnHeld } from './turnHeldStore';
 import { turnProducedNothing } from './turnProducedNothing';
 import { promptProgress, promptRead, type PromptRead } from '../leanzero-swarm/engineFigures';
 import type { MlxLiveRequest, MlxLiveStats } from '../leanzero-swarm/mlxLiveStats';
@@ -59,6 +60,11 @@ function Publish({ read }: { read: PromptRead | null }) {
   return null;
 }
 
+function Held({ held }: { held: boolean }) {
+  usePublishTurnHeld(SESSION, held);
+  return null;
+}
+
 function renderRow(read: PromptRead | null) {
   return render(
     <IntlProvider locale="en" messages={{}}>
@@ -75,6 +81,7 @@ describe('Q-301: the chat says its turn works while nothing is written yet', () 
   });
   afterEach(() => {
     resetTurnReadForTests();
+    resetTurnHeldForTests();
     resetSessionActivityForTests();
   });
 
@@ -161,6 +168,27 @@ describe('Q-301: the chat says its turn works while nothing is written yet', () 
       rerender(
         <IntlProvider locale="en" messages={{}}>
           <Publish read={null} />
+          <TurnWorkingRow sessionId={SESSION} />
+        </IntlProvider>
+      )
+    );
+    expect(screen.getByTestId('turn-working-row').dataset.stage).toBe('waiting');
+  });
+
+  // Q-461 (live 3.0.74, 42-Y-wait): "Waiting for the model’s first words · 1m" sat beside the
+  // composer's "Waiting while Work’s Mac Studio serves …" — the model had not even been asked.
+  it('Q-461: while the composer says the loader holds the turn, the row says nothing', () => {
+    const { rerender } = render(
+      <IntlProvider locale="en" messages={{}}>
+        <Held held />
+        <TurnWorkingRow sessionId={SESSION} />
+      </IntlProvider>
+    );
+    expect(screen.queryByTestId('turn-working-row')).toBeNull();
+    act(() =>
+      rerender(
+        <IntlProvider locale="en" messages={{}}>
+          <Held held={false} />
           <TurnWorkingRow sessionId={SESSION} />
         </IntlProvider>
       )

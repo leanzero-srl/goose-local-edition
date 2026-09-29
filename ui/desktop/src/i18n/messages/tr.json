@@ -458,6 +458,9 @@
   "busyIn.sendGoesTo": {
     "defaultMessage": "Şimdi gönderilen bir mesaj {node} düğümüne gider — o yanıtı beklemez."
   },
+  "busyIn.sendGoesToNext": {
+    "defaultMessage": "Şimdi gönderilen mesaj {node} düğümüne gider — {passed} yüklü değil, bu yüzden o yanıtın çalıştığı hiçbir şey durdurulmaz."
+  },
   "busyIn.sendLoadsAfter": {
     "defaultMessage": "Şimdi gönderilen bir mesaj o yanıtın bitmesini bekler, sonra {node} yüklenir."
   },
@@ -466,6 +469,9 @@
   },
   "busyIn.sendWaits": {
     "defaultMessage": "Şimdi gönderilen bir mesaj, motorda yer açılana kadar bekler."
+  },
+  "busyIn.sendWaitsForChat": {
+    "defaultMessage": "Şimdi gönderilen mesaj, o sohbet kapatılana veya başka bir düğüme geçene kadar bekler, ardından {node} yüklenir."
   },
   "busyIn.sendYields": {
     "defaultMessage": "Şimdi gönderilen mesaj önce gider: goose bu kontrolü bir kenara bırakır ve sonra yeniden çalıştırır."
