@@ -98,13 +98,13 @@ impl Ways for AgentWays {
         let settled = matches!(single.state.as_str(), "mounting" | "running");
         if let (Some(port), false) = (single.stray_listener_port, settled) {
             return Err(step(format!(
-                "this Mac's engine on port {port} is not this goose window's; switch it from the window that started it, or free the port with Stop in Run it"
+                "this Mac's engine on port {port} is not this goose's; switch it from the goose that started it, or free the port with Stop in Run it"
             )));
         }
         let remote = match mlx_remote::read() {
             mlx_remote::RouteRecord::Other(route) => {
                 return Err(step(format!(
-                    "another goose window on this Mac (goosed pid {}) routes chat to {}; switch from that window",
+                    "another goose on this Mac (pid {}) routes chat to {}; switch from that goose",
                     route.pid,
                     route.peer_name()
                 )))
@@ -128,7 +128,7 @@ impl Ways for AgentWays {
         match owner::read() {
             owner::OwnerRecord::Other(engine) => {
                 return Err(step(format!(
-                    "the split of another goose window (goosed pid {}) owns this Mac; switch from that window",
+                    "the split of another goose (pid {}) owns this Mac; switch from that goose",
                     engine.pid
                 )))
             }
