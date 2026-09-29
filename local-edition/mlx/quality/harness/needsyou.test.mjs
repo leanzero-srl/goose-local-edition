@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { loadGuidance, matchGuidance, chooseAnswer, planClick, pickOptions, isAnswerMessage, parseDbItems, sessionIdOf } from './needsyou.mjs';
+import { loadGuidance, matchGuidance, chooseAnswer, planClick, pickOptions, isAnswerMessage, parseDbItems, sessionIdOf, textUse, textUseCell, contentWords, openCardFails } from './needsyou.mjs';
 
 const BRIEF = fileURLToPath(new URL('../briefs/2026-09-25-1-jira-migration-readiness.json', import.meta.url));
 const jira = loadGuidance(JSON.parse(readFileSync(BRIEF, 'utf8')));
@@ -115,4 +115,33 @@ test('the brief guidance is validated loudly', () => {
 test('session id from the chat URL', () => {
   assert.equal(sessionIdOf('file:///x/index.html#/pair?resumeSessionId=20260928_21'), '20260928_21');
   assert.equal(sessionIdOf('file:///x/index.html#/'), '');
+});
+
+// The outcome column (owner 2026-09-29): answers and replies verbatim from E2E #3w (session 20260929_12,
+// needsyou.tsv) — two replies that used the answer, and the price answer given to a sulphite question.
+const SCONE = { a: "€3.50 in both shops. Douglas goes up on 1 October, so there's just the one price.", r: 'On the scone: €3.50 in both shops now, and Douglas catches up on 1 October. One price, so the two-board note is spent.' };
+const SODA = { a: 'Oat milk, in both shops, since August. The buttermilk version is gone. Butter still comes on the side with every slice, and the soup and the salmon come with buttered soda bread too.', r: "On the soda bread: oat milk in both shops since August, the buttermilk version is gone. That flips three dishes — the soup and the salmon lose milk and the bread's only allergen is now cereals, and everything comes with butter on the side." };
+const MINCE = { a: '€2.50 each, or four for €9.00. Same in both shops.', r: 'That answers the price, not the sulphites — and the two are linked, so I want it rather than leave the tag off and risk an inspector finding it on the mince pie.' };
+
+test('textUse: a reply that repeats the answer quotes it; one that talks past it does not', () => {
+  assert.equal(textUse(SCONE.a, SCONE.r).verdict, 'quote');
+  assert.match(textUseCell(SODA.a, SODA.r), /^quote "/);
+  const m = textUse(MINCE.a, MINCE.r);
+  assert.equal(m.verdict, 'no', `the #3w mince reply does not use the price: ${JSON.stringify(m)}`);
+  assert.equal(textUseCell(MINCE.a, ''), 'no reply');
+  assert.equal(textUseCell('Yes', 'Done, the folder is set.'), 'unmeasurable (0 content words)', 'a bare Yes cannot be proven used by overlap');
+});
+
+test('textUse: the facts paraphrased with no five-word run is "uses"; numbers count whole', () => {
+  assert.deepEqual(contentWords('€3.50 in both shops, 1 October'), ['3.50', 'shops', '1', 'october']);
+  const u = textUse(SCONE.a, 'Douglas moves to 3.50 from 1 October — one price across shops.');
+  assert.equal(u.verdict, 'uses'); assert.ok(u.share >= 0.3);
+});
+
+test('openCardFails: every open question from the store and the tray, once each; an unreadable store says so', () => {
+  const db = { ok: true, items: [{ id: 'ny_1', status: 'open', question: 'Which price?' }, { id: 'ny_2', status: 'answered', question: 'x' }] };
+  assert.deepEqual(openCardFails(db, { cards: [{ id: 'ny_1', question: 'Which price?' }, { id: 'ny_3', question: 'Folder?' }] }),
+    ['FAIL: open card ny_1 Which price?', 'FAIL: open card ny_3 Folder?']);
+  assert.deepEqual(openCardFails({ ok: true, items: [] }), []);
+  assert.match(openCardFails({ ok: false, error: 'locked', items: [] })[0], /could not be read: locked/);
 });
