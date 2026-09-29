@@ -22,10 +22,11 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 
 ## Gate / merge → 3.0.79
 - g079 (/tmp/g079.out): the full gate on merge-487-488 (1813810f2 = Q-487 204457a56 + Q-488 5a8d72d49), background
-  priority. UI part: 61 vitest reds across unrelated files (load at `taskpolicy -b`), superseded by g079b's UI run.
-  Its Rust part is running.
-- g079b (/tmp/g079b.out): chained to start when g079 ends, relaunched at NORMAL priority (background priority starved
-  vitest). UI gate on merge-079b (968b6b7e3 = merge-487-488
+  priority. RUST GREEN (goose lib, every acp_*/needs_you/chat_search test, sidecar, providers, link, server,
+  mcp+cli 948+98, clippy, dev gates 11, the ACP schema, the Windows check). One timing flake:
+  test_session_name_update_notification failed twice in-file and passed 3/3 alone → Q-497. Its UI part (61 load
+  reds) is superseded by g079b.
+- g079b GREEN: UI gate on merge-079b 15af6c730. tsc 0, vitest 4589 passed / 1 skipped, eslint 0, i18n 3810. UI gate on merge-079b (968b6b7e3 = merge-487-488
   + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2 + Q-492/493 4b548171d + Q-494 1bea50263 → 15af6c730), no conflicts.
 - g079c (/tmp/g079c.out): chained after g079b. goose lib + acp_cross_note + recall_wording + clippy -p goose on
   merge-079b (Q-494's claim_check change).
@@ -40,8 +41,13 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   landing.
   - r1 now proves every send (SEND_LOST + one resend), from #3y on.
 - #3x: turn 1 (the memory turn) never reached the chat, so its memory checks at 33/39 are VOID for this run.
+  Turn 2 ran 8,349 s (152 tools): a determinism/timezone grind in the fake-log generator, ending 36/36 verified.
+  At 181k/262k after turn 3, compaction is near.
 - Q-494 DONE 1bea50263 (replayed 17,948 real responses: 4 count false-alarms gone, every real year catch kept),
   merged into merge-079b.
+- Q-496 DONE 95ee34a44: the chat's own smooth scroll (a >200 px jump) read as the person scrolling up. Follow now
+  ends only on a real user intent, plus a "Jump to latest" button and data-following for the harness. Merged into
+  merge-079b (7088fe6eb); g079d (/tmp/g079d.out) re-runs the UI gate after g079c.
 - Q-487..491: done, all in merge-079b.
 
 ## Next
@@ -61,7 +67,7 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-466 waits on: a CI red. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-496.
+- Check CI, agents, disk ≥ 30 GB (101 GB). Take a vigil screenshot and READ it. The next free id is Q-498.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never close a window whose chat is mid-turn (Q-490) until the fix ships.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg. Training ONLY on the owner's word.
