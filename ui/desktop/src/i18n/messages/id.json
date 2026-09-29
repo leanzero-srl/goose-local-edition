@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose berhenti sebelum menjawab ini"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Lanjutkan"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Lanjutkan dari bagian terakhir."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose berhenti di tengah jalan"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose berhenti di tengah jalan — aplikasi tertutup saat goose sedang bekerja"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Batal"
   },

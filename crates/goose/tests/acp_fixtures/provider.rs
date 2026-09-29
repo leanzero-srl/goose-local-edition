@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use strum::VariantNames;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 pub type NotificationSink = Arc<std::sync::Mutex<Vec<SessionUpdate>>>;
 type SessionModels = Arc<std::sync::Mutex<HashMap<String, ModelConfig>>>;
@@ -32,6 +32,7 @@ pub struct AcpProviderConnection {
     permission_manager: Arc<PermissionManager>,
     session_counter: usize,
     notification_sink: NotificationSink,
+    notify: Arc<Notify>,
     session_models: SessionModels,
     work_dir: std::path::PathBuf,
     data_root: std::path::PathBuf,
@@ -45,6 +46,7 @@ pub struct AcpProviderSession {
     provider: Arc<Mutex<Option<AcpProvider>>>,
     session_id: agent_client_protocol::schema::v1::SessionId,
     notification_sink: NotificationSink,
+    notify: Arc<Notify>,
     session_models: SessionModels,
     work_dir: std::path::PathBuf,
 }
@@ -175,6 +177,8 @@ impl Connection for AcpProviderConnection {
         let notification_sink: NotificationSink = Arc::new(std::sync::Mutex::new(Vec::new()));
         let session_models: SessionModels = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let sink_clone = notification_sink.clone();
+        let notify = Arc::new(Notify::new());
+        let notify_clone = notify.clone();
         let provider_config = AcpProviderConfig {
             command: "unused".into(),
             args: vec![],
@@ -194,6 +198,7 @@ impl Connection for AcpProviderConnection {
                 .collect(),
             notification_callback: Some(Arc::new(move |n| {
                 sink_clone.lock().unwrap().push(n.update.clone());
+                notify_clone.notify_waiters();
             })),
         };
 
@@ -212,6 +217,7 @@ impl Connection for AcpProviderConnection {
             permission_manager,
             session_counter: 0,
             notification_sink,
+            notify,
             session_models,
             work_dir: cwd_path,
             data_root,
@@ -239,6 +245,7 @@ impl Connection for AcpProviderConnection {
             provider: Arc::clone(&self.provider),
             session_id: agent_client_protocol::schema::v1::SessionId::new(goose_id),
             notification_sink: self.notification_sink.clone(),
+            notify: self.notify.clone(),
             session_models: self.session_models.clone(),
             work_dir: self.work_dir.clone(),
         };
@@ -320,6 +327,10 @@ impl Session for AcpProviderSession {
 
     fn notifications(&self) -> Vec<super::Notification> {
         super::to_notifications(&self.session_updates())
+    }
+
+    async fn next_notifications(&self) -> Vec<super::Notification> {
+        super::next_notifications(&self.notify, || self.notifications()).await
     }
 
     async fn prompt(

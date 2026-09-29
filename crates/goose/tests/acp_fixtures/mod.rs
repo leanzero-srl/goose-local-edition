@@ -440,6 +440,24 @@ pub enum Notification {
     },
 }
 
+/// Drains `drain` until it yields something, sleeping on `notify` between tries. The waiter is
+/// armed BEFORE each drain, so an update landing between the drain and the await still wakes it.
+pub async fn next_notifications(
+    notify: &tokio::sync::Notify,
+    drain: impl Fn() -> Vec<Notification>,
+) -> Vec<Notification> {
+    loop {
+        let notified = notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let notifications = drain();
+        if !notifications.is_empty() {
+            return notifications;
+        }
+        notified.await;
+    }
+}
+
 pub fn to_notifications(updates: &[SessionUpdate]) -> Vec<Notification> {
     let mut out = Vec::new();
     for u in updates {
@@ -779,6 +797,9 @@ pub trait Session: std::fmt::Debug {
     fn session_updates(&self) -> Vec<SessionUpdate>;
     /// Drains and returns simplified notifications collected by the fixture.
     fn notifications(&self) -> Vec<Notification>;
+    /// Like `notifications`, but waits for the fixture to receive at least one: progress-based,
+    /// woken by each arriving update, bounded only by the harness's own test timeout.
+    async fn next_notifications(&self) -> Vec<Notification>;
     async fn prompt(
         &mut self,
         text: &str,

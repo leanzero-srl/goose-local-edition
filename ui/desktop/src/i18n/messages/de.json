@@ -11243,6 +11243,18 @@
   "unansweredPrompt.title": {
     "defaultMessage": "goose hat aufgehört, bevor es hierauf geantwortet hat"
   },
+  "unansweredPrompt.continue": {
+    "defaultMessage": "Weiter"
+  },
+  "unansweredPrompt.continueMessage": {
+    "defaultMessage": "Mach da weiter, wo du aufgehört hast."
+  },
+  "unansweredPrompt.midway": {
+    "defaultMessage": "goose hat mittendrin aufgehört"
+  },
+  "unansweredPrompt.midwayAppClosed": {
+    "defaultMessage": "goose hat mittendrin aufgehört – die App wurde geschlossen, während es arbeitete"
+  },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Abbrechen"
   },
