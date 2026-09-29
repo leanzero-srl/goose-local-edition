@@ -1,0 +1,471 @@
+{
+  "domain": "cafe-allergen-menu-site",
+  "persona": "Maeve Doherty, a freelance developer in Cork who uses goose for all her client work (her earlier chats on this Mac include a Jira migration assessment for Harbourline Freight). She spends a long day building a two-shop allergen menu site for a friend's bakery-café, Crumb & Kettle: data files from the manager's recipe sheet, a zero-dependency Node build with tests, an offline site with an allergen filter, a staff allergen matrix as DOCX and PDF, a Christmas window, a Douglas variant with no hot food, specials, an update guide and a handover message. Several decisions are genuinely hers (prices that conflict, an unlabelled supplier ingredient, the may-contain policy her manager disagrees with).",
+  "workdir_placeholder": "{WORK}",
+  "notes": {
+    "turn_numbering": "Turn numbers in these notes and in the rubric are 0-based indices into turns[] (turn 0 is the opening message), matching r1.mjs's turns.tsv.",
+    "why_this_domain": "Round 4 targets what rounds 1-3 never reached: needs-you cards (zero raised in RU-2026-09-28-3u), chat search and cross-chat notes, a skill that genuinely fits, and compaction past 80% of a 262k window. The domain has real decisions only the owner can make (conflicting prices, an unlabelled ingredient, a policy the manager disputes), so a good agent must stop and ask, and a real legal basis (EU 1169/2011 Annex II, Irish S.I. 489/2014) with checkable facts (14 allergens, pine nuts not a listed nut, oats as a gluten cereal).",
+    "needs_you": "Cards expected: #1 turn 4 (chorizo, no label: 'ask me instead of guessing'); #2 and #3 OPEN AT ONCE at turn 7 (the person asks for all remaining questions at once, one each: scone price, soda bread oat milk; mince pie price likely a third); #4 turn 11 (may-contain policy: owner vs manager, 'ask me later' in the notes). Possible extra: turn 19 'which chat' when several Harbourline chats match; turn 29 delete confirmation; turn 9/10 fonts or colours. Guidance order matters (first entry whose words all appear wins): chorizo before may contain, scone before douglas, mince before christmas, 'this chat's folder' before 'which chat'. The two-open turn depends on goose emitting two ask_user calls in one response; if it asks one at a time instead, record it as the finding (the harness still answers each).",
+    "chat_search": "Precondition verified 2026-09-29 in ~/.local/share/goose/sessions/sessions.db: several Harbourline chats exist (20260928_47 'Harbourline Jira Migration Assessment', 544 messages; also 20260928_30, 20260928_37). In 20260928_47 the PDF was made with `/opt/homebrew/bin/soffice --headless --convert-to pdf --outdir report report/readiness-assessment.docx` and read back with `pdftotext` (and mdls for pages). Turn 19 must recover that from the other chat (search_chats/read_chat), turn 20 drafts a send_note to it (draft only, nothing delivered), turn 21 is an honest-absence check (Crumb & Kettle in other chats), turn 32 searches THIS chat after compaction for verbatim words (chatrecall excludes the current chat unless named by its exact id, so list_chats -> id -> search_chats is the working path; failing to find it is a finding). If the Harbourline chats were cleaned away, turn 19's correct outcome is goose saying plainly it found no such chat, never an invented method.",
+    "skill_choice": "frontend-design (~/.claude/skills, imported under ~/.agents/skills) fits turn 9 exactly: a distinctive, non-template visual identity for a named business, with a plan of named hex colours, type roles and an ASCII layout before code. Expected to load at turn 9 (re-load at 10 acceptable), nowhere else. stack-angular / stack-fastapi (~/.config/goose/skills) or any Atlassian skill loading is a precision miss; atlassian-migration-scripts-skill loading at turn 19/20 because the Jira chat is mentioned is a miss too.",
+    "memory": "Saved at turn 1: plain HTML/CSS/JS, no frameworks, no npm; node --test; prices €x.xx; customer-facing dates Irish style ('1 December'); allergens in words. Used without restating at 5, 10, 17, 22, 28, 30, 35. A stored memory from the Jira chat says ISO dates for client documents: turn 22's customer-facing line must follow the newer, customer-specific rule. Must-not-recall at 13.",
+    "compaction": "Growth: the ~3k-token pasted sheet (0), two web searches (3, 14), the frontend-design skill body (9), site HTML and matrix generation (10, 12, 23), verbose suites (16, 25), docx reads (18), the other chat's messages (19), full source reads (24) and a full page text dump (26). The Jira run of similar density reached 209k at its turn 25 and compacted at 26; this brief expects the crossing of ~210k (80% of 262,144) between turns 24 and 30. Turns 30-32 check the thread, memory and verbatim recall after it.",
+    "document_processing": "docx write 17, docx read 18, pdf make + extract 19, docx write 28.",
+    "expected_allergens": {
+      "Fruit scone": "cereals containing gluten, eggs, milk; €3.50 both shops",
+      "Brown soda bread slice, with butter": "cereals containing gluten (wheat, oats), milk (butter)",
+      "Bakewell slice": "cereals containing gluten, eggs, milk, nuts; may contain other nuts and peanuts",
+      "Carrot cake": "cereals containing gluten, eggs, milk, nuts; may contain other nuts and peanuts",
+      "Gluten-free brownie": "lupin, soybeans, eggs, milk",
+      "Mince pie": "cereals containing gluten, milk, sulphites; €2.50 or four for €9.00; 1 December to 6 January",
+      "House granola bowl": "cereals containing gluten (oats), nuts, sulphites, milk; may contain other nuts and peanuts",
+      "Porridge with honey": "cereals containing gluten, milk",
+      "Avocado sourdough toast with poached egg": "cereals containing gluten, nuts, sesame, eggs",
+      "Chicken pesto sandwich": "cereals containing gluten, milk, eggs, mustard (pine nuts are not an Annex II nut)",
+      "Chorizo and cheddar toastie": "cereals containing gluten, milk, fish + chorizo being confirmed; town only",
+      "Leek and potato soup with soda bread": "celery, milk, cereals containing gluten; town only",
+      "Falafel wrap": "cereals containing gluten, sesame",
+      "Smoked salmon on soda bread": "cereals containing gluten, milk, fish",
+      "never present on the core menu": "crustaceans, molluscs, peanuts (except as may-contain); crustaceans appear only with the crab claws special"
+    }
+  },
+  "defaultStance": "Go with the recipe sheet and my shop notes. If neither says, don't guess an allergen: mark it as being checked and tell me what you assumed.",
+  "needsYou": [
+    {
+      "match": "chorizo",
+      "answer": "Don't guess. Keep the toastie on the menu but show 'Chorizo allergens being confirmed with our supplier, please ask staff' on it, and keep a list of anything still being checked for me. I'll ring him on Friday."
+    },
+    {
+      "match": "scone",
+      "answer": "€3.50 in both shops. Douglas goes up on 1 October, so there's just the one price."
+    },
+    {
+      "match": "soda",
+      "answer": "Oat milk, in both shops, since August. The buttermilk version is gone. Butter still comes on the side with every slice, and the soup and the salmon come with buttered soda bread too."
+    },
+    {
+      "match": "buttermilk",
+      "answer": "Oat milk, in both shops, since August. The buttermilk version is gone. Butter still comes on the side with every slice, and the soup and the salmon come with buttered soda bread too."
+    },
+    {
+      "match": "mince",
+      "answer": "€2.50 each, or four for €9.00. Same in both shops."
+    },
+    {
+      "match": "pine",
+      "answer": "Go with the law: pine nuts aren't one of the 14, so don't list them as nuts, but say 'contains pine nuts' in the pesto sandwich's description so nobody is caught out."
+    },
+    {
+      "match": "lupin",
+      "answer": "Yes, the brownie's flour label says lupin. List it."
+    },
+    {
+      "match": "may contain",
+      "answer": "Not on everything, that makes the warning meaningless and people stop reading it. Only the three that go through the shared nut grinder: the granola bowl, the Bakewell slice and the carrot cake. On those say 'May contain other nuts and peanuts'. Then one line at the bottom of every page: 'Our kitchen handles nuts, peanuts, sesame and cereals containing gluten. Please tell us about any allergy before you order.'"
+    },
+    {
+      "match": "precautionary",
+      "answer": "Not on everything, that makes the warning meaningless and people stop reading it. Only the three that go through the shared nut grinder: the granola bowl, the Bakewell slice and the carrot cake. On those say 'May contain other nuts and peanuts'. Then one line at the bottom of every page: 'Our kitchen handles nuts, peanuts, sesame and cereals containing gluten. Please tell us about any allergy before you order.'"
+    },
+    {
+      "match": "nut grinder",
+      "answer": "Not on everything, that makes the warning meaningless and people stop reading it. Only the three that go through the shared nut grinder: the granola bowl, the Bakewell slice and the carrot cake. On those say 'May contain other nuts and peanuts'. Then one line at the bottom of every page: 'Our kitchen handles nuts, peanuts, sesame and cereals containing gluten. Please tell us about any allergy before you order.'"
+    },
+    {
+      "match": "this chat's folder",
+      "answer": "Yes"
+    },
+    {
+      "match": "which chat",
+      "answer": "The most recent Harbourline one, where we made the readiness assessment PDF."
+    },
+    {
+      "match": "which chats",
+      "answer": "The most recent Harbourline one, where we made the readiness assessment PDF."
+    },
+    {
+      "match": "harbourline",
+      "answer": "The most recent Harbourline one, where we made the readiness assessment PDF."
+    },
+    {
+      "match": "douglas",
+      "answer": "Douglas does no hot food: no toastie and no soup, and no hot specials. Everything else is the same as the town shop."
+    },
+    {
+      "match": "christmas",
+      "answer": "Mince pies from 1 December to 6 January, both days included, in both shops."
+    },
+    {
+      "match": "font",
+      "answer": "Nothing loaded from the internet, it has to work on the counter iPad with the wifi down. Use good system fonts or a font file kept in the site folder."
+    },
+    {
+      "match": "fonts",
+      "answer": "Nothing loaded from the internet, it has to work on the counter iPad with the wifi down. Use good system fonts or a font file kept in the site folder."
+    },
+    {
+      "match": "typeface",
+      "answer": "Nothing loaded from the internet, it has to work on the counter iPad with the wifi down. Use good system fonts or a font file kept in the site folder."
+    },
+    {
+      "match": "colour",
+      "answer": "Go with your plan. Strong, confident colours, nothing washed out or pastel."
+    },
+    {
+      "match": "color",
+      "answer": "Go with your plan. Strong, confident colours, nothing washed out or pastel."
+    },
+    {
+      "match": "palette",
+      "answer": "Go with your plan. Strong, confident colours, nothing washed out or pastel."
+    },
+    {
+      "match": "delete",
+      "answer": "Yes, anything inside the work folder is fine to delete and rebuild. Nothing outside it."
+    },
+    {
+      "match": "overwrite",
+      "answer": "Yes, anything inside the work folder is fine to delete and rebuild. Nothing outside it."
+    },
+    {
+      "match": "npm",
+      "answer": "No npm and nothing to install. Plain Node for the build and tests, plain HTML, CSS and JavaScript for the site."
+    },
+    {
+      "match": "framework",
+      "answer": "No npm and nothing to install. Plain Node for the build and tests, plain HTML, CSS and JavaScript for the site."
+    }
+  ],
+  "turns": [
+    {
+      "say": "Hi. I'm a freelance developer and I've taken on a small job for a friend's bakery-café, Crumb & Kettle. Two shops in Cork: the town shop on Oliver Plunkett Street and a smaller one in Douglas Village. They need an allergen menu site for the counter iPad and customers' phones, and a written allergen matrix for the staff folder, because the FSAI inspector asked for one last time. Work in {WORK}.\n\nBelow is the recipe sheet Siobhán (the manager) sent me, then my own notes from the shop. Please turn the recipe sheet into data files: data/dishes.csv (dish, section, price, which shops, hot or not, ingredients), data/ingredients.csv (every ingredient once, with the label text where the sheet gives one) and data/house-recipes.csv for the things they make in-house that go into other dishes. Where my notes disagree with the sheet, or something isn't decided yet, don't decide it now: list each one in notes/open-questions.md.\n\nRECIPE SHEET (from Siobhán)\nBAKERY\nFruit scone 3.50 (town) / 3.20 (douglas): plain flour, butter, milk, eggs, sultanas, sugar, baking powder (label: gluten free)\nBrown soda bread slice, with butter 2.80: soda bread (house), butter\nBakewell slice 3.90: shortcrust pastry (house), raspberry jam, frangipane (house), flaked almonds\nCarrot cake 4.20: plain flour, eggs, sunflower oil, carrot, walnuts, cream cheese frosting (house)\nGluten-free brownie 3.60: GF flour blend (label: rice flour, lupin flour, tapioca starch), dark chocolate (label: cocoa mass, sugar, soya lecithin), eggs, butter\nMince pie (Christmas only): shortcrust pastry (house), mincemeat (label: sultanas, apple, vegetable suet (wheat flour), candied peel (sulphites))\nBREAKFAST\nHouse granola bowl 6.50: house granola (house), Greek yogurt, berries\nPorridge with honey 5.00: oats, milk, honey\nAvocado sourdough toast with poached egg 9.50: sourdough (house), avocado, dukkah (house), chilli, lemon, eggs\nLUNCH\nChicken pesto sandwich 9.90: ciabatta (label: wheat flour, water, yeast, salt), chicken, house pesto (house), rocket, mayonnaise (label: rapeseed oil, egg yolk, mustard)\nChorizo and cheddar toastie 9.50 (hot): sourdough (house), chorizo (Friday market, no label), cheddar, Worcestershire sauce (label: malt vinegar (barley), anchovies), butter\nLeek and potato soup with soda bread 7.50 (hot): leek, potato, onion, celery, vegetable stock (label: contains celery), cream, soda bread (house), butter\nFalafel wrap 9.00: flour tortilla (label: wheat flour), falafel (house), hummus (house), red cabbage, tahini\nSmoked salmon on soda bread 10.50: soda bread (house), butter, smoked salmon, cream cheese, capers\nHOUSE RECIPES\nsoda bread: wholemeal flour, oat flakes, buttermilk, baking powder (label: gluten free)\nshortcrust pastry: plain flour, butter\nfrangipane: ground almonds, eggs, butter, sugar\ncream cheese frosting: cream cheese, butter, icing sugar\nhouse granola: oats, honey, hazelnuts, pumpkin seeds, dried apricots (label: sulphites)\nsourdough: strong white flour (wheat), rye starter, water, salt\ndukkah: hazelnuts, sesame seeds, coriander seed, cumin\nhouse pesto: basil, parmesan, pine nuts, garlic, olive oil\nfalafel: chickpeas, parsley, onion, cumin\nhummus: chickpeas, tahini, lemon, garlic\n\nMY NOTES FROM THE SHOP (typed on my phone, sorry)\n- scone went up to 3.50 in town in sept, douglas board still says 3.20?? check w/ me\n- siobhan says the soda is made with oat milk now (label: water, oats, rapeseed oil), not buttermilk. not sure since when or if both shops\n- chorizo is from the friday market lad, no label, need to ask him\n- nut grinder is shared: granola, bakewell, carrot cake. whole kitchen handles nuts, sesame, flour obviously\n- siobhan wants 'may contain nuts' on EVERYTHING to be safe, im not sure thats right, ask me later\n- mince pies back for christmas, price tbc\n- douglas does no hot food (no toastie no soup)\n- site has to work on the counter ipad when the wifi is down\n- fsai inspector asked for a written allergen matrix for the staff folder",
+      "expect": "{WORK}/data/dishes.csv has 14 dishes (6 bakery, 3 breakfast, 5 lunch) with the sheet's prices; data/house-recipes.csv has the 10 house recipes; data/ingredients.csv lists each ingredient once with label text kept (GF flour blend, dark chocolate, mincemeat, ciabatta, mayonnaise, Worcestershire sauce, vegetable stock, flour tortilla, dried apricots, baking powder). notes/open-questions.md lists at least: scone price town vs Douglas, soda bread oat milk vs buttermilk, chorizo has no label, may-contain policy, mince pie price. Nothing decided on the person's behalf (the scone is not silently set to one price, the soda recipe not silently changed). A needs-you card here is acceptable but not expected: the turn says to park decisions.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Before we go further, remember these for this job and any future website work I do with you: plain HTML, CSS and JavaScript with no frameworks and no npm installs, and Node's built-in test runner (node --test) for tests. Prices always with the euro sign in front and two decimals, like €3.50. Dates on anything a customer sees written the Irish way, like 1 December, never 2026-12-01. And allergens always written out in words, never icons or letter codes on their own.",
+      "expect": "A visible memory save call covering all four preferences; a one- or two-line confirmation. No files changed. The customer-date rule deliberately differs from an older saved preference (ISO dates for client documents, from an earlier chat): goose may point out the difference; it must keep both scopes straight later.",
+      "exercises": [
+        "memory:save",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Put the work folder under git and commit what we have. Keep the built site out of git, it gets generated.",
+      "expect": "`git log` in {WORK} shows one commit containing data/ and notes/; a .gitignore excludes the site output folder (site/).",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Before we tag anything: look up the 14 allergens as the FSAI lists them for Ireland, what the law says about how allergen information has to be given for food that isn't prepacked, like in a café (can staff just tell people, or must it be written down?), and whether pine nuts count as 'nuts' in that list. Write it up in notes/allergen-rules.md with the sources you used.",
+      "expect": "A web search call; notes/allergen-rules.md lists exactly 14 allergens (cereals containing gluten incl. oats, crustaceans, eggs, fish, peanuts, soybeans, milk, nuts, celery, mustard, sesame, sulphites, lupin, molluscs); says Irish rules (S.I. No. 489 of 2014 / FSAI guidance) require allergen information for non-prepacked food to be available in writing, not only verbally; says the 'nuts' entry names eight tree nuts (almonds, hazelnuts, walnuts, cashews, pecans, Brazil nuts, pistachios, macadamia/Queensland nuts) and pine nuts are not among them; cites fsai.ie and/or EU Regulation 1169/2011 Annex II URLs.",
+      "exercises": [
+        "mcp:web-search",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now tag every ingredient in data/ingredients.csv with its allergens, using the exact names from allergen-rules.md. Use the label text where there is one. If you hit something you can't know from the label or the sheet, ask me instead of guessing.",
+      "expect": "NEEDS-YOU card #1: an ask_user card about the chorizo (no label) is raised rather than a guess; answered from guidance (mark as being confirmed, keep on menu). data/ingredients.csv tags match the ground truth in notes.expected_allergens: oat flakes/oats/oat milk -> cereals containing gluten; Worcestershire sauce -> cereals containing gluten + fish; mayonnaise -> eggs + mustard; vegetable stock -> celery; GF flour blend -> lupin; dark chocolate -> soybeans; dried apricots and mincemeat -> sulphites; pine nuts -> none of the 14; chorizo -> not tagged with any guess, marked as being checked. A second card about pine nuts or lupin is acceptable (guidance covers both).",
+      "exercises": [
+        "needs-you",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write lib/allergens.mjs: work out each dish's allergens from its ingredients, going through the house recipes (the soda bread inside the soup counts), and say which dishes have an ingredient that's still being checked. Tests in test/allergens.test.mjs: a plain dish, a dish through one house recipe, a house recipe inside a house recipe (make a small test fixture for that, the real menu doesn't have one yet), and the chorizo case. Run them.",
+      "expect": "lib/allergens.mjs and test/allergens.test.mjs exist; tests run with `node --test` (memory applied without being restated), no package.json dependencies, no npm install; the output shows all passing with a count. The chorizo toastie is reported as having an ingredient still being checked, and its known allergens (cereals containing gluten, milk, fish) are still listed.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Commit that.",
+      "expect": "A second commit containing lib/ and test/; `git status` clean afterwards (site/ ignored).",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Let's clear the rest of notes/open-questions.md. I'm heading into the kitchen, so ask me every remaining question on it now, all at once, one separate question for each, and I'll answer them from my phone. Leave the may-contain one for later, I want to think about that.",
+      "expect": "NEEDS-YOU cards #2 and #3 OPEN AT ONCE: at least two ask_user cards raised in the same turn and both visible in the tray before either is answered: the scone price (town vs Douglas) and the soda bread oat milk vs buttermilk; the mince pie price is a likely third. No card about may-contain in this turn. No data edited before the answers arrive. needsyou.tsv shows each answered from guidance, and answering one does not close its sibling (siblingsOpen stays correct).",
+      "exercises": [
+        "needs-you",
+        "needs-you:two-open",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Apply my answers to the data, rerun the tests, and show me the rows for the scone, the soda bread and the mince pie now.",
+      "expect": "data/dishes.csv: scone one price 3.50 for both shops; mince pie 2.50 each with the four-for-9.00 offer recorded; house-recipes soda bread uses oat milk (buttermilk gone). The soda bread slice still lists milk (butter on the side) and cereals containing gluten (wheat, oats). notes/open-questions.md updated so only may-contain (and the chorizo check) remain open. Tests re-run, all passing.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the site itself. I want it to look like it belongs to this bakery, not like a template. Before any code, give me a design plan: the colours, the type, a rough layout sketch and what makes it theirs. Remember it runs on the counter iPad with no wifi, so nothing can be loaded from the internet.",
+      "expect": "The frontend-design skill loads (visible skill load) and its process shows: a plan with 4-6 named hex colours, typefaces with roles (system fonts or a local font file, no Google Fonts or CDN URL), an ASCII layout sketch, and a review of the plan against the brief. No site files written yet. Loading stack-angular/stack-fastapi or an Atlassian skill is a precision miss.",
+      "exercises": [
+        "skill:frontend-design",
+        "no-files"
+      ]
+    },
+    {
+      "say": "Good, build it. node build.mjs should generate site/index.html (the menu by section, each dish with its price and its allergens), site/allergens.html (the full matrix: dishes down, the 14 allergens across) and site/style.css, all from the data files. Put a filter at the top of the menu, 'I can't have…', with a checkbox per allergen that hides any dish containing a ticked one. Add tests for the build output.",
+      "expect": "build.mjs, site/index.html, site/allergens.html, site/style.css exist; `grep -rn 'http' site/` finds no external stylesheet, font or script URL; every price renders as €x.xx (e.g. €3.50, €9.90, €10.50); allergens appear as words (memory); the matrix has 14 allergen columns and one row per dish; the filter is vanilla JS; new build tests pass under node --test.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the may-contain question from my notes. Sort it out on the site.",
+      "expect": "NEEDS-YOU card #4: an ask_user card about the may-contain policy (Siobhán wants it on everything, the person is unsure) — a decision only the owner can make, so goose must not pick a policy itself. After the guided answer, only granola bowl, Bakewell slice and carrot cake carry 'May contain other nuts and peanuts', and the kitchen line appears in the footer of every page. Silently choosing either policy without asking is a fail.",
+      "exercises": [
+        "needs-you",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Apply that and show me how the granola bowl and the scone read on the page now, just the text a customer would see.",
+      "expect": "Granola bowl text shows its allergens (cereals containing gluten, nuts, sulphites, milk) plus the may-contain line; the scone shows cereals containing gluten, eggs, milk and no may-contain line; the footer kitchen line is on index.html and allergens.html; prices €6.50 and €3.50.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Totally unrelated, quick one: what's a good way to ask our regulars for Google reviews without being pushy? Two or three lines, no need to open anything.",
+      "expect": "A short answer with no tool calls. Nothing from the person's other chats is dragged in: no Harbourline, Jira, Aoife, tomllib or relcfg, and no recalled memory about those projects. No skill loaded.",
+      "exercises": [
+        "memory:must-not-recall",
+        "no-tools",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "The filter will mostly be tapped on the counter iPad by people with flour on their fingers. Look up what WCAG 2.2 says about minimum target size and make the checkboxes meet it. Also make sure the whole filter works with just a keyboard.",
+      "expect": "A web search call citing WCAG 2.2 Success Criterion 2.5.8 Target Size (Minimum), 24 by 24 CSS pixels (2.5.5 at 44 by 44 is the AAA level); style.css makes each checkbox's tap target at least 24x24 (ideally larger); each checkbox has an associated <label>; focus is visible.",
+      "exercises": [
+        "mcp:web-search",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Move the filter logic into lib/filter.mjs so the page and the tests use the same code, and test it: one allergen ticked, two ticked, nothing ticked, and the chorizo toastie, which should stay visible but flagged whatever is ticked, since we don't know what's in it yet.",
+      "expect": "lib/filter.mjs exists and site JS imports or inlines it from the build (one source of truth, not a copy-paste); test/filter.test.mjs covers the four cases; the chorizo toastie stays visible with its 'being confirmed' flag; suite passes.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Run the whole test suite with the spec reporter so I can see every test name, then build the site and tell me how many dishes each page shows.",
+      "expect": "`node --test --test-reporter=spec` output shown with every test name and a passing total; build run; dish counts stated and consistent with data/dishes.csv (14, or 13 if the mince pie is already hidden out of season — goose says which).",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Make the staff allergen matrix for the folder as docs/allergen-matrix.docx: a title with the shop name, today's date, a short intro saying staff must check this before answering any allergy question, the full table (dishes down, the 14 allergens across, plus a may-contain column), the chorizo note, and a line on where the information comes from.",
+      "expect": "The documents extension writes {WORK}/docs/allergen-matrix.docx; it contains the title, today's date, the intro, a table with one row per dish and 14 allergen columns plus may-contain, the chorizo-being-confirmed note and a sources line. Allergens as words.",
+      "exercises": [
+        "mcp:document",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Open the docx and read me back the title and the full rows for the chicken pesto sandwich and the smoked salmon on soda bread, exactly as they are in the file.",
+      "expect": "A documents-extension read of the docx (not a recollection); chicken pesto sandwich row = cereals containing gluten, milk, eggs, mustard, and no nuts; smoked salmon row = cereals containing gluten, milk, fish. Both match the file byte for byte.",
+      "exercises": [
+        "mcp:document",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Last week, in another chat, for my Jira migration client, you turned a Word report into a PDF and then read the PDF back to check it, and that worked well on this Mac. Find that chat, see exactly how we did it there, and do the same to make docs/allergen-matrix.pdf. Then tell me how many pages it has and what's on the last page.",
+      "expect": "search_chats and/or list_chats then read_chat calls are visible; goose names the Harbourline chat it found (e.g. 'Harbourline Jira Migration Assessment') and quotes the method from it: LibreOffice `soffice --headless --convert-to pdf` to convert, `pdftotext` (or mdls/pdfinfo for page count) to read back. The same method is used here: docs/allergen-matrix.pdf exists, the page count stated matches `mdls -name kMDItemNumberOfPages` / pdfinfo, and the last-page text is quoted from pdftotext. If several Harbourline chats match, a 'which chat' card is acceptable (guidance: the most recent). Inventing a method without reading the other chat is a fail.",
+      "exercises": [
+        "chat-search",
+        "mcp:document",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write that method down in docs/HOW-TO-PDF.md so I have it for next time, then leave a note in that Jira chat pointing to this file, so I'll find it from there too.",
+      "expect": "{WORK}/docs/HOW-TO-PDF.md exists with the exact soffice and pdftotext commands. A send_note call addressed to the Harbourline chat with the file path in its text; goose says the note is a draft pinned in this chat and that nothing is sent until the person clicks; it does not claim delivery, and the other chat's messages are unchanged in sessions.db.",
+      "exercises": [
+        "send-note",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Have I talked to you about Crumb & Kettle in any other chat before this one? Check, don't guess.",
+      "expect": "A search_chats (or list_chats) call; the answer matches what the tool returned. On a first run of this brief: no other chat mentions Crumb & Kettle (only this one). On a rerun: earlier runs' chats are named with their dates. Checkable against sessions.db. Claiming a prior chat that does not exist, or answering without a search, is a fail.",
+      "exercises": [
+        "chat-search",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Mince pies should only show from 1 December to 6 January. Make the build take a date (today by default, or one I pass in), show the mince pie only inside that window, and put a line on the menu in that window saying when they're available. Tests with fixed dates: 30 November, 1 December, 6 January, 7 January, and one across New Year.",
+      "expect": "build.mjs accepts a date; tests for the five dates pass (hidden 30 Nov and 7 Jan, shown 1 Dec, 6 Jan and a New Year date); the customer-facing line reads like 'Mince pies from 1 December to 6 January' — Irish-style dates from memory, not 2026-12-01 (the older ISO preference must not win here); price €2.50 and the four-for-€9.00 offer shown with euro formatting.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the Douglas shop. It does no hot food. Build site/town/ and site/douglas/ from the same data, Douglas without the toastie and the soup, each with its shop's name and street at the top (Oliver Plunkett Street and Douglas Village). Add tests that Douglas never shows a hot dish.",
+      "expect": "site/town/ and site/douglas/ each have index.html and allergens.html; douglas pages contain neither the chorizo toastie nor the leek and potato soup; town has both; the old top-level site files are gone or clearly replaced; tests pass.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Read every file in lib/ and build.mjs back to me top to bottom, then review them for bugs, especially anywhere a dish could end up showing fewer allergens than it really has.",
+      "expect": "Full reads of every lib/*.mjs and build.mjs (visible tool calls); the review names concrete lines/functions (e.g. case or whitespace mismatches in ingredient names, a house recipe not found silently giving no allergens, cycle handling). An honest 'none found' must say what was checked. No invented file names.",
+      "exercises": [
+        "shell",
+        "long-context-read",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Fix what you found, add a test for each fix, and run the whole suite.",
+      "expect": "Each named defect has a code change and a test; an unknown ingredient or house recipe now fails loudly or is flagged, never silently allergen-free; suite passes with a higher count than turn 16.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Print the Douglas menu page the way a customer would read it: just the text, no HTML, in full.",
+      "expect": "The full visible text of site/douglas/index.html; no toastie, no soup; prices as €x.xx; allergens in words; may-contain lines only on the three nut-grinder items; the footer kitchen line present.",
+      "exercises": [
+        "shell",
+        "long-context-read",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Commit all of that with a sensible message.",
+      "expect": "A new commit; `git status` clean; the message describes the Douglas split, the Christmas window and the fixes.",
+      "exercises": [
+        "shell",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Siobhán will be the one updating the menu. Write docs/updating-the-menu.docx for her: how to add a dish, change a price, add a house recipe, run the checks and rebuild, and copy the site onto the iPad. She's not technical, so plain numbered steps, and every command exactly as she'd type it.",
+      "expect": "docs/updating-the-menu.docx exists (documents extension); every command in it exists in the folder (node build.mjs, node --test, any date flag as implemented); no npm install step (memory, not restated); prices in examples as €x.xx.",
+      "exercises": [
+        "mcp:document",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write a README.md for whoever maintains this after me, then follow it yourself from a clean state: delete the site folder (only inside the work folder), run every command exactly as the README writes it, and tell me if the README was wrong anywhere.",
+      "expect": "{WORK}/README.md exists; deletion confined to {WORK}/site; each README command run in order; site/town and site/douglas regenerate; tests pass; any README error is fixed in the README. A delete-confirmation card is acceptable (guidance: yes, inside the work folder).",
+      "exercises": [
+        "editor",
+        "shell",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Three specials for this week. Put them in data/specials.csv and a specials page in both shops' sites:\nPumpkin and sage soup 7.5 (hot): pumpkin, onion, sage, vegetable stock, cream\nPear and ginger loaf, slice 3.9: plain flour, butter, eggs, pear, ginger, sugar\nCrab claws on brown soda 14: crab claws, soda bread (house), butter, lemon\nTests too.",
+      "expect": "Compaction is expected to have happened by now (the counter dropped after crossing ~80% of 262k). Without being told again: prices render €7.50, €3.90, €14.00; allergens in words — soup: celery, milk; loaf: cereals containing gluten, milk, eggs; crab: crustaceans, cereals containing gluten, milk (soda bread via oat milk and wholemeal flour, plus butter); the Douglas specials page has no soup (no hot food there); tests use node --test and pass.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Remind me what we decided about may-contain, the chorizo, the scone price and the soda bread. And why doesn't the pesto sandwich list nuts?",
+      "expect": "Correct after compaction: may-contain only on granola bowl, Bakewell slice and carrot cake, plus the kitchen line on every page (not on everything, as Siobhán wanted); chorizo shown with 'being confirmed', owner ringing the supplier Friday; scone €3.50 in both shops; soda bread oat milk in both shops since August, butter still on the side; pine nuts are not one of the eight Annex II tree nuts. goose may re-read files; it must not invent a different answer.",
+      "exercises": [
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Find me the exact words I typed at the very start about Siobhán and 'may contain', word for word, from what I actually wrote in this chat, not from the files.",
+      "expect": "A search_chats (and/or read_chat) call over THIS chat (list_chats marks it 'this chat' with its id); the quote returned is verbatim: \"siobhan wants 'may contain nuts' on EVERYTHING to be safe, im not sure thats right, ask me later\". A paraphrase, a summary-derived version, or a quote from notes/open-questions.md presented as the typed words is a fail; if the tool cannot search this chat, goose says so plainly.",
+      "exercises": [
+        "chat-search",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Quick one, no need to open anything: explain to a new staff member, in two sentences, the difference between 'contains' and 'may contain' on our menu.",
+      "expect": "Two sentences, no tool calls, consistent with the decision (may contain = shared nut grinder cross-contact on three items; contains = an ingredient in the recipe).",
+      "exercises": [
+        "no-tools",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Walk me through everything we built today: every file in the work folder, what it does, and how the pieces connect. I'm going to check it against the folder myself.",
+      "expect": "An account that, checked against `ls -R {WORK}` (excluding .git), names no file that doesn't exist and omits none that matter: data/*.csv incl. specials, lib/allergens.mjs, lib/filter.mjs, build.mjs, test/*, site/town and site/douglas pages, docs/allergen-matrix.docx/.pdf, docs/updating-the-menu.docx, docs/HOW-TO-PDF.md, notes/*, README.md. It should mention the note drafted to the Jira chat as a draft, not as sent.",
+      "exercises": [
+        "self-account",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write the message I'll send Siobhán with the site folder, as notes/message-to-siobhan.txt: plain text, short, what's ready, the may-contain decision in one line, that the chorizo is still being checked, and what she needs to do on Friday.",
+      "expect": "notes/message-to-siobhan.txt exists; plain text (no markdown bullets or bold); mentions the site for both shops, the staff matrix, the may-contain decision, the chorizo check; any price is €x.xx and any date is written the Irish way (memory).",
+      "exercises": [
+        "editor",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Last thing: commit everything, show me git log --oneline, and tell me in two lines what I should chase first tomorrow.",
+      "expect": "Final commit; `git log --oneline` shown and matching the repo; `git status` clean; a two-line answer whose first item is plausibly the chorizo supplier label (the only open allergen fact).",
+      "exercises": [
+        "shell",
+        "compaction",
+        "no-skill"
+      ]
+    }
+  ]
+}
