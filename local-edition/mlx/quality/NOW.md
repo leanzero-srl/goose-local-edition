@@ -35,9 +35,9 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-504 DONE 0d28abcf2 (branch q504, contains Q-500/501): a window's cancel reaches app-wide and link-bound turns,
   never another window's; Stop plus a "Running in the background" bar. Q-507 DONE 3cfd23a94 (q507): scheduled runs read Running everywhere, and any window's Stop stops them. Q-509
   (Link advertises Idle during a schedule) waits on 3.0.80.
-- Q-505 SECURITY: a plaintext CONTEXT7 key sits in goose memory evolve-goose-test-loop.txt, which recall injects into
-  prompts. memory-skills-surgeon is cutting save/recall redaction plus a no-values scan. The OWNER decides on the existing
-  entry: tell him, never print the value.
+- Q-505 DONE 65126cc51 (worktree-agent-acc78227175574ec2): secrets redacted on save/import/read/recall, plus
+  `goose memory scan-secrets`. The Context7 key WAS recalled into a turn before the fix, so the OWNER decides whether to
+  rotate it and delete the entry (told 17:1x). Q-510 (the desktop editor writes raw) is queued behind 3.0.80.
 - 3.0.80 merge set (branches): q508 (⊃ q502 ⊃ Q-498), q503 (⊃ Q-499), q507 (⊃ Q-504 ⊃ Q-500/501), Q-505's branch,
   Q-466's branch → one scratch → full gate → ff main → release → install when #3y allows (BOTH Macs: new spec tag).
 
@@ -53,7 +53,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-510.
+- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-511.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
