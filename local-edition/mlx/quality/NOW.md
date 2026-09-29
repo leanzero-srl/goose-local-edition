@@ -26,7 +26,9 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   Its Rust part is running.
 - g079b (/tmp/g079b.out): chained to start when g079 ends, relaunched at NORMAL priority (background priority starved
   vitest). UI gate on merge-079b (968b6b7e3 = merge-487-488
-  + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2 + Q-492/493 4b548171d → 67b2813df), no conflicts.
+  + Q-489 0d11170ec + Q-491 078115bc8 + Q-490 70d84fae2 + Q-492/493 4b548171d + Q-494 1bea50263 → 15af6c730), no conflicts.
+- g079c (/tmp/g079c.out): chained after g079b. goose lib + acp_cross_note + recall_wording + clippy -p goose on
+  merge-079b (Q-494's claim_check change).
 - Both green → ff main to merge-079b, push, release 3.0.79. Install when #3x ends (or is stopped).
   Then prove Q-490 live: closerepro2 must click [data-testid=confirm-close-run-stop]; expect main.log
   "close held … chat turn(s) in flight", the app alive, no exit.
@@ -38,7 +40,8 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
   landing.
   - r1 now proves every send (SEND_LOST + one resend), from #3y on.
 - #3x: turn 1 (the memory turn) never reached the chat, so its memory checks at 33/39 are VOID for this run.
-- Q-494 (the reply check calls counts "years": "Total rows: 1999"): general-purpose agent, cutting.
+- Q-494 DONE 1bea50263 (replayed 17,948 real responses: 4 count false-alarms gone, every real year catch kept),
+  merged into merge-079b.
 - Q-487..491: done, all in merge-079b.
 
 ## Next
