@@ -30,15 +30,14 @@ const MANIFEST = {
 };
 
 /**
- * Q-466: the view settles through two timers of its own — the skeleton lifts 300 ms after the list
- * loads, the fade-in flips 50 ms later — and every RecipesView render remounts every recipe card
- * (RecipeItem is declared inside the view). A Delete button found as the skeleton lifted was
- * detached by the flip whenever a loaded machine let the 50 ms timer land before the click: the
- * click reached nothing, no dialog opened, and the wait for it ran out the test's whole 5 s clock
- * (CI, 2026-09-29). The view's timers run on the fake clock until it has settled — its list
- * shown and no timer of its own left to fire — so the button clicked is the one on screen, and no
- * real 350 ms is spent waiting for it. A pass flushes what the previous one scheduled: the loaded
- * list's render schedules the skeleton timer only once act flushes it.
+ * The view settles through two timers of its own: the skeleton lifts 300 ms after the list loads
+ * (the cards, and their Delete buttons, render only then) and the fade-in flips 50 ms later. Those
+ * timers run on the fake clock until the view has settled — its list shown and no timer of its own
+ * left to fire — so every test clicks a settled view and no real 350 ms is spent waiting for it. A
+ * pass flushes what the previous one scheduled: the loaded list's render schedules the skeleton
+ * timer only once act flushes it. (Q-466 added this when the fade-in flip remounted every card and
+ * detached a button found before it; Q-511 hoisted RecipeItem out of the view, so a card now
+ * survives the flip — RecipesView.settle.test.tsx pins that.)
  */
 async function renderView() {
   vi.useFakeTimers();

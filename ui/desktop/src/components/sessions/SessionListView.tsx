@@ -296,6 +296,212 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
+interface SessionItemProps {
+  session: SessionListItem;
+  label?: string;
+  isSharing: boolean;
+  nostrEnabled: boolean;
+  onSelectSession: (sessionId: string) => void;
+  onEditClick: (session: SessionListItem) => void;
+  onDuplicateClick: (session: SessionListItem) => void;
+  onDeleteClick: (session: SessionListItem) => void;
+  onExportClick: (session: SessionListItem, e: React.MouseEvent) => void;
+  onShareClick: (session: SessionListItem, e: React.MouseEvent) => void;
+  onOpenInNewWindow: (session: SessionListItem, e: React.MouseEvent) => void;
+}
+
+// SessionItem and SessionSkeleton live at module scope on purpose (Q-512): declared inside
+// SessionListView each was a new component type on every render of the list, so every card
+// remounted and a button held across a render was detached. Every callback SessionListView passes
+// is a stable useCallback, so the memo skips a card whose session, label and share state are unchanged.
+const SessionItem = React.memo(function SessionItem({
+  session,
+  label,
+  isSharing,
+  nostrEnabled,
+  onSelectSession,
+  onEditClick,
+  onDuplicateClick,
+  onDeleteClick,
+  onExportClick,
+  onShareClick,
+  onOpenInNewWindow,
+}: SessionItemProps) {
+  const intl = useIntl();
+
+  const handleEditClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onEditClick(session);
+    },
+    [onEditClick, session]
+  );
+
+  const handleDuplicateClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDuplicateClick(session);
+    },
+    [onDuplicateClick, session]
+  );
+
+  const handleDeleteClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDeleteClick(session);
+    },
+    [onDeleteClick, session]
+  );
+
+  const handleCardClick = useCallback(() => {
+    onSelectSession(session.id);
+  }, [onSelectSession, session.id]);
+
+  const handleExportClick = useCallback(
+    (e: React.MouseEvent) => {
+      onExportClick(session, e);
+    },
+    [onExportClick, session]
+  );
+
+  const handleShareClick = useCallback(
+    (e: React.MouseEvent) => {
+      onShareClick(session, e);
+    },
+    [onShareClick, session]
+  );
+
+  const handleOpenInNewWindowClick = useCallback(
+    (e: React.MouseEvent) => {
+      onOpenInNewWindow(session, e);
+    },
+    [onOpenInNewWindow, session]
+  );
+
+  const displayName = label ?? displaySessionListName(session.name);
+  const stateAttrs = useSessionStateAttrs(session.id);
+
+  return (
+    <Card
+      onClick={handleCardClick}
+      data-testid={`session-card-${session.id}`}
+      {...stateAttrs}
+      className="h-full py-3 px-4 hover:shadow-default cursor-pointer transition-all duration-150 flex flex-col justify-between relative group"
+    >
+      <div>
+        <h3 className="text-base break-words line-clamp-2 w-full mb-1">{displayName}</h3>
+        <SessionActivityMarker sessionId={session.id} className="mb-1" />
+        <div className="flex-1 mt-2">
+          <div className="flex items-center text-text-secondary text-xs">
+            <Calendar className="w-3 h-3 mr-1 flex-shrink-0" />
+            <span>{formatMessageTimestamp(Date.parse(sessionActivityAt(session)) / 1000)}</span>
+          </div>
+          <div className="flex items-center text-text-secondary text-xs">
+            <Folder className="w-3 h-3 mr-1 flex-shrink-0" />
+            <span className="truncate">{session.workingDir}</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between mt-1">
+        <div className="flex items-center space-x-3 text-xs text-text-secondary">
+          <div className="flex items-center">
+            <MessageSquareText className="w-3 h-3 mr-1" />
+            <span className="font-mono">{session.messageCount}</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button
+          onClick={handleOpenInNewWindowClick}
+          className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+          title={intl.formatMessage(i18n.openInNewWindow)}
+        >
+          <ExternalLink className="w-3 h-3 text-text-secondary hover:text-text-primary" />
+        </button>
+        <button
+          onClick={handleEditClick}
+          className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+          title={intl.formatMessage(i18n.editSessionName)}
+        >
+          <Edit2 className="w-3 h-3 text-text-secondary hover:text-text-primary" />
+        </button>
+        <button
+          onClick={handleDuplicateClick}
+          className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+          title={intl.formatMessage(i18n.duplicateSession)}
+        >
+          <Copy className="w-3 h-3 text-text-secondary hover:text-text-primary" />
+        </button>
+        <button
+          onClick={handleDeleteClick}
+          className="group p-2 rounded hover:bg-lz-err-solid cursor-pointer transition-colors"
+          title={intl.formatMessage(i18n.deleteSession)}
+        >
+          <Trash2 className="w-3 h-3 text-lz-err group-hover:text-white" />
+        </button>
+        <button
+          onClick={handleExportClick}
+          className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+          title={intl.formatMessage(i18n.exportSession)}
+        >
+          <Download className="w-3 h-3 text-text-secondary hover:text-text-primary" />
+        </button>
+        {nostrEnabled && (
+          <button
+            onClick={handleShareClick}
+            disabled={isSharing}
+            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer disabled:cursor-wait"
+            title={intl.formatMessage(i18n.shareNostrSession)}
+          >
+            {isSharing ? (
+              <LoaderCircle className="w-3 h-3 text-text-secondary animate-spin" />
+            ) : (
+              <Share2 className="w-3 h-3 text-text-secondary hover:text-text-primary" />
+            )}
+          </button>
+        )}
+      </div>
+    </Card>
+  );
+});
+
+const SessionSkeleton = React.memo(({ variant = 0 }: { variant?: number }) => {
+  const titleWidths = ['w-3/4', 'w-2/3', 'w-4/5', 'w-1/2'];
+  const pathWidths = ['w-32', 'w-28', 'w-36', 'w-24'];
+  const tokenWidths = ['w-12', 'w-10', 'w-14', 'w-8'];
+
+  return (
+    <Card className="session-skeleton h-full py-3 px-4 flex flex-col justify-between">
+      <div className="flex-1">
+        <Skeleton className={`h-5 ${titleWidths[variant % titleWidths.length]} mb-2`} />
+        <div className="flex items-center mb-1">
+          <Skeleton className="h-3 w-3 mr-1 rounded-sm" />
+          <Skeleton className="h-4 w-20" />
+        </div>
+        <div className="flex items-center mb-1">
+          <Skeleton className="h-3 w-3 mr-1 rounded-sm" />
+          <Skeleton className={`h-4 ${pathWidths[variant % pathWidths.length]}`} />
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between mt-1 pt-2">
+        <div className="flex items-center space-x-3">
+          <div className="flex items-center">
+            <Skeleton className="h-3 w-3 mr-1 rounded-sm" />
+            <Skeleton className="h-4 w-8" />
+          </div>
+          <div className="flex items-center">
+            <Skeleton className="h-3 w-3 mr-1 rounded-sm" />
+            <Skeleton className={`h-4 ${tokenWidths[variant % tokenWidths.length]}`} />
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+});
+
+SessionSkeleton.displayName = 'SessionSkeleton';
+
 interface SessionListViewProps {
   onSelectSession: (sessionId: string) => void;
 }
@@ -720,200 +926,6 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(({ onSelectSe
     });
   }, []);
 
-  const SessionItem = React.memo(function SessionItem({
-    session,
-    label,
-    onEditClick,
-    onDuplicateClick,
-    onDeleteClick,
-    onExportClick,
-    onShareClick,
-    onOpenInNewWindow,
-    isSharing,
-  }: {
-    session: SessionListItem;
-    label?: string;
-    onEditClick: (session: SessionListItem) => void;
-    onDuplicateClick: (session: SessionListItem) => void;
-    onDeleteClick: (session: SessionListItem) => void;
-    onExportClick: (session: SessionListItem, e: React.MouseEvent) => void;
-    onShareClick: (session: SessionListItem, e: React.MouseEvent) => void;
-    onOpenInNewWindow: (session: SessionListItem, e: React.MouseEvent) => void;
-    isSharing: boolean;
-  }) {
-    const handleEditClick = useCallback(
-      (e: React.MouseEvent) => {
-        e.stopPropagation();
-        onEditClick(session);
-      },
-      [onEditClick, session]
-    );
-
-    const handleDuplicateClick = useCallback(
-      (e: React.MouseEvent) => {
-        e.stopPropagation();
-        onDuplicateClick(session);
-      },
-      [onDuplicateClick, session]
-    );
-
-    const handleDeleteClick = useCallback(
-      (e: React.MouseEvent) => {
-        e.stopPropagation();
-        onDeleteClick(session);
-      },
-      [onDeleteClick, session]
-    );
-
-    const handleCardClick = useCallback(() => {
-      onSelectSession(session.id);
-    }, [session.id]);
-
-    const handleExportClick = useCallback(
-      (e: React.MouseEvent) => {
-        onExportClick(session, e);
-      },
-      [onExportClick, session]
-    );
-
-    const handleShareClick = useCallback(
-      (e: React.MouseEvent) => {
-        onShareClick(session, e);
-      },
-      [onShareClick, session]
-    );
-
-    const handleOpenInNewWindowClick = useCallback(
-      (e: React.MouseEvent) => {
-        onOpenInNewWindow(session, e);
-      },
-      [onOpenInNewWindow, session]
-    );
-
-    const displayName = label ?? displaySessionListName(session.name);
-    const stateAttrs = useSessionStateAttrs(session.id);
-
-    return (
-      <Card
-        onClick={handleCardClick}
-        data-testid={`session-card-${session.id}`}
-        {...stateAttrs}
-        className="h-full py-3 px-4 hover:shadow-default cursor-pointer transition-all duration-150 flex flex-col justify-between relative group"
-      >
-        <div>
-          <h3 className="text-base break-words line-clamp-2 w-full mb-1">{displayName}</h3>
-          <SessionActivityMarker sessionId={session.id} className="mb-1" />
-          <div className="flex-1 mt-2">
-            <div className="flex items-center text-text-secondary text-xs">
-              <Calendar className="w-3 h-3 mr-1 flex-shrink-0" />
-              <span>{formatMessageTimestamp(Date.parse(sessionActivityAt(session)) / 1000)}</span>
-            </div>
-            <div className="flex items-center text-text-secondary text-xs">
-              <Folder className="w-3 h-3 mr-1 flex-shrink-0" />
-              <span className="truncate">{session.workingDir}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center justify-between mt-1">
-          <div className="flex items-center space-x-3 text-xs text-text-secondary">
-            <div className="flex items-center">
-              <MessageSquareText className="w-3 h-3 mr-1" />
-              <span className="font-mono">{session.messageCount}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={handleOpenInNewWindowClick}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
-            title={intl.formatMessage(i18n.openInNewWindow)}
-          >
-            <ExternalLink className="w-3 h-3 text-text-secondary hover:text-text-primary" />
-          </button>
-          <button
-            onClick={handleEditClick}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
-            title={intl.formatMessage(i18n.editSessionName)}
-          >
-            <Edit2 className="w-3 h-3 text-text-secondary hover:text-text-primary" />
-          </button>
-          <button
-            onClick={handleDuplicateClick}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
-            title={intl.formatMessage(i18n.duplicateSession)}
-          >
-            <Copy className="w-3 h-3 text-text-secondary hover:text-text-primary" />
-          </button>
-          <button
-            onClick={handleDeleteClick}
-            className="group p-2 rounded hover:bg-lz-err-solid cursor-pointer transition-colors"
-            title={intl.formatMessage(i18n.deleteSession)}
-          >
-            <Trash2 className="w-3 h-3 text-lz-err group-hover:text-white" />
-          </button>
-          <button
-            onClick={handleExportClick}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
-            title={intl.formatMessage(i18n.exportSession)}
-          >
-            <Download className="w-3 h-3 text-text-secondary hover:text-text-primary" />
-          </button>
-          {nostrEnabled && (
-            <button
-              onClick={handleShareClick}
-              disabled={isSharing}
-              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer disabled:cursor-wait"
-              title={intl.formatMessage(i18n.shareNostrSession)}
-            >
-              {isSharing ? (
-                <LoaderCircle className="w-3 h-3 text-text-secondary animate-spin" />
-              ) : (
-                <Share2 className="w-3 h-3 text-text-secondary hover:text-text-primary" />
-              )}
-            </button>
-          )}
-        </div>
-      </Card>
-    );
-  });
-
-  const SessionSkeleton = React.memo(({ variant = 0 }: { variant?: number }) => {
-    const titleWidths = ['w-3/4', 'w-2/3', 'w-4/5', 'w-1/2'];
-    const pathWidths = ['w-32', 'w-28', 'w-36', 'w-24'];
-    const tokenWidths = ['w-12', 'w-10', 'w-14', 'w-8'];
-
-    return (
-      <Card className="session-skeleton h-full py-3 px-4 flex flex-col justify-between">
-        <div className="flex-1">
-          <Skeleton className={`h-5 ${titleWidths[variant % titleWidths.length]} mb-2`} />
-          <div className="flex items-center mb-1">
-            <Skeleton className="h-3 w-3 mr-1 rounded-sm" />
-            <Skeleton className="h-4 w-20" />
-          </div>
-          <div className="flex items-center mb-1">
-            <Skeleton className="h-3 w-3 mr-1 rounded-sm" />
-            <Skeleton className={`h-4 ${pathWidths[variant % pathWidths.length]}`} />
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between mt-1 pt-2">
-          <div className="flex items-center space-x-3">
-            <div className="flex items-center">
-              <Skeleton className="h-3 w-3 mr-1 rounded-sm" />
-              <Skeleton className="h-4 w-8" />
-            </div>
-            <div className="flex items-center">
-              <Skeleton className="h-3 w-3 mr-1 rounded-sm" />
-              <Skeleton className={`h-4 ${tokenWidths[variant % tokenWidths.length]}`} />
-            </div>
-          </div>
-        </div>
-      </Card>
-    );
-  });
-
-  SessionSkeleton.displayName = 'SessionSkeleton';
-
   const renderActualContent = () => {
     if (error) {
       return (
@@ -962,13 +974,15 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(({ onSelectSe
                   key={session.id}
                   session={session}
                   label={sessionLabels.get(session.id)}
+                  isSharing={sharingSessionId === session.id}
+                  nostrEnabled={nostrEnabled}
+                  onSelectSession={onSelectSession}
                   onEditClick={handleEditSession}
                   onDuplicateClick={handleDuplicateSession}
                   onDeleteClick={handleDeleteSession}
                   onExportClick={handleExportSession}
                   onShareClick={handleShareSessionNostr}
                   onOpenInNewWindow={handleOpenInNewWindow}
-                  isSharing={sharingSessionId === session.id}
                 />
               ))}
             </div>
