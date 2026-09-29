@@ -7,8 +7,11 @@ import {
   buildGooseServeEnv,
   buildLocalServeUrls,
   findGooseBinaryPath,
+  GOOSED_FOLLOWS_PARENT_ARG,
   GOOSED_SIGKILL_AFTER_MS,
+  type GooseServeResult,
   startGooseServe,
+  type StartGooseServeOptions,
   withSystemSbin,
 } from './gooseServe';
 
@@ -16,6 +19,39 @@ const binaryName = process.platform === 'win32' ? 'goose.exe' : 'goose';
 const tempDirs: string[] = [];
 const originalCwd = process.cwd();
 type ReadinessFetchInit = Parameters<typeof globalThis.fetch>[1];
+
+// Q-456: the fake records its argv in a sibling file and renames it into place, so the file exists
+// only once it is whole. `printf … > "$TEST_ARGS_PATH"` creates the file BEFORE printf writes, and a
+// test that polls for the file's existence read it empty — CI c5a22884d saw argv [''].
+const RECORD_ARGV =
+  'printf "%s\\n" "$@" > "$TEST_ARGS_PATH.part" && mv "$TEST_ARGS_PATH.part" "$TEST_ARGS_PATH"';
+
+// Q-140/Q-456: these tests exec a freshly written fake goosed, and macOS holds the first exec of a new
+// script for an assessment that serializes machine-wide — under load two TLS tests ran past vitest's
+// 5 s default (5,023 ms and 5,005 ms). This is a hang guard, not a speed limit: every wait inside
+// runs on the test clock (testClock.ts), so a slow machine is never a failure while the output is right.
+const REAL_GOOSED_HANG_MS = 60_000;
+
+// Every goosed a test starts is stopped, and its exit awaited, before the next test begins — also when
+// the test failed or timed out before its own stop, so no fake outlives the test that spawned it.
+const startedServes: GooseServeResult[] = [];
+
+async function startServe(options: StartGooseServeOptions): Promise<GooseServeResult> {
+  const result = await startGooseServe(options);
+  startedServes.push(result);
+  return result;
+}
+
+async function stopStartedServes(): Promise<void> {
+  await Promise.all(startedServes.splice(0).map((result) => result.cleanup()));
+}
+
+function removeTempDirs(): void {
+  while (tempDirs.length > 0) {
+    const tempDir = tempDirs.pop();
+    if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
 
 function makeTempDir(): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goose-serve-test-'));
@@ -37,22 +73,16 @@ function makeExecutable(filePath: string, contents: string): string {
   return filePath;
 }
 
-async function waitForFileLines(filePath: string): Promise<string[]> {
-  await pollUntil(() => fs.existsSync(filePath), filePath, 10);
-  return fs.readFileSync(filePath, 'utf8').trim().split('\n');
+async function waitForRecordedArgv(argsPath: string): Promise<string[]> {
+  await pollUntil(() => fs.existsSync(argsPath), 'the fake goosed to record its argv', 10);
+  return fs.readFileSync(argsPath, 'utf8').trim().split('\n');
 }
 
 describe('findGooseBinaryPath', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     process.chdir(originalCwd);
-
-    while (tempDirs.length > 0) {
-      const tempDir = tempDirs.pop();
-      if (tempDir) {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }
+    removeTempDirs();
   });
 
   it('uses GOOSE_BINARY in development builds', () => {
@@ -120,18 +150,13 @@ describe('buildLocalServeUrls', () => {
   });
 });
 
-describe('startGooseServe', () => {
-  afterEach(() => {
+describe('startGooseServe', { timeout: REAL_GOOSED_HANG_MS }, () => {
+  afterEach(async () => {
+    await stopStartedServes();
     vi.unstubAllEnvs();
     process.chdir(originalCwd);
-
-    while (tempDirs.length > 0) {
-      const tempDir = tempDirs.pop();
-      if (tempDir) {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }
-  });
+    removeTempDirs();
+  }, REAL_GOOSED_HANG_MS);
 
   it.skipIf(process.platform === 'win32')('uses the injected readiness fetch', async () => {
     const tempDir = makeTempDir();
@@ -147,19 +172,15 @@ describe('startGooseServe', () => {
       return new Response(null, { status: 200 });
     });
 
-    const result = await startGooseServe({
+    await startServe({
       serverSecret: 'test-secret',
       dir: tempDir,
       stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
       readinessFetch,
     });
 
-    try {
-      expect(readinessFetch).toHaveBeenCalledTimes(1);
-      expect(readinessUrls[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/status$/);
-    } finally {
-      await result.cleanup();
-    }
+    expect(readinessFetch).toHaveBeenCalledTimes(1);
+    expect(readinessUrls[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/status$/);
   });
 
   // Q-257: one goosed serves every window, so its stderr goes to the app-wide file the caller names —
@@ -175,7 +196,7 @@ describe('startGooseServe', () => {
       vi.stubEnv('GOOSE_BINARY', goosePath);
       const stderrLogPath = path.join(tempDir, 'logs', 'goose-serve-stderr.log');
 
-      const result = await startGooseServe({
+      const result = await startServe({
         serverSecret: 'test-secret',
         dir: tempDir,
         stderrLogPath,
@@ -229,7 +250,7 @@ describe('startGooseServe', () => {
       return new Response(null, { status: 200 });
     });
 
-    const result = await startGooseServe({
+    const result = await startServe({
       serverSecret: 'test-secret',
       dir: tempDir,
       stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
@@ -237,11 +258,7 @@ describe('startGooseServe', () => {
       readinessFetch,
     });
 
-    try {
-      expect(result.certFingerprint).toBe('AA:BB:CC');
-    } finally {
-      await result.cleanup();
-    }
+    expect(result.certFingerprint).toBe('AA:BB:CC');
   });
 
   it.skipIf(process.platform === 'win32')(
@@ -253,7 +270,7 @@ describe('startGooseServe', () => {
         path.join(tempDir, 'goose'),
         [
           '#!/usr/bin/env sh',
-          'printf "%s\\n" "$@" > "$TEST_ARGS_PATH"',
+          RECORD_ARGV,
           'printf "GOOSED_CERT_FINGERPRINT=DD:EE:FF\\n"',
           'while true; do sleep 1; done',
           '',
@@ -271,7 +288,7 @@ describe('startGooseServe', () => {
         return new Response(null, { status: 200 });
       });
 
-      const result = await startGooseServe({
+      const result = await startServe({
         serverSecret: 'test-secret',
         dir: tempDir,
         stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
@@ -283,14 +300,10 @@ describe('startGooseServe', () => {
         readinessFetch,
       });
 
-      try {
-        expect(readinessUrls[0]).toMatch(/^https:\/\/127\.0\.0\.1:\d+\/status$/);
-        expect(result.acpUrl).toMatch(/^wss:\/\/127\.0\.0\.1:\d+\/acp\?token=test-secret$/);
-        expect(result.certFingerprint).toBe('DD:EE:FF');
-        await expect(waitForFileLines(argsPath)).resolves.toContain('--tls');
-      } finally {
-        await result.cleanup();
-      }
+      expect(readinessUrls[0]).toMatch(/^https:\/\/127\.0\.0\.1:\d+\/status$/);
+      expect(result.acpUrl).toMatch(/^wss:\/\/127\.0\.0\.1:\d+\/acp\?token=test-secret$/);
+      expect(result.certFingerprint).toBe('DD:EE:FF');
+      expect(await waitForRecordedArgv(argsPath)).toContain('--tls');
     }
   );
 
@@ -312,7 +325,7 @@ describe('startGooseServe', () => {
 
       const readinessFetch = vi.fn(async () => new Response(null, { status: 200 }));
 
-      const result = await startGooseServe({
+      const result = await startServe({
         serverSecret: 'test-secret',
         dir: tempDir,
         stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
@@ -320,69 +333,64 @@ describe('startGooseServe', () => {
         readinessFetch,
       });
 
-      try {
-        expect(readinessFetch).toHaveBeenCalled();
-        expect(result.certFingerprint).toBe('11:22:33');
-      } finally {
-        await result.cleanup();
-      }
+      expect(readinessFetch).toHaveBeenCalled();
+      expect(result.certFingerprint).toBe('11:22:33');
     }
   );
 });
 
 // Q-223: the app's quit ended its goosed neither reliably nor with a wait. These drive startGooseServe
 // against fake goosed scripts with the real signal and pipe plumbing.
-describe('startGooseServe — goosed ends with its app, and the stop waits for its exit (Q-223)', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    while (tempDirs.length > 0) {
-      const tempDir = tempDirs.pop();
-      if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
+describe(
+  'startGooseServe — goosed ends with its app, and the stop waits for its exit (Q-223)',
+  { timeout: REAL_GOOSED_HANG_MS },
+  () => {
+    afterEach(async () => {
+      await stopStartedServes();
+      vi.unstubAllEnvs();
+      removeTempDirs();
+    }, REAL_GOOSED_HANG_MS);
 
-  const ready = vi.fn(async () => new Response(null, { status: 200 }));
-  const quiet = { info: vi.fn(), error: vi.fn() };
-  // Ready only once the fake has installed its TERM trap (it touches `trapped`), as a real goosed
-  // installs its signal handlers before it binds — a SIGTERM earlier would kill the shell outright.
-  const readyOnceTrapped = (dir: string) =>
-    vi.fn(
-      async () =>
-        new Response(null, { status: fs.existsSync(path.join(dir, 'trapped')) ? 200 : 503 })
-    );
-
-  const waitFor = (check: () => boolean, what: string) => pollUntil(check, what, 25);
-
-  it.skipIf(process.platform === 'win32')(
-    'hands goosed a stdin pipe held open for its life, and asks it to exit on EOF',
-    async () => {
-      const tempDir = makeTempDir();
-      const argsPath = path.join(tempDir, 'args.txt');
-      const eofPath = path.join(tempDir, 'eof');
-      makeExecutable(
-        path.join(tempDir, 'goose'),
-        [
-          '#!/usr/bin/env sh',
-          'printf "%s\\n" "$@" > "$TEST_ARGS_PATH"',
-          'cat > /dev/null',
-          'echo eof > "$TEST_EOF_PATH"',
-          '',
-        ].join('\n')
+    const ready = () => vi.fn(async () => new Response(null, { status: 200 }));
+    const quiet = () => ({ info: vi.fn(), error: vi.fn() });
+    // Ready only once the fake has installed its TERM trap (it touches `trapped`), as a real goosed
+    // installs its signal handlers before it binds — a SIGTERM earlier would kill the shell outright.
+    const readyOnceTrapped = (dir: string) =>
+      vi.fn(
+        async () =>
+          new Response(null, { status: fs.existsSync(path.join(dir, 'trapped')) ? 200 : 503 })
       );
-      vi.stubEnv('GOOSE_BINARY', path.join(tempDir, 'goose'));
 
-      const result = await startGooseServe({
-        serverSecret: 'test-secret',
-        dir: tempDir,
-        stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
-        env: { TEST_ARGS_PATH: argsPath, TEST_EOF_PATH: eofPath },
-        logger: quiet,
-        readinessFetch: ready,
-      });
-      try {
+    const waitFor = (check: () => boolean, what: string) => pollUntil(check, what, 25);
+
+    it.skipIf(process.platform === 'win32')(
+      'hands goosed a stdin pipe held open for its life, and asks it to exit on EOF',
+      async () => {
+        const tempDir = makeTempDir();
+        const argsPath = path.join(tempDir, 'args.txt');
+        const eofPath = path.join(tempDir, 'eof');
+        makeExecutable(
+          path.join(tempDir, 'goose'),
+          [
+            '#!/usr/bin/env sh',
+            RECORD_ARGV,
+            'cat > /dev/null',
+            'echo eof > "$TEST_EOF_PATH"',
+            '',
+          ].join('\n')
+        );
+        vi.stubEnv('GOOSE_BINARY', path.join(tempDir, 'goose'));
+
+        const result = await startServe({
+          serverSecret: 'test-secret',
+          dir: tempDir,
+          stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
+          env: { TEST_ARGS_PATH: argsPath, TEST_EOF_PATH: eofPath },
+          logger: quiet(),
+          readinessFetch: ready(),
+        });
         // The fake records its argv and then blocks in `cat`: once the file exists it is reading.
-        await waitFor(() => fs.existsSync(argsPath), 'the fake goosed to record its argv');
-        expect(fs.readFileSync(argsPath, 'utf8').split('\n')).toContain('--exit-when-stdin-closes');
+        expect(await waitForRecordedArgv(argsPath)).toContain(GOOSED_FOLLOWS_PARENT_ARG);
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(fs.existsSync(eofPath)).toBe(false);
         expect(result.hasExited()).toBe(false);
@@ -391,82 +399,80 @@ describe('startGooseServe — goosed ends with its app, and the stop waits for i
         result.process.stdin?.destroy();
         await waitFor(() => result.hasExited(), 'the fake goosed to exit on EOF');
         expect(fs.readFileSync(eofPath, 'utf8').trim()).toBe('eof');
-      } finally {
-        await result.cleanup();
       }
-    }
-  );
+    );
 
-  it.skipIf(process.platform === 'win32')(
-    'resolves the stop only once goosed has EXITED, for every caller',
-    async () => {
-      const tempDir = makeTempDir();
-      const donePath = path.join(tempDir, 'teardown-done');
-      makeExecutable(
-        path.join(tempDir, 'goose'),
-        [
-          '#!/usr/bin/env sh',
-          // goosed's own teardown: it takes a while, then exits on its own.
-          'trap \'sleep 0.4; echo done > "$TEST_DONE_PATH"; exit 143\' TERM',
-          'touch "$TEST_DIR/trapped"',
-          'while true; do sleep 0.05; done',
-          '',
-        ].join('\n')
-      );
-      vi.stubEnv('GOOSE_BINARY', path.join(tempDir, 'goose'));
+    it.skipIf(process.platform === 'win32')(
+      'resolves the stop only once goosed has EXITED, for every caller',
+      async () => {
+        const tempDir = makeTempDir();
+        const donePath = path.join(tempDir, 'teardown-done');
+        makeExecutable(
+          path.join(tempDir, 'goose'),
+          [
+            '#!/usr/bin/env sh',
+            // goosed's own teardown: it takes a while, then exits on its own.
+            'trap \'sleep 0.4; echo done > "$TEST_DONE_PATH"; exit 143\' TERM',
+            'touch "$TEST_DIR/trapped"',
+            'while true; do sleep 0.05; done',
+            '',
+          ].join('\n')
+        );
+        vi.stubEnv('GOOSE_BINARY', path.join(tempDir, 'goose'));
 
-      const result = await startGooseServe({
-        serverSecret: 'test-secret',
-        dir: tempDir,
-        stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
-        env: { TEST_DONE_PATH: donePath, TEST_DIR: tempDir },
-        logger: quiet,
-        readinessFetch: readyOnceTrapped(tempDir),
-      });
-      const release = result.cleanup();
-      const quit = result.cleanup();
-      await Promise.all([release, quit]);
-      expect(fs.existsSync(donePath)).toBe(true);
-      expect(result.hasExited()).toBe(true);
-      expect(result.getExitDetails().code).toBe(143);
-    }
-  );
+        const result = await startServe({
+          serverSecret: 'test-secret',
+          dir: tempDir,
+          stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
+          env: { TEST_DONE_PATH: donePath, TEST_DIR: tempDir },
+          logger: quiet(),
+          readinessFetch: readyOnceTrapped(tempDir),
+        });
+        const release = result.cleanup();
+        const quit = result.cleanup();
+        await Promise.all([release, quit]);
+        expect(fs.existsSync(donePath)).toBe(true);
+        expect(result.hasExited()).toBe(true);
+        expect(result.getExitDetails().code).toBe(143);
+      }
+    );
 
-  it.skipIf(process.platform === 'win32')(
-    'SIGKILLs a goosed that ignores SIGTERM only after the grace, and waits for that exit',
-    async () => {
-      const tempDir = makeTempDir();
-      makeExecutable(
-        path.join(tempDir, 'goose'),
-        [
-          '#!/usr/bin/env sh',
-          "trap '' TERM",
-          'touch "$TEST_DIR/trapped"',
-          'while true; do sleep 0.05; done',
-          '',
-        ].join('\n')
-      );
-      vi.stubEnv('GOOSE_BINARY', path.join(tempDir, 'goose'));
-      const logger = { info: vi.fn(), error: vi.fn() };
+    it.skipIf(process.platform === 'win32')(
+      'SIGKILLs a goosed that ignores SIGTERM only after the grace, and waits for that exit',
+      async () => {
+        const tempDir = makeTempDir();
+        makeExecutable(
+          path.join(tempDir, 'goose'),
+          [
+            '#!/usr/bin/env sh',
+            "trap '' TERM",
+            'touch "$TEST_DIR/trapped"',
+            'while true; do sleep 0.05; done',
+            '',
+          ].join('\n')
+        );
+        vi.stubEnv('GOOSE_BINARY', path.join(tempDir, 'goose'));
+        const logger = { info: vi.fn(), error: vi.fn() };
 
-      const result = await startGooseServe({
-        serverSecret: 'test-secret',
-        dir: tempDir,
-        stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
-        env: { TEST_DIR: tempDir },
-        logger,
-        readinessFetch: readyOnceTrapped(tempDir),
-        sigkillAfterMs: 300,
-      });
-      const started = Date.now();
-      await result.cleanup();
-      expect(Date.now() - started).toBeGreaterThanOrEqual(300);
-      expect(result.hasExited()).toBe(true);
-      expect(result.getExitDetails().signal).toBe('SIGKILL');
-      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('sending SIGKILL'));
-    }
-  );
-});
+        const result = await startServe({
+          serverSecret: 'test-secret',
+          dir: tempDir,
+          stderrLogPath: path.join(tempDir, 'stderr', 'goose-serve-stderr.log'),
+          env: { TEST_DIR: tempDir },
+          logger,
+          readinessFetch: readyOnceTrapped(tempDir),
+          sigkillAfterMs: 300,
+        });
+        const started = Date.now();
+        await result.cleanup();
+        expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+        expect(result.hasExited()).toBe(true);
+        expect(result.getExitDetails().signal).toBe('SIGKILL');
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('sending SIGKILL'));
+      }
+    );
+  }
+);
 
 describe('buildGooseServeEnv — bundled tailscaled wiring', () => {
   afterEach(() => {
