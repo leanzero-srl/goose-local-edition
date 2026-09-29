@@ -19,7 +19,13 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- none running.
+- The isolated 3.0.76 walk: Q-465, Q-468 (one case fails → Q-470), Q-334 and Q-335 PROVEN; Q-457 FAILED → reopened.
+- Cutting (3 lanes, file-disjoint):
+  - Q-470 (SECURITY: secret echoed by the config diagnosis);
+  - visual (Q-457 reopen, Q-474 left rail, Q-475 destructive contrast, Q-476 drag row, Q-477 focus);
+  - behaviour (Q-471 banner layout, Q-472 native dialogs + sweep, Q-473 "[object Object]" data loss,
+    Q-478 onboarding 401).
+- Q-270/373/424/205 SCHEDULED; Q-398/425 QUEUED behind fork access; Q-466 SCHEDULED on a CI red.
 
 ## 3.0.76 = main 978075296 — INSTALLED (DMG in ~/goose-builds/dmg)
 
@@ -32,6 +38,6 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 
 ## Standing rules for every tick
 - Check CI, agents, disk ≥ 30 GB (126 GB now) and clean.sh. Merge via scratch plus ledger_resolve, gate, ff, push.
-- The coordinator assigns Q ids; the next free id is Q-469. Agents use their own scratch folders.
+- The coordinator assigns Q ids; the next free id is Q-479. Agents use their own scratch folders.
 - Never navigate the main window while an E2E runs. Kill pids, never killpg.
 - Training: next round on the MacBook, ONLY on the owner's word (memory next-training-on-macbook).
