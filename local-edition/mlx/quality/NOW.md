@@ -36,8 +36,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   never another window's; Stop plus a "Running in the background" bar. Q-507 DONE 3cfd23a94 (q507): scheduled runs read Running everywhere, and any window's Stop stops them. Q-509
   (Link advertises Idle during a schedule) waits on 3.0.80.
 - Q-505 DONE 65126cc51 (worktree-agent-acc78227175574ec2): secrets redacted on save/import/read/recall, plus
-  `goose memory scan-secrets`. The Context7 key WAS recalled into a turn before the fix, so the OWNER decides whether to
-  rotate it and delete the entry (told 17:1x). Q-510 (the desktop editor writes raw) is queued behind 3.0.80.
+  `goose memory scan-secrets`. Owner 17:1x: keys stay as they are, do not raise them again. Q-510 dropped.
 - 3.0.80 merge set (branches): q508 (⊃ q502 ⊃ Q-498), q503 (⊃ Q-499), q507 (⊃ Q-504 ⊃ Q-500/501), Q-505's branch,
   Q-466's branch → one scratch → full gate → ff main → release → install when #3y allows (BOTH Macs: new spec tag).
 
