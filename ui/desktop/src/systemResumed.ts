@@ -1,4 +1,5 @@
 import type { App } from 'electron';
+import { sendToWindow, type ReachableWindow } from './windowReach';
 
 /**
  * The Mac woke from sleep (DESIGN-SESSION-LOOPS §5.4, slice L10). goosed's loop runner keeps its
@@ -15,9 +16,8 @@ import type { App } from 'electron';
 export const SYSTEM_RESUMED_CHANNEL = 'system-resumed';
 
 /** The BrowserWindow surface the broadcast reads — Electron-free, so it is tested as data. */
-export interface ResumedWindow {
-  isDestroyed(): boolean;
-  webContents: { id: number; send(channel: string): void };
+export interface ResumedWindow extends ReachableWindow {
+  webContents: ReachableWindow['webContents'] & { id: number };
 }
 
 /** Sends `system-resumed` to every live goose window; answers the webContents ids it reached. */
@@ -27,9 +27,8 @@ export function broadcastSystemResumed(
 ): number[] {
   const reached: number[] = [];
   for (const win of windows) {
-    if (win.isDestroyed() || win.webContents.id === glanceWebContentsId) continue;
-    win.webContents.send(SYSTEM_RESUMED_CHANNEL);
-    reached.push(win.webContents.id);
+    if (win.webContents.id === glanceWebContentsId) continue;
+    if (sendToWindow(win, SYSTEM_RESUMED_CHANNEL)) reached.push(win.webContents.id);
   }
   return reached;
 }

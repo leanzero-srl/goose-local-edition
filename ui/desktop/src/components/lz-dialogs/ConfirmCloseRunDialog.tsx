@@ -1,12 +1,19 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, Panel, StatusDot, SURFACE, TYPE, cx } from '../lz';
-import type { LiveRunRef } from '../../utils/closeGuard';
+import type { LiveRunRef, TurnInFlight } from '../../utils/closeGuard';
 
 /**
- * The question main asks when a window holding a LIVE swarm run is closed with the mouse
- * (closeGuard.ts): the traffic-light button would release the window's backend lease and the run
- * would die with it. Never window.confirm — a Studio overlay Panel with a warn StatusDot, the safe
+ * The question main asks when a window holding a LIVE swarm run — or a chat whose prompt is in flight
+ * on this window's connection (Q-490) — is closed (closeGuard.ts): the close ends the window's
+ * connection and the run or the answer dies with it.
+ * With a run it speaks of the run (naming any turns too); with only turns it speaks of the answer. Never window.confirm — a Studio overlay Panel with a warn StatusDot, the safe
  * action ("Keep running") focused and on Escape, the destructive one in the err tone.
  *
  * Modal for real: aria-modal on the dialog, Tab/Shift+Tab cycle inside it, Escape anywhere in the
@@ -42,11 +49,38 @@ const i18n = defineMessages({
     id: 'confirmCloseRun.warning',
     defaultMessage: 'Warning',
   },
+  turnTitle: {
+    id: 'confirmCloseRun.turnTitle',
+    defaultMessage: 'A chat in this window is still answering',
+  },
+  turnBody: {
+    id: 'confirmCloseRun.turnBody',
+    defaultMessage:
+      'Closing this window stops the answer: the chat was sent from this window, and its reply ends where it is.',
+  },
+  turnLine: {
+    id: 'confirmCloseRun.turnLine',
+    defaultMessage: 'Chat: {name}',
+  },
+  keepAnswering: {
+    id: 'confirmCloseRun.keepAnswering',
+    defaultMessage: 'Keep answering',
+  },
+  stopAnswerAndClose: {
+    id: 'confirmCloseRun.stopAnswerAndClose',
+    defaultMessage: 'Stop the answer and close',
+  },
+  stoppingAnswer: {
+    id: 'confirmCloseRun.stoppingAnswer',
+    defaultMessage: 'Stopping the answer…',
+  },
 });
 
 export interface ConfirmCloseRunDialogProps {
   /** The live runs this window's renderer is watching — what the body names. */
   runs: LiveRunRef[];
+  /** The chats with a prompt in flight on this window's connection. */
+  turns: TurnInFlight[];
   /** Escape, or the secondary action: nothing happens, the window stays. */
   onKeepRunning: () => void;
   /** The err-tone action: main will close the window for real. */
@@ -58,6 +92,7 @@ const FOCUSABLE =
 
 export function ConfirmCloseRunDialog({
   runs,
+  turns,
   onKeepRunning,
   onStopAndClose,
 }: ConfirmCloseRunDialogProps) {
@@ -66,6 +101,23 @@ export function ConfirmCloseRunDialog({
   const bodyId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const [stopping, setStopping] = useState(false);
+  // A swarm run is the bigger thing to lose, so it leads the words whenever there is one.
+  const words =
+    runs.length > 0
+      ? {
+          title: i18n.title,
+          body: i18n.body,
+          keep: i18n.keepRunning,
+          stop: i18n.stopAndClose,
+          stopping: i18n.stopping,
+        }
+      : {
+          title: i18n.turnTitle,
+          body: i18n.turnBody,
+          keep: i18n.keepAnswering,
+          stop: i18n.stopAnswerAndClose,
+          stopping: i18n.stoppingAnswer,
+        };
   // Whoever had focus before the dialog, read at RENDER: autoFocus moves focus during commit, before
   // any effect runs, so an effect would only ever see the dialog's own button.
   const [previousFocus] = useState(() => document.activeElement);
@@ -141,14 +193,21 @@ export function ConfirmCloseRunDialog({
             />
             <div className="flex min-w-0 flex-1 flex-col gap-2">
               <h2 id={titleId} className={TYPE.h1}>
-                {intl.formatMessage(i18n.title)}
+                {intl.formatMessage(words.title)}
               </h2>
               <div id={bodyId} className="flex flex-col gap-2">
-                <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.body)}</p>
+                <p className={TYPE.bodyMuted}>{intl.formatMessage(words.body)}</p>
                 <ul className="flex flex-col gap-1" data-testid="confirm-close-run-runs">
                   {runs.map((run) => (
                     <li key={run.runDir} className={cx(TYPE.mono, 'break-all')}>
                       {intl.formatMessage(i18n.runLine, { runId: run.runId, runDir: run.runDir })}
+                    </li>
+                  ))}
+                  {turns.map((turn) => (
+                    <li key={turn.sessionId} className={cx(TYPE.body, 'break-all')}>
+                      {intl.formatMessage(i18n.turnLine, {
+                        name: turn.sessionName ?? turn.sessionId,
+                      })}
                     </li>
                   ))}
                 </ul>
@@ -157,7 +216,7 @@ export function ConfirmCloseRunDialog({
           </div>
           <div className="mt-5 flex justify-end gap-2">
             <Button variant="secondary" autoFocus disabled={stopping} onClick={onKeepRunning}>
-              {intl.formatMessage(i18n.keepRunning)}
+              {intl.formatMessage(words.keep)}
             </Button>
             <Button
               variant="destructive"
@@ -165,7 +224,7 @@ export function ConfirmCloseRunDialog({
               disabled={stopping}
               onClick={stop}
             >
-              {intl.formatMessage(stopping ? i18n.stopping : i18n.stopAndClose)}
+              {intl.formatMessage(stopping ? words.stopping : words.stop)}
             </Button>
           </div>
         </Panel>

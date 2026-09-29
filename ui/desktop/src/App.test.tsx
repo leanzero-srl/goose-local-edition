@@ -494,6 +494,31 @@ describe('App — the close-run question', () => {
     expect(confirmCloseRunReply).toHaveBeenCalledTimes(2);
   });
 
+  it('asks about a chat mid-turn when main sends turns and no runs (Q-490)', async () => {
+    render(<AppInner />, { wrapper: AppInnerTestWrapper });
+    await waitFor(() => {
+      expect(mockElectron.reactReady).toHaveBeenCalled();
+    });
+    const ask = mockElectron.on.mock.calls.find(
+      ([channel]) => channel === 'confirm-close-run'
+    )?.[1];
+    const title = 'A chat in this window is still answering';
+
+    act(() => ask?.({} as any, { runs: [], turns: [] }));
+    expect(screen.queryByRole('dialog', { name: title })).toBeNull();
+
+    act(() =>
+      ask?.({} as any, {
+        runs: [],
+        turns: [{ sessionId: '20260928_18', sessionName: 'Portugal capital question' }],
+      })
+    );
+    expect(screen.getByRole('dialog', { name: title })).toBeInTheDocument();
+    expect(screen.getByText('Chat: Portugal capital question')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop the answer and close' }));
+    expect(confirmCloseRunReply).toHaveBeenCalledWith(true);
+  });
+
   it('Escape on the question keeps the run', async () => {
     render(<AppInner />, { wrapper: AppInnerTestWrapper });
     await waitFor(() => {

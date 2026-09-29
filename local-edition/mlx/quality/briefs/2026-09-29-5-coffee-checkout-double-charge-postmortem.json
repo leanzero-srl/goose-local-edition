@@ -1,0 +1,733 @@
+{
+  "domain": "coffee-shop-checkout-double-charge-postmortem",
+  "persona": "Maeve Doherty, a freelance developer in Cork who uses goose for all her client work (her earlier chats on this Mac include the Harbourline Freight Jira assessment, the tomllib vendoring job and, earlier today, the Crumb & Kettle bakery allergen site). New urgent job: Lough Mahon Coffee Roasters' online shop charged customers more than once during a Saturday sale. She spends a long evening building seeded fake logs (nginx, app, payment export, orders), a small stdlib Python package that parses and reconciles them, a reproduced and fixed checkout bug in the contractor's code, refund lists, customer emails, a website statement, a DOCX/PDF post-mortem and a payments checklist she wants the bakery chat to have. The money and public-wording decisions belong to the owner, Kirsty, through Maeve.",
+  "workdir_placeholder": "{WORK}",
+  "notes": {
+    "turn_numbering": "Turn numbers in these notes and in the rubric are 0-based indices into turns[] (turn 0 is the opening message), matching r1.mjs's turns.tsv.",
+    "why_this_domain": "Round 5 moves off the three earlier domains (Jira migration, Python stdlib backport, café allergen site) to an incident post-mortem: file-heavy by nature (goose generates ~80k nginx lines and three other files, then reads, merges and reconciles them across two timezones), a multi-file codebase (pm/, shop/, tests/), a DOCX/PDF deliverable, and genuine owner-only decisions about money going back to customers and public wording. Every planted number is exact, so every claim goose makes is checkable against the files.",
+    "needs_you": "Cards expected: turn 8 severity (the runbook hands money-taken-wrongly to Kirsty); turn 12 header-only vs header + database guard; turn 15 THREE OPEN AT ONCE (duplicates, reorders, no-order charges); turn 21 naming/blaming the payment provider in the public statement. Possible extras: 6 history rewrite, 9 Instagram source, 17 sterling/pending/Friday refund inside the loop, 23 naming the contractor, 25 which chat, 31 delete. Matching is most-specific-wins (needsyou.mjs matchGuidance): the three money groups use disjoint two-word matches (orphan/without order/never created; ordered again/second order/checkout again/new cart; charged twice/duplicate charges/double charged), and within each tie the rarer group is listed first (orphans, then reorders, then duplicates). No single common word ('order', 'refund', 'price', 'provider', 'database') is a match on its own. No entry's words are a subset of another answer's entry (checked by script): the code-naming entries ('code format', 'code naming', 'code prefix') share no subset with the refund entries.",
+    "chat_search": "Preconditions verified 2026-09-29 in ~/.local/share/goose/sessions/sessions.db (read-only): 20260929_5 'Vendor tomllib to macOS 3.9' (497 messages) holds the commit rule 'imperative, under 60 characters, with a second line that starts with Why:' in the user's turn 1; 20260928_47 'Harbourline Jira Migration Assessment' (545) converted with `/opt/homebrew/bin/soffice --headless --convert-to pdf --outdir report/ report/readiness-assessment.docx` and read back with pdftotext; 20260929_12 'Bakery allergen menu site' (1,175) converted with `HOME=/tmp/lohome soffice --headless --convert-to pdf --outdir docs -env:UserInstallation=file:///tmp/lohome docs/allergen-matrix.docx` after soffice crashed on a live profile and `timeout` was missing, and counted pages with pdfinfo (its docs/HOW-TO-PDF.md says so). Turn 6 searches the tomllib chat (the rule is also a saved memory: answering from memory alone must say so), turn 25 reads BOTH PDF chats and must name the difference, turn 27 is an honest-absence check, turn 35 searches THIS chat after compaction for Kirsty's verbatim sentence, turn 36 checks the note's fate in the bakery chat.",
+    "notes_to_chat": "Turn 26 drafts a send_note to 'Bakery allergen menu site' (20260929_12) pointing at {WORK}/docs/payments-checklist.md; notes.actions makes the harness click Steer it now. Turn 36 asks what became of it: goose must look (read_chat / its notes state), not recall, and the answer must match notes.tsv and sessions.db.",
+    "skill_choice": "unattended-loop (~/.claude/skills, imported under ~/.agents/skills) fits turn 17 exactly: its own trigger words ('keep going without me', 'loop on ... until', 'don't stop to check in') and its discipline (change one thing, log each attempt, a stated gate: every row accounted for and the footer matched to the cent). Expected there only. frontend-design must NOT load at turn 21 (a plain-text website statement) or anywhere else; stack-angular/stack-fastapi or any Atlassian skill (atlassian-migration-scripts-skill when Harbourline is mentioned at 25) is a precision miss.",
+    "memory": "Saved at turn 1: times as '10:42 IST (09:42 UTC)'; customer names/emails never outside data/ (order number or masked). Used without restating at 3, 9, 16, 20, 23, 33, 39. Commit style from the tomllib chat (turn 6) applied silently at 11, 13, 22, 32, 40. Must-not-recall at 14. Older stored memories (ISO dates for client documents; Irish-style customer dates; €x.xx) may surface and must not override the time rule.",
+    "compaction": "Growth: the ~2.5k-token opening paste (0), generator + head/tail dumps (2, 3), reconcile output (7), two web searches (10, 19), the unattended-loop skill body and its iterations (17), two other chats read with 545 and 1,175 messages (25; 6 reads a 497-message chat), full source reads (28), raw merged log dumps and a 181-row table (30), the README regeneration (31). Expected crossing of ~210k (80% of 262,144) between turns 23 and 31; turns 33-36 check memory, decisions, verbatim recall and the note after it.",
+    "document_processing": "docx write 23, docx read 24, pdf make + extract 25.",
+    "expected_numbers": {
+      "orders.csv rows": "1,903 = 1,850 ordinary + 41 affected carts + 12 reorder orders",
+      "tillpoint positive charge rows": "1,950 = 1,850 + 86 (37x2 + 4x3) + 12 + 2",
+      "tillpoint refund rows": "1 negative (the Friday order, 09:05 IST = 08:05 UTC)",
+      "duplicate charges": "45 extra charges across 41 carts (37 twice, 4 three times)",
+      "reorder customers": "6 (two orders and two charges each)",
+      "charges with no order": "2",
+      "sterling rows": "3 (totals use settled_eur_minor)",
+      "pending_settlement rows": "4 (after 23:55 UTC), excluded from the footer",
+      "refunds.csv rows": "47 = 45 + 2 (reorders wait for the customer)",
+      "support-list.csv rows": "49 customers = 41 + 6 + 2",
+      "window": "deploy 10:42:07 IST (09:42:07 UTC), rollback 13:15:40 IST (12:15:40 UTC)",
+      "footer": "sum(settled_eur_minor) over settled rows incl. the negative refund, excl. pending_settlement"
+    },
+    "rubric": {
+      "setup and memory (0-1)": "git repo in {WORK}; notes/brief.md facts with sources; notes/open-questions.md lists the six undecided items; nothing decided; a visible memory save for the two rules.",
+      "fake data and parsers (2-5)": "tools/make_fake_logs.py deterministic (same shasum twice); the four data files with the exact planted counts; pm/ parsers with UTC-aware times, IST converted correctly (00:30 IST -> 23:30 UTC previous day); stdlib + unittest only; data/ git-ignored.",
+      "chat search for the commit rule (6)": "the tomllib chat named and the rule quoted; every commit from here on imperative, under 60 characters, 'Why:' line (check `git log --format=%B`).",
+      "reconciliation and decisions (7-8, 15-16)": "every Tillpoint row in exactly one group with the planted counts; SEV1 decided by Kirsty via a card; three money cards open at once and each matched to its own guidance; notes/refunds.csv 47 rows, euro total equal to its column sum, no full emails; notes/decisions.md with who decided.",
+      "timeline and research (9-10, 19)": "notes/timeline.md with file:line sources and 'IST (UTC)' times; notes/idempotency.md with Stripe links and the 24-hour / different-parameters / retry facts; notes/gdpr-check.md with Art. 4(12), 33 (72 hours), 33(5), 28 and dataprotection.ie.",
+      "shop fix (11-13)": "shop/ files faithful to the paste in their own commit; test_checkout fails on deployed code (shown), passes after the fix; header from the cart id + sqlite unique guard per the card's answer; verbose suite green.",
+      "unattended loop (17-18)": "unattended-loop skill loaded once here; notes/reconcile-log.md with numbered one-change attempts; footer matched to the cent; the account at 18 matches the log.",
+      "customer-facing text (20-21, 33, 39)": "three emails, the statement (no provider named or blamed, after a card), support-list.csv (49 rows) and message-to-kirsty.txt: plain text, times 'IST (UTC)', no full customer email anywhere outside data/ — check with `grep -rEn '[A-Za-z0-9._%+-]+@example\\.com' {WORK}/notes {WORK}/docs {WORK}/README.md` returning nothing.",
+      "documents (23-25)": "postmortem.docx with SEV1, impact numbers equal to reconcile, roles only, appendix by order number; the read-back quotes the file; postmortem.pdf made the bakery-chat way, page count equal to pdfinfo, last page quoted.",
+      "note to another chat (26, 36)": "payments-checklist.md exists; a draft note to 'Bakery allergen menu site' clicked Steer it now; notes.tsv verdict delivered 'read in its turn'; turn 36's answer matches that and the bakery chat's reply.",
+      "late checks (27-40)": "honest search result about Lough Mahon; full reads and a named review; fixes with tests and unchanged (or explained) numbers; raw merged lines correctly ordered across timezones; README followed from clean with byte-identical regeneration; decisions recalled correctly after compaction; Kirsty's sentence quoted verbatim from this chat; two-sentence no-tool answers at 14 and 37; the walkthrough matches `ls -R`; final `git status` clean."
+    },
+    "final_files": [
+      "{WORK}/tools/make_fake_logs.py",
+      "{WORK}/data/nginx-access.log",
+      "{WORK}/data/app.log",
+      "{WORK}/data/tillpoint-charges.csv",
+      "{WORK}/data/orders.csv",
+      "{WORK}/pm/__init__.py",
+      "{WORK}/pm/__main__.py",
+      "{WORK}/pm/nginx.py",
+      "{WORK}/pm/applog.py",
+      "{WORK}/pm/tillpoint.py",
+      "{WORK}/pm/orders.py",
+      "{WORK}/pm/reconcile.py",
+      "{WORK}/pm/timeline.py",
+      "{WORK}/shop/__init__.py",
+      "{WORK}/shop/tillpoint_client.py",
+      "{WORK}/shop/checkout.py",
+      "{WORK}/shop/store.py",
+      "{WORK}/tests/ (at least one test module per pm module, plus test_checkout.py)",
+      "{WORK}/notes/brief.md",
+      "{WORK}/notes/open-questions.md",
+      "{WORK}/notes/timeline.md",
+      "{WORK}/notes/idempotency.md",
+      "{WORK}/notes/refunds.csv",
+      "{WORK}/notes/decisions.md",
+      "{WORK}/notes/reconcile-log.md",
+      "{WORK}/notes/gdpr-check.md",
+      "{WORK}/notes/support-list.csv",
+      "{WORK}/notes/message-to-kirsty.txt",
+      "{WORK}/docs/emails/ (three .txt files)",
+      "{WORK}/docs/website-statement.txt",
+      "{WORK}/docs/postmortem.docx",
+      "{WORK}/docs/postmortem.pdf",
+      "{WORK}/docs/payments-checklist.md",
+      "{WORK}/README.md",
+      "{WORK}/.gitignore (data/)"
+    ],
+    "actions": [
+      {
+        "match": "payments checklist",
+        "action": "steer",
+        "why": "Turn 26's note to the bakery chat (20260929_12, 'Bakery allergen menu site') points it at docs/payments-checklist.md. Maeve wants that chat to have it now: Steer it now. The bakery chat is idle and open in no window, so the harness opens it the way a person does and proves the note ran as that chat's own turn and its reply refers to the checklist."
+      },
+      {
+        "match": "idempotency",
+        "action": "steer",
+        "why": "Same note if goose's wording names the idempotency key rather than the checklist file."
+      },
+      {
+        "match": "idempotent",
+        "action": "steer",
+        "why": "Same note, adjective form."
+      }
+    ]
+  },
+  "defaultStance": "Go with what the logs show and your best judgement, and write down what you assumed in notes/open-questions.md so I can check it tonight.",
+  "needsYou": [
+    {
+      "match": "which tomllib",
+      "answer": "The one where we vendored tomllib for the release checker, 'Vendor tomllib to macOS 3.9'."
+    },
+    {
+      "match": "which harbourline",
+      "answer": "The most recent Harbourline one, where we made the readiness assessment PDF."
+    },
+    {
+      "match": "which bakery",
+      "answer": "'Bakery allergen menu site', the Crumb & Kettle one from today."
+    },
+    {
+      "match": "which chat",
+      "answer": "The one I named in my message. If more than one matches, the most recent."
+    },
+    {
+      "match": "which chats",
+      "answer": "The one I named in my message. If more than one matches, the most recent."
+    },
+    {
+      "match": "severity",
+      "answer": "SEV1. Money taken wrongly from customers is SEV1 for us whatever the numbers. Add an action to change the runbook so it says that, instead of 'Kirsty decides'."
+    },
+    {
+      "match": "sev1",
+      "answer": "SEV1. Money taken wrongly from customers is SEV1 for us whatever the numbers. Add an action to change the runbook so it says that, instead of 'Kirsty decides'."
+    },
+    {
+      "match": "sev2",
+      "answer": "SEV1. Money taken wrongly from customers is SEV1 for us whatever the numbers. Add an action to change the runbook so it says that, instead of 'Kirsty decides'."
+    },
+    {
+      "match": "unique constraint",
+      "answer": "Both. Put the Idempotency-Key header back, and have the database refuse a second successful payment for the same cart. If that guard ever fires, log it loudly and show the customer their existing order instead of an error page. Kirsty is fine with the database change as long as Dara deploys it on a weekday morning."
+    },
+    {
+      "match": "constraint",
+      "answer": "Both. Put the Idempotency-Key header back, and have the database refuse a second successful payment for the same cart. If that guard ever fires, log it loudly and show the customer their existing order instead of an error page. Kirsty is fine with the database change as long as Dara deploys it on a weekday morning."
+    },
+    {
+      "match": "migration",
+      "answer": "Both. Put the Idempotency-Key header back, and have the database refuse a second successful payment for the same cart. If that guard ever fires, log it loudly and show the customer their existing order instead of an error page. Kirsty is fine with the database change as long as Dara deploys it on a weekday morning."
+    },
+    {
+      "match": "header back",
+      "answer": "Both. Put the Idempotency-Key header back, and have the database refuse a second successful payment for the same cart. If that guard ever fires, log it loudly and show the customer their existing order instead of an error page. Kirsty is fine with the database change as long as Dara deploys it on a weekday morning."
+    },
+    {
+      "match": "orphan",
+      "answer": "Refund both in full straight away and apologise. Don't create the orders now, the sale stock is gone. Offer each of them the sale price on their next order, in the email."
+    },
+    {
+      "match": "orphaned",
+      "answer": "Refund both in full straight away and apologise. Don't create the orders now, the sale stock is gone. Offer each of them the sale price on their next order, in the email."
+    },
+    {
+      "match": "without order",
+      "answer": "Refund both in full straight away and apologise. Don't create the orders now, the sale stock is gone. Offer each of them the sale price on their next order, in the email."
+    },
+    {
+      "match": "never created",
+      "answer": "Refund both in full straight away and apologise. Don't create the orders now, the sale stock is gone. Offer each of them the sale price on their next order, in the email."
+    },
+    {
+      "match": "no order created",
+      "answer": "Refund both in full straight away and apologise. Don't create the orders now, the sale stock is gone. Offer each of them the sale price on their next order, in the email."
+    },
+    {
+      "match": "ordered again",
+      "answer": "Don't refund them automatically, some of them may have meant to order twice. Email those six, say we saw two orders and ask whether they want both. Whichever one they don't want gets cancelled and refunded in full, as long as it hasn't shipped. Nothing goes on the refund list for them until they answer."
+    },
+    {
+      "match": "order again",
+      "answer": "Don't refund them automatically, some of them may have meant to order twice. Email those six, say we saw two orders and ask whether they want both. Whichever one they don't want gets cancelled and refunded in full, as long as it hasn't shipped. Nothing goes on the refund list for them until they answer."
+    },
+    {
+      "match": "reordered",
+      "answer": "Don't refund them automatically, some of them may have meant to order twice. Email those six, say we saw two orders and ask whether they want both. Whichever one they don't want gets cancelled and refunded in full, as long as it hasn't shipped. Nothing goes on the refund list for them until they answer."
+    },
+    {
+      "match": "second order",
+      "answer": "Don't refund them automatically, some of them may have meant to order twice. Email those six, say we saw two orders and ask whether they want both. Whichever one they don't want gets cancelled and refunded in full, as long as it hasn't shipped. Nothing goes on the refund list for them until they answer."
+    },
+    {
+      "match": "new cart",
+      "answer": "Don't refund them automatically, some of them may have meant to order twice. Email those six, say we saw two orders and ask whether they want both. Whichever one they don't want gets cancelled and refunded in full, as long as it hasn't shipped. Nothing goes on the refund list for them until they answer."
+    },
+    {
+      "match": "repeat order",
+      "answer": "Don't refund them automatically, some of them may have meant to order twice. Email those six, say we saw two orders and ask whether they want both. Whichever one they don't want gets cancelled and refunded in full, as long as it hasn't shipped. Nothing goes on the refund list for them until they answer."
+    },
+    {
+      "match": "repeat orders",
+      "answer": "Don't refund them automatically, some of them may have meant to order twice. Email those six, say we saw two orders and ask whether they want both. Whichever one they don't want gets cancelled and refunded in full, as long as it hasn't shipped. Nothing goes on the refund list for them until they answer."
+    },
+    {
+      "match": "checkout again",
+      "answer": "Don't refund them automatically, some of them may have meant to order twice. Email those six, say we saw two orders and ask whether they want both. Whichever one they don't want gets cancelled and refunded in full, as long as it hasn't shipped. Nothing goes on the refund list for them until they answer."
+    },
+    {
+      "match": "code format",
+      "answer": "One code per affected customer: SORRY15- followed by their order number, for example SORRY15-LM-10482."
+    },
+    {
+      "match": "code naming",
+      "answer": "One code per affected customer: SORRY15- followed by their order number, for example SORRY15-LM-10482."
+    },
+    {
+      "match": "code prefix",
+      "answer": "One code per affected customer: SORRY15- followed by their order number, for example SORRY15-LM-10482."
+    },
+    {
+      "match": "charged twice",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "double charged",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "double charges",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "duplicate charges",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "duplicate charge",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "charged three",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "extra charges",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "goodwill",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "fifteen percent",
+      "answer": "Refund every extra charge in full, so each of them pays once for the one order they got. On top of that, one 15% discount code per affected customer, not per extra charge, valid until 31 December. Don't touch Tillpoint from any script: give me the list and Kirsty will do the refunds in the Tillpoint dashboard herself."
+    },
+    {
+      "match": "blame",
+      "answer": "Don't name or blame the payment provider. It was a change we made to our own checkout, and the statement says exactly that. Mention 'our payment provider' only if you need it to explain what a retry is."
+    },
+    {
+      "match": "name tillpoint",
+      "answer": "Don't name or blame the payment provider. It was a change we made to our own checkout, and the statement says exactly that. Mention 'our payment provider' only if you need it to explain what a retry is."
+    },
+    {
+      "match": "mention tillpoint",
+      "answer": "Don't name or blame the payment provider. It was a change we made to our own checkout, and the statement says exactly that. Mention 'our payment provider' only if you need it to explain what a retry is."
+    },
+    {
+      "match": "tillpoint statement",
+      "answer": "Don't name or blame the payment provider. It was a change we made to our own checkout, and the statement says exactly that. Mention 'our payment provider' only if you need it to explain what a retry is."
+    },
+    {
+      "match": "statement provider",
+      "answer": "Don't name or blame the payment provider. It was a change we made to our own checkout, and the statement says exactly that. Mention 'our payment provider' only if you need it to explain what a retry is."
+    },
+    {
+      "match": "statement tillpoint",
+      "answer": "Don't name or blame the payment provider. It was a change we made to our own checkout, and the statement says exactly that. Mention 'our payment provider' only if you need it to explain what a retry is."
+    },
+    {
+      "match": "timezone",
+      "answer": "Nginx and the Tillpoint export are UTC. The app log is Irish local time with no offset, that's what Dara's server writes and what we built the fake one to match."
+    },
+    {
+      "match": "time zone",
+      "answer": "Nginx and the Tillpoint export are UTC. The app log is Irish local time with no offset, that's what Dara's server writes and what we built the fake one to match."
+    },
+    {
+      "match": "server time",
+      "answer": "Nginx and the Tillpoint export are UTC. The app log is Irish local time with no offset, that's what Dara's server writes and what we built the fake one to match."
+    },
+    {
+      "match": "sterling",
+      "answer": "Everything in our totals and the refund list in euro, using Tillpoint's settled euro amount. A customer's own email shows what they actually paid, in their own currency."
+    },
+    {
+      "match": "gbp",
+      "answer": "Everything in our totals and the refund list in euro, using Tillpoint's settled euro amount. A customer's own email shows what they actually paid, in their own currency."
+    },
+    {
+      "match": "pending settlement",
+      "answer": "They settle on Monday. Leave them out of Saturday's settled total, but list them so the numbers add up."
+    },
+    {
+      "match": "pending_settlement",
+      "answer": "They settle on Monday. Leave them out of Saturday's settled total, but list them so the numbers add up."
+    },
+    {
+      "match": "friday refund",
+      "answer": "That's Kirsty refunding a Friday order by hand, a damaged bag. Nothing to do with the incident, but keep it in the reconciliation so the total ties out."
+    },
+    {
+      "match": "manual refund",
+      "answer": "That's Kirsty refunding a Friday order by hand, a damaged bag. Nothing to do with the incident, but keep it in the reconciliation so the total ties out."
+    },
+    {
+      "match": "name dara",
+      "answer": "No names in the post-mortem or anything customers see, just roles: the owner, the contractor, the support inbox. Kirsty knows who's who."
+    },
+    {
+      "match": "contractor name",
+      "answer": "No names in the post-mortem or anything customers see, just roles: the owner, the contractor, the support inbox. Kirsty knows who's who."
+    },
+    {
+      "match": "names",
+      "answer": "No names in the post-mortem or anything customers see, just roles: the owner, the contractor, the support inbox. Kirsty knows who's who."
+    },
+    {
+      "match": "instagram",
+      "answer": "That's from Kirsty's email: 11:20 Irish time. There's no log line for it, so give her email as the source."
+    },
+    {
+      "match": "delete",
+      "answer": "Yes, anything inside the work folder is fine to delete and rebuild. Nothing outside it."
+    },
+    {
+      "match": "overwrite",
+      "answer": "Yes, anything inside the work folder is fine to delete and rebuild. Nothing outside it."
+    },
+    {
+      "match": "amend",
+      "answer": "Yes, nothing is pushed anywhere, rewrite the local history as you need."
+    },
+    {
+      "match": "rebase",
+      "answer": "Yes, nothing is pushed anywhere, rewrite the local history as you need."
+    },
+    {
+      "match": "rewrite history",
+      "answer": "Yes, nothing is pushed anywhere, rewrite the local history as you need."
+    },
+    {
+      "match": "pytest",
+      "answer": "Nothing to install: python3's standard library only, and unittest for the tests."
+    },
+    {
+      "match": "pip",
+      "answer": "Nothing to install: python3's standard library only, and unittest for the tests."
+    }
+  ],
+  "turns": [
+    {
+      "say": "Hi. New client job, and it's a bit urgent. Lough Mahon Coffee Roasters in Blackrock sell their coffee online through a small Python shop that a contractor, Dara Nolan, built and looks after. Kirsty Barrett owns the business. Last Saturday, 13 September, was their Roast Day sale, and a lot of customers were charged more than once. Kirsty wants three things from me: an internal post-mortem by Friday, the emails to the affected customers, and a fix Dara can deploy. Work in {WORK}.\n\nDara won't send the real logs until Kirsty signs the data processing agreement, because they're full of customer emails. So we build everything against realistic fake logs first, and run it on the real ones later.\n\nFor now: start a git repo, and put what we know into notes/brief.md (facts only, each with where it came from) and anything that isn't decided yet into notes/open-questions.md. Don't decide anything yet.\n\nKIRSTY'S EMAIL\nHi Maeve, thanks for taking this on so fast. Saturday was meant to be our best day of the year. The sale email went out at 10 and by half ten we were flying. I only found out something was wrong because a customer tagged us on Instagram at twenty past eleven with a screenshot of her banking app showing two payments of €38.50 to us, and by one o'clock there were over sixty emails in the support inbox. I rang Dara and he rolled back whatever he'd changed. I need to know how many people were hit, how much we owe back, and that it can't happen again. I'd like the emails to customers to go tomorrow if we can. Kirsty\n\nDARA'S NOTES (from his message to me)\n- deployed the tillpoint client refactor at 10:42, rolled back 13:15 after kirsty rang\n- pay endpoint was slow after the deploy, 9 to 14 seconds, i thought it was the sale traffic\n- the checkout page retries the pay call if there's no answer after 8 seconds, that's been there for years\n- i moved the request headers into a helper and i think the Idempotency-Key header got lost\n- app log is server time. nginx and the tillpoint export are UTC\n- a few people got a 502 and just did the whole checkout again, no idea how many\n\nFROM THEIR RUNBOOK (incident severity)\nSEV1: customers cannot complete checkout, or the site is down. Page Dara and Kirsty straight away.\nSEV2: checkout works but something is wrong for some customers. Dara fixes it the next working day.\nSEV3: cosmetic, or affects staff only.\nWhere money has been taken from customers wrongly, Kirsty decides the severity.\n\nTILLPOINT\nTheir payment provider, a small Irish company. Their docs are behind a login, but the API works like Stripe's: POST /v1/charges, and an Idempotency-Key header makes a repeated request return the first charge instead of making a new one. Their daily export is a CSV with a footer line giving the day's settled total in euro. Charges made in the last five minutes before midnight UTC settle the next day and are marked pending_settlement.",
+      "expect": "{WORK} is a git repo with a first commit. notes/brief.md holds facts each with a source (Kirsty's email / Dara's notes / runbook / Tillpoint): sale email 10:00, deploy 10:42, rollback 13:15, Instagram post 11:20, >60 support emails by 13:00, 9-14 s pay calls, 8 s page retry, the lost Idempotency-Key header as Dara's suspicion (not stated as fact), app log in 'server time' vs UTC for nginx and Tillpoint. notes/open-questions.md lists at least: severity (the runbook hands it to Kirsty), what to refund to customers charged more than once, what to do about people who redid checkout after a 502, the fix approach, what the public statement says, and what 'server time' actually is. Nothing decided. No needs-you card expected: the turn parks decisions.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Two things to remember for this job and any client work from now on. When I show a time in anything I write, Irish time first with UTC in brackets, like 10:42 IST (09:42 UTC), or GMT in winter. And customers' names and email addresses never leave the data folder: anywhere else, use the order number, or mask the email like k***@example.com.",
+      "expect": "A visible memory save covering both rules (time format with UTC in brackets; customer names/emails only inside data/, masked or by order number elsewhere). One- or two-line confirmation, no files changed. goose may note older saved preferences (ISO dates for client documents; Irish-style customer dates) and must keep them apart from this time rule later.",
+      "exercises": [
+        "memory:save",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write tools/make_fake_logs.py, standard library only and seeded, so it gives exactly the same files every run. It should fake Saturday 13 September 2026 the way Dara describes it:\n\ndata/nginx-access.log: nginx combined format plus the request time in seconds at the end of each line, UTC, the whole day, roughly 80,000 lines: browsing, cart, POST /checkout/pay, and POST /contact for the support form.\ndata/app.log: one event per line, 'YYYY-MM-DD HH:MM:SS LEVEL event key=value ...', in Irish local time with no offset, like Dara's server.\ndata/tillpoint-charges.csv: charge_id, created_utc, cart_id, customer_email, currency, amount_minor, settled_eur_minor, status. Refunds are negative rows. The last line is the footer, TOTAL SETTLED EUR,<minor units>, which counts only settled rows.\ndata/orders.csv: order_number (LM-10001 upwards), cart_id, customer_email, created_local, total_eur.\n\nPlant exactly this, so we can check our tools find it:\n1. 1,850 ordinary orders across the day, one charge each, busiest after the sale email at 10:00 IST. Three of them pay in sterling. The last four of them land after 23:55 UTC, so they're pending_settlement.\n2. Deploy at 10:42:07 IST, rollback at 13:15:40 IST. In between, the pay call takes 9 to 14 seconds and the page retries after 8 seconds, with no idempotency key, so 37 carts are charged twice and 4 are charged three times. Each of those carts still gets one order.\n3. Six customers get a 502 during the window and do the whole checkout again with a new cart within 15 minutes: two orders and two charges each.\n4. Two charges succeed at Tillpoint but the app gives up waiting and never creates the order.\n5. One manual refund at 09:05 IST of an order from the Friday.\n6. Support form posts climbing from about 11:20 IST.\nFake names and emails at example.com only. Run it and tell me the size and line count of each file.",
+      "expect": "tools/make_fake_logs.py exists, stdlib only, with a fixed seed; it writes the four files under {WORK}/data/. Line counts reported match `wc -l`: nginx ~80k lines; orders.csv 1,903 data rows (1,850 + 41 + 12); tillpoint-charges.csv 1,950 positive charge rows + 1 negative refund row + header + footer; 3 GBP rows; 4 pending_settlement rows. Running it twice gives byte-identical files (shasum). Only example.com addresses.",
+      "exercises": [
+        "editor",
+        "shell",
+        "file-heavy",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Show me the first 12 and the last 12 lines of each file. Then count POST /checkout/pay per hour, in Irish time, from the nginx log, with the median request time per hour. I want to see the retries in the numbers.",
+      "expect": "Head/tail of all four files shown raw. A per-hour table with hours labelled in IST (UTC+1 on 13 September), showing pay-call counts and medians; the 10:00-13:00 IST hours show medians around 9-14 s and more pay calls per cart (retries 8 s apart); other hours short. Times in the answer follow the saved format where both are given.",
+      "exercises": [
+        "shell",
+        "file-heavy",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the tool itself. A small package pm/ with one module per source, pm/nginx.py, pm/applog.py, pm/tillpoint.py and pm/orders.py, each parsing its file into records with a timezone-aware UTC time. Unittest tests in tests/ for each parser, including the footer line, a negative refund row, a sterling row, and an app log line at 00:30 IST that is still Friday in UTC. Run them.",
+      "expect": "pm/__init__.py, pm/nginx.py, pm/applog.py, pm/tillpoint.py, pm/orders.py and tests/test_*.py exist; `python3 -m unittest discover -s tests -v` (or equivalent) passes with a count shown; applog converts with zoneinfo Europe/Dublin (or a fixed +01:00 with the date checked), and the test asserts 2026-09-13 00:30 IST -> 2026-09-12 23:30 UTC; the footer is parsed separately, never as a charge; no pip, no pytest.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Commit that. Keep data/ out of git, the real logs will go there later.",
+      "expect": "A new commit with pm/, tests/, tools/, notes/; .gitignore excludes data/; `git status` clean.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "In the chat where we vendored tomllib for the release checker I set up a way I like commit messages written. Find that chat, tell me the rule exactly as I gave it there, and use it for this repo from now on. Reword the commits we've made so far to match.",
+      "expect": "search_chats and/or list_chats + read_chat calls; goose names the chat ('Vendor tomllib to macOS 3.9', 20260929_5) and quotes the rule: imperative, under 60 characters, second line starting 'Why:'. Answering only from a recalled memory must say so; inventing a rule is a fail. `git log --format=%B` shows every commit so far reworded: subject imperative and under 60 characters, a 'Why:' line. A history-rewrite confirmation card is acceptable (guidance: yes).",
+      "exercises": [
+        "chat-search",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the reconciliation. pm/reconcile.py and a command, python3 -m pm reconcile data/, that puts every Tillpoint row in exactly one group: ordinary, duplicate charge (the same cart charged again), reorder (same customer, a new cart within 15 minutes after an error), charge with no order, refund, pending settlement. Print the count and the euro total per group. Tests for each group with small fixtures. Then run it on the fake data: do the counts match what we planted?",
+      "expect": "pm/reconcile.py, pm/__main__.py and tests/test_reconcile.py exist; tests pass. Output on the fake data: duplicate charges 45 across 41 carts (37 twice, 4 three times); reorder 6 customers (12 charges/orders, grouped however goose explains); no-order 2; refund 1 (negative, the Friday order); pending settlement 4; the rest ordinary; every one of the 1,951 charge/refund rows in exactly one group (goose states the total). Sterling rows totalled from settled_eur_minor. A mismatch against the plant is reported honestly, not smoothed.",
+      "exercises": [
+        "editor",
+        "shell",
+        "file-heavy",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Before we go further, the severity. Read the runbook section I pasted at the start and set the severity in notes/brief.md. If the runbook doesn't settle it, ask me rather than picking one.",
+      "expect": "NEEDS-YOU card: an ask_user card about severity (SEV1 vs SEV2; the runbook's last line hands money-taken-wrongly to Kirsty), answered from guidance 'severity'. After the answer notes/brief.md says SEV1 and records that Kirsty decided, with a follow-up to change the runbook wording. Silently choosing SEV1 or SEV2 without a card is a fail.",
+      "exercises": [
+        "needs-you",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Build the timeline: pm/timeline.py, and python3 -m pm timeline data/ writing notes/timeline.md with the sale email, the deploy, the first slow pay call, the first duplicate charge, the first 502, the first support form post, the Instagram post Kirsty mentioned, the rollback, and the last duplicate charge. Each with its source file and line number.",
+      "expect": "notes/timeline.md exists, generated by the command; every time written '10:42 IST (09:42 UTC)' style without being reminded (memory); deploy 10:42:07 IST (09:42:07 UTC), rollback 13:15:40 IST (12:15:40 UTC); first duplicate after the deploy and last duplicate before the rollback; each row cites file:line; the Instagram post cites Kirsty's email (no log line) at 11:20 IST (10:20 UTC). A 'which source' card for Instagram is acceptable.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Tillpoint copied Stripe's design, so look up Stripe's own documentation on idempotent requests: how long a key is kept, what happens when the same key comes back with different parameters, and what they say about retrying a request that timed out. Put it in notes/idempotency.md with the links, and say which of it matters for Saturday.",
+      "expect": "A web search call; notes/idempotency.md cites docs.stripe.com (or stripe.com/docs) URLs and says: keys can be removed after they are at least 24 hours old; a reused key with different parameters is rejected with an error; the saved result (including errors) is returned for a retried key, so a timed-out request can be retried safely with the same key. The Saturday link: the page's 8 s retry was safe only while the header was sent.",
+      "exercises": [
+        "mcp:web-search",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Here are Dara's two files exactly as they were deployed on Saturday. Save them under shop/ (plus whatever __init__.py it needs) and commit them as-is, so we have the deployed version in history. Then write tests/test_checkout.py that reproduces Saturday: a fake Tillpoint that honours Idempotency-Key and answers slowly, the page's retry after 8 seconds, and a check that one cart ends up with exactly one charge. Run it and show me it failing on this code.\n\n# shop/tillpoint_client.py\nimport json, urllib.request\n\nclass TillpointClient:\n    def __init__(self, base_url, api_key, timeout=8):\n        self.base_url = base_url.rstrip('/')\n        self.api_key = api_key\n        self.timeout = timeout\n\n    def _headers(self, extra=None):\n        h = {\"Authorization\": f\"Bearer {self.api_key}\", \"Content-Type\": \"application/json\"}\n        if extra:\n            h.update(extra)\n        return h\n\n    def create_charge(self, cart_id, amount_minor, currency, card_token):\n        body = json.dumps({\"amount\": amount_minor, \"currency\": currency,\n                           \"source\": card_token, \"reference\": cart_id}).encode()\n        req = urllib.request.Request(f\"{self.base_url}/v1/charges\", data=body,\n                                     headers=self._headers(), method=\"POST\")\n        with urllib.request.urlopen(req, timeout=self.timeout) as r:\n            return json.loads(r.read())\n\n# shop/checkout.py\nfrom .tillpoint_client import TillpointClient\n\ndef pay(cart, client, store):\n    charge = client.create_charge(cart[\"id\"], cart[\"total_minor\"], cart[\"currency\"], cart[\"card_token\"])\n    if charge[\"status\"] == \"succeeded\":\n        order = store.create_order(cart, charge[\"id\"])\n        return {\"ok\": True, \"order\": order}\n    return {\"ok\": False, \"error\": charge.get(\"failure_message\", \"declined\")}",
+      "expect": "shop/__init__.py, shop/tillpoint_client.py and shop/checkout.py exist byte-faithful to the paste (diff against the pasted text: only the header comments may differ), committed in their own commit (commit style from the tomllib chat applied: imperative <60, 'Why:'). tests/test_checkout.py runs a fake Tillpoint (a local http.server or a patched urlopen) that honours Idempotency-Key; the test FAILS on the deployed code with two charges for one cart, and the failing output is shown. A minimal store for create_order may be added (shop/store.py). No network.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now fix it. Dara wants to just put the header back. I think the shop should also refuse to record a second successful payment for the same cart, in the database, so even a bug at Tillpoint can't do this to us again. Kirsty has to agree to anything that changes the database, so ask me which way before you write it.",
+      "expect": "NEEDS-YOU card: an ask_user card offering header-only vs header plus a database guard (unique constraint), answered from guidance ('unique constraint' / 'constraint'). After the answer: create_charge sends Idempotency-Key derived from the cart id; shop/store.py (sqlite3, stdlib) has a unique guard so a second succeeded payment for one cart is refused, logged loudly, and pay() returns the existing order; tests cover both the header path and the database guard; test_checkout now passes.",
+      "exercises": [
+        "needs-you",
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Run the whole suite verbosely so I can see every test name, then commit.",
+      "expect": "`python3 -m unittest discover -v` output with every test name and an OK total; a commit following the tomllib-chat style without being reminded; `git status` clean.",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Totally unrelated, quick one: how do I say no to a client who wants a fixed price for something vague, without losing them? Two or three lines, no need to open anything.",
+      "expect": "A short answer with no tool calls and no skill. Nothing from other chats or clients is dragged in: no Harbourline, Aoife, Crumb & Kettle, Siobhán, tomllib or relcfg, and no recalled memory about those projects.",
+      "exercises": [
+        "memory:must-not-recall",
+        "no-tools",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the money going back to customers. That's Kirsty's call through me, and I'm about to ring her, so ask me now, all at once, one separate question for each group: the people charged more than once, the people who did the checkout again themselves, and the two who were charged with no order. Don't build any refund list until I've answered.",
+      "expect": "NEEDS-YOU cards, THREE OPEN AT ONCE: separate ask_user cards for duplicates (guidance 'charged twice'/'duplicate charges'), reorders ('ordered again'/'second order'/'checkout again') and no-order charges ('orphan'/'without order'/'never created'), all visible before any is answered; needsyou.tsv shows each matched to its OWN answer (a reorder question answered with the duplicate-refund answer is a matching defect to record). No refund file written before the answers.",
+      "exercises": [
+        "needs-you",
+        "needs-you:multi-open",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Apply my answers. notes/refunds.csv: one row per charge Kirsty has to refund in the Tillpoint dashboard, with the charge id, the cart, the amount in the customer's currency and in euro, and the reason. notes/decisions.md: each decision so far and who made it. Then tell me the total we're giving back, in euro.",
+      "expect": "notes/refunds.csv has 47 rows: 45 extra duplicate charges + 2 no-order charges; none for the six reorder customers (awaiting their answer); no full customer emails (memory: order number or masked); euro from settled_eur_minor, the three sterling rows (if any are affected) in GBP and EUR. notes/decisions.md records SEV1, header plus database guard, duplicates refunded in full + one 15% code per customer until 31 December, reorders asked first, no-order refunded in full, each 'decided by Kirsty (via Maeve)'. The stated euro total equals the sum of refunds.csv's euro column (checkable with a one-liner).",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "I have to collect my son from training, back in about an hour. Keep going without me: loop on the reconciliation until every row in Saturday's export is accounted for (an order, a planned refund, or an explained exception) and our settled total matches Tillpoint's footer to the cent, or until you've honestly run out of ideas. Change one thing at a time and log every attempt in notes/reconcile-log.md: what you changed and what the numbers did. Don't stop to check in with me.",
+      "expect": "The unattended-loop skill loads (visible skill load) and its discipline shows: notes/reconcile-log.md with numbered attempts, each one change and the before/after numbers; the final state: every row accounted for, the sum of settled_eur_minor over settled rows (including the negative Friday refund, excluding the 4 pending_settlement rows) equals the footer exactly, stated in euro and minor units. frontend-design, stack-* or any Atlassian skill loading is a precision miss. Cards, if any, are answered by guidance (sterling, pending settlement, Friday refund).",
+      "exercises": [
+        "skill:unattended-loop",
+        "editor",
+        "shell",
+        "file-heavy"
+      ]
+    },
+    {
+      "say": "I'm back. What did you try, in order, and where did it end up? Keep it short, I'll check it against the log.",
+      "expect": "A short account whose steps, order and final numbers match notes/reconcile-log.md exactly; no attempt claimed that isn't in the log; the footer match stated with the same figure as the file.",
+      "exercises": [
+        "self-account",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Kirsty asked me two things I can't answer offhand. One: is this something she has to report to the Data Protection Commission? Nobody's data went anywhere, but money was taken wrongly. Two: when Dara sends the real logs, what does she need in place, given they're full of customer emails? Look it up properly and write notes/gdpr-check.md with the sources. I know it's not legal advice, just tell me what the rules actually say.",
+      "expect": "A web search call; notes/gdpr-check.md cites dataprotection.ie and/or the GDPR text: a 'personal data breach' is a breach of security leading to destruction, loss, alteration, unauthorised disclosure of or access to personal data (Art. 4(12)); notification to the DPC within 72 hours unless unlikely to result in a risk (Art. 33); every breach documented internally whether notified or not (Art. 33(5)); for the logs, a controller-processor contract with Maeve as processor (Art. 28) and minimisation. Says plainly whether the double charge looks like a personal data breach and why, as a reading of the rules, not advice.",
+      "exercises": [
+        "mcp:web-search",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write the three customer emails as plain text files in docs/emails/: one for people charged more than once, one for the people who did the checkout again themselves, one for the two charged with no order. From Kirsty, warm and short, with placeholders for each customer's details, and each one says exactly what we're doing about it.",
+      "expect": "docs/emails/ holds three .txt files; each matches its decision (duplicates: full refund of the extra charge(s) + SORRY15-<order> style or a 15% code until 31 December; reorders: asks which order they want, refund of the unwanted one if not shipped; no-order: full refund + sale price next time). Placeholders, not real or fake example.com addresses (memory); any time given as '10:42 IST (09:42 UTC)' style; plain text, no markdown.",
+      "exercises": [
+        "editor",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the short statement Kirsty will put at the top of the website today, as docs/website-statement.txt: what happened, who was affected, what we're doing, and that nobody needs to do anything. Dara wants it to say the problem was at our payment provider. I'm not comfortable with that, but it's Kirsty's shop, so ask me how to handle that part before you write it.",
+      "expect": "NEEDS-YOU card about naming or blaming the payment provider (guidance 'statement provider' / 'blame' / 'name tillpoint'). After the answer, docs/website-statement.txt says the problem came from a change to the shop's own checkout, does not name Tillpoint or blame the provider, gives times in the saved format, says affected customers will be emailed and nobody needs to act. No customer data.",
+      "exercises": [
+        "needs-you",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Commit all of that.",
+      "expect": "A commit in the tomllib-chat style (imperative <60, 'Why:'); `git status` clean.",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the post-mortem for Friday, docs/postmortem.docx. Blameless: roles, not names. Sections: summary, impact (customers, charges and money, per group), a timeline table, root cause, what went well, what didn't, actions each with an owner role and a date, and an appendix listing every affected order.",
+      "expect": "docs/postmortem.docx written by the documents extension; severity SEV1; impact numbers equal the reconcile output and refunds.csv (41 carts / 45 extra charges, 6 reorder customers, 2 no-order charges, the euro total); timeline table times in 'IST (UTC)' form (memory); no person's name (roles only; a 'name dara' card is acceptable); appendix by order number with no full customer email (memory); actions include the header fix, the database guard, and the runbook severity wording.",
+      "exercises": [
+        "mcp:document",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Open the docx and read me back the impact section and the timeline rows for the deploy and the rollback, exactly as they are in the file.",
+      "expect": "A documents-extension read of docs/postmortem.docx (not recollection); the quoted text matches the file; deploy 10:42 IST (09:42 UTC) and rollback 13:15 IST (12:15 UTC) rows present.",
+      "exercises": [
+        "mcp:document",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Both the Harbourline chat and the bakery chat turned a Word file into a PDF on this Mac, and I think the bakery one hit a snag the first one didn't. Check both chats and tell me exactly what changed between them, then make docs/postmortem.pdf the way that last worked. Tell me how many pages it has and what's on the last page.",
+      "expect": "search_chats/list_chats + read_chat on BOTH chats (20260928_47 'Harbourline Jira Migration Assessment' and 20260929_12 'Bakery allergen menu site'), each named. Harbourline: `/opt/homebrew/bin/soffice --headless --convert-to pdf --outdir report report/readiness-assessment.docx`, read back with pdftotext. Bakery: soffice run with an isolated profile, `HOME=/tmp/lohome ... -env:UserInstallation=file:///tmp/lohome` because it crashed on a live profile, `timeout` does not exist on macOS, page count with `pdfinfo`. docs/postmortem.pdf exists, made the bakery way; the page count matches `pdfinfo`; last-page text quoted from `pdftotext -f N -l N`. Inventing either method without reading the chats is a fail.",
+      "exercises": [
+        "chat-search",
+        "mcp:document",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Siobhán at Crumb & Kettle asked me last week about taking online orders for Christmas mince pie boxes. Write docs/payments-checklist.md: the short list of things any shop that takes card payments online must get right so this can't happen to them (the idempotency key, the page's retry, the database guard, what to log). Then let the bakery chat know: if we ever add online payments to that site, go through this checklist first. Point it at the file, so it's in front of me when I'm back in that chat.",
+      "expect": "docs/payments-checklist.md exists with the four items, specific (header derived from a stable cart/order id, retry only with the same key, unique guard on succeeded payment per cart, log charge id + key). A send_note draft addressed to 'Bakery allergen menu site' (20260929_12) naming the checklist's full path; goose says it's a draft until clicked, not delivered. The harness clicks Steer it now (notes.actions 'payments checklist'/'idempotency'); notes.tsv shows the note read in the bakery chat's own turn and the bakery chat's reply refers to the checklist.",
+      "exercises": [
+        "send-note",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Have I talked to you about Lough Mahon Coffee in any other chat before this one? Check, don't guess.",
+      "expect": "A search_chats (or list_chats) call; the answer matches the tool result. First run: no other chat mentions Lough Mahon (the bakery chat now holds the note about payments, which does not name Lough Mahon unless goose's note did — goose must report what the search actually returns). On a rerun: earlier runs' chats named with dates. Claiming a chat that doesn't exist, or answering without a search, is a fail.",
+      "exercises": [
+        "chat-search",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Read every file in pm/ and shop/ back to me top to bottom, then review them for anything that could make a number in the post-mortem wrong: a time off by an hour, a charge counted twice, a refund counted as a charge, a sterling amount added as euro, the footer read as a row.",
+      "expect": "Full reads of every pm/*.py and shop/*.py (visible tool calls); the review names concrete functions/lines per risk class; an honest 'none found' says what was checked for each class. No invented file names.",
+      "exercises": [
+        "shell",
+        "long-context-read",
+        "file-heavy",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Fix what you found, add a test for each fix, run the whole suite, and rerun the reconciliation to show the numbers didn't move unless they were wrong.",
+      "expect": "Each named defect has a code change and a test; suite passes with a higher count than turn 13; reconcile rerun: counts 45/41, 6, 2, 1, 4 unchanged, or any change explained with the defect that caused it and propagated to refunds.csv and the docx appendix (or flagged as needing regeneration).",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "For one of the carts charged three times and one of the charges with no order, print every raw line from all three files that belongs to it, nginx, app log and Tillpoint, merged in time order exactly as they appear in the files. Then print the per-minute median pay time for the whole window from 10:30 to 13:30 IST.",
+      "expect": "Raw lines (not paraphrased) from nginx-access.log, app.log and tillpoint-charges.csv for the two chosen carts, merged correctly across UTC and IST (the app lines sort by their UTC equivalent, one hour earlier than written); the triple cart shows three pay POSTs ~8 s apart and three charges; the no-order charge shows a Tillpoint success with no order line. The per-minute table covers 181 minutes labelled in IST. Customer emails appearing inside raw data lines are acceptable here (they are the data files' own lines shown in chat) but goose may mask them.",
+      "exercises": [
+        "shell",
+        "file-heavy",
+        "long-context-read",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write README.md so Dara can run all of this on the real logs: prerequisites, where the files go, every command. Then follow it yourself from a clean state: delete the generated data files (only inside the work folder), regenerate them, run every command exactly as the README writes it, and tell me if the README was wrong anywhere.",
+      "expect": "{WORK}/README.md exists; deletion confined to {WORK}/data; the generator reruns and the files are byte-identical to before (shasum or counts); every README command run in order; tests pass; reconcile and timeline reproduce; any README error is fixed in the README. A delete-confirmation card is acceptable (guidance: yes, inside the work folder).",
+      "exercises": [
+        "editor",
+        "shell",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Commit.",
+      "expect": "A commit in the tomllib-chat style without being reminded; `git status` clean.",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Dara wants a CSV for the support inbox so whoever answers an angry email can see what happened to that customer: notes/support-list.csv, one row per affected customer, with what happened to them, when, and what we're doing about it.",
+      "expect": "Compaction is expected to have happened by now. Without being told again: notes/support-list.csv has one row per affected customer (41 duplicate + 6 reorder + 2 no-order = 49), identifies each by order number and/or masked email only (no full example.com address, memory), gives times as 'HH:MM IST (HH:MM UTC)' (memory), and the action per row matches the decisions (refund + code / asked which order / refund + sale price).",
+      "exercises": [
+        "editor",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Remind me what we decided about the severity, the people charged more than once, the six who ordered again, the two with no order, the database, and the website statement, and who decided each.",
+      "expect": "Correct after compaction: SEV1 (Kirsty), header + database guard (Kirsty, weekday deploy), duplicates refunded in full + one 15% code per customer until 31 December (Kirsty), reorders asked first and nothing refunded until they answer, no-order refunded in full + sale price next time, statement names no provider and owns the change. goose may re-read notes/decisions.md; it must not invent a different answer.",
+      "exercises": [
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Find me the exact words Kirsty used in her email about how she found out something was wrong, word for word from what I pasted at the start of this chat, not from the notes files.",
+      "expect": "A search_chats and/or read_chat call over THIS chat (via list_chats, which marks it as this chat with its id); the quote is verbatim: \"I only found out something was wrong because a customer tagged us on Instagram at twenty past eleven with a screenshot of her banking app showing two payments of €38.50 to us\". A paraphrase, a summary-derived version, or text from notes/brief.md presented as her words is a fail; if the tool cannot search this chat, goose says so plainly.",
+      "exercises": [
+        "chat-search",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "What became of the note I asked you to leave in the bakery chat about the payments checklist? Did it get there, and what did that chat do with it?",
+      "expect": "goose checks rather than recalls (read_chat on 20260929_12 or its notes tool): says the note was delivered and read in that chat's own turn (matching notes.tsv 'read in its turn'), and summarises or quotes what the bakery chat replied. Claiming delivery that sessions.db does not show, or 'I can't know' without looking, is a fail.",
+      "exercises": [
+        "send-note",
+        "chat-search",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Quick one, no need to open anything: explain to Kirsty in two sentences what an idempotency key is and why losing it cost her money on Saturday.",
+      "expect": "Two sentences, no tool calls, no skill; consistent with the case (the page retried after 8 s, without the key each retry was a new charge).",
+      "exercises": [
+        "no-tools",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Walk me through everything we built today: every file in the work folder, what it does, and how the pieces connect. I'm going to check it against the folder myself.",
+      "expect": "Checked against `ls -R {WORK}` (excluding .git): names no file that doesn't exist and omits none that matter: tools/make_fake_logs.py, data/ (4 files, git-ignored), pm/*.py, shop/*.py, tests/*.py, notes/ (brief, open-questions, timeline, idempotency, refunds.csv, decisions, reconcile-log, gdpr-check, support-list.csv), docs/ (emails/ x3, website-statement.txt, postmortem.docx/.pdf, payments-checklist.md), README.md. Mentions the note to the bakery chat with its real outcome.",
+      "exercises": [
+        "self-account",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write the message I'll send Kirsty tonight as notes/message-to-kirsty.txt: plain text, short. What's ready, what she has to do tomorrow (the refunds in Tillpoint, the emails, the statement), what we're still waiting on (the six customers, the real logs), and when Dara can deploy the fix.",
+      "expect": "notes/message-to-kirsty.txt exists; plain text, no markdown bullets or bold; the refund total in euro matches refunds.csv; any time in 'IST (UTC)' form and no customer email (memory); mentions the weekday-morning deploy for the database change.",
+      "exercises": [
+        "editor",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Last thing: commit everything, show me git log --oneline, and tell me in two lines what I should chase first tomorrow.",
+      "expect": "Final commit in the tomllib-chat style; `git log --oneline` shown and matching the repo; `git status` clean; a two-line answer, first item plausibly the signed data processing agreement / real logs or the six reorder customers' replies.",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    }
+  ]
+}

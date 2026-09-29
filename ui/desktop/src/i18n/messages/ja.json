@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "警告"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "このウィンドウのチャットはまだ応答中です"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "このウィンドウを閉じると応答は停止します。チャットはこのウィンドウから送信されており、その返信はその時点で終わります。"
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "チャット: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "応答を続ける"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "応答を停止して閉じる"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "応答を停止しています…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "いいえ"
   },

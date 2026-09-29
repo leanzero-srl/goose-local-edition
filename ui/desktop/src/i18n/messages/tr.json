@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "Uyarı"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Bu penceredeki bir sohbet hâlâ yanıt veriyor"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "Bu pencereyi kapatmak yanıtı durdurur: sohbet bu pencereden gönderildi ve yanıtı olduğu yerde biter."
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "Sohbet: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Yanıtlamaya devam et"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Yanıtı durdur ve kapat"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Yanıt durduruluyor…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Hayır"
   },

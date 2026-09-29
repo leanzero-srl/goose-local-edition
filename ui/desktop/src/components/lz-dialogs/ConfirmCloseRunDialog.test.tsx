@@ -18,6 +18,7 @@ function mount(overrides: Partial<Parameters<typeof ConfirmCloseRunDialog>[0]> =
   const utils = render(
     <ConfirmCloseRunDialog
       runs={runs}
+      turns={[]}
       onKeepRunning={onKeepRunning}
       onStopAndClose={onStopAndClose}
       {...overrides}
@@ -29,6 +30,43 @@ function mount(overrides: Partial<Parameters<typeof ConfirmCloseRunDialog>[0]> =
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+/**
+ * Q-490: a window whose chat is mid-turn is asked too — its close drops the prompt mid-answer. With
+ * no swarm run the words are about the answer, and every chat in flight is named.
+ */
+describe('ConfirmCloseRunDialog — a chat mid-turn (Q-490)', () => {
+  const turns = [
+    { sessionId: '20260928_18', sessionName: 'Portugal capital question' },
+    { sessionId: '20260929_2', sessionName: null },
+  ];
+
+  it('speaks of the answer, names each chat (by id until it has a name), and replies through the same two actions', () => {
+    const { container, onKeepRunning, onStopAndClose } = mount({ runs: [], turns });
+    const dialog = screen.getByRole('dialog', { name: 'A chat in this window is still answering' });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleDescription(/Closing this window stops the answer/);
+    expect(screen.getByText('Chat: Portugal capital question')).toBeInTheDocument();
+    expect(screen.getByText('Chat: 20260929_2')).toBeInTheDocument();
+    assertStudioClean(container);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Keep answering' }));
+    expect(onKeepRunning).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop the answer and close' }));
+    expect(onStopAndClose).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Stopping the answer…' })).toBeDisabled();
+  });
+
+  it('a live run leads the words; the chat in flight is still named', () => {
+    mount({ turns: [turns[0]] });
+    expect(
+      screen.getByRole('dialog', { name: 'A swarm run is live in this window' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('Run 20260901-2302 in /proj')).toBeInTheDocument();
+    expect(screen.getByText('Chat: Portugal capital question')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop run and close' })).toBeInTheDocument();
+  });
 });
 
 describe('ConfirmCloseRunDialog', () => {
@@ -122,10 +160,7 @@ describe('ConfirmCloseRunDialog', () => {
 
   it('names every live run when the window watches more than one', () => {
     mount({
-      runs: [
-        ...runs,
-        { runId: 'bench', runDir: '/bench/app', workingDir: '/bench/app' },
-      ],
+      runs: [...runs, { runId: 'bench', runDir: '/bench/app', workingDir: '/bench/app' }],
     });
     expect(screen.getByTestId('confirm-close-run-runs').children).toHaveLength(2);
     expect(screen.getByText('Run bench in /bench/app')).toBeInTheDocument();

@@ -14,6 +14,8 @@ import {
   acpPermissionUserInputRequestId,
   acpChatSessionStore,
   useAcpChatSessionSnapshot,
+  watchPromptsInFlight,
+  type PromptInFlight,
 } from '../chatSessionStore';
 
 function message(id: string, text: string): Message {
@@ -697,5 +699,49 @@ describe('a failed prompt does not claim the session cannot load', () => {
   it('a GENUINE load failure still raises sessionLoadError — the wall must survive for real failures', () => {
     acpChatSessionActions.failSessionLoad(sid, 'session 404: gone');
     expect(acpChatSessionStore.getSnapshot(sid)?.sessionLoadError).toBe('session 404: gone');
+  });
+});
+
+/**
+ * Q-490: main's close guard must know which chats have a prompt in flight on THIS window's connection
+ * — closing the window drops that prompt. The window's own store is the source: an active prompt
+ * attempt, from startPromptAttempt until it finishes or is cancelled.
+ */
+describe('watchPromptsInFlight — the window reports its prompts in flight on every change', () => {
+  const ids = ['q490-a', 'q490-b'];
+  afterEach(() => {
+    for (const id of ids) acpChatSessionActions.deleteSnapshot(id);
+  });
+
+  it('reports a prompt when it starts, not on every streamed change, and drops it when it ends', () => {
+    const reports: PromptInFlight[][] = [];
+    const last = () => reports[reports.length - 1];
+    const stop = watchPromptsInFlight((prompts) => reports.push(prompts));
+    expect(reports).toEqual([[]]);
+
+    acpChatSessionActions.setSessionMetadata('q490-a', session('q490-a'));
+    acpChatSessionActions.startPromptAttempt('q490-a', 'attempt-1');
+    expect(last()).toEqual([{ sessionId: 'q490-a', sessionName: 'Session q490-a' }]);
+
+    const before = reports.length;
+    acpChatSessionActions.setChatState('q490-a', ChatState.Streaming);
+    acpChatSessionActions.setMessages('q490-a', [message('m-1', 'token')]);
+    expect(reports.length).toBe(before);
+
+    acpChatSessionActions.startPromptAttempt('q490-b', 'attempt-2');
+    expect(last()).toEqual([
+      { sessionId: 'q490-a', sessionName: 'Session q490-a' },
+      { sessionId: 'q490-b', sessionName: null },
+    ]);
+
+    expect(acpChatSessionActions.finishPromptAttemptIfCurrent('q490-a', 'attempt-1')).toBe(true);
+    expect(last()).toEqual([{ sessionId: 'q490-b', sessionName: null }]);
+
+    acpChatSessionActions.startPromptCancellation('q490-b', 'attempt-2');
+    expect(last()).toEqual([]);
+
+    stop();
+    acpChatSessionActions.startPromptAttempt('q490-a', 'attempt-3');
+    expect(last()).toEqual([]);
   });
 });

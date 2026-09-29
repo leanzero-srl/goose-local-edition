@@ -64,8 +64,10 @@ import {
   CONFIRM_CLOSE_RUN_REPLY_CHANNEL,
   ConfirmedCloses,
   decideClose,
+  isTurnsInFlight,
+  TURNS_IN_FLIGHT_CHANNEL,
 } from './utils/closeGuard';
-import type { CloseRunPayload } from './utils/closeGuard';
+import type { CloseRunPayload, CloseVerdict, TurnInFlight } from './utils/closeGuard';
 import { benchmarkCancellationPids } from './utils/benchReap';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
@@ -78,6 +80,7 @@ import { reapOrphanedGoosed } from './utils/orphanGoosedReap';
 import { LOCAL_NETWORK_SETTINGS_URL, touchLocalNetwork } from './localNetwork';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { QuitHold } from './quitHold';
+import { broadcastToWindows, canReach, reportFatalError, sendToWindow } from './windowReach';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
 import {
@@ -1434,7 +1437,7 @@ const createChat = async (
     }
     log.info(
       reused
-        ? `Window shares the app's goose serve backend (pid ${reused.pid ?? '?'}, ${reused.windowIds.size} window(s) attached)`
+        ? `Window shares the app's goose serve backend (pid ${reused.pid ?? '?'}), already serving ${reused.windowIds.size} other window(s)`
         : `Window uses the app's goose serve backend (pid ${gooseServeLease.pid ?? '?'})`
     );
   }
@@ -1713,22 +1716,27 @@ const createChat = async (
   //
   // Every window still asks with one goosed shared by all (Q-257): the run lives with THIS window's
   // ACP connection, which its close aborts (closeGuard.ts has the measurement), not with goosed.
+  // A chat turn in flight on that connection is protected the same way (Q-490): the renderer reports
+  // its prompts in flight, and `closeVerdictOf` reads both. `window.electron.closeWindow()` is a
+  // plain `close()` and lands here too; it never bypassed this guard.
   mainWindow.on('close', (event) => {
-    const contents = mainWindow.webContents;
-    const rendererCanAnswer = !contents.isDestroyed() && !contents.isCrashed();
-    const verdict = decideClose({
-      confirmed: confirmedCloses.take(windowId),
-      windowHoldsLiveRun: rendererCanAnswer && windowHoldsLiveRun(mainWindow),
-      rendererCanAnswer,
-    });
-    if (verdict === 'pass') return;
+    if (closeVerdictOf(mainWindow, confirmedCloses.take(windowId)) === 'pass') {
+      log.info(`Window ${windowId} closing`);
+      return;
+    }
     event.preventDefault();
     // A refused close refuses the quit it may belong to: the floating window comes back (Q-229),
     // and the next quit holds for goosed again (Q-241).
     engineGlanceDesktop.resumeAfterRefusedQuit();
     quitHold.quitRefused();
-    const payload: CloseRunPayload = { runs: windowLiveRuns(mainWindow) };
-    contents.send(CONFIRM_CLOSE_RUN_CHANNEL, payload);
+    const payload: CloseRunPayload = {
+      runs: windowLiveRuns(mainWindow),
+      turns: windowTurnsInFlight(mainWindow),
+    };
+    log.info(
+      `Window ${windowId} close held for the person's answer: ${payload.runs.length} live run(s), ${payload.turns.length} chat turn(s) in flight`
+    );
+    mainWindow.webContents.send(CONFIRM_CLOSE_RUN_CHANNEL, payload);
   });
 
   // Handle window closure
@@ -1990,22 +1998,26 @@ function parseRecipeDeeplink(url: string): RecipeDeeplinkData | undefined {
   };
 }
 
-// Global error handler
-const handleFatalError = (error: Error) => {
-  const windows = BrowserWindow.getAllWindows();
-  windows.forEach((win) => {
-    win.webContents.send('fatal-error', error.message || 'An unexpected error occurred');
-  });
+// An error nobody caught goes to main.log and to every window that can still show it; the handler
+// never throws (a throw inside it is Node's exit code 7 with nothing logged — Q-490, windowReach.ts).
+const fatalErrorDeps = {
+  windows: () => BrowserWindow.getAllWindows(),
+  logError: (message: string, detail: string) => log.error(message, detail),
+  formatError: formatErrorForLogging,
 };
 
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', formatErrorForLogging(error));
-  handleFatalError(error);
+  reportFatalError('uncaughtException', error, fatalErrorDeps);
 });
 
 process.on('unhandledRejection', (error) => {
-  console.error('Unhandled Rejection:', formatErrorForLogging(error));
-  handleFatalError(error instanceof Error ? error : new Error(String(error)));
+  reportFatalError('unhandledRejection', error, fatalErrorDeps);
+});
+
+// Every exit of the main process that runs its `exit` event says so in main.log, with its code — an
+// app that vanished used to leave no line at all (Q-490). The file transport writes synchronously.
+process.on('exit', (code) => {
+  log.info(`[main] process exiting with code ${code}`);
 });
 
 ipcMain.on('react-ready', (event) => {
@@ -2173,10 +2185,11 @@ const mlxEngineConfig = () => {
   }
   return mlxEngineConfigFromYaml(text);
 };
-const mlxActionWindow = (): BrowserWindow | null =>
-  BrowserWindow.getFocusedWindow() ??
-  BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
-  null;
+const mlxActionWindow = (): BrowserWindow | null => {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && canReach(focused)) return focused;
+  return BrowserWindow.getAllWindows().find(canReach) ?? null;
+};
 const mlxSwarmRuns = (): string[] => {
   const runs = new Set<string>();
   if (activeBenchRun) runs.add(activeBenchRun.runId ?? path.basename(activeBenchRun.workdir));
@@ -2230,9 +2243,7 @@ const mlxMonitor = new MlxEngineMonitor({
     renderMlxTray(snapshot);
     // Pushed as it lands: the composer's bar follows main's read at once instead of at its next
     // poll (Q-59: it lingered ~2 s after the Mac answered again).
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send(MLX_ENGINE_SNAPSHOT_CHANNEL, snapshot);
-    }
+    broadcastToWindows(BrowserWindow.getAllWindows(), MLX_ENGINE_SNAPSHOT_CHANNEL, snapshot);
   },
   schedule: (fn, ms) => {
     const timer = setTimeout(fn, ms);
@@ -2345,10 +2356,9 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
   // click; the controller asks again on the refresh a goose window's focus brings (below).
   tellDismissed: () => {
     const win = BrowserWindow.getFocusedWindow();
-    if (!win || win.isDestroyed()) return false;
+    if (!win) return false;
     const notice: GlanceDismissedNotice = { tray: tray != null };
-    win.webContents.send(ENGINE_GLANCE_DISMISSED_CHANNEL, notice);
-    return true;
+    return sendToWindow(win, ENGINE_GLANCE_DISMISSED_CHANNEL, notice);
   },
   // Settings › App offers it back and the tray grows its item: both read the republished glance.
   dismissedChanged: () => renderMlxTray(mlxMonitor.current()),
@@ -2379,9 +2389,9 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
     return;
   }
   lastGlancePush = key;
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send(ENGINE_GLANCE_CHANNEL, push);
-  }
+  // A window mid-close is still listed here while its renderer is already gone, and this runs from
+  // exactly that moment (a closing window's `destroyed` redraws the glance) — Q-490, windowReach.ts.
+  broadcastToWindows(BrowserWindow.getAllWindows(), ENGINE_GLANCE_CHANNEL, push);
   engineGlanceDesktop.update(push);
 };
 const saveGlancePrefs = (next: GlancePrefs) => {
@@ -3275,9 +3285,7 @@ ipcMain.handle('benchmark-runtime-install', async () => {
     throw new Error('Wait for the active benchmark to finish before changing its tools.');
   if (!benchmarkRuntimeInstallation) {
     benchmarkRuntimeInstallation = installBenchmarkRuntime(benchWorkRoot(), (progress) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send('benchmark-runtime-progress', progress);
-      }
+      broadcastToWindows(BrowserWindow.getAllWindows(), 'benchmark-runtime-progress', progress);
     }).finally(() => {
       benchmarkRuntimeInstallation = null;
     });
@@ -4149,9 +4157,7 @@ ipcMain.handle(
         // benchmark-log and the terminal benchmark-finished were silently dropped — a status-restored
         // strip with no live line, and a finished run the view learned about only via the 1s poll.
         try {
-          for (const w of BrowserWindow.getAllWindows()) {
-            if (!w.isDestroyed()) w.webContents.send(channel, payload);
-          }
+          broadcastToWindows(BrowserWindow.getAllWindows(), channel, payload);
         } catch {
           /* no window at all — the run continues headless */
         }
@@ -4470,8 +4476,7 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string) => {
     const launchedAt = new Date().toISOString();
     const launchKey = { startedAt: session.startedAt, slotDir: session.slotDir ?? workdir, runId };
     const send = (channel: string, payload: unknown) => {
-      for (const window of BrowserWindow.getAllWindows())
-        if (!window.isDestroyed()) window.webContents.send(channel, payload);
+      broadcastToWindows(BrowserWindow.getAllWindows(), channel, payload);
     };
     const processRecord = path.join(attemptRoot, 'process.json');
     const stamp = (status: string, error?: string) =>
@@ -4985,24 +4990,42 @@ const windowLiveRuns = (win: BrowserWindow): CloseRunPayload['runs'] => {
   return runs;
 };
 
+// The prompts each renderer has in flight on its OWN ACP connection, keyed by webContents id and
+// dropped with the renderer (closeGuard.ts, Q-490). A close ends that connection and the answer.
+const turnsInFlightByContents = new Map<number, TurnInFlight[]>();
+const windowTurnsInFlight = (win: BrowserWindow): TurnInFlight[] =>
+  turnsInFlightByContents.get(win.webContents.id) ?? [];
+ipcMain.on(TURNS_IN_FLIGHT_CHANNEL, (event, turns: unknown) => {
+  if (!isTurnsInFlight(turns)) return;
+  const sender = event.sender;
+  if (!turnsInFlightByContents.has(sender.id)) {
+    sender.once('destroyed', () => turnsInFlightByContents.delete(sender.id));
+  }
+  turnsInFlightByContents.set(sender.id, turns);
+});
+
 // The pass-through flags of the mouse-close guard (closeGuard.ts): a window whose renderer answered
 // "Stop run and close" gets exactly one `close` through. See mainWindow.on('close') in createChat.
 const confirmedCloses = new ConfirmedCloses();
 
+/** The close guard's verdict for one window — the ONE place its inputs are read, for the window's own
+ *  `close` and for the quit hold's look-ahead alike. */
+const closeVerdictOf = (win: BrowserWindow, confirmed: boolean): CloseVerdict => {
+  const contents = win.webContents;
+  const rendererCanAnswer = !contents.isDestroyed() && !contents.isCrashed();
+  return decideClose({
+    confirmed,
+    windowHoldsLiveRun: rendererCanAnswer && windowHoldsLiveRun(win),
+    windowHoldsLiveTurn: rendererCanAnswer && windowTurnsInFlight(win).length > 0,
+    rendererCanAnswer,
+  });
+};
+
 /** Would any goose window's close guard ask before closing — the same verdict its `close` reaches. */
 const anyCloseWouldAsk = (): boolean =>
-  BrowserWindow.getAllWindows().some((win) => {
-    if (win.isDestroyed()) return false;
-    const contents = win.webContents;
-    const rendererCanAnswer = !contents.isDestroyed() && !contents.isCrashed();
-    return (
-      decideClose({
-        confirmed: confirmedCloses.has(win.id),
-        windowHoldsLiveRun: rendererCanAnswer && windowHoldsLiveRun(win),
-        rendererCanAnswer,
-      }) === 'ask'
-    );
-  });
+  BrowserWindow.getAllWindows().some(
+    (win) => !win.isDestroyed() && closeVerdictOf(win, confirmedCloses.has(win.id)) === 'ask'
+  );
 
 // Q-241: the quit waits for every goosed to EXIT, starting at `before-quit` — before any window
 // closes (quitHold.ts has the measurement). `will-quit` holds too, below.
@@ -6006,9 +6029,7 @@ async function appMain() {
   applyThemeSource(themePreferenceOf(settings));
   nativeTheme.on('updated', () => {
     const payload = { dark: nativeTheme.shouldUseDarkColors };
-    for (const window of BrowserWindow.getAllWindows()) {
-      window.webContents.send('native-theme-updated', payload);
-    }
+    broadcastToWindows(BrowserWindow.getAllWindows(), 'native-theme-updated', payload);
   });
 
   // Register global shortcuts based on settings
@@ -6467,7 +6488,7 @@ async function appMain() {
 
     allWindows.forEach((window) => {
       if (window.id !== senderWindow?.id) {
-        window.webContents.send('theme-changed', themeData);
+        sendToWindow(window, 'theme-changed', themeData);
       }
     });
     // The desktop glance is not a BrowserWindow (engineGlanceWindow.ts): told on its own.

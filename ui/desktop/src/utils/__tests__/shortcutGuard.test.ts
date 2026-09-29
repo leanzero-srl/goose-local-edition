@@ -227,7 +227,12 @@ describe('the click path agrees with the chord path on which window is protected
         sessionRunLive: windowHoldsLiveRun,
         windowHoldsLiveRun,
       });
-      const click = decideClose({ confirmed: false, windowHoldsLiveRun, rendererCanAnswer: true });
+      const click = decideClose({
+        confirmed: false,
+        windowHoldsLiveRun,
+        windowHoldsLiveTurn: false,
+        rendererCanAnswer: true,
+      });
       expect(chordRefused).toBe(windowHoldsLiveRun);
       expect(click).toBe(windowHoldsLiveRun ? 'ask' : 'pass');
     }
