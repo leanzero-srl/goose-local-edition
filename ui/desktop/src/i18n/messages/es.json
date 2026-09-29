@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "Advertencia"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Un chat de esta ventana todavía está respondiendo"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "Cerrar esta ventana detiene la respuesta: el chat se envió desde esta ventana y su respuesta termina donde esté."
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "Chat: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Seguir respondiendo"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Detener la respuesta y cerrar"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Deteniendo la respuesta…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "No"
   },

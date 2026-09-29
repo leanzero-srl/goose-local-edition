@@ -21,16 +21,43 @@
 // drops `on_prompt` mid-await (acp_connection_close_test.rs, Q9), and `goose swarm run` is spawned
 // `kill_on_drop` (providers/swarm.rs). So closing the window whose chat runs the build kills the build
 // even while other windows keep goosed alive — the question is asked whichever window it is.
+//
+// A CHAT TURN is the same shape (Q-490). A prompt runs on the ACP connection of the window that sent
+// it; closing that window drops the prompt mid-answer (goosed: "a prompt dropped before it ended (its
+// connection closed …); its run is cleared"). The guard used to see swarm runs only, so a window whose
+// chat was generating closed without a word. Each renderer now reports the prompts it has in flight
+// on its own connection (TURNS_IN_FLIGHT_CHANNEL, from acpChatSessionStore's active prompt attempts),
+// and a window holding one is asked exactly like a window holding a run.
 
 /** main → renderer: "your window is being closed on a live run — ask the user". */
 export const CONFIRM_CLOSE_RUN_CHANNEL = 'confirm-close-run';
 /** renderer → main: `true` = stop the run and close; anything else = keep running. */
 export const CONFIRM_CLOSE_RUN_REPLY_CHANNEL = 'confirm-close-run-reply';
+/** renderer → main: the prompts this window has in flight on its own ACP connection, on every change. */
+export const TURNS_IN_FLIGHT_CHANNEL = 'turns-in-flight';
 
 export type LiveRunRef = { runId: string; runDir: string; workingDir: string };
 
-/** What main tells the renderer: every live run this window's renderer is watching. */
-export type CloseRunPayload = { runs: LiveRunRef[] };
+/** A chat whose prompt is in flight on this window's connection. `sessionName` is null until named. */
+export type TurnInFlight = { sessionId: string; sessionName: string | null };
+
+/** What main tells the renderer: every live run this window's renderer is watching, and every
+ *  prompt it has in flight. */
+export type CloseRunPayload = { runs: LiveRunRef[]; turns: TurnInFlight[] };
+
+export function isTurnsInFlight(value: unknown): value is TurnInFlight[] {
+  return (
+    Array.isArray(value) &&
+    value.every((t: unknown) => {
+      if (t == null || typeof t !== 'object') return false;
+      const turn = t as Record<string, unknown>;
+      return (
+        typeof turn.sessionId === 'string' &&
+        (turn.sessionName === null || typeof turn.sessionName === 'string')
+      );
+    })
+  );
+}
 
 export type CloseVerdict = 'pass' | 'ask';
 
@@ -39,6 +66,8 @@ export type CloseGuardInput = {
   confirmed: boolean;
   /** THE SAME PREDICATE the accelerator guard feeds for `close` (ShortcutGuardInput.windowHoldsLiveRun). */
   windowHoldsLiveRun: boolean;
+  /** This window's renderer reported a prompt in flight on its own ACP connection (Q-490). */
+  windowHoldsLiveTurn: boolean;
   /** The renderer can still show the dialog and answer: its webContents is neither destroyed nor crashed. */
   rendererCanAnswer: boolean;
 };
@@ -54,10 +83,11 @@ export type CloseGuardInput = {
 export function decideClose({
   confirmed,
   windowHoldsLiveRun,
+  windowHoldsLiveTurn,
   rendererCanAnswer,
 }: CloseGuardInput): CloseVerdict {
   if (confirmed) return 'pass';
-  if (!windowHoldsLiveRun) return 'pass';
+  if (!windowHoldsLiveRun && !windowHoldsLiveTurn) return 'pass';
   if (!rendererCanAnswer) return 'pass';
   return 'ask';
 }

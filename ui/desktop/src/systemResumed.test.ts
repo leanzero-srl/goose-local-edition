@@ -9,12 +9,24 @@ import {
 
 /** Q-228 (L10): the wake reaches every goose window and never the floating engine glance. */
 
-function fakeWindow(id: number, destroyed = false): ResumedWindow & { sent: string[] } {
+function fakeWindow(
+  id: number,
+  destroyed = false,
+  contentsDestroyed = destroyed
+): ResumedWindow & { sent: string[] } {
   const sent: string[] = [];
   return {
     sent,
     isDestroyed: () => destroyed,
-    webContents: { id, send: (channel: string) => sent.push(channel) },
+    webContents: {
+      id,
+      isDestroyed: () => contentsDestroyed,
+      send: (channel: string) => {
+        // What Electron 41 does for a renderer that is gone (Q-490).
+        if (contentsDestroyed) throw new TypeError('Object has been destroyed');
+        sent.push(channel);
+      },
+    },
   };
 }
 
@@ -38,6 +50,14 @@ describe('broadcastSystemResumed', () => {
 
     expect(broadcastSystemResumed([live, closed], null)).toEqual([11]);
     expect(closed.sent).toEqual([]);
+  });
+
+  it('skips a window mid-close — still listed and not destroyed, its renderer already gone (Q-490)', () => {
+    const live = fakeWindow(11);
+    const closing = fakeWindow(12, false, true);
+
+    expect(broadcastSystemResumed([closing, live], null)).toEqual([11]);
+    expect(live.sent).toEqual([SYSTEM_RESUMED_CHANNEL]);
   });
 });
 

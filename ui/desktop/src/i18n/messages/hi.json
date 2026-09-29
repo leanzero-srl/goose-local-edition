@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "चेतावनी"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "इस विंडो की एक चैट अभी भी जवाब दे रही है"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "यह विंडो बंद करने से जवाब रुक जाता है: चैट इसी विंडो से भेजी गई थी, और उसका जवाब जहाँ है वहीं खत्म हो जाता है।"
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "चैट: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "जवाब देने दें"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "जवाब रोकें और बंद करें"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "जवाब रोका जा रहा है…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "नहीं"
   },

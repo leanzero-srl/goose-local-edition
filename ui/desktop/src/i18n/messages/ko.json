@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "경고"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "이 창의 채팅이 아직 답변 중입니다"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "이 창을 닫으면 답변이 중지됩니다. 채팅은 이 창에서 보내졌으며, 답변은 지금 위치에서 끝납니다."
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "채팅: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "계속 답변"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "답변을 중지하고 닫기"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "답변을 중지하는 중…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "아니요"
   },

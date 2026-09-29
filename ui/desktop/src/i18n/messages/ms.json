@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "Amaran"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Satu sembang dalam tetingkap ini masih menjawab"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "Menutup tetingkap ini menghentikan jawapan: sembang dihantar dari tetingkap ini, dan balasannya berakhir di situ."
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "Sembang: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Teruskan menjawab"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Hentikan jawapan dan tutup"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Menghentikan jawapan…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Tidak"
   },

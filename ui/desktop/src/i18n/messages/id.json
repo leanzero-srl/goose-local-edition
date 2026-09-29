@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "Peringatan"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Sebuah chat di jendela ini masih menjawab"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "Menutup jendela ini menghentikan jawabannya: chat dikirim dari jendela ini, dan balasannya berhenti di titik itu."
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "Chat: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Tetap menjawab"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Hentikan jawaban dan tutup"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Menghentikan jawaban…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Tidak"
   },

@@ -195,9 +195,14 @@ export class GooseServeLeaseRegistry {
     }
 
     lease.windowIds.delete(windowId);
-    if (lease.windowIds.size === 0) {
-      await this.cleanupLease(lease);
-    }
+    // A window `acquireLocal` handed this lease to and that has not attached yet holds it too (the
+    // same rule `releaseUnattached` keeps): the last ATTACHED window closing must not stop the goosed
+    // a window being made is about to use.
+    if (lease.windowIds.size > 0 || lease.pendingWindows > 0) return;
+    this.logger.info(
+      `Window ${windowId} was the last one using goose serve (pid ${lease.pid ?? '?'}); stopping it`
+    );
+    await this.cleanupLease(lease);
   }
 
   async cleanupLease(lease: GooseServeLease): Promise<GooseServeStop> {

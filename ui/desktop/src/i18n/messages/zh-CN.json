@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "警告"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "此窗口中的一个对话仍在回答"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "关闭此窗口会停止回答:该对话是从此窗口发送的,它的回复会停在当前位置。"
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "对话:{name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "继续回答"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "停止回答并关闭"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "正在停止回答…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "否"
   },

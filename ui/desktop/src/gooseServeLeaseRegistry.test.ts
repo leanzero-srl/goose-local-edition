@@ -325,6 +325,49 @@ describe('GooseServeLeaseRegistry — one local goosed per app (Q-257)', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
+  // Q-490's lead, walked: main.log at 11:58:11 said "Window shares the app's goose serve backend
+  // (pid 83194, 1 window(s) attached)" with two windows on screen. The count is read BEFORE the new
+  // window attaches, so the 1 is the main window; closing the new one leaves goosed serving it.
+  it('the count a joining window logs is the OTHER windows; closing the joiner keeps goosed (Q-490)', async () => {
+    const cleanup = vi.fn(async () => 'exited' as const);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const start = vi.fn(async () => store.create(createGooseServeResult({ cleanup }), 's'));
+    const main = await store.acquireLocal(start);
+    store.attachWindow(1, main!);
+
+    const reused = store.liveLocal();
+    const joiner = await store.acquireLocal(start);
+    expect(reused?.windowIds.size).toBe(1);
+    store.attachWindow(2, joiner!);
+
+    await store.releaseWindow(2);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(store.getAcpUrl(1)).toBe('ws://127.0.0.1:1234/acp?token=test');
+  });
+
+  // The rule releaseUnattached already kept, now kept by releaseWindow too (Q-490): a window being
+  // made holds the goosed it was handed, so the last ATTACHED window closing does not stop it.
+  it('the last attached window closing never stops the goosed a window being made was handed', async () => {
+    const cleanup = vi.fn(async () => 'exited' as const);
+    const logger = createLogger();
+    const store = new GooseServeLeaseRegistry(logger);
+    const start = vi.fn(async () => store.create(createGooseServeResult({ cleanup }), 's'));
+    const first = await store.acquireLocal(start);
+    store.attachWindow(1, first!);
+    const coming = await store.acquireLocal(start);
+
+    await store.releaseWindow(1);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(store.liveLocal()).toBe(coming);
+
+    store.attachWindow(2, coming!);
+    await store.releaseWindow(2);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      'Window 2 was the last one using goose serve (pid ?); stopping it'
+    );
+  });
+
   it('a lease handed out to one window and given back unused is stopped', async () => {
     const cleanup = vi.fn(async () => 'exited' as const);
     const store = new GooseServeLeaseRegistry(createLogger());

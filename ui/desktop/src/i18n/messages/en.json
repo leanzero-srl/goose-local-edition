@@ -1277,6 +1277,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "Closing this window stops the run: the window's backend is released and the swarm engine under it is signalled to exit."
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Keep answering"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Keep running"
   },
@@ -1286,11 +1289,26 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "Stop run and close"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Stop the answer and close"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "Stopping the run…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Stopping the answer…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "A swarm run is live in this window"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "Closing this window stops the answer: the chat was sent from this window, and its reply ends where it is."
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "Chat: {name}"
+  },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "A chat in this window is still answering"
   },
   "confirmCloseRun.warning": {
     "defaultMessage": "Warning"

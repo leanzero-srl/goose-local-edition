@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "Cảnh báo"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Một cuộc trò chuyện trong cửa sổ này vẫn đang trả lời"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "Đóng cửa sổ này sẽ dừng câu trả lời: cuộc trò chuyện được gửi từ cửa sổ này, và phần trả lời kết thúc tại chỗ nó đang dừng."
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "Trò chuyện: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Tiếp tục trả lời"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Dừng câu trả lời và đóng"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Đang dừng câu trả lời…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Không"
   },

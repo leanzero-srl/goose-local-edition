@@ -1295,6 +1295,24 @@
   "confirmCloseRun.warning": {
     "defaultMessage": "Предупреждение"
   },
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Чат в этом окне ещё отвечает"
+  },
+  "confirmCloseRun.turnBody": {
+    "defaultMessage": "Закрытие этого окна останавливает ответ: чат был отправлен из этого окна, и его ответ обрывается там, где он сейчас."
+  },
+  "confirmCloseRun.turnLine": {
+    "defaultMessage": "Чат: {name}"
+  },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Продолжить ответ"
+  },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Остановить ответ и закрыть"
+  },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Остановка ответа…"
+  },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Нет"
   },

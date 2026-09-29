@@ -41,6 +41,7 @@ import BenchmarkAutoOpen from './components/benchmark/BenchmarkAutoOpen';
 import UnreadableConfigBanner from './components/unreadableConfigBanner/UnreadableConfigBanner';
 import { ConfirmCloseRunDialog } from './components/lz-dialogs/ConfirmCloseRunDialog';
 import type { CloseRunPayload } from './utils/closeGuard';
+import { useReportTurnsInFlight } from './hooks/useReportTurnsInFlight';
 import ProviderSettings from './components/settings/providers/ProviderSettingsPage';
 import { AppLayout } from './components/Layout/AppLayout';
 import { ChatProvider, DEFAULT_CHAT_TITLE } from './contexts/ChatContext';
@@ -671,13 +672,17 @@ export function AppInner() {
   }, [intl]);
 
   // The mouse-close guard: main kept this window on `close` because its renderer holds a live swarm
-  // run, and asks here. The dialog answers through confirmCloseRunReply — true closes the window for
-  // real (the dialog stays up, disabled, while the window goes), false leaves everything as it was.
+  // run or a chat turn in flight (Q-490), and asks here. The dialog answers through
+  // confirmCloseRunReply — true closes the window for real (the dialog stays up, disabled, while the
+  // window goes), false leaves everything as it was.
+  useReportTurnsInFlight();
   useEffect(() => {
     const handleConfirmCloseRun = (_event: IpcRendererEvent, ...args: unknown[]) => {
       const payload = args[0] as Partial<CloseRunPayload> | undefined;
-      if (!Array.isArray(payload?.runs)) return;
-      setCloseRunPrompt({ runs: payload.runs });
+      const runs = Array.isArray(payload?.runs) ? payload.runs : [];
+      const turns = Array.isArray(payload?.turns) ? payload.turns : [];
+      if (runs.length === 0 && turns.length === 0) return;
+      setCloseRunPrompt({ runs, turns });
     };
     window.electron.on('confirm-close-run', handleConfirmCloseRun);
     return () => window.electron.off('confirm-close-run', handleConfirmCloseRun);
@@ -731,6 +736,7 @@ export function AppInner() {
   const closeRunDialog = closeRunPrompt ? (
     <ConfirmCloseRunDialog
       runs={closeRunPrompt.runs}
+      turns={closeRunPrompt.turns}
       onKeepRunning={() => {
         setCloseRunPrompt(null);
         window.electron.confirmCloseRunReply(false);

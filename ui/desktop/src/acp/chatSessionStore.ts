@@ -122,11 +122,37 @@ export interface AcpChatSessionActions {
 
 interface AcpChatSessionStoreInternal extends AcpChatSessionStore, AcpChatSessionActions {
   subscribe(sessionId: string, listener: (snapshot: AcpChatSessionSnapshot) => void): () => void;
+  /** Called after ANY session's snapshot changes (or one is deleted). */
+  subscribeAny(listener: () => void): () => void;
+  promptsInFlight(): PromptInFlight[];
+}
+
+/** A chat with a prompt in flight on THIS window's ACP connection — its close drops it (Q-490). */
+export interface PromptInFlight {
+  sessionId: string;
+  sessionName: string | null;
 }
 
 function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
   const sessionsById = new Map<string, StoreEntry>();
   const listenersBySessionId = new Map<string, Set<SnapshotListener>>();
+  const anyListeners = new Set<() => void>();
+
+  const subscribeAny: AcpChatSessionStoreInternal['subscribeAny'] = (listener) => {
+    anyListeners.add(listener);
+    return () => {
+      anyListeners.delete(listener);
+    };
+  };
+
+  const notifyAny = () => {
+    for (const listener of anyListeners) listener();
+  };
+
+  const promptsInFlight: AcpChatSessionStoreInternal['promptsInFlight'] = () =>
+    [...sessionsById.entries()]
+      .filter(([, entry]) => entry.activePromptAttemptId !== null)
+      .map(([sessionId, entry]) => ({ sessionId, sessionName: entry.session?.name || null }));
 
   const getSnapshot: AcpChatSessionStore['getSnapshot'] = (sessionId) => {
     const entry = sessionsById.get(sessionId);
@@ -159,6 +185,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
 
   const deleteSnapshot: AcpChatSessionActions['deleteSnapshot'] = (sessionId) => {
     sessionsById.delete(sessionId);
+    notifyAny();
   };
 
   const getOrCreateEntry = (sessionId: string): StoreEntry => {
@@ -195,6 +222,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
         listener(snapshot);
       }
     }
+    notifyAny();
     return snapshot;
   };
 
@@ -506,6 +534,8 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
   return {
     getSnapshot,
     subscribe,
+    subscribeAny,
+    promptsInFlight,
     deleteSnapshot,
     setSessionMetadata,
     startSessionLoad,
@@ -542,6 +572,23 @@ export const acpChatSessionStore: AcpChatSessionStore = storeFromInternal(
 export const acpChatSessionActions: AcpChatSessionActions = actionsFromStore(
   acpChatSessionStoreInternal
 );
+
+/**
+ * This window's prompts in flight, re-read on every store change; `onChange` hears only a CHANGED
+ * set (the store changes on every streamed token). Returns the unsubscribe.
+ */
+export function watchPromptsInFlight(onChange: (prompts: PromptInFlight[]) => void): () => void {
+  let last = '';
+  const read = () => {
+    const prompts = acpChatSessionStoreInternal.promptsInFlight();
+    const key = JSON.stringify(prompts);
+    if (key === last) return;
+    last = key;
+    onChange(prompts);
+  };
+  read();
+  return acpChatSessionStoreInternal.subscribeAny(read);
+}
 
 interface AcpChatSessionSnapshotState {
   sessionId: string;
@@ -602,7 +649,7 @@ function actionsFromStore(store: AcpChatSessionStoreInternal): AcpChatSessionAct
     waitForPromptCancellation: store.waitForPromptCancellation,
     finishPromptAttemptIfCurrent: store.finishPromptAttemptIfCurrent,
     clearActivePromptAttempt: store.clearActivePromptAttempt,
-  clearSubmitError: store.clearSubmitError,
+    clearSubmitError: store.clearSubmitError,
     isCurrentPromptAttempt: store.isCurrentPromptAttempt,
   };
 }

@@ -8,7 +8,8 @@ import type { ProjectEntry } from './utils/projectDirs';
 import type { MemoryOrigin } from './utils/memoryProvenance';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
-import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
+import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL, TURNS_IN_FLIGHT_CHANNEL } from './utils/closeGuard';
+import type { TurnInFlight } from './utils/closeGuard';
 import { SYSTEM_RESUMED_CHANNEL } from './systemResumed';
 import type { FleetProbeResult } from './utils/fleetProbe';
 import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
@@ -437,6 +438,8 @@ type ElectronAPI = {
   closeWindow: () => void;
   /** The answer to main's `confirm-close-run` (closeGuard.ts): true = stop the run and close. */
   confirmCloseRunReply: (confirmed: boolean) => void;
+  /** This window's prompts in flight on its own ACP connection, for main's close guard (Q-490). */
+  reportTurnsInFlight: (turns: TurnInFlight[]) => void;
   hasAcceptedRecipeBefore: (recipe: Recipe) => Promise<boolean>;
   recordRecipeHash: (recipe: Recipe) => Promise<boolean>;
   openDirectoryInExplorer: (directoryPath: string) => Promise<boolean>;
@@ -758,6 +761,7 @@ const electronAPI: ElectronAPI = {
   closeWindow: () => ipcRenderer.send('close-window'),
   confirmCloseRunReply: (confirmed: boolean) =>
     ipcRenderer.send(CONFIRM_CLOSE_RUN_REPLY_CHANNEL, confirmed),
+  reportTurnsInFlight: (turns: TurnInFlight[]) => ipcRenderer.send(TURNS_IN_FLIGHT_CHANNEL, turns),
   hasAcceptedRecipeBefore: (recipe: Recipe) =>
     ipcRenderer.invoke('has-accepted-recipe-before', recipe),
   recordRecipeHash: (recipe: Recipe) => ipcRenderer.invoke('record-recipe-hash', recipe),
