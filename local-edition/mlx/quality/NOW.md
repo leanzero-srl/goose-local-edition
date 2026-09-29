@@ -33,7 +33,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-500/501 DONE c900ee4ea (branch worktree-agent-adf3890d8dcce9f43, KEEP): running rows shared across windows, Stop
   from a second window, the banner reads the engine's request list. Full vitest 4,638 green.
 - Q-504 DONE 0d28abcf2 (branch q504, contains Q-500/501): a window's cancel reaches app-wide and link-bound turns,
-  never another window's; Stop plus a "Running in the background" bar. Q-507 (schedules are invisible): cutting ON 0d28abcf2.
+  never another window's; Stop plus a "Running in the background" bar. Q-507 DONE 3cfd23a94 (q507): scheduled runs read Running everywhere, and any window's Stop stops them. Q-509
+  (Link advertises Idle during a schedule) waits on 3.0.80.
 - Q-505 SECURITY: a plaintext CONTEXT7 key sits in goose memory evolve-goose-test-loop.txt, which recall injects into
   prompts. memory-skills-surgeon is cutting save/recall redaction plus a no-values scan. The OWNER decides on the existing
   entry: tell him, never print the value.
@@ -52,7 +53,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-509.
+- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-510.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
