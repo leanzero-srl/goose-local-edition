@@ -8,6 +8,7 @@
  * sees any of it: the diff lives outside the result's content.
  */
 import type { Message, ToolResponseMessageContent } from '../../types/message';
+import { revealAsUser } from '../../utils/userScroll';
 
 export type BeforeState = 'file' | 'none' | 'unreadable';
 
@@ -157,8 +158,10 @@ export const REVEAL_TOOL_CALL_EVENT = 'goose:reveal-tool-call';
 
 /** Scroll the chat to a tool call's card and open it. */
 export function revealToolCall(toolCallId: string): void {
-  const card = document.getElementById(toolCallDomId(toolCallId));
-  card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  revealAsUser(document.getElementById(toolCallDomId(toolCallId)), {
+    block: 'center',
+    behavior: 'smooth',
+  });
   window.dispatchEvent(new CustomEvent(REVEAL_TOOL_CALL_EVENT, { detail: { toolCallId } }));
 }
 

@@ -1,4 +1,5 @@
 import { AppEvents } from '../constants/events';
+import { ArrowDown } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { defineMessages, useIntl } from '../i18n';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -88,6 +89,10 @@ const i18n = defineMessages({
   brandTitle: {
     id: 'baseChat.brandTitle',
     defaultMessage: 'Goose Swarm by LeanZero — open leanzero.net',
+  },
+  jumpToLatest: {
+    id: 'baseChat.jumpToLatest',
+    defaultMessage: 'Jump to latest',
   },
 });
 
@@ -217,6 +222,30 @@ export function SessionLoadErrorPanel({
   );
 }
 
+/**
+ * The chat is not following its live edge — the person scrolled up or jumped to a result (Q-496).
+ * One solid control, over the bottom of the transcript, takes the view back and turns following on.
+ */
+export function JumpToLatestButton({ onJump }: { onJump: () => void }) {
+  const intl = useIntl();
+  return (
+    <div className={cx('pointer-events-none relative h-0', LAYER.chrome)}>
+      <div className="absolute inset-x-0 bottom-3 flex justify-center">
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<ArrowDown />}
+          onClick={onJump}
+          data-testid="jump-to-latest"
+          className="pointer-events-auto shadow-lz-overlay dark:shadow-lz-overlay-dark"
+        >
+          {intl.formatMessage(i18n.jumpToLatest)}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 interface BaseChatProps {
   setChat: (chat: ChatType) => void;
   onMessageSubmit?: (message: string) => void;
@@ -245,6 +274,7 @@ export default function BaseChat({
   const location = useLocation();
   const navigate = useNavigate();
   const scrollRef = useRef<ScrollAreaHandle>(null);
+  const [followingLatest, setFollowingLatest] = useState(true);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const disableAnimation = location.state?.disableAnimation || false;
   const [hasStartedUsingRecipe, setHasStartedUsingRecipe] = React.useState(false);
@@ -404,11 +434,17 @@ export default function BaseChat({
       .reverse();
   }, [messages]);
 
+  // Sending is the person asking to watch the reply: the view goes back to the live edge (Q-496).
+  const submitFollowing = (input: UserInput) => {
+    scrollRef.current?.scrollToBottom();
+    handleSubmit(input);
+  };
+
   const chatInputSubmit = (input: UserInput) => {
     if (recipe && input.msg.trim()) {
       setHasStartedUsingRecipe(true);
     }
-    handleSubmit(input);
+    submitFollowing(input);
   };
 
   const sessionModel = session?.model_config?.model_name ?? null;
@@ -628,6 +664,7 @@ export default function BaseChat({
           ref={scrollRef}
           className={cx('flex-1 min-h-0 relative pr-1 pb-10', !isLocal && headerSpacingClassName)}
           autoScroll
+          onScrollChange={setFollowingLatest}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           data-drop-zone="true"
@@ -650,7 +687,7 @@ export default function BaseChat({
           {recipe && (
             <div className={hasStartedUsingRecipe ? 'mb-6' : ''}>
               <RecipeActivities
-                append={(text: string) => handleSubmit({ msg: text, images: [] })}
+                append={(text: string) => submitFollowing({ msg: text, images: [] })}
                 activities={Array.isArray(recipe.activities) ? recipe.activities : null}
                 title={recipe.title}
                 parameterValues={session?.user_recipe_values || {}}
@@ -665,7 +702,7 @@ export default function BaseChat({
                   messages={messages}
                   chat={{ sessionId }}
                   toolCallNotifications={toolCallNotifications}
-                  append={(text: string) => handleSubmit({ msg: text, images: [] })}
+                  append={(text: string) => submitFollowing({ msg: text, images: [] })}
                   isUserMessage={(m: Message) => m.role === 'user'}
                   isStreamingMessage={chatState !== ChatState.Idle}
                   onRenderingComplete={handleRenderingComplete}
@@ -709,6 +746,10 @@ export default function BaseChat({
           )}
         </ScrollArea>
 
+        {!followingLatest && messages.length > 0 && (
+          <JumpToLatestButton onJump={() => scrollRef.current?.scrollToBottom()} />
+        )}
+
         {/* The chat's right rail (Q-190 + Q-228): its loop and what its write/edit calls changed — pills
           in the corner that open one panel over the chat; it never takes width from the conversation. */}
         <SessionRail
@@ -718,7 +759,7 @@ export default function BaseChat({
           control={sessionLoop.control}
           workingDir={session?.working_dir}
           onPillsHeight={setRailPillsHeight}
-          onSend={(text: string) => handleSubmit({ msg: text, images: [] })}
+          onSend={(text: string) => submitFollowing({ msg: text, images: [] })}
           className={cx(
             'absolute right-4',
             LAYER.chrome,

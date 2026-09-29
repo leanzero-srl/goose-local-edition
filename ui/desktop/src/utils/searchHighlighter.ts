@@ -9,6 +9,8 @@
  * `::highlight(goose-search-match)` / `::highlight(goose-search-current)` — the words stay on top
  * and readable, and the ranges follow reflow without any position bookkeeping.
  */
+import { announceUserScroll } from './userScroll';
+
 type DomRange = ReturnType<typeof document.createRange>;
 type DomHighlight = InstanceType<typeof window.Highlight>;
 
@@ -135,6 +137,7 @@ export class SearchHighlighter {
     this.current.add(range);
 
     if (shouldScroll && this.scrollContainer) {
+      announceUserScroll(this.scrollContainer);
       const containerRect = this.scrollContainer.getBoundingClientRect();
       const matchRect = range.getBoundingClientRect();
       this.scrollContainer.scrollTop =

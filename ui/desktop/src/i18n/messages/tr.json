@@ -377,6 +377,9 @@
   "baseChat.goHome": {
     "defaultMessage": "Ana sayfaya git"
   },
+  "baseChat.jumpToLatest": {
+    "defaultMessage": "En yeniye git"
+  },
   "baseChat.promptFailed": {
     "defaultMessage": "That message did not go through"
   },

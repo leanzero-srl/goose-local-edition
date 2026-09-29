@@ -377,6 +377,9 @@
   "baseChat.goHome": {
     "defaultMessage": "Vai alla home"
   },
+  "baseChat.jumpToLatest": {
+    "defaultMessage": "Vai al più recente"
+  },
   "baseChat.promptFailed": {
     "defaultMessage": "That message did not go through"
   },
