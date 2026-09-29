@@ -28,9 +28,7 @@ impl ExperimentManager {
     /// Enable or disable an experiment
     pub fn set_enabled(name: &str, enabled: bool) -> Result<()> {
         let config = Config::global();
-        let mut experiments: HashMap<String, bool> = config
-            .get_param("experiments")
-            .unwrap_or_else(|_| HashMap::new());
+        let mut experiments: HashMap<String, bool> = config.get_param_for_update("experiments")?;
         Self::refresh_experiments(&mut experiments);
         experiments.insert(name.to_string(), enabled);
 

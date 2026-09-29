@@ -351,6 +351,8 @@ impl GatewayManager {
 
     fn save_config(gw_config: &GatewayConfig) -> anyhow::Result<()> {
         let config = Config::global();
+        let mut entries: Vec<SavedGatewayEntry> =
+            config.get_param_for_update(GATEWAY_CONFIGS_KEY)?;
 
         // Save platform_config (contains secrets like bot tokens) to the secret store.
         config
@@ -360,9 +362,6 @@ impl GatewayManager {
             )
             .map_err(|e| anyhow::anyhow!("failed to save gateway secret: {}", e))?;
 
-        // Load existing entries, add/replace this one, save back.
-        let mut entries: Vec<SavedGatewayEntry> =
-            config.get_param(GATEWAY_CONFIGS_KEY).unwrap_or_default();
         entries.retain(|e| e.gateway_type != gw_config.gateway_type);
         entries.push(SavedGatewayEntry {
             gateway_type: gw_config.gateway_type.clone(),
@@ -386,7 +385,13 @@ impl GatewayManager {
 
         // Remove from the config entries list.
         let mut entries: Vec<SavedGatewayEntry> =
-            config.get_param(GATEWAY_CONFIGS_KEY).unwrap_or_default();
+            match config.get_param_for_update(GATEWAY_CONFIGS_KEY) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    tracing::error!(error = %e, "gateway config list not updated");
+                    return;
+                }
+            };
         entries.retain(|e| e.gateway_type != gateway_type);
         if let Err(e) = config.set_param(GATEWAY_CONFIGS_KEY, &entries) {
             tracing::warn!(error = %e, "failed to update gateway config list");

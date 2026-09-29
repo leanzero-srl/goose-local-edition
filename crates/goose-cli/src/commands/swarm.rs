@@ -1498,10 +1498,9 @@ fn merge_config_over_defaults(
     })
 }
 
+mod config_save;
 fn save_config(cfg: &SwarmConfig) -> Result<()> {
-    Config::global()
-        .set_param(SWARM_CONFIG_KEY, cfg)
-        .map_err(|e| anyhow!("failed to save swarm config: {e}"))
+    config_save::save(cfg)
 }
 
 // ---------------------------------------------------------------------------------------------

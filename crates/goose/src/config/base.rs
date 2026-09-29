@@ -783,6 +783,32 @@ impl Config {
         }
     }
 
+    /// Read a value a caller is about to modify and save back. An absent key is `T::default()`;
+    /// a present value that does not deserialize is an error naming the key, because the caller
+    /// would otherwise save the default over it (Q-465).
+    pub fn get_param_for_update<T: for<'de> Deserialize<'de> + Default>(
+        &self,
+        key: &str,
+    ) -> Result<T, ConfigError> {
+        match self.get_param(key) {
+            Ok(value) => Ok(value),
+            Err(ConfigError::NotFound(_)) => Ok(T::default()),
+            Err(ConfigError::DeserializeError(_))
+                if matches!(
+                    self.get_param::<serde_yaml::Value>(key),
+                    Ok(serde_yaml::Value::Null)
+                ) =>
+            {
+                Ok(T::default())
+            }
+            Err(ConfigError::DeserializeError(e)) => Err(ConfigError::DeserializeError(format!(
+                "`{key}` in {} does not have the expected shape ({e}); it was left untouched",
+                self.path()
+            ))),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Read-modify-write a configuration value atomically through the write path.
     pub fn update_param<T, V, F>(&self, key: &str, f: F) -> Result<(), ConfigError>
     where
@@ -1778,6 +1804,31 @@ mod tests {
             extensions.get("my-own-extension"),
             Some(&serde_yaml::Value::from("on"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn get_param_for_update_refuses_a_misshapen_value_and_defaults_an_absent_one(
+    ) -> Result<(), ConfigError> {
+        let config_file = NamedTempFile::new().unwrap();
+        let secrets_file = NamedTempFile::new().unwrap();
+        let config = Config::new_with_file_secrets(config_file.path(), secrets_file.path())?;
+        std::fs::write(
+            config_file.path(),
+            "experiments: [not, a, map]\nslash_commands:\n",
+        )?;
+
+        let err = config
+            .get_param_for_update::<HashMap<String, bool>>("experiments")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`experiments`"), "{err}");
+        assert!(config
+            .get_param_for_update::<Vec<String>>("slash_commands")?
+            .is_empty());
+        assert!(config
+            .get_param_for_update::<Vec<String>>("gateway_pairings")?
+            .is_empty());
         Ok(())
     }
 
