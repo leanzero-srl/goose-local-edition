@@ -12,9 +12,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   - memory recall after compaction 33/39;
   - Q-513/506 model behaviour;
   - Q-517 turn starts.
-  - Turn 2 (40+ min): the model is debugging an infinite loop in its own generator. Two orphaned python pids (95770,
-    99202, PPID 1, ~99% CPU) came from its `( … &)` commands → Q-520 (the shell tool never names survivors). Leave
-    them during the run and reap them per pid at the end if still alive.
+  - Turn 2: 5,558 s / 56 tools (the model debugged an infinite loop in its own generator). Its two orphans (95770,
+    99202, 63 min at ~99% CPU) were reaped per pid at 22:47 once the turn moved on → Q-520 (fixed a3cdea917, in 3.0.82).
 - #3y ENDED at turn 25 on a harness crash (fixed); #3x stopped at turn 4.
 
 ## 3.0.80 — INSTALLED on BOTH Macs 20:2x (split serving "OK."), main 8368ce115
