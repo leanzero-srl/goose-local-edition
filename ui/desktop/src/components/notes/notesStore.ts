@@ -143,6 +143,16 @@ function watchReconnects(): void {
   });
 }
 
+/**
+ * The chat this window shows turned idle after it had to leave goosed's offer (Q-488: a window that
+ * opens a chat announces it before the chat has loaded, so the offer that announcement brings finds
+ * it busy). Saying again that it shows the chat makes goosed offer its due note again. A window that
+ * no longer shows the chat says nothing: the window that shows it next is offered the note.
+ */
+export function askForDueNotes(sessionId: string): void {
+  if (isShownHere(sessionId)) announce(sessionId, true);
+}
+
 /** While `showing`, this window shows `sessionId`: goosed may offer it the chat's due notes. */
 export function useShowsChat(sessionId: string, showing: boolean): void {
   useEffect(() => {

@@ -7,7 +7,8 @@
 //! - An idle target shown in a window: goose offers the note (`notes/deliverDue`) to that window,
 //!   which submits it with `_meta.goose.crossNote`; a mark that does not carry the note's words is
 //!   refused.
-//! - A target no window shows: the note waits, and is offered the moment a window shows the chat.
+//! - A target no window shows: the note waits, and is offered the moment a window shows the chat —
+//!   and again when that window, the chat idle there at last, says again that it shows it (Q-488).
 //! - A note never supersedes the target's open question.
 //!
 //! One goose and one model per process, one test at a time.
@@ -312,7 +313,7 @@ async fn an_idle_targets_note_is_offered_then_submitted_as_its_own_turn() {
 }
 
 /// No window shows B: the note waits — offered nowhere, "not open in any window" on the draft —
-/// and is offered the moment a window shows B.
+/// and is offered the moment a window shows B, and again each time that window says it shows B.
 async fn a_note_to_a_chat_no_window_shows_waits_until_one_does() {
     let (_model, addr) = goose(vec![Answer::Finish("Read your note.")]).await;
     let work = tempfile::tempdir().unwrap();
@@ -349,9 +350,17 @@ async fn a_note_to_a_chat_no_window_shows_waits_until_one_does() {
     assert!(waiting.offer_when_idle);
 
     showing(&mut window_b, &chat_b, true).await;
+    let first = window_b
+        .notification(DELIVER_DUE, |p| p["noteId"] == draft.id.as_str())
+        .await;
+    // Q-488: the window says it shows B at mount, before it has read B, so it leaves that first
+    // offer. Once B is idle there it says again that it shows B, and goose offers the note again.
+    assert_eq!(notes(&chat_b).await.inbox[0].status, InboxStatus::Waiting);
+    showing(&mut window_b, &chat_b, true).await;
     let due = window_b
         .notification(DELIVER_DUE, |p| p["noteId"] == draft.id.as_str())
         .await;
+    assert_eq!(due, first, "the same note, offered again");
     let turn = window_b
         .prompt(
             &chat_b,

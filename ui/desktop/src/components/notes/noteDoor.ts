@@ -8,9 +8,10 @@ import type { Message } from '../../types/message';
  * A note's own turn (Q-358): the window submits the note's exact words as a user message under the
  * note's message id, marked `_meta.goose.crossNote`, through the door a typed message uses — so the
  * reply streams where the person sees it. goosed offers a due note (`notes/deliverDue`) only to the
- * windows that show its chat; one that is busy here, or not shown here, is left alone and goosed
- * offers it again when the chat's turn ends or a window shows the chat. "Give it to goose now" on
- * the inbox tray is the same door, opened by the person's click.
+ * windows that show its chat; one that is not shown here is left alone, and one that is busy here
+ * (still loading, a turn running, input queued) is left for goosed to offer again — when the
+ * chat's turn ends, or when this window, the chat idle at last, says again that it shows it (Q-488).
+ * "Give it to goose now" on the inbox tray is the same door, opened by the person's click.
  */
 
 export interface NoteTurn {
@@ -25,7 +26,10 @@ export type NoteDoorOutcome =
   | { kind: 'duplicate' }
   /** The window does not show the chat: another window, or a later showing, takes it. */
   | { kind: 'not_here' }
-  /** A turn runs, or the person's own input waits: goosed offers it again when that clears. */
+  /**
+   * Not loaded yet, a turn runs, or the person's own input waits: the driver asks goosed to offer
+   * it again the moment that clears (a turn's end alone would miss a chat that was only loading).
+   */
   | { kind: 'busy' }
   /** goosed refused it (taken already, no longer waiting): nothing ran, the marker is withdrawn. */
   | { kind: 'refused'; error: string }
@@ -55,7 +59,14 @@ export function noteTurnMessage(turn: NoteTurn): Message & { id: string } {
   };
 }
 
-function busy(snapshot: AcpChatSessionSnapshot | undefined, queued: number): boolean {
+/**
+ * The chat cannot take a note's turn here now: not loaded yet (a window that has just opened the
+ * chat is still reading it), a turn runs, or the person's own input waits.
+ */
+export function noteDoorBusy(
+  snapshot: AcpChatSessionSnapshot | undefined,
+  queued: number
+): boolean {
   if (!snapshot?.session) return true;
   if (queued > 0) return true;
   return Boolean(
@@ -85,7 +96,7 @@ export function createNoteDoor(deps: NoteDoorDeps): NoteDoor {
   async function open(turn: NoteTurn, fromOffer: boolean): Promise<NoteDoorOutcome> {
     if (fromOffer && !deps.isShownHere(turn.sessionId)) return { kind: 'not_here' };
     if (taken.has(turn.messageId)) return { kind: 'duplicate' };
-    if (busy(deps.getSnapshot(turn.sessionId), deps.pendingUserInput(turn.sessionId))) {
+    if (noteDoorBusy(deps.getSnapshot(turn.sessionId), deps.pendingUserInput(turn.sessionId))) {
       return { kind: 'busy' };
     }
     taken.add(turn.messageId);
