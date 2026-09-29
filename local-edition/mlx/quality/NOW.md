@@ -25,7 +25,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - = main (Q-495, Q-497) + q502 (Q-498, Q-502) + q503 (Q-499, Q-503) + q507 (Q-500/501, Q-504, Q-507)
   + Q-505 65126cc51 + Q-466 e49d42e7e. No conflicts.
 - Q-508 DONE e43fc13ba (q508): g080b (chained after g080) merges it into merge-080 and runs sidecar + session_id + clippy.
-- Still cutting: Q-511 (RecipeItem hoist) → on top after.
+- Q-511 DONE b26645498. Q-512 (SessionItem/SessionSkeleton/Row nested components) is cutting on q512 = 57033c308 +
+  Q-511, and merges into merge-080 after g080b (it brings Q-511 with it).
 - Green → ff main → release 3.0.80 → install on BOTH Macs (Q-502's new spec tag) when #3y allows → prove live:
   Q-502 (two chats keep warm), Q-500/501 (second window), Q-504/507 (Stop an app-wide / scheduled turn), Q-493/495
   (the stopped lines), Q-505 (a redacted memory).
@@ -42,7 +43,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-512.
+- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-513.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
