@@ -28,7 +28,7 @@ import { mainPage } from './mainpage.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { liveCheck } from './livecheck.mjs';
 import { loadGuidance, chooseAnswer, planClick, isAnswerMessage, readDbItems, sessionIdOf, readTray, readChat, answerCard, norm, textUseCell, openCardFails } from './needsyou.mjs';
-import { loadNoteGuidance, readNotes, actOnNote, noteFails, noteRow, NOTES_TSV_HEADER } from './notes.mjs';
+import { loadNoteGuidance, readNotes, actOnNote, noteFails, noteRow, NOTES_TSV_HEADER, readMessages, lastRowId } from './notes.mjs';
 import { workDirOf, projectRowTestId, readWorkingDir, checkWorkingDir } from './workdir.mjs';
 const dir = process.argv[2];
 const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
@@ -147,6 +147,15 @@ const openedSession = await openChatInWork();
 // One turn, from a send already made until the chat stops working: the done / notice / stall / hang rules, the
 // live check and the needs-you look every LIVE_EVERY polls, one turns.tsv row. `label` is the brief turn's
 // number, or `<n>a<k>` for the k-th answer turn after brief turn n (Q-376). n0 = assistant messages before it.
+// The user rows goose stored after `after` — does one carry this prompt's words?
+function sentLanded(after, prompt) {
+  const head = prompt.slice(0, 80);
+  return readMessages(openedSession, after).some((row) => {
+    if (row.role !== 'user') return false;
+    try { return JSON.parse(row.content_json).some((c) => c.type === 'text' && c.text.slice(0, 80) === head); } catch { return false; }
+  });
+}
+
 async function runTurn(label, n0, start) {
   let lastChange = Date.now(); let prev = null; let ended = ''; let stallLogged = false;
   await p.waitForTimeout(3000);
@@ -441,8 +450,23 @@ for (let turn = 0; turn < maxTurns; turn++) {
   // yanks his view; to TYPE it must be in its own chat, so it returns there only at a turn boundary.
   if (chatUrl && p.url() !== chatUrl) { note(`RETURN to own chat from ${p.url().split('#')[1]}`); await p.goto(chatUrl); await p.waitForTimeout(3000); }
   const input = p.locator('[data-testid=chat-input]:visible').first();
+  const row0 = lastRowId(openedSession);
   await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
-  const r = await runTurn(String(turn), n0, Date.now());
+  let r = await runTurn(String(turn), n0, Date.now());
+  // Q-492: a turn is DONE only when its words reached the chat. #3x's turn 1 (the memory turn) was pressed,
+  // never stored, and counted done in 5 s with 0 tools — the Stop button's absence proves nothing about a send.
+  if (r.ended === 'done' && !sentLanded(row0, prompt)) {
+    const box = await input.evaluate((el) => ({ value: (el.value ?? el.innerText ?? '').slice(0, 120), disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true' })).catch((e) => ({ error: String(e).slice(0, 120) }));
+    const queued = await p.evaluate(() => [...document.querySelectorAll('[data-testid*=queue], [data-testid*=queued]')].map((e) => e.innerText.slice(0, 80)).join(' | ')).catch(() => '');
+    await p.screenshot({ path: `${dir}/send-lost-${turn}.png` }).catch(() => {});
+    note(`LIVE SEND_LOST turn ${turn}: pressed Enter, no user row after ${row0}; composer ${JSON.stringify(box)} queued "${queued}"`);
+    // A person who sees their message vanish sends it again; one resend, recorded as its own turn row.
+    const n1 = await p.evaluate(() => [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).length);
+    const row1 = lastRowId(openedSession);
+    await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
+    r = await runTurn(`${turn}r`, n1, Date.now());
+    if (!sentLanded(row1, prompt)) { note(`STOPPED: turn ${turn} did not reach the chat twice (SEND_LOST)`); break; }
+  }
   // Q-390: the turn went into the chat opened (and verified) in <dir>/work, not some other chat.
   if (turn === 0 && sessionIdOf(chatUrl || p.url()) !== openedSession) { note(`WORKDIR_FAIL turn 0 ran in ${sessionIdOf(chatUrl || p.url()) || chatUrl}, not the chat opened in ${work} (${openedSession})`); writeRound({ workingDirVerified: false, workingDirError: `turn 0 ran in ${sessionIdOf(chatUrl || p.url()) || chatUrl}` }); console.error(`r1 STOPPED after turn 0 (Q-390): the turn did not run in ${openedSession}`); break; }
   if (turn % 5 === 0) await p.screenshot({ path: `${dir}/turn-${turn}.png` });
