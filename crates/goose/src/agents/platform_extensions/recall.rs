@@ -305,26 +305,106 @@ pub fn correction_memory(user_text: &str, action: &str) -> (String, Vec<String>)
     )
 }
 
-/// The question the assistant left open, when its last message asked one.
+const QUESTION_AUXILIARIES: &[&str] = &[
+    "do", "does", "did", "should", "shall", "would", "could", "can", "will", "may", "is", "are",
+    "am", "was", "were",
+];
+const QUESTION_SUBJECTS: &[&str] = &[
+    "i", "we", "you", "it", "this", "that", "they", "there", "he", "she",
+];
+const WH_WORDS: &[&str] = &[
+    "which", "what", "who", "whom", "whose", "where", "when", "why", "how", "whether",
+];
+const FIRST_PERSON: &[&str] = &["i", "i'm", "im", "i'll", "i've", "i'd"];
+const SELF_UNCERTAINTY: &[&str] = &["not sure", "unsure", "uncertain", "assume", "assuming"];
+
+/// The sentences of one line: cut at a terminator, a semicolon, a colon or a spaced dash that is
+/// followed by a space, so "tools/gen-matrix.mjs" and "3.0.78" stay whole.
+fn line_sentences(line: &str) -> Vec<Vec<String>> {
+    let normalized = line.replace('\u{2019}', "'").to_lowercase();
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    let mut chars = normalized.chars().peekable();
+    while let Some(c) = chars.next() {
+        let breaks = matches!(c, '.' | '!' | '?' | ';' | ':' | '\u{2014}' | '\u{2013}')
+            && chars.peek().is_none_or(|next| next.is_whitespace());
+        if breaks {
+            sentences.push(std::mem::take(&mut current));
+        } else {
+            current.push(c);
+        }
+    }
+    sentences.push(current);
+    sentences
+        .iter()
+        .map(|s| {
+            s.split(|c: char| !c.is_alphanumeric() && c != '\'')
+                .map(|t| t.trim_matches('\''))
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|tokens| !tokens.is_empty())
+        .collect()
+}
+
+/// An auxiliary before its subject ("should I", "do you", "is it") — the inversion that makes an
+/// English sentence ask.
+fn inverted_at(words: &[&str], at: usize) -> bool {
+    words
+        .get(at)
+        .is_some_and(|t| QUESTION_AUXILIARIES.contains(t))
+        && words
+            .get(at + 1)
+            .is_some_and(|t| QUESTION_SUBJECTS.contains(t))
+}
+
+fn opens_with(words: &[&str], phrase: &str) -> bool {
+    let n = phrase.split(' ').count();
+    words.len() >= n && has_phrase(&words[..n], phrase)
+}
+
+/// Does this sentence ask? It opens inverted ("Should I…", "Do you want…", "Would you like…"); or
+/// opens with a question word and inverts after it ("Which one do you want…" — a relative "which
+/// reads the data" never inverts); or asks for an answer outright ("Please confirm…", "Let me know
+/// which…"); or the model states its OWN uncertainty ("I'm not sure whether…", "I'll assume X
+/// unless…"). "Confirm" or "assume" inside a statement about something else is not asking.
+fn sentence_asks(tokens: &[String]) -> bool {
+    let all: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    let words = match all.first() {
+        Some(&("please" | "so" | "and" | "or" | "also")) => &all[1..],
+        _ => &all[..],
+    };
+    let Some(&first) = words.first() else {
+        return false;
+    };
+    let inverted = inverted_at(words, 0)
+        || (WH_WORDS.contains(&first) && (1..words.len()).any(|at| inverted_at(words, at)));
+    let requests = first == "confirm"
+        || ((opens_with(words, "let me know") || opens_with(words, "tell me"))
+            && words.iter().any(|t| WH_WORDS.contains(t)));
+    let self_uncertain = (FIRST_PERSON.contains(&first)
+        && SELF_UNCERTAINTY.iter().any(|p| has_phrase(words, p)))
+        || opens_with(words, "not sure")
+        || first == "unsure";
+    inverted || requests || self_uncertain
+}
+
+/// The question the assistant left open, when its last line asks one: it ends in "?", or one of
+/// its sentences asks (`sentence_asks`). Measured (Q-487, session 20260929_12 turn 35): the line
+/// "`matrix.json` — intermediate output from `tools/gen-matrix.mjs`, which reads the data … your
+/// call." was taken for a question on the substring "which ", and the next instruction was shown
+/// as "Noticed your answer" and offered to the model as a fact to remember.
 pub fn open_question(assistant_text: &str) -> Option<String> {
     let last = assistant_text
         .lines()
         .rev()
         .map(str::trim)
         .find(|l| !l.is_empty())?;
-    let lower = last.to_lowercase();
-    let asks = last.ends_with('?')
-        || [
-            "which ",
-            "should i",
-            "do you want",
-            "not sure",
-            "unsure",
-            "assume",
-            "confirm",
-        ]
-        .iter()
-        .any(|m| lower.contains(m));
+    let asks = last
+        .trim_end_matches(['*', '_', '`', ')', '"', '\''])
+        .ends_with('?')
+        || line_sentences(last).iter().any(|s| sentence_asks(s));
     asks.then(|| headline(last))
 }
 
@@ -2352,6 +2432,59 @@ mod tests {
             Some("I'm not sure which port the vendor uses; I will assume 8850".to_string())
         );
         assert_eq!(open_question("Done. The tests pass."), None);
+    }
+
+    const Q487_RECEIPT: &str = "`matrix.json` \u{2014} intermediate output from `tools/gen-matrix.mjs`, which reads the data and writes the JSON that the docx/pdf are generated from. It's in git because it's the source for the matrix docs. You could equally generate it fresh each time and drop it from git \u{2014} your call.";
+
+    #[test]
+    fn a_relative_which_in_a_statement_is_not_a_question() {
+        assert_eq!(open_question(Q487_RECEIPT), None);
+        assert_eq!(open_question("I confirmed the build passes."), None);
+        assert_eq!(
+            open_question("The loader reads the file, which is then cached; confirmed on 3.0.78."),
+            None
+        );
+        assert_eq!(
+            open_question("Tests assume a clean checkout, so I reset it first."),
+            None
+        );
+    }
+
+    #[test]
+    fn a_question_asks_by_its_form_not_by_a_word_in_it() {
+        for line in [
+            "Which one do you want, A or B",
+            "Should I push the branch now",
+            "Do you want the docs regenerated too",
+            "Would you like me to drop it from the repo",
+            "Can you confirm the port is 8850",
+            "Shall I open the PR",
+            "Both builds pass. Which should I ship first",
+            "Please confirm the tenant before I write.",
+            "Let me know which branch to use.",
+            "Not sure whether the vendor restarted.",
+            "I'll assume 8850 unless you say otherwise.",
+            "The port is free \u{2014} should I bind it",
+            "Is the key the one in secrets.yaml? (dev or prod?)",
+        ] {
+            assert!(open_question(line).is_some(), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_push_back_after_a_statement_stays_a_correction() {
+        let asked = open_question(Q487_RECEIPT).is_some();
+        assert_eq!(
+            correction_strength_after("No, don't drop it from the repo.", asked),
+            Some(Correction::Strong)
+        );
+        assert_eq!(
+            correction_strength_after(
+                "Write the message I'll send Siobhán with the site folder, as notes/message-to-siobhan.txt",
+                asked
+            ),
+            None
+        );
     }
 
     #[test]
