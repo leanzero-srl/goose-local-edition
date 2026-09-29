@@ -182,8 +182,17 @@ pub enum RankProgram {
     /// would reuse a different prefix and run a different number of prefill steps.
     /// `mlxLmServerKvDtype` (a 3.0.74–3.0.79 requester) still reads, with
     /// `keep_every_conversation` off: that requester's ranks keep the newest conversation alike.
+    ///
+    /// Tagged `mlxLmServerNamedConversation` since Q-508: `name_conversations` makes every rank
+    /// tell conversations apart by the client's own name for them (goose's `agent-session-id`
+    /// header, which rank 0 puts on the request it shares) instead of by tokens alone, so a
+    /// compacted chat's older prefix is its own stale entry, not another conversation kept. A peer
+    /// that told them apart by tokens would keep an entry this Mac's cache evicts.
+    /// `mlxLmServerEveryConversation` (a 3.0.80 requester) still reads, with `name_conversations`
+    /// off: that requester's ranks tell conversations apart by tokens alike.
     #[serde(
-        rename = "mlxLmServerEveryConversation",
+        rename = "mlxLmServerNamedConversation",
+        alias = "mlxLmServerEveryConversation",
         alias = "mlxLmServerKvDtype",
         alias = "mlxLmServerStableHead",
         alias = "mlxLmServerConversationPrefix",
@@ -286,6 +295,15 @@ pub enum RankProgram {
         /// 200,456 tokens. Supersedes the single kept prefix and head.
         #[serde(default)]
         keep_every_conversation: bool,
+        /// Every rank tells the kept conversations apart by the name the client gives them — the
+        /// request's `agent-session-id` header, which goose sends on every chat request — and by
+        /// tokens only for a request that names none (`rank_boundary.py` `Conversations.cut`,
+        /// Q-508): by tokens alone a chat that compacted left its pre-compaction prefix kept as
+        /// another conversation (E2E #3w's 6.95 GB), holding every side call that would have
+        /// joined the compacted chat's row and outliving the chat's shared head. With
+        /// `keep_every_conversation` only.
+        #[serde(default)]
+        name_conversations: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -498,6 +516,7 @@ pub fn rank_specs(
             keep_stable_head: true,
             batch_kv_dtype: true,
             keep_every_conversation: true,
+            name_conversations: true,
             sampling_defaults: Box::default(),
         }
     })
@@ -1160,6 +1179,7 @@ pub(crate) mod tests {
                 keep_stable_head: true,
                 batch_kv_dtype: true,
                 keep_every_conversation: true,
+                name_conversations: true,
                 sampling_defaults: _,
             }
         ));
@@ -3532,6 +3552,90 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// Q-508, rank_boundary.py's named `Conversations` under a real interpreter: a request that
+    /// carries its client's name for the conversation continues THAT conversation whatever its
+    /// tokens, so a chat that compacted (the same head, a summary, none of the old messages) is
+    /// one conversation whose older prefix stops being kept at the cut — never a second
+    /// conversation kept and reserved for; the NEGATIVE CONTROL is the same requests unnamed
+    /// (Q-502's tokens), which keep the orphan and reserve its bytes as another conversation's.
+    /// Two named chats with one head stay two conversations sharing one head entry; an unnamed
+    /// request is told apart among the unnamed conversations only.
+    #[test]
+    fn a_named_conversation_keeps_one_prefix_through_its_compaction() {
+        let checks = r#"
+
+def held(entry):
+    return None if entry.tokens is None else len(entry.tokens)
+
+
+head = list(range(10))
+a1 = head + list(range(100, 160)) + [900] * 5
+a2 = a1[:70] + list(range(200, 210)) + [901] * 5
+compacted = head + list(range(500, 520)) + [902] * 5
+
+
+def replay(named):
+    convs = Conversations()
+    name = "20260929_12" if named else None
+    ca = convs.cut(a1, 70, 10, name)
+    convs.inserted(a1[:10], 10)
+    convs.inserted(a1[:70], 70)
+    assert convs.cut(a2, 80, 10, name) is ca, "a tool step extends the prefix: the same chat"
+    convs.inserted(a2[:80], 80)
+    assert [held(e) for e in convs.kept()] == [80, 10]
+    cc = convs.cut(compacted, 30, 10, name)
+    at_cut = [held(e) for e in convs.kept()]
+    convs.inserted(compacted[:30], 30)
+    return convs, ca, cc, at_cut
+
+
+convs, ca, cc, at_cut = replay(True)
+assert cc is ca and len(convs.all) == 1, "the compacted chat is the same conversation"
+assert at_cut == [None, 10], "its older prefix stops being kept at the compacted request's cut"
+assert [held(e) for e in convs.kept()] == [30, 10]
+assert convs.reserve() == (30, 10, 0, 1), "nothing reserved for the past"
+
+tokens, ta, tc, token_cut = replay(False)
+assert tc is not ta and len(tokens.all) == 2, "NEGATIVE CONTROL: by tokens, a second conversation"
+assert token_cut == [None, 80, 10], token_cut
+assert [held(e) for e in tokens.kept()] == [30, 80, 10], "the orphan kept before the head"
+assert tokens.reserve() == (30, 10, 80, 2), "and reserved for as another chat's"
+
+# A second session opening on the same system prompt and tools: its own conversation, the head
+# entry shared and counted once.
+b1 = head + list(range(700, 740)) + [903] * 5
+cb = convs.cut(b1, 50, 10, "20260929_13")
+assert cb is not ca and cb.head == ca.head and len(convs.heads) == 1
+convs.inserted(b1[:50], 50)
+assert [held(e) for e in convs.kept()] == [50, 30, 10]
+assert convs.reserve() == (50, 10, 30, 2)
+
+# An unnamed request (another client) whose prompt extends a named chat's prefix is not that
+# chat: the names are the clients', tokens decide among the unnamed only.
+foreign = compacted[:30] + [904] * 8
+cf = convs.cut(foreign, 32, 10)
+assert cf is not ca and cf.name is None and ca.prefix.tokens is not None
+convs.inserted(foreign[:32], 32)
+assert convs.cut(foreign[:32] + [906] * 4, 34, 10) is cf, "extends cf's held prefix: cf"
+
+# The named chat's next step extends its compacted prefix: kept, the same conversation.
+c2 = compacted[:30] + [907] * 6
+assert convs.cut(c2, 33, 10, "20260929_12") is ca and held(ca.prefix) == 30
+print("ok")
+"#;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_boundary.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
     /// Q-498, rank_boundary.py's `EvictionLog` under a real interpreter: an evicted entry is named
     /// by the prompt that extends it past what the cache supplied — by its key's digest, never its
     /// length alone — with the conversation the cache kept at that eviction (this prompt's own,
@@ -3775,6 +3879,8 @@ A_LATE, A_LATE_PREFIX = 250000, 249000
 B_HEAD, B_PREFIX, B_CALL, B_OUT = 41266, 76816, 77683, 297
 B_NEXT, B_NEXT_PREFIX, B_LATER = 77749, 77171, 78000
 SIDE, SIDE2, SMALL = 84, 119, 84
+# The two goose sessions (Q-508: the name each chat's requests carry).
+A_SESSION, B_SESSION = "20260929_15", "20260928_19"
 
 
 def at(h, m, s):
@@ -3788,12 +3894,15 @@ B_ROW_ENDED = at(12, 10, 59.228)
 upstream_pop = LRUPromptCache.CacheOrder.pop
 
 
-def replay(limit, every):
+def replay(limit, every, named=False):
     LRUPromptCache.CacheOrder.pop = upstream_pop
     if every:
         convs = Conversations()
         keep_conversations(LRUPromptCache.CacheOrder, convs)
-        cut, inserted, kept_prefix, kept_now = convs.cut, convs.inserted, convs.newest_prefix, convs.kept
+        inserted, kept_prefix, kept_now = convs.inserted, convs.newest_prefix, convs.kept
+
+        def cut(prompt, boundary, head, session):
+            convs.cut(prompt, boundary, head, session if named else None)
 
         def room(rows, width, tokens):
             prefix, head, other, _ = convs.reserve()
@@ -3802,7 +3911,7 @@ def replay(limit, every):
         prefix_entry, head_entry = KeptEntry(), KeptEntry()
         keep_entries(LRUPromptCache.CacheOrder, prefix_entry, head_entry)
 
-        def cut(prompt, boundary, head):
+        def cut(prompt, boundary, head, session):
             prefix_entry.cut(prompt[:boundary])
             head_entry.cut(prompt[:head])
 
@@ -3861,7 +3970,7 @@ def replay(limit, every):
     small = [fresh(SMALL, 10_000_000 + 1000 * i) for i in range(6)]
     out = {}
     # #3x's 15:05:47 call left its head, its prefix and its end entry beside three helper entries.
-    cut(a[:A_CALL], A_PREFIX, A_HEAD)
+    cut(a[:A_CALL], A_PREFIX, A_HEAD, A_SESSION)
     bound = limit - batch_kv_charge(p, 1, A_CALL)
     insert(a[:A_HEAD], "system", bound)
     insert(small[0], "system", bound)
@@ -3872,7 +3981,7 @@ def replay(limit, every):
     insert(end, "assistant", limit - batch_kv_charge(p, 1, A_CALL + A_OUT))
     # 15:05:57.94: the second chat's call alone; its side calls and #3x's next call arrive while
     # it reads, then its head and prefix are cached.
-    cut(b, B_PREFIX, B_HEAD)
+    cut(b, B_PREFIX, B_HEAD, B_SESSION)
     out["b_read"] = lookup(b)
     admit(1, B_CALL, ["req-424"], at(12, 5, 57.940))
     out["held_on_arrival"] = [not room(1, B_CALL, t) for t in (SIDE, SIDE2, A_NEXT)]
@@ -3902,7 +4011,7 @@ def replay(limit, every):
         insert(small[4], "assistant", limit - batch_kv_charge(p, 2, SIDE2))
         insert(small[5], "assistant", limit - batch_kv_charge(p, 2, SIDE2))
     # #3x's next call, alone (the batch empty).
-    cut(a[:A_NEXT], A_NEXT_PREFIX, A_HEAD)
+    cut(a[:A_NEXT], A_NEXT_PREFIX, A_HEAD, A_SESSION)
     out["a_read"] = lookup(a[:A_NEXT])
     out["a_lost"] = log.lost_prefix(a[:A_NEXT], out["a_read"], B_ROW_ENDED)
     admit(1, A_NEXT, ["req-427"], B_ROW_ENDED)
@@ -3915,13 +4024,13 @@ def replay(limit, every):
     insert(a[:A_NEXT_PREFIX] + fresh(A_NEXT - A_NEXT_PREFIX + A_OUT, 60_000_000), "assistant",
            limit - batch_kv_charge(p, 1, A_NEXT + A_OUT))
     # The second chat's next call (15:11:06), once #3x's is done.
-    cut(b_next, B_NEXT_PREFIX, B_HEAD)
+    cut(b_next, B_NEXT_PREFIX, B_HEAD, B_SESSION)
     out["b_next_read"] = lookup(b_next)
     admit(1, B_NEXT, ["req-428"], B_ROW_ENDED)
     insert(b_next[:B_NEXT_PREFIX], "user", limit - batch_kv_charge(p, 1, B_NEXT))
     # What the plan still cannot keep: #3x grown to 250,000 tokens alone leaves the cache less
     # than both prefixes; the second chat's (the less recent) goes, and its next call says so.
-    cut(a[:A_LATE], A_LATE_PREFIX, A_HEAD)
+    cut(a[:A_LATE], A_LATE_PREFIX, A_HEAD, A_SESSION)
     out["a_late_read"] = lookup(a[:A_LATE])
     admit(1, A_LATE, ["req-500"], 100.0)
     out["b_later_read"] = lookup(b_later)
@@ -3953,6 +4062,176 @@ assert new["b_later_lost"] == {"tokens": B_NEXT_PREFIX, "while_keeping": "anothe
 KEEPS_BOTH = 13264512220
 assert replay(KEEPS_BOTH, True)["a_read"] == A_PREFIX
 assert replay(KEEPS_BOTH - (1 << 20), True)["a_read"] == 0
+
+# Q-508: named by their sessions, two chats that never compact are the same two conversations —
+# every number above, and the bound, unchanged.
+assert replay(PLAN_LIMIT, True, named=True) == new
+assert replay(KEEPS_BOTH, True, named=True)["a_read"] == A_PREFIX
+assert replay(KEEPS_BOTH - (1 << 20), True, named=True)["a_read"] == 0
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_boundary.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// Q-508 through the REAL mlx_lm 0.31.3 `LRUPromptCache`, at E2E #3w's sizes (rank0
+    /// ...1790649911215, the 27B split's 17,333,813,248 B plan): the chat's last call before its
+    /// compaction (08:12:33Z, 210,205 tokens; its stable prefix 6,946,553,856 B = 209,643 tokens
+    /// at 08:12:56Z; the head 1,453,850,624 B = 42,019 tokens), then the compacted chat's calls at
+    /// the sizes the log names (49,189 — the ledger's post-compaction prompt — then 61,757, 72,638
+    /// and 77,686: the 08:18:12, 08:30:08 and 08:37:11 admission lines), each with a 154-token tool
+    /// label arriving while its row generates (#3h's label), then the chat grown to a lone
+    /// 140,000-token call and compacted again. Each stable prefix ends 562 tokens before its
+    /// prompt, as the 210,205-token call's did.
+    ///
+    /// Named by goose's session id (the shipped rule), the compacted chat is the same
+    /// conversation: the pre-compaction prefix is no longer kept, no label waits for the chat's
+    /// row (the room reserved is the chat's own prefix and head), the orphan is evicted by the
+    /// first label's admission, the 140,000-token call keeps the head beside the prefix, and the
+    /// second compaction reads the 42,019-token head. The NEGATIVE CONTROL is the same sequence
+    /// told apart by tokens (Q-502 alone, what a client naming no conversation still gets): the
+    /// orphan is a second conversation, kept and reserved (6,946,553,856 B in `other`), every label
+    /// waits for the chat's row, the 140,000-token call's trim takes the head and keeps the orphan
+    /// (prefixes are kept before heads), and the second compaction reads 0. Either way every call
+    /// of the compacted chat reads the same prefix: the labels joining its row cost it nothing.
+    #[test]
+    fn a_compacted_chats_past_is_evicted_first_at_e2e_3w_sizes_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models.cache import LRUPromptCache
+
+p = {"kv_bytes_per_token": 32768, "sequence_state_bytes": 76972032, "batch_transient_ratio": 2.2}
+PLAN_LIMIT = 17333813248
+
+
+class Layer:
+    def __init__(self, tokens):
+        self.nbytes = batch_kv_charge(p, 1, tokens)
+
+    def is_trimmable(self):
+        return False
+
+
+HEAD = 42019
+OLD_CALL, OLD_PREFIX, OUT = 210205, 209643, 80
+TAIL = OLD_CALL - OLD_PREFIX
+COMPACTED = [49189, 61757, 72638, 77686]
+GROWN = 140000
+LABEL, LABEL_OUT = 154, 9
+assert batch_kv_charge(p, 1, HEAD) == 1453850624 and batch_kv_charge(p, 1, OLD_PREFIX) == 6946553856
+upstream_pop = LRUPromptCache.CacheOrder.pop
+
+
+def replay(named):
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    convs = Conversations()
+    keep_conversations(LRUPromptCache.CacheOrder, convs)
+    session = "20260929_12" if named else None
+    cache = LRUPromptCache(max_size=PLAN_LIMIT // batch_kv_charge(p, 1, 256), max_bytes=PLAN_LIMIT)
+
+    def insert(tokens, cache_type, bound):
+        layers = [Layer(len(tokens))]
+        convs.inserted(tokens, layers[0].nbytes)
+        cache.insert_cache("m", tokens, layers, cache_type=cache_type)
+        forget_dropped(cache._lru, convs.kept())
+        cache.trim_to(n_bytes=bound)
+
+    def lookup(prompt):
+        found, rest = cache.fetch_nearest_cache("m", prompt)
+        return len(prompt) - len(rest) if found is not None else 0
+
+    def room(rows, width, tokens):
+        prefix, head, other, _ = convs.reserve()
+        return admits(p, PLAN_LIMIT, rows, width, tokens, prefix, head, other)
+
+    def holds(tokens):
+        return any(len(t) == tokens for lru in cache._lru._lrus.values() for _, t in lru)
+
+    def fresh(n, base):
+        return [-(base + k) for k in range(n)]
+
+    def alone(prompt, boundary):
+        # One call of the chat, alone: cut, read, admitted (the cache trimmed to what the lone
+        # row leaves), its head (when not read) and its stable prefix cached.
+        convs.cut(prompt, boundary, HEAD, session)
+        read = lookup(prompt)
+        bound = PLAN_LIMIT - batch_kv_charge(p, 1, len(prompt))
+        cache.trim_to(n_bytes=bound)
+        if read < HEAD:
+            insert(prompt[:HEAD], "system", bound)
+        insert(prompt[:boundary], "user", bound)
+        return read
+
+    head = list(range(HEAD))
+    old = head + list(range(10_000_000, 10_000_000 + OLD_CALL - HEAD))
+    out = {"reads": [], "reserve": [], "label_held": [], "orphan_cached": []}
+    out["old_read"] = alone(old, OLD_PREFIX)
+    insert(old + fresh(OUT, 20_000_000), "assistant", PLAN_LIMIT - batch_kv_charge(p, 1, OLD_CALL + OUT))
+    # The compacted chat: the same head, then the summary and its tool steps.
+    chat = head + fresh(GROWN - HEAD, 30_000_000)
+    for i, width in enumerate(COMPACTED):
+        prompt = chat[:width]
+        out["reads"].append(alone(prompt, width - TAIL))
+        # The tool label arrives while the row generates.
+        out["reserve"].append(list(convs.reserve()))
+        held = not room(1, width, LABEL)
+        out["label_held"].append(held)
+        label = fresh(LABEL + LABEL_OUT, 40_000_000 + 1000 * i)
+        if not held:
+            cache.trim_to(n_bytes=PLAN_LIMIT - batch_kv_charge(p, 2, width))
+            insert(label, "assistant", PLAN_LIMIT - batch_kv_charge(p, 2, width))
+        insert(prompt + fresh(OUT, 50_000_000 + 1000 * i), "assistant",
+               PLAN_LIMIT - batch_kv_charge(p, 1, width + OUT))
+        if held:
+            insert(label, "assistant", PLAN_LIMIT - batch_kv_charge(p, 1, LABEL))
+        out["orphan_cached"].append(holds(OLD_PREFIX))
+    # The chat grown past what the plan keeps beside all three: a lone 140,000-token call.
+    out["grown_read"] = alone(chat[:GROWN], GROWN - TAIL)
+    out["after_grown"] = {"head": holds(HEAD), "orphan": holds(OLD_PREFIX),
+                          "prefix": holds(GROWN - TAIL)}
+    # The chat compacts again: the same head, a new summary.
+    again = head + fresh(6000, 60_000_000)
+    out["again_read"] = alone(again, len(again) - TAIL)
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    return out
+
+
+named = replay(True)
+tokens = replay(False)
+PREFIXES = [w - TAIL for w in COMPACTED]
+for run in (named, tokens):
+    assert run["old_read"] == 0, run
+    assert run["reads"] == [HEAD] + PREFIXES[:-1], run["reads"]
+    assert run["grown_read"] == PREFIXES[-1], run
+    assert run["after_grown"]["prefix"], run
+
+assert named["label_held"] == [False] * 4, named
+assert [r[2:] for r in named["reserve"]] == [[0, 1]] * 4, "nothing reserved for the past"
+assert [r[:2] for r in named["reserve"]] == [[batch_kv_charge(p, 1, n), 1453850624] for n in PREFIXES]
+assert named["orphan_cached"] == [False] * 4, "the first label's admission evicted the orphan"
+assert named["after_grown"] == {"head": True, "orphan": False, "prefix": True}, named
+assert named["again_read"] == HEAD, named
+
+assert tokens["label_held"] == [True] * 4, "NEGATIVE CONTROL: every label waits for the row"
+assert [r[2:] for r in tokens["reserve"]] == [[6946553856, 2]] * 4, tokens["reserve"]
+assert tokens["orphan_cached"] == [True] * 4, tokens
+assert tokens["after_grown"] == {"head": False, "orphan": True, "prefix": True}, tokens
+assert tokens["again_read"] == 0, "NEGATIVE CONTROL: the head went, the orphan stayed"
 print("ok")
 "#;
         let out = std::process::Command::new(&python)
@@ -4568,11 +4847,12 @@ httpd = http.server.ThreadingHTTPServer(
 )
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
-def call(path, body=None):
+def call(path, body=None, headers=None):
     url = f"http://127.0.0.1:{httpd.server_address[1]}{path}"
     data = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(url, data=data, headers=headers or {})
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=600) as reply:
+        with urllib.request.urlopen(request, timeout=600) as reply:
             return [reply.status, json.loads(reply.read())]
     except urllib.error.HTTPError as error:
         return [error.code, json.loads(error.read())]
@@ -5258,6 +5538,289 @@ os._exit(0)
         eprintln!(
             "Q-502 admission: A alone {} / every conversation {} (side held {} s) / newest only {}",
             alone["reads"], kept["reads"], released["held_s"], old["reads"]
+        );
+    }
+
+    /// Q-508 through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5, the wrapper's own hooks
+    /// installed (rank 0): a chat takes two agent steps, then COMPACTS — the same system prompt
+    /// and tools, a summary as its first message — and a side call arrives while the compacted
+    /// chat's first call generates, at a plan bound set where the side call fits beside that row
+    /// with room for the compacted chat's own prefix and head. Every request carries goose's
+    /// `agent-session-id` header, as the omlx provider sends it. With `name_conversations` the
+    /// compacted chat is the same conversation: its pre-compaction prefix is not kept, the side
+    /// call joins the row (no hold), the join's trim evicts that past, and the chat's next step
+    /// reads its compacted prefix. NEGATIVE CONTROLS: the same spec with no header (a client
+    /// naming no conversation: told apart by tokens, said once — GOOSE_RANK_CONVERSATION_UNNAMED
+    /// for its user agent, however many requests), and the 3.0.80 spec with the header (the name
+    /// ignored): the orphan is another conversation, the side call is held for its bytes
+    /// (`other_conversations` = the pre-compaction prefix, 2 conversations) until the row ends.
+    /// Either way the compacted chat's next step reads the same prefix. And the name survives the
+    /// pickle `_share_object` hands every rank.
+    #[test]
+    fn a_compacted_chat_is_one_conversation_by_its_session_through_the_real_server() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let spec_with = |name_conversations: bool| {
+            let tensor = TensorLaunch {
+                planned_bytes: 27_456_216_576,
+                prompt_cache_limit_bytes: 9_431_744_512,
+                prompt_cache_entries: 110,
+                mlx_cache_limit_bytes: 2_745_621_658,
+                prefill: e2e_prefill(),
+            };
+            let mut spec = rank_specs(
+                &config,
+                &ServedNames::only("node-alias"),
+                &[tensor, tensor],
+                141_568,
+                2.0,
+            )
+            .remove(0);
+            if let RankProgram::MlxLmServer {
+                doorbell,
+                name_conversations: named,
+                ..
+            } = &mut spec.program
+            {
+                *doorbell = false;
+                *named = name_conversations;
+            }
+            spec.load_lock = Some(launch_load_lock());
+            spec
+        };
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+import pickle
+import time
+
+SESSION = {"agent-session-id": "20260929_12"} if SEND_SESSION else {}
+
+# The name rides the request `_share_object` pickles for every rank (server.py:492).
+shared = server.CompletionRequest("chat", "", [], None, None)
+shared.conversation = "20260929_12"
+assert pickle.loads(pickle.dumps((shared, None)))[0].conversation == "20260929_12"
+
+
+def send(messages, tail=None, tools=TOOLS, max_tokens=2):
+    body = {"model": served, "messages": messages, "max_tokens": max_tokens, "temperature": 0.0}
+    if tools:
+        body["tools"] = tools
+    if tail is not None:
+        body[TRANSIENT_TAIL] = tail
+    status, reply = call("/v1/chat/completions", body, SESSION)
+    assert status == 200, reply
+    return [reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"],
+            reply["usage"]["completion_tokens"]]
+
+
+def entry_bytes(length):
+    for lru in cache._lru._lrus.values():
+        for _, tokens in lru:
+            if len(tokens) == length:
+                return cache._trie.get(provider.model_key, tokens).nbytes
+    return None
+
+
+def compacted_chat(system, steps):
+    # goose's chat after a compaction: the same system prompt and tools, the summary as its
+    # first message, then tool steps ending on the turn-context block as `conversation`'s do.
+    question = "Write the users script and run it."
+    summary = "Summary of the conversation so far: the users script was written and run. " * 3
+    compacted = []
+    for sent, tail in conversation(system, steps):
+        assert sent[1]["content"].startswith(question)
+        first = {**sent[1], "content": summary + sent[1]["content"][len(question):]}
+        compacted.append(([sent[0], first, *sent[2:]], tail))
+    return compacted
+
+
+SYSTEM = "A. " + "You are goose, a general-purpose agent. " * 40
+a = conversation(SYSTEM, 1)
+c = compacted_chat(SYSTEM, 1)
+SIDE = [{"role": "system", "content": "Summarize this tool call in a short lowercase phrase (3-8 words). "},
+        {"role": "user", "content": "shell: node step0.js"}]
+reads = [send(*a[0]), send(*a[1])]
+a_head = next(i for i, (x, y) in enumerate(zip(
+    render(a[0][0]), render(a[0][0][:1] + [{"role": "user", "content": ""}], generation=False))) if x != y)
+a_prefix = stable_boundary(render(a[1][0]), render(a[1][0], False, a[1][1]))
+c_prefix = stable_boundary(render(c[0][0]), render(c[0][0], False, c[0][1]))
+assert render(c[0][0])[:a_head] == render(a[0][0])[:a_head], "the compacted chat opens on the chat's head"
+assert render(c[0][0])[:a_prefix] != render(a[1][0])[:a_prefix], "and extends none of its prefix"
+head_bytes, prefix_bytes = entry_bytes(a_head), entry_bytes(a_prefix)
+assert head_bytes and prefix_bytes, (a_head, a_prefix)
+per_token = (prefix_bytes - head_bytes) // (a_prefix - a_head)
+prefill["kv_bytes_per_token"] = per_token
+prefill["sequence_state_bytes"] = head_bytes - a_head * per_token
+bound = {}
+
+c_generating = threading.Event()
+armed = [True]
+upstream_step = server.BatchGenerator.next
+
+
+def gated_step(self):
+    answer = upstream_step(self)
+    if armed[0] and any(r.finish_reason is None for r in answer[1]):
+        armed[0] = False
+        # The compacted chat's row is generating, its prefix cached: the bound where the side
+        # call fits beside it with room for the chat's own prefix and head (the row may grow a
+        # few tokens more).
+        rows, width = batch_shape(self)
+        prefix, head, other, _ = kept_room()
+        charge = batch_kv_charge(prefill, rows + 1, width + 16)
+        limit = charge + max(kept_prefix_bytes(prefill, width + 16), prefix) + head
+        globals()["prompt_cache_limit"] = limit
+        cli.prompt_cache_bytes = limit
+        cache.max_bytes = limit
+        bound.update(rows=rows, width=width, limit=limit, own=[prefix, head], other=other)
+        c_generating.set()
+        while responses.requests.empty():
+            time.sleep(0.001)
+        # End this step loop: the side call is decided before the row's next step.
+        last_step["read_prompt"] = True
+    return answer
+
+
+server.BatchGenerator.next = gated_step
+c_reply = []
+c_thread = threading.Thread(target=lambda: c_reply.append(send(*c[0], max_tokens=48)))
+c_thread.start()
+c_generating.wait()
+side_reply = []
+side_thread = threading.Thread(target=lambda: side_reply.append(send(SIDE, tools=None, max_tokens=4)))
+side_thread.start()
+c_thread.join()
+side_thread.join()
+reads += [c_reply[0], side_reply[0], send(*c[1])]
+kept = [len(e.tokens) for e in kept_now() if e.tokens is not None]
+past_cached = any(len(t) == a_prefix for lru in cache._lru._lrus.values() for _, t in lru)
+print("GOOSE_TEST " + json.dumps({"reads": reads, "a_prefix": a_prefix, "c_prefix": c_prefix,
+                                  "prefix_bytes": prefix_bytes, "bound": bound, "kept": kept,
+                                  "past_cached": past_cached}), flush=True)
+os._exit(0)
+"#;
+        let run = |name_conversations: bool, send_session: bool| {
+            let program = format!(
+                "{}\
+                 class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+                 group = _Group()\n{}QWEN38 = {qwen}\nSEND_SESSION = {send}\n{TINY_QWEN35_SERVER}{checks}",
+                tensor_modules(),
+                &wrapper[start..end],
+                qwen = serde_json::to_string(QWEN38).unwrap(),
+                send = if send_session { "True" } else { "False" },
+            );
+            run_against_real_packages_printing(&python, &program, &spec_with(name_conversations))
+        };
+        let lines = |stdout: &str, prefix: &str| -> Vec<serde_json::Value> {
+            stdout
+                .lines()
+                .filter_map(|l| l.strip_prefix(prefix))
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect()
+        };
+        let reads =
+            |seen: &serde_json::Value, at: usize| -> u64 { seen["reads"][at][1].as_u64().unwrap() };
+
+        let (named, named_out) = run(true, true);
+        let c_prefix = named["c_prefix"].as_u64().unwrap();
+        let a_prefix = named["a_prefix"].as_u64().unwrap();
+        assert!(c_prefix > 0 && a_prefix > 0, "{named}");
+        assert_eq!(
+            named["bound"]["other"], 0,
+            "named: nothing reserved for the chat's past: {named}"
+        );
+        assert!(
+            lines(&named_out, "GOOSE_RANK_ADMISSION ")
+                .iter()
+                .all(|a| a.get("held_tokens").is_none()),
+            "named: the side call joins the compacted chat's row: {named_out}"
+        );
+        assert_eq!(
+            reads(&named, 4),
+            c_prefix,
+            "the compacted chat's next step reads its prefix: {named}"
+        );
+        assert!(
+            !named["kept"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(a_prefix)),
+            "the pre-compaction prefix is not kept: {named}"
+        );
+        assert_eq!(
+            named["past_cached"], false,
+            "the join's trim evicted it: {named}"
+        );
+        assert!(
+            lines(&named_out, "GOOSE_RANK_CONVERSATION_UNNAMED ").is_empty(),
+            "{named_out}"
+        );
+
+        let (unnamed, unnamed_out) = run(true, false);
+        let held = |seen: &serde_json::Value, out: &str, why: &str| {
+            let admissions = lines(out, "GOOSE_RANK_ADMISSION ");
+            let held = admissions
+                .iter()
+                .find(|a| a.get("held_tokens").is_some())
+                .unwrap_or_else(|| panic!("{why}: the side call is held: {out}"))
+                .clone();
+            assert_eq!(held["rows"], 1, "{why}: {held}");
+            assert_eq!(held["conversations"], 2, "{why}: {held}");
+            assert_eq!(
+                held["other_conversations"], seen["prefix_bytes"],
+                "{why}: the room it waits for is the pre-compaction prefix: {held} vs {seen}"
+            );
+            assert!(
+                admissions
+                    .iter()
+                    .any(|a| a.get("released_tokens") == held.get("held_tokens")),
+                "{why}: released once the row is done: {out}"
+            );
+            assert_eq!(reads(seen, 4), c_prefix, "{why}: {seen}");
+            assert_eq!(seen["past_cached"], true, "{why}: the orphan kept: {seen}");
+        };
+        held(
+            &unnamed,
+            &unnamed_out,
+            "NEGATIVE CONTROL (no session header: told apart by tokens)",
+        );
+        let said = lines(&unnamed_out, "GOOSE_RANK_CONVERSATION_UNNAMED ");
+        assert_eq!(
+            said.len(),
+            1,
+            "said once for the client, over four tail-bearing requests: {unnamed_out}"
+        );
+        assert_eq!(said[0]["header"], "agent-session-id", "{}", said[0]);
+        assert_eq!(said[0]["told_apart_by"], "tokens", "{}", said[0]);
+        assert!(
+            said[0]["user_agent"]
+                .as_str()
+                .is_some_and(|ua| ua.starts_with("Python-urllib/")),
+            "{}",
+            said[0]
+        );
+
+        let (old, old_out) = run(false, true);
+        held(
+            &old,
+            &old_out,
+            "NEGATIVE CONTROL (the 3.0.80 spec: the header ignored)",
+        );
+        assert!(
+            lines(&old_out, "GOOSE_RANK_CONVERSATION_UNNAMED ").is_empty(),
+            "a spec that does not name conversations says nothing: {old_out}"
+        );
+        eprintln!(
+            "Q-508 compaction: named {} / no header {} / 3.0.80 spec {}",
+            named["reads"], unnamed["reads"], old["reads"]
         );
     }
 
@@ -9682,20 +10245,73 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerEveryConversation");
+        assert_eq!(json["program"], "mlxLmServerNamedConversation");
+        assert_eq!(json["name_conversations"], true);
         assert_eq!(json["keep_every_conversation"], true);
         assert_eq!(json["batch_kv_dtype"], true);
         assert_eq!(json["keep_stable_head"], true);
         assert_eq!(json["keep_conversation_prefix"], true);
 
+        // A 3.0.80 requester's spec (the every-conversation tag, no name_conversations) tells
+        // conversations apart by tokens here: its own ranks tell them apart alike.
+        let mut every = json.clone();
+        every["program"] = "mlxLmServerEveryConversation".into();
+        every.as_object_mut().unwrap().remove("name_conversations");
+        let read: RankSpec = serde_json::from_value(every).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                name_conversations: false,
+                keep_every_conversation: true,
+                ..
+            }
+        ));
+
+        // A 3.0.80 peer's goosed (its enum knows the every-conversation tag, not this one)
+        // refuses this spec: its cache would keep a compacted chat's older prefix this Mac's
+        // cache evicts.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum EveryConversationProgram {
+            #[serde(
+                rename = "mlxLmServerEveryConversation",
+                alias = "mlxLmServerKvDtype",
+                alias = "mlxLmServerStableHead",
+                alias = "mlxLmServerConversationPrefix",
+                alias = "mlxLmServerPrefillYield",
+                alias = "mlxLmServerNewestPrefix",
+                alias = "mlxLmServerRowProcessors",
+                alias = "mlxLmServerSkeletonGuard",
+                alias = "mlxLmServerTransientTail",
+                alias = "mlxLmServerFormation",
+                alias = "mlxLmServerPrefill",
+                alias = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<EveryConversationProgram>(json.clone()).unwrap_err();
+        assert!(
+            refused.to_string().contains("mlxLmServerNamedConversation"),
+            "{refused}"
+        );
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
+
         // A 3.0.74–3.0.79 requester's spec (the KV-dtype tag, no keep_every_conversation) keeps
         // the newest conversation alone here: its own ranks keep that one alike.
         let mut dtype = json.clone();
         dtype["program"] = "mlxLmServerKvDtype".into();
-        dtype
-            .as_object_mut()
-            .unwrap()
-            .remove("keep_every_conversation");
+        let fields = dtype.as_object_mut().unwrap();
+        fields.remove("keep_every_conversation");
+        fields.remove("name_conversations");
         let read: RankSpec = serde_json::from_value(dtype).unwrap();
         assert!(matches!(
             read.program,
@@ -9737,7 +10353,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<KvDtypeProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerEveryConversation"),
+            refused.to_string().contains("mlxLmServerNamedConversation"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
