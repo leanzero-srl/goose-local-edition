@@ -41,11 +41,141 @@ struct BusyRun {
     connection_prompt: bool,
 }
 
+/// The in-flight replies of one set of agents, keyed by session id: the busy set every window's
+/// Running list reads and the tokens `session/cancel` reaches.
+#[derive(Default)]
+pub struct RunRegistry {
+    runs: RwLock<HashMap<String, BusyRun>>,
+}
+
+impl RunRegistry {
+    async fn register(
+        &self,
+        session_id: &str,
+        token: CancellationToken,
+        connection_prompt: bool,
+    ) -> Result<()> {
+        let mut runs = self.runs.write().await;
+        if runs.contains_key(session_id) {
+            anyhow::bail!("Session '{}' is currently busy", session_id);
+        }
+        runs.insert(
+            session_id.to_string(),
+            BusyRun {
+                token,
+                since: chrono::Utc::now(),
+                connection_prompt,
+            },
+        );
+        Ok(())
+    }
+
+    async fn unregister(&self, session_id: &str) {
+        self.runs.write().await.remove(session_id);
+    }
+
+    async fn remove_and_cancel(&self, session_id: &str) {
+        if let Some(run) = self.runs.write().await.remove(session_id) {
+            run.token.cancel();
+        }
+    }
+
+    pub async fn busy_session_ids(&self) -> Vec<String> {
+        self.runs.read().await.keys().cloned().collect()
+    }
+
+    pub async fn busy_sessions(&self) -> Vec<(String, chrono::DateTime<chrono::Utc>)> {
+        self.runs
+            .read()
+            .await
+            .iter()
+            .map(|(id, run)| (id.clone(), run.since))
+            .collect()
+    }
+
+    async fn cancel(&self, session_id: &str) -> Result<()> {
+        let runs = self.runs.read().await;
+        let run = runs
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("No active operation for session {}", session_id))?;
+        run.token.cancel();
+        Ok(())
+    }
+
+    /// Cancel the session's turn when no ACP connection's prompt holds it. True when a turn was
+    /// cancelled.
+    pub async fn cancel_run_no_connection_holds(&self, session_id: &str) -> bool {
+        match self.runs.read().await.get(session_id) {
+            Some(run) if !run.connection_prompt => {
+                run.token.cancel();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub async fn is_busy(&self, session_id: &str) -> bool {
+        self.runs.read().await.contains_key(session_id)
+    }
+}
+
+static STANDALONE_RUNS: std::sync::LazyLock<RunRegistry> =
+    std::sync::LazyLock::new(RunRegistry::default);
+
+/// The turns this process runs on a standalone [`Agent`] that no manager holds: the scheduler's
+/// runs (Q-507). Every window reads them as Running ([`AgentManager::process_busy_sessions`]) and
+/// every window's `session/cancel` reaches them, since no window's connection sent them.
+pub fn standalone_runs() -> &'static RunRegistry {
+    &STANDALONE_RUNS
+}
+
+/// A standalone turn's place in [`standalone_runs`] for as long as the turn runs.
+/// [`Self::release`] ends it on every path the turn returns through; the drop covers a turn whose
+/// future is dropped mid-await, so it never reads Running after it is gone.
+pub struct StandaloneRun {
+    session_id: String,
+    released: bool,
+}
+
+impl StandaloneRun {
+    pub async fn register(session_id: &str, token: CancellationToken) -> Result<Self> {
+        standalone_runs().register(session_id, token, false).await?;
+        Ok(Self {
+            session_id: session_id.to_string(),
+            released: false,
+        })
+    }
+
+    pub async fn release(mut self) {
+        standalone_runs().unregister(&self.session_id).await;
+        self.released = true;
+    }
+}
+
+impl Drop for StandaloneRun {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        let session_id = std::mem::take(&mut self.session_id);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    standalone_runs().unregister(&session_id).await;
+                });
+            }
+            Err(error) => {
+                tracing::error!(%session_id, %error, "a standalone turn dropped outside a runtime; it stays in the busy set");
+            }
+        }
+    }
+}
+
 pub struct AgentManager {
     sessions: Arc<RwLock<LruCache<String, Arc<Agent>>>>,
     agent_config: AgentConfig,
     default_provider: Arc<RwLock<Option<Arc<dyn crate::providers::base::Provider>>>>,
-    cancel_tokens: Arc<RwLock<HashMap<String, BusyRun>>>,
+    cancel_tokens: RunRegistry,
     /// Per-session creation locks.  When `get_or_create_agent` misses the
     /// `sessions` cache it acquires the per-session lock before doing the
     /// expensive work (provider restore, MCP extension initialization) so
@@ -66,7 +196,7 @@ impl AgentManager {
             sessions: Arc::new(RwLock::new(LruCache::new(capacity))),
             agent_config,
             default_provider: Arc::new(RwLock::new(None)),
-            cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
+            cancel_tokens: RunRegistry::default(),
             creation_locks: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -112,17 +242,34 @@ impl AgentManager {
     /// from the token map alone. Independent of the session store and of the agent cache,
     /// so a reply that is running stays visible while either of those is unreadable.
     pub async fn busy_session_ids(&self) -> Vec<String> {
-        self.cancel_tokens.read().await.keys().cloned().collect()
+        self.cancel_tokens.busy_session_ids().await
     }
 
     /// The busy set with when each turn began — what the app shows as "running · 27m".
     pub async fn busy_sessions(&self) -> Vec<(String, chrono::DateTime<chrono::Utc>)> {
-        self.cancel_tokens
-            .read()
-            .await
-            .iter()
-            .map(|(id, run)| (id.clone(), run.since))
-            .collect()
+        self.cancel_tokens.busy_sessions().await
+    }
+
+    /// Every turn running in this process as `own`'s connection sees it: `own`'s, the
+    /// process-wide manager's when [`Self::instance`] built it, and the standalone turns (the
+    /// scheduler's, Q-507). Earliest start wins.
+    pub async fn process_busy_sessions(
+        own: &Arc<Self>,
+    ) -> HashMap<String, chrono::DateTime<chrono::Utc>> {
+        let mut busy: HashMap<String, chrono::DateTime<chrono::Utc>> = HashMap::new();
+        let mut runs = own.busy_sessions().await;
+        if let Some(shared) = Self::instance_if_built() {
+            if !Arc::ptr_eq(&shared, own) {
+                runs.extend(shared.busy_sessions().await);
+            }
+        }
+        runs.extend(standalone_runs().busy_sessions().await);
+        for (session_id, since) in runs {
+            busy.entry(session_id)
+                .and_modify(|earliest| *earliest = (*earliest).min(since))
+                .or_insert(since);
+        }
+        busy
     }
 
     pub fn scheduler(&self) -> Arc<dyn SchedulerTrait> {
@@ -345,9 +492,7 @@ impl AgentManager {
     }
 
     pub async fn remove_session(&self, session_id: &str) -> Result<()> {
-        if let Some(run) = self.cancel_tokens.write().await.remove(session_id) {
-            run.token.cancel();
-        }
+        self.cancel_tokens.remove_and_cancel(session_id).await;
         let mut sessions = self.sessions.write().await;
         sessions
             .pop(session_id)
@@ -364,9 +509,7 @@ impl AgentManager {
 
     /// Drops an in-memory agent when one is loaded for `session_id`.
     pub async fn remove_session_if_loaded(&self, session_id: &str) -> Result<()> {
-        if let Some(run) = self.cancel_tokens.write().await.remove(session_id) {
-            run.token.cancel();
-        }
+        self.cancel_tokens.remove_and_cancel(session_id).await;
         let mut sessions = self.sessions.write().await;
         if sessions.pop(session_id).is_none() {
             return Ok(());
@@ -410,54 +553,33 @@ impl AgentManager {
         token: CancellationToken,
         connection_prompt: bool,
     ) -> Result<()> {
-        let mut tokens = self.cancel_tokens.write().await;
-        if tokens.contains_key(session_id) {
-            anyhow::bail!("Session '{}' is currently busy", session_id);
-        }
-        tokens.insert(
-            session_id.to_string(),
-            BusyRun {
-                token,
-                since: chrono::Utc::now(),
-                connection_prompt,
-            },
-        );
-        Ok(())
+        self.cancel_tokens
+            .register(session_id, token, connection_prompt)
+            .await
     }
 
     /// Remove the cancellation token for a session (called when reply finishes)
     pub async fn unregister_cancel_token(&self, session_id: &str) {
-        self.cancel_tokens.write().await.remove(session_id);
+        self.cancel_tokens.unregister(session_id).await;
     }
 
     /// Cancel a running agent by triggering its cancellation token
     pub async fn cancel_session(&self, session_id: &str) -> Result<()> {
-        let tokens = self.cancel_tokens.read().await;
-        let token = tokens
-            .get(session_id)
-            .map(|run| &run.token)
-            .ok_or_else(|| anyhow::anyhow!("No active operation for session {}", session_id))?;
-        token.cancel();
-        Ok(())
+        self.cancel_tokens.cancel(session_id).await
     }
 
     /// Cancel the session's turn when no ACP connection's prompt holds it — an orchestrator
     /// subagent's turn, a linked Mac's remote run, goose-server's reply route (Q-504). A
     /// connection's own prompt is left to that connection. True when a turn was cancelled.
     pub async fn cancel_run_no_connection_holds(&self, session_id: &str) -> bool {
-        match self.cancel_tokens.read().await.get(session_id) {
-            Some(run) if !run.connection_prompt => {
-                run.token.cancel();
-                true
-            }
-            _ => false,
-        }
+        self.cancel_tokens
+            .cancel_run_no_connection_holds(session_id)
+            .await
     }
 
     /// Check if a session has an active reply in progress
     pub async fn is_session_busy(&self, session_id: &str) -> bool {
-        let tokens = self.cancel_tokens.read().await;
-        tokens.contains_key(session_id)
+        self.cancel_tokens.is_busy(session_id).await
     }
 
     /// List session IDs that currently have active agents loaded
@@ -613,6 +735,51 @@ mod tests {
         );
         assert!(subagent.is_cancelled());
         assert!(!manager.cancel_run_no_connection_holds("idle-chat").await);
+    }
+
+    /// Q-507: a standalone turn (a scheduled run) is in every connection's busy set and any
+    /// window's cancel reaches it; it leaves the busy set when released, and when its future is
+    /// dropped mid-run.
+    #[tokio::test]
+    async fn a_standalone_run_is_busy_everywhere_until_released_or_dropped() {
+        let temp_dir = TempDir::new().unwrap();
+        let manager = Arc::new(create_test_manager(&temp_dir).await);
+        let released_id = format!("scheduled-{}", uuid::Uuid::new_v4().simple());
+        let dropped_id = format!("scheduled-{}", uuid::Uuid::new_v4().simple());
+        let token = tokio_util::sync::CancellationToken::new();
+
+        let run = super::StandaloneRun::register(&released_id, token.clone())
+            .await
+            .unwrap();
+        assert!(AgentManager::process_busy_sessions(&manager)
+            .await
+            .contains_key(&released_id));
+        assert!(super::StandaloneRun::register(&released_id, token.clone())
+            .await
+            .is_err());
+        assert!(
+            super::standalone_runs()
+                .cancel_run_no_connection_holds(&released_id)
+                .await
+        );
+        assert!(token.is_cancelled());
+        run.release().await;
+        assert!(!super::standalone_runs().is_busy(&released_id).await);
+
+        let dropped =
+            super::StandaloneRun::register(&dropped_id, tokio_util::sync::CancellationToken::new())
+                .await
+                .unwrap();
+        drop(dropped);
+        let mut gone = false;
+        for _ in 0..200 {
+            if !super::standalone_runs().is_busy(&dropped_id).await {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(gone, "a dropped standalone run leaves the busy set");
     }
 
     #[tokio::test]

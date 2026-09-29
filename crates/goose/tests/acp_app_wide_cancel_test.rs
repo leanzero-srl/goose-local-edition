@@ -8,6 +8,10 @@
 //! holds — a loop tick included, since a tick is submitted by the window whose door took it — Q-500
 //! relays that Stop to the holding window.
 //!
+//! Q-507: a scheduled run is such a turn too. The scheduler runs it on a standalone `Agent::new()`
+//! that no manager holds, so before the fix no window listed it as Running and no window's Stop
+//! reached it; it now registers in the process's standalone runs for the whole run.
+//!
 //! One runtime, one goose, one scripted model, one test at a time (as the loop tick tests).
 
 #[path = "acp_ws/mod.rs"]
@@ -22,7 +26,10 @@ use goose::agents::{Agent, SessionConfig};
 use goose::conversation::message::Message;
 use goose::execution::manager::AgentManager;
 use goose::session::SessionManager;
-use goose_sdk_types::custom_requests::{LoopCadence, LoopTemplateId, LoopsStartRequest};
+use goose_sdk_types::custom_requests::{
+    CreateScheduleRequest, DeleteScheduleRequest, ListSchedulesResponse, LoopCadence,
+    LoopTemplateId, LoopsStartRequest, RecipeDto, RunScheduleNowRequest,
+};
 use serde_json::{json, Value};
 use serial_test::serial;
 use tokio::sync::OnceCell;
@@ -262,8 +269,116 @@ async fn a_windows_cancel_leaves_a_tick_another_window_runs() {
     b.close().await;
 }
 
+/// The session a schedule's current run writes to, once the scheduler has recorded it.
+async fn current_run_session(window: &mut Window, schedule_id: &str) -> Option<String> {
+    let listed: ListSchedulesResponse = serde_json::from_value(
+        window
+            .request("_goose/unstable/schedules/list", json!({}))
+            .await,
+    )
+    .unwrap();
+    listed
+        .jobs
+        .into_iter()
+        .find(|job| job.id == schedule_id)
+        .and_then(|job| job.current_session_id)
+}
+
+/// Q-507: a scheduled run started from the Scheduler (window A's "Run now") reads Running in
+/// another window, window B's Stop (`session/cancel` on B's own connection) stops it, "Run now"
+/// answers cancelled, and the run's session is idle again everywhere.
+async fn a_scheduled_run_reads_running_and_stops_from_a_windows_cancel() {
+    let bed = bed(vec![Answer::Unfinished("Reading last night's build logs")]).await;
+    let mut scheduler_view = Window::open(bed.addr, true).await;
+    let mut window = Window::open(bed.addr, true).await;
+    let schedule_id = format!("q507-nightly-{}", uuid::Uuid::new_v4().simple());
+    let recipe: RecipeDto = serde_json::from_value(json!({
+        "title": "Nightly build triage",
+        "description": "Summarise the failed builds from last night",
+        "prompt": "Summarise last night's failed builds",
+        "extensions": [],
+    }))
+    .unwrap();
+    let create = CreateScheduleRequest {
+        id: schedule_id.clone(),
+        recipe,
+        cron: "0 0 0 1 1 *".into(),
+        working_dir: bed.work.path().to_string_lossy().into_owned(),
+    };
+    scheduler_view
+        .request(
+            "_goose/unstable/schedules/create",
+            serde_json::to_value(create).unwrap(),
+        )
+        .await;
+
+    let asked = bed.model.completion_requests();
+    let run_now = scheduler_view
+        .send(
+            "_goose/unstable/schedules/run-now",
+            serde_json::to_value(RunScheduleNowRequest {
+                schedule_id: schedule_id.clone(),
+            })
+            .unwrap(),
+        )
+        .await;
+    let deadline = tokio::time::Instant::now() + acp_ws::SETTLE;
+    let session = loop {
+        if let Some(session) = current_run_session(&mut window, &schedule_id).await {
+            break session;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the scheduled run records its session: not within the test's wait"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    eventually("the scheduled run reaches the model", || async {
+        bed.model.completion_requests() > asked
+    })
+    .await;
+    assert!(
+        running(&mut window).await.contains(&session),
+        "a window that did not start the scheduled run reads it as Running"
+    );
+
+    window.cancel(&session).await;
+    let answered = scheduler_view
+        .response(run_now)
+        .await
+        .expect("Run now answered");
+    assert_eq!(
+        answered["status"], "cancelled",
+        "the window's cancel stopped the scheduled run"
+    );
+    assert!(
+        !running(&mut window).await.contains(&session),
+        "the scheduled run's session is idle again"
+    );
+    assert_eq!(
+        current_run_session(&mut window, &schedule_id).await,
+        None,
+        "the schedule no longer records a current run"
+    );
+
+    scheduler_view
+        .request(
+            "_goose/unstable/schedules/delete",
+            serde_json::to_value(DeleteScheduleRequest { schedule_id }).unwrap(),
+        )
+        .await;
+    scheduler_view.close().await;
+    window.close().await;
+}
+
 mod tests {
     use super::*;
+
+    #[test]
+    #[serial]
+    fn a_scheduled_run_reads_running_and_stops_from_a_windows_cancel() {
+        run(super::a_scheduled_run_reads_running_and_stops_from_a_windows_cancel());
+    }
 
     #[test]
     #[serial]

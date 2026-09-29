@@ -3585,10 +3585,11 @@ impl GooseAcpAgent {
     }
 
     /// Q-504: a turn no ACP connection sent — an orchestrator subagent's on the process-wide
-    /// agents, a linked Mac's remote run on the link's managers — reads Running in every window
-    /// (`busy_sessions`, and Q-500's relay), so a window's cancel must reach it. Every manager this
-    /// process runs such turns on is asked; a connection's own prompt is never cancelled here,
-    /// since only its connection stops it (Q-500 relays another window's Stop there).
+    /// agents, a linked Mac's remote run on the link's managers, a scheduled run on its standalone
+    /// agent (Q-507) — reads Running in every window (`busy_sessions`, and Q-500's relay), so a
+    /// window's cancel must reach it. Every manager this process runs such turns on is asked; a
+    /// connection's own prompt is never cancelled here, since only its connection stops it (Q-500
+    /// relays another window's Stop there).
     async fn cancel_turn_no_connection_holds(&self, session_id: &str) -> bool {
         let mut managers = vec![self.agent_manager.clone()];
         let shared = AgentManager::instance_if_built();
@@ -3603,7 +3604,9 @@ impl GooseAcpAgent {
                 return true;
             }
         }
-        false
+        crate::execution::manager::standalone_runs()
+            .cancel_run_no_connection_holds(session_id)
+            .await
     }
 
     async fn on_set_model(
