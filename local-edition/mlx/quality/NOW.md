@@ -31,6 +31,13 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - Q-490's cause: the main process exit(7). A broadcast threw on the closing window (Electron 41: isDestroyed()
   is not enough), then the uncaught handler threw again. goosed saw stdin EOF → the engine stopped.
 
+## Agents (worktrees)
+- Q-492 (an "@" in the last word opens the file picker and swallows Enter, so #3x's turn 1 was LOST) and Q-493 (a
+  turn killed with the app leaves no trace): panel-surgeon, cutting.
+  - r1 now proves every send (SEND_LOST + one resend), from #3y on.
+- #3x: turn 1 (the memory turn) never reached the chat, so its memory checks at 33/39 are VOID for this run.
+- Q-487..491: done, all in merge-079b.
+
 ## Next
 1. Every tick: read #3x's words (r1.out, events.log, turns.tsv, the latest turn PNG) + a vigil screenshot.
 2. g079 green → 3.0.79. Install it only when #3x ends or is stopped under the stop rules.
