@@ -18,7 +18,8 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - none running.
 
 ## 3.0.75 = main 49f7a7fd1 — DMG BUILT 05:0x (~/goose-builds/dmg)
-- On #3v's turn-8 end: stop r1 (per pid), then install.sh 3.0.75 on BOTH Macs → split-start smoke → E2E #3w on
+- SUPERSEDED by 3.0.76 (it is packaging and already carries all of 3.0.75). On #3v's turn-8 end: stop r1 (per
+  pid), then install.sh 3.0.76 on BOTH Macs → split-start smoke → E2E #3w on
   the café brief (needs-you cards, chat search/notes).
 - Then live-walk the solid colours (Q-334/335/457), Q-458..462 and Q-455's context line.
 
