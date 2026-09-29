@@ -15,7 +15,8 @@ pub struct MemoryReading {
     pub reclaimable_cache_bytes: Option<u64>,
 }
 
-/// Page counts from `host_statistics64(HOST_VM_INFO64)`, as the kernel reports them.
+/// Page counts in `host_statistics64(HOST_VM_INFO64)`'s shape, as `vm_stat` prints them and as
+/// `darwin::measure` rebuilds them from the live `vm.page_*` counters.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct VmPageCounts {
@@ -78,47 +79,65 @@ pub fn measure() -> anyhow::Result<MemoryReading> {
 #[cfg(target_os = "macos")]
 mod darwin {
     use super::{darwin_reading, MemoryReading, VmPageCounts};
-    use std::sync::OnceLock;
+    use std::ffi::CStr;
 
-    extern "C" {
-        fn mach_host_self() -> libc::mach_port_t;
-    }
-
-    /// One host send right for the process: every `mach_host_self()` call adds a user
-    /// reference, and the status poll would otherwise leak one per read.
-    fn host_port() -> libc::mach_port_t {
-        static HOST: OnceLock<libc::mach_port_t> = OnceLock::new();
-        *HOST.get_or_init(|| unsafe { mach_host_self() })
-    }
-
+    /// The page counts, read live from the kernel's `vm.page_*` counters — never through
+    /// `host_statistics64`, which the kernel rate-limits for every caller that is not an Apple
+    /// binary: past a random 2–10 calls in a one-second window, machine-wide, it answers
+    /// KERN_SUCCESS with a cached copy (xnu `rate_limit_host_statistics`). Measured 2026-09-29 on
+    /// the M4 Max: two processes polling every 50 ms read the same frozen copy for ~1 s at a time,
+    /// and a loop of 400,000 calls got 2 live answers while goosed polled beside it; under a 4 GiB
+    /// churn the frozen copy sat 1.3 GB off `vm_stat`'s live figure, and the parity test failed 27
+    /// of 50 runs with the same value before and after. These counters are what host_statistics64
+    /// copies: on its live answers `free_count` was `vm.page_free_count + vm.page_speculative_count`
+    /// and speculative, external and purgeable were equal to the page.
     pub fn measure() -> anyhow::Result<MemoryReading> {
-        let mut stat: libc::vm_statistics64 = unsafe { std::mem::zeroed() };
-        let mut count = libc::HOST_VM_INFO64_COUNT;
-        let rc = unsafe {
-            libc::host_statistics64(
-                host_port(),
-                libc::HOST_VM_INFO64,
-                &mut stat as *mut libc::vm_statistics64 as libc::host_info64_t,
-                &mut count,
-            )
+        let free = page_count(c"vm.page_free_count")?;
+        let speculative = page_count(c"vm.page_speculative_count")?;
+        let counts = VmPageCounts {
+            free: free.saturating_add(speculative),
+            speculative,
+            external: page_count(c"vm.page_pageable_external_count")?,
+            purgeable: page_count(c"vm.page_purgeable_count")?,
         };
-        anyhow::ensure!(
-            rc == libc::KERN_SUCCESS,
-            "host_statistics64(HOST_VM_INFO64) failed with kern_return {rc}"
-        );
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         anyhow::ensure!(
             page_size > 0,
             "sysconf(_SC_PAGESIZE) failed: {}",
             std::io::Error::last_os_error()
         );
-        let counts = VmPageCounts {
-            free: u64::from(stat.free_count),
-            speculative: u64::from(stat.speculative_count),
-            external: u64::from(stat.external_page_count),
-            purgeable: u64::from(stat.purgeable_count),
-        };
         Ok(darwin_reading(counts, page_size as u64, total_bytes()?))
+    }
+
+    /// A `vm.page_*` counter: 4 bytes for most, 8 for `vm.page_purgeable_count` (measured).
+    fn page_count(name: &CStr) -> anyhow::Result<u64> {
+        let mut value = [0u8; 8];
+        let mut len = value.len();
+        let rc = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                value.as_mut_ptr() as *mut libc::c_void,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        anyhow::ensure!(
+            rc == 0,
+            "sysctl {} failed: {}",
+            name.to_string_lossy(),
+            std::io::Error::last_os_error()
+        );
+        match len {
+            4 => Ok(u64::from(u32::from_ne_bytes([
+                value[0], value[1], value[2], value[3],
+            ]))),
+            8 => Ok(u64::from_ne_bytes(value)),
+            other => anyhow::bail!(
+                "sysctl {} answered {other} bytes, not a 4- or 8-byte page count",
+                name.to_string_lossy()
+            ),
+        }
     }
 
     fn total_bytes() -> anyhow::Result<u64> {
@@ -211,6 +230,26 @@ mod tests {
         if let Some(cache) = reading.reclaimable_cache_bytes {
             assert!(cache <= reading.available_bytes);
         }
+    }
+
+    /// A frozen copy is byte-identical from call to call; a live count moves when a GiB of this
+    /// process's own memory is touched between two reads. Ten reads first spend the most calls the
+    /// kernel's rate limiter ever lets through in one window, so a reader built on
+    /// `host_statistics64` answers both of the last two from its cache.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_reading_is_live_never_the_kernels_rate_limited_copy() {
+        for _ in 0..10 {
+            measure().unwrap();
+        }
+        let before = measure().unwrap();
+        let touched = vec![1u8; GIB as usize];
+        let after = measure().unwrap();
+        std::hint::black_box(&touched);
+        assert_ne!(
+            before, after,
+            "touching 1 GiB left every count unchanged: the reading is a cached copy"
+        );
     }
 
     const PAGE_16K: u64 = 16 * 1024;

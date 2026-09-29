@@ -3356,7 +3356,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_reports_a_stray_listener_on_the_configured_port() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = crate::unshared_loopback_listener().unwrap();
         let port = listener.local_addr().unwrap().port();
         let manager = test_manager();
         manager.set_settings(EngineSettings {
@@ -3585,10 +3585,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
         let manager = test_manager();
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             port,
@@ -3609,10 +3606,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(status.active_requests_error, None);
         manager.unmount().await.unwrap();
 
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             port,
@@ -3648,10 +3642,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     #[cfg(unix)]
     #[tokio::test]
     async fn a_killed_engine_is_failed_on_the_next_poll_and_a_mount_restarts_it() {
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
         let manager = test_manager();
@@ -3720,10 +3711,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     /// a mount that only keeps an identical supervised engine is no load.
     #[tokio::test]
     async fn a_load_that_ends_is_measured_at_its_ready_and_failed_paths() {
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
         let manager = test_manager();
@@ -3919,10 +3907,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     #[cfg(unix)]
     #[tokio::test]
     async fn identical_mount_reuses_the_supervisor_and_a_crash_loop_trips_the_breaker() {
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
         let manager = test_manager();
@@ -4004,10 +3989,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let kv_cache: Option<KvCacheMode> = std::env::var("GOOSE_SIDECAR_LIVE_KV_CACHE")
             .ok()
             .map(|v| serde_json::from_value(serde_json::Value::String(v)).unwrap());
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         let manager = MlxEngineManager::new();
         manager.set_settings(EngineSettings {
             models_dir,
@@ -4185,8 +4167,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     /// A port nothing on this Mac listens on. A test that can reach [`MlxEngineManager::unmount`]'s
     /// reclaim must use one: the default (8090) is where the owner's real engine serves (Q-258).
     fn free_port() -> u16 {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        probe.local_addr().unwrap().port()
+        crate::unshared_loopback_port().unwrap()
     }
 
     fn complete_small_model(models_dir: &std::path::Path, id: &str) {
@@ -4201,7 +4182,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     /// names it (Q-240): here the listener is this very process.
     #[tokio::test]
     async fn mount_refuses_when_an_unsupervised_listener_holds_the_port() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = crate::unshared_loopback_listener().unwrap();
         let port = listener.local_addr().unwrap().port();
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
@@ -4318,10 +4299,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     /// named — pid, command line, why — and keeps serving.
     #[tokio::test]
     async fn a_mount_stops_its_own_leftover_engine_and_names_one_it_may_not_stop() {
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
         let manager = test_manager();
@@ -4555,10 +4533,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     #[tokio::test]
     async fn a_mount_waits_its_turn_behind_another_load_on_this_mac() {
         use std::io::Write;
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
         let manager: &'static MlxEngineManager = Box::leak(Box::new(test_manager()));
@@ -4708,10 +4683,7 @@ while True:
     #[tokio::test]
     async fn an_unmount_stops_a_loading_engine_and_frees_the_mac_before_it_returns() {
         let marker = format!("goose-q112-{}", std::process::id());
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
+        let port = crate::unshared_loopback_port().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/slow");
         let manager = test_manager();

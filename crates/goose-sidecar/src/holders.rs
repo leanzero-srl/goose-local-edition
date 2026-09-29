@@ -245,6 +245,7 @@ pub fn wait_for_reply_end(path: &Path) -> Result<()> {
             std::io::Error::last_os_error()
         );
     }
+    drop(HeldFlock(file));
     Ok(())
 }
 
@@ -253,8 +254,23 @@ pub fn wait_for_reply_end(path: &Path) -> Result<()> {
     bail!("holder locks are flocks: unix only ({})", path.display())
 }
 
+/// An flock this process holds, UNLOCKED when dropped: closing the file alone leaves the lock with
+/// every child forked while it was open until that child's exec, so a loader waiting on a released
+/// reply would wake only then (the `machine::take` defect, Q-503).
+struct HeldFlock(#[cfg_attr(not(unix), allow(dead_code))] std::fs::File);
+
+impl Drop for HeldFlock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
+}
+
 #[cfg(unix)]
-fn open_locked(path: &Path) -> Result<std::fs::File> {
+fn open_locked(path: &Path) -> Result<HeldFlock> {
     use std::os::unix::fs::OpenOptionsExt;
     use std::os::unix::io::AsRawFd;
     let file = std::fs::OpenOptions::new()
@@ -272,11 +288,11 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
             std::io::Error::last_os_error()
         );
     }
-    Ok(file)
+    Ok(HeldFlock(file))
 }
 
 #[cfg(not(unix))]
-fn open_locked(path: &Path) -> Result<std::fs::File> {
+fn open_locked(path: &Path) -> Result<HeldFlock> {
     bail!("holder locks are flocks: unix only ({})", path.display())
 }
 
@@ -297,8 +313,8 @@ pub struct Registration {
     dir: PathBuf,
     record: StdMutex<HolderRecord>,
     /// The open replies' locks, by reply number.
-    reply_locks: StdMutex<Vec<(u64, std::fs::File)>>,
-    lock: Option<std::fs::File>,
+    reply_locks: StdMutex<Vec<(u64, HeldFlock)>>,
+    lock: Option<HeldFlock>,
     /// Held from reading the record to renaming its file: writers publish one at a time, and each
     /// publishes the record as it is when its turn comes (no older state lands over a newer one).
     publishing: StdMutex<()>,
