@@ -15,19 +15,15 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
 
 ## Agents (worktrees)
-- Q-468 (surface a corrupt config at boot: banner + move aside), on merge-075.
-- Q-467 (strategy chat counter reads the served node's window), on merge-075.
-- Q-270/373/424/205 SCHEDULED on measurements; Q-398/425 QUEUED behind fork access; Q-466 SCHEDULED on a CI red.
+- none running.
 
-## 3.0.75 = /tmp/merge-075 f8d867b30 — FULL GATE RUNNING (/tmp/g075.out, own session, target g075)
-- Holds:
-  - Q-454 (docx tables), Q-455 (chat context line), the Linux lint fix;
-  - Q-269, Q-334/335, Q-457 (host-wide solid colours), Q-207 + Q-465 (config data loss; the swarm save folds
-    both into config_store.rs), Q-464;
-  - Q-208 (one status poller), Q-456, Q-463, Q-458..462.
-- Green → ff main → release 3.0.75 → install BOTH Macs (Q-459 changes goosed's wire words) at an #3v turn
-  boundary.
-- Q-467/Q-468 join a short delta gate if they land before the release, else 3.0.76.
+## 3.0.75 = main 49f7a7fd1 — RELEASE BUILDING (~/goose-builds/release-3.0.75.log, own session)
+- Gate g075 all green: vitest 4,399, clippy, schema, wincheck.
+- DMG → install BOTH Macs at an #3v turn boundary (Q-459 changes goosed's wire words) → split-start smoke →
+  live-walk the solid colours (Q-334/335/457 screens) + Q-458..462 + Q-455's context line.
+
+## 3.0.76 — /tmp/merge-076 09078f1fd = main + Q-467 (served-node window in the counter, incl. node:<id>) + Q-468
+  (corrupt-config banner + move aside). Full gate g076 → /tmp/g076.out (own session).
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
