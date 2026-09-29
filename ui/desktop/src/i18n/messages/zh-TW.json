@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} 個上下文 token + 正在寫入的 {live} 個，視窗共 {limit} 個 token"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "已用 · 視窗未知"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} 個上下文 token。回答此聊天上一輪的節點沒有回報其上下文視窗。"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "對話限制"
   },

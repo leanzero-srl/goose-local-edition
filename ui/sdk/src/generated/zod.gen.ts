@@ -6975,6 +6975,10 @@ export const zNodeServedTurnDto = z.object({
     servingOther: z.union([
         zNodeServingOtherDto,
         z.null()
+    ]).optional(),
+    contextWindow: z.union([
+        z.number().int().gte(0),
+        z.null()
     ]).optional()
 });
 

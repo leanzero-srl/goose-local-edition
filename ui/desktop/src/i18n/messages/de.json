@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} Tokens Kontext + {live}, die gerade geschrieben werden, von einem Fenster mit {limit} Tokens"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "genutzt · Fenster unbekannt"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} Tokens Kontext. Der Knoten, der den letzten Durchgang dieses Chats beantwortet hat, hat sein Kontextfenster nicht gemeldet."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Konversationslimits"
   },

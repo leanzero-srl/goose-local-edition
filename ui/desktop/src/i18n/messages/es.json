@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} tokens de contexto + {live} escribiéndose ahora, de una ventana de {limit} tokens"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "usados · ventana desconocida"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} tokens de contexto. El nodo que respondió el último turno de este chat no informó su ventana de contexto."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Límites de conversación"
   },

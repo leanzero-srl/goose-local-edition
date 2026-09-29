@@ -1887,6 +1887,7 @@ fn a_replys_load_rides_its_later_records_on_the_same_node() {
         at_ms: 1,
         asked_for_this_turn: false,
         serving_other: None,
+        context_window: None,
     };
     let delegate = "served-test-delegate-q434";
     assert_eq!(
@@ -1942,6 +1943,7 @@ async fn the_served_record_is_kept_in_memory_and_in_the_session() {
         at_ms: 1,
         serving_other: None,
         asked_for_this_turn: false,
+        context_window: Some(262_144),
     };
     served::record(&sessions, &session.id, turn.clone())
         .await

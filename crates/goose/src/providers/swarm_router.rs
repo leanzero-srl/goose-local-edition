@@ -1450,6 +1450,7 @@ pub(crate) async fn route_stream(
         let Some(lease) = clear_of_queued_switches(seam, lease).await else {
             continue;
         };
+        let window = lease.context_window;
         match stream_on(lease, providers, kwargs_source, &turn).await? {
             Streamed::Served(stream, node) => {
                 note_served(seam, &node, pool_lease_way(seam, &node), || {
@@ -1463,6 +1464,7 @@ pub(crate) async fn route_stream(
                         at_ms: now_ms(),
                         asked_for_this_turn: false,
                         serving_other: None,
+                        context_window: window,
                     }
                 });
                 return Ok(stream);
@@ -2547,6 +2549,7 @@ fn chain_record(
     tried: &[Tried],
     loaded_ms: Option<u64>,
     serving_other: &HashMap<String, NodeServingOtherDto>,
+    context_window: Option<u64>,
 ) -> NodeServedTurnDto {
     let first = plan.entry.chain.first().map(|l| l.node.as_str());
     let first_serving_other = first
@@ -2576,6 +2579,7 @@ fn chain_record(
             .as_ref()
             .is_some_and(|(lead, _)| lead != node),
         serving_other: first_serving_other,
+        context_window,
     }
 }
 
@@ -2776,6 +2780,7 @@ pub(crate) async fn route_chain(
                         &tried,
                         loaded.get(&node.id).copied(),
                         &serving_other,
+                        window,
                     )
                 });
                 return Ok(stream);
@@ -6335,6 +6340,47 @@ devices:
             route_window(&router, &plan, Some(SESSION), &members, &remounted).await,
             Ok(131_072)
         );
+    }
+
+    /// Q-467: the composer's counter reads the served record, so the record carries the window of
+    /// the node that took the turn — the same one `route_window` answers compaction with — and
+    /// nothing when that node did not say (a cloud model its catalog lacks), never another's.
+    #[tokio::test]
+    async fn the_served_record_carries_the_serving_nodes_window_or_none() {
+        let probe = FakeProbe(HashMap::from([
+            ("studio".to_string(), window(262_144)),
+            ("cloud".to_string(), Ok(Servable::default())),
+        ]));
+        let members = FakeMembers(members(vec![
+            ("studio", Ok(member("studio"))),
+            ("cloud", Ok(member("cloud"))),
+        ]));
+        for (chain_order, node, served_window) in [
+            ([("studio", 1), ("cloud", 1)], "studio", Some(262_144)),
+            ([("cloud", 1), ("studio", 1)], "cloud", None),
+        ] {
+            let plan = chain(role(
+                &chain_order,
+                NodeWhen::Failover,
+                NodeIfNotLoaded::Load,
+            ));
+            let seam = RecordingSeam::default();
+            let stream = chain_turn(
+                &Router::new(),
+                &plan,
+                &members,
+                &probe,
+                &AllAnswer,
+                &seam,
+                "hi",
+            )
+            .await
+            .unwrap();
+            drop(stream);
+            let record = seam.last();
+            assert_eq!(record.node, node);
+            assert_eq!(record.context_window, served_window, "{node}");
+        }
     }
 
     #[test]

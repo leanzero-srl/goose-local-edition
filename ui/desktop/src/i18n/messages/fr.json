@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} jetons de contexte + {live} en cours d’écriture, sur une fenêtre de {limit} jetons"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "utilisés · fenêtre inconnue"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} jetons de contexte. Le nœud qui a répondu au dernier tour de cette discussion n’a pas indiqué sa fenêtre de contexte."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Limites de conversation"
   },

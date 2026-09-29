@@ -16704,6 +16704,14 @@
             }
           ],
           "description": "The 1st was passed over because its Mac serves another node for other chats and the role\nsays `useNext` (Q-428): what the turn line names."
+        },
+        "contextWindow": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The window the serving node's probe read when it took this turn: the one compaction reads\nfor this chat (Q-463) and the composer's counter shows (Q-467). Absent = the node did not\nreport one (a cloud model its catalog does not carry) — never a stand-in number.",
+          "minimum": 0
         }
       },
       "required": [

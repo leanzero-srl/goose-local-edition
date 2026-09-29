@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "컨텍스트 {context} 토큰 + 지금 작성 중 {live}, 창 {limit} 토큰 중"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "사용됨 · 창 알 수 없음"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} 토큰의 컨텍스트. 이 채팅의 마지막 턴에 응답한 노드가 컨텍스트 창을 알려 주지 않았습니다."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "대화 제한"
   },

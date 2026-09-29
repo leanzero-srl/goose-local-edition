@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} токенов контекста + {live} пишутся сейчас, из окна в {limit} токенов"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "использовано · окно неизвестно"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} токенов контекста. Узел, ответивший на последний ход этого чата, не сообщил своё контекстное окно."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Ограничения разговора"
   },

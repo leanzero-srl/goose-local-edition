@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} टोकन संदर्भ + {live} अभी लिखे जा रहे, {limit}-टोकन विंडो में से"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "उपयोग किए · विंडो अज्ञात"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} टोकन का संदर्भ। जिस नोड ने इस चैट के पिछले टर्न का जवाब दिया, उसने अपनी कॉन्टेक्स्ट विंडो नहीं बताई।"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "बातचीत की सीमाएँ"
   },

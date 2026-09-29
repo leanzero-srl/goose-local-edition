@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} 个上下文 token + 正在写入的 {live} 个，窗口共 {limit} 个 token"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "已用 · 窗口未知"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} 个上下文 token。回答此聊天上一轮的节点没有报告其上下文窗口。"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "对话限制"
   },

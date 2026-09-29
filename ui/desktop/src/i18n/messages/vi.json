@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "{context} token ngữ cảnh + {live} đang được viết, trên cửa sổ {limit} token"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "đã dùng · không rõ cửa sổ"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} token ngữ cảnh. Nút đã trả lời lượt cuối của cuộc trò chuyện này không báo cửa sổ ngữ cảnh của nó."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Giới hạn cuộc trò chuyện"
   },

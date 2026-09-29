@@ -1415,6 +1415,12 @@
   "contextWindowIndicator.liveTitle": {
     "defaultMessage": "コンテキスト {context} トークン + 現在書き込み中 {live}、ウィンドウ {limit} トークン中"
   },
+  "contextWindowIndicator.windowUnknown": {
+    "defaultMessage": "使用済み · ウィンドウ不明"
+  },
+  "contextWindowIndicator.windowUnknownTitle": {
+    "defaultMessage": "{context} トークンのコンテキスト。このチャットの直前のターンに応答したノードは、コンテキストウィンドウを報告しませんでした。"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "会話制限"
   },

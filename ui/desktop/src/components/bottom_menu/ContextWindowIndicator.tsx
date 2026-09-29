@@ -12,6 +12,11 @@ interface ContextWindowIndicatorProps {
    * context grows by them while goose reports usage only when the turn ends. 0 = none measured.
    */
   liveTokens?: number;
+  /**
+   * The node that serves this chat did not report its window (Q-467: a strategy turn a cloud node
+   * answered): the chip says so beside what is used — never another engine's number.
+   */
+  windowUnknown?: boolean;
 }
 
 const i18n = defineMessages({
@@ -19,6 +24,15 @@ const i18n = defineMessages({
     id: 'contextWindowIndicator.liveTitle',
     defaultMessage:
       '{context} tokens of context + {live} being written now, of a {limit}-token window',
+  },
+  windowUnknown: {
+    id: 'contextWindowIndicator.windowUnknown',
+    defaultMessage: 'used · window unknown',
+  },
+  windowUnknownTitle: {
+    id: 'contextWindowIndicator.windowUnknownTitle',
+    defaultMessage:
+      '{context} tokens of context. The node that answered this chat’s last turn did not report its context window.',
   },
 });
 
@@ -39,11 +53,40 @@ export function ContextWindowIndicator({
   tokenLimit,
   alerts,
   liveTokens = 0,
+  windowUnknown = false,
 }: ContextWindowIndicatorProps) {
   const intl = useIntl();
+  const live = liveTokens > 0 ? liveTokens : 0;
+  if (windowUnknown) {
+    if (totalTokens + live === 0) return null;
+    return (
+      <Chip>
+        <div className="flex items-center h-full">
+          <BottomMenuAlertPopover alerts={alerts}>
+            <span
+              data-testid="context-window-indicator"
+              data-window="unknown"
+              title={intl.formatMessage(i18n.windowUnknownTitle, {
+                context: intl.formatNumber(totalTokens + live),
+              })}
+              className={cx('text-lz-meta text-lz-ink-3', TNUM)}
+            >
+              {formatTokenCount(totalTokens)}
+              {live > 0 && (
+                <span data-testid="context-window-live" className="text-lz-accent font-lz-semibold">
+                  {' + '}
+                  {formatTokenCount(live)}
+                </span>
+              )}{' '}
+              {intl.formatMessage(i18n.windowUnknown)}
+            </span>
+          </BottomMenuAlertPopover>
+        </div>
+      </Chip>
+    );
+  }
   if (!tokenLimit) return null;
 
-  const live = liveTokens > 0 ? liveTokens : 0;
   const percentage = Math.round(((totalTokens + live) / tokenLimit) * 100);
   const colorClass = getProgressColor(percentage);
 

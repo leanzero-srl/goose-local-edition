@@ -136,6 +136,11 @@ export interface ChatServing {
   armed: boolean;
   /** This chat has a turn in flight (what the bar's words about "this answer" hang on). */
   turnInFlight: boolean;
+  /**
+   * The router's record of this `node:`/`strategy:` chat's last turn — null = none served yet,
+   * undefined = not read (or not a routed chat). The counter reads its window (Q-467).
+   */
+  servedRecord?: NodeServedTurnDto | null;
 }
 
 /**
@@ -256,5 +261,5 @@ export function useChatServedBy(
       nodes,
     ]
   );
-  return { served, single: status, armed, turnInFlight };
+  return { served, single: status, armed, turnInFlight, servedRecord };
 }

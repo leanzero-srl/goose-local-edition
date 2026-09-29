@@ -55,3 +55,31 @@ describe('Q-153: the context counter grows with the answer being written', () =>
     expect(gauge).not.toHaveAttribute('title');
   });
 });
+
+/**
+ * Q-467: a strategy chat's turn answered by a node that reports no window (deepseek, which the
+ * catalog lacks) showed "42k / 262k" — the pool's split window. The chip now says what it knows.
+ */
+describe('Q-467: a window the serving node did not report', () => {
+  it('says "used · window unknown" beside the count, never a number for the window', () => {
+    mount(
+      <ContextWindowIndicator totalTokens={42_000} tokenLimit={0} alerts={[]} windowUnknown />
+    );
+    const gauge = screen.getByTestId('context-window-indicator');
+    expect(gauge).toHaveTextContent('42k used · window unknown');
+    expect(gauge.textContent).not.toContain('/');
+    expect(gauge).toHaveAttribute('data-window', 'unknown');
+  });
+
+  it('a stale window never shows while the served node said none', () => {
+    mount(
+      <ContextWindowIndicator totalTokens={42_000} tokenLimit={262_144} alerts={[]} windowUnknown />
+    );
+    expect(screen.getByTestId('context-window-indicator').textContent).not.toContain('262k');
+  });
+
+  it('nothing used yet: no chip', () => {
+    mount(<ContextWindowIndicator totalTokens={0} tokenLimit={0} alerts={[]} windowUnknown />);
+    expect(screen.queryByTestId('context-window-indicator')).toBeNull();
+  });
+});

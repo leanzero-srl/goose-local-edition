@@ -996,6 +996,11 @@ pub struct NodeServedTurnDto {
     /// says `useNext` (Q-428): what the turn line names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub serving_other: Option<NodeServingOtherDto>,
+    /// The window the serving node's probe read when it took this turn: the one compaction reads
+    /// for this chat (Q-463) and the composer's counter shows (Q-467). Absent = the node did not
+    /// report one (a cloud model its catalog does not carry) — never a stand-in number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 /// The last served-turn record of a session (this process's, else the one persisted in the
