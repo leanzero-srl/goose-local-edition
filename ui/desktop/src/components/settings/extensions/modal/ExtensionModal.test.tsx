@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, type RenderOptions, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import userEvent, { type UserEvent } from '@testing-library/user-event';
 import ExtensionModal from './ExtensionModal';
 import { ExtensionFormData } from '../utils';
 import { IntlTestWrapper } from '../../../../i18n/test-utils';
@@ -19,6 +19,16 @@ const mockedUpsertConfig = vi.mocked(acpUpsertConfig);
 
 const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
+
+/**
+ * Q-466: a value arrives whole — click the field, paste the text. These tests are about what the
+ * modal submits and when it asks, not about typing; typing re-rendered the modal once per key, and
+ * the http_streamable case's 76 keys took 5.1 s under load (the default clock is 5 s).
+ */
+async function enter(user: UserEvent, field: HTMLElement, text: string) {
+  await user.click(field);
+  await user.paste(text);
+}
 
 describe('ExtensionModal', () => {
   it('does not show unsaved changes dialog when closing without modifications', async () => {
@@ -90,7 +100,7 @@ describe('ExtensionModal', () => {
 
     const nameInput = screen.getByPlaceholderText('Enter extension name...');
     await user.clear(nameInput);
-    await user.type(nameInput, 'New Name');
+    await enter(user, nameInput, 'New Name');
 
     const cancelButton = screen.getByRole('button', { name: 'Cancel' });
     await user.click(cancelButton);
@@ -129,7 +139,7 @@ describe('ExtensionModal', () => {
 
     const descriptionInput = screen.getByPlaceholderText('Optional description...');
     await user.clear(descriptionInput);
-    await user.type(descriptionInput, 'New description');
+    await enter(user, descriptionInput, 'New description');
 
     const cancelButton = screen.getByRole('button', { name: 'Cancel' });
     await user.click(cancelButton);
@@ -168,7 +178,7 @@ describe('ExtensionModal', () => {
 
     const timeoutInput = screen.getByDisplayValue('300');
     await user.clear(timeoutInput);
-    await user.type(timeoutInput, '600');
+    await enter(user, timeoutInput, '600');
 
     const cancelButton = screen.getByRole('button', { name: 'Cancel' });
     await user.click(cancelButton);
@@ -208,7 +218,7 @@ describe('ExtensionModal', () => {
     const nameInput = screen.getByPlaceholderText('Enter extension name...');
     const submitButton = screen.getByTestId('extension-submit-btn');
 
-    await user.type(nameInput, 'Test MCP');
+    await enter(user, nameInput, 'Test MCP');
 
     const typeSelect = screen.getByRole('combobox');
     await user.click(typeSelect);
@@ -221,10 +231,10 @@ describe('ExtensionModal', () => {
     });
 
     const endpointInput = screen.getByPlaceholderText('Enter endpoint URL...');
-    await user.type(endpointInput, 'https://foo.bar.com/mcp/');
+    await enter(user, endpointInput, 'https://foo.bar.com/mcp/');
 
     const descriptionInput = screen.getByPlaceholderText('Optional description...');
-    await user.type(descriptionInput, 'Test MCP extension');
+    await enter(user, descriptionInput, 'Test MCP extension');
 
     const headerNameInput = screen.getByPlaceholderText('Header name');
     const headerValueInput = screen
@@ -235,9 +245,9 @@ describe('ExtensionModal', () => {
           input.parentElement?.parentElement?.textContent?.includes('Request Headers')
       );
 
-    await user.type(headerNameInput, 'Authorization');
+    await enter(user, headerNameInput, 'Authorization');
     if (headerValueInput) {
-      await user.type(headerValueInput, 'Bearer abc123');
+      await enter(user, headerValueInput, 'Bearer abc123');
     }
 
     await user.click(submitButton);
@@ -307,16 +317,17 @@ describe('ExtensionModal', () => {
         />
       );
 
-      await user.type(screen.getByPlaceholderText('Enter extension name...'), 'WooMCP');
-      await user.type(
+      await enter(user, screen.getByPlaceholderText('Enter extension name...'), 'WooMCP');
+      await enter(
+        user,
         screen.getByPlaceholderText(/^e\.g\. npx/),
         'npx -y @automattic/mcp-wordpress-remote@latest'
       );
 
       const { envVarKeyInput, envVarValueInput } = getEnvVarInputs();
-      await user.type(envVarKeyInput, 'JWT_TOKEN');
+      await enter(user, envVarKeyInput, 'JWT_TOKEN');
       if (envVarValueInput) {
-        await user.type(envVarValueInput, 'my_very_long_token');
+        await enter(user, envVarValueInput, 'my_very_long_token');
       }
 
       // Note: intentionally NOT clicking the "+ Add" button — this is the #8969 repro.
@@ -356,11 +367,11 @@ describe('ExtensionModal', () => {
         />
       );
 
-      await user.type(screen.getByPlaceholderText('Enter extension name...'), 'WooMCP');
-      await user.type(screen.getByPlaceholderText(/^e\.g\. npx/), 'npx -y something');
+      await enter(user, screen.getByPlaceholderText('Enter extension name...'), 'WooMCP');
+      await enter(user, screen.getByPlaceholderText(/^e\.g\. npx/), 'npx -y something');
 
       const { envVarKeyInput } = getEnvVarInputs();
-      await user.type(envVarKeyInput, 'LONELY_KEY');
+      await enter(user, envVarKeyInput, 'LONELY_KEY');
       // Intentionally leaving the value field empty.
 
       await user.click(screen.getByTestId('extension-submit-btn'));

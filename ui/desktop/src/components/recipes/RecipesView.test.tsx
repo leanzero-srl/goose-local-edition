@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import RecipesView from './RecipesView';
 
@@ -29,17 +29,36 @@ const MANIFEST = {
   recipe: { title: 'Weekly report', description: 'Summarise the week', instructions: 'go' },
 };
 
-function renderView() {
-  return render(
-    <IntlTestWrapper>
-      <RecipesView />
-    </IntlTestWrapper>
-  );
+/**
+ * Q-466: the view settles through two timers of its own — the skeleton lifts 300 ms after the list
+ * loads, the fade-in flips 50 ms later — and every RecipesView render remounts every recipe card
+ * (RecipeItem is declared inside the view). A Delete button found as the skeleton lifted was
+ * detached by the flip whenever a loaded machine let the 50 ms timer land before the click: the
+ * click reached nothing, no dialog opened, and the wait for it ran out the test's whole 5 s clock
+ * (CI, 2026-09-29). The view's timers run on the fake clock until it has settled — its list
+ * shown and no timer of its own left to fire — so the button clicked is the one on screen, and no
+ * real 350 ms is spent waiting for it. A pass flushes what the previous one scheduled: the loaded
+ * list's render schedules the skeleton timer only once act flushes it.
+ */
+async function renderView() {
+  vi.useFakeTimers();
+  try {
+    render(
+      <IntlTestWrapper>
+        <RecipesView />
+      </IntlTestWrapper>
+    );
+    for (let pass = 0; pass < 10; pass++) {
+      if (vi.getTimerCount() === 0 && screen.queryByTitle('Delete recipe')) break;
+      await act(() => vi.runAllTimersAsync());
+    }
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
-async function clickDelete() {
-  const button = await screen.findByTitle('Delete recipe');
-  fireEvent.click(button);
+function clickDelete() {
+  fireEvent.click(screen.getByTitle('Delete recipe'));
 }
 
 describe('RecipesView delete (Q-472)', () => {
@@ -54,10 +73,10 @@ describe('RecipesView delete (Q-472)', () => {
   });
 
   it('asks in the app ConfirmationModal, never a native message box, and deletes on confirm', async () => {
-    renderView();
-    await clickDelete();
+    await renderView();
+    clickDelete();
 
-    const dialog = await screen.findByRole('dialog');
+    const dialog = screen.getByRole('dialog');
     expect(
       within(dialog).getByText('Are you sure you want to delete "Weekly report"?')
     ).toBeTruthy();
@@ -70,9 +89,9 @@ describe('RecipesView delete (Q-472)', () => {
   });
 
   it('cancel closes the modal and deletes nothing', async () => {
-    renderView();
-    await clickDelete();
-    const dialog = await screen.findByRole('dialog');
+    await renderView();
+    clickDelete();
+    const dialog = screen.getByRole('dialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(recipes.remove).not.toHaveBeenCalled();

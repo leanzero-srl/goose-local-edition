@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SwarmRunPanel from './SwarmRunPanel';
 import { IntlTestWrapper } from '../../i18n/test-utils';
@@ -200,14 +200,15 @@ describe('SwarmRunPanel — every rendered class compiles and nothing banned ren
   afterEach(() => cleanup());
 
   it('compiles every class it emits, expanded as far as a click can take it', async () => {
-    const { container, findByText, findAllByRole } = render(
+    const { container, findByText } = render(
       <IntlTestWrapper>
         <SwarmRunPanel workingDir="/tmp/build" />
       </IntlTestWrapper>
     );
     await findByText('Swarm run');
     await findByText('Work');
-    await findAllByRole('button');
+    // Q-466: the toggles are there to click — a role query named every button on the panel to learn it.
+    await waitFor(() => expect(container.querySelector('button')).not.toBeNull());
     const seen = new Set<string>(allClasses(container));
     assertStudioClean(container);
     // Expand: every toggle (zone headers, lane rows, board rows, call rows, plan drawer) — collect the
@@ -223,5 +224,8 @@ describe('SwarmRunPanel — every rendered class compiles and nothing banned ren
     expect(seen.size).toBeGreaterThan(80);
     const missing = await missingUtilities(utilitiesOf([...seen]));
     expect(missing).toEqual([]);
-  });
+    // Q-466: inherently heavy — the whole panel, every toggle clicked twice, and main.css compiled
+    // through the real Tailwind pipeline: measured 0.5–0.6 s alone and 2.7–3.6 s beside a full
+    // suite, against the 5 s default. The same 30 s every other compile-the-classes test carries.
+  }, 30_000);
 });

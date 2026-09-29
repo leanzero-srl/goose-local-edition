@@ -41,6 +41,8 @@ const NO_RING_BY_DESIGN: Record<string, string> = {
 };
 
 const NO_OUTLINE = /(^|[\s'"`])(?:focus:|focus-visible:)?outline-(?:none|hidden)(?=[\s'"`]|$)/;
+/** Every NO_OUTLINE match contains this, so a file without it has nothing to report. */
+const OUTLINE_WORD = /outline-(?:none|hidden)/;
 const INDICATOR =
   /focus-visible:(?:outline-(?:solid|2)|ring-(?!0\b))|focus:ring-(?!0\b)|focus:bg-|focus-within:|data-\[highlighted\]:bg-|\bFOCUS\b|PEER_FOCUS/;
 
@@ -137,9 +139,12 @@ describe('every keyboard stop shows the focus ring (Q-477)', () => {
   });
 
   it('no outline-none without a replacement indicator, outside the listed exceptions', () => {
-    const found = sourceFiles(SRC).flatMap((file) =>
-      bareOutlines(relative(SRC, file), readFileSync(file, 'utf8'))
-    );
+    // Q-466: only a file whose text names outline-none/-hidden can hold a hit, so only those are
+    // parsed — the TypeScript parse of every source file was 0.8 s alone and 2.8 s under load.
+    const found = sourceFiles(SRC).flatMap((file) => {
+      const text = readFileSync(file, 'utf8');
+      return OUTLINE_WORD.test(text) ? bareOutlines(relative(SRC, file), text) : [];
+    });
     const unlisted = found.filter((hit) => !(hit.split(':')[0] in NO_RING_BY_DESIGN));
     expect(unlisted).toEqual([]);
     const stale = Object.keys(NO_RING_BY_DESIGN).filter(
