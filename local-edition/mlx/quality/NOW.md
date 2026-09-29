@@ -28,7 +28,9 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-499 DONE 6b4e8fcfb (branch worktree-agent-aec73c85bddb00a5e, KEEP): readiness requires the engine's own listener.
   The CI collision came from a sibling test's port.
 - Q-503 cutting ON 6b4e8fcfb: the sidecar probe/machine test flakes.
-- Q-500/501 cutting (panel-surgeon): a second window shows a running chat idle; the busy banner names the wrong chat.
+- Q-500/501 DONE c900ee4ea (branch worktree-agent-adf3890d8dcce9f43, KEEP): running rows shared across windows, Stop
+  from a second window, the banner reads the engine's request list. Full vitest 4,638 green.
+- Q-504 (a loop/schedule turn that no window sent cannot be stopped): general-purpose, cutting.
 - When the agents land: one scratch branch (Q-502 includes Q-498; Q-503 includes Q-499; Q-500/501) → full gate → ff main
   → release 3.0.80 → install when #3y allows.
 
@@ -42,7 +44,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-466 waits on: a CI red naming one of its tests. Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (72 GB). Take a vigil screenshot and READ it. The next free id is Q-504.
+- Check CI, agents, disk ≥ 30 GB (72 GB). Take a vigil screenshot and READ it. The next free id is Q-505.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
