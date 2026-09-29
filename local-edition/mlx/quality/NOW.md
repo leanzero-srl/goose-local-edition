@@ -25,8 +25,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - = main (Q-495, Q-497) + q502 (Q-498, Q-502) + q503 (Q-499, Q-503) + q507 (Q-500/501, Q-504, Q-507)
   + Q-505 65126cc51 + Q-466 e49d42e7e. No conflicts.
 - Q-508 DONE e43fc13ba (q508): g080b (chained after g080) merges it into merge-080 and runs sidecar + session_id + clippy.
-- Q-511 DONE b26645498. Q-512 (SessionItem/SessionSkeleton/Row nested components) is cutting on q512 = 57033c308 +
-  Q-511, and merges into merge-080 after g080b (it brings Q-511 with it).
+- Q-511 b26645498 + Q-512 8756d4c4f DONE (q512, full vitest 4651 green on the merge-080 base). g080c (chained after
+  g080b) merges q512 and runs tsc + the touched dirs + eslint.
 - Green → ff main → release 3.0.80 → install on BOTH Macs (Q-502's new spec tag) when #3y allows → prove live:
   Q-502 (two chats keep warm), Q-500/501 (second window), Q-504/507 (Stop an app-wide / scheduled turn), Q-493/495
   (the stopped lines), Q-505 (a redacted memory).
