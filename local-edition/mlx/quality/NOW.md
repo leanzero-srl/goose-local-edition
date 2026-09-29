@@ -16,6 +16,10 @@ Updated: 2026-09-29 12:0x (date) · heartbeat cron + runwatch.sh per run · vigi
 - #3w's note: Steer never delivered (Q-488). The manual "Give it to goose now" door DELIVERED it (own_turn,
   marker in B, the reply acted on it: B checked its own PDF for the blank-page issue). No note left pending.
 
+- Leftover to clear when #3x ends: "Jira DC to Cloud migration assessment" (20260928_19) still holds 2 needs-you
+  cards from yesterday's run. Answer them through the UI and prove the outcome (owner rule: nothing stays
+  pending). Not done during #3x, because its turn would share the split with the run.
+
 ## Gate / merge
 - merge-487-488 at ~/goose-targets/wt-m487 (1813810f2 = main + Q-487 204457a56 + Q-488 5a8d72d49). The full gate
   runs at background priority (taskpolicy -b), target g079 → /tmp/g079.out.
