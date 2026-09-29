@@ -22,8 +22,10 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
   the café brief (needs-you cards, chat search/notes).
 - Then live-walk the solid colours (Q-334/335/457), Q-458..462 and Q-455's context line.
 
-## 3.0.76 — /tmp/merge-076 41e69d9cf = main + Q-467 + Q-468 + Q-469
-- g076 full gate GREEN at 09078f1fd. g076b delta for Q-469 → /tmp/g076b.out.
+## 3.0.76 = main 978075296 — RELEASE BUILDING (~/goose-builds/release-3.0.76.log)
+- Adds Q-467 (the counter shows the served node's window), Q-468 (corrupt-config banner) and Q-469 (correction
+  detector: reaction shape only; honest block).
+- Gates g076 + g076b green.
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
