@@ -153,8 +153,10 @@ dark:shadow-lz-overlay-dark` (`0 8px 24px rgba(15,23,42,.12)` / `rgba(0,0,0,.55)
   INSET ring (`SURFACE.selectedRing`) where the fill would hide content. Hover on a selected row is
   the accent-hover step (`SURFACE.selectedHover`), never the neutral step: selected always wins.
 - Focus: the app's own accent ring on `:focus-visible` (`FOCUS` = 2px outline, `--color-ring`).
-- Disabled: solid — surface-2 fill, ink-3 text, hairline border, pointer-events off (`DISABLED`).
-  Never `opacity-50`.
+  `--color-ring-primary` is `#1d4ed8` light / `#60a5fa` dark in EVERY edition, owned by
+  theme-tokens.ts (Q-334; theme/focusRing.test.ts holds it at 3:1 on every surface).
+- Disabled: solid — surface-2 fill, ink-3 text, hairline border, pointer-events off (`DISABLED`;
+  `DISABLED_NOW` for an element disabled by a prop, not the attribute). Never `opacity-50`.
 
 ## Primitives (`src/components/lz`)
 
@@ -199,7 +201,8 @@ colour and deletes the size step. Use `cx`.
 4. No decorative shadow; no gradient; no second accent in a component; no node hue on chrome.
 5. No hand-written colour: every hue is a token utility through `tokens.ts`.
 
-`src/components/lz/assertStudioClean.ts` refuses 1–3 on rendered output; `studioGallery.test.tsx`
+`src/components/lz/assertStudioClean.ts` refuses 1–3 on rendered output; `lz/fadedOpacity.test.ts` refuses
+`opacity-5..95` and inline `opacity: 0.x` anywhere in the host source (Q-335) and ratchets `/NN` colour washes; `studioGallery.test.tsx`
 compiles every emitted class against the real pipeline so a dead utility cannot ship.
 
 ## How the website can follow it

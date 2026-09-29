@@ -128,8 +128,10 @@ const lightColorTokens: ColorTokens = {
   '--color-border-warning': '#fbcd44',
   '--color-border-disabled': '#e3e6ea',
 
-  // Rings
-  '--color-ring-primary': '#e3e6ea',
+  // Rings. The primary ring IS the keyboard focus ring (FOCUS, `ring-ring`, `outline-ring`), so it is
+  // the solid LeanZero blue in every edition (Q-334): the old #e3e6ea drew a near-white hairline on
+  // the white surface.
+  '--color-ring-primary': '#1d4ed8',
   '--color-ring-secondary': '#cbd1d6',
   '--color-ring-inverse': '#ffffff',
   '--color-ring-info': '#5c98f9',
@@ -188,8 +190,10 @@ const darkColorTokens: ColorTokens = {
   '--color-border-warning': '#ffd966',
   '--color-border-disabled': '#3f434b',
 
-  // Rings
-  '--color-ring-primary': '#525b68',
+  // Rings — the focus ring in dark (Q-334; #525b68 was grey on grey). #60a5fa, not the local
+  // edition's old #3b82f6: that measured 2.6:1 on background-secondary, under the 3:1 a focus
+  // indicator needs; this clears 3:1 on every dark surface (theme/focusRing.test.ts).
+  '--color-ring-primary': '#60a5fa',
   '--color-ring-secondary': '#474e57',
   '--color-ring-inverse': '#000000',
   '--color-ring-info': '#7cacff',

@@ -185,7 +185,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
     >
       <div className="flex w-full items-center">
         <div className="relative flex flex-1 items-center h-full min-w-0">
-          <SearchIcon className="no-drag h-4 w-4 text-text-inverse/70 absolute left-3" />
+          <SearchIcon className="no-drag h-4 w-4 text-text-inverse absolute left-3" />
           <div className="w-full">
             <input
               ref={inputRef}
@@ -223,7 +223,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
               className={`no-drag flex items-center justify-center min-w-[32px] h-[28px] rounded transition-all duration-150 ${
                 caseSensitive
                   ? 'bg-white/20 shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)] text-text-inverse hover:bg-white/25'
-                  : 'text-text-inverse/70 hover:text-text-inverse hover:bg-white/10'
+                  : 'text-text-inverse hover:text-text-inverse hover:bg-white/10'
               }`}
               title={intl.formatMessage(i18nMessages.caseSensitive)}
             >
@@ -236,21 +236,21 @@ export const SearchBar: React.FC<SearchBarProps> = ({
               <Button
                 onClick={(e) => handleNavigate('prev', e)}
                 variant="ghost"
-                className="no-drag flex items-center justify-center min-w-[32px] h-[28px] rounded transition-all duration-150 text-text-inverse/70 hover:text-text-inverse hover:bg-white/10"
+                className="no-drag flex items-center justify-center min-w-[32px] h-[28px] rounded transition-all duration-150 text-text-inverse hover:text-text-inverse hover:bg-white/10"
                 title={intl.formatMessage(i18nMessages.previous, { shortcut: '↑' })}
               >
                 <ArrowUp
-                  className={`h-5 w-5 transition-opacity ${!hasResults ? 'opacity-30' : ''}`}
+                  className={`h-5 w-5 transition-colors ${!hasResults ? 'text-text-secondary' : ''}`}
                 />
               </Button>
               <Button
                 onClick={(e) => handleNavigate('next', e)}
                 variant="ghost"
-                className="no-drag flex items-center justify-center min-w-[32px] h-[28px] rounded transition-all duration-150 text-text-inverse/70 hover:text-text-inverse hover:bg-white/10"
+                className="no-drag flex items-center justify-center min-w-[32px] h-[28px] rounded transition-all duration-150 text-text-inverse hover:text-text-inverse hover:bg-white/10"
                 title={intl.formatMessage(i18nMessages.next, { shortcut: '↓ or Enter' })}
               >
                 <ArrowDown
-                  className={`h-5 w-5 transition-opacity ${!hasResults ? 'opacity-30' : ''}`}
+                  className={`h-5 w-5 transition-colors ${!hasResults ? 'text-text-secondary' : ''}`}
                 />
               </Button>
             </div>
@@ -259,7 +259,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
           <Button
             onClick={handleClose}
             variant="ghost"
-            className="no-drag flex items-center justify-center min-w-[32px] h-[28px] rounded transition-all duration-150 text-text-inverse/70 hover:text-text-inverse hover:bg-white/10"
+            className="no-drag flex items-center justify-center min-w-[32px] h-[28px] rounded transition-all duration-150 text-text-inverse hover:text-text-inverse hover:bg-white/10"
             title={intl.formatMessage(i18nMessages.close, { shortcut: 'Esc' })}
           >
             <Close className="h-5 w-5" />
