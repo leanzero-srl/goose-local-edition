@@ -328,6 +328,23 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   slower on the CPU). TRAP: numpy's buffer protocol refuses bfloat16 (`'oat16'` PEP 3118 error) — probe
   bf16 arrays by dtype/nbytes, not `np.array(x, copy=False)`.
 
+### The split's prompt cache across CHATS (2026-09-29 — Q-498 a6d70abba, Q-502 9cb716449, Q-508 cutting)
+- Measured on the 27B tensor split (MacBook rank 0 + Studio rank 1, 262,144 window): KV = 32,768 B per token per
+  rank (16 full-attention layers × K,V × 2 KV heads/rank × 256 × 2 B) + 76,972,032 B recurrent state per sequence.
+  The plan's KV charge (= prompt-cache byte limit) = 17,333,813,248 B = one live + one cached context. Rank peak
+  ~44.9 GB each.
+- Before Q-502, admission and eviction protected only the NEWEST conversation. The owner's second chat (77,683-token
+  row + an 84-token side call) evicted #3x's 200k prefix, and each switch cost an 18-min cold re-read (E2E #3x, 15:10).
+  Keeping both under the old rule needs 29.07 GB; the MacBook lacks it.
+- Q-498: the engine SAYS it. `/v1/status requests[].evicted_prefix` and the rank-log line `GOOSE_RANK_PREFIX_LOST`
+  drive the glance/tray: "another chat pushed N of this conversation out of the engine's memory".
+- Q-502: every conversation's kept prefix + head are protected, and a request whose padding would evict another
+  chat's kept entries is HELD until rows finish (no timer). The spec tag `mlxLmServerEveryConversation` goes to every
+  rank, and a 3.0.79 peer refuses it: BOTH Macs need the same build. Replay: #3x 0 → 199,798 cached at 17.33 GB; the
+  side call held 42 s longer.
+- Q-503: goose read free memory with host_statistics64, which macOS rate-limits for non-Apple processes (a cached
+  copy returned as success). memory.rs now reads the vm.page_* counters live through sysctl.
+
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
   families by REGISTRY id (aws_bedrock, zai, google, custom_deepseek). One allow-list, `LOCAL_EDITION_PROVIDER_IDS` in

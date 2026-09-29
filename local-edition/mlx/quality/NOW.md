@@ -24,8 +24,8 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 ## Toward 3.0.80 (main has Q-495 4503c521a + Q-497 23c06bb8b)
 - Q-498 DONE a6d70abba (branch worktree-agent-afa856b427b453865, KEEP): says why a prompt went cold. Keeping both chats
   cached needs 29.07 GB against the 17.33 GB plan.
-- Q-502 cutting ON a6d70abba (mlx-backend): hold a side call instead of evicting another chat's kept prefix. The
-  replay keeps #3x warm at 17.33 GB.
+- Q-502 DONE 9cb716449 (branch q502, contains Q-498): every chat's prefix kept; #3x replay 0 → 199,798 cached. BOTH
+  Macs need the same build (a new spec tag). Q-508 (key conversations by session id, not tokens): cutting ON 9cb716449.
 - Q-499 DONE 6b4e8fcfb (branch worktree-agent-aec73c85bddb00a5e, KEEP): readiness requires the engine's own listener.
   The CI collision came from a sibling test's port.
 - Q-503 DONE 43f3431e1 (branch q503, contains Q-499): two PRODUCT bugs. The memory reading was rate-limited stale
@@ -52,7 +52,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (72 GB). Take a vigil screenshot and READ it. The next free id is Q-508.
+- Check CI, agents, disk ≥ 30 GB (72 GB). Take a vigil screenshot and READ it. The next free id is Q-509.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
