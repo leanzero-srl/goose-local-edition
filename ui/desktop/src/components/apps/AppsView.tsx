@@ -224,7 +224,7 @@ export default function AppsView() {
     return (
       <MainPanelLayout>
         <div className="flex flex-col items-center justify-center h-64 text-center">
-          <p className="text-red-500 mb-4">{intl.formatMessage(i18n.errorLoading, { error })}</p>
+          <p className="text-text-danger mb-4">{intl.formatMessage(i18n.errorLoading, { error })}</p>
           <Button onClick={loadApps}>{intl.formatMessage(i18n.retry)}</Button>
         </div>
       </MainPanelLayout>

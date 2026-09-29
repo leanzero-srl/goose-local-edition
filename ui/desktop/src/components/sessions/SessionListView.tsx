@@ -918,7 +918,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(({ onSelectSe
     if (error) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-text-secondary">
-          <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
+          <AlertCircle className="h-12 w-12 text-text-danger mb-4" />
           <p className="text-lg mb-2">{intl.formatMessage(i18n.errorLoading)}</p>
           <p className="text-sm text-center mb-4">{error}</p>
           <Button onClick={() => loadSessions(debouncedSearchTerm)} variant="default">

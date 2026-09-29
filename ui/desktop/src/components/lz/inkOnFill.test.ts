@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { contrast, oklchToHex, resolvedPaint, type Theme } from './resolvedPaint';
+import { contrast, oklchToHex, resolvedPaint, studioToken, type Theme } from './resolvedPaint';
 import * as tokens from './tokens';
 
 /**
@@ -17,7 +17,7 @@ import * as tokens from './tokens';
  * one), both resolved through the real Tailwind pipeline per theme (`dark:` applied in dark), is
  * weighed where ink is actually painted — words at 4.5:1, an icon at 3:1 — at rest, and under the
  * pointer when the element carries a `hover:` fill. REFUSED outright: ink in its fill's own hue,
- * and anything under 3:1. Every other pair under its bar rides a count that may only fall.
+ * and anything under 3:1 — and since Q-479 every other pair under its bar fails too, by name.
  *
  * Only UNCONDITIONAL classes are weighed (a literal className, the literal arms of cx/cn/clsx, a
  * template's static text, a Studio token like TONE_FILL.err); a ternary's branches are
@@ -273,13 +273,13 @@ function describePair(p: Pair): string {
 }
 
 /**
- * Pairs under their bar that are NOT the refused class: mostly the host's own text tokens
- * (--color-text-secondary #878787 is 3.59:1 on white, --color-text-danger #f94b4b 3.42:1) on host
- * surfaces — a token-level debt outside Q-457, filed as its own ledger row. The count may only
- * FALL; a change that lowers it lowers this number in the same commit.
+ * Q-479 took the below-bar count from 199 to ZERO: the host's --color-text-secondary (#878787 3.59:1
+ * on white, #969696 3.36:1 on dark background-secondary) and --color-text-danger, the Studio's
+ * ink-3 / status / dark accent-text, and the Tailwind palette inks (text-red-500 3.8:1, green-600,
+ * amber-600, blue-500 …) were retuned or swapped for the per-theme tokens. Every pair the scan can
+ * see now clears its bar in both themes, at rest and under the pointer — so there is no ratchet left
+ * to carry: a new pair under 4.5:1 (words) or 3:1 (a glyph) fails here by name.
  */
-const BELOW_BAR_RATCHET = 200;
-
 async function allPairs(): Promise<Pair[]> {
   const out: Pair[] = [];
   for (const file of componentFiles(SRC)) out.push(...(await scan(file, readFileSync(file, 'utf8'))));
@@ -324,11 +324,34 @@ describe('ink on a fill (Q-457 reopened)', () => {
     120_000
   );
 
+  it('Q-479: host secondary words clear 4.5:1 on every host surface yet stay quieter than primary', async () => {
+    const fixture = `export const X = () => (
+      <div className="bg-background-secondary">
+        <p className="text-text-secondary">Last used 3 days ago</p>
+        <p className="text-red-500">Name is required</p>
+      </div>
+    );`;
+    const bad = (await scan(join(SRC, 'fixture.tsx'), fixture))
+      .filter((p) => p.ratio < p.need)
+      .map((p) => `${p.theme} ${p.text}`);
+    // the palette red still fails in both themes — the scan sees what Q-479 swept away
+    expect(bad.sort()).toEqual(['dark #fb2c36', 'light #fb2c36']);
+    for (const theme of ['light', 'dark'] as const) {
+      for (const surface of ['primary', 'secondary', 'tertiary']) {
+        const bg = studioToken(`--color-background-${surface}`, theme);
+        const primary = contrast(studioToken('--color-text-primary', theme), bg);
+        const secondary = contrast(studioToken('--color-text-secondary', theme), bg);
+        expect(secondary, `${theme} secondary on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        expect(primary / secondary, `${theme} hierarchy on ${surface}`).toBeGreaterThan(1.5);
+      }
+    }
+  });
+
   it(
-    'the remaining below-bar pairs only ever shrink (ratchet)',
+    'every pair clears its bar: words 4.5:1, a glyph 3:1, in both themes and under hover (Q-479)',
     async () => {
       const below = (await allPairs()).filter((p) => p.ratio < p.need).map(describePair);
-      expect(below.length, below.join('\n')).toBeLessThanOrEqual(BELOW_BAR_RATCHET);
+      expect(below).toEqual([]);
     },
     120_000
   );

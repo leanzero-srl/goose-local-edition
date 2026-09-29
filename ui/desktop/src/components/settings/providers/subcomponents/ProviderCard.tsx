@@ -62,7 +62,7 @@ export const ProviderCard = function ProviderCard({
       body={
         <CardBody>
           {provider.connection_error && (
-            <p role="alert" className="mb-3 text-sm text-red-500 break-words">
+            <p role="alert" className="mb-3 text-sm text-text-danger break-words">
               {provider.connection_error}
             </p>
           )}

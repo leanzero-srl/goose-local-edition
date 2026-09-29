@@ -31,7 +31,7 @@ export default function ImagePreview({ src }: ImagePreviewProps) {
 
   if (error) {
     return (
-      <div className="text-red-500 text-xs italic mt-1 mb-1">
+      <div className="text-text-danger text-xs italic mt-1 mb-1">
         {intl.formatMessage(i18n.unableToLoad)}
       </div>
     );

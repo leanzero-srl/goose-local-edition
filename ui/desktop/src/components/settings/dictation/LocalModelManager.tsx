@@ -245,7 +245,7 @@ export const LocalModelManager = () => {
                     </h4>
                     <span className="text-xs text-text-secondary">{model.sizeMb}MB</span>
                     {model.recommended && (
-                      <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded">
+                      <span className="text-xs bg-lz-accent text-lz-accent-ink px-2 py-0.5 rounded">
                         {intl.formatMessage(i18n.recommended)}
                       </span>
                     )}
@@ -258,7 +258,7 @@ export const LocalModelManager = () => {
 
                   <p className="text-xs text-text-secondary mt-1">{model.description}</p>
                   {model.recommended && (
-                    <p className="text-xs text-blue-600 mt-1 font-medium">
+                    <p className="text-xs text-lz-accent mt-1 font-medium">
                       {intl.formatMessage(i18n.recommendedForHardware)}
                     </p>
                   )}
@@ -267,7 +267,7 @@ export const LocalModelManager = () => {
                 <div className="flex items-center gap-2">
                   {model.downloaded ? (
                     <>
-                      <div className="flex items-center gap-1 text-xs text-green-600">
+                      <div className="flex items-center gap-1 text-xs text-lz-ok">
                         <Check className="w-4 h-4" />
                         <span>{intl.formatMessage(i18n.downloaded)}</span>
                       </div>

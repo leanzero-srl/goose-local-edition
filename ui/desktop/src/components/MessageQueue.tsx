@@ -358,7 +358,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
             {isPaused ? (
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <Clock className="w-4 h-4 text-lz-warn" />
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -458,7 +458,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
                   <div
                     className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold transition-colors ${
                       index === 0
-                        ? 'bg-blue-500 text-white'
+                        ? 'bg-lz-accent text-lz-accent-ink'
                         : 'bg-background-secondary text-text-secondary'
                     }`}
                   >
@@ -611,7 +611,7 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
 
               {/* Next up indicator */}
               {index === 0 && !isPaused && (
-                <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-medium">
+                <div className="absolute -top-2 -right-2 bg-lz-accent text-lz-accent-ink text-xs px-2 py-1 rounded-full font-medium">
                   {intl.formatMessage(i18n.next)}
                 </div>
               )}

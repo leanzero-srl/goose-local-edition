@@ -186,7 +186,7 @@ const ParameterInputModal: React.FC<ParameterInputModalProps> = ({
                       className="block text-base font-medium text-text-primary mb-2"
                     >
                       {param.description || param.key}
-                      {needsUserValue(param) && <span className="text-red-500 ml-1">*</span>}
+                      {needsUserValue(param) && <span className="text-text-danger ml-1">*</span>}
                     </label>
 
                     {choices ? (
@@ -218,7 +218,7 @@ const ParameterInputModal: React.FC<ParameterInputModalProps> = ({
                     )}
 
                     {validationErrors[param.key] && (
-                      <p className="text-red-500 text-sm mt-1">{validationErrors[param.key]}</p>
+                      <p className="text-text-danger text-sm mt-1">{validationErrors[param.key]}</p>
                     )}
                   </div>
                 );

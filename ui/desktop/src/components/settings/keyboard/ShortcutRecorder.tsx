@@ -181,11 +181,11 @@ export function ShortcutRecorder({
               {intl.formatMessage(i18n.pressShortcut)}
             </span>
           ) : displayShortcut ? (
-            <span className={conflict ? 'text-yellow-600' : 'text-text-primary'}>
+            <span className={conflict ? 'text-lz-warn' : 'text-text-primary'}>
               {displayShortcut}
             </span>
           ) : capturedShortcut ? (
-            <span className={conflict ? 'text-yellow-600' : 'text-text-primary'}>
+            <span className={conflict ? 'text-lz-warn' : 'text-text-primary'}>
               {formatShortcut(capturedShortcut)}
             </span>
           ) : (
@@ -206,7 +206,7 @@ export function ShortcutRecorder({
         </Button>
       </div>
       {conflict && (
-        <div className="text-xs text-yellow-600 flex items-center gap-1">
+        <div className="text-xs text-lz-warn flex items-center gap-1">
           <span>⚠️</span>
           <span>
             {intl.formatMessage(i18n.conflictWarning, {

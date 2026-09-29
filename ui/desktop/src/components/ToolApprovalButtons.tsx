@@ -138,7 +138,7 @@ export default function ToolApprovalButtons({ data }: { data: ToolApprovalData }
         </Button>
       </div>
       {approvalError && (
-        <p className="text-sm text-red-500 mt-2" role="alert">
+        <p className="text-sm text-text-danger mt-2" role="alert">
           {approvalError}
         </p>
       )}

@@ -258,7 +258,7 @@ export default function ImportRecipeForm({ isOpen, onClose, onSuccess }: ImportR
                               {intl.formatMessage(i18n.deeplinkHint)}
                             </p>
                             {field.state.meta.errors.length > 0 && (
-                              <p className="text-red-500 text-sm mt-1">
+                              <p className="text-text-danger text-sm mt-1">
                                 {typeof field.state.meta.errors[0] === 'string'
                                   ? field.state.meta.errors[0]
                                   : field.state.meta.errors[0]?.message ||
@@ -318,14 +318,14 @@ export default function ImportRecipeForm({ isOpen, onClose, onSuccess }: ImportR
                               <button
                                 type="button"
                                 onClick={() => setShowSchemaModal(true)}
-                                className="text-xs text-blue-500 hover:text-blue-700 underline"
+                                className="text-xs text-lz-accent underline"
                                 disabled={isDisabled}
                               >
                                 {intl.formatMessage(i18n.example)}
                               </button>
                             </div>
                             {field.state.meta.errors.length > 0 && (
-                              <p className="text-red-500 text-sm mt-1">
+                              <p className="text-text-danger text-sm mt-1">
                                 {typeof field.state.meta.errors[0] === 'string'
                                   ? field.state.meta.errors[0]
                                   : field.state.meta.errors[0]?.message ||

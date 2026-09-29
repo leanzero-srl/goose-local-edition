@@ -34,7 +34,7 @@ export const SessionIndicators = React.memo<SessionIndicatorsProps>(
       return (
         <div className="flex items-center gap-1">
           <AlertCircle
-            className="w-3.5 h-3.5 text-red-500"
+            className="w-3.5 h-3.5 text-text-danger"
             aria-label={intl.formatMessage(i18n.error)}
           />
         </div>
@@ -44,7 +44,7 @@ export const SessionIndicators = React.memo<SessionIndicatorsProps>(
     if (isStreaming) {
       return (
         <div className="flex items-center gap-1">
-          <Loader2 className="w-3 h-3 text-blue-500 animate-spin" aria-label={intl.formatMessage(i18n.streaming)} />
+          <Loader2 className="w-3 h-3 text-lz-accent animate-spin" aria-label={intl.formatMessage(i18n.streaming)} />
         </div>
       );
     }

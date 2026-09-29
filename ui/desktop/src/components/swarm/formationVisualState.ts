@@ -210,9 +210,9 @@ export const FORMATION_INK = FORMATION_INK_FALLBACKS.map(
 /** The LeanZero status palette. The `solid*` entries are FILLS that carry white text; the plain entries are
  *  foreground/border colors. Both are fully saturated — never a tint, never an opacity fade. */
 export const SWARM_STATUS = {
-  running: 'var(--color-status-warn, #d97706)',
-  done: 'var(--color-status-ok, #16a34a)',
-  error: 'var(--color-status-err, #dc2626)',
+  running: 'var(--color-status-warn, #b45309)',
+  done: 'var(--color-status-ok, #15803d)',
+  error: 'var(--color-status-err, #c81e1e)',
   action: 'var(--color-action-solid, #1d4ed8)',
   stopped: 'var(--color-status-stopped, #475569)',
   solidRunning: 'var(--color-status-warn-solid, #b45309)',

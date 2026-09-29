@@ -145,7 +145,7 @@ Use {{parameter_name}} syntax for any user-provided values.`;
               }`}
               placeholder={intl.formatMessage(i18n.placeholder)}
             />
-            {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+            {error && <p className="text-text-danger text-sm mt-2">{error}</p>}
           </div>
         </div>
 

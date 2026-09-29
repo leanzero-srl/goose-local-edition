@@ -177,7 +177,7 @@ export default function RecipeActivityEditor({
             type="button"
             onClick={handleAddActivity}
             disabled={!newActivity.trim()}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+            className="px-4 py-2 bg-lz-accent text-lz-accent-ink rounded-lg text-sm hover:bg-lz-accent-hover transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
             {intl.formatMessage(i18n.addActivity)}
           </button>

@@ -278,15 +278,16 @@
   --color-node-5-ink: #ffffff;
   --color-node-6-ink: #0b0b0b;
 
-  /* Semantic status triad (orthogonal to the node ramp), LeanZero light values. */
-  --color-status-ok: #16a34a;
-  --color-status-warn: #d97706;
-  --color-status-err: #dc2626;
+  /* Semantic status triad (orthogonal to the node ramp), LeanZero light values. The bare tokens are
+     TEXT (status lines, dots, callout edges), so each clears 4.5:1 on the surfaces words sit on —
+     white, lz-bg, lz-surface-2 (Q-479: #16a34a 3.3, #d97706 3.2, #dc2626 4.4 on surface-2 did not). */
+  --color-status-ok: #15803d;
+  --color-status-warn: #b45309;
+  --color-status-err: #c81e1e;
   --color-status-stopped: #475569;
 
-  /* The -solid tokens are FILLS that carry WHITE text. #16a34a and #d97706 clear AA as foreground but only
-     reach 3.4:1 / 3.1:1 behind white, so their fills are one step darker in the same hue. Never a tint —
-     the fill stays fully saturated, it is the text contrast that forces the step. */
+  /* The -solid tokens are FILLS that carry WHITE text (4.5:1 behind white). Never a tint — the fill
+     stays fully saturated, it is the text contrast that forces the step. */
   --color-status-ok-solid: #15803d;
   --color-status-warn-solid: #b45309;
   --color-status-err-solid: #dc2626;
@@ -316,9 +317,10 @@
   --color-node-5-ink: #0b0b0b;
   --color-node-6-ink: #0b0b0b;
 
+  /* #ef4444 measured 3.9:1 on lz-surface-2 (Q-479); #f87171 is 5.3 there, 6.5 on the surface. */
   --color-status-ok: #22c55e;
   --color-status-warn: #f59e0b;
-  --color-status-err: #ef4444;
+  --color-status-err: #f87171;
   --color-status-stopped: #94a3b8;
 
   --color-status-ok-solid: #15803d;
@@ -507,9 +509,9 @@
   --color-lz-syntax-bool: var(--color-lz-syntax-bool, #c2410c);
 
   /* Status triad — `-solid` is a FILL carrying white ink; the bare token is for text, icons, dots. */
-  --color-lz-ok: var(--color-status-ok, #16a34a);
-  --color-lz-warn: var(--color-status-warn, #d97706);
-  --color-lz-err: var(--color-status-err, #dc2626);
+  --color-lz-ok: var(--color-status-ok, #15803d);
+  --color-lz-warn: var(--color-status-warn, #b45309);
+  --color-lz-err: var(--color-status-err, #c81e1e);
   --color-lz-stopped: var(--color-status-stopped, #475569);
   --color-lz-ok-solid: var(--color-status-ok-solid, #15803d);
   --color-lz-warn-solid: var(--color-status-warn-solid, #b45309);
@@ -590,7 +592,9 @@
   --color-lz-accent-text: #1d4ed8;
   --color-lz-ink: #0f172a;
   --color-lz-ink-2: #334155;
-  --color-lz-ink-3: #64748b;
+  /* ink-3 is the meta register: #64748b measured 4.34:1 on surface-2 (Q-479); #56657a clears 4.5 on
+     every light surface, host #e3e6ea included, and stays between ink-2 and ink-4. */
+  --color-lz-ink-3: #56657a;
   --color-lz-ink-4: #94a3b8;
   --color-lz-accent-hover: #1e40af;
   --color-lz-secondary: #6d28d9;
@@ -625,7 +629,9 @@
   --color-lz-surface-2: #1e293b;
   --color-lz-border: #1e293b;
   --color-lz-border-strong: #334155;
-  --color-lz-accent-text: #60a5fa;
+  /* Accent words also sit on the HOST's background-secondary (#3f434b), where #60a5fa measured
+     3.9:1 (Q-479); #7cb8ff is 4.8 there and 7.1 on lz-surface-2. */
+  --color-lz-accent-text: #7cb8ff;
   --color-lz-ink: #f8fafc;
   --color-lz-ink-2: #cbd5e1;
   --color-lz-ink-3: #94a3b8;

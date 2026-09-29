@@ -914,7 +914,7 @@ export const SwitchModelModal = ({
               </div>
 
               {attemptedSubmit && validationErrors.model && (
-                <div className="text-red-500 text-sm mt-1">{validationErrors.model}</div>
+                <div className="text-text-danger text-sm mt-1">{validationErrors.model}</div>
               )}
 
               {thinkingEffortControl}
@@ -954,7 +954,7 @@ export const SwitchModelModal = ({
                   isClearable
                 />
                 {attemptedSubmit && validationErrors.provider && (
-                  <div className="text-red-500 text-sm mt-1">{validationErrors.provider}</div>
+                  <div className="text-text-danger text-sm mt-1">{validationErrors.provider}</div>
                 )}
               </div>
 
@@ -971,7 +971,7 @@ export const SwitchModelModal = ({
                         {selectedProviderOption?.description}
                       </span>
                       {attemptedSubmit && validationErrors.model && (
-                        <div className="text-red-500 text-sm mt-1">{validationErrors.model}</div>
+                        <div className="text-text-danger text-sm mt-1">{validationErrors.model}</div>
                       )}
                     </div>
                   ) : provider === 'local' &&
@@ -1031,7 +1031,7 @@ export const SwitchModelModal = ({
                         value={model}
                       />
                       {attemptedSubmit && validationErrors.model && (
-                        <div className="text-red-500 text-sm mt-1">{validationErrors.model}</div>
+                        <div className="text-text-danger text-sm mt-1">{validationErrors.model}</div>
                       )}
                     </div>
                   ) : !isCustomModel ? (
@@ -1063,7 +1063,7 @@ export const SwitchModelModal = ({
                       />
 
                       {attemptedSubmit && validationErrors.model && (
-                        <div className="text-red-500 text-sm mt-1">{validationErrors.model}</div>
+                        <div className="text-text-danger text-sm mt-1">{validationErrors.model}</div>
                       )}
                       {provider && providerWarnings[provider] && (
                         <div className="rounded-md bg-lz-warn-solid p-3 mt-2">
@@ -1093,7 +1093,7 @@ export const SwitchModelModal = ({
                         value={model}
                       />
                       {attemptedSubmit && validationErrors.model && (
-                        <div className="text-red-500 text-sm mt-1">{validationErrors.model}</div>
+                        <div className="text-text-danger text-sm mt-1">{validationErrors.model}</div>
                       )}
                     </div>
                   )}

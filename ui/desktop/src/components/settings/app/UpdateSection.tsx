@@ -336,11 +336,11 @@ export default function UpdateSection() {
       case 'downloading':
         return <Loader2 className="w-4 h-4 animate-spin" />;
       case 'success':
-        return <CheckCircle className="w-4 h-4 text-green-500" />;
+        return <CheckCircle className="w-4 h-4 text-lz-ok" />;
       case 'error':
-        return <AlertCircle className="w-4 h-4 text-red-500" />;
+        return <AlertCircle className="w-4 h-4 text-text-danger" />;
       case 'ready':
-        return <CheckCircle className="w-4 h-4 text-blue-500" />;
+        return <CheckCircle className="w-4 h-4 text-lz-accent" />;
       default:
         return updateInfo.isUpdateAvailable ? <Download className="w-4 h-4" /> : null;
     }
@@ -422,18 +422,18 @@ export default function UpdateSection() {
         {updateInfo.isUpdateAvailable && updateStatus === 'idle' && (
           <div className="text-xs text-text-secondary mt-4 space-y-1">
             {autoDownloadEffectivelyDisabled ? (
-              <p className="text-xs text-amber-600">
+              <p className="text-xs text-lz-warn">
                 {intl.formatMessage(i18n.autoDownloadDisabledNote)}
               </p>
             ) : (
               <>
                 <p>{intl.formatMessage(i18n.autoDownload)}</p>
                 {isUsingGitHubFallback ? (
-                  <p className="text-xs text-amber-600">
+                  <p className="text-xs text-lz-warn">
                     {intl.formatMessage(i18n.manualInstallNote)}
                   </p>
                 ) : (
-                  <p className="text-xs text-green-600">
+                  <p className="text-xs text-lz-ok">
                     {intl.formatMessage(i18n.autoInstallNote)}
                   </p>
                 )}
@@ -446,7 +446,7 @@ export default function UpdateSection() {
           <div className="text-xs text-text-secondary mt-4 space-y-1">
             {isUsingGitHubFallback ? (
               <>
-                <p className="text-xs text-green-600">
+                <p className="text-xs text-lz-ok">
                   {intl.formatMessage(i18n.readyInstallManual)}
                 </p>
                 <p className="text-xs text-text-secondary">
@@ -455,7 +455,7 @@ export default function UpdateSection() {
               </>
             ) : (
               <>
-                <p className="text-xs text-green-600">
+                <p className="text-xs text-lz-ok">
                   {intl.formatMessage(i18n.readyInstallAuto)}
                 </p>
                 <p className="text-xs text-text-secondary">
@@ -470,7 +470,7 @@ export default function UpdateSection() {
       {/* Auto-download toggle */}
       <div className="mt-6 pt-4 border-t border-border-primary">
         {autoDownloadForcedByEnv ? (
-          <p className="text-xs text-amber-600">
+          <p className="text-xs text-lz-warn">
             {intl.formatMessage(i18n.autoDownloadDisabledByEnv)}
           </p>
         ) : (

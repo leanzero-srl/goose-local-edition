@@ -102,7 +102,7 @@ const HelpText = () => {
           link: (
             <Button
               variant="link"
-              className="text-blue-500 hover:text-blue-600 p-0 h-auto"
+              className="text-lz-accent p-0 h-auto"
               onClick={() =>
                 window.open(
                   'https://goose-docs.ai/docs/guides/using-goosehints/',
@@ -124,7 +124,7 @@ const ErrorDisplay = ({ error }: { error: Error }) => {
 
   return (
     <div className="text-sm text-text-secondary">
-      <div className="text-red-600">
+      <div className="text-text-danger">
         {intl.formatMessage(i18n.errorReading, { error: errorMessage(error) })}
       </div>
     </div>
@@ -137,7 +137,7 @@ const FileInfo = ({ filePath, found }: { filePath: string; found: boolean }) => 
   return (
     <div className="text-sm font-medium mb-2">
       {found ? (
-        <div className="text-green-600">
+        <div className="text-lz-ok">
           <Check className="w-4 h-4 inline-block" />{' '}
           {intl.formatMessage(i18n.fileFound, { filePath })}
         </div>
@@ -225,7 +225,7 @@ export const GoosehintsModal = ({ directory, setIsGoosehintsModalOpen }: Goosehi
 
         <DialogFooter>
           {saveSuccess && (
-            <span className="text-green-600 text-sm flex items-center gap-1 mr-auto">
+            <span className="text-lz-ok text-sm flex items-center gap-1 mr-auto">
               <Check className="w-4 h-4" />
               {intl.formatMessage(i18n.savedSuccessfully)}
             </span>

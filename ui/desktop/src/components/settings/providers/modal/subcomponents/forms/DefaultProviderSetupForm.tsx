@@ -263,7 +263,7 @@ export default function DefaultProviderSetupForm({
         <div key={parameter.name}>
           <label className="block text-sm font-medium text-text-primary mb-1">
             {getFieldLabel(parameter)}
-            {parameter.required && <span className="text-red-500 ml-1">*</span>}
+            {parameter.required && <span className="text-text-danger ml-1">*</span>}
           </label>
           <Input
             type="text"
@@ -286,7 +286,7 @@ export default function DefaultProviderSetupForm({
             required={parameter.required}
           />
           {validationErrors[parameter.name] && (
-            <p className="text-red-500 text-sm mt-1">{validationErrors[parameter.name]}</p>
+            <p className="text-text-danger text-sm mt-1">{validationErrors[parameter.name]}</p>
           )}
         </div>
       );

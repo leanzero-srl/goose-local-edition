@@ -108,7 +108,7 @@ export default function TelemetrySettings() {
   const learnMoreLink = (
     <button
       onClick={() => setShowModal(true)}
-      className="text-blue-600 dark:text-blue-400 hover:underline"
+      className="text-lz-accent hover:underline"
     >
       {intl.formatMessage(i18n.learnMore)}
     </button>

@@ -99,7 +99,7 @@ export const SessionMessages: React.FC<SessionMessagesProps> = ({
               </div>
             ) : error ? (
               <div className="flex flex-col items-center justify-center py-8 text-text-secondary">
-                <div className="text-red-500 mb-4">
+                <div className="text-text-danger mb-4">
                   <AlertCircle size={32} />
                 </div>
                 <p className="text-base mb-2">{intl.formatMessage(i18n.errorLoadingDetails)}</p>

@@ -292,7 +292,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                         {recommended.id}
                       </span>
                       {recommended.status.state === 'Downloaded' && (
-                        <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded-full">
+                        <span className="text-xs bg-lz-ok-solid text-white px-2 py-0.5 rounded-full">
                           {intl.formatMessage(i18n.ready)}
                         </span>
                       )}
@@ -357,7 +357,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
                                 {formatSize(model.sizeBytes)}
                               </span>
                               {model.status.state === 'Downloaded' && (
-                                <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded-full">
+                                <span className="text-xs bg-lz-ok-solid text-white px-2 py-0.5 rounded-full">
                                   Ready
                                 </span>
                               )}

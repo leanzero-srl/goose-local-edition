@@ -259,7 +259,7 @@ export function RecipeFormFields({
               htmlFor="recipe-title"
               className="block text-sm font-medium text-text-primary mb-2"
             >
-              {intl.formatMessage(i18n.titleLabel)} <span className="text-red-500">*</span>
+              {intl.formatMessage(i18n.titleLabel)} <span className="text-text-danger">*</span>
             </label>
             <input
               id="recipe-title"
@@ -277,7 +277,7 @@ export function RecipeFormFields({
               data-testid="title-input"
             />
             {field.state.meta.errors.length > 0 && (
-              <p className="text-red-500 text-sm mt-1">{field.state.meta.errors[0]}</p>
+              <p className="text-text-danger text-sm mt-1">{field.state.meta.errors[0]}</p>
             )}
           </div>
         )}
@@ -291,7 +291,7 @@ export function RecipeFormFields({
               htmlFor="recipe-description"
               className="block text-sm font-medium text-text-primary mb-2"
             >
-              {intl.formatMessage(i18n.descriptionLabel)} <span className="text-red-500">*</span>
+              {intl.formatMessage(i18n.descriptionLabel)} <span className="text-text-danger">*</span>
             </label>
             <input
               id="recipe-description"
@@ -309,7 +309,7 @@ export function RecipeFormFields({
               data-testid="description-input"
             />
             {field.state.meta.errors.length > 0 && (
-              <p className="text-red-500 text-sm mt-1">{field.state.meta.errors[0]}</p>
+              <p className="text-text-danger text-sm mt-1">{field.state.meta.errors[0]}</p>
             )}
           </div>
         )}
@@ -324,7 +324,7 @@ export function RecipeFormFields({
                 htmlFor="recipe-instructions"
                 className="block text-sm font-medium text-text-primary"
               >
-                {intl.formatMessage(i18n.instructionsLabel)} <span className="text-red-500">*</span>
+                {intl.formatMessage(i18n.instructionsLabel)} <span className="text-text-danger">*</span>
               </label>
               <Button
                 type="button"
@@ -358,7 +358,7 @@ export function RecipeFormFields({
               {intl.formatMessage(i18n.templateVarHint)}
             </p>
             {field.state.meta.errors.length > 0 && (
-              <p className="text-red-500 text-sm mt-1">{field.state.meta.errors[0]}</p>
+              <p className="text-text-danger text-sm mt-1">{field.state.meta.errors[0]}</p>
             )}
 
             {/* Instructions Editor Modal */}
@@ -519,7 +519,7 @@ export function RecipeFormFields({
                       type="button"
                       onClick={handleAddParameter}
                       disabled={!newParameterName.trim()}
-                      className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                      className="px-4 py-2 bg-lz-accent text-lz-accent-ink rounded-lg text-sm hover:bg-lz-accent-hover transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
                     >
                       {intl.formatMessage(i18n.addParameter)}
                     </button>
@@ -624,7 +624,7 @@ export function RecipeFormFields({
                 )}
 
                 {field.state.meta.errors.length > 0 && (
-                  <p className="text-red-500 text-sm mt-1">{field.state.meta.errors[0]}</p>
+                  <p className="text-text-danger text-sm mt-1">{field.state.meta.errors[0]}</p>
                 )}
 
                 {/* JSON Schema Editor Modal */}

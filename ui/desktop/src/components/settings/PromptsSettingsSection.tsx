@@ -377,7 +377,7 @@ export default function PromptsSettingsSection() {
             </div>
 
             {hasChanges && (
-              <div className="text-sm text-yellow-600 dark:text-yellow-400">
+              <div className="text-sm text-lz-warn">
                 {intl.formatMessage(i18n.unsavedChanges)}
               </div>
             )}

@@ -88,7 +88,7 @@ export default function OnboardingSuccess({ providerName, onFinish }: Onboarding
                 {intl.formatMessage(i18n.privacyDescription)}{' '}
                 <button
                   onClick={() => setShowPrivacyInfo(true)}
-                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                  className="text-lz-accent hover:underline"
                 >
                   {intl.formatMessage(i18n.learnMore)}
                 </button>

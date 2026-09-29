@@ -180,7 +180,7 @@ export default function JsonSchemaEditor({
 }`}
             />
             {(localError || error) && (
-              <p className="text-red-500 text-sm mt-2">{localError || error}</p>
+              <p className="text-text-danger text-sm mt-2">{localError || error}</p>
             )}
           </div>
         </div>

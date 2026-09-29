@@ -496,7 +496,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
                 {intl.formatMessage(i18n.preventSleepDesc)}
               </p>
               {keepAwakeProblem && (
-                <p role="alert" className="text-xs text-red-600 max-w-md mt-[2px]">
+                <p role="alert" className="text-xs text-text-danger max-w-md mt-[2px]">
                   {intl.formatMessage(i18n.preventSleepFailed, { reason: keepAwakeProblem })}
                 </p>
               )}

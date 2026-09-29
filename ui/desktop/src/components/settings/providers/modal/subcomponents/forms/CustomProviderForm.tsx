@@ -610,7 +610,7 @@ export default function CustomProviderForm({
             className="flex items-center text-sm font-medium text-text-primary mb-2"
           >
             {intl.formatMessage(i18n.providerType)}
-            <span className="text-red-500 ml-1">*</span>
+            <span className="text-text-danger ml-1">*</span>
           </label>
           <Select
             id="provider-select"
@@ -640,7 +640,7 @@ export default function CustomProviderForm({
             isSearchable={false}
           />
           {validationErrors.providerType && (
-            <p id="provider-select-error" className="text-red-500 text-sm mt-1">
+            <p id="provider-select-error" className="text-text-danger text-sm mt-1">
               {validationErrors.providerType}
             </p>
           )}
@@ -655,7 +655,7 @@ export default function CustomProviderForm({
             className="flex items-center text-sm font-medium text-text-primary mb-2"
           >
             {intl.formatMessage(i18n.displayName)}
-            <span className="text-red-500 ml-1">*</span>
+            <span className="text-text-danger ml-1">*</span>
           </label>
           <Input
             id="display-name"
@@ -667,7 +667,7 @@ export default function CustomProviderForm({
             className={validationErrors.displayName ? 'border-red-500' : ''}
           />
           {validationErrors.displayName && (
-            <p id="display-name-error" className="text-red-500 text-sm mt-1">
+            <p id="display-name-error" className="text-text-danger text-sm mt-1">
               {validationErrors.displayName}
             </p>
           )}
@@ -682,7 +682,7 @@ export default function CustomProviderForm({
             className="flex items-center text-sm font-medium text-text-primary mb-2"
           >
             {intl.formatMessage(i18n.apiUrl)}
-            <span className="text-red-500 ml-1">*</span>
+            <span className="text-text-danger ml-1">*</span>
           </label>
           <Input
             id="api-url"
@@ -694,7 +694,7 @@ export default function CustomProviderForm({
             className={validationErrors.apiUrl ? 'border-red-500' : ''}
           />
           {validationErrors.apiUrl && (
-            <p id="api-url-error" className="text-red-500 text-sm mt-1">
+            <p id="api-url-error" className="text-text-danger text-sm mt-1">
               {validationErrors.apiUrl}
             </p>
           )}
@@ -753,7 +753,7 @@ export default function CustomProviderForm({
                   ({selectedTemplate.envVar})
                 </span>
               )}
-              {!initialData && <span className="text-red-500 ml-1">*</span>}
+              {!initialData && <span className="text-text-danger ml-1">*</span>}
             </label>
             <Input
               id="api-key"
@@ -770,7 +770,7 @@ export default function CustomProviderForm({
               className={validationErrors.apiKey ? 'border-red-500' : ''}
             />
             {validationErrors.apiKey && (
-              <p id="api-key-error" className="text-red-500 text-sm mt-1">
+              <p id="api-key-error" className="text-text-danger text-sm mt-1">
                 {validationErrors.apiKey}
               </p>
             )}
@@ -786,7 +786,7 @@ export default function CustomProviderForm({
             className="flex items-center text-sm font-medium text-text-primary mb-2"
           >
             {intl.formatMessage(i18n.availableModels)}
-            <span className="text-red-500 ml-1">*</span>
+            <span className="text-text-danger ml-1">*</span>
           </label>
           <Input
             id="available-models"
@@ -798,7 +798,7 @@ export default function CustomProviderForm({
             className={validationErrors.models ? 'border-red-500' : ''}
           />
           {validationErrors.models && (
-            <p id="available-models-error" className="text-red-500 text-sm mt-1">
+            <p id="available-models-error" className="text-text-danger text-sm mt-1">
               {validationErrors.models}
             </p>
           )}
@@ -912,14 +912,14 @@ export default function CustomProviderForm({
             </Button>
           </div>
           {headerValidationError && (
-            <div className="mt-2 text-red-500 text-sm">{headerValidationError}</div>
+            <div className="mt-2 text-text-danger text-sm">{headerValidationError}</div>
           )}
         </div>
       )}
 
       <SecureStorageNotice />
 
-      {submitError && <p className="text-red-500 text-sm">{submitError}</p>}
+      {submitError && <p className="text-text-danger text-sm">{submitError}</p>}
 
       {showDeleteConfirmation ? (
         <div className="pt-4 space-y-3">
@@ -959,7 +959,7 @@ export default function CustomProviderForm({
             <Button
               type="button"
               variant="outline"
-              className="text-red-500 hover:text-red-600 mr-auto"
+              className="text-text-danger mr-auto"
               onClick={() => setShowDeleteConfirmation(true)}
             >
               <Trash2 className="h-4 w-4 mr-2" />

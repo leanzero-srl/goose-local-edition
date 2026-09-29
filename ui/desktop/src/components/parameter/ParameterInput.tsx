@@ -173,7 +173,7 @@ const ParameterInput: React.FC<ParameterInputProps> = ({
               e.stopPropagation();
               onDelete(key);
             }}
-            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+            className="p-1 text-text-danger hover:bg-lz-err-solid hover:text-white rounded transition-colors"
             title={intl.formatMessage(i18n.deleteParameter, { key })}
           >
             <Trash2 className="w-4 h-4" />

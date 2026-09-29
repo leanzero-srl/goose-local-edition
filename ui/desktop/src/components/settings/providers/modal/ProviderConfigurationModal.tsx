@@ -332,7 +332,7 @@ export default function ProviderConfigurationModal({
     if (showDeleteConfirmation) {
       return (
         <AlertTriangle
-          className={isActiveProvider ? 'text-yellow-500' : 'text-red-500'}
+          className={isActiveProvider ? 'text-lz-warn' : 'text-text-danger'}
           size={24}
         />
       );

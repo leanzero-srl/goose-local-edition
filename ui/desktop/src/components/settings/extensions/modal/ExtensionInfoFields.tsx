@@ -84,7 +84,7 @@ export default function ExtensionInfoFields({
               className={`${!submitAttempted || isNameValid() ? 'border-border-primary' : 'border-red-500'} text-text-primary focus:border-border-primary`}
             />
             {submitAttempted && !isNameValid() && (
-              <div className="absolute text-xs text-red-500 mt-1">{intl.formatMessage(i18n.nameRequired)}</div>
+              <div className="absolute text-xs text-text-danger mt-1">{intl.formatMessage(i18n.nameRequired)}</div>
             )}
           </div>
         </div>

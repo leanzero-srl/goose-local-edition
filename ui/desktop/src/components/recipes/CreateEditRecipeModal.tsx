@@ -511,7 +511,7 @@ export default function CreateEditRecipeModal({
                   href="https://goose-docs.ai/docs/guides/recipes/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-blue-500 hover:text-blue-600 hover:underline"
+                  className="inline-flex items-center gap-1 text-lz-accent hover:underline"
                 >
                   {intl.formatMessage(i18n.learnMore)}
                   <ExternalLink className="w-3 h-3" />

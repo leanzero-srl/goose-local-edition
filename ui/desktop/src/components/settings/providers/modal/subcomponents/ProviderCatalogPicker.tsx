@@ -186,7 +186,7 @@ export default function ProviderCatalogPicker({
         </div>
       )}
       {error && (
-        <div className="text-center py-8 text-red-500">
+        <div className="text-center py-8 text-text-danger">
           {intl.formatMessage(i18n.errorPrefix, { error })}
         </div>
       )}

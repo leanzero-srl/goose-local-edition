@@ -293,7 +293,7 @@ function PersonMessage({ message, onMessageUpdate, opensConversation = false }: 
             {error && (
               <div
                 id={`error-${message.id}`}
-                className="text-red-400 text-xs mt-2 mb-2"
+                className="text-text-danger text-xs mt-2 mb-2"
                 role="alert"
                 aria-live="polite"
               >

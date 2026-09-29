@@ -499,7 +499,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   <Button
                     onClick={() => setIsModalOpen(true)}
                     variant="outline"
-                    className="w-full md:w-auto flex items-center gap-2 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-lz-accent hover:text-lz-accent-ink"
+                    className="w-full md:w-auto flex items-center gap-2 text-lz-accent border-blue-300 dark:border-blue-600 hover:bg-lz-accent hover:text-lz-accent-ink"
                     disabled={isActionLoading}
                   >
                     <Edit className="w-4 h-4" />
@@ -510,8 +510,8 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                     variant="outline"
                     className={`w-full md:w-auto flex items-center gap-2 ${
                       scheduleDetails.paused
-                        ? 'text-green-600 dark:text-green-400 border-green-300 dark:border-green-600 hover:bg-lz-ok-solid hover:text-white'
-                        : 'text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-600 hover:bg-lz-warn-solid hover:text-white'
+                        ? 'text-lz-ok border-green-300 dark:border-green-600 hover:bg-lz-ok-solid hover:text-white'
+                        : 'text-lz-warn border-orange-300 dark:border-orange-600 hover:bg-lz-warn-solid hover:text-white'
                     }`}
                     disabled={isActionLoading}
                   >
@@ -535,7 +535,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   <Button
                     onClick={handleInspect}
                     variant="outline"
-                    className="w-full md:w-auto flex items-center gap-2 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-lz-accent hover:text-lz-accent-ink"
+                    className="w-full md:w-auto flex items-center gap-2 text-lz-accent border-blue-300 dark:border-blue-600 hover:bg-lz-accent hover:text-lz-accent-ink"
                     disabled={isActionLoading}
                   >
                     <Eye className="w-4 h-4" />
@@ -544,7 +544,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                   <Button
                     onClick={handleKill}
                     variant="outline"
-                    className="w-full md:w-auto flex items-center gap-2 text-red-600 dark:text-red-400 border-red-300 dark:border-red-600 hover:bg-lz-err-solid hover:text-white"
+                    className="w-full md:w-auto flex items-center gap-2 text-text-danger border-red-300 dark:border-red-600 hover:bg-lz-err-solid hover:text-white"
                     disabled={isActionLoading}
                   >
                     <Square className="w-4 h-4" />
@@ -555,13 +555,13 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
             </div>
 
             {scheduleDetails?.currentlyRunning && (
-              <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
+              <p className="text-sm text-lz-warn mt-2">
                 {intl.formatMessage(i18n.cannotModifyRunning)}
               </p>
             )}
 
             {scheduleDetails?.paused && (
-              <p className="text-sm text-orange-600 dark:text-orange-400 mt-2">
+              <p className="text-sm text-lz-warn mt-2">
                 {intl.formatMessage(i18n.pausedWarning)}
               </p>
             )}

@@ -367,9 +367,9 @@ export function ExtensionInstallModal({ addExtension, setView }: ExtensionInstal
   const getTitleClassName = () => {
     switch (modalState.modalType) {
       case 'blocked':
-        return 'text-red-600 dark:text-red-400';
+        return 'text-text-danger';
       case 'untrusted':
-        return 'text-yellow-600 dark:text-yellow-400';
+        return 'text-lz-warn';
       case 'trusted':
       default:
         return '';

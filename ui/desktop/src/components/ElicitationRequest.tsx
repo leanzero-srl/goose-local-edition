@@ -205,12 +205,12 @@ export default function ElicitationRequest({
           </div>
         )}
         {submitError && (
-          <div role="alert" className="mt-3 text-sm text-red-500">
+          <div role="alert" className="mt-3 text-sm text-text-danger">
             {submitError}
           </div>
         )}
         <div
-          className={`mt-3 pt-3 border-t border-border-primary flex items-center gap-2 text-sm ${isUrgent ? 'text-red-500' : 'text-text-secondary'}`}
+          className={`mt-3 pt-3 border-t border-border-primary flex items-center gap-2 text-sm ${isUrgent ? 'text-text-danger' : 'text-text-secondary'}`}
         >
           <svg
             className="w-4 h-4 animate-pulse"

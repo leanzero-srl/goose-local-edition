@@ -38,7 +38,7 @@ export function RecipeNameField({
   return (
     <div>
       <label htmlFor={id} className="block text-sm font-medium text-text-primary mb-2">
-        {displayLabel} {required && <span className="text-red-500">*</span>}
+        {displayLabel} {required && <span className="text-text-danger">*</span>}
       </label>
       <input
         id={id}
@@ -71,7 +71,7 @@ export function RecipeNameField({
         data-testid="recipe-name-input"
       />
       <p className="text-xs text-text-secondary mt-1">{intl.formatMessage(i18n.formatHint)}</p>
-      {errors.length > 0 && <p className="text-red-500 text-sm mt-1">{errors[0]}</p>}
+      {errors.length > 0 && <p className="text-text-danger text-sm mt-1">{errors[0]}</p>}
     </div>
   );
 }

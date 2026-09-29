@@ -297,7 +297,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
             <>
               <div>
                 <label htmlFor="scheduleId-modal" className={modalLabelClassName}>
-                  {intl.formatMessage(i18n.nameLabel)} <span className="text-red-500">*</span>
+                  {intl.formatMessage(i18n.nameLabel)} <span className="text-text-danger">*</span>
                 </label>
                 <Input
                   type="text"
@@ -311,7 +311,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
 
               <div>
                 <label className={modalLabelClassName}>
-                  {intl.formatMessage(i18n.sourceLabel)} <span className="text-red-500">*</span>
+                  {intl.formatMessage(i18n.sourceLabel)} <span className="text-text-danger">*</span>
                 </label>
                 <div className="space-y-2">
                   <div className="flex bg-gray-100 dark:bg-gray-700 rounded-full p-1">
@@ -390,7 +390,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
 
           <div>
             <label className={modalLabelClassName}>
-              {intl.formatMessage(i18n.folderLabel)} <span className="text-red-500">*</span>
+              {intl.formatMessage(i18n.folderLabel)} <span className="text-text-danger">*</span>
             </label>
             <div className="flex items-center gap-2">
               {workingDir ? (

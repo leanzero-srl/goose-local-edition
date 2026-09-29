@@ -30,7 +30,7 @@ export function OllamaNotConfiguredTooltipMessage() {
         href="https://ollama.com/download"
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-600 underline hover:text-blue-800"
+        className="text-lz-accent underline"
       >
         {intl.formatMessage(i18n.ollamaApp)}
       </a>{' '}

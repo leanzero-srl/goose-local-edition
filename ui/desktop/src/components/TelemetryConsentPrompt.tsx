@@ -93,7 +93,7 @@ export default function TelemetryConsentPrompt() {
             {intl.formatMessage(i18n.description)}{' '}
             <button
               onClick={() => setShowPrivacyInfo(true)}
-              className="text-blue-600 dark:text-blue-400 hover:underline"
+              className="text-lz-accent hover:underline"
             >
               {intl.formatMessage(i18n.learnMore)}
             </button>

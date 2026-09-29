@@ -214,7 +214,7 @@ export default function ExternalBackendSection() {
                   className={urlError ? 'border-red-500' : ''}
                 />
                 {urlError && (
-                  <p className="text-xs text-red-500 flex items-center gap-1">
+                  <p className="text-xs text-text-danger flex items-center gap-1">
                     <AlertCircle size={12} />
                     {urlError}
                   </p>

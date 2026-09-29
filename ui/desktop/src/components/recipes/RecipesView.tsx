@@ -696,7 +696,7 @@ export default function RecipesView() {
             {(schedule_cron || slash_command) && (
               <div className="flex items-center gap-3">
                 {schedule_cron && (
-                  <div className="flex items-center text-blue-600 dark:text-blue-400">
+                  <div className="flex items-center text-lz-accent">
                     <Clock className="w-3 h-3 mr-1" />
                     {intl.formatMessage(i18n.runs, { schedule: getReadableCron(schedule_cron) })}
                   </div>
@@ -863,7 +863,7 @@ export default function RecipesView() {
     if (error) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-text-secondary">
-          <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
+          <AlertCircle className="h-12 w-12 text-text-danger mb-4" />
           <p className="text-lg mb-2">{intl.formatMessage(i18n.errorLoadingRecipes)}</p>
           <p className="text-sm text-center mb-4">{error}</p>
           <Button onClick={loadSavedRecipes} variant="default">

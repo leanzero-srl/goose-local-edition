@@ -259,7 +259,7 @@ export default function ExtensionModal({
   // Function to determine which icon to display with proper styling
   const getModalIcon = () => {
     if (showDeleteConfirmation) {
-      return <AlertTriangle className="text-red-500" size={24} />;
+      return <AlertTriangle className="text-text-danger" size={24} />;
     }
     return modalType === 'add' ? (
       <PlusIcon className="text-text-primary" size={24} />
@@ -525,7 +525,7 @@ export default function ExtensionModal({
                   <Button
                     onClick={() => setShowDeleteConfirmation(true)}
                     variant="outline"
-                    className="text-red-500 hover:text-red-600"
+                    className="text-text-danger"
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
                     {intl.formatMessage(i18n.removeExtension)}

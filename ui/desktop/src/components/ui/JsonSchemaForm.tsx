@@ -215,7 +215,7 @@ export default function JsonSchemaForm({
             checked={Boolean(value)}
             onChange={(e) => handleChange(key, e.target.checked)}
             disabled={disabled}
-            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            className="h-4 w-4 rounded border-gray-300 text-lz-accent focus:ring-blue-500"
           />
           <span className="text-sm text-text-primary">{prop.description || key}</span>
         </label>
@@ -270,7 +270,7 @@ export default function JsonSchemaForm({
           return (
             <div key={key} className="flex flex-col gap-1">
               {renderField(key, prop)}
-              {error && <span className="text-red-500 text-xs">{error}</span>}
+              {error && <span className="text-text-danger text-xs">{error}</span>}
             </div>
           );
         }
@@ -282,13 +282,13 @@ export default function JsonSchemaForm({
               className="text-sm font-medium text-text-primary"
             >
               {key}
-              {isRequired && <span className="text-red-500 ml-1">*</span>}
+              {isRequired && <span className="text-text-danger ml-1">*</span>}
             </label>
             {prop.description && prop.type !== 'boolean' && (
               <span className="text-xs text-text-secondary">{prop.description}</span>
             )}
             {renderField(key, prop)}
-            {error && <span className="text-red-500 text-xs">{error}</span>}
+            {error && <span className="text-text-danger text-xs">{error}</span>}
           </div>
         );
       })}

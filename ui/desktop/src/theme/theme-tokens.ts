@@ -106,12 +106,16 @@ const lightColorTokens: ColorTokens = {
 
   // Text
   '--color-text-primary': '#3f434b',
-  '--color-text-secondary': '#878787',
+  // Q-479: secondary and danger are WORDS on the three host surfaces (#ffffff / #f4f6f7 / #e3e6ea),
+  // so each clears 4.5:1 on all three — secondary #666666 5.7 / 5.3 / 4.6 (was #878787 3.6 / 3.3),
+  // danger #c81e1e 5.7 / 5.3 / 4.6 (was #f94b4b 3.4 / 3.2). Primary stays 9.9:1, so secondary
+  // still reads as the quieter grey. Ghost is secondary's twin.
+  '--color-text-secondary': '#666666',
   '--color-text-tertiary': '#a7b0b9',
   '--color-text-inverse': '#ffffff',
-  '--color-text-ghost': '#878787',
+  '--color-text-ghost': '#666666',
   '--color-text-info': '#5c98f9',
-  '--color-text-danger': '#f94b4b',
+  '--color-text-danger': '#c81e1e',
   '--color-text-success': '#91cb80',
   '--color-text-warning': '#fbcd44',
   '--color-text-disabled': '#cbd1d6',
@@ -164,16 +168,17 @@ const darkColorTokens: ColorTokens = {
 
   // Text
   '--color-text-primary': '#ffffff',
-  // Dark-theme secondary/tertiary were below WCAG AA on the card background (measured: #878787 = 4.28:1,
-  // #606c7a = 2.87:1 on rgb(34,37,42), where AA needs 4.5 / large-text 3.0). Bumped to clear AA with margin
-  // while staying visibly secondary — white 12.3:1 > secondary 5.20:1 > tertiary 4.15:1. Solid greys, no
-  // faded tint. (The LIGHT block keeps #878787 — brightening there would REDUCE contrast on a light bg.)
-  '--color-text-secondary': '#969696',
+  // Q-479: secondary is WORDS on all three dark host surfaces (#22252a / #3f434b / #474e57), not only the
+  // card: #969696 cleared the card (5.2) but measured 3.36:1 on background-secondary, where the sidebar,
+  // settings rows and hovered items sit. #c0c0c0 is 8.5 / 5.5 / 4.6 while white stays 15.4 / 9.9 / 8.4,
+  // so it still reads as the quieter grey. Danger #ff9b9b: 7.6 on the card, 4.9 on background-secondary
+  // (was #ff6b6b 3.6 there). Ghost is secondary's twin.
+  '--color-text-secondary': '#c0c0c0',
   '--color-text-tertiary': '#7a8694',
   '--color-text-inverse': '#000000',
-  '--color-text-ghost': '#878787',
+  '--color-text-ghost': '#c0c0c0',
   '--color-text-info': '#7cacff',
-  '--color-text-danger': '#ff6b6b',
+  '--color-text-danger': '#ff9b9b',
   '--color-text-success': '#a3d795',
   '--color-text-warning': '#ffd966',
   '--color-text-disabled': '#525b68',

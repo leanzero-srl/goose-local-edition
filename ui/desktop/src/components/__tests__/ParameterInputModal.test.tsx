@@ -58,7 +58,7 @@ describe('ParameterInputModal', () => {
       renderWithIntl(<ParameterInputModal {...defaultProps} />);
 
       const requiredParam = screen.getByText('Test parameter 1');
-      expect(requiredParam.parentElement?.querySelector('.text-red-500')).toBeInTheDocument();
+      expect(requiredParam.parentElement?.querySelector('.text-text-danger')).toBeInTheDocument();
     });
   });
 

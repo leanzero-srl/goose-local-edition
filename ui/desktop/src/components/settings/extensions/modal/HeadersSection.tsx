@@ -206,7 +206,7 @@ export default function HeadersSection({
           <Plus /> {intl.formatMessage(i18n.add)}
         </Button>
       </div>
-      {validationError && <div className="mt-2 text-red-500 text-sm">{validationError}</div>}
+      {validationError && <div className="mt-2 text-text-danger text-sm">{validationError}</div>}
     </div>
   );
 }

@@ -60,7 +60,7 @@ export default function ExtensionConfigFields({
               className={`w-full ${!submitAttempted || isValid ? 'border-border-primary' : 'border-red-500'} text-text-primary`}
             />
             {submitAttempted && !isValid && (
-              <div className="absolute text-xs text-red-500 mt-1">{intl.formatMessage(i18n.commandRequired)}</div>
+              <div className="absolute text-xs text-text-danger mt-1">{intl.formatMessage(i18n.commandRequired)}</div>
             )}
           </div>
         </div>
@@ -78,7 +78,7 @@ export default function ExtensionConfigFields({
             className={`w-full ${!submitAttempted || isValid ? 'border-border-primary' : 'border-red-500'} text-text-primary`}
           />
           {submitAttempted && !isValid && (
-            <div className="absolute text-xs text-red-500 mt-1">{intl.formatMessage(i18n.endpointRequired)}</div>
+            <div className="absolute text-xs text-text-danger mt-1">{intl.formatMessage(i18n.endpointRequired)}</div>
           )}
         </div>
       </div>
