@@ -5,7 +5,6 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -152,11 +151,7 @@ http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 "#;
 
 fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    goose_sidecar::unshared_loopback_port().unwrap()
 }
 
 fn port_listening(port: u16) -> bool {

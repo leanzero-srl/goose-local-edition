@@ -6,7 +6,6 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -41,11 +40,7 @@ engine.wait()
 "#;
 
 fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    goose_sidecar::unshared_loopback_port().unwrap()
 }
 
 fn config(port: u16) -> SidecarConfig {
@@ -488,7 +483,7 @@ async fn cached_holders_are_read_again_when_what_they_named_is_gone() {
 /// client connection to it (the negative control), and nothing once it closes.
 #[tokio::test]
 async fn listener_pids_agree_with_lsof() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = goose_sidecar::unshared_loopback_listener().unwrap();
     let port = listener.local_addr().unwrap().port();
     let mut client = Command::new("python3")
         .args([

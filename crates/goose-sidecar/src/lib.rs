@@ -898,11 +898,14 @@ impl Sidecar {
                 watch.publish(&mark, &handle);
             }
             let not_ready = match self.probe().await {
-                Ok(()) => {
-                    state.handle = Some(handle);
-                    tracing::info!(sidecar = %self.config.name, base_url = %self.config.base_url, "sidecar ready");
-                    return Ok(());
-                }
+                Ok(()) => match self.answer_outside_tree(&mut sys, &handle) {
+                    None => {
+                        state.handle = Some(handle);
+                        tracing::info!(sidecar = %self.config.name, base_url = %self.config.base_url, "sidecar ready");
+                        return Ok(());
+                    }
+                    Some(outside) => outside,
+                },
                 Err(NotReady::OtherId(served)) => {
                     // A catalog with another id is decisive when OUR OWN tree is the listener:
                     // the engine ignored the alias, and every probe it answers would count as
@@ -1005,6 +1008,53 @@ impl Sidecar {
         reqwest::Url::parse(&self.config.base_url)
             .ok()
             .and_then(|u| u.port_or_known_default())
+    }
+
+    /// Why a ready answer is NOT this child's, or `None` when it is (Q-499). The port is claimed
+    /// free before the spawn, but a load leaves it unbound for as long as it takes, and any other
+    /// process may bind it meanwhile and serve the expected id — on Linux CI a sibling test's
+    /// stand-in did, and the start returned "ready" before its own engine had bound anything. The
+    /// tree is sampled AFTER the answer, so a listener that joined the tree during the probe is
+    /// in it. Our tree runs as our uid, so its listener is always in the read: a read naming no
+    /// member means another process answered (or it left since), and the next look asks again.
+    #[cfg(unix)]
+    fn answer_outside_tree(&self, sys: &mut System, handle: &ChildHandle) -> Option<String> {
+        let port = self.listen_port()?;
+        let listeners = match port_holder::listener_pids(port) {
+            Ok(listeners) => listeners,
+            Err(e) => {
+                tracing::warn!(
+                    sidecar = %self.config.name,
+                    port,
+                    error = %e,
+                    "the ready answer's listener could not be read, so it is taken as this \
+                     child's without proof that another process did not answer"
+                );
+                return None;
+            }
+        };
+        let tree = match handle.child.id() {
+            Some(root) => process_tree_sample(sys, root),
+            None => Vec::new(),
+        };
+        if listeners
+            .iter()
+            .any(|pid| tree.iter().any(|(member, _, _)| member == pid))
+        {
+            return None;
+        }
+        Some(format!(
+            "{}/v1/models serves '{}', but no listener on port {port} is in this sidecar's process \
+             tree (listening pid(s): {listeners:?}) — another process answered, so it is not this \
+             child's readiness",
+            self.config.base_url, self.config.expected_model_id
+        ))
+    }
+
+    /// Off Unix the listener cannot be attributed; the answer is taken as the child's.
+    #[cfg(not(unix))]
+    fn answer_outside_tree(&self, _sys: &mut System, _handle: &ChildHandle) -> Option<String> {
+        None
     }
 
     /// Whether a LISTEN socket on our port belongs to a pid in the child's sampled tree.
@@ -1454,6 +1504,28 @@ async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
 fn process_group_of(pid: u32) -> Option<u32> {
     let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
     (pgid > 0).then_some(pgid as u32)
+}
+
+/// A loopback listener on a port no earlier call in this process was handed (Q-499). A port that
+/// `bind(0)` handed out goes back to the kernel's pool once released, and Linux may hand it out
+/// again at once — two tests of one binary drawing ports that way drew the same port, and one
+/// test's engine answered the other's readiness probe. For tests.
+#[doc(hidden)]
+pub fn unshared_loopback_listener() -> std::io::Result<std::net::TcpListener> {
+    static HANDED_OUT: StdMutex<BTreeSet<u16>> = StdMutex::new(BTreeSet::new());
+    let mut handed_out = HANDED_OUT.lock().unwrap();
+    loop {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        if handed_out.insert(listener.local_addr()?.port()) {
+            return Ok(listener);
+        }
+    }
+}
+
+/// [`unshared_loopback_listener`]'s port, released for the caller's own child to bind.
+#[doc(hidden)]
+pub fn unshared_loopback_port() -> std::io::Result<u16> {
+    Ok(unshared_loopback_listener()?.local_addr()?.port())
 }
 
 pub(crate) fn port_has_listener(port: u16) -> bool {
@@ -1973,7 +2045,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_lsof_is_an_error_never_an_empty_port() {
         let lsof = resolve_lsof().unwrap();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = crate::unshared_loopback_listener().unwrap();
         let port = listener.local_addr().unwrap().port();
         let pids = listening_pids(port).await.unwrap();
         assert_eq!(pids, vec![std::process::id()]);

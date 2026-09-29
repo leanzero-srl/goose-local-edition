@@ -2,7 +2,6 @@
 //! for an engine (macOS ships python3; the repo's test suites already shell out freely).
 #![cfg(unix)]
 
-use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -28,8 +27,7 @@ http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 "#;
 
 fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().port()
+    goose_sidecar::unshared_loopback_port().unwrap()
 }
 
 fn fake_engine_config(port: u16) -> SidecarConfig {
@@ -98,6 +96,73 @@ async fn a_slow_engine_that_keeps_progressing_is_never_failed_by_the_clock() {
     );
     assert!(sidecar.healthy().await);
     sidecar.shutdown().await;
+}
+
+/// Q-499: a start's readiness is its OWN child's answer. While the child loads, its port is free,
+/// and another process can bind it and serve the very catalog the probe expects — on Linux CI a
+/// sibling test's stand-in drew the same port and the slow start returned "ready" at t < 4 s,
+/// before its own engine had bound anything. The sibling here answers one probe; only then may
+/// the child try its bind, which fails, and the start must say so — never succeed on the
+/// sibling's answer.
+#[tokio::test]
+async fn a_listener_outside_the_childs_tree_is_not_its_readiness() {
+    use tokio::io::AsyncBufReadExt;
+
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let probed = dir.path().join("the-sibling-was-probed");
+    let marker = format!("readiness-owner-marker-{port}");
+    let mut config = fake_engine_config(port);
+    config.command = vec![
+        "python3".to_string(),
+        "-c".to_string(),
+        format!(
+            "import os, sys, time  # {marker}\nwhile not os.path.exists({probed:?}):\n    \
+             print('loading', file=sys.stderr, flush=True); time.sleep(0.1)\n{FAKE_ENGINE}"
+        ),
+        port.to_string(),
+    ];
+
+    let sibling = tokio::spawn(async move {
+        // The child exists only after the start claimed the free port; bind it only then.
+        loop {
+            let found = std::process::Command::new("pgrep")
+                .args(["-f", &marker])
+                .output()
+                .unwrap();
+            if !found.stdout.is_empty() {
+                break;
+            }
+            tokio::time::sleep(goose_sidecar::GRACE_TICK).await;
+        }
+        let mut sibling = tokio::process::Command::new("python3")
+            .args(["-u", "-c", FAKE_ENGINE, &port.to_string()])
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut lines = tokio::io::BufReader::new(sibling.stderr.take().unwrap()).lines();
+        while let Some(line) = lines.next_line().await.unwrap() {
+            if line.contains("served /v1/models") {
+                break;
+            }
+        }
+        std::fs::write(&probed, b"").unwrap();
+        sibling
+    });
+
+    let outcome = Sidecar::start(config).await;
+    let mut sibling = sibling.await.unwrap();
+    sibling.kill().await.unwrap();
+    let err = match outcome {
+        Ok(sidecar) => {
+            sidecar.shutdown().await;
+            panic!("the start took a listener outside its child's tree for the child's readiness");
+        }
+        Err(e) => e.to_string(),
+    };
+    assert!(err.contains("exited during startup"), "err was: {err}");
+    assert!(err.contains("Address already in use"), "err was: {err}");
 }
 
 /// The other half: a child that never serves AND never progresses (no stderr, no CPU, no
