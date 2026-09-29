@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import { errorMessage } from '../../utils/conversionUtils';
 import { defineMessages, useIntl } from '../../i18n';
+import { DISABLED_NOW } from '../lz/tokens';
 
 const i18n = defineMessages({
   enterText: {
@@ -176,9 +177,9 @@ export const InlineEditText: React.FC<InlineEditTextProps> = ({
         className={`
           w-full px-2 py-1 border rounded
           bg-background-primary text-text-primary
-          border-blue-500 ring-2 ring-blue-500/20
-          focus:outline-none focus:ring-2 focus:ring-blue-500/40
-          disabled:opacity-50 disabled:cursor-not-allowed
+          border-blue-500
+          focus:outline-none focus:ring-2 focus:ring-blue-500
+          disabled:bg-lz-surface-2 disabled:text-lz-ink-3 disabled:cursor-not-allowed
           ${editClassName}
         `}
         onClick={(e) => e.stopPropagation()}
@@ -192,12 +193,18 @@ export const InlineEditText: React.FC<InlineEditTextProps> = ({
         cursor-pointer px-2 py-1 rounded
         hover:bg-background-secondary
         transition-colors
-        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
+        ${disabled ? DISABLED_NOW : ''}
         ${className}
       `}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
-      title={disabled ? '' : singleClickEdit ? intl.formatMessage(i18n.clickToEdit) : intl.formatMessage(i18n.doubleClickToEdit)}
+      title={
+        disabled
+          ? ''
+          : singleClickEdit
+            ? intl.formatMessage(i18n.clickToEdit)
+            : intl.formatMessage(i18n.doubleClickToEdit)
+      }
     >
       {value || <span className="text-text-secondary italic">{resolvedPlaceholder}</span>}
     </div>

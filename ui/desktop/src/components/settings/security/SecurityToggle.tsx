@@ -80,7 +80,8 @@ const i18n = defineMessages({
   },
   mlEndpointDescription: {
     id: 'securityToggle.mlEndpointDescription',
-    defaultMessage: 'Enter the full URL for your ML classification service (including model identifier)',
+    defaultMessage:
+      'Enter the full URL for your ML classification service (including model identifier)',
   },
   mlTokenDescription: {
     id: 'securityToggle.mlTokenDescription',
@@ -190,8 +191,7 @@ export const SecurityToggle = () => {
   const commandClassifierOverride = window.appConfig?.get(
     'SECURITY_COMMAND_CLASSIFIER_ENABLED_OVERRIDE'
   ) as string | undefined;
-  const isPromptOverridden =
-    promptEnabledOverride === 'true' || promptEnabledOverride === 'false';
+  const isPromptOverridden = promptEnabledOverride === 'true' || promptEnabledOverride === 'false';
   const isCommandClassifierOverridden =
     commandClassifierOverride === 'true' || commandClassifierOverride === 'false';
   const promptOverrideValue = promptEnabledOverride === 'true';
@@ -330,7 +330,7 @@ export const SecurityToggle = () => {
             </p>
           )}
         </div>
-        <div className={`flex items-center ${isPromptOverridden ? 'opacity-40' : ''}`}>
+        <div className="flex items-center">
           <Switch
             checked={isPromptOverridden ? promptOverrideValue : enabled}
             onCheckedChange={handleToggle}
@@ -347,7 +347,7 @@ export const SecurityToggle = () => {
       >
         <div className="space-y-4 px-2 pb-2">
           {/* Detection Threshold */}
-          <div className={effectiveEnabled ? '' : 'opacity-50'}>
+          <div>
             <label
               className={`text-sm font-medium ${effectiveEnabled ? 'text-text-primary' : 'text-text-secondary'}`}
             >
@@ -409,9 +409,7 @@ export const SecurityToggle = () => {
                   </>
                 )}
               </div>
-              <div
-                className={`flex items-center ${isCommandClassifierOverridden ? 'opacity-40' : ''}`}
-              >
+              <div className="flex items-center">
                 <Switch
                   checked={effectiveCommandClassifierEnabled}
                   onCheckedChange={handleCommandClassifierToggle}
@@ -436,11 +434,7 @@ export const SecurityToggle = () => {
                     : 'max-h-0 opacity-0'
                 }`}
               >
-                <div
-                  className={
-                    effectiveEnabled && effectiveCommandClassifierEnabled ? '' : 'opacity-50'
-                  }
-                >
+                <div>
                   <ClassifierEndpointInputs
                     endpointValue={commandEndpointInput}
                     tokenValue={commandTokenInput}
@@ -492,7 +486,7 @@ export const SecurityToggle = () => {
                   : 'max-h-0 opacity-0'
               }`}
             >
-              <div className={effectiveEnabled && mlEnabled ? '' : 'opacity-50'}>
+              <div>
                 {showModelDropdown ? (
                   <div className="space-y-3">
                     <div>

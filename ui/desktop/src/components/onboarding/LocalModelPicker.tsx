@@ -371,7 +371,7 @@ export default function LocalModelPicker({ onConfigured }: LocalModelPickerProps
             <button
               onClick={handlePrimaryAction}
               disabled={!selectedModelId}
-              className="w-full px-4 py-2.5 bg-blue-600 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-700 cursor-pointer"
+              className="w-full px-4 py-2.5 bg-blue-600 rounded-lg text-white text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:bg-lz-surface-2 disabled:text-lz-ink-3 hover:bg-blue-700 cursor-pointer"
             >
               {selectedModel?.status.state === 'Downloaded'
                 ? intl.formatMessage(i18n.useModel, { modelId: selectedModel.id })

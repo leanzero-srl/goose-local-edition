@@ -4691,19 +4691,19 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "не измерено"
   },
-  "mlxDistributed.otherWindow.answering": {
+  "mlxDistributed.otherGoose.answering": {
     "defaultMessage": "отвечает"
   },
-  "mlxDistributed.otherWindow.label": {
-    "defaultMessage": "Запущено в другом окне"
+  "mlxDistributed.otherGoose.label": {
+    "defaultMessage": "Запущен другим goose"
   },
-  "mlxDistributed.otherWindow.notAnswering": {
+  "mlxDistributed.otherGoose.notAnswering": {
     "defaultMessage": "не отвечает"
   },
-  "mlxDistributed.otherWindow.readOnly": {
-    "defaultMessage": "Здесь только просмотр: запуск и остановка — в окне, которое его запустило (PID goosed {pid})."
+  "mlxDistributed.otherGoose.readOnly": {
+    "defaultMessage": "Здесь только просмотр: его держит goose с PID {pid} — goose serve в терминале или другое приложение goose. Запускайте и останавливайте его там."
   },
-  "mlxDistributed.otherWindow.run": {
+  "mlxDistributed.otherGoose.run": {
     "defaultMessage": "{model} на {nodes} · {backend} · {state}"
   },
   "mlxDistributed.passed": {
@@ -5357,11 +5357,11 @@
   "mlxModels.settingsFailed": {
     "defaultMessage": "Не удалось прочитать настройки движка."
   },
-  "mlxMount.foreignAnswering": {
-    "defaultMessage": "Готов · принадлежит другому окну"
+  "mlxMount.otherGooseAnswering": {
+    "defaultMessage": "Готов · запущен другим goose"
   },
-  "mlxMount.foreignNotAnswering": {
-    "defaultMessage": "Не отвечает · принадлежит другому окну"
+  "mlxMount.otherGooseNotAnswering": {
+    "defaultMessage": "Не отвечает · запущен другим goose"
   },
   "mlxMountRefusal.details": {
     "defaultMessage": "Подробности"
@@ -6284,8 +6284,8 @@
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} на {where}"
   },
-  "modelsBottomBar.servedWhereForeign": {
-    "defaultMessage": "{phase} на {where} · запущена другим окном"
+  "modelsBottomBar.servedWhereOtherGoose": {
+    "defaultMessage": "{phase} на {where} · запущена другим goose"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"

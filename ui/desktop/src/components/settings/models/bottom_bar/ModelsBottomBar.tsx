@@ -111,8 +111,8 @@ const i18n = defineMessages({
     defaultMessage: '{phase} on {where}',
   },
   servedWhereForeign: {
-    id: 'modelsBottomBar.servedWhereForeign',
-    defaultMessage: '{phase} on {where} · run by another window',
+    id: 'modelsBottomBar.servedWhereOtherGoose',
+    defaultMessage: '{phase} on {where} · run by another goose',
   },
   servedNotRunning: {
     id: 'modelsBottomBar.servedNotRunning',
