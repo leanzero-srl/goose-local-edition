@@ -1,5 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { acpReadAllConfig, acpReadConfig, acpRemoveConfig, acpUpsertConfig } from '../acp/config';
+import {
+  acpMoveConfigAside,
+  acpReadAllConfig,
+  acpReadConfig,
+  acpRemoveConfig,
+  acpUpsertConfig,
+  type UnreadableConfigFile,
+} from '../acp/config';
 import { acpListProviderDetails } from '../acp/providers';
 import {
   getConfiguredExtensions,
@@ -56,6 +63,10 @@ interface ConfigContextType {
   providersList: ProviderDetails[];
   extensionsList: FixedExtensionEntry[];
   extensionWarnings: string[];
+  /** Settings files goosed could not read: the app runs without them and saves refuse them. */
+  unreadableFiles: UnreadableConfigFile[];
+  /** Renames an unreadable file aside through goosed, then loads everything as on a fresh boot. */
+  moveConfigAside: (path: string) => Promise<string>;
   upsert: (key: string, value: unknown, is_secret: boolean) => Promise<void>;
   read: (key: string, is_secret: boolean, options?: { throwOnError?: boolean }) => Promise<unknown>;
   remove: (key: string, is_secret: boolean) => Promise<void>;
@@ -77,14 +88,16 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
   const [providersList, setProvidersList] = useState<ProviderDetails[]>([]);
   const [extensionsList, setExtensionsList] = useState<FixedExtensionEntry[]>([]);
   const [extensionWarnings, setExtensionWarnings] = useState<string[]>([]);
+  const [unreadableFiles, setUnreadableFiles] = useState<UnreadableConfigFile[]>([]);
 
   // Ref to access providersList in getProviders without recreating the callback
   const providersListRef = React.useRef<ProviderDetails[]>(providersList);
   providersListRef.current = providersList;
 
   const reloadConfig = useCallback(async () => {
-    const config = await acpReadAllConfig();
-    setConfig(config);
+    const response = await acpReadAllConfig();
+    setConfig(response.config);
+    setUnreadableFiles(response.unreadableFiles);
   }, []);
 
   const upsert = useCallback(
@@ -195,58 +208,68 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
     return providersListRef.current;
   }, []);
 
+  // Everything the app reads at boot. Moving an unreadable file aside runs it again, so the fresh
+  // file gets the same bundled extensions a first launch would.
+  const loadAll = useCallback(async () => {
+    await reloadConfig();
+
+    // Load providers
+    try {
+      const providersData = await acpListProviderDetails();
+      providersListRef.current = providersData;
+      setProvidersList(providersData);
+    } catch (error) {
+      console.error('Failed to load providers:', error);
+      setProvidersList([]);
+    }
+
+    // Load extensions
+    try {
+      const extensionsResponse = await getConfiguredExtensions();
+      let extensions = extensionsResponse.extensions;
+
+      // Always sync bundled extensions from bundled-extensions.json
+      // This ensures:
+      // 1. Fresh installs get the default extensions (developer, computercontroller, etc.)
+      // 2. Existing users get NEW bundled extensions added in subsequent releases
+      // The syncBundledExtensions function skips extensions that already exist and are marked as bundled
+      // Platform extensions (code_execution, todo, etc.) are handled by the backend
+      const addExtensionForSync = async (
+        _name: string,
+        config: ExtensionConfig,
+        enabled: boolean
+      ) => {
+        await addConfigExtension(config, enabled);
+      };
+      const removeExtensionForSync = async (configKey: string) => {
+        await removeConfigExtension(configKey);
+      };
+      extensions = await pruneDeprecatedBundledExtensions(extensions, removeExtensionForSync);
+      await syncBundledExtensions(extensions, addExtensionForSync);
+      await reconcileBundledMcpsAtStartup(extensions);
+      // Reload extensions after sync
+      const refreshedResponse = await getConfiguredExtensions();
+      extensions = refreshedResponse.extensions;
+
+      setExtensionsList(extensions);
+      setExtensionWarnings(extensionsResponse.warnings || []);
+    } catch (error) {
+      console.error('Failed to load extensions:', error);
+    }
+  }, [reloadConfig]);
+
   useEffect(() => {
-    // Load all configuration data and providers on mount
-    (async () => {
-      // Load config
-      const configResponse = await acpReadAllConfig();
-      setConfig(configResponse);
+    loadAll().catch((error) => console.error('Failed to load configuration:', error));
+  }, [loadAll]);
 
-      // Load providers
-      try {
-        const providersData = await acpListProviderDetails();
-        providersListRef.current = providersData;
-        setProvidersList(providersData);
-      } catch (error) {
-        console.error('Failed to load providers:', error);
-        setProvidersList([]);
-      }
-
-      // Load extensions
-      try {
-        const extensionsResponse = await getConfiguredExtensions();
-        let extensions = extensionsResponse.extensions;
-
-        // Always sync bundled extensions from bundled-extensions.json
-        // This ensures:
-        // 1. Fresh installs get the default extensions (developer, computercontroller, etc.)
-        // 2. Existing users get NEW bundled extensions added in subsequent releases
-        // The syncBundledExtensions function skips extensions that already exist and are marked as bundled
-        // Platform extensions (code_execution, todo, etc.) are handled by the backend
-        const addExtensionForSync = async (
-          _name: string,
-          config: ExtensionConfig,
-          enabled: boolean
-        ) => {
-          await addConfigExtension(config, enabled);
-        };
-        const removeExtensionForSync = async (configKey: string) => {
-          await removeConfigExtension(configKey);
-        };
-        extensions = await pruneDeprecatedBundledExtensions(extensions, removeExtensionForSync);
-        await syncBundledExtensions(extensions, addExtensionForSync);
-        await reconcileBundledMcpsAtStartup(extensions);
-        // Reload extensions after sync
-        const refreshedResponse = await getConfiguredExtensions();
-        extensions = refreshedResponse.extensions;
-
-        setExtensionsList(extensions);
-        setExtensionWarnings(extensionsResponse.warnings || []);
-      } catch (error) {
-        console.error('Failed to load extensions:', error);
-      }
-    })();
-  }, []);
+  const moveConfigAside = useCallback(
+    async (path: string) => {
+      const movedTo = await acpMoveConfigAside(path);
+      await loadAll();
+      return movedTo;
+    },
+    [loadAll]
+  );
 
   const contextValue = useMemo(() => {
     return {
@@ -254,6 +277,8 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
       providersList,
       extensionsList,
       extensionWarnings,
+      unreadableFiles,
+      moveConfigAside,
       upsert,
       read,
       remove,
@@ -268,6 +293,8 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
     providersList,
     extensionsList,
     extensionWarnings,
+    unreadableFiles,
+    moveConfigAside,
     upsert,
     read,
     remove,

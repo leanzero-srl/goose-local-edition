@@ -427,6 +427,14 @@ impl GooseAcpAgent {
         self.on_config_read_all(req).await
     }
 
+    #[custom_method(ConfigMoveAsideRequest)]
+    async fn dispatch_config_move_aside(
+        &self,
+        req: ConfigMoveAsideRequest,
+    ) -> Result<ConfigMoveAsideResponse, agent_client_protocol::Error> {
+        self.on_config_move_aside(req).await
+    }
+
     #[custom_method(DefaultsReadRequest)]
     async fn dispatch_defaults_read(
         &self,

@@ -72,6 +72,7 @@ vi.mock('./components/ConfigContext', () => ({
     addExtension: vi.fn(),
     updateExtension: vi.fn(),
     createProviderDefaults: vi.fn(),
+    unreadableFiles: [],
   }),
   ConfigProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));

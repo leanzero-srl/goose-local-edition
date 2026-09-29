@@ -11132,6 +11132,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "正在等待模型的第一个字 · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "取消"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "移到一旁"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose 会在同一文件夹中将它重命名为 {fileName}.corrupt- 加上日期和时间，因此其中的内容都不会被删除，然后在没有已保存密钥的情况下开始。你可以从重命名后的文件中复制回需要的内容。} other{goose 会在同一文件夹中将它重命名为 {fileName}.corrupt- 加上日期和时间，因此其中的内容都不会被删除，然后使用新的设置文件开始。你可以从重命名后的文件中复制回需要的内容。}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "将 {fileName} 移到一旁？"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{在修复之前，goose 会在没有其中已保存密钥的情况下运行，因此需要密钥的提供商看起来像已退出登录。文件无法读取期间，不会有任何内容保存覆盖它。} other{在修复之前，goose 会使用默认设置运行，因此你的提供商、模型和扩展可能看起来不见了。文件无法读取期间，不会有任何内容保存覆盖它。}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose 无法读取保存你密钥的文件} other{goose 无法读取你的设置文件}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "移到一旁并重新开始"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose 无法将它移到一旁：{error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "第 {line} 行，第 {column} 列"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "在 Finder 中显示"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "更新将在后台自动下载。"
   },

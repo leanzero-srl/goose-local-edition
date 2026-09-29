@@ -64,25 +64,105 @@ pub enum ConfigError {
         path.display()
     )]
     Unparseable { path: PathBuf, reason: String },
+    #[error(
+        "{} is not a goose settings file that is unreadable right now; nothing was moved",
+        path.display()
+    )]
+    NotUnreadable { path: PathBuf },
+}
+
+/// Why a settings file that exists could not be read, with the parser's 1-based line and column
+/// when it reports one (Q-468: the desktop names the file and the place).
+struct SettingsReadFailure {
+    reason: String,
+    line: Option<usize>,
+    column: Option<usize>,
+}
+
+impl SettingsReadFailure {
+    fn without_location(reason: String) -> Self {
+        Self {
+            reason,
+            line: None,
+            column: None,
+        }
+    }
 }
 
 /// A settings file that exists is the person's data. An empty document (blank, comments only,
 /// `---`, `~`) is an honestly empty mapping; anything else that is not a mapping is refused, so no
 /// read-modify-write can replace it with defaults.
-fn parse_settings_file(path: &Path, content: &str) -> Result<Mapping, ConfigError> {
-    let unparseable = |reason: String| ConfigError::Unparseable {
-        path: path.to_path_buf(),
-        reason,
-    };
+fn parse_settings_content(content: &str) -> Result<Mapping, SettingsReadFailure> {
     match serde_yaml::from_str::<serde_yaml::Value>(content) {
         Ok(serde_yaml::Value::Null) => Ok(Mapping::new()),
         Ok(serde_yaml::Value::Mapping(mapping)) => Ok(mapping),
-        Ok(other) => Err(unparseable(format!(
+        Ok(other) => Err(SettingsReadFailure::without_location(format!(
             "expected a mapping of keys, found {}",
             yaml_kind(&other)
         ))),
-        Err(e) => Err(unparseable(e.to_string())),
+        Err(e) => {
+            let location = e.location();
+            Err(SettingsReadFailure {
+                reason: e.to_string(),
+                line: location.as_ref().map(|at| at.line()),
+                column: location.as_ref().map(|at| at.column()),
+            })
+        }
     }
+}
+
+fn parse_settings_file(path: &Path, content: &str) -> Result<Mapping, ConfigError> {
+    parse_settings_content(content).map_err(|failure| ConfigError::Unparseable {
+        path: path.to_path_buf(),
+        reason: failure.reason,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsFileRole {
+    Config,
+    Secrets,
+}
+
+/// A settings file goose reads that exists but cannot be read. Reads skip it so the app keeps
+/// booting and saves refuse to write over it (Q-465); this report is how the person is told (Q-468).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadableSettingsFile {
+    pub path: PathBuf,
+    pub role: SettingsFileRole,
+    pub reason: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+}
+
+/// The same read and parse the readers use (`load`, `read_secrets_from_file`), so a file reported
+/// here is exactly a file those readers skip or refuse. A file that does not exist is not unreadable.
+fn diagnose_settings_file(path: &Path, role: SettingsFileRole) -> Option<UnreadableSettingsFile> {
+    let failure = match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => SettingsReadFailure::without_location(e.to_string()),
+        Ok(content) => match parse_settings_content(&content) {
+            Err(failure) => failure,
+            Ok(mapping) if role == SettingsFileRole::Secrets => {
+                match serde_json::to_value(mapping) {
+                    Ok(Value::Object(_)) => return None,
+                    // Never the value itself: this file holds secrets.
+                    Ok(_) => SettingsReadFailure::without_location(
+                        "expected a mapping of keys".to_string(),
+                    ),
+                    Err(e) => SettingsReadFailure::without_location(e.to_string()),
+                }
+            }
+            Ok(_) => return None,
+        },
+    };
+    Some(UnreadableSettingsFile {
+        path: path.to_path_buf(),
+        role,
+        reason: failure.reason,
+        line: failure.line,
+        column: failure.column,
+    })
 }
 
 fn yaml_kind(value: &serde_yaml::Value) -> &'static str {
@@ -501,6 +581,66 @@ impl Config {
 
     pub fn path(&self) -> String {
         self.write_path().to_string_lossy().to_string()
+    }
+
+    fn secrets_file(&self) -> PathBuf {
+        match &self.secrets {
+            #[cfg(feature = "system-keyring")]
+            SecretStorage::Keyring { .. } => Self::secrets_file_path(),
+            SecretStorage::File { path } => path.clone(),
+        }
+    }
+
+    /// Every settings file this config reads that exists but cannot be read, re-diagnosed on each
+    /// call so the report is never staler than the files on disk.
+    pub fn unreadable_files(&self) -> Vec<UnreadableSettingsFile> {
+        let mut unreadable: Vec<UnreadableSettingsFile> = self
+            .config_paths
+            .iter()
+            .filter_map(|path| diagnose_settings_file(path, SettingsFileRole::Config))
+            .collect();
+        unreadable.extend(diagnose_settings_file(
+            &self.secrets_file(),
+            SettingsFileRole::Secrets,
+        ));
+        unreadable
+    }
+
+    /// Rename an unreadable settings file to `<name>.corrupt-<utc>` so goose starts that file
+    /// fresh while the person's bytes stay on disk. The path arrives from the desktop, so only a
+    /// file in `unreadable_files()` at this moment may move; anything else is refused.
+    pub fn move_aside_unreadable(&self, path: &Path) -> Result<PathBuf, ConfigError> {
+        let _guard = self.guard.lock().unwrap();
+        if !self.unreadable_files().iter().any(|file| file.path == path) {
+            return Err(ConfigError::NotUnreadable {
+                path: path.to_path_buf(),
+            });
+        }
+        let name = path
+            .file_name()
+            .ok_or_else(|| ConfigError::NotUnreadable {
+                path: path.to_path_buf(),
+            })?
+            .to_string_lossy();
+        let aside = path.with_file_name(format!(
+            "{name}.corrupt-{}",
+            chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
+        ));
+        if aside.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("{} already exists; nothing was moved", aside.display()),
+            )
+            .into());
+        }
+        std::fs::rename(path, &aside)?;
+        self.invalidate_secrets_cache();
+        tracing::warn!(
+            "moved the unreadable settings file {} aside to {}",
+            path.display(),
+            aside.display()
+        );
+        Ok(aside)
     }
 
     /// Load only the writable config file for read-modify-write operations.
@@ -1882,6 +2022,126 @@ mod tests {
         config.set_secret("ANTHROPIC_API_KEY", &"sk-2")?;
         let value: String = config.get_secret("ANTHROPIC_API_KEY")?;
         assert_eq!(value, "sk-2");
+        Ok(())
+    }
+
+    fn config_in(dir: &tempfile::TempDir) -> Result<(Config, PathBuf, PathBuf), ConfigError> {
+        let config_path = dir.path().join(CONFIG_YAML_NAME);
+        let secrets_path = dir.path().join("secrets.yaml");
+        let config = Config::new_with_file_secrets(&config_path, &secrets_path)?;
+        Ok((config, config_path, secrets_path))
+    }
+
+    // Q-468: reads skip an unreadable file so goose keeps booting; the report is what says so.
+    #[test]
+    fn a_corrupt_config_is_reported_with_its_place_and_saves_still_refuse(
+    ) -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, config_path, _) = config_in(&dir)?;
+        let original = "GOOSE_PROVIDER: openai\nextensions: [unclosed\n";
+        std::fs::write(&config_path, original)?;
+
+        let report = config.unreadable_files();
+        assert_eq!(report.len(), 1, "{report:?}");
+        let file = &report[0];
+        assert_eq!(file.path, config_path);
+        assert_eq!(file.role, SettingsFileRole::Config);
+        assert!(
+            file.reason.contains("did not find expected"),
+            "{}",
+            file.reason
+        );
+        assert_eq!((file.line, file.column), (Some(3), Some(1)), "{file:?}");
+
+        assert!(config.set_param("k", "v").is_err());
+        assert_eq!(std::fs::read_to_string(&config_path)?, original);
+        assert_eq!(config.unreadable_files(), report);
+        Ok(())
+    }
+
+    #[test]
+    fn a_corrupt_secrets_file_is_reported_without_its_values() -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _, secrets_path) = config_in(&dir)?;
+        std::fs::write(
+            &secrets_path,
+            "OPENAI_API_KEY: sk-live-secret\nbroken: [unclosed\n",
+        )?;
+
+        let report = config.unreadable_files();
+        assert_eq!(report.len(), 1, "{report:?}");
+        assert_eq!(report[0].path, secrets_path);
+        assert_eq!(report[0].role, SettingsFileRole::Secrets);
+        assert!(!report[0].reason.contains("sk-live-secret"), "{report:?}");
+        assert!(report[0].line.is_some());
+        assert!(config.set_secret("ANTHROPIC_API_KEY", &"sk-2").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn readable_empty_or_missing_files_are_not_reported() -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, config_path, secrets_path) = config_in(&dir)?;
+        assert_eq!(config.unreadable_files(), vec![]);
+        std::fs::write(&config_path, "# nothing yet\n")?;
+        std::fs::write(&secrets_path, "")?;
+        assert_eq!(config.unreadable_files(), vec![]);
+        std::fs::write(&config_path, "GOOSE_PROVIDER: openai\n")?;
+        std::fs::write(&secrets_path, "OPENAI_API_KEY: sk-1\n")?;
+        assert_eq!(config.unreadable_files(), vec![]);
+        Ok(())
+    }
+
+    #[test]
+    fn move_aside_keeps_the_bytes_clears_the_report_and_saves_work_again() -> Result<(), ConfigError>
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, config_path, secrets_path) = config_in(&dir)?;
+        let original = "GOOSE_PROVIDER: openai\nextensions: [unclosed\n";
+        std::fs::write(&config_path, original)?;
+        std::fs::write(&secrets_path, "- not\n- a map\n")?;
+
+        let aside = config.move_aside_unreadable(&config_path)?;
+        assert!(!config_path.exists());
+        assert_eq!(aside.parent(), config_path.parent());
+        let aside_name = aside.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            aside_name.starts_with("config.yaml.corrupt-"),
+            "{aside_name}"
+        );
+        assert_eq!(std::fs::read_to_string(&aside)?, original);
+
+        let report = config.unreadable_files();
+        assert_eq!(report.len(), 1, "{report:?}");
+        assert_eq!(report[0].path, secrets_path);
+
+        config.set_param("GOOSE_PROVIDER", "anthropic")?;
+        let provider: String = config.get_param("GOOSE_PROVIDER")?;
+        assert_eq!(provider, "anthropic");
+
+        config.move_aside_unreadable(&secrets_path)?;
+        assert_eq!(config.unreadable_files(), vec![]);
+        config.set_secret("ANTHROPIC_API_KEY", &"sk-2")?;
+        Ok(())
+    }
+
+    #[test]
+    fn move_aside_refuses_a_file_that_is_not_unreadable() -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, config_path, _) = config_in(&dir)?;
+        std::fs::write(&config_path, "GOOSE_PROVIDER: openai\n")?;
+        let elsewhere = dir.path().join("notes.yaml");
+        std::fs::write(&elsewhere, "[unclosed\n")?;
+
+        for path in [&config_path, &elsewhere] {
+            let err = config.move_aside_unreadable(path).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::NotUnreadable { .. }),
+                "{path:?}: {err}"
+            );
+            assert!(path.exists());
+        }
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 2);
         Ok(())
     }
 

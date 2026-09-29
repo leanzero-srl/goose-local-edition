@@ -11132,6 +11132,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Modelin ilk sözcükleri bekleniyor · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Kenara al"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose onu aynı klasörde {fileName}.corrupt- ve ardından tarih ve saat olacak şekilde yeniden adlandırır, böylece içindeki hiçbir şey silinmez; ardından kayıtlı anahtar olmadan başlar. İhtiyacınız olanı yeniden adlandırılan dosyadan geri kopyalayabilirsiniz.} other{goose onu aynı klasörde {fileName}.corrupt- ve ardından tarih ve saat olacak şekilde yeniden adlandırır, böylece içindeki hiçbir şey silinmez; ardından yeni bir ayarlar dosyasıyla başlar. İhtiyacınız olanı yeniden adlandırılan dosyadan geri kopyalayabilirsiniz.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "{fileName} kenara alınsın mı?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Düzeltilene kadar goose içinde kayıtlı anahtarlar olmadan çalışır, bu yüzden anahtar gerektiren sağlayıcılar oturumu kapalı görünür. Dosya okunamadığı sürece üzerine hiçbir şey kaydedilmez.} other{Düzeltilene kadar goose varsayılanlarıyla çalışır, bu yüzden sağlayıcılarınız, modelleriniz ve uzantılarınız kaybolmuş görünebilir. Dosya okunamadığı sürece üzerine hiçbir şey kaydedilmez.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose anahtarlarınızı tutan dosyayı okuyamadı} other{goose ayarlar dosyanızı okuyamadı}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Kenara al ve baştan başla"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose onu kenara alamadı: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Satır {line}, sütun {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Finder'da göster"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Güncelleme arka planda otomatik olarak indirilecektir."
   },

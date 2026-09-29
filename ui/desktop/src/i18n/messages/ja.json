@@ -11132,6 +11132,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "モデルの最初の言葉を待っています · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "退避する"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose は同じフォルダー内でこのファイルの名前を {fileName}.corrupt- の後に日時を付けた名前に変更するため、内容は何も削除されません。その後、保存済みのキーなしで始めます。必要なものは名前を変更したファイルからコピーして戻せます。} other{goose は同じフォルダー内でこのファイルの名前を {fileName}.corrupt- の後に日時を付けた名前に変更するため、内容は何も削除されません。その後、新しい設定ファイルで始めます。必要なものは名前を変更したファイルからコピーして戻せます。}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "{fileName} を退避しますか?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{修正されるまで、goose はこのファイルに保存されたキーなしで動作するため、キーが必要なプロバイダーはサインアウトしているように見えます。読み込めない間、このファイルに上書き保存されることはありません。} other{修正されるまで、goose は既定値で動作するため、プロバイダー、モデル、拡張機能が消えたように見えることがあります。読み込めない間、このファイルに上書き保存されることはありません。}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose はキーを保存しているファイルを読み込めませんでした} other{goose は設定ファイルを読み込めませんでした}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "退避して新しく始める"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose は退避できませんでした: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "{line} 行目、{column} 列目"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Finder に表示"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "アップデートはバックグラウンドで自動的にダウンロードされます。"
   },

@@ -11132,6 +11132,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Esperando las primeras palabras del modelo · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Apartarlo"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose lo renombra a {fileName}.corrupt- seguido de la fecha y la hora, en la misma carpeta, así que no se borra nada de su contenido, y después empieza sin claves guardadas. Puedes copiar lo que necesites desde el archivo renombrado.} other{goose lo renombra a {fileName}.corrupt- seguido de la fecha y la hora, en la misma carpeta, así que no se borra nada de su contenido, y después empieza con un archivo de configuración nuevo. Puedes copiar lo que necesites desde el archivo renombrado.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "¿Apartar {fileName}?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Hasta que se corrija, goose funciona sin las claves guardadas en él, así que los proveedores que necesitan una parecen desconectados. No se guarda nada sobre el archivo mientras no se pueda leer.} other{Hasta que se corrija, goose funciona con sus valores predeterminados, así que tus proveedores, modelos y extensiones pueden parecer desaparecidos. No se guarda nada sobre el archivo mientras no se pueda leer.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose no pudo leer el archivo que guarda tus claves} other{goose no pudo leer tu archivo de configuración}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Apartarlo y empezar de cero"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose no pudo apartarlo: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Línea {line}, columna {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Mostrar en Finder"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "La actualización se descargará automáticamente en segundo plano."
   },

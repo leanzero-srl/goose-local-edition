@@ -901,6 +901,101 @@ fn test_custom_defaults_read() {
     });
 }
 
+// Q-468: goosed boots past a corrupt config.yaml, says so through config/read-all, keeps refusing
+// saves over it (Q-465), and moves it aside only on request.
+#[test]
+#[serial]
+fn test_config_read_all_reports_an_unreadable_config_until_it_is_moved_aside() {
+    let corrupt = "GOOSE_DISABLE_KEYRING: true\nGOOSE_PROVIDER: openai\nextensions: [unclosed\n";
+    let config_dir = write_acp_global_config(DEFAULT_ACP_TEST_CONFIG);
+    let config_path = config_dir.join(goose::config::base::CONFIG_YAML_NAME);
+
+    run_test(async move {
+        let openai = OpenAiFixture::new(vec![], Arc::new(EnforceSessionId::default())).await;
+        let config = TestConnectionConfig {
+            data_root: config_dir.clone(),
+            ..Default::default()
+        };
+        let conn = AcpServerConnection::new(config, openai).await;
+        // The fixture rewrites config.yaml while it connects; the corruption lands after.
+        std::fs::write(&config_path, corrupt).unwrap();
+
+        let response = send_custom(
+            conn.cx(),
+            "_goose/unstable/config/read-all",
+            serde_json::json!({}),
+        )
+        .await
+        .expect("read-all should succeed on a corrupt config");
+        let files = response["unreadableFiles"]
+            .as_array()
+            .expect("read-all carries unreadableFiles");
+        assert_eq!(files.len(), 1, "{response}");
+        assert_eq!(files[0]["path"], config_path.to_string_lossy().as_ref());
+        assert_eq!(files[0]["role"], "config");
+        assert_eq!(
+            (&files[0]["line"], &files[0]["column"]),
+            (&4.into(), &1.into())
+        );
+        assert!(
+            files[0]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("did not find expected")),
+            "{response}"
+        );
+
+        let save = send_custom(
+            conn.cx(),
+            "_goose/unstable/config/upsert",
+            serde_json::json!({ "key": "some_key", "value": "v" }),
+        )
+        .await;
+        assert!(save.is_err(), "a save over the corrupt config was accepted");
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), corrupt);
+
+        let refused = send_custom(
+            conn.cx(),
+            "_goose/unstable/config/move-aside",
+            serde_json::json!({ "path": config_dir.join("not-a-settings-file.yaml") }),
+        )
+        .await;
+        assert!(
+            refused.is_err(),
+            "move-aside accepted a path it does not report"
+        );
+
+        let moved = send_custom(
+            conn.cx(),
+            "_goose/unstable/config/move-aside",
+            serde_json::json!({ "path": config_path }),
+        )
+        .await
+        .expect("move-aside of the reported file should succeed");
+        let moved_to = PathBuf::from(moved["movedTo"].as_str().expect("movedTo"));
+        assert!(!config_path.exists());
+        assert_eq!(std::fs::read_to_string(&moved_to).unwrap(), corrupt);
+
+        let response = send_custom(
+            conn.cx(),
+            "_goose/unstable/config/read-all",
+            serde_json::json!({}),
+        )
+        .await
+        .expect("read-all after move-aside");
+        assert_eq!(response["unreadableFiles"], serde_json::json!([]));
+        send_custom(
+            conn.cx(),
+            "_goose/unstable/config/upsert",
+            serde_json::json!({ "key": "some_key", "value": "v" }),
+        )
+        .await
+        .expect("a save after move-aside should succeed");
+
+        std::fs::remove_file(moved_to).unwrap();
+    });
+    write_acp_global_config(DEFAULT_ACP_TEST_CONFIG);
+}
+
 #[test]
 #[serial]
 fn test_custom_dictation_secret_save_delete() {

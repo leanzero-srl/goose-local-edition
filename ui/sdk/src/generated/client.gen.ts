@@ -26,6 +26,8 @@ import type {
   CompactionPreviewResponse_unstable,
   CompactionSteerRequest_unstable,
   CompactionSteerResponse_unstable,
+  ConfigMoveAsideRequest_unstable,
+  ConfigMoveAsideResponse_unstable,
   ConfigReadAllRequest_unstable,
   ConfigReadAllResponse_unstable,
   ConfigReadRequest_unstable,
@@ -358,6 +360,7 @@ import {
   zCanonicalModelInfoResponse_unstable,
   zCompactionPreviewResponse_unstable,
   zCompactionSteerResponse_unstable,
+  zConfigMoveAsideResponse_unstable,
   zConfigReadAllResponse_unstable,
   zConfigReadResponse_unstable,
   zCreateRecipeResponse_unstable,
@@ -1022,6 +1025,18 @@ export class GooseExtClient {
     return zConfigReadAllResponse_unstable.parse(
       raw,
     ) as ConfigReadAllResponse_unstable;
+  }
+
+  async configMoveAside_unstable(
+    params: ConfigMoveAsideRequest_unstable,
+  ): Promise<ConfigMoveAsideResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/config/move-aside",
+      params,
+    );
+    return zConfigMoveAsideResponse_unstable.parse(
+      raw,
+    ) as ConfigMoveAsideResponse_unstable;
   }
 
   async defaultsRead_unstable(

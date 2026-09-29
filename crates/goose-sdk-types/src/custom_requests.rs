@@ -545,6 +545,47 @@ pub struct ConfigReadAllRequest {}
 #[serde(rename_all = "camelCase")]
 pub struct ConfigReadAllResponse {
     pub config: std::collections::HashMap<String, serde_json::Value>,
+    /// Settings files that exist but could not be read. `config` was read without them, and every
+    /// save refuses to write over them until they are fixed or moved aside.
+    #[serde(default)]
+    pub unreadable_files: Vec<UnreadableConfigFile>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ConfigFileRole {
+    #[default]
+    Config,
+    Secrets,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UnreadableConfigFile {
+    pub path: String,
+    pub role: ConfigFileRole,
+    /// The reader's own error, verbatim.
+    pub reason: String,
+    /// 1-based, when the parser reported a place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u64>,
+}
+
+/// Rename an unreadable settings file (one listed in `unreadableFiles`) to
+/// `<name>.corrupt-<utc>` so goose starts that file fresh; any other path is refused.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/config/move-aside", response = ConfigMoveAsideResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigMoveAsideRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigMoveAsideResponse {
+    pub moved_to: String,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

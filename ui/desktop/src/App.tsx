@@ -38,6 +38,7 @@ import { PROVIDER_ROUTES } from './components/nodes/providerRoutes';
 import BenchmarkView from './components/benchmark/BenchmarkView';
 import AgentWorkView from './components/agent-work/AgentWorkView';
 import BenchmarkAutoOpen from './components/benchmark/BenchmarkAutoOpen';
+import UnreadableConfigBanner from './components/unreadableConfigBanner/UnreadableConfigBanner';
 import { ConfirmCloseRunDialog } from './components/lz-dialogs/ConfirmCloseRunDialog';
 import type { CloseRunPayload } from './utils/closeGuard';
 import ProviderSettings from './components/settings/providers/ProviderSettingsPage';
@@ -775,6 +776,7 @@ export function AppInner() {
       <ExtensionInstallModal addExtension={addExtension} setView={setView} />
       <RecipeParamsModalContainer />
       <BenchmarkAutoOpen />
+      <UnreadableConfigBanner />
       <div className="relative w-screen h-screen overflow-hidden bg-background-secondary flex flex-col">
         <div className="titlebar-drag-region" />
         <div style={{ position: 'relative', width: '100%', height: '100%' }}>

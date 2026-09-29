@@ -11132,6 +11132,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "मॉडल के पहले शब्दों की प्रतीक्षा · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "अलग रखें"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose इसे उसी फ़ोल्डर में {fileName}.corrupt- के बाद तारीख और समय वाले नाम में बदल देता है, ताकि इसमें से कुछ भी न मिटे, फिर बिना सहेजी कुंजियों के शुरू होता है। आप जो चाहिए उसे बदले गए नाम वाली फ़ाइल से वापस कॉपी कर सकते हैं।} other{goose इसे उसी फ़ोल्डर में {fileName}.corrupt- के बाद तारीख और समय वाले नाम में बदल देता है, ताकि इसमें से कुछ भी न मिटे, फिर एक नई सेटिंग्स फ़ाइल से शुरू होता है। आप जो चाहिए उसे बदले गए नाम वाली फ़ाइल से वापस कॉपी कर सकते हैं।}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "{fileName} को अलग रखें?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{जब तक इसे ठीक नहीं किया जाता, goose इसमें सहेजी गई कुंजियों के बिना चलता है, इसलिए जिन प्रदाताओं को कुंजी चाहिए वे साइन आउट दिखते हैं। फ़ाइल पढ़ी न जा सकने तक उस पर कुछ भी सहेजा नहीं जाता।} other{जब तक इसे ठीक नहीं किया जाता, goose अपने डिफ़ॉल्ट पर चलता है, इसलिए आपके प्रदाता, मॉडल और एक्सटेंशन गायब लग सकते हैं। फ़ाइल पढ़ी न जा सकने तक उस पर कुछ भी सहेजा नहीं जाता।}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose आपकी कुंजियों वाली फ़ाइल नहीं पढ़ सका} other{goose आपकी सेटिंग्स फ़ाइल नहीं पढ़ सका}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "इसे अलग रखें और नए सिरे से शुरू करें"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose इसे अलग नहीं रख सका: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "पंक्ति {line}, कॉलम {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Finder में दिखाएँ"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "अपडेट बैकग्राउंड में अपने आप डाउनलोड हो जाएगा."
   },

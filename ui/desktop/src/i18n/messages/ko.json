@@ -11132,6 +11132,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "모델의 첫 단어를 기다리는 중 · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "취소"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "옆으로 옮기기"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose는 같은 폴더에서 이름을 {fileName}.corrupt- 뒤에 날짜와 시간을 붙인 이름으로 바꾸므로 내용은 하나도 삭제되지 않으며, 그다음 저장된 키 없이 시작합니다. 필요한 내용은 이름이 바뀐 파일에서 다시 복사할 수 있습니다.} other{goose는 같은 폴더에서 이름을 {fileName}.corrupt- 뒤에 날짜와 시간을 붙인 이름으로 바꾸므로 내용은 하나도 삭제되지 않으며, 그다음 새 설정 파일로 시작합니다. 필요한 내용은 이름이 바뀐 파일에서 다시 복사할 수 있습니다.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "{fileName}을(를) 옆으로 옮길까요?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{고칠 때까지 goose는 이 파일에 저장된 키 없이 실행되므로, 키가 필요한 공급자는 로그아웃된 것처럼 보입니다. 파일을 읽을 수 없는 동안에는 그 위에 아무것도 저장되지 않습니다.} other{고칠 때까지 goose는 기본값으로 실행되므로, 공급자, 모델, 확장 프로그램이 사라진 것처럼 보일 수 있습니다. 파일을 읽을 수 없는 동안에는 그 위에 아무것도 저장되지 않습니다.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose가 키를 저장한 파일을 읽지 못했습니다} other{goose가 설정 파일을 읽지 못했습니다}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "옆으로 옮기고 새로 시작"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose가 옆으로 옮기지 못했습니다: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "{line}번째 줄, {column}번째 열"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Finder에서 보기"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "업데이트는 백그라운드에서 자동으로 다운로드됩니다."
   },

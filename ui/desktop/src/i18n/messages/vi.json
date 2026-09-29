@@ -11132,6 +11132,36 @@
   "turnWorking.waitingFor": {
     "defaultMessage": "Đang chờ những từ đầu tiên của mô hình · {elapsed}"
   },
+  "unreadableConfigBanner.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "unreadableConfigBanner.confirm": {
+    "defaultMessage": "Để riêng"
+  },
+  "unreadableConfigBanner.confirmMessage": {
+    "defaultMessage": "{role,select,secrets{goose đổi tên tệp thành {fileName}.corrupt- kèm ngày giờ, trong cùng thư mục, nên không nội dung nào bị xóa, rồi bắt đầu mà không có khóa đã lưu. Bạn có thể sao chép lại những gì cần từ tệp đã đổi tên.} other{goose đổi tên tệp thành {fileName}.corrupt- kèm ngày giờ, trong cùng thư mục, nên không nội dung nào bị xóa, rồi bắt đầu với một tệp cài đặt mới. Bạn có thể sao chép lại những gì cần từ tệp đã đổi tên.}}"
+  },
+  "unreadableConfigBanner.confirmTitle": {
+    "defaultMessage": "Để riêng {fileName}?"
+  },
+  "unreadableConfigBanner.consequence": {
+    "defaultMessage": "{role,select,secrets{Cho đến khi được sửa, goose chạy mà không có các khóa lưu trong tệp này, nên các nhà cung cấp cần khóa trông như đã đăng xuất. Không có gì được lưu đè lên tệp khi tệp chưa đọc được.} other{Cho đến khi được sửa, goose chạy với giá trị mặc định, nên các nhà cung cấp, mô hình và tiện ích mở rộng của bạn có thể trông như đã biến mất. Không có gì được lưu đè lên tệp khi tệp chưa đọc được.}}"
+  },
+  "unreadableConfigBanner.headline": {
+    "defaultMessage": "{role,select,secrets{goose không đọc được tệp chứa các khóa của bạn} other{goose không đọc được tệp cài đặt của bạn}}"
+  },
+  "unreadableConfigBanner.moveAside": {
+    "defaultMessage": "Để riêng và bắt đầu lại"
+  },
+  "unreadableConfigBanner.moveFailed": {
+    "defaultMessage": "goose không để riêng được tệp: {error}"
+  },
+  "unreadableConfigBanner.place": {
+    "defaultMessage": "Dòng {line}, cột {column}"
+  },
+  "unreadableConfigBanner.showFile": {
+    "defaultMessage": "Hiện trong Finder"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose sẽ tải bản cập nhật ở chế độ nền và cài đặt vào lần tiếp theo khi bạn thoát hoặc khởi động lại."
   },
