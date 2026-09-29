@@ -21,24 +21,13 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
   narrowed the privacy rule to this project (Q-506, model). Memory at 1 → recall at 33/39; note to the bakery chat at 26; needs-you at 8/12/15/21.
 - E2E #3x STOPPED at turn 4 (E2E-RUNS): the Q-498 cache thrash with the owner's second chat; its memory turn was lost.
 
-## Toward 3.0.80 (main has Q-495 4503c521a + Q-497 23c06bb8b)
-- Q-498 DONE a6d70abba (branch worktree-agent-afa856b427b453865, KEEP): says why a prompt went cold. Keeping both chats
-  cached needs 29.07 GB against the 17.33 GB plan.
-- Q-502 DONE 9cb716449 (branch q502, contains Q-498): every chat's prefix kept; #3x replay 0 → 199,798 cached. BOTH
-  Macs need the same build (a new spec tag). Q-508 (key conversations by session id, not tokens): cutting ON 9cb716449.
-- Q-499 DONE 6b4e8fcfb (branch worktree-agent-aec73c85bddb00a5e, KEEP): readiness requires the engine's own listener.
-  The CI collision came from a sibling test's port.
-- Q-503 DONE 43f3431e1 (branch q503, contains Q-499): two PRODUCT bugs. The memory reading was rate-limited stale
-  (host_statistics64 → sysctl live), and a refused load lock stayed held by a forked child (explicit unlock).
-- Q-500/501 DONE c900ee4ea (branch worktree-agent-adf3890d8dcce9f43, KEEP): running rows shared across windows, Stop
-  from a second window, the banner reads the engine's request list. Full vitest 4,638 green.
-- Q-504 DONE 0d28abcf2 (branch q504, contains Q-500/501): a window's cancel reaches app-wide and link-bound turns,
-  never another window's; Stop plus a "Running in the background" bar. Q-507 DONE 3cfd23a94 (q507): scheduled runs read Running everywhere, and any window's Stop stops them. Q-509
-  (Link advertises Idle during a schedule) waits on 3.0.80.
-- Q-505 DONE 65126cc51 (worktree-agent-acc78227175574ec2): secrets redacted on save/import/read/recall, plus
-  `goose memory scan-secrets`. Owner 17:1x: keys stay as they are, do not raise them again. Q-510 dropped.
-- 3.0.80 merge set (branches): q508 (⊃ q502 ⊃ Q-498), q503 (⊃ Q-499), q507 (⊃ Q-504 ⊃ Q-500/501), Q-505's branch,
-  Q-466's branch → one scratch → full gate → ff main → release → install when #3y allows (BOTH Macs: new spec tag).
+## 3.0.80 — merge-080 GATING (/tmp/g080.out), ~/goose-targets/wt-m080 @ 57033c308
+- = main (Q-495, Q-497) + q502 (Q-498, Q-502) + q503 (Q-499, Q-503) + q507 (Q-500/501, Q-504, Q-507)
+  + Q-505 65126cc51 + Q-466 e49d42e7e. No conflicts.
+- Still cutting, to go on top: Q-508 (on q502: key conversations by session id); Q-511 (RecipeItem hoist).
+- Green → ff main → release 3.0.80 → install on BOTH Macs (Q-502's new spec tag) when #3y allows → prove live:
+  Q-502 (two chats keep warm), Q-500/501 (second window), Q-504/507 (Stop an app-wide / scheduled turn), Q-493/495
+  (the stopped lines), Q-505 (a redacted memory).
 
 ## CI
 - Red 13:18Z: the RecipesView delete test hit its 5 s timeout (the vitest-under-load class). Q-466 is cutting
@@ -52,7 +41,7 @@ Updated: 2026-09-29 16:0x (date) · runwatch.sh per run · vigil-shot.mjs every 
 - Q-452 waits on: a second red.
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-511.
+- Check CI, agents, disk ≥ 30 GB (40 GB after a cleanup at 16:5x). Take a vigil screenshot and READ it. The next free id is Q-512.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance; do not blame goose-in-one-chat.
