@@ -1349,7 +1349,7 @@ impl GooseAcpAgent {
                 return Err(refusal(
                     "remoteSingleActive",
                     format!(
-                        "another goose window on this Mac (goosed pid {}) routes chat to {} ({}); stop it from that window",
+                        "another goose on this Mac (pid {}) routes chat to {} ({}); stop it there",
                         route.pid,
                         route.peer_name(),
                         route.model_id
@@ -1491,7 +1491,7 @@ impl GooseAcpAgent {
     ) -> Result<MlxEngineRemoteSingleStopResponse, agent_client_protocol::Error> {
         if let RouteRecord::Other(route) = mlx_remote::read() {
             return Err(agent_client_protocol::Error::invalid_params().data(format!(
-                "remoteSingleActive: another goose window on this Mac (goosed pid {}) owns the route to {}; stop it from that window",
+                "remoteSingleActive: another goose on this Mac (pid {}) owns the route to {}; stop it there",
                 route.pid,
                 route.peer_name()
             )));
@@ -1585,12 +1585,12 @@ fn distributed_owner() -> Option<String> {
     use crate::providers::mlx_distributed_owner::{self as owner_record, OwnerRecord};
     if owner_record::own_active_base_url().is_some() {
         return Some(
-            "this window's distributed MLX engine owns this Mac; stop it first".to_string(),
+            "this goose's distributed MLX engine owns this Mac; stop it first".to_string(),
         );
     }
     match owner_record::read() {
         OwnerRecord::Other(engine) => Some(format!(
-            "the distributed MLX engine of another window (goosed pid {}) owns this Mac; stop it first",
+            "the distributed MLX engine of another goose (pid {}) owns this Mac; stop it there first",
             engine.pid
         )),
         _ => None,

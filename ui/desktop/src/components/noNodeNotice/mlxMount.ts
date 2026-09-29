@@ -153,7 +153,7 @@ export function distributedFact(
   if (!distributed) return null;
   const foreign = foreignOwner(distributed);
   if (foreign) {
-    // Another window's goosed supervises it: its own /v1/models answer is the whole fact here.
+    // Another goose process supervises it: its own /v1/models answer is the whole fact here.
     return foreign.state === 'answering' && servedId != null && foreign.servedModelId === servedId
       ? 'up'
       : 'down';
@@ -188,16 +188,16 @@ export function distributedSummary(distributed: MlxDistributedStatus): MlxModeSu
 
 const i18n = defineMessages({
   foreignAnswering: {
-    id: 'mlxMount.foreignAnswering',
-    defaultMessage: 'Ready · owned by another window',
+    id: 'mlxMount.otherGooseAnswering',
+    defaultMessage: 'Ready · started by another goose',
   },
   foreignNotAnswering: {
-    id: 'mlxMount.foreignNotAnswering',
-    defaultMessage: 'Not answering · owned by another window',
+    id: 'mlxMount.otherGooseNotAnswering',
+    defaultMessage: 'Not answering · started by another goose',
   },
 });
 
-/** Its state in words: this window's run in the backend's vocabulary, another window's as the
+/** Its state in words: this goose's run in the backend's vocabulary, another goose's as the
  *  answer its engine gave (only its owner knows the supervisor's state). */
 export function distributedStateLabel(intl: IntlShape, distributed: MlxDistributedStatus): string {
   const foreign = foreignOwner(distributed);
@@ -212,21 +212,21 @@ export function distributedStateLabel(intl: IntlShape, distributed: MlxDistribut
   return distributedStateWord(intl, distributed.state);
 }
 
-/** It answers requests: this window's run is ready/serving, another window's answers /v1/models. */
+/** It answers requests: this goose's run is ready/serving, another goose's answers /v1/models. */
 export function distributedServes(distributed: MlxDistributedStatus): boolean {
   const foreign = foreignOwner(distributed);
   if (foreign) return foreign.state === 'answering';
   return distributed.state === 'ready' || distributed.state === 'serving';
 }
 
-/** Why it does not answer: this window's last error, or the probe of another window's engine. */
+/** Why it does not answer: this goose's last error, or the probe of another goose's engine. */
 export function distributedProblem(distributed: MlxDistributedStatus): string | null {
   const foreign = foreignOwner(distributed);
   if (foreign) return foreign.detail ?? null;
   return distributed.lastError ?? null;
 }
 
-/** The id the owning engine serves — this window's run, or the one another window published. */
+/** The id the owning engine serves — this goose's run, or the one another goose published. */
 export function distributedServedId(distributed: MlxDistributedStatus): string | null {
   return foreignOwner(distributed)?.servedModelId ?? distributed.servedModelId ?? null;
 }

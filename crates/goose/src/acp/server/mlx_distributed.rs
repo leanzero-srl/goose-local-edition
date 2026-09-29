@@ -430,7 +430,7 @@ pub(super) async fn refuse_single_mount_while_distributed(
     }
     if let OwnerRecord::Other(engine) = owner_record::read() {
         return Err(agent_client_protocol::Error::invalid_params().data(format!(
-            "distributedEngineActive: {}; one engine owns a Mac at a time — stop it from that window \
+            "distributedEngineActive: {}; one engine owns a Mac at a time — stop it in that goose \
              before mounting",
             owned_elsewhere(&engine)
         )));
@@ -442,7 +442,8 @@ const OWNED_BY_ANOTHER_WINDOW: &str = "ownedByAnotherWindow";
 
 fn owned_elsewhere(engine: &PublishedEngine) -> String {
     format!(
-        "the distributed MLX engine serving '{}' at {} is owned by another window (goosed pid {})",
+        "the distributed MLX engine serving '{}' at {} was started by another goose (pid {}) — a \
+         goose serve in a terminal, or another goose app",
         engine.served_model_id, engine.base_url, engine.pid
     )
 }
@@ -812,10 +813,7 @@ impl GooseAcpAgent {
                 started: false,
                 refusal: Some(MlxDistributedRefusalDto {
                     code: OWNED_BY_ANOTHER_WINDOW.to_string(),
-                    message: format!(
-                        "{}; start and stop it from that window",
-                        owned_elsewhere(&engine)
-                    ),
+                    message: format!("{}; start and stop it there", owned_elsewhere(&engine)),
                     ..Default::default()
                 }),
                 preflight: None,
@@ -939,7 +937,7 @@ impl GooseAcpAgent {
             // (by owner token) — which would kill another window's live run. Only its owner stops it.
             if let OwnerRecord::Other(engine) = owner_record::read() {
                 return Err(agent_client_protocol::Error::invalid_params().data(format!(
-                    "{OWNED_BY_ANOTHER_WINDOW}: {}; stop it from that window",
+                    "{OWNED_BY_ANOTHER_WINDOW}: {}; stop it there",
                     owned_elsewhere(&engine)
                 )));
             }

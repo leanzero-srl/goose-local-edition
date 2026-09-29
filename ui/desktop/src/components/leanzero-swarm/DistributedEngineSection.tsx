@@ -405,23 +405,23 @@ const i18n = defineMessages({
   },
   modelDir: { id: 'mlxDistributed.field.modelDir', defaultMessage: 'Model folder on this node' },
   startRefused: { id: 'mlxDistributed.startRefused', defaultMessage: 'Start refused' },
-  otherWindow: {
-    id: 'mlxDistributed.otherWindow.label',
-    defaultMessage: 'Running in another window',
+  otherGoose: {
+    id: 'mlxDistributed.otherGoose.label',
+    defaultMessage: 'Started by another goose',
   },
-  otherWindowRun: {
-    id: 'mlxDistributed.otherWindow.run',
+  otherGooseRun: {
+    id: 'mlxDistributed.otherGoose.run',
     defaultMessage: '{model} on {nodes} · {backend} · {state}',
   },
-  otherWindowAnswering: { id: 'mlxDistributed.otherWindow.answering', defaultMessage: 'answering' },
-  otherWindowNotAnswering: {
-    id: 'mlxDistributed.otherWindow.notAnswering',
+  otherGooseAnswering: { id: 'mlxDistributed.otherGoose.answering', defaultMessage: 'answering' },
+  otherGooseNotAnswering: {
+    id: 'mlxDistributed.otherGoose.notAnswering',
     defaultMessage: 'not answering',
   },
-  otherWindowReadOnly: {
-    id: 'mlxDistributed.otherWindow.readOnly',
+  otherGooseReadOnly: {
+    id: 'mlxDistributed.otherGoose.readOnly',
     defaultMessage:
-      'Read-only here: Start and Stop belong to the window that started it (goosed pid {pid}).',
+      'Read-only here: goose pid {pid} runs it — a goose serve in a terminal, or another goose app. Start and Stop it there.',
   },
   preflightError: { id: 'mlxDistributed.error.preflight', defaultMessage: 'Preflight error' },
   startError: { id: 'mlxDistributed.error.start', defaultMessage: 'Start error' },
@@ -599,7 +599,8 @@ const NODE_FIELDS: readonly NodeTextField[] = [
 ];
 
 const META = cx(TYPE.meta, TNUM);
-/** distributedStart's refusal code while another window's goosed supervises the run. */
+/** distributedStart's refusal code while another goose process (a CLI goose serve, another app
+ *  build) supervises the run; the wire name predates Q-257's one goosed per app. */
 const OWNED_BY_ANOTHER_WINDOW = 'ownedByAnotherWindow';
 const BIG = cx('text-[28px] leading-none tracking-tight', WEIGHT.semibold, TNUM);
 
@@ -1359,28 +1360,28 @@ function RunFacts({ status }: { status: MlxDistributedStatus }) {
 // all share one goosed since Q-257, so a split one window loaded is every window's own)
 // ---------------------------------------------------------------------------
 
-function OtherWindowRun({ owner }: { owner: MlxDistributedOwner }) {
+function OtherGooseRun({ owner }: { owner: MlxDistributedOwner }) {
   const intl = useIntl();
   const answering = owner.state === 'answering';
-  const run = intl.formatMessage(i18n.otherWindowRun, {
+  const run = intl.formatMessage(i18n.otherGooseRun, {
     model: owner.servedModelId ?? owner.modelId ?? '—',
     nodes: owner.nodeNames?.length ? owner.nodeNames.join(' · ') : '—',
     backend: backendName(owner.backend) ?? '—',
-    state: intl.formatMessage(answering ? i18n.otherWindowAnswering : i18n.otherWindowNotAnswering),
+    state: intl.formatMessage(answering ? i18n.otherGooseAnswering : i18n.otherGooseNotAnswering),
   });
   return (
     <div
-      data-testid="mlx-dist-other-window"
+      data-testid="mlx-dist-other-goose"
       data-state={owner.state}
       className="flex flex-col gap-1"
     >
       <ToneBanner
         tone={answering ? 'accent' : 'warn'}
-        label={intl.formatMessage(i18n.otherWindow)}
+        label={intl.formatMessage(i18n.otherGoose)}
         text={owner.detail ? `${run} — ${owner.detail}` : run}
       />
       <p className={TYPE.meta}>
-        {intl.formatMessage(i18n.otherWindowReadOnly, { pid: owner.pid ?? '—' })}
+        {intl.formatMessage(i18n.otherGooseReadOnly, { pid: owner.pid ?? '—' })}
       </p>
     </div>
   );
@@ -1945,7 +1946,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const preflightWhyId = useId();
 
   const owning = ownsTheMac(status);
-  const otherWindow = foreignOwner(status);
+  const otherGoose = foreignOwner(status);
   // A refusal is the answer to ONE start; once the run owns the Mac it no longer describes it.
   useEffect(() => {
     if (owning) setRefusal(null);
@@ -2086,7 +2087,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
     onToggleFree,
     onMakeRoom,
     making: makingRoom,
-    locked: busy != null || owning || otherWindow != null || config == null,
+    locked: busy != null || owning || otherGoose != null || config == null,
   };
 
   const onSave = () =>
@@ -2205,7 +2206,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
         <ToneBanner
           tone={refusal.code === OWNED_BY_ANOTHER_WINDOW ? 'warn' : 'err'}
           label={intl.formatMessage(
-            refusal.code === OWNED_BY_ANOTHER_WINDOW ? i18n.otherWindow : i18n.startRefused
+            refusal.code === OWNED_BY_ANOTHER_WINDOW ? i18n.otherGoose : i18n.startRefused
           )}
           text={refusal.message}
           testId="mlx-dist-refusal"
@@ -2263,7 +2264,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
         <ToneBanner tone="err" label={intl.formatMessage(i18n.lastError)} text={status.lastError} />
       )}
       {lastAlarmKind === LOCAL_NETWORK_EVENT && <LocalNetworkNotice />}
-      {otherWindow && <OtherWindowRun owner={otherWindow} />}
+      {otherGoose && <OtherGooseRun owner={otherGoose} />}
 
       {status && (
         <div className="flex flex-col gap-2">
@@ -2288,7 +2289,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
                     cancel: intl.formatMessage(i18n.stopCancel),
                   })
                 }
-                disabled={busy != null || otherWindow != null}
+                disabled={busy != null || otherGoose != null}
               >
                 {intl.formatMessage(i18n.stop)}
               </Button>
@@ -2304,7 +2305,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
                   )
                 }
                 onClick={onStart}
-                disabled={!canAct || otherWindow != null || status.hosting != null}
+                disabled={!canAct || otherGoose != null || status.hosting != null}
               >
                 {intl.formatMessage(i18n.start)}
               </Button>
