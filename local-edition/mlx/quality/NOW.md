@@ -3,13 +3,17 @@
 Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed: 3.0.74 on BOTH Macs; the split is serving.
-- E2E #3v RUNNING: RU-2026-09-29-3v-split-tensor-stdlib, session 20260929_5, the stdlib-backport brief, 3.0.74,
-  runwatch.
-- Q-428 + Q-430/432/441/442/443 PROVEN LIVE on 3.0.74; Q-447 decode 11.1 tok/s on a cache-hit turn with a helper
-  beside it, no RANK_KV_DTYPE_MIXED. The prove found Q-458..463 (cutting).
-- E2E #3u COMPLETE 30/30; Q-342/Q-347 proven on its compaction.
-- A brief author is writing a 3rd brief (needs-you cards, chat search/notes, compaction recall).
+- Installed: 3.0.76 on BOTH Macs 05:4x. The split is serving ("OK.").
+- E2E #3w RUNNING: RU-2026-09-29-3w-split-tensor-cafe, session 20260929_12, the café brief (37 turns): needs-you
+  cards at turns 4 / 7 (two at once) / 11, chat search 19/21/32, a note to another chat at 20, frontend-design
+  skill at 9, compaction recall.
+- E2E #3v stopped after 9 turns for the install (E2E-RUNS). Q-367 proven live; the repeat guard broke a loop.
+- To live-prove on 3.0.76, all at once while #3w runs, from its own surfaces:
+  - Q-455 (context line) and Q-469 (no false correction);
+  - Q-467 (counter);
+  - Q-458..462 (composer lines);
+  - Q-468 (banner, needs a copy config);
+  - Q-334/335/457 (solid colours: live walk).
 
 ## CI
 - a66c6ccf6: one of two runs RED on the sidecar test shutdown_releases_the_port_from_residue_of_its_own_group (a flake; the sibling run passed) → Q-449 agent.
@@ -17,16 +21,7 @@ Updated: 2026-09-28 23:3x (tick 5, 23:59) (date) · heartbeat cron 90b0083a + ru
 ## Agents (worktrees)
 - none running.
 
-## 3.0.75 = main 49f7a7fd1 — DMG BUILT 05:0x (~/goose-builds/dmg)
-- SUPERSEDED by 3.0.76 (it is packaging and already carries all of 3.0.75). On #3v's turn-8 end: stop r1 (per
-  pid), then install.sh 3.0.76 on BOTH Macs → split-start smoke → E2E #3w on
-  the café brief (needs-you cards, chat search/notes).
-- Then live-walk the solid colours (Q-334/335/457), Q-458..462 and Q-455's context line.
-
-## 3.0.76 = main 978075296 — RELEASE BUILDING (~/goose-builds/release-3.0.76.log)
-- Adds Q-467 (the counter shows the served node's window), Q-468 (corrupt-config banner) and Q-469 (correction
-  detector: reaction shape only; honest block).
-- Gates g076 + g076b green.
+## 3.0.76 = main 978075296 — INSTALLED (DMG in ~/goose-builds/dmg)
 
 ## Queued / scheduled
 - Q-427 QUEUED behind: Q-426 landing. Q-398 QUEUED behind: agent cap. Q-425 QUEUED behind: fork access.
