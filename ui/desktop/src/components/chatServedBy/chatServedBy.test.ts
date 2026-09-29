@@ -754,13 +754,14 @@ describe('THIS turn on the engine (Q-13) and the Mac that said it is leaving (Q-
       })
     );
     expect(served.turnRequest).toBeNull();
-    // No turn in flight, no claim either.
+    // No turn in flight, no claim either: goose's own call for this chat (its title, Q-185) is no
+    // turn. (An UNTAGGED lease of this chat IS its turn, whichever window sent it — Q-501.)
     expect(
       deriveChatServedBy(
         inputs({
           remote: ROUTE,
           main: snapshot('remote', PREFILL_STATUS, {
-            clients: [mine],
+            clients: [{ ...mine, key: 'chat:s-mine:title', work: 'title' }],
             unattributed: 0,
             swarmRuns: [],
             error: null,
@@ -852,8 +853,10 @@ describe('deriveChatServedBy — the chip is THIS chat’s request (Q-124)', () 
     expect(served.activity).toBe('prefill');
     expect(served.work).toBe('helper');
     expect(served.phase).toBe('idle');
-    // This chat's own session leasing between turns (its title) is a helper too, never a turn.
-    expect(derive(false, body(request('t2', 'generation', 900)), [mine]).work).toBe('helper');
+    // This chat's own session leasing between turns for its title (tagged `title`, Q-185) is a
+    // helper too, never a turn. Untagged, the lease IS its turn, sent from another window (Q-501).
+    const ownTitle = { ...mine, key: 'chat:s-mine:title', work: 'title' as const };
+    expect(derive(false, body(request('t2', 'generation', 900)), [ownTitle]).work).toBe('helper');
   });
 
   it('the turn ENDED and the engine serves requests goose cannot name (the omlx provider): "others"', () => {

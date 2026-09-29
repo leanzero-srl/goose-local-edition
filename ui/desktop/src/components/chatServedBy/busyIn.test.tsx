@@ -181,6 +181,101 @@ describe('Q-152: an idle chat names the chat the engine is busy in', () => {
   });
 });
 
+/**
+ * Q-501 (3.0.78, 15:48): the Coffee chat, opened in a second window while the engine read its own
+ * 200.8K prompt (17m 46s, a turn the first window sent), said "Busy in ‘Jira DC to Cloud migration
+ * assessment’ · 17m 46s" — the Jira chat waiting behind it was the one OTHER session, and the age was
+ * Coffee's own. The glance in the same window said "Chat · Coffee Roasters Double-Charge Incident":
+ * goose's in-flight list carries Coffee's turn lease, the source both now read.
+ */
+describe('Q-501: the chat whose own request the engine serves is never "busy in" another', () => {
+  const COFFEE = '20260929_15';
+  const COFFEE_TURN: MlxClient = {
+    key: `chat:${COFFEE}`,
+    kind: 'chat',
+    work: null,
+    sessionId: COFFEE,
+    sessionName: 'Coffee Roasters Double-Charge Incident',
+    count: 1,
+  };
+  const JIRA_TURN: MlxClient = {
+    key: 'chat:20260928_19',
+    kind: 'chat',
+    work: null,
+    sessionId: '20260928_19',
+    sessionName: 'Jira DC to Cloud migration assessment',
+    count: 1,
+  };
+  const reading = request({
+    request_id: 'chatcmpl-coffee',
+    phase: 'prefill',
+    elapsed_s: 1066,
+    prompt_tokens: 200_847,
+    completion_tokens: 0,
+    tokens_per_second: 0,
+  });
+  const waiting = request({
+    request_id: 'chatcmpl-jira',
+    status: 'waiting',
+    phase: 'queued',
+    elapsed_s: 40,
+    prompt_tokens: 77_683,
+    completion_tokens: 0,
+  });
+  const engine = () => main([reading, waiting], [COFFEE_TURN, JIRA_TURN]);
+
+  it('the second window (no turn of its own in flight): no busyIn, the turn is this chat’s', () => {
+    const served = deriveChatServedBy(
+      inputs({ sessionId: COFFEE, turnInFlight: false, main: engine() })
+    );
+    expect(served.busyIn).toBeNull();
+    expect(served.work).not.toBe('others');
+  });
+
+  it('its composer bar never says "Busy in"', () => {
+    const served = deriveChatServedBy(
+      inputs({ sessionId: COFFEE, turnInFlight: false, main: engine() })
+    );
+    render(
+      <IntlTestWrapper>
+        <MemoryRouter>
+          <ComposerReadinessStrip
+            serving={{ served, single: STOPPED, armed: true, turnInFlight: false }}
+          />
+        </MemoryRouter>
+      </IntlTestWrapper>
+    );
+    expect(screen.queryByTestId('composer-readiness-busy-in')).toBeNull();
+    expect(document.body.textContent ?? '').not.toContain('Busy in');
+    cleanup();
+  });
+
+  it('it reads exactly as the window that sent the turn reads it', () => {
+    const second = deriveChatServedBy(
+      inputs({ sessionId: COFFEE, turnInFlight: false, main: engine() })
+    );
+    const first = deriveChatServedBy(inputs({ sessionId: COFFEE, turnInFlight: true, main: engine() }));
+    expect(second.work).toBe(first.work);
+    expect(second.busyIn).toEqual(first.busyIn);
+    expect(second.busyWithOthers).toEqual(first.busyWithOthers);
+    expect(second.phase).toBe(first.phase);
+  });
+
+  it('a third chat with no request on the engine still names no one of two', () => {
+    expect(
+      deriveChatServedBy(inputs({ sessionId: '20260926_8', main: engine() })).busyIn
+    ).toBeNull();
+  });
+
+  it('goose’s own call for this chat (its title) is not a turn: the other chat is still named', () => {
+    const title: MlxClient = { ...COFFEE_TURN, key: `chat:${COFFEE}:title`, work: 'title' };
+    const served = deriveChatServedBy(
+      inputs({ sessionId: COFFEE, main: main([request()], [LIVE_CHAT, title]) })
+    );
+    expect(served.busyIn).toMatchObject({ sessionId: '20260926_19' });
+  });
+});
+
 function Where() {
   return <span data-testid="where">{useLocation().search}</span>;
 }

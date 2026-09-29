@@ -9,6 +9,7 @@ import type { MemoryOrigin } from './utils/memoryProvenance';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
 import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL, TURNS_IN_FLIGHT_CHANNEL } from './utils/closeGuard';
+import { SHOW_TURN_WINDOW_CHANNEL, STOP_TURN_ELSEWHERE_CHANNEL } from './utils/runningElsewhere';
 import type { TurnInFlight } from './utils/closeGuard';
 import { SYSTEM_RESUMED_CHANNEL } from './systemResumed';
 import type { FleetProbeResult } from './utils/fleetProbe';
@@ -440,6 +441,10 @@ type ElectronAPI = {
   confirmCloseRunReply: (confirmed: boolean) => void;
   /** This window's prompts in flight on its own ACP connection, for main's close guard (Q-490). */
   reportTurnsInFlight: (turns: TurnInFlight[]) => void;
+  /** Bring forward the window whose connection runs this chat's turn (Q-500). */
+  showTurnWindow: (sessionId: string) => void;
+  /** Stop this chat's turn in the window whose connection runs it (Q-500). */
+  stopTurnElsewhere: (sessionId: string) => void;
   hasAcceptedRecipeBefore: (recipe: Recipe) => Promise<boolean>;
   recordRecipeHash: (recipe: Recipe) => Promise<boolean>;
   openDirectoryInExplorer: (directoryPath: string) => Promise<boolean>;
@@ -762,6 +767,9 @@ const electronAPI: ElectronAPI = {
   confirmCloseRunReply: (confirmed: boolean) =>
     ipcRenderer.send(CONFIRM_CLOSE_RUN_REPLY_CHANNEL, confirmed),
   reportTurnsInFlight: (turns: TurnInFlight[]) => ipcRenderer.send(TURNS_IN_FLIGHT_CHANNEL, turns),
+  showTurnWindow: (sessionId: string) => ipcRenderer.send(SHOW_TURN_WINDOW_CHANNEL, sessionId),
+  stopTurnElsewhere: (sessionId: string) =>
+    ipcRenderer.send(STOP_TURN_ELSEWHERE_CHANNEL, sessionId),
   hasAcceptedRecipeBefore: (recipe: Recipe) =>
     ipcRenderer.invoke('has-accepted-recipe-before', recipe),
   recordRecipeHash: (recipe: Recipe) => ipcRenderer.invoke('record-recipe-hash', recipe),

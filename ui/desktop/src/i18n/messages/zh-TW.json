@@ -11198,6 +11198,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose 想要呼叫 {toolName}。要允許嗎？"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose 正在另一個視窗中回答此聊天。停止會在那裡結束它；現在傳送的訊息會等到它完成。"
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "顯示那個視窗"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "停止在另一個視窗中執行的回合"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "正在另一個視窗中執行"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {排在 # 個已停止但仍在退出引擎的請求之後} other {排在 # 個已停止但仍在退出引擎的請求之後}}{since, select, none {} other { · {since} 前已停止}}"
   },

@@ -11198,6 +11198,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose {toolName} को कॉल करना चाहेंगे। अनुमति दें?"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose इस चैट का जवाब दूसरी विंडो में दे रहा है। रोकें उसे वहीं समाप्त करता है; अभी भेजा गया संदेश उसके पूरा होने तक प्रतीक्षा करता है।"
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "वह विंडो दिखाएँ"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "दूसरी विंडो में चल रहा टर्न रोकें"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "दूसरी विंडो में चल रहा है"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {# रोके गए अनुरोध के पीछे कतार में, जो अभी भी इंजन छोड़ रहा है} other {# रोके गए अनुरोधों के पीछे कतार में, जो अभी भी इंजन छोड़ रहे हैं}}{since, select, none {} other { · {since} पहले रोका गया}}"
   },

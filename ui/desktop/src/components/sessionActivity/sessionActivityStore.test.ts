@@ -68,6 +68,7 @@ function running(sessionId: string, startedAt: string) {
 function snapshotWith(partial: Partial<SessionActivitySnapshot>): SessionActivitySnapshot {
   return {
     running: [],
+    elsewhere: [],
     needsYou: [],
     failed: [],
     stopped: [],
@@ -405,5 +406,76 @@ describe('session activity: the one source of running / needs-you / failed / idl
     elicitations.pending = [{ id: 'e1', sessionId: 's', request: { message: 'm' } }];
     elicitations.listener?.();
     expect(getSessionActivitySnapshot().elicitations).toHaveLength(1);
+  });
+});
+
+/**
+ * Q-500: the second window's connection cannot see the turn the main window's connection runs; main
+ * pushes it (utils/runningElsewhere.ts), and the store joins it into every running read — and keeps
+ * it across its own polls, which never list it.
+ */
+describe('turns another window runs (Q-500)', () => {
+  const COFFEE = {
+    sessionId: '20260929_15',
+    sessionName: 'Coffee Roasters Double-Charge Incident',
+    workingDir: '/w',
+    startedAt: '2026-09-29T12:30:14+00:00',
+  };
+  const JIRA = {
+    ...COFFEE,
+    sessionId: '20260928_19',
+    sessionName: 'Jira DC to Cloud migration assessment',
+    startedAt: '2026-09-29T12:31:02+00:00',
+  };
+  let pushed: ((event: unknown, ...args: unknown[]) => void) | undefined;
+  const original = (window as unknown as { electron: unknown }).electron;
+  beforeEach(() => {
+    pushed = undefined;
+    elicitations.pending = [];
+    (window as unknown as { electron: unknown }).electron = {
+      on: (channel: string, fn: (event: unknown, ...args: unknown[]) => void) => {
+        if (channel === 'session-running-elsewhere') pushed = fn;
+      },
+      off: vi.fn(),
+    };
+  });
+  afterEach(() => {
+    resetSessionActivityForTests();
+    (window as unknown as { electron: unknown }).electron = original;
+  });
+
+  it('main’s push makes the chat running here, and the window’s own re-read keeps it', async () => {
+    acp.acpSessionActivity.mockResolvedValue({ running: [JIRA], needsYou: [], failed: [] });
+    startSessionActivitySync();
+    await refreshSessionActivity();
+    expect(activityOf(getSessionActivitySnapshot(), COFFEE.sessionId).runningSince).toBeUndefined();
+
+    pushed?.({}, [{ ...COFFEE, window: 1 }]);
+    const state = getSessionActivitySnapshot();
+    expect(activityOf(state, COFFEE.sessionId)).toMatchObject({
+      runningSince: COFFEE.startedAt,
+      turnWindow: 1,
+    });
+    expect(sessionStates(activityOf(state, COFFEE.sessionId))).toEqual(['running']);
+    expect(activeSessions(state).map((s) => s.sessionId)).toEqual([
+      COFFEE.sessionId,
+      JIRA.sessionId,
+    ]);
+
+    acp.acpSessionActivity.mockResolvedValue({ running: [], needsYou: [], failed: [] });
+    await refreshSessionActivity();
+    expect(activityOf(getSessionActivitySnapshot(), COFFEE.sessionId).runningSince).toBe(
+      COFFEE.startedAt
+    );
+
+    pushed?.({}, []);
+    expect(activityOf(getSessionActivitySnapshot(), COFFEE.sessionId).runningSince).toBeUndefined();
+  });
+
+  it('a malformed push changes nothing', () => {
+    acp.acpSessionActivity.mockResolvedValue({ running: [], needsYou: [], failed: [] });
+    startSessionActivitySync();
+    pushed?.({}, [{ sessionId: 'x' }]);
+    expect(getSessionActivitySnapshot().elsewhere).toEqual([]);
   });
 });

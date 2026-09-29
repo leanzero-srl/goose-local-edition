@@ -136,15 +136,16 @@ describe('EngineGlanceDockSlot — the card at the foot of the sidebar', () => {
 
 describe('glanceSessionsOf — the session-state store as the glance reports it', () => {
   it('counts running turns and lists every open question, with its session', () => {
+    const auth = {
+      sessionId: 'a',
+      sessionName: 'Auth',
+      workingDir: '/p',
+      startedAt: '2026-09-27T10:00:00Z',
+    };
     const report = glanceSessionsOf({
-      running: [
-        {
-          sessionId: 'a',
-          sessionName: 'Auth',
-          workingDir: '/p',
-          startedAt: '2026-09-27T10:00:00Z',
-        },
-      ],
+      running: [auth],
+      // Another window's turn is that window's to report (Q-500): main counts it once.
+      elsewhere: [{ ...auth, sessionId: 'x', window: 2 }],
       needsYou: [
         {
           id: 'n1',
@@ -163,6 +164,7 @@ describe('glanceSessionsOf — the session-state store as the glance reports it'
     expect(report).toEqual({
       running: 1,
       needsYou: [{ sessionId: 'b', sessionName: 'Deploy', question: 'Staging or prod?' }],
+      runningRows: [auth],
     });
   });
 });

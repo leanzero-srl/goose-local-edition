@@ -11198,6 +11198,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose, {toolName}'yi aramak istiyor. İzin vermek?"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose bu sohbeti başka bir pencerede yanıtlıyor. Durdur onu orada bitirir; şimdi gönderilen mesaj bitene kadar bekler."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "O pencereyi göster"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Başka pencerede çalışan turu durdur"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "Başka bir pencerede çalışıyor"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {Motordan hâlâ çıkmakta olan # durdurulmuş isteğin arkasında sırada} other {Motordan hâlâ çıkmakta olan # durdurulmuş isteğin arkasında sırada}}{since, select, none {} other { · {since} önce durduruldu}}"
   },

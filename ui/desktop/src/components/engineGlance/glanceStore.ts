@@ -119,7 +119,8 @@ export function glanceSessionsOf(state: Parameters<typeof activeSessions>[0]): G
           .map((request) => request.request.message),
       ].map((question) => ({ sessionId: s.sessionId, sessionName: s.sessionName, question }))
     );
-  return { running: state.running.length, needsYou };
+  // This window's OWN connection's read: main joins the windows (utils/runningElsewhere.ts).
+  return { running: state.running.length, needsYou, runningRows: state.running };
 }
 
 /**

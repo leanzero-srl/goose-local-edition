@@ -11198,6 +11198,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose 想调用 {toolName}，允许吗？"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose 正在另一个窗口中回答此聊天。停止会在那里结束它；现在发送的消息会等到它完成。"
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "显示那个窗口"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "停止在另一个窗口中运行的回合"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "正在另一个窗口中运行"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {排在 # 个已停止但仍在退出引擎的请求之后} other {排在 # 个已停止但仍在退出引擎的请求之后}}{since, select, none {} other { · {since} 前已停止}}"
   },

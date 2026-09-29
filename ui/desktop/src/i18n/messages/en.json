@@ -11222,6 +11222,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose is answering this chat in another window. Stop ends it there; a message sent now waits until it finishes."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "Show that window"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Stop the turn running in another window"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "Running in another window"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows,plural,one{{since,select,none{Queued behind {rows, number} stopped request still leaving the engine} other{Queued behind {rows, number} stopped request still leaving the engine · stopped {since} ago}}} other{{since,select,none{Queued behind {rows, number} stopped requests still leaving the engine} other{Queued behind {rows, number} stopped requests still leaving the engine · stopped {since} ago}}}}"
   },

@@ -11198,6 +11198,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose möchte {toolName} aufrufen. Erlauben?"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose beantwortet diesen Chat in einem anderen Fenster. Stopp beendet es dort; eine jetzt gesendete Nachricht wartet, bis es fertig ist."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "Dieses Fenster zeigen"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Den Durchgang im anderen Fenster stoppen"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "Läuft in einem anderen Fenster"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {In der Warteschlange hinter # gestoppten Anfrage, die die Engine noch verlässt} other {In der Warteschlange hinter # gestoppten Anfragen, die die Engine noch verlassen}}{since, select, none {} other { · vor {since} gestoppt}}"
   },

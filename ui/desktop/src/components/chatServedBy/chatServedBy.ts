@@ -671,6 +671,23 @@ function workOf(
   return 'shared';
 }
 
+/**
+ * THIS chat's turn is on the engine by goose's own in-flight list — the list the engine glance names
+ * its "Chat · …" from — whichever window's connection sent it (Q-501). A turn's lease carries no
+ * `work`; goose's own calls for the chat (a title, the fact check) carry theirs (Q-185).
+ *
+ * Measured, 3.0.78: the Coffee chat opened in a second window while its 200.8K prompt was read, the
+ * turn sent by the first window. Its composer here had no turn in flight, so the Jira chat waiting
+ * behind it was "the one other session" and the bar read "Busy in ‘Jira DC to Cloud migration
+ * assessment’ · 17m 46s" — Coffee's own request, and its own age.
+ */
+function ownTurnOnEngine(serving: MlxServing | null, sessionId: string | null): boolean {
+  if (!serving || serving.error || sessionId == null) return false;
+  return serving.clients.some(
+    (c) => c.kind === 'chat' && c.sessionId === sessionId && c.work == null
+  );
+}
+
 /** The activity THIS chat's chip is coloured by, from whose work the engine is doing. */
 function chatActivity(
   activity: MlxActivity | null,
@@ -1207,10 +1224,11 @@ function deriveEngineServedBy(given: ChatServedInputs): ChatServedBy {
 
   const stats = liveStatsOf(main, serving.engine);
   const activity = stats ? mlxActivity(stats) : null;
-  const turnRequest =
-    stats && main ? turnRequestOf(main, stats, sessionId, inputs.turnInFlight) : null;
+  const turnInFlight =
+    inputs.turnInFlight || (stats != null && ownTurnOnEngine(main?.serving ?? null, sessionId));
+  const turnRequest = stats && main ? turnRequestOf(main, stats, sessionId, turnInFlight) : null;
   const work =
-    main && activity ? workOf(main, activity, sessionId, inputs.turnInFlight, turnRequest) : null;
+    main && activity ? workOf(main, activity, sessionId, turnInFlight, turnRequest) : null;
   return {
     ...serving,
     phase: phaseOf(serving, inputs, chatActivity(activity, work, turnRequest, stats), readiness),
@@ -1218,11 +1236,11 @@ function deriveEngineServedBy(given: ChatServedInputs): ChatServedBy {
     work,
     busyWithOthers:
       stats && activity && main
-        ? busyWith(main, stats, activity, sessionId, inputs.turnInFlight)
+        ? busyWith(main, stats, activity, sessionId, turnInFlight)
         : null,
     busyIn:
       stats && activity && main && work === 'others'
-        ? busyInOf(main, stats, activity, sessionId, inputs.turnInFlight)
+        ? busyInOf(main, stats, activity, sessionId, turnInFlight)
         : null,
     turnRequest,
     turnWait: stats ? turnWaitOf(stats, turnRequest) : null,

@@ -11198,6 +11198,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose desidera richiamare {toolName}. Consentire?"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose sta rispondendo a questa chat in un'altra finestra. Interrompi la termina lì; un messaggio inviato ora attende che finisca."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "Mostra quella finestra"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Interrompi il turno in esecuzione in un'altra finestra"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "In esecuzione in un'altra finestra"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {In coda dietro # richiesta fermata che sta ancora lasciando il motore} other {In coda dietro # richieste fermate che stanno ancora lasciando il motore}}{since, select, none {} other { · fermata {since} fa}}"
   },

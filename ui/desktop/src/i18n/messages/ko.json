@@ -11198,6 +11198,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "goose가 {toolName}을 호출하려고 합니다. 허용하시겠습니까?"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose가 다른 창에서 이 채팅에 답하고 있습니다. 중지하면 그 창에서 끝납니다. 지금 보낸 메시지는 끝날 때까지 기다립니다."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "그 창 보기"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "다른 창에서 실행 중인 턴 중지"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "다른 창에서 실행 중"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {아직 엔진에서 빠져나가는 중인 중지된 요청 #개 뒤에서 대기 중} other {아직 엔진에서 빠져나가는 중인 중지된 요청 #개 뒤에서 대기 중}}{since, select, none {} other { · {since} 전에 중지됨}}"
   },

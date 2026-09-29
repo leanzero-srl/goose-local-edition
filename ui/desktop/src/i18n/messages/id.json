@@ -11198,6 +11198,18 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose ingin memanggil {toolName}. Izinkan?"
   },
+  "turnElsewhere.detail": {
+    "defaultMessage": "goose sedang menjawab chat ini di jendela lain. Hentikan akan mengakhirinya di sana; pesan yang dikirim sekarang menunggu hingga selesai."
+  },
+  "turnElsewhere.show": {
+    "defaultMessage": "Tampilkan jendela itu"
+  },
+  "turnElsewhere.stop": {
+    "defaultMessage": "Hentikan giliran yang berjalan di jendela lain"
+  },
+  "turnElsewhere.title": {
+    "defaultMessage": "Berjalan di jendela lain"
+  },
   "turnWait.leaving": {
     "defaultMessage": "{rows, plural, one {Mengantre di belakang # permintaan yang dihentikan dan masih keluar dari mesin} other {Mengantre di belakang # permintaan yang dihentikan dan masih keluar dari mesin}}{since, select, none {} other { · dihentikan {since} lalu}}"
   },

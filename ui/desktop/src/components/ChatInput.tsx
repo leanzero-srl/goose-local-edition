@@ -74,6 +74,12 @@ import { composerWords } from './loops/startLoopWords';
 import { setPendingUserInput } from './loops/pendingUserInput';
 import { sendLoopControlNow } from './loops/tickDoor';
 import { servedChipWords } from './settings/models/bottom_bar/servedChip';
+import {
+  TurnElsewhereBar,
+  stopTurnElsewhere,
+  turnElsewhereWords,
+  useTurnElsewhere,
+} from './turnWorking/TurnElsewhereBar';
 
 const turndown = new TurndownService({
   headingStyle: 'atx',
@@ -285,8 +291,15 @@ export default function ChatInput({
   const [pastedImages, setPastedImages] = useState<PastedImage[]>([]);
   const [isFilePickerOpen, setIsFilePickerOpen] = useState(false);
 
-  // Derived state - chatState != Idle means we're in some form of loading state
-  const isLoading = chatState !== ChatState.Idle;
+  // Derived state - chatState != Idle means we're in some form of loading state. A turn another
+  // window's connection runs for this chat (Q-500) is busy here too: Stop, and a send that waits.
+  const turnElsewhere = useTurnElsewhere(sessionId, chatState !== ChatState.Idle);
+  const isLoading = chatState !== ChatState.Idle || turnElsewhere !== null;
+  // Only the window whose connection sent the prompt can cancel it (goosed's `on_cancel`).
+  const stopTurn = () => {
+    if (turnElsewhere && sessionId) stopTurnElsewhere(sessionId);
+    else onStop?.();
+  };
   const isLoadingRef = useRef(isLoading);
   const queueProcessingBlockedRef = useRef(queueProcessingBlocked);
   const wasLoadingRef = useRef(isLoading);
@@ -1280,7 +1293,7 @@ export default function ChatInput({
 
     if (interruptionMatch && interruptionMatch.shouldInterrupt) {
       setLastInterruption(interruptionMatch.matchedText);
-      if (onStop) onStop();
+      stopTurn();
       pauseRemainingQueue();
 
       // For interruptions, we need to queue the message to be sent after the stop completes
@@ -1685,14 +1698,14 @@ export default function ChatInput({
     sendAfterStopMessageIdRef.current = messageId;
     pauseRemainingQueue();
     setQueuedMessages((prev) => moveQueuedMessageToFront(prev, messageId));
-    if (onStop) onStop();
+    stopTurn();
   };
 
   const handleStop = () => {
     if (pauseQueueOnStop && queuedMessages.length > 0) {
       pauseRemainingQueue();
     }
-    if (onStop) onStop();
+    stopTurn();
   };
 
   const handleResumeQueue = () => {
@@ -1739,6 +1752,9 @@ export default function ChatInput({
         sessionId={sessionId}
         onModelChanged={setModelOverride}
       />
+      {turnElsewhere && sessionId && (
+        <TurnElsewhereBar sessionId={sessionId} since={turnElsewhere.since} />
+      )}
       {/* Message Queue Display */}
       {queuedMessages.length > 0 && (
         <MessageQueue
@@ -2126,7 +2142,9 @@ export default function ChatInput({
             title={
               tickHere !== null
                 ? intl.formatMessage(composerWords.stopTick, { n: tickHere })
-                : undefined
+                : turnElsewhere
+                  ? intl.formatMessage(turnElsewhereWords.stop)
+                  : undefined
             }
             icon={<Stop />}
           />
