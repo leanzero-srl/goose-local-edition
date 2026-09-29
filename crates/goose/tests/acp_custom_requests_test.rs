@@ -940,7 +940,7 @@ fn test_config_read_all_reports_an_unreadable_config_until_it_is_moved_aside() {
         assert!(
             files[0]["reason"]
                 .as_str()
-                .is_some_and(|reason| reason.contains("did not find expected")),
+                .is_some_and(|reason| reason == "an unclosed '['"),
             "{response}"
         );
 
