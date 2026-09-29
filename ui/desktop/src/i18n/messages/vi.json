@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Đang chuyển"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "Phiên chưa đặt tên"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} đang chờ"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "Đang chạy"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "Phiên chưa đặt tên"
   },
   "sessionIndicators.error": {
     "defaultMessage": "Phiên gặp lỗi"

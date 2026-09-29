@@ -50,7 +50,7 @@ import {
   type GlanceStage,
 } from '../../utils/engineGlance';
 import { backgroundWorkFor, backgroundWorkLabel } from '../sessionActivity/backgroundWorkText';
-import { needsYouCountLabel } from '../sessionActivity/needsYouWords';
+import { activeRowName, needsYouCountLabel, questionGist } from '../sessionActivity/needsYouWords';
 import { FormingPanel } from '../forming/FormingPanel';
 import { swappingText } from '../chatServedBy/loaderText';
 
@@ -172,7 +172,6 @@ const i18n = defineMessages({
     id: 'engineGlance.openQuestion',
     defaultMessage: 'Open {name} — it asked: {question}',
   },
-  untitled: { id: 'engineGlance.untitled', defaultMessage: 'Untitled session' },
   node: { id: 'nodes.glanceNode', defaultMessage: 'Node · {name}' },
   openNode: { id: 'nodes.glanceOpenNode', defaultMessage: 'Open {name} on the Nodes page' },
   nodeUnknown: {
@@ -507,7 +506,7 @@ function NeedsYouStrip({
   const items = push.sessions.needsYou;
   if (items.length === 0) return null;
   const first = items[0];
-  const name = first.sessionName || intl.formatMessage(i18n.untitled);
+  const name = activeRowName(intl, first.sessionName);
   return (
     <button
       type="button"
@@ -784,7 +783,7 @@ function GlanceFace(props: EngineGlanceCardProps) {
   // No engine to speak of, only a question: the card is the question, in its solid warn fill, and
   // a click opens the chat that asked it.
   const question = engine.present ? null : (push.sessions.needsYou[0] ?? null);
-  const questionName = question ? question.sessionName || intl.formatMessage(i18n.untitled) : null;
+  const questionName = question ? activeRowName(intl, question.sessionName) : null;
   const open = () => {
     if (question) props.onOpenSession(question.sessionId);
     else props.onOpenEngine();
@@ -1008,7 +1007,13 @@ function GlanceFace(props: EngineGlanceCardProps) {
           <div data-testid="engine-glance-question" className="flex min-w-0 flex-col gap-0.5">
             <span className={cx('truncate text-lz-body', WEIGHT.semibold)}>{questionName}</span>
             {question.question && (
-              <span className="line-clamp-2 break-words text-lz-meta">{question.question}</span>
+              <span
+                data-testid="engine-glance-question-gist"
+                title={question.question}
+                className="truncate text-lz-meta"
+              >
+                {questionGist(question.question)}
+              </span>
             )}
           </div>
         )}

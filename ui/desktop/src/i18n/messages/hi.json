@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "बदल रहा है"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "बिना शीर्षक का सत्र"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} प्रतीक्षा में"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "अभी चल रहे हैं"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "बिना शीर्षक का सत्र"
   },
   "sessionIndicators.error": {
     "defaultMessage": "सत्र में एक त्रुटि आई"

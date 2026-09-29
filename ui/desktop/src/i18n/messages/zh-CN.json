@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "正在切换"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "未命名会话"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} 个等待中"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "正在运行"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "未命名会话"
   },
   "sessionIndicators.error": {
     "defaultMessage": "会话发生错误"

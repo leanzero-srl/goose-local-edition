@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Menukar"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "Sesi tanpa judul"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} menunggu"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "Sedang berjalan"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "Sesi tanpa judul"
   },
   "sessionIndicators.error": {
     "defaultMessage": "Sesi mengalami kesalahan"

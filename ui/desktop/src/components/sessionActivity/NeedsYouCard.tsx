@@ -22,6 +22,7 @@ import {
   type SendAnswer,
 } from './needsYouAnswerQueue';
 import { useNeedsYouFold } from './needsYouFold';
+import { questionGist } from './needsYouWords';
 
 const i18n = defineMessages({
   title: { id: 'needsYouCard.title', defaultMessage: 'Needs you' },
@@ -88,7 +89,7 @@ interface FoldBandProps {
   bodyId: string;
   icon: ReactNode;
   title: string;
-  /** Shown beside the title only while folded — the card's one line. */
+  /** Shown beside the title only while folded, as its gist — the card's one line. */
   summary: string;
   queued: boolean;
   position: string | null;
@@ -127,8 +128,12 @@ function FoldBand({
       {icon}
       <span className={cx('shrink-0 text-lz-body', WEIGHT.semibold)}>{title}</span>
       {folded ? (
-        <span data-testid="needs-you-fold-summary" className="min-w-0 flex-1 truncate text-lz-body">
-          {summary}
+        <span
+          data-testid="needs-you-fold-summary"
+          title={summary}
+          className="min-w-0 flex-1 truncate text-lz-body"
+        >
+          {questionGist(summary)}
         </span>
       ) : (
         <span className="flex-1" />
@@ -512,7 +517,9 @@ export default function NeedsYouTray({
                 ? intl.formatMessage(i18n.unsentClosed)
                 : intl.formatMessage(i18n.unsentFailed, { error: notice.error ?? '' })}
             </span>
-            <span className="truncate">{notice.question}</span>
+            <span title={notice.question} className="truncate">
+              {questionGist(notice.question)}
+            </span>
             <span className="whitespace-pre-wrap break-words">
               {intl.formatMessage(i18n.unsentAnswer, { answer: notice.answer })}
             </span>
@@ -555,9 +562,10 @@ export default function NeedsYouTray({
           </span>
           <span
             data-testid="needs-you-stack-first"
+            title={firstQuestion}
             className="min-w-0 flex-1 truncate text-lz-body"
           >
-            — {firstQuestion}
+            — {questionGist(firstQuestion)}
           </span>
           {queuedCount > 0 && (
             <span data-testid="needs-you-stack-queued" className={BAND_CHIP}>

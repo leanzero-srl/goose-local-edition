@@ -20,6 +20,7 @@ import {
 } from './loopView';
 import { durationWords, type LoopCheckRun, type LoopRecord, type LoopTickRecord } from './model';
 import { useChatName } from './useChatName';
+import { questionGist } from '../sessionActivity/needsYouWords';
 
 const LINK = cx(
   'inline-flex h-6 items-center rounded-lz-control border border-lz-border-strong bg-lz-surface px-2 text-xs font-lz-medium text-lz-ink hover:bg-lz-surface-2',
@@ -206,7 +207,7 @@ function collapsedLine(tick: LoopTickRecord, format: Format, chatName: string): 
     case 'no_report':
       return format(w.tickNoReport);
     case 'asked':
-      return format(w.tickAsked, { question: outcome.question });
+      return format(w.tickAsked, { question: questionGist(outcome.question) });
   }
   if (tick.report?.summary) return firstLine(tick.report.summary);
   if (outcome?.kind === 'stopped_by_you') return format(w.tickStoppedByYou);

@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "Переключение"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "Сеанс без названия"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count} в ожидании"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "Идут сейчас"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "Сеанс без названия"
   },
   "sessionIndicators.error": {
     "defaultMessage": "В сеансе возникла ошибка"

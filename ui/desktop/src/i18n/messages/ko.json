@@ -2243,9 +2243,6 @@
   "engineGlance.stage.swapping": {
     "defaultMessage": "전환 중"
   },
-  "engineGlance.untitled": {
-    "defaultMessage": "제목 없는 세션"
-  },
   "engineGlance.waiting": {
     "defaultMessage": "{count}개 대기 중"
   },
@@ -9703,9 +9700,6 @@
   },
   "sessionActivityIndicator.runningMenu": {
     "defaultMessage": "지금 실행 중"
-  },
-  "sessionActivityIndicator.unnamed": {
-    "defaultMessage": "제목 없는 세션"
   },
   "sessionIndicators.error": {
     "defaultMessage": "세션에 오류가 발생했습니다."
