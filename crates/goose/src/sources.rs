@@ -22,7 +22,7 @@ use tracing::warn;
 ///
 /// `Ok(None)` means the file has no frontmatter: it does not OPEN with a `---` line, or the block is never
 /// closed by one. The old split on every `---` in the file read a body's horizontal rule as a delimiter —
-/// ~/.agents/skills/talent-vault-skill has no frontmatter and a `---` rule after its intro, so its first
+/// ~/.agents/skills/harborlight-skill has no frontmatter and a `---` rule after its intro, so its first
 /// section ("**Two parallel …**") was parsed as YAML and failed "while scanning an alias at line 3".
 ///
 /// The YAML is read the way Claude Code reads the same files (2.1.280: `ts` → `Afr` → `M`): strictly
@@ -1906,12 +1906,12 @@ mod tests {
         assert_eq!(body, "body");
     }
 
-    /// ~/.agents/skills/talent-vault-skill has no frontmatter and a `---` rule under its intro. The old split
+    /// ~/.agents/skills/harborlight-skill has no frontmatter and a `---` rule under its intro. The old split
     /// on every `---` parsed the text between the rules as YAML: "while scanning an alias at line 3 column 1"
-    /// on `**Two parallel "employee" stores …`.
+    /// on `**Two parallel "ledger" stores …`.
     #[test]
     fn a_horizontal_rule_in_a_body_is_not_frontmatter() {
-        let raw = "# TalentVault Technical Skill\n\n> Purpose: give any AI agent the map.\n\n---\n\n## 0. The one fact\n\n**Two parallel \"employee\" stores exist:**\n\n---\n\nmore";
+        let raw = "# Harborlight Technical Skill\n\n> Purpose: give any AI agent the map.\n\n---\n\n## 0. The one fact\n\n**Two parallel \"ledger\" stores exist:**\n\n---\n\nmore";
         assert!(name_description(raw).is_none());
         let raw = "---\nname: x\ndescription: a---b\n---\nbody\n\n---\n\nafter the rule";
         let (meta, body) = name_description(raw).unwrap();

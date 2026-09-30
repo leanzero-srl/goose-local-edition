@@ -1110,22 +1110,22 @@ mod tests {
     }
 
     /// Claude Code reads a SKILL.md with no frontmatter as a skill named by its directory, described by
-    /// its first line (2.1.280 `hhe`). ~/.agents/skills/talent-vault-skill is exactly that file.
+    /// its first line (2.1.280 `hhe`). ~/.agents/skills/harborlight-skill is exactly that file.
     #[test]
     fn a_skill_without_frontmatter_is_named_by_its_directory() {
-        let dir = Path::new("/s/talent-vault-skill");
-        let raw = "# TalentVault Technical Skill — Component Map\n\n> Purpose: the map.\n\n---\n\n**Two parallel \"employee\" stores**";
+        let dir = Path::new("/s/harborlight-skill");
+        let raw = "# Harborlight Technical Skill — Component Map\n\n> Purpose: the map.\n\n---\n\n**Two parallel \"ledger\" stores**";
         let skill = parse_skill_content(raw, dir, true).expect("a skill");
-        assert_eq!(skill.name, "talent-vault-skill");
+        assert_eq!(skill.name, "harborlight-skill");
         assert_eq!(
             skill.description,
-            "TalentVault Technical Skill — Component Map"
+            "Harborlight Technical Skill — Component Map"
         );
         assert_eq!(skill.content, raw);
 
         let skill = parse_skill_content("---\ndescription: d\n---\nbody", dir, true).unwrap();
         assert_eq!(
-            skill.name, "talent-vault-skill",
+            skill.name, "harborlight-skill",
             "a missing name is the directory's"
         );
         let skill =
