@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -229,6 +230,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # That cost a whole 5-hour run: a call was looping in plain sight with no way to ask whether
     # the judge had even fired. The console now lands next to the tree while the run is going.
     console = workdir / "engine-console.log"
+    session_leader = None
     try:
         with console.open("w", buffering=1) as fh:
             if provider or snapshot is not None:
@@ -236,6 +238,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                                         stderr=subprocess.STDOUT, text=True,
                                         env={**child_env, "GOOSE_MODE": "auto"},
                                         start_new_session=True)
+                session_leader = proc.pid
                 for line in proc.stdout:
                     for value in credential_values:
                         line = line.replace(value, "[REDACTED]")
@@ -244,15 +247,27 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                 proc.stdout.close()
                 code = proc.wait()
             else:
-                proc = subprocess.run(cmd, cwd=workdir, stdout=fh, stderr=subprocess.STDOUT, text=True,
-                                      timeout=(timeout if timeout and timeout > 0 else None),
-                                      env=child_env, start_new_session=True)
-                code = proc.returncode
+                # Popen + wait is subprocess.run's own timeout semantics (kill, reap, re-raise), kept
+                # so the session leader's pid is known to the teardown below.
+                proc = subprocess.Popen(cmd, cwd=workdir, stdout=fh, stderr=subprocess.STDOUT, text=True,
+                                        env=child_env, start_new_session=True)
+                session_leader = proc.pid
+                try:
+                    code = proc.wait(timeout=(timeout if timeout and timeout > 0 else None))
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    raise
         tail = console.read_text(errors="replace")[-1500:]
     except subprocess.TimeoutExpired:
         code, tail = None, "timed out"
     result = {"exit": code, "secs": round(time.time() - started, 1), "tail": tail,
               "timed_out": code is None}
+    # The entrant's own test instance must not outlive it: one left running (2026-10-01,
+    # openrouter-cloud-c003209f) kept syncing against the scorer's vendor and was graded alongside.
+    teardown = reap_entrant_survivors(workdir, session_leader, credential_values)
+    result["reaped_processes"] = teardown["reaped_processes"]
+    (workdir / "reaped-processes.json").write_text(json.dumps(teardown, indent=2))
     knowledge_after = knowledge_store_snapshot(workdir)
     if knowledge_after != knowledge_before:
         changed = sorted(set(knowledge_before.items()) ^ set(knowledge_after.items()))
@@ -285,6 +300,162 @@ def knowledge_store_snapshot(workdir: Path) -> dict[str, float]:
         for path in sorted(p for p in root.rglob("*") if p.is_file()):
             snapshot[str(path)] = path.stat().st_mtime
     return snapshot
+
+
+def _process_table() -> Dict[int, dict]:
+    listing = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True,
+                             check=True).stdout
+    table = {}
+    for line in listing.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) >= 2 and fields[0].isdigit() and fields[1].isdigit():
+            table[int(fields[0])] = {"ppid": int(fields[1]), "args": fields[2] if len(fields) > 2 else ""}
+    return table
+
+
+def _process_cwds() -> Dict[int, str]:
+    listing = subprocess.run(["lsof", "-a", "-d", "cwd", "-Fpn"], capture_output=True, text=True).stdout
+    cwds, pid = {}, None
+    for line in listing.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line.startswith("n") and pid is not None:
+            cwds[pid] = line[1:]
+    return cwds
+
+
+def _alive(pid: int) -> bool:
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap_entrant_survivors(workdir: Path, session_leader: int | None, redactions=(),
+                           grace_seconds: float = 5.0) -> dict:
+    """Terminate, PER PID, every process the finished entrant left behind.
+
+    An entrant's process is one in the entrant's session (start_new_session made its leader the
+    session id; goose's shell tool regroups commands but keeps the session), a process whose cwd is
+    inside the workdir AND whose orphan root (the topmost ancestor below launchd) is itself such a
+    process, or a descendant of either. The root rule spares an operator's shell or tool that merely
+    cd'd into the tree: its chain reaches a terminal or agent outside the tree, and it is recorded as
+    skipped, never signalled. The harness and its ancestors (the desktop app) are never candidates.
+    SIGTERM, then poll liveness, then SIGKILL survivors still running the same command (gate 4: no
+    group signal). grace_seconds is teardown, not model work (gate 5). # measured: a python app
+    server exited 0.001 s after SIGTERM (3 of 3, 2026-10-02); 5 s leaves a graceful handler three
+    orders of magnitude of room before SIGKILL.
+    """
+    root = os.path.realpath(workdir)
+
+    def inside(path: str | None) -> bool:
+        return bool(path) and (path == root or path.startswith(root + os.sep))
+
+    def redact(text: str) -> str:
+        for value in redactions:
+            text = text.replace(value, "[REDACTED]")
+        return text
+
+    errors = []
+    table = _process_table()
+    try:
+        cwds = _process_cwds()
+    except OSError as error:
+        cwds = {}
+        errors.append(f"lsof cwd scan unavailable ({type(error).__name__}); only the entrant's session was searched")
+    protected, pid = set(), os.getpid()
+    while pid in table and pid not in protected:
+        protected.add(pid)
+        pid = table[pid]["ppid"]
+    protected.update({0, 1})
+
+    def in_session(candidate: int) -> bool:
+        try:
+            return session_leader is not None and os.getsid(candidate) == session_leader
+        except OSError:
+            return False
+
+    session = {p for p in table if p not in protected and in_session(p)}
+    in_tree = {p for p, path in cwds.items() if inside(path) and p in table and p not in protected}
+
+    def orphan_root(candidate: int) -> int:
+        seen = set()
+        while table.get(candidate, {}).get("ppid", 1) > 1 and candidate not in seen:
+            seen.add(candidate)
+            candidate = table[candidate]["ppid"]
+        return candidate
+
+    rooted = {p for p in in_tree if orphan_root(p) in in_tree | session}
+    matched = {p: ["session"] for p in session}
+    for p in rooted:
+        matched.setdefault(p, []).append("cwd")
+    frontier = list(matched)
+    while frontier:
+        parent = frontier.pop()
+        for child, row in table.items():
+            if row["ppid"] == parent and child not in matched and child not in protected:
+                matched[child] = ["descendant"]
+                frontier.append(child)
+
+    reaped = []
+    for p in sorted(matched):
+        try:
+            os.kill(p, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError as error:
+            errors.append(f"pid {p}: SIGTERM refused ({error.strerror})")
+            continue
+        reaped.append({"pid": p, "args": redact(table[p]["args"]), "cwd": cwds.get(p),
+                       "matched_by": matched[p], "signal": "SIGTERM"})
+    pending = [row for row in reaped]
+    step = grace_seconds / 100  # ratio: one hundredth of the grace per liveness poll
+    waited = 0.0
+    while pending and waited < grace_seconds:
+        time.sleep(step)
+        waited += step
+        pending = [row for row in pending if _alive(row["pid"])]
+    if pending:
+        current = _process_table()
+        for row in pending:
+            if current.get(row["pid"], {}).get("args") == table[row["pid"]]["args"]:
+                try:
+                    os.kill(row["pid"], signal.SIGKILL)
+                    row["signal"] = "SIGKILL"
+                except ProcessLookupError:
+                    pass
+        waited = 0.0
+        while pending and waited < grace_seconds:
+            time.sleep(step)
+            waited += step
+            pending = [row for row in pending if _alive(row["pid"])]
+        for row in pending:
+            row["survived"] = True
+            errors.append(f"pid {row['pid']} still alive after SIGKILL")
+    for row in reaped:
+        print(f"REAPED entrant survivor pid {row['pid']} ({row['signal']}, matched by "
+              f"{'+'.join(row['matched_by'])}) cwd={row['cwd']}: {row['args']}", flush=True)
+    record = {"reaped_processes": reaped}
+    skipped = [{"pid": p, "args": redact(table[p]["args"]), "cwd": cwds.get(p),
+                "reason": f"cwd inside the workdir but its root pid {orphan_root(p)} is outside it"}
+               for p in sorted(in_tree - set(matched))]
+    if skipped:
+        record["skipped_processes"] = skipped
+        for row in skipped:
+            print(f"NOT REAPED pid {row['pid']} in the workdir: {row['reason']}: {row['args']}", flush=True)
+    if errors:
+        record["errors"] = errors
+        for error in errors:
+            print(f"REAP INCOMPLETE: {error}", flush=True)
+    return record
 
 
 def entrant_config(provider: str | None) -> dict:
@@ -341,6 +512,127 @@ def google_model_limits(model: str, credentials: Dict[str, str]) -> Dict[str, in
     return limits
 
 
+# Providers whose engine runs on this machine's own fleet: the brief and the scorer's local arms
+# never relied on cloud metadata, and their windows are probed by the engine itself.
+LOCAL_ENGINE_PROVIDERS = frozenset({"lmstudio", "swarm"})
+# goose parses GOOSE_MAX_TOKENS as an i32 (crates/goose/src/config/base.rs get_goose_max_tokens);
+# a larger value is a config error in the child, so it is refused here, before any model call.
+GOOSE_MAX_TOKENS_TYPE_BOUND = 2**31 - 1
+
+
+def _positive_limit(value, what: str) -> int:
+    if type(value) is not int or value <= 0:
+        raise RuntimeError(f"REFUSED: {what} is {value!r}, not a positive integer token limit")
+    return value
+
+
+def _openrouter_model_limits(model: str, credentials: Dict[str, str]) -> dict:
+    key = credentials.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("REFUSED: OPENROUTER_API_KEY is absent from the benchmark snapshot, so the "
+                           "model's limits cannot be read")
+    # The same host the engine's OpenRouter provider calls (OPENROUTER_HOST, default openrouter.ai),
+    # so the limits describe the endpoint the run actually uses.
+    host = credentials.get("OPENROUTER_HOST") or "https://openrouter.ai"
+    url = host.rstrip("/") + "/api/v1/models"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            listing = json.load(response)
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"REFUSED: OpenRouter model metadata unreadable at {url}: "
+                           f"{type(error).__name__}") from None
+    entries = listing.get("data") if isinstance(listing, dict) else None
+    if not isinstance(entries, list):
+        raise RuntimeError(f"REFUSED: OpenRouter model listing at {url} carries no data array")
+    matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("id") == model]
+    if len(matches) != 1:
+        raise RuntimeError(f"REFUSED: OpenRouter lists {len(matches)} models with id exactly {model!r} "
+                           f"(of {len(entries)}); the run's limits cannot be measured")
+    entry = matches[0]
+    top = entry.get("top_provider") if isinstance(entry.get("top_provider"), dict) else {}
+    # A null max_completion_tokens was measured on 7 of 464 listed models on 2026-10-01, all of them
+    # routers (openrouter/auto, openrouter/free, ...), never on a frontier model, so it is refused
+    # rather than derived from the context window.
+    context = _positive_limit(entry.get("context_length"), f"OpenRouter context_length for {model}")
+    output = _positive_limit(top.get("max_completion_tokens"),
+                             f"OpenRouter top_provider.max_completion_tokens for {model}")
+    return {"context": context, "output": output,
+            "provenance": {"source": "openrouter-model-metadata", "url": url,
+                           "fields": {"context_length": context,
+                                      "top_provider.max_completion_tokens": output}}}
+
+
+def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]) -> dict | None:
+    """The context window and output cap a cloud entrant runs with, from a NAMED source.
+
+    goose's canonical catalog lags new models, and an unknown model silently gets the engine's
+    128,000 context fallback and the provider's own default output cap (Bedrock: 4,096). Measured on
+    fable-5.1-r0: 7 of 22 calls ended at exactly 4,096 completion tokens with truncated write
+    arguments, and compaction fired at 0.8 x 128k on a 1M-context model. So a cloud entrant gets
+    limits from the operator (BENCH_CONTEXT_LIMIT/BENCH_MAX_TOKENS, which win everywhere) or from
+    provider metadata (google, openrouter), recorded with their provenance. Bedrock without operator
+    values is refused before the model is called: that is the measured harm (fable-5.1, gpt-6-astra).
+    Every other provider proceeds on goose's own limits and the record says so by name (gate 1:
+    a loud absence, never a silent default). Local fleets return None.
+    """
+    if provider in LOCAL_ENGINE_PROVIDERS:
+        return None
+    explicit = {name: os.environ.get(name) for name in ("BENCH_CONTEXT_LIMIT", "BENCH_MAX_TOKENS")}
+    if any(explicit.values()):
+        missing = [name for name, value in explicit.items() if not value]
+        if missing:
+            raise RuntimeError(f"REFUSED: {', '.join(missing)} unset; explicit limits need both "
+                               "BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS")
+        parsed = {}
+        for name, value in explicit.items():
+            try:
+                parsed[name] = int(value)
+            except ValueError:
+                parsed[name] = value
+        context = _positive_limit(parsed["BENCH_CONTEXT_LIMIT"], "BENCH_CONTEXT_LIMIT")
+        output = _positive_limit(parsed["BENCH_MAX_TOKENS"], "BENCH_MAX_TOKENS")
+        provenance = {"source": "operator-env", "fields": explicit}
+    elif provider == "google":
+        google = google_model_limits(model, credentials)
+        context, output = google["inputTokenLimit"], google["outputTokenLimit"]
+        provenance = {"source": "google-model-metadata",
+                      "url": f"https://generativelanguage.googleapis.com/v1beta/models/{model}",
+                      "fields": google}
+    elif provider == "openrouter":
+        measured = _openrouter_model_limits(model, credentials)
+        context, output, provenance = measured["context"], measured["output"], measured["provenance"]
+    elif provider == "aws_bedrock":
+        raise RuntimeError(
+            f"REFUSED: no source for {provider}/{model}'s context window and output cap. goose would "
+            "run it on its 128,000-token context fallback and Bedrock's default 4,096-token output "
+            "cap (measured on fable-5.1-r0). Export BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS from the "
+            "model's documentation and launch again.")
+    else:
+        configured = {name: credentials[name] for name in ("GOOSE_CONTEXT_LIMIT", "GOOSE_MAX_TOKENS")
+                      if name in credentials}
+        reason = (f"no limits metadata path for provider {provider}; goose falls back to its catalog "
+                  "or DEFAULT_CONTEXT_LIMIT 128000, and to the provider's own default output cap")
+        if configured:
+            reason += f", except where goose's own config sets {', '.join(sorted(configured))}"
+        record = {"status": "provider_default_unverified", "reason": reason,
+                  "provider": provider, "model": model}
+        if configured:
+            record["goose_config"] = configured
+        return record
+    if output > GOOSE_MAX_TOKENS_TYPE_BOUND:
+        raise RuntimeError(f"REFUSED: output cap {output} for {model} exceeds goose's i32 GOOSE_MAX_TOKENS")
+    provenance = {**provenance, "provider": provider, "model": model,
+                  "resolved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    replaced = {name: credentials[name] for name, value in
+                (("GOOSE_CONTEXT_LIMIT", str(context)), ("GOOSE_MAX_TOKENS", str(output)))
+                if name in credentials and credentials[name] != value}
+    if replaced:
+        provenance["replaced_goose_config"] = replaced
+    return {"GOOSE_CONTEXT_LIMIT": str(context), "GOOSE_MAX_TOKENS": str(output),
+            "provenance": provenance}
+
+
 def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         provider: str | None = None, model: str | None = None) -> Dict:
     workdir = out_root / f"{entrant}-r{rep}"
@@ -349,10 +641,18 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     snapshot = entrant_config(provider) if provider or os.environ.get("BENCH_SB71") else None
     credentials = (cloud_env(provider, snapshot) if provider else
                    snapshot_environment(snapshot) if snapshot else load_env())
-    model_limits = google_model_limits(model, credentials) if provider == "google" else None
-    if model_limits:
-        credentials = {**credentials, "GOOSE_CONTEXT_LIMIT": str(model_limits["inputTokenLimit"]),
-                       "GOOSE_MAX_TOKENS": str(model_limits["outputTokenLimit"])}
+    # A MODELS entrant is a Bedrock cloud model launched without --provider (invoke()'s second arm),
+    # and fable-5.1-r0, the receipt for provider_model_limits, ran on exactly that arm.
+    limits_provider = provider or ("aws_bedrock" if entrant in MODELS else None)
+    limits_model = model or MODELS.get(entrant)
+    model_limits = (provider_model_limits(limits_provider, limits_model, credentials)
+                    if limits_provider else None)
+    if model_limits and "GOOSE_CONTEXT_LIMIT" in model_limits:
+        credentials = {**credentials, "GOOSE_CONTEXT_LIMIT": model_limits["GOOSE_CONTEXT_LIMIT"],
+                       "GOOSE_MAX_TOKENS": model_limits["GOOSE_MAX_TOKENS"]}
+    elif model_limits:
+        print(f"MODEL LIMITS UNVERIFIED: {limits_provider}/{limits_model} — {model_limits['reason']}. "
+              "Set BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS to pin them.", flush=True)
     workdir.mkdir(parents=True)
     if model_limits:
         (workdir / "model-limits.json").write_text(json.dumps(model_limits, indent=2))
@@ -530,7 +830,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     if provider:
         verdict["provider"] = provider
         verdict["model"] = model
+    if provider or model_limits:
         verdict["model_limits"] = model_limits
+    if "reaped_processes" in agent:
+        verdict["reaped_processes"] = agent["reaped_processes"]
     # BENCH2/F769: ARCHIVE THE TREE at score time — the sweep wipes the workdir within seconds
     # of [done] (dir reuse), which has already cost the campaign the 0.996 tree and the first
     # two dual-score windows. A tree copy is ~100KB and makes every scored artifact a permanent

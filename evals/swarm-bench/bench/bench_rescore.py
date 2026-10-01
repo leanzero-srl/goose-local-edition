@@ -11,8 +11,8 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 # Harness-owned evidence is outside the declared candidate source inventory.
 EXCLUDED = {'engine-console.log', 'harness-console.log', 'trace.jsonl', 'verdict.json',
-            'model-usage.json', 'model-limits.json', 'isolation.json', 'sb7-expect.json',
-            'sb7-tokens.json', 'probe-observations.json', 'api-observations.json',
+            'model-usage.json', 'model-limits.json', 'reaped-processes.json', 'isolation.json',
+            'sb7-expect.json', 'sb7-tokens.json', 'probe-observations.json', 'api-observations.json',
             'bench-shots', 'sb7-shots', 'bench-media', 'scorer-logs', '.swarm',
             'graded-sb7-db', 'sb7-empty-db', 'sb7-combined-db', 'scoring-unavailable.json',
             'run.jsonl', 'process.json', 'heartbeat', 'nodeloop-result.json'}
