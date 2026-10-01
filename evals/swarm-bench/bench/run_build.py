@@ -624,13 +624,21 @@ def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]
         raise RuntimeError(f"REFUSED: output cap {output} for {model} exceeds goose's i32 GOOSE_MAX_TOKENS")
     provenance = {**provenance, "provider": provider, "model": model,
                   "resolved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    replaced = {name: credentials[name] for name, value in
-                (("GOOSE_CONTEXT_LIMIT", str(context)), ("GOOSE_MAX_TOKENS", str(output)))
+    limits = {"GOOSE_CONTEXT_LIMIT": str(context), "GOOSE_MAX_TOKENS": str(output)}
+    if provider == "openrouter":
+        # MEASURED 2026-10-01: sending the listed maximum (943,718 for deepseek-v4.1-flash) shrinks
+        # OpenRouter's backend pool to the hosts that accept it and removes the host's own output
+        # bound — run openrouter-cloud-9e652114 streamed 32k chars of degenerate thinking on its first
+        # request. With no max_tokens OpenRouter served anthropic/claude-haiku-4.5 (8,004 tokens) and
+        # openai/gpt-6-luna (8,176) to a natural stop, so the 4,096 truncation that destroyed the
+        # Bedrock runs does not exist on this lane. The context window is the limit goose was missing.
+        del limits["GOOSE_MAX_TOKENS"]
+        provenance["max_tokens_sent"] = credentials.get("GOOSE_MAX_TOKENS")
+    replaced = {name: credentials[name] for name, value in limits.items()
                 if name in credentials and credentials[name] != value}
     if replaced:
         provenance["replaced_goose_config"] = replaced
-    return {"GOOSE_CONTEXT_LIMIT": str(context), "GOOSE_MAX_TOKENS": str(output),
-            "provenance": provenance}
+    return {**limits, "provenance": provenance}
 
 
 def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
@@ -648,8 +656,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     model_limits = (provider_model_limits(limits_provider, limits_model, credentials)
                     if limits_provider else None)
     if model_limits and "GOOSE_CONTEXT_LIMIT" in model_limits:
-        credentials = {**credentials, "GOOSE_CONTEXT_LIMIT": model_limits["GOOSE_CONTEXT_LIMIT"],
-                       "GOOSE_MAX_TOKENS": model_limits["GOOSE_MAX_TOKENS"]}
+        credentials = {**credentials, **{name: model_limits[name] for name in
+                                         ("GOOSE_CONTEXT_LIMIT", "GOOSE_MAX_TOKENS") if name in model_limits}}
     elif model_limits:
         print(f"MODEL LIMITS UNVERIFIED: {limits_provider}/{limits_model} — {model_limits['reason']}. "
               "Set BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS to pin them.", flush=True)

@@ -191,7 +191,10 @@ class ProviderModelLimitsTests(unittest.TestCase):
         request = call.call_args.args[0]
         self.assertEqual(request.full_url, 'https://openrouter.ai/api/v1/models')
         self.assertEqual(request.get_header('Authorization'), 'Bearer test-or')
-        self.assertEqual((limits['GOOSE_CONTEXT_LIMIT'], limits['GOOSE_MAX_TOKENS']), ('1050000', '128000'))
+        self.assertEqual(limits['GOOSE_CONTEXT_LIMIT'], '1050000')
+        # The listed output cap is recorded, never sent: it narrows the backend pool (run 9e652114).
+        self.assertNotIn('GOOSE_MAX_TOKENS', limits)
+        self.assertIsNone(limits['provenance']['max_tokens_sent'])
         provenance = limits['provenance']
         self.assertEqual(provenance['source'], 'openrouter-model-metadata')
         self.assertEqual(provenance['fields'], {'context_length': 1050000,
