@@ -398,9 +398,12 @@ def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]
     goose's canonical catalog lags new models, and an unknown model silently gets the engine's
     128,000 context fallback and the provider's own default output cap (Bedrock: 4,096). Measured on
     fable-5.1-r0: 7 of 22 calls ended at exactly 4,096 completion tokens with truncated write
-    arguments, and compaction fired at 0.8 x 128k on a 1M-context model. So every cloud entrant
-    gets limits from provider metadata or from the operator, recorded with their provenance, and
-    one that has neither is refused before the model is called (gate 1). Local fleets return None.
+    arguments, and compaction fired at 0.8 x 128k on a 1M-context model. So a cloud entrant gets
+    limits from the operator (BENCH_CONTEXT_LIMIT/BENCH_MAX_TOKENS, which win everywhere) or from
+    provider metadata (google, openrouter), recorded with their provenance. Bedrock without operator
+    values is refused before the model is called: that is the measured harm (fable-5.1, gpt-6-astra).
+    Every other provider proceeds on goose's own limits and the record says so by name (gate 1:
+    a loud absence, never a silent default). Local fleets return None.
     """
     if provider in LOCAL_ENGINE_PROVIDERS:
         return None
@@ -428,12 +431,24 @@ def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]
     elif provider == "openrouter":
         measured = _openrouter_model_limits(model, credentials)
         context, output, provenance = measured["context"], measured["output"], measured["provenance"]
-    else:
+    elif provider == "aws_bedrock":
         raise RuntimeError(
             f"REFUSED: no source for {provider}/{model}'s context window and output cap. goose would "
-            "run it on its 128,000-token context fallback and the provider's default output cap "
-            "(Bedrock: 4,096). Export BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS from the model's "
-            "documentation and launch again.")
+            "run it on its 128,000-token context fallback and Bedrock's default 4,096-token output "
+            "cap (measured on fable-5.1-r0). Export BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS from the "
+            "model's documentation and launch again.")
+    else:
+        configured = {name: credentials[name] for name in ("GOOSE_CONTEXT_LIMIT", "GOOSE_MAX_TOKENS")
+                      if name in credentials}
+        reason = (f"no limits metadata path for provider {provider}; goose falls back to its catalog "
+                  "or DEFAULT_CONTEXT_LIMIT 128000, and to the provider's own default output cap")
+        if configured:
+            reason += f", except where goose's own config sets {', '.join(sorted(configured))}"
+        record = {"status": "provider_default_unverified", "reason": reason,
+                  "provider": provider, "model": model}
+        if configured:
+            record["goose_config"] = configured
+        return record
     if output > GOOSE_MAX_TOKENS_TYPE_BOUND:
         raise RuntimeError(f"REFUSED: output cap {output} for {model} exceeds goose's i32 GOOSE_MAX_TOKENS")
     provenance = {**provenance, "provider": provider, "model": model,
@@ -461,9 +476,12 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     limits_model = model or MODELS.get(entrant)
     model_limits = (provider_model_limits(limits_provider, limits_model, credentials)
                     if limits_provider else None)
-    if model_limits:
+    if model_limits and "GOOSE_CONTEXT_LIMIT" in model_limits:
         credentials = {**credentials, "GOOSE_CONTEXT_LIMIT": model_limits["GOOSE_CONTEXT_LIMIT"],
                        "GOOSE_MAX_TOKENS": model_limits["GOOSE_MAX_TOKENS"]}
+    elif model_limits:
+        print(f"MODEL LIMITS UNVERIFIED: {limits_provider}/{limits_model} — {model_limits['reason']}. "
+              "Set BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS to pin them.", flush=True)
     workdir.mkdir(parents=True)
     if model_limits:
         (workdir / "model-limits.json").write_text(json.dumps(model_limits, indent=2))

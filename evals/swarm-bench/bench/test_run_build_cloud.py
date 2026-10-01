@@ -7,6 +7,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import run_build
 
@@ -252,6 +253,50 @@ class ProviderModelLimitsTests(unittest.TestCase):
         with patch.object(run_build.urllib.request, 'urlopen', return_value=contextlib.closing(io.BytesIO(b'{}'))):
             with self.assertRaises(ValueError):
                 run_build.provider_model_limits('google', 'gemini-3.8-flash', {'GOOGLE_API_KEY': 'test-only'})
+
+    def test_providers_without_a_metadata_path_proceed_with_a_named_absence(self):
+        with patch.object(run_build.urllib.request, 'urlopen') as call:
+            for provider in ('omlx', 'ollama', 'anthropic', 'openai'):
+                with self.subTest(provider=provider):
+                    record = run_build.provider_model_limits(provider, 'some-model', {})
+                    self.assertEqual(record['status'], 'provider_default_unverified')
+                    self.assertIn(f'no limits metadata path for provider {provider}', record['reason'])
+                    self.assertIn('DEFAULT_CONTEXT_LIMIT 128000', record['reason'])
+                    self.assertNotIn('GOOSE_CONTEXT_LIMIT', record)
+                    self.assertNotIn('goose_config', record)
+            configured = run_build.provider_model_limits('omlx', 'm', {'GOOSE_CONTEXT_LIMIT': '262144'})
+            self.assertEqual(configured['goose_config'], {'GOOSE_CONTEXT_LIMIT': '262144'})
+            self.assertIn("goose's own config sets GOOSE_CONTEXT_LIMIT", configured['reason'])
+        call.assert_not_called()
+
+    def test_operator_limits_win_for_a_provider_without_metadata(self):
+        with patch.dict(os.environ, {'BENCH_CONTEXT_LIMIT': '262144', 'BENCH_MAX_TOKENS': '32768'}):
+            limits = run_build.provider_model_limits('omlx', 'local-27b', {})
+        self.assertEqual((limits['GOOSE_CONTEXT_LIMIT'], limits['GOOSE_MAX_TOKENS']), ('262144', '32768'))
+        self.assertEqual(limits['provenance']['source'], 'operator-env')
+
+    def test_run_proceeds_for_a_custom_local_provider_and_records_the_absence(self):
+        seen = {}
+        def invoke(entrant, workdir, port, env, *args):
+            seen['env'] = env
+            seen['limits_file'] = json.loads((workdir / 'model-limits.json').read_text())
+            raise RuntimeError('controlled stop after dispatch')
+        scorer = SimpleNamespace(_port_holder=lambda port: None)
+        vendor = SimpleNamespace(serve=lambda port, trace: trace.write_text('') or
+                                 SimpleNamespace(shutdown=lambda: None), mark_phase=lambda *a: None)
+        snapshot = {'version': 1, 'providers': ['omlx'], 'config': {}, 'secrets': {'OMLX_KEY': 'k'},
+                    'custom_providers': {}}
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(run_build, '_regime', return_value=(scorer, vendor, None)), \
+                patch.object(run_build, 'entrant_config', return_value=snapshot), \
+                patch.object(run_build, 'invoke', side_effect=invoke), \
+                contextlib.redirect_stdout(stdout):
+            with self.assertRaisesRegex(RuntimeError, 'controlled stop after dispatch'):
+                run_build.run('omlx-fixture', 0, Path(tmp), 0, 8850, 'omlx', 'local-27b')
+        self.assertEqual(seen['limits_file']['status'], 'provider_default_unverified')
+        self.assertNotIn('GOOSE_CONTEXT_LIMIT', seen['env'])
+        self.assertIn('MODEL LIMITS UNVERIFIED: omlx/local-27b', stdout.getvalue())
 
     def test_local_engines_are_unaffected(self):
         with patch.object(run_build.urllib.request, 'urlopen') as call:
