@@ -107,3 +107,24 @@ Astra figure — a reasoning-heavy frontier trajectory moves it most.
    tokens (25% premium) and read none.
 3. Anthropic via OpenRouter: cache breakpoints on the per-turn context block ⇒ 0% cache reads, negative
    cache_discount every turn (live probe: 0% → 62–82% cached after the fix, −58% cost).
+
+### 2026-10-02 — proof runs on the fixed build (3.0.83 / 3.0.84)
+
+- Run 2 (`cloud-9e652114`, 3.0.83): GOOSE_MAX_TOKENS=943,718 injected → first request on host Relace streamed
+  32,758 chars of degenerate thinking; stopped. Run 3 (`cloud-64c280f5`, 3.0.84, no max_tokens): every request
+  routed to Relace (cheapest host; no cache discount — its cache-read price equals its input price), degenerate
+  again ("…spliceosome proteasome apoptosome inflammasome…"); stopped. **The variable is OpenRouter's backend
+  host, not the benchmark**: run 1's 174 requests spread over six hosts (95 on Parasail) and never degenerated.
+- Run 4 (`cloud-43896353`, 3.0.84, `OPENROUTER_PARAMETERS={"provider":{"order":["deepseek"],"ignore":["relace"]}}`,
+  goose config restored right after launch): all 172 requests on the first-party DeepSeek host; context window
+  1,048,576 (no false compaction — context grew to 349k); **billed $0.3291**; 35.9M prompt tokens, 99% cached,
+  277k output; clean handoff. In-app 0.699; **hermetic re-score 0.799** (inner 0.8995; no critical failure).
+  Archive `~/goose-builds/sb71-runs/20261002-deepseek-v4.1-flash-pinned-43896353/`.
+- Same 172 turns repriced: **GPT-6 Astra $53.1, Fable 5.1 $27.4**. With goose compacting at 128k–262k on
+  that shape, Astra ≈ $39–45 (output alone ≈ $14). Run 1's shorter trajectory: Astra $31, Fable $26.
+- **In-app score ≠ hermetic score on both runs** (0.4776 vs 0.4900; 0.699 vs 0.799): c_paged_walk counted
+  445–517 pages served with ~192 duplicates in-app vs 192/192 hermetic; draw/frame rows "not measurable"
+  in-app. Under diagnosis — the in-app number a user would publish is understated.
+- 3D observation: the overview field (12,288 towers, prescribed day × rank layout) renders as an unreadable
+  colour carpet in the golden reference AND both entrants; the presentation band is tripped by a 4.49:1 button
+  contrast instead. The structured inspector spire is where 3D quality is visible.
