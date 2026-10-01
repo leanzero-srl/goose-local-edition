@@ -73,3 +73,37 @@ Commit 5f24a45d0 restores SB7 as the default for both local and Gemini app launc
 Validation: 235 desktop test files / 1,999 tests passed, plus Node24 TypeScript and ESLint. A signed build was installed in `/Applications/Goose.app`. Live native-app readback showed “New runs use SB-7: Meridian Payments Console,” all three real Gemini camera screenshots, correct historical weights 10/20/45/20/5, and the isometric image opened successfully in the full viewer. No model run was launched.
 
 The superseded empty payments-console starter draft is preserved under `/tmp/sb71-superseded-starter-20260920`; it is not part of the active source or advertised SB7.1 contract. The subsequent user instruction authorized design, implementation and a fresh Gemini 3.8 Flash test of the payments-based SB7.1.
+
+## 2026-10-01 — DeepSeek v4.1 Flash, measured cost, and why frontier runs were expensive
+
+Launched from the installed app's Benchmark view (Goose Swarm 3.0.81, SB7.1, Single model, OpenRouter
+`deepseek/deepseek-v4.1-flash`), run `cloud-c003209f-caef-4646-9bb2-c7b55ba2b2d3`, seed `09699756384b0886`.
+Archive: `~/goose-builds/sb71-runs/20261001-deepseek-v4.1-flash-c003209f/` (tree, per-turn usage, OpenRouter
+generation records, both verdicts).
+
+- Model work 20:34–21:01 UTC (~27 min), 174 requests, 10,989,550 prompt tokens (92% cache-read), 249,758
+  completion (72,318 reasoning). **Billed $0.6239** — summed from OpenRouter `/api/v1/generation` for every gen id,
+  not estimated. goose's own `accumulated_cost` said $0.293 (wrong by 2×).
+- Score: in-app 0.4776; **hermetic re-score 0.4900** (inner 0.8729, ceiling 0.699, critical ×0.6 for a dead
+  approval workflow). The in-app score was contaminated: the model left its own test server
+  (`python3 -m app --ledger-port 8811 …`, PPID 1) syncing against the grading vendor; re-scored without it,
+  c_paged_walk 0→1.0 ("517/192 pages, 196 duplicates" → "192/192, 0"), c_b1/c_b2 0.67→1.0, webhook 0.84→1.0.
+  Harness fix: reap entrant survivors per pid before scoring.
+- Real 3D was produced: 12,288-column instanced field and an inspector spire with ribs, hollow frame, pedestal
+  and cap (S geometry 0.78, collar 1.0). Lost on interaction/liveness: picking 2/6, stream never applied, no
+  collar animation, brush link 0.44, presentation contrast/framing 0.
+
+**Projection — the same 174 turns repriced (OpenRouter list prices 2026-10-01):** GPT-6 Astra $31 (OpenAI
+automatic prefix cache); Fable 5.1 $26 with working Anthropic cache breakpoints, **$139 with goose's breakpoint
+placement before the fix**; Astra with no caching (the Bedrock Converse path) $122. Output is ~40% of the
+Astra figure — a reasoning-heavy frontier trajectory moves it most.
+
+**Root causes of the earlier $100–200 frontier spend (measured on the Sep 9 Bedrock runs):**
+1. New model ids are absent from goose's canonical catalog (Jul 4) ⇒ 128,000 context and no max_tokens ⇒
+   Bedrock's 4,096 output default. Fable 5.1: 7/22 calls ended at exactly 4,096 tokens, write-tool args
+   truncated, model quit mid-build, 0.0054. DeepSeek on OpenRouter also compacted at 102k on a 1M window.
+2. Bedrock reported totalTokens including cache writes, and goose added cache again — Astra's compaction check
+   saw ~2× the real size every turn: 68 compactions, zero writes, VOID. Astra on Converse also wrote 7.1M cache
+   tokens (25% premium) and read none.
+3. Anthropic via OpenRouter: cache breakpoints on the per-turn context block ⇒ 0% cache reads, negative
+   cache_discount every turn (live probe: 0% → 62–82% cached after the fix, −58% cost).
