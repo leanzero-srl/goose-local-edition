@@ -27,9 +27,11 @@ use serde_json::Value;
 use smithy_transport_reqwest::ReqwestHttpClient;
 
 use super::formats::bedrock::{
-    bedrock_anthropic_thinking_fields, bedrock_inference_config, from_bedrock_message,
-    from_bedrock_usage, to_bedrock_message_with_caching, to_bedrock_tool_config,
+    bedrock_anthropic_thinking_fields, bedrock_inference_config,
+    bedrock_model_supports_prompt_caching, from_bedrock_message, from_bedrock_usage,
+    to_bedrock_messages, to_bedrock_tool_config,
 };
+use crate::config::ConfigError;
 
 pub(crate) const BEDROCK_PROVIDER_NAME: &str = "aws_bedrock";
 pub const BEDROCK_DOC_LINK: &str =
@@ -227,12 +229,18 @@ impl BedrockProvider {
     }
 
     fn should_enable_caching(&self, model: &ModelConfig) -> bool {
-        let config = crate::config::Config::global();
-
-        let enabled = config
-            .get_param::<bool>("BEDROCK_ENABLE_CACHING")
-            .unwrap_or(false);
-        enabled && model.model_name.contains("anthropic.claude")
+        match crate::config::Config::global().get_param::<bool>("BEDROCK_ENABLE_CACHING") {
+            Ok(enabled) => enabled && model.model_name.contains("anthropic.claude"),
+            Err(ConfigError::NotFound(_)) => {
+                bedrock_model_supports_prompt_caching(&model.model_name)
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "BEDROCK_ENABLE_CACHING is set but unreadable ({err}); prompt caching is off"
+                );
+                false
+            }
+        }
     }
 
     async fn post_mantle_streaming(
@@ -283,8 +291,8 @@ impl BedrockProvider {
 
     /// Build the request inputs shared by [`Self::converse`] and
     /// [`Self::converse_stream`]: system blocks (with optional cache point),
-    /// converted messages (with optional trailing-message cache point), and
-    /// the tool configuration.
+    /// converted messages (with optional cache points on the last two user
+    /// turns, ahead of the turn-context), and the tool configuration.
     fn build_request_parts(
         &self,
         model: &ModelConfig,
@@ -317,13 +325,7 @@ impl BedrockProvider {
         let visible_messages: Vec<&Message> =
             messages.iter().filter(|m| m.is_agent_visible()).collect();
 
-        let last_idx = visible_messages.len().saturating_sub(1);
-
-        let bedrock_messages = visible_messages
-            .iter()
-            .enumerate()
-            .map(|(idx, m)| to_bedrock_message_with_caching(m, enable_caching && idx == last_idx))
-            .collect::<Result<Vec<_>>>()?;
+        let bedrock_messages = to_bedrock_messages(&visible_messages, enable_caching)?;
 
         let tool_config = if tools.is_empty() {
             None
@@ -720,7 +722,7 @@ impl goose_providers::base::ProviderDescriptor for BedrockProvider {
         ProviderMetadata::new(
             BEDROCK_PROVIDER_NAME,
             "Amazon Bedrock",
-            "Run models through Amazon Bedrock. Supports AWS SSO profiles - run 'aws sso login --profile <profile-name>' before using. Configure with AWS_PROFILE and AWS_REGION, use environment variables/credentials, or use AWS_BEARER_TOKEN_BEDROCK for bearer token authentication. Region is required for bearer token auth (can be set via AWS_REGION, AWS_DEFAULT_REGION, or AWS profile). Prompt caching can be enabled for Anthropic Claude models by setting BEDROCK_ENABLE_CACHING=true. Responses stream via the ConverseStream API; set BEDROCK_DISABLE_STREAMING=true to fall back to blocking Converse calls.",
+            "Run models through Amazon Bedrock. Supports AWS SSO profiles - run 'aws sso login --profile <profile-name>' before using. Configure with AWS_PROFILE and AWS_REGION, use environment variables/credentials, or use AWS_BEARER_TOKEN_BEDROCK for bearer token authentication. Region is required for bearer token auth (can be set via AWS_REGION, AWS_DEFAULT_REGION, or AWS profile). Prompt caching is on by default for the Anthropic Claude models Bedrock caches (Claude 3.7 Sonnet and newer); set BEDROCK_ENABLE_CACHING=false to turn it off, or true to force it on for any Claude model. Responses stream via the ConverseStream API; set BEDROCK_DISABLE_STREAMING=true to fall back to blocking Converse calls.",
             BEDROCK_DEFAULT_MODEL,
             BEDROCK_KNOWN_MODELS.to_vec(),
             BEDROCK_DOC_LINK,
@@ -728,7 +730,7 @@ impl goose_providers::base::ProviderDescriptor for BedrockProvider {
                 ConfigKey::new("AWS_PROFILE", false, false, Some("default"), true),
                 ConfigKey::new("AWS_REGION", true, false, Some("us-east-1"), true),
                 ConfigKey::new("AWS_BEARER_TOKEN_BEDROCK", false, true, None, true),
-                ConfigKey::new("BEDROCK_ENABLE_CACHING", false, false, Some("false"), false),
+                ConfigKey::new("BEDROCK_ENABLE_CACHING", false, false, None, false),
                 ConfigKey::new(
                     "BEDROCK_DISABLE_STREAMING",
                     false,
@@ -1063,6 +1065,32 @@ mod tests {
             !provider.should_enable_caching(&model),
             "Caching should be disabled for non-Claude models"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn test_caching_defaults_on_only_where_bedrock_caches() {
+        std::env::remove_var("BEDROCK_ENABLE_CACHING");
+
+        let (provider, claude) = create_mock_provider_and_model("us.anthropic.claude-fable-5-1");
+        assert!(provider.should_enable_caching(&claude));
+
+        let (_, astra) = create_mock_provider_and_model("us.openai.gpt-6-astra");
+        assert!(!provider.should_enable_caching(&astra));
+
+        let (_, legacy) = create_mock_provider_and_model("anthropic.claude-3-haiku-20240307-v1:0");
+        assert!(!provider.should_enable_caching(&legacy));
+    }
+
+    #[test]
+    #[serial]
+    fn test_explicit_false_disables_caching() {
+        std::env::set_var("BEDROCK_ENABLE_CACHING", "false");
+
+        let (provider, model) = create_mock_provider_and_model("us.anthropic.claude-fable-5-1");
+        assert!(!provider.should_enable_caching(&model));
+
+        std::env::remove_var("BEDROCK_ENABLE_CACHING");
     }
 
     #[test]

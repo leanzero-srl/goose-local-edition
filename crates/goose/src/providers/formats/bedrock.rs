@@ -150,15 +150,12 @@ fn bedrock_model_supports_temperature(model_config: &ModelConfig) -> bool {
     }
 }
 
-pub fn to_bedrock_message_with_caching(
-    message: &Message,
-    enable_caching: bool,
-) -> Result<bedrock::Message> {
+pub fn to_bedrock_message(message: &Message) -> Result<bedrock::Message> {
     // Bedrock rejects reasoning content in user messages (ValidationException),
     // so drop Thinking/RedactedThinking blocks that reach a user-role message
     // (e.g. a summarizer response re-roled during compaction).
     let is_user = matches!(message.role, rmcp::model::Role::User);
-    let mut content_blocks: Vec<bedrock::ContentBlock> = message
+    let content_blocks: Vec<bedrock::ContentBlock> = message
         .content
         .iter()
         .filter(|c| {
@@ -171,20 +168,106 @@ pub fn to_bedrock_message_with_caching(
         .map(to_bedrock_message_content)
         .collect::<Result<_>>()?;
 
-    if enable_caching && !content_blocks.is_empty() {
-        content_blocks.push(bedrock::ContentBlock::CachePoint(
-            bedrock::CachePointBlock::builder()
-                .r#type(bedrock::CachePointType::Default)
-                .build()
-                .map_err(|e| anyhow!("Failed to build cache point for message: {}", e))?,
-        ));
-    }
-
     bedrock::Message::builder()
         .role(to_bedrock_role(&message.role))
         .set_content(Some(content_blocks))
         .build()
         .map_err(|err| anyhow!("Failed to construct Bedrock message: {}", err))
+}
+
+/// The native Anthropic formatter's two message breakpoints; with the system prompt's
+/// checkpoint that is three of the four Bedrock accepts per request.
+const MESSAGE_CACHE_POINTS: usize = 2;
+
+/// Converts the agent-visible conversation. The turn-context block (current time, context
+/// usage) changes on every request and is never stored in history, so a checkpoint placed
+/// after it caches a prefix no later request can match: it is moved to the tail of the last
+/// message and each cache point goes on the last block before it, as in the native
+/// Anthropic formatter.
+pub fn to_bedrock_messages(
+    messages: &[&Message],
+    enable_caching: bool,
+) -> Result<Vec<bedrock::Message>> {
+    let mut converted = messages
+        .iter()
+        .map(|m| to_bedrock_message(m))
+        .collect::<Result<Vec<_>>>()?;
+
+    relocate_turn_context_to_tail(&mut converted);
+
+    if enable_caching {
+        let mut placed = 0;
+        for message in converted.iter_mut().rev() {
+            if message.role != bedrock::ConversationRole::User {
+                continue;
+            }
+            let Some(target) = message
+                .content
+                .iter()
+                .rposition(|block| !is_turn_context_block(block))
+            else {
+                continue;
+            };
+            message.content.insert(target + 1, cache_point()?);
+            placed += 1;
+            if placed >= MESSAGE_CACHE_POINTS {
+                break;
+            }
+        }
+    }
+
+    Ok(converted)
+}
+
+fn cache_point() -> Result<bedrock::ContentBlock> {
+    Ok(bedrock::ContentBlock::CachePoint(
+        bedrock::CachePointBlock::builder()
+            .r#type(bedrock::CachePointType::Default)
+            .build()
+            .map_err(|e| anyhow!("Failed to build cache point: {}", e))?,
+    ))
+}
+
+fn relocate_turn_context_to_tail(messages: &mut [bedrock::Message]) {
+    let Some(last) = messages.len().checked_sub(1) else {
+        return;
+    };
+    let source = messages.iter().enumerate().rev().find_map(|(mi, m)| {
+        m.content
+            .iter()
+            .position(is_turn_context_block)
+            .map(|bi| (mi, bi))
+    });
+    let Some((mi, bi)) = source else {
+        return;
+    };
+    if mi != last && messages[mi].content.len() <= 1 {
+        return;
+    }
+    let block = messages[mi].content.remove(bi);
+    messages[last].content.push(block);
+}
+
+fn is_turn_context_block(block: &bedrock::ContentBlock) -> bool {
+    matches!(block, bedrock::ContentBlock::Text(text) if crate::conversation::is_turn_context_text(text))
+}
+
+/// Whether Converse accepts `cachePoint` blocks for this model id. Bedrock answers a cache
+/// point on a model without explicit caching with a 403 ("You invoked an unsupported model or
+/// your request did not allow prompt caching"), so only the Claude models AWS lists for
+/// explicit prompt caching qualify. OpenAI models on Bedrock (gpt-5.6, gpt-6) cache only
+/// through the Responses API, never through Converse.
+pub fn bedrock_model_supports_prompt_caching(model_name: &str) -> bool {
+    let Some((_, claude)) = model_name.rsplit_once("anthropic.claude-") else {
+        return false;
+    };
+    let legacy_naming = claude.starts_with(|c: char| c.is_ascii_digit())
+        || claude.starts_with("instant")
+        || claude.starts_with("v2");
+    !legacy_naming
+        || ["3-7-sonnet", "3-5-haiku", "3-5-sonnet-20241022-v2"]
+            .iter()
+            .any(|cacheable| claude.starts_with(cacheable))
 }
 
 pub fn to_bedrock_message_content(content: &MessageContent) -> Result<bedrock::ContentBlock> {
@@ -582,11 +665,14 @@ pub fn from_bedrock_role(role: &bedrock::ConversationRole) -> Result<Role> {
     })
 }
 
+/// Bedrock's `inputTokens` excludes cache reads and writes but its `totalTokens` already
+/// includes them, so folding the cache into the reported total counts it twice. The total
+/// is rebuilt from the folded input plus the output instead.
 pub fn from_bedrock_usage(usage: &bedrock::TokenUsage) -> Usage {
     Usage::from_cache_exclusive_input(
         Some(usage.input_tokens),
         Some(usage.output_tokens),
-        Some(usage.total_tokens),
+        None,
         usage.cache_read_input_tokens,
         usage.cache_write_input_tokens,
     )
@@ -847,8 +933,21 @@ mod tests {
         Ok(())
     }
 
+    const TURN_CONTEXT: &str = "<turn-context>\n<current-time>2026-09-09 20:15</current-time>\n<working-directory>/tmp/sb7</working-directory>\n<context-usage>61%</context-usage>\n</turn-context>";
+
+    fn is_cache_point(block: &bedrock::ContentBlock) -> bool {
+        matches!(block, bedrock::ContentBlock::CachePoint(_))
+    }
+
+    fn text_of(block: &bedrock::ContentBlock) -> &str {
+        match block {
+            bedrock::ContentBlock::Text(text) => text,
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn test_to_bedrock_message_with_caching() -> Result<()> {
+    fn test_to_bedrock_messages_with_caching() -> Result<()> {
         use chrono::Utc;
         use rmcp::model::Role;
 
@@ -861,7 +960,7 @@ mod tests {
                 MessageContent::text("Second text"),
             ],
         );
-        let bedrock_message = to_bedrock_message_with_caching(&message, true)?;
+        let bedrock_message = to_bedrock_messages(&[&message], true)?.remove(0);
         assert_eq!(bedrock_message.content.len(), 3);
         if let bedrock::ContentBlock::Text(text) = &bedrock_message.content[0] {
             assert_eq!(text, "First text");
@@ -879,26 +978,221 @@ mod tests {
         ));
 
         // Caching disabled: no cache point added
-        let no_cache = to_bedrock_message_with_caching(&message, false)?;
+        let no_cache = to_bedrock_messages(&[&message], false)?.remove(0);
         assert_eq!(no_cache.content.len(), 2);
         for block in &no_cache.content {
-            assert!(!matches!(block, bedrock::ContentBlock::CachePoint(_)));
+            assert!(!is_cache_point(block));
         }
 
         // Empty content: no cache point added even with caching enabled
         let empty = Message::new(Role::User, Utc::now().timestamp(), vec![]);
-        let empty_msg = to_bedrock_message_with_caching(&empty, true)?;
+        let empty_msg = to_bedrock_messages(&[&empty], true)?.remove(0);
         assert_eq!(empty_msg.content.len(), 0);
 
         Ok(())
     }
 
     #[test]
-    fn test_from_bedrock_usage_folds_cache_tokens_into_input() {
+    fn test_cache_point_sits_before_the_turn_context() -> Result<()> {
+        use chrono::Utc;
+        use rmcp::model::Role;
+
+        // inject_moim prepends the turn-context to the latest user message.
+        let message = Message::new(
+            Role::User,
+            Utc::now().timestamp(),
+            vec![
+                MessageContent::text(TURN_CONTEXT),
+                MessageContent::text("Fix the failing test."),
+            ],
+        );
+
+        let cached = to_bedrock_messages(&[&message], true)?.remove(0);
+        assert_eq!(cached.content.len(), 3);
+        assert_eq!(text_of(&cached.content[0]), "Fix the failing test.");
+        assert!(is_cache_point(&cached.content[1]));
+        assert_eq!(text_of(&cached.content[2]), TURN_CONTEXT);
+
+        let uncached = to_bedrock_messages(&[&message], false)?.remove(0);
+        assert_eq!(uncached.content.len(), 2);
+        assert_eq!(text_of(&uncached.content[0]), "Fix the failing test.");
+        assert_eq!(text_of(&uncached.content[1]), TURN_CONTEXT);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cache_point_sits_before_the_turn_context_on_tool_results() -> Result<()> {
+        use chrono::Utc;
+        use rmcp::model::{CallToolResult, Role};
+
+        // With host_on_tool_results the turn-context rides at the tail of the tool results.
+        let message = Message::new(
+            Role::User,
+            Utc::now().timestamp(),
+            vec![
+                MessageContent::tool_response(
+                    "tool_1".to_string(),
+                    Ok(CallToolResult::success(vec![Content::text("ok")])),
+                ),
+                MessageContent::text(TURN_CONTEXT),
+            ],
+        );
+
+        let cached = to_bedrock_messages(&[&message], true)?.remove(0);
+        assert_eq!(cached.content.len(), 3);
+        assert!(matches!(
+            cached.content[0],
+            bedrock::ContentBlock::ToolResult(_)
+        ));
+        assert!(is_cache_point(&cached.content[1]));
+        assert_eq!(text_of(&cached.content[2]), TURN_CONTEXT);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_next_request_prefix_matches_the_previous_checkpoint() -> Result<()> {
+        use chrono::Utc;
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Role};
+        use serde_json::json;
+
+        let ts = Utc::now().timestamp();
+        let ask = Message::new(
+            Role::User,
+            ts,
+            vec![MessageContent::text("Fix the failing test.")],
+        );
+        let ask_with_context = Message::new(
+            Role::User,
+            ts,
+            vec![
+                MessageContent::text(TURN_CONTEXT),
+                MessageContent::text("Fix the failing test."),
+            ],
+        );
+        let call = Message::new(
+            Role::Assistant,
+            ts,
+            vec![MessageContent::tool_request(
+                "tool_1".to_string(),
+                Ok(CallToolRequestParams::new("shell")
+                    .with_arguments(object(json!({"command": "cargo test"})))),
+            )],
+        );
+        let result_with_context = Message::new(
+            Role::User,
+            ts,
+            vec![
+                MessageContent::tool_response(
+                    "tool_1".to_string(),
+                    Ok(CallToolResult::success(vec![Content::text("1 failed")])),
+                ),
+                MessageContent::text(TURN_CONTEXT.replace("20:15", "20:16")),
+            ],
+        );
+
+        let turn_one = to_bedrock_messages(&[&ask_with_context], true)?;
+        let turn_two = to_bedrock_messages(&[&ask, &call, &result_with_context], true)?;
+
+        // Turn one cached [ask, checkpoint]; turn two carries the same blocks with a
+        // checkpoint at the same boundary, so the earlier write is read back.
+        assert_eq!(turn_one[0].content[..2], turn_two[0].content[..]);
+        assert!(!turn_two[1].content.iter().any(is_cache_point));
+        assert!(is_cache_point(&turn_two[2].content[1]));
+        assert!(is_turn_context_block(&turn_two[2].content[2]));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_at_most_two_message_cache_points() -> Result<()> {
+        use chrono::Utc;
+        use rmcp::model::Role;
+
+        let ts = Utc::now().timestamp();
+        let user = |text: &str| Message::new(Role::User, ts, vec![MessageContent::text(text)]);
+        let assistant =
+            |text: &str| Message::new(Role::Assistant, ts, vec![MessageContent::text(text)]);
+        let conversation = [
+            user("one"),
+            assistant("a"),
+            user("two"),
+            assistant("b"),
+            user("three"),
+        ];
+        let refs: Vec<&Message> = conversation.iter().collect();
+
+        let converted = to_bedrock_messages(&refs, true)?;
+        let points: Vec<usize> = converted
+            .iter()
+            .map(|m| m.content.iter().filter(|b| is_cache_point(b)).count())
+            .collect();
+        assert_eq!(points, vec![0, 0, 1, 0, 1]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prompt_caching_support_by_model() {
+        for supported in [
+            "us.anthropic.claude-fable-5-1",
+            "global.anthropic.claude-sonnet-5",
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+            "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+        ] {
+            assert!(
+                bedrock_model_supports_prompt_caching(supported),
+                "{supported}"
+            );
+        }
+        for unsupported in [
+            "us.openai.gpt-6-astra",
+            "openai.gpt-oss-20b-1:0",
+            "amazon.nova-pro-v1:0",
+            "anthropic.claude-3-haiku-20240307-v1:0",
+            "anthropic.claude-3-5-sonnet-20240620-v1:0",
+            "anthropic.claude-3-opus-20240229-v1:0",
+            "anthropic.claude-instant-v1",
+            "anthropic.claude-v2:1",
+        ] {
+            assert!(
+                !bedrock_model_supports_prompt_caching(unsupported),
+                "{unsupported}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_bedrock_usage_does_not_count_cache_twice() {
+        // The last call of session 20260909_1 (us.openai.gpt-6-astra over Converse): Bedrock's
+        // totalTokens is already inputTokens + outputTokens + cacheWriteInputTokens.
+        let usage = bedrock::TokenUsage::builder()
+            .input_tokens(2)
+            .output_tokens(51)
+            .total_tokens(78557)
+            .cache_read_input_tokens(0)
+            .cache_write_input_tokens(78504)
+            .build()
+            .unwrap();
+
+        let converted = from_bedrock_usage(&usage);
+        assert_eq!(converted.input_tokens, Some(78506));
+        assert_eq!(converted.output_tokens, Some(51));
+        assert_eq!(converted.total_tokens, Some(78557));
+        assert_eq!(converted.cache_read_input_tokens, Some(0));
+        assert_eq!(converted.cache_write_input_tokens, Some(78504));
+    }
+
+    #[test]
+    fn test_from_bedrock_usage_folds_cache_reads_and_writes_into_input() {
         let usage = bedrock::TokenUsage::builder()
             .input_tokens(7)
             .output_tokens(50)
-            .total_tokens(57)
+            .total_tokens(6057)
             .cache_read_input_tokens(5000)
             .cache_write_input_tokens(1000)
             .build()
@@ -1225,10 +1519,10 @@ mod tests {
             ],
         );
 
-        let bedrock_message = to_bedrock_message_with_caching(&message, true)?;
+        let bedrock_message = to_bedrock_messages(&[&message], true)?.remove(0);
 
-        // Verify cache point is added after all content blocks (text + tool request + cache point)
-        assert_eq!(bedrock_message.content.len(), 3);
+        // Checkpoints go on user turns only, as in the native Anthropic formatter
+        assert_eq!(bedrock_message.content.len(), 2);
         assert!(matches!(
             bedrock_message.content[0],
             bedrock::ContentBlock::Text(_)
@@ -1236,10 +1530,6 @@ mod tests {
         assert!(matches!(
             bedrock_message.content[1],
             bedrock::ContentBlock::ToolUse(_)
-        ));
-        assert!(matches!(
-            bedrock_message.content[2],
-            bedrock::ContentBlock::CachePoint(_)
         ));
 
         Ok(())
@@ -1283,7 +1573,7 @@ mod tests {
             )],
         );
 
-        let bedrock_message = to_bedrock_message_with_caching(&message, true)?;
+        let bedrock_message = to_bedrock_messages(&[&message], true)?.remove(0);
 
         // Verify cache point is added after tool response content
         assert_eq!(bedrock_message.content.len(), 2);
@@ -1323,10 +1613,10 @@ mod tests {
             ],
         );
 
-        let bedrock_message = to_bedrock_message_with_caching(&message, true)?;
+        let bedrock_message = to_bedrock_messages(&[&message], true)?.remove(0);
 
-        // Verify cache point is added at the end after all tool requests
-        assert_eq!(bedrock_message.content.len(), 4);
+        // Assistant turns carry no checkpoint; block order is preserved
+        assert_eq!(bedrock_message.content.len(), 3);
         assert!(matches!(
             bedrock_message.content[0],
             bedrock::ContentBlock::Text(_)
@@ -1338,10 +1628,6 @@ mod tests {
         assert!(matches!(
             bedrock_message.content[2],
             bedrock::ContentBlock::ToolUse(_)
-        ));
-        assert!(matches!(
-            bedrock_message.content[3],
-            bedrock::ContentBlock::CachePoint(_)
         ));
 
         Ok(())
