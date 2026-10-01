@@ -117,8 +117,9 @@ impl OpenRouterProvider {
             .await
     }
 
-    /// The window OpenRouter's live models listing declares for `model_name` — `None`, after one
-    /// warning per model, when the listing cannot be fetched or does not carry the model.
+    /// The window OpenRouter's live models listing declares for `model_name` — `None`, with a
+    /// warning, when the listing cannot be fetched (retried on the next lookup) or does not carry
+    /// the model (remembered, warned once).
     async fn listed_context_window(&self, model_name: &str) -> Option<usize> {
         if let Some(resolved) = self
             .resolved_windows
@@ -129,30 +130,30 @@ impl OpenRouterProvider {
             return resolved;
         }
 
-        let window = match self.context_windows().await {
-            Ok(windows) => {
-                let window = windows.get(model_name).copied();
-                if window.is_none() {
-                    tracing::warn!(
-                        model = %model_name,
-                        listed_models = windows.len(),
-                        "context_window_unlisted: OpenRouter's models listing carries no \
-                         context_length for this model; the compaction guard and the per-turn \
-                         context line run on the default"
-                    );
-                }
-                window
-            }
+        let windows = match self.context_windows().await {
+            Ok(windows) => windows,
             Err(err) => {
+                // Not remembered: a transient failure must not pin the default for the life of a
+                // long-running process — the next lookup tries the listing again.
                 tracing::warn!(
                     model = %model_name,
                     reason = %err,
                     "context_window_listing_failed: OpenRouter's models listing could not be \
                      read; the compaction guard and the per-turn context line run on the default"
                 );
-                None
+                return None;
             }
         };
+        let window = windows.get(model_name).copied();
+        if window.is_none() {
+            tracing::warn!(
+                model = %model_name,
+                listed_models = windows.len(),
+                "context_window_unlisted: OpenRouter's models listing carries no \
+                 context_length for this model; the compaction guard and the per-turn \
+                 context line run on the default"
+            );
+        }
 
         if let Ok(mut cache) = self.resolved_windows.lock() {
             cache.insert(model_name.to_string(), window);
