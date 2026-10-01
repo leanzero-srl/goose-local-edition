@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.1",
-  "sourceCommit": "b5b2e7fe0abf7575afaee475a1c4a9461e04a2a8",
-  "sourceCommitScope": "Benchmark implementation snapshot; release metadata and validation archive added by the manifest commit. 3.0.8: run_build.py gained the knowledge-blind invariant (a scored run's knowledge store is snapshotted before and after and the artifact refused if it moved); scorer bytes unchanged. run_build.py now resolves cloud entrant limits from explicit BENCH_CONTEXT_LIMIT/BENCH_MAX_TOKENS or provider metadata (google, openrouter), refuses Bedrock without them before the model is called, and records a named provider_default_unverified absence for every other provider; test_run_build_cloud.py changed with it; scorer bytes unchanged.",
+  "sourceCommit": "d9a4d8a466b69dbecfd791bf272ae027ec72b783",
+  "sourceCommitScope": "Benchmark implementation snapshot; release metadata and validation archive added by the manifest commit. 3.0.8: run_build.py gained the knowledge-blind invariant (a scored run's knowledge store is snapshotted before and after and the artifact refused if it moved); scorer bytes unchanged. run_build.py now resolves cloud entrant limits from explicit BENCH_CONTEXT_LIMIT/BENCH_MAX_TOKENS or provider metadata (google, openrouter), refuses Bedrock without them before the model is called, and records a named provider_default_unverified absence for every other provider; It also reaps, per pid, every process the finished entrant left in its session or its tree before scoring (reaped-processes.json, which bench_rescore.py excludes from the candidate inventory); test_run_build_cloud.py changed with it; scorer bytes unchanged.",
   "validation": {
     "status": "passed",
     "scope": "Full reference scoring and deliberate media-encoder failure isolation; subsequent actual reference recording encoded successfully with final speed preset. Last reporting-only wording change covered by targeted tests. No new paid model run.",
@@ -25,7 +25,7 @@
   "files": {
     "bench/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "bench/bench_isolation.py": "f07450bf62127226a954faa554143fc3734718755e8fbfb5b48989cdd94455f4",
-    "bench/bench_rescore.py": "e7019c85c8b86647829668c66394e64a7775ca0877444cef89f72f6c591a785c",
+    "bench/bench_rescore.py": "ed7f9472196d2a8e16de6ef6824b811e1ffe7eb3682643769972919911ba7f95",
     "bench/browser-self-test.mjs": "df8feec1c3f7d18d14c26dc34dd53f7b74dcf42a5c54c29a3f315ae23be0b095",
     "bench/calibrate.py": "9ac08148b9063d238902269c34d5b42fefbc82e69b9f70f7511017e9079832b1",
     "bench/ceremony.py": "2f4697833b2b63cfa6064a120b86178139e795a5649b14cc13f73c46b970d211",
@@ -50,7 +50,7 @@
     "bench/quality_observer_aggregate.py": "8f8aac80bbdbeceafc9d894fb07743955c1c2d5acbc8781f97ee99cdfeb13c4e",
     "bench/repair.py": "83734027abae84772688198d4da694c4df57e638bd763cdd9c2432bf6a9793f6",
     "bench/route_oracle.py": "8712733b7bdf377c10e62455e72478c68aed6647b0b3c939046de30737b6d848",
-    "bench/run_build.py": "933d7097cc7010fdcfe3066a782b9629e8a320190e0a64311ae11708f4d20641",
+    "bench/run_build.py": "240a55c3eb51a0af2965939ae478e32f58d7eab6e3df7b778a4097bc43add097",
     "bench/sb6-thresholds.json": "723e71b5a029885103b2a4c61674bc8c8c6ca415ac397e20f3f7ecd1aa66490a",
     "bench/sb7-thresholds.json": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3",
     "bench/sb71-release-validation.json": "a9dacd7131c6c72d82c06c2d4b692503f71d73c179fc291f231c2a302366edf4",
@@ -74,7 +74,7 @@
     "bench/test_port_holder.py": "e4be7adfc57c198ec19486442d959bdde73da62fb9343dcb34e1077638655307",
     "bench/test_probe_preflight.py": "b2f31018f7324a552b164b188264fd6af349f4a8b6baacc38306ad4b19c42dd4",
     "bench/test_quality_observer_aggregate.py": "507cbdfcde5c5112549fd647a4540727d3c9b0eb32fe2656afb02d5da17b208b",
-    "bench/test_run_build_cloud.py": "d3fa719a5228ee8b5c9c7c0b8aa719bc830cff1a5c40eda137114022769c0e4a",
+    "bench/test_run_build_cloud.py": "20ac326ca30478eccb0d7d32c9d1982e8e1831d91af71a590fc1728e528ea0cd",
     "bench/test_sb71_flow_journey.py": "1eaaf34f8f81146c012e2f0ddb31a12e1cfff223becda00c0676b0cf03b8a0e2",
     "bench/test_sb71_note_optimism.mjs": "d974b180199c0d2a4bb750abb275c22a9a0ed3f74ef4422f801c0d33239e082f",
     "bench/test_sb71_resync.py": "ca6ef15607c94a12aed15204e4e8e03fe3c8c417a62842d72eb49498fcba1367",
