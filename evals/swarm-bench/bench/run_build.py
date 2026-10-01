@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -229,6 +230,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # That cost a whole 5-hour run: a call was looping in plain sight with no way to ask whether
     # the judge had even fired. The console now lands next to the tree while the run is going.
     console = workdir / "engine-console.log"
+    session_leader = None
     try:
         with console.open("w", buffering=1) as fh:
             if provider or snapshot is not None:
@@ -236,6 +238,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                                         stderr=subprocess.STDOUT, text=True,
                                         env={**child_env, "GOOSE_MODE": "auto"},
                                         start_new_session=True)
+                session_leader = proc.pid
                 for line in proc.stdout:
                     for value in credential_values:
                         line = line.replace(value, "[REDACTED]")
@@ -244,15 +247,27 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                 proc.stdout.close()
                 code = proc.wait()
             else:
-                proc = subprocess.run(cmd, cwd=workdir, stdout=fh, stderr=subprocess.STDOUT, text=True,
-                                      timeout=(timeout if timeout and timeout > 0 else None),
-                                      env=child_env, start_new_session=True)
-                code = proc.returncode
+                # Popen + wait is subprocess.run's own timeout semantics (kill, reap, re-raise), kept
+                # so the session leader's pid is known to the teardown below.
+                proc = subprocess.Popen(cmd, cwd=workdir, stdout=fh, stderr=subprocess.STDOUT, text=True,
+                                        env=child_env, start_new_session=True)
+                session_leader = proc.pid
+                try:
+                    code = proc.wait(timeout=(timeout if timeout and timeout > 0 else None))
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    raise
         tail = console.read_text(errors="replace")[-1500:]
     except subprocess.TimeoutExpired:
         code, tail = None, "timed out"
     result = {"exit": code, "secs": round(time.time() - started, 1), "tail": tail,
               "timed_out": code is None}
+    # The entrant's own test instance must not outlive it: one left running (2026-10-01,
+    # openrouter-cloud-c003209f) kept syncing against the scorer's vendor and was graded alongside.
+    teardown = reap_entrant_survivors(workdir, session_leader, credential_values)
+    result["reaped_processes"] = teardown["reaped_processes"]
+    (workdir / "reaped-processes.json").write_text(json.dumps(teardown, indent=2))
     knowledge_after = knowledge_store_snapshot(workdir)
     if knowledge_after != knowledge_before:
         changed = sorted(set(knowledge_before.items()) ^ set(knowledge_after.items()))
@@ -285,6 +300,162 @@ def knowledge_store_snapshot(workdir: Path) -> dict[str, float]:
         for path in sorted(p for p in root.rglob("*") if p.is_file()):
             snapshot[str(path)] = path.stat().st_mtime
     return snapshot
+
+
+def _process_table() -> Dict[int, dict]:
+    listing = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True,
+                             check=True).stdout
+    table = {}
+    for line in listing.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) >= 2 and fields[0].isdigit() and fields[1].isdigit():
+            table[int(fields[0])] = {"ppid": int(fields[1]), "args": fields[2] if len(fields) > 2 else ""}
+    return table
+
+
+def _process_cwds() -> Dict[int, str]:
+    listing = subprocess.run(["lsof", "-a", "-d", "cwd", "-Fpn"], capture_output=True, text=True).stdout
+    cwds, pid = {}, None
+    for line in listing.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line.startswith("n") and pid is not None:
+            cwds[pid] = line[1:]
+    return cwds
+
+
+def _alive(pid: int) -> bool:
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap_entrant_survivors(workdir: Path, session_leader: int | None, redactions=(),
+                           grace_seconds: float = 5.0) -> dict:
+    """Terminate, PER PID, every process the finished entrant left behind.
+
+    An entrant's process is one in the entrant's session (start_new_session made its leader the
+    session id; goose's shell tool regroups commands but keeps the session), a process whose cwd is
+    inside the workdir AND whose orphan root (the topmost ancestor below launchd) is itself such a
+    process, or a descendant of either. The root rule spares an operator's shell or tool that merely
+    cd'd into the tree: its chain reaches a terminal or agent outside the tree, and it is recorded as
+    skipped, never signalled. The harness and its ancestors (the desktop app) are never candidates.
+    SIGTERM, then poll liveness, then SIGKILL survivors still running the same command (gate 4: no
+    group signal). grace_seconds is teardown, not model work (gate 5). # measured: a python app
+    server exited 0.001 s after SIGTERM (3 of 3, 2026-10-02); 5 s leaves a graceful handler three
+    orders of magnitude of room before SIGKILL.
+    """
+    root = os.path.realpath(workdir)
+
+    def inside(path: str | None) -> bool:
+        return bool(path) and (path == root or path.startswith(root + os.sep))
+
+    def redact(text: str) -> str:
+        for value in redactions:
+            text = text.replace(value, "[REDACTED]")
+        return text
+
+    errors = []
+    table = _process_table()
+    try:
+        cwds = _process_cwds()
+    except OSError as error:
+        cwds = {}
+        errors.append(f"lsof cwd scan unavailable ({type(error).__name__}); only the entrant's session was searched")
+    protected, pid = set(), os.getpid()
+    while pid in table and pid not in protected:
+        protected.add(pid)
+        pid = table[pid]["ppid"]
+    protected.update({0, 1})
+
+    def in_session(candidate: int) -> bool:
+        try:
+            return session_leader is not None and os.getsid(candidate) == session_leader
+        except OSError:
+            return False
+
+    session = {p for p in table if p not in protected and in_session(p)}
+    in_tree = {p for p, path in cwds.items() if inside(path) and p in table and p not in protected}
+
+    def orphan_root(candidate: int) -> int:
+        seen = set()
+        while table.get(candidate, {}).get("ppid", 1) > 1 and candidate not in seen:
+            seen.add(candidate)
+            candidate = table[candidate]["ppid"]
+        return candidate
+
+    rooted = {p for p in in_tree if orphan_root(p) in in_tree | session}
+    matched = {p: ["session"] for p in session}
+    for p in rooted:
+        matched.setdefault(p, []).append("cwd")
+    frontier = list(matched)
+    while frontier:
+        parent = frontier.pop()
+        for child, row in table.items():
+            if row["ppid"] == parent and child not in matched and child not in protected:
+                matched[child] = ["descendant"]
+                frontier.append(child)
+
+    reaped = []
+    for p in sorted(matched):
+        try:
+            os.kill(p, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError as error:
+            errors.append(f"pid {p}: SIGTERM refused ({error.strerror})")
+            continue
+        reaped.append({"pid": p, "args": redact(table[p]["args"]), "cwd": cwds.get(p),
+                       "matched_by": matched[p], "signal": "SIGTERM"})
+    pending = [row for row in reaped]
+    step = grace_seconds / 100  # ratio: one hundredth of the grace per liveness poll
+    waited = 0.0
+    while pending and waited < grace_seconds:
+        time.sleep(step)
+        waited += step
+        pending = [row for row in pending if _alive(row["pid"])]
+    if pending:
+        current = _process_table()
+        for row in pending:
+            if current.get(row["pid"], {}).get("args") == table[row["pid"]]["args"]:
+                try:
+                    os.kill(row["pid"], signal.SIGKILL)
+                    row["signal"] = "SIGKILL"
+                except ProcessLookupError:
+                    pass
+        waited = 0.0
+        while pending and waited < grace_seconds:
+            time.sleep(step)
+            waited += step
+            pending = [row for row in pending if _alive(row["pid"])]
+        for row in pending:
+            row["survived"] = True
+            errors.append(f"pid {row['pid']} still alive after SIGKILL")
+    for row in reaped:
+        print(f"REAPED entrant survivor pid {row['pid']} ({row['signal']}, matched by "
+              f"{'+'.join(row['matched_by'])}) cwd={row['cwd']}: {row['args']}", flush=True)
+    record = {"reaped_processes": reaped}
+    skipped = [{"pid": p, "args": redact(table[p]["args"]), "cwd": cwds.get(p),
+                "reason": f"cwd inside the workdir but its root pid {orphan_root(p)} is outside it"}
+               for p in sorted(in_tree - set(matched))]
+    if skipped:
+        record["skipped_processes"] = skipped
+        for row in skipped:
+            print(f"NOT REAPED pid {row['pid']} in the workdir: {row['reason']}: {row['args']}", flush=True)
+    if errors:
+        record["errors"] = errors
+        for error in errors:
+            print(f"REAP INCOMPLETE: {error}", flush=True)
+    return record
 
 
 def entrant_config(provider: str | None) -> dict:
@@ -661,6 +832,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         verdict["model"] = model
     if provider or model_limits:
         verdict["model_limits"] = model_limits
+    if "reaped_processes" in agent:
+        verdict["reaped_processes"] = agent["reaped_processes"]
     # BENCH2/F769: ARCHIVE THE TREE at score time — the sweep wipes the workdir within seconds
     # of [done] (dir reuse), which has already cost the campaign the 0.996 tree and the first
     # two dual-score windows. A tree copy is ~100KB and makes every scored artifact a permanent
