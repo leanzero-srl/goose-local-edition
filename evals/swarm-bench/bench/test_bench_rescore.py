@@ -109,7 +109,8 @@ Path(a.json_out).write_text(json.dumps({'score':.4,'scorerVersion':'sb-7.1','fix
             _probe_preflight=lambda: None, _draw_seed=lambda: '0123456789abcdef', gather=gather)
         vendor = SimpleNamespace(serve=serve, mark_phase=lambda *args: None)
         environment = {'BENCH_SB71': '1', 'BENCH_COMPLETION_RECEIPT': str(receipt),
-            'BENCH_RUN_ID': 'completed-before-crash', 'BENCH_STARTED_AT': '2026-09-20T20:00:00Z'}
+            'BENCH_RUN_ID': 'completed-before-crash', 'BENCH_STARTED_AT': '2026-09-20T20:00:00Z',
+            'BENCH_CONTEXT_LIMIT': '200000', 'BENCH_MAX_TOKENS': '32000'}
         with patch.dict(os.environ, environment, clear=True), \
              patch.object(run_build, '_regime', return_value=(scorer, vendor, None)), \
              patch.object(run_build, 'entrant_config', return_value={}), \

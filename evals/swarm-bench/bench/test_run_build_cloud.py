@@ -162,3 +162,109 @@ output.write_text(json.dumps({'version':1,'providers':['custom_provider'],'confi
             self.assertEqual(call.call_args.args[0].get_header('X-goog-api-key'),'test-only')
         with patch.object(run_build.urllib.request,'urlopen',return_value=contextlib.closing(io.BytesIO(b'{}'))):
             with self.assertRaises(ValueError):run_build.google_model_limits('gemini-3.8-flash',{'GOOGLE_API_KEY':'test-only'})
+
+
+def _listing(*entries):
+    return contextlib.closing(io.BytesIO(json.dumps({'data': list(entries)}).encode()))
+
+
+ASTRA = {'id': 'openai/gpt-6-astra', 'context_length': 1050000,
+         'top_provider': {'context_length': 1050000, 'max_completion_tokens': 128000}}
+
+
+class ProviderModelLimitsTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {}, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_openrouter_takes_the_exact_id_and_records_its_source(self):
+        decoy = {**ASTRA, 'id': 'openai/gpt-6-astra:thinking', 'context_length': 7,
+                 'top_provider': {'max_completion_tokens': 3}}
+        with patch.object(run_build.urllib.request, 'urlopen', return_value=_listing(decoy, ASTRA)) as call:
+            limits = run_build.provider_model_limits('openrouter', 'openai/gpt-6-astra',
+                                                     {'OPENROUTER_API_KEY': 'test-or',
+                                                      'GOOSE_CONTEXT_LIMIT': '128000'})
+        request = call.call_args.args[0]
+        self.assertEqual(request.full_url, 'https://openrouter.ai/api/v1/models')
+        self.assertEqual(request.get_header('Authorization'), 'Bearer test-or')
+        self.assertEqual((limits['GOOSE_CONTEXT_LIMIT'], limits['GOOSE_MAX_TOKENS']), ('1050000', '128000'))
+        provenance = limits['provenance']
+        self.assertEqual(provenance['source'], 'openrouter-model-metadata')
+        self.assertEqual(provenance['fields'], {'context_length': 1050000,
+                                                'top_provider.max_completion_tokens': 128000})
+        self.assertEqual(provenance['replaced_goose_config'], {'GOOSE_CONTEXT_LIMIT': '128000'})
+        self.assertNotIn('test-or', json.dumps(limits))
+
+    def test_openrouter_queries_the_configured_host(self):
+        with patch.object(run_build.urllib.request, 'urlopen', return_value=_listing(ASTRA)) as call:
+            run_build.provider_model_limits('openrouter', 'openai/gpt-6-astra',
+                                            {'OPENROUTER_API_KEY': 'k', 'OPENROUTER_HOST': 'https://or.example/'})
+        self.assertEqual(call.call_args.args[0].full_url, 'https://or.example/api/v1/models')
+
+    def test_openrouter_missing_model_is_refused(self):
+        with patch.object(run_build.urllib.request, 'urlopen', return_value=_listing(ASTRA)):
+            with self.assertRaisesRegex(RuntimeError, r"REFUSED: OpenRouter lists 0 models with id exactly 'openai/gpt-6'"):
+                run_build.provider_model_limits('openrouter', 'openai/gpt-6', {'OPENROUTER_API_KEY': 'k'})
+
+    def test_openrouter_non_positive_or_null_limits_are_refused(self):
+        for context, output in [(0, 128000), (1050000, None), (1050000, -1), ('1050000', 128000), (True, 128000)]:
+            entry = {**ASTRA, 'context_length': context, 'top_provider': {'max_completion_tokens': output}}
+            with self.subTest(context=context, output=output), \
+                    patch.object(run_build.urllib.request, 'urlopen', return_value=_listing(entry)):
+                with self.assertRaisesRegex(RuntimeError, 'REFUSED: OpenRouter .* not a positive integer'):
+                    run_build.provider_model_limits('openrouter', 'openai/gpt-6-astra', {'OPENROUTER_API_KEY': 'k'})
+
+    def test_openrouter_without_a_key_is_refused_before_any_request(self):
+        with patch.object(run_build.urllib.request, 'urlopen') as call:
+            with self.assertRaisesRegex(RuntimeError, 'OPENROUTER_API_KEY is absent'):
+                run_build.provider_model_limits('openrouter', 'openai/gpt-6-astra', {})
+        call.assert_not_called()
+
+    def test_bedrock_without_explicit_limits_is_refused(self):
+        with patch.object(run_build.urllib.request, 'urlopen') as call:
+            with self.assertRaisesRegex(RuntimeError, 'REFUSED: no source for aws_bedrock/us.anthropic.claude-fable-5-1'):
+                run_build.provider_model_limits('aws_bedrock', 'us.anthropic.claude-fable-5-1', {})
+        call.assert_not_called()
+
+    def test_bedrock_takes_explicit_operator_limits(self):
+        with patch.dict(os.environ, {'BENCH_CONTEXT_LIMIT': '1000000', 'BENCH_MAX_TOKENS': '128000'}):
+            limits = run_build.provider_model_limits('aws_bedrock', 'us.anthropic.claude-fable-5-1', {})
+        self.assertEqual((limits['GOOSE_CONTEXT_LIMIT'], limits['GOOSE_MAX_TOKENS']), ('1000000', '128000'))
+        self.assertEqual(limits['provenance']['source'], 'operator-env')
+
+    def test_explicit_limits_must_be_complete_and_positive(self):
+        for env, message in [({'BENCH_CONTEXT_LIMIT': '1000000'}, 'BENCH_MAX_TOKENS unset'),
+                             ({'BENCH_CONTEXT_LIMIT': '0', 'BENCH_MAX_TOKENS': '4096'}, 'BENCH_CONTEXT_LIMIT is 0'),
+                             ({'BENCH_CONTEXT_LIMIT': '1M', 'BENCH_MAX_TOKENS': '4096'}, "BENCH_CONTEXT_LIMIT is '1M'"),
+                             ({'BENCH_CONTEXT_LIMIT': '1000000', 'BENCH_MAX_TOKENS': str(2**31)}, 'i32')]:
+            with self.subTest(env=env), patch.dict(os.environ, env):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    run_build.provider_model_limits('aws_bedrock', 'us.anthropic.claude-fable-5-1', {})
+
+    def test_google_path_is_unchanged(self):
+        with patch.object(run_build.urllib.request, 'urlopen', return_value=contextlib.closing(
+                io.BytesIO(b'{"inputTokenLimit":1048576,"outputTokenLimit":65536}'))) as call:
+            limits = run_build.provider_model_limits('google', 'gemini-3.8-flash', {'GOOGLE_API_KEY': 'test-only'})
+        self.assertEqual(call.call_args.args[0].get_header('X-goog-api-key'), 'test-only')
+        self.assertEqual((limits['GOOSE_CONTEXT_LIMIT'], limits['GOOSE_MAX_TOKENS']), ('1048576', '65536'))
+        self.assertEqual(limits['provenance']['fields'], {'inputTokenLimit': 1048576, 'outputTokenLimit': 65536})
+        with patch.object(run_build.urllib.request, 'urlopen', return_value=contextlib.closing(io.BytesIO(b'{}'))):
+            with self.assertRaises(ValueError):
+                run_build.provider_model_limits('google', 'gemini-3.8-flash', {'GOOGLE_API_KEY': 'test-only'})
+
+    def test_local_engines_are_unaffected(self):
+        with patch.object(run_build.urllib.request, 'urlopen') as call:
+            for provider in ('lmstudio', 'swarm'):
+                self.assertIsNone(run_build.provider_model_limits(provider, 'local-model', {}))
+        call.assert_not_called()
+
+    def test_run_refuses_a_bedrock_entrant_before_its_tree_or_model_exists(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(run_build, 'MODELS', {'fable-5.1': 'us.anthropic.claude-fable-5-1'}), \
+                patch.object(run_build, 'load_env', return_value={}), \
+                patch.object(run_build, 'invoke') as invoke:
+            with self.assertRaisesRegex(RuntimeError, 'REFUSED: no source for aws_bedrock'):
+                run_build.run('fable-5.1', 0, Path(tmp), 0, 8850)
+            self.assertFalse((Path(tmp) / 'fable-5.1-r0').exists())
+        invoke.assert_not_called()

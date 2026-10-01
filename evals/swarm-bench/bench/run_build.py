@@ -341,6 +341,112 @@ def google_model_limits(model: str, credentials: Dict[str, str]) -> Dict[str, in
     return limits
 
 
+# Providers whose engine runs on this machine's own fleet: the brief and the scorer's local arms
+# never relied on cloud metadata, and their windows are probed by the engine itself.
+LOCAL_ENGINE_PROVIDERS = frozenset({"lmstudio", "swarm"})
+# goose parses GOOSE_MAX_TOKENS as an i32 (crates/goose/src/config/base.rs get_goose_max_tokens);
+# a larger value is a config error in the child, so it is refused here, before any model call.
+GOOSE_MAX_TOKENS_TYPE_BOUND = 2**31 - 1
+
+
+def _positive_limit(value, what: str) -> int:
+    if type(value) is not int or value <= 0:
+        raise RuntimeError(f"REFUSED: {what} is {value!r}, not a positive integer token limit")
+    return value
+
+
+def _openrouter_model_limits(model: str, credentials: Dict[str, str]) -> dict:
+    key = credentials.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("REFUSED: OPENROUTER_API_KEY is absent from the benchmark snapshot, so the "
+                           "model's limits cannot be read")
+    # The same host the engine's OpenRouter provider calls (OPENROUTER_HOST, default openrouter.ai),
+    # so the limits describe the endpoint the run actually uses.
+    host = credentials.get("OPENROUTER_HOST") or "https://openrouter.ai"
+    url = host.rstrip("/") + "/api/v1/models"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            listing = json.load(response)
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"REFUSED: OpenRouter model metadata unreadable at {url}: "
+                           f"{type(error).__name__}") from None
+    entries = listing.get("data") if isinstance(listing, dict) else None
+    if not isinstance(entries, list):
+        raise RuntimeError(f"REFUSED: OpenRouter model listing at {url} carries no data array")
+    matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("id") == model]
+    if len(matches) != 1:
+        raise RuntimeError(f"REFUSED: OpenRouter lists {len(matches)} models with id exactly {model!r} "
+                           f"(of {len(entries)}); the run's limits cannot be measured")
+    entry = matches[0]
+    top = entry.get("top_provider") if isinstance(entry.get("top_provider"), dict) else {}
+    # A null max_completion_tokens was measured on 7 of 464 listed models on 2026-10-01, all of them
+    # routers (openrouter/auto, openrouter/free, ...), never on a frontier model, so it is refused
+    # rather than derived from the context window.
+    context = _positive_limit(entry.get("context_length"), f"OpenRouter context_length for {model}")
+    output = _positive_limit(top.get("max_completion_tokens"),
+                             f"OpenRouter top_provider.max_completion_tokens for {model}")
+    return {"context": context, "output": output,
+            "provenance": {"source": "openrouter-model-metadata", "url": url,
+                           "fields": {"context_length": context,
+                                      "top_provider.max_completion_tokens": output}}}
+
+
+def provider_model_limits(provider: str, model: str, credentials: Dict[str, str]) -> dict | None:
+    """The context window and output cap a cloud entrant runs with, from a NAMED source.
+
+    goose's canonical catalog lags new models, and an unknown model silently gets the engine's
+    128,000 context fallback and the provider's own default output cap (Bedrock: 4,096). Measured on
+    fable-5.1-r0: 7 of 22 calls ended at exactly 4,096 completion tokens with truncated write
+    arguments, and compaction fired at 0.8 x 128k on a 1M-context model. So every cloud entrant
+    gets limits from provider metadata or from the operator, recorded with their provenance, and
+    one that has neither is refused before the model is called (gate 1). Local fleets return None.
+    """
+    if provider in LOCAL_ENGINE_PROVIDERS:
+        return None
+    explicit = {name: os.environ.get(name) for name in ("BENCH_CONTEXT_LIMIT", "BENCH_MAX_TOKENS")}
+    if any(explicit.values()):
+        missing = [name for name, value in explicit.items() if not value]
+        if missing:
+            raise RuntimeError(f"REFUSED: {', '.join(missing)} unset; explicit limits need both "
+                               "BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS")
+        parsed = {}
+        for name, value in explicit.items():
+            try:
+                parsed[name] = int(value)
+            except ValueError:
+                parsed[name] = value
+        context = _positive_limit(parsed["BENCH_CONTEXT_LIMIT"], "BENCH_CONTEXT_LIMIT")
+        output = _positive_limit(parsed["BENCH_MAX_TOKENS"], "BENCH_MAX_TOKENS")
+        provenance = {"source": "operator-env", "fields": explicit}
+    elif provider == "google":
+        google = google_model_limits(model, credentials)
+        context, output = google["inputTokenLimit"], google["outputTokenLimit"]
+        provenance = {"source": "google-model-metadata",
+                      "url": f"https://generativelanguage.googleapis.com/v1beta/models/{model}",
+                      "fields": google}
+    elif provider == "openrouter":
+        measured = _openrouter_model_limits(model, credentials)
+        context, output, provenance = measured["context"], measured["output"], measured["provenance"]
+    else:
+        raise RuntimeError(
+            f"REFUSED: no source for {provider}/{model}'s context window and output cap. goose would "
+            "run it on its 128,000-token context fallback and the provider's default output cap "
+            "(Bedrock: 4,096). Export BENCH_CONTEXT_LIMIT and BENCH_MAX_TOKENS from the model's "
+            "documentation and launch again.")
+    if output > GOOSE_MAX_TOKENS_TYPE_BOUND:
+        raise RuntimeError(f"REFUSED: output cap {output} for {model} exceeds goose's i32 GOOSE_MAX_TOKENS")
+    provenance = {**provenance, "provider": provider, "model": model,
+                  "resolved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    replaced = {name: credentials[name] for name, value in
+                (("GOOSE_CONTEXT_LIMIT", str(context)), ("GOOSE_MAX_TOKENS", str(output)))
+                if name in credentials and credentials[name] != value}
+    if replaced:
+        provenance["replaced_goose_config"] = replaced
+    return {"GOOSE_CONTEXT_LIMIT": str(context), "GOOSE_MAX_TOKENS": str(output),
+            "provenance": provenance}
+
+
 def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
         provider: str | None = None, model: str | None = None) -> Dict:
     workdir = out_root / f"{entrant}-r{rep}"
@@ -349,10 +455,15 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     snapshot = entrant_config(provider) if provider or os.environ.get("BENCH_SB71") else None
     credentials = (cloud_env(provider, snapshot) if provider else
                    snapshot_environment(snapshot) if snapshot else load_env())
-    model_limits = google_model_limits(model, credentials) if provider == "google" else None
+    # A MODELS entrant is a Bedrock cloud model launched without --provider (invoke()'s second arm),
+    # and fable-5.1-r0, the receipt for provider_model_limits, ran on exactly that arm.
+    limits_provider = provider or ("aws_bedrock" if entrant in MODELS else None)
+    limits_model = model or MODELS.get(entrant)
+    model_limits = (provider_model_limits(limits_provider, limits_model, credentials)
+                    if limits_provider else None)
     if model_limits:
-        credentials = {**credentials, "GOOSE_CONTEXT_LIMIT": str(model_limits["inputTokenLimit"]),
-                       "GOOSE_MAX_TOKENS": str(model_limits["outputTokenLimit"])}
+        credentials = {**credentials, "GOOSE_CONTEXT_LIMIT": model_limits["GOOSE_CONTEXT_LIMIT"],
+                       "GOOSE_MAX_TOKENS": model_limits["GOOSE_MAX_TOKENS"]}
     workdir.mkdir(parents=True)
     if model_limits:
         (workdir / "model-limits.json").write_text(json.dumps(model_limits, indent=2))
@@ -530,6 +641,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     if provider:
         verdict["provider"] = provider
         verdict["model"] = model
+    if provider or model_limits:
         verdict["model_limits"] = model_limits
     # BENCH2/F769: ARCHIVE THE TREE at score time — the sweep wipes the workdir within seconds
     # of [done] (dir reuse), which has already cost the campaign the 0.996 tree and the first
