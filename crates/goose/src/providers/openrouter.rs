@@ -6,12 +6,16 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use super::api_client::{ApiClient, AuthMethod};
-use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata};
+use super::base::{
+    model_info_for_provider_model, ConfigKey, MessageStream, ModelInfo, Provider, ProviderDef,
+    ProviderMetadata,
+};
 use super::openai_compatible::{handle_status, stream_openai_compat};
 use super::retry::ProviderRetry;
 use crate::conversation::message::Message;
 use crate::providers::formats::openrouter as openrouter_format;
 use goose_providers::errors::ProviderError;
+use goose_providers::formats::anthropic_cache::apply_anthropic_cache_breakpoints;
 use goose_providers::formats::openai::create_request;
 use goose_providers::model::ModelConfig;
 use goose_providers::request_log::{start_log, LoggerHandleExt};
@@ -47,6 +51,10 @@ pub struct OpenRouterProvider {
     name: String,
     #[serde(skip)]
     configured_parameters: Option<HashMap<String, Value>>,
+    #[serde(skip)]
+    context_windows: tokio::sync::OnceCell<HashMap<String, usize>>,
+    #[serde(skip)]
+    resolved_windows: std::sync::Mutex<HashMap<String, Option<usize>>>,
 }
 
 impl OpenRouterProvider {
@@ -72,81 +80,131 @@ impl OpenRouterProvider {
             supports_streaming: true,
             name: OPENROUTER_PROVIDER_NAME.to_string(),
             configured_parameters,
+            context_windows: tokio::sync::OnceCell::new(),
+            resolved_windows: std::sync::Mutex::new(HashMap::new()),
         })
+    }
+
+    async fn fetch_models_listing(&self) -> Result<Vec<ListedModel>, ProviderError> {
+        let response = self
+            .api_client
+            .request("api/v1/models")
+            .response_get()
+            .await
+            .map_err(|e| {
+                ProviderError::RequestFailed(format!(
+                    "Failed to fetch models from OpenRouter API: {}",
+                    e
+                ))
+            })?;
+
+        let json: Value = response.json().await.map_err(|e| {
+            ProviderError::RequestFailed(format!(
+                "Failed to parse OpenRouter API response as JSON: {}",
+                e
+            ))
+        })?;
+
+        parse_models_listing(&json)
+    }
+
+    async fn context_windows(&self) -> Result<&HashMap<String, usize>, ProviderError> {
+        self.context_windows
+            .get_or_try_init(|| async {
+                let listing = self.fetch_models_listing().await?;
+                Ok(context_windows_of(&listing))
+            })
+            .await
+    }
+
+    /// The window OpenRouter's live models listing declares for `model_name` — `None`, after one
+    /// warning per model, when the listing cannot be fetched or does not carry the model.
+    async fn listed_context_window(&self, model_name: &str) -> Option<usize> {
+        if let Some(resolved) = self
+            .resolved_windows
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(model_name).copied())
+        {
+            return resolved;
+        }
+
+        let window = match self.context_windows().await {
+            Ok(windows) => {
+                let window = windows.get(model_name).copied();
+                if window.is_none() {
+                    tracing::warn!(
+                        model = %model_name,
+                        listed_models = windows.len(),
+                        "context_window_unlisted: OpenRouter's models listing carries no \
+                         context_length for this model; the compaction guard and the per-turn \
+                         context line run on the default"
+                    );
+                }
+                window
+            }
+            Err(err) => {
+                tracing::warn!(
+                    model = %model_name,
+                    reason = %err,
+                    "context_window_listing_failed: OpenRouter's models listing could not be \
+                     read; the compaction guard and the per-turn context line run on the default"
+                );
+                None
+            }
+        };
+
+        if let Ok(mut cache) = self.resolved_windows.lock() {
+            cache.insert(model_name.to_string(), window);
+        }
+        window
     }
 }
 
-/// Update the request when using anthropic model.
-/// For anthropic model, we can enable prompt caching to save cost. Since openrouter is the OpenAI compatible
-/// endpoint, we need to modify the open ai request to have anthropic cache control field.
-fn update_request_for_anthropic(original_payload: &Value) -> Value {
-    let mut payload = original_payload.clone();
+struct ListedModel {
+    id: String,
+    context_length: Option<usize>,
+}
 
-    if let Some(messages_spec) = payload
-        .as_object_mut()
-        .and_then(|obj| obj.get_mut("messages"))
-        .and_then(|messages| messages.as_array_mut())
-    {
-        // Add "cache_control" to the last and second-to-last "user" messages.
-        // During each turn, we mark the final message with cache_control so the conversation can be
-        // incrementally cached. The second-to-last user message is also marked for caching with the
-        // cache_control parameter, so that this checkpoint can read from the previous cache.
-        let mut user_count = 0;
-        for message in messages_spec.iter_mut().rev() {
-            if message.get("role") == Some(&json!("user")) {
-                if let Some(content) = message.get_mut("content") {
-                    if let Some(content_str) = content.as_str() {
-                        *content = json!([{
-                            "type": "text",
-                            "text": content_str,
-                            "cache_control": { "type": "ephemeral" }
-                        }]);
-                    }
-                }
-                user_count += 1;
-                if user_count >= 2 {
-                    break;
-                }
-            }
-        }
-
-        // Update the system message to have cache_control field.
-        if let Some(system_message) = messages_spec
-            .iter_mut()
-            .find(|msg| msg.get("role") == Some(&json!("system")))
-        {
-            if let Some(content) = system_message.get_mut("content") {
-                if let Some(content_str) = content.as_str() {
-                    *system_message = json!({
-                        "role": "system",
-                        "content": [{
-                            "type": "text",
-                            "text": content_str,
-                            "cache_control": { "type": "ephemeral" }
-                        }]
-                    });
-                }
-            }
-        }
+fn parse_models_listing(json: &Value) -> Result<Vec<ListedModel>, ProviderError> {
+    if let Some(err_obj) = json.get("error") {
+        let msg = err_obj
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        return Err(ProviderError::RequestFailed(format!(
+            "OpenRouter API returned an error: {}",
+            msg
+        )));
     }
 
-    if let Some(tools_spec) = payload
-        .as_object_mut()
-        .and_then(|obj| obj.get_mut("tools"))
-        .and_then(|tools| tools.as_array_mut())
-    {
-        // Add "cache_control" to the last tool spec, if any. This means that all tool definitions,
-        // will be cached as a single prefix.
-        if let Some(last_tool) = tools_spec.last_mut() {
-            if let Some(function) = last_tool.get_mut("function") {
-                function
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("cache_control".to_string(), json!({ "type": "ephemeral" }));
-            }
-        }
-    }
-    payload
+    let data = json
+        .get("data")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| ProviderError::UsageError("Missing data field in JSON response".into()))?;
+
+    Ok(data
+        .iter()
+        .filter_map(|model| {
+            let id = model.get("id").and_then(|v| v.as_str())?;
+            let context_length = model
+                .get("context_length")
+                .and_then(Value::as_u64)
+                .filter(|&length| length > 0)
+                .map(|length| length as usize);
+            Some(ListedModel {
+                id: id.to_string(),
+                context_length,
+            })
+        })
+        .collect())
+}
+
+fn context_windows_of(listing: &[ListedModel]) -> HashMap<String, usize> {
+    listing
+        .iter()
+        .filter_map(|model| Some((model.id.clone(), model.context_length?)))
+        .collect()
 }
 
 fn is_gemini_model(model_name: &str) -> bool {
@@ -233,52 +291,36 @@ impl Provider for OpenRouterProvider {
         &self.name
     }
 
-    /// Fetch supported models from OpenRouter API (only models with tool support)
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
-        let response = self
-            .api_client
-            .request("api/v1/models")
-            .response_get()
-            .await
-            .map_err(|e| {
-                ProviderError::RequestFailed(format!(
-                    "Failed to fetch models from OpenRouter API: {}",
-                    e
-                ))
-            })?;
-
-        let json: serde_json::Value = response.json().await.map_err(|e| {
-            ProviderError::RequestFailed(format!(
-                "Failed to parse OpenRouter API response as JSON: {}",
-                e
-            ))
-        })?;
-
-        if let Some(err_obj) = json.get("error") {
-            let msg = err_obj
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(ProviderError::RequestFailed(format!(
-                "OpenRouter API returned an error: {}",
-                msg
-            )));
-        }
-
-        let data = json.get("data").and_then(|v| v.as_array()).ok_or_else(|| {
-            ProviderError::UsageError("Missing data field in JSON response".into())
-        })?;
-
-        let mut models: Vec<String> = data
-            .iter()
-            .filter_map(|model| {
-                let id = model.get("id").and_then(|v| v.as_str())?;
-                Some(id.to_string())
-            })
-            .collect();
-
+        let listing = self.fetch_models_listing().await?;
+        let _ = self.context_windows.set(context_windows_of(&listing));
+        let mut models: Vec<String> = listing.into_iter().map(|model| model.id).collect();
         models.sort();
         Ok(models)
+    }
+
+    /// An explicit or catalogued window (GOOSE_CONTEXT_LIMIT, a session override, the canonical
+    /// registry) is used as-is; otherwise the `context_length` OpenRouter's live models listing
+    /// declares for the model, so a model newer than the bundled catalog does not compact at the
+    /// 128,000 default's threshold.
+    async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
+        if let Some(limit) = model_config.context_limit {
+            return Ok(limit);
+        }
+        Ok(self
+            .listed_context_window(&model_config.model_name)
+            .await
+            .unwrap_or_else(|| model_config.context_limit()))
+    }
+
+    async fn fetch_model_info(&self, model_name: &str) -> Result<ModelInfo, ProviderError> {
+        let mut info = model_info_for_provider_model(self.get_name(), model_name);
+        if info.context_limit == 0 {
+            if let Some(window) = self.listed_context_window(model_name).await {
+                info.context_limit = window;
+            }
+        }
+        Ok(info)
     }
 
     async fn stream(
@@ -316,7 +358,7 @@ impl Provider for OpenRouterProvider {
         }
 
         if supports_cache_control(model_config) {
-            payload = update_request_for_anthropic(&payload);
+            apply_anthropic_cache_breakpoints(&mut payload);
         }
 
         if is_gemini_model(&model_config.model_name) {
@@ -429,5 +471,160 @@ mod tests {
         let request_params = model.request_params.as_ref().unwrap();
         assert_eq!(request_params["plugins"], json!([{ "id": "web" }]));
         assert_eq!(request_params["verbosity"], json!("xhigh"));
+    }
+
+    fn models_listing() -> Value {
+        json!({"data": [
+            {"id": "vendor/new-model-1m", "context_length": 1048576},
+            {"id": "vendor/small-model", "context_length": 32768},
+            {"id": "vendor/no-window"},
+            {"id": "vendor/zero-window", "context_length": 0},
+        ]})
+    }
+
+    fn provider_with_listing(listing: &Value) -> OpenRouterProvider {
+        let windows = context_windows_of(&parse_models_listing(listing).unwrap());
+        OpenRouterProvider {
+            api_client: ApiClient::new_with_tls(
+                "http://127.0.0.1:9".to_string(),
+                AuthMethod::BearerToken("test".to_string()),
+                None,
+            )
+            .unwrap(),
+            supports_streaming: true,
+            name: OPENROUTER_PROVIDER_NAME.to_string(),
+            configured_parameters: None,
+            context_windows: tokio::sync::OnceCell::new_with(Some(windows)),
+            resolved_windows: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn the_models_listing_keeps_only_declared_windows() {
+        let windows = context_windows_of(&parse_models_listing(&models_listing()).unwrap());
+
+        assert_eq!(
+            windows,
+            HashMap::from([
+                ("vendor/new-model-1m".to_string(), 1_048_576),
+                ("vendor/small-model".to_string(), 32_768),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_models_listing_error_is_an_error() {
+        let err = parse_models_listing(&json!({"error": {"message": "bad key"}}))
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("bad key"));
+    }
+
+    #[tokio::test]
+    async fn an_unset_context_limit_comes_from_the_live_listing() {
+        let provider = provider_with_listing(&models_listing());
+
+        assert_eq!(
+            provider
+                .get_context_limit(&model_config("vendor/new-model-1m"))
+                .await
+                .unwrap(),
+            1_048_576
+        );
+        assert_eq!(
+            provider
+                .fetch_model_info("vendor/small-model")
+                .await
+                .unwrap()
+                .context_limit,
+            32_768
+        );
+    }
+
+    #[tokio::test]
+    async fn an_explicit_context_limit_wins_over_the_listing() {
+        let provider = provider_with_listing(&models_listing());
+        let mut model = model_config("vendor/new-model-1m");
+        model.context_limit = Some(200_000);
+
+        assert_eq!(provider.get_context_limit(&model).await.unwrap(), 200_000);
+    }
+
+    #[tokio::test]
+    async fn a_model_the_listing_does_not_size_runs_on_the_default() {
+        let provider = provider_with_listing(&models_listing());
+
+        for model in ["vendor/no-window", "vendor/zero-window", "vendor/absent"] {
+            assert_eq!(
+                provider
+                    .get_context_limit(&model_config(model))
+                    .await
+                    .unwrap(),
+                goose_providers::model::DEFAULT_CONTEXT_LIMIT,
+                "{model}"
+            );
+        }
+    }
+
+    /// The request goose actually sends in a tool loop: the turn-context block rides a trailing
+    /// user message, and the moving breakpoint lands on the tool result before it.
+    #[test]
+    fn a_tool_loop_request_breaks_on_the_tool_result_not_the_turn_context() {
+        let turn_context = "<turn-context>\n<current-time>2026-10-01 20:49</current-time>\n\
+                            <working-directory>/tmp</working-directory>\n</turn-context>";
+        let tool_result = |id: &str, text: &str| {
+            Message::user().with_tool_response(
+                id,
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::Content::text(text),
+                ])),
+            )
+        };
+        let messages = vec![
+            Message::user().with_text("cat the files"),
+            Message::assistant()
+                .with_tool_request("c1", Ok(rmcp::model::CallToolRequestParams::new("shell"))),
+            tool_result("c1", "part one"),
+            Message::assistant()
+                .with_tool_request("c2", Ok(rmcp::model::CallToolRequestParams::new("shell"))),
+            tool_result("c2", "part two").with_text(turn_context),
+        ];
+        let mut payload = create_request(
+            &model_config("anthropic/claude-haiku-4.5"),
+            "system prompt",
+            &messages,
+            &[],
+            &ImageFormat::OpenAi,
+            true,
+        )
+        .unwrap();
+        apply_anthropic_cache_breakpoints(&mut payload);
+
+        let marked: Vec<(String, String)> = payload["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| {
+                let part = m["content"]
+                    .as_array()?
+                    .iter()
+                    .find(|p| p.get("cache_control").is_some())?;
+                Some((
+                    m["role"].as_str()?.to_string(),
+                    part["text"].as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        assert_eq!(
+            marked,
+            vec![
+                ("system".to_string(), "system prompt".to_string()),
+                ("tool".to_string(), "part one".to_string()),
+                ("tool".to_string(), "part two".to_string()),
+            ]
+        );
+        let last = payload["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["role"], json!("user"));
+        assert_eq!(last["content"], json!(turn_context));
     }
 }

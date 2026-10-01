@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod anthropic_cache;
 pub mod databricks;
 pub mod ollama;
 pub mod openai;
