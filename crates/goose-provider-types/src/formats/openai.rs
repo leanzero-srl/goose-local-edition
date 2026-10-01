@@ -1218,9 +1218,16 @@ pub fn get_usage(usage: &Value) -> Usage {
         })
         .map(|v| v as i32);
 
+    // OpenRouter reports the Anthropic cache write as `prompt_tokens_details.cache_write_tokens`.
     let cache_write_input_tokens = usage
         .get("cache_creation_input_tokens")
         .and_then(|v| v.as_i64())
+        .or_else(|| {
+            usage
+                .get("prompt_tokens_details")
+                .and_then(|d| d.get("cache_write_tokens"))
+                .and_then(|v| v.as_i64())
+        })
         .map(|v| v as i32);
 
     let total_tokens = usage
@@ -3459,6 +3466,29 @@ mod tests {
         assert_eq!(usage.total_tokens, Some(150));
         assert_eq!(usage.cache_read_input_tokens, Some(80));
         assert_eq!(usage.cache_write_input_tokens, None);
+    }
+
+    #[test]
+    fn test_get_usage_reads_openrouter_cache_write_tokens() {
+        // Verbatim from an OpenRouter streamed usage chunk (anthropic/claude-haiku-4.5,
+        // gen-1790887839-JGsNNaSrYz7aqPjAhYJ0).
+        let usage = get_usage(&json!({
+            "prompt_tokens": 6587,
+            "completion_tokens": 5,
+            "total_tokens": 6592,
+            "cost": 0.008245,
+            "is_byok": false,
+            "prompt_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 6532,
+                "audio_tokens": 0,
+                "video_tokens": 0
+            }
+        }));
+
+        assert_eq!(usage.input_tokens, Some(6587));
+        assert_eq!(usage.cache_read_input_tokens, Some(0));
+        assert_eq!(usage.cache_write_input_tokens, Some(6532));
     }
 
     #[test]
