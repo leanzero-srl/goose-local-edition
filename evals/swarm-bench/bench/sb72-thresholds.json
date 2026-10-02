@@ -1,0 +1,4 @@
+{
+  "note": "SB7.2 overlay on sb7-thresholds.json: only the stream-apply excellence rung moves. PROVISIONAL until the reference receipt is measured.",
+  "e_stream_apply_ms_rungs": [[1.0, 175], [0.75, 200], [0.5, 400], [0.25, 800]]
+}

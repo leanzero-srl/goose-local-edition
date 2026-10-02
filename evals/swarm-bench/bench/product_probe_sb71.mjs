@@ -157,7 +157,23 @@ const V7 = {
   labelW: 110, labelH: 18, labelDx: 10, labelDy: -9, labelSlopPx: 2, labelCandidates: 12,
   depthGapNdc: 0.002, lateralPx: 3, pairMarginPx: 5,
   idleWindowMs: 500,
+  wheelDelta: 400,                                        // one graded wheel step; reaches distMax from dist0
 };
+// SB7.2 runs this probe through product_probe_sb72.mjs: its published default camera frames the
+// field, and the overview legibility check joins the visual battery. Every number below is printed
+// in sb7.2/VISUAL-CONTRACT.md; nothing here is hidden from the entrant.
+const PROBE_TIER = globalThis.__BENCH_PROBE_TIER === 'sb-7.2' ? 'sb-7.2' : 'sb-7.1';
+const SB72_LEGIBILITY = {
+  spanMin: 0.60,          // drawn field spans >= 60% of the canvas width AND height
+  edgePx: 4,              // no tower pixel within 4 CSS px of the canvas edge
+  litContrastMin: 2.0,    // median WCAG contrast of predicted tower pixels vs #101828
+  capBlockPx: 2,          // a readable cap shows a whole 2x2 block of screen pixels
+  capsMin: 64,            // seeded payments sampled with a readable cap
+  capsSample: 96,         // sample size the probe stops at
+  statusDistance: 40,     // RGB distance within which a pixel reads as a legend colour
+  accuracyMin: 0.90,      // share of sampled caps whose pixels all read as their status
+};
+if (PROBE_TIER === 'sb-7.2') Object.assign(V7, { yaw0: 70, pitch0: 50, dist0: 190, wheelDelta: 800 });
 const VIZ_LAUNCH_ARGS = [
   '--use-angle=swiftshader', '--enable-unsafe-swiftshader',   // deterministic software GL (verified sb-6)
   '--force-color-profile=srgb', '--force-device-scale-factor=1',
@@ -2864,6 +2880,73 @@ function seededSurfacePoints(ctx,skip=()=>false) {
   }
   return points;
 }
+// SB7.2 overview legibility, read from the same composited screenshot as s_visible_surface:
+// framing (span of pixels showing a published tower colour), lighting (contrast of independently
+// predicted tower pixels against the published background) and status (cap pixels of seeded
+// payments classified against the published status legend).
+function wcagLuminance(rgb) {
+  return rgb.slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4);}).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
+}
+function overviewLegibility(ctx,screenshot,rect,covered,seed,excluded) {
+  const L=SB72_LEGIBILITY,W=Math.round(ctx.W),H=Math.round(ctx.H);
+  const shot=(x,y)=>screenshot.at(rect.left+x,rect.top+y);
+  const palette=[];for(const rgb of Object.values(V7.status))for(const f of [1,.82,.72,.55])palette.push(rgb.map(v=>Math.round(v*f)));
+  const xs=[],ys=[];let edgePixels=0;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(covered(x,y))continue;
+    const px=shot(x,y);if(!px||!palette.some(c=>rgbNear(px,c)))continue;
+    xs.push(x);ys.push(y);
+    if(x<L.edgePx||y<L.edgePx||x>=W-L.edgePx||y>=H-L.edgePx)edgePixels++;
+  }
+  const quantile=(values,q)=>{const sorted=values.slice().sort((a,b)=>a-b);return sorted[Math.min(sorted.length-1,Math.floor(q*sorted.length))];};
+  const spanW=xs.length?(quantile(xs,.995)-quantile(xs,.005)+1)/W:0,spanH=ys.length?(quantile(ys,.995)-quantile(ys,.005)+1)/H:0;
+  const framing={towerPixels:xs.length,spanW:+spanW.toFixed(4),spanH:+spanH.toFixed(4),edgePixels,
+    ok:spanW>=L.spanMin&&spanH>=L.spanMin&&edgePixels===0};
+  framing.score=framing.ok?1:Math.min(1,spanW/L.spanMin)*Math.min(1,spanH/L.spanMin)*(edgePixels===0?1:.5);
+  const rng=seedRng(seed,'sb72-overview-legibility'),bg=wcagLuminance(V7.bg);
+  const contrasts=[],surface=[];
+  for(let tries=0;tries<20000&&surface.length<200;tries++){
+    const x=Math.floor(rng()*(W-2))+1,y=Math.floor(rng()*(H-2))+1;
+    if(covered(x,y))continue;
+    const hit=castPixel(ctx,x+.5,y+.5)[0];if(!hit)continue;
+    const stable=[[-.45,0],[.45,0],[0,-.45],[0,.45]].every(([dx,dy])=>{const near=castPixel(ctx,x+.5+dx,y+.5+dy)[0];return near&&near.n===hit.n&&near.factor===hit.factor;});
+    if(!stable)continue;
+    const got=shot(x,y);if(!got)continue;
+    const front=wcagLuminance(got),ratio=(Math.max(front,bg)+.05)/(Math.min(front,bg)+.05);
+    contrasts.push(ratio);surface.push({x,y,n:hit.n,got,ratio:+ratio.toFixed(3)});
+  }
+  const median=contrasts.length?quantile(contrasts,.5):1;
+  const lit={samples:contrasts.length,medianContrast:+median.toFixed(3),examples:surface.slice(0,6),ok:contrasts.length>=24&&median>=L.litContrastMin};
+  lit.score=lit.ok?1:contrasts.length>=24?Math.max(0,Math.min(1,(median-1)/(L.litContrastMin-1))):0;
+  const legend=Object.entries(V7.status),readAs=px=>{
+    if(!px)return null;
+    const ranked=legend.map(([name,rgb])=>[name,Math.hypot(px[0]-rgb[0],px[1]-rgb[1],px[2]-rgb[2])]).sort((a,b)=>a[1]-b[1]);
+    return ranked[0][1]<=L.statusDistance?ranked[0][0]:null;
+  };
+  const caps=new Map(),block=L.capBlockPx;let tries=0;
+  for(;tries<40000&&caps.size<L.capsSample;tries++){
+    const x=Math.floor(rng()*(W-block-1))+1,y=Math.floor(rng()*(H-block-1))+1;
+    const centre=castPixel(ctx,x+block/2,y+block/2)[0];
+    if(!centre||centre.factor!==1||caps.has(centre.n))continue;
+    const it=ctx.model.items[centre.n];if(excluded.has(it.id))continue;
+    let whole=true;
+    for(let by=0;by<block&&whole;by++)for(let bx=0;bx<block&&whole;bx++)if(covered(x+bx,y+by))whole=false;
+    for(const [cx,cy] of [[.05,.05],[block-.05,.05],[.05,block-.05],[block-.05,block-.05]]){
+      if(!whole)break;const hit=castPixel(ctx,x+cx,y+cy)[0];whole=!!hit&&hit.n===centre.n&&hit.factor===1;
+    }
+    if(!whole)continue;
+    const pixels=[];for(let by=0;by<block;by++)for(let bx=0;bx<block;bx++)pixels.push(shot(x+bx,y+by));
+    const read=pixels.map(readAs);
+    caps.set(centre.n,{id:it.id,status:it.status,x,y,pixels,read,ok:read.every(r=>r===it.status)});
+  }
+  const sampled=[...caps.values()],correct=sampled.filter(c=>c.ok).length,accuracy=sampled.length?correct/sampled.length:0;
+  const status={sampled:sampled.length,correct,accuracy:+accuracy.toFixed(4),tries,
+    misread:sampled.filter(c=>!c.ok).slice(0,8),examples:sampled.filter(c=>c.ok).slice(0,4),
+    ok:sampled.length>=L.capsMin&&accuracy>=L.accuracyMin};
+  status.score=status.ok?1:accuracy*Math.min(1,sampled.length/L.capsMin);
+  return {thresholds:L,camera:{yaw:ctx.yaw,pitch:ctx.pitch,distance:ctx.distance},canvas:{width:W,height:H},
+    framing,lit,status,score:(framing.score+lit.score+status.score)/3,ok:framing.ok&&lit.ok&&status.ok};
+}
 function geometryEvidence(it,pose,samples) {
   const groups=Object.fromEntries(['pedestal','shaft','cap','collar','ribs','chamfer','cutout','framegap','void'].map(k=>[k,{matched:0,total:0,examples:[]}]));
   for(const sample of samples) {
@@ -3055,9 +3138,11 @@ async function sb71VisualScenario(page,model,H,pack) {
   });
   const labelRects=await page.evaluate(()=>Array.from(document.querySelectorAll('#viz-labels .viz-label')).filter(e=>e.getClientRects().length&&getComputedStyle(e).display!=='none').map(e=>{const r=e.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom};}));
   let rootFacts={dom,matched:0,total:0,ids:[],labelRects,observedState:await page.evaluate(pageVs7,{want:['camera','brush']})};
+  let legibility=null;
   if(rect?.w&&rect?.h) {
     const ctx=poseCtx(model,V7.yaw0,V7.pitch0,V7.dist0,rect.w,rect.h);
-    const points=seededSurfacePoints(ctx,(x,y)=>labelRects.some(r=>rect.left+x>=r.left-1&&rect.left+x<=r.right+1&&rect.top+y>=r.top-1&&rect.top+y<=r.bottom+1));
+    const underLabel=(x,y)=>labelRects.some(r=>rect.left+x>=r.left-1&&rect.left+x<=r.right+1&&rect.top+y>=r.top-1&&rect.top+y<=r.bottom+1);
+    const points=seededSurfacePoints(ctx,underLabel);
     const sampled=await page.evaluate(pageSamplePixels,{points});
     rootFacts.total=points.length;
     rootFacts.framebufferMatched=(sampled.samples||[]).filter(s=>rgbNear(s.got,s.expected)).length;
@@ -3066,9 +3151,16 @@ async function sb71VisualScenario(page,model,H,pack) {
     rootFacts.registrationTolerancePixels=1;
     rootFacts.screenshotSize={width:screenshot.width,height:screenshot.height};
     rootFacts.ids=[...new Set(points.map(p=>model.items[p.n].id))];
+    if(PROBE_TIER==='sb-7.2')legibility=overviewLegibility(ctx,screenshot,rect,underLabel,pack.seed,
+      new Set([...(pack.sb71_reserved_payment_ids||[]),...((pack.stream||{}).mutateIds||[])]));
   }
   const admitted=dom.visible&&dom.exposed/Math.max(1,dom.total)>=.9&&!dom.failures.length&&rootFacts.total>=12&&rootFacts.ids.length>=8&&rootFacts.matched/rootFacts.total>=.95;
   add('s_visible_surface','S',Number(admitted),'Visible canvas, unobscured samples and independently predicted seeded-payment pixels from this browser',rootFacts);
+  if(PROBE_TIER==='sb-7.2')add('q_overview_legibility','Q',legibility?legibility.score:0,legibility?
+    `framing ${legibility.framing.spanW}x${legibility.framing.spanH} of the canvas (edge pixels ${legibility.framing.edgePixels}); `+
+    `median tower contrast ${legibility.lit.medianContrast}:1 over ${legibility.lit.samples} predicted pixels; `+
+    `${legibility.status.correct}/${legibility.status.sampled} readable caps show their status colour`:
+    'Default overview canvas was not measurable',legibility||{dom});
   await H.saveShot('sb71-field');
   const candidates=['EUR','USD','JPY','KWD'].map(cur=>model.items.filter(it=>it.cur===cur&&!(pack.sb71_reserved_payment_ids||[]).includes(it.id)).sort((a,b)=>b.h-a.h||a.id.localeCompare(b.id))[0]);
   const cases=[],contexts=[],framing=[],oracleCoverageUnavailable=[];
@@ -3603,17 +3695,17 @@ async function vizScenario(page, pack, H) {
         const hit=document.elementFromPoint(x,y),canvas=document.getElementById('viz3d');
         return {x,y,hit:hit?{tag:hit.tagName,id:hit.id,className:hit.className}:null,canvas:canvas.getBoundingClientRect().toJSON(),viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}};
       },{x:cx,y:cy});
-      await page.mouse.wheel(0, 400);
+      await page.mouse.wheel(0, V7.wheelDelta);
       await sleep(300);
       const r1 = await page.evaluate(pageCanvasRect).catch(() => null);
       const c1 = await vs7({ want: ['camera'] });
       const cam1 = c1.camera && !c1.camera.__err ? c1.camera : null;
-      const want1 = clamp((cam0 ? cam0.distance : V7.dist0) * Math.exp(V7.wheelK * 400), V7.distMin, V7.distMax);
-      await page.mouse.wheel(0, -400);
+      const want1 = clamp((cam0 ? cam0.distance : V7.dist0) * Math.exp(V7.wheelK * V7.wheelDelta), V7.distMin, V7.distMax);
+      await page.mouse.wheel(0, -V7.wheelDelta);
       await sleep(300);
       const c2 = await vs7({ want: ['camera'] });
       const cam2 = c2.camera && !c2.camera.__err ? c2.camera : null;
-      const want2 = clamp(want1 * Math.exp(V7.wheelK * -400), V7.distMin, V7.distMax);
+      const want2 = clamp(want1 * Math.exp(V7.wheelK * -V7.wheelDelta), V7.distMin, V7.distMax);
       cameraMath.wheel = {
         events:await page.evaluate(()=>{const evidence=window.__p7.wheelEvidence;document.removeEventListener('wheel',evidence.listener,true);return evidence.events;}),
         pageScrolled: !!(r1 && rect && Math.abs(r1.top - rect.top) > 1),
@@ -4062,6 +4154,9 @@ async function vizScenario(page, pack, H) {
         if (it.id === d1TargetId || model.brush.has(it.id)) continue;
         const pt = findDecisivePointFor(ctxB, model, n);
         if (!pt) continue;
+        // SB7.2's framed default pose yields decisive targets ~3.5 px wide, so the colour read at
+        // the clicked pixel must come from one homogeneous face (not a 0.14 px collar ledge).
+        if (PROBE_TIER === 'sb-7.2' && !pixelWitnessAt(ctxB, n, pt.sx, pt.sy)) continue;
         if (!a) a = { n, id: it.id, pt };
         else if (!b2) { b2 = { n, id: it.id, pt }; break; }
       }
@@ -4456,7 +4551,16 @@ async function vizScenario(page, pack, H) {
     }
     let clear = { available: !!tC.background };
     if (tC.background) {
-      const probeF = tC.fronts[0] || null;                // a non-member while brush is non-empty
+      let probeF = tC.fronts[0] || null;                  // a non-member while brush is non-empty
+      if (PROBE_TIER === 'sb-7.2') {
+        // The restored-colour pixel must sit on one homogeneous face at the framed default pose.
+        probeF = tC.fronts.find((f) => pixelWitnessAt(ctxC, f.frontN, f.sx, f.sy)) || null;
+        const rngW = seedRng(pack.seed || 'sb7', 'clear-witness');
+        for (let tries = 0; !probeF && tries < 2000; tries++) {
+          const n = Math.floor(rngW() * model.items.length), w = findPixelWitnessFor(ctxC, model, n);
+          if (w) probeF = { sx: w.sx, sy: w.sy, frontN: n, frontId: model.items[n].id };
+        }
+      }
       let beforePx = null;
       if (probeF && model.brush.size > 0 && !model.brush.has(probeF.frontId)) {
         const s = await page.evaluate(pageSamplePixels,

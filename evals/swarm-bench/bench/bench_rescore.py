@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 
+import isolated_tiers
+
 ROOT = Path(__file__).resolve().parent.parent
 # Harness-owned evidence is outside the declared candidate source inventory.
 EXCLUDED = {'engine-console.log', 'harness-console.log', 'trace.jsonl', 'vendor-build-trace.jsonl',
@@ -16,7 +18,9 @@ EXCLUDED = {'engine-console.log', 'harness-console.log', 'trace.jsonl', 'vendor-
             'bench-shots', 'sb7-shots', 'bench-media', 'scorer-logs', '.swarm',
             'graded-sb7-db', 'sb7-empty-db', 'sb7-combined-db', 'scoring-unavailable.json',
             'run.jsonl', 'process.json', 'heartbeat', 'nodeloop-result.json'}
-CONTRACTS = ['spec-build-sb71.md', 'spec-build-sb7.md', 'sb7.1/VISUAL-CONTRACT.md']
+# SB7.1's task files; each isolated tier names its own (isolated_tiers.py), and a receipt carries
+# its tier's version, so a retry always replays the scorer and contract the build actually had.
+CONTRACTS = list(isolated_tiers.SB71.contracts)
 
 
 def sha(path):
@@ -38,21 +42,21 @@ def inventory(tree):
     return result
 
 
-def write_completion(tree, destination, agent, *, run_id, started_at, seed, port, provider, model):
+def write_completion(tree, destination, agent, *, run_id, started_at, seed, port, provider, model,
+                     tier=isolated_tiers.SB71):
     if destination.resolve().is_relative_to(tree.resolve()):
         raise ValueError('Completion receipt must be outside the candidate tree')
     if type(agent.get('exit')) is not int or agent['exit'] != 0 or agent.get('timed_out') is not False:
         raise ValueError('No completion receipt: model process did not exit successfully')
     if not run_id or not started_at:
         raise ValueError('No completion receipt: launch identity is missing')
-    receipt = {'schemaVersion': 1, 'scorerVersion': 'sb-7.1', 'runId': run_id,
+    receipt = {'schemaVersion': 1, 'scorerVersion': tier.version, 'runId': run_id,
                'startedAt': started_at, 'completedAt': time.time(),
                'completionEvidence': 'runner observed engine exit 0',
                'fixture_seed': seed, 'vendor_port': port, 'provider': provider, 'model': model,
                'agent': agent, 'sourceInventory': inventory(tree),
-               'contracts': {name: sha(ROOT / name) for name in CONTRACTS},
-               'scorerFiles': {name: sha(ROOT / 'bench' / name) for name in
-                               ['score_sb71.py', 'score_sb7.py', 'product_probe_sb71.mjs', 'product_probe_v3.mjs']}}
+               'contracts': {name: sha(ROOT / name) for name in tier.contracts},
+               'scorerFiles': {name: sha(ROOT / 'bench' / name) for name in tier.scorer_files}}
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix('.tmp')
     temporary.write_text(json.dumps(receipt, indent=2))
@@ -60,8 +64,16 @@ def write_completion(tree, destination, agent, *, run_id, started_at, seed, port
     return receipt
 
 
+def receipt_tier(receipt):
+    tier = isolated_tiers.BY_VERSION.get(receipt.get('scorerVersion'))
+    if receipt.get('schemaVersion') != 1 or tier is None:
+        raise ValueError('Completion receipt identity does not match this session')
+    return tier
+
+
 def validate_receipt(receipt, tree, run_id):
-    if receipt.get('schemaVersion') != 1 or receipt.get('scorerVersion') != 'sb-7.1' or receipt.get('runId') != run_id:
+    tier = receipt_tier(receipt)
+    if receipt.get('runId') != run_id:
         raise ValueError('Completion receipt identity does not match this session')
     agent = receipt.get('agent', {})
     if type(agent.get('exit')) is not int or agent['exit'] != 0 or agent.get('timed_out') is not False:
@@ -75,7 +87,7 @@ def validate_receipt(receipt, tree, run_id):
         raise ValueError('Original vendor port is missing')
     if receipt.get('sourceInventory') != inventory(tree):
         raise ValueError('Candidate files changed after the completed model build; retry refused')
-    if receipt.get('contracts') != {name: sha(ROOT / name) for name in CONTRACTS}:
+    if receipt.get('contracts') != {name: sha(ROOT / name) for name in tier.contracts}:
         raise ValueError('The installed benchmark task differs from the original build; retry refused')
     header = json.loads((tree / 'trace.jsonl').read_text().splitlines()[0])
     if header.get('fixture_seed') != seed:
@@ -91,6 +103,7 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     receipt = validate_receipt(json.loads(args.receipt.read_text()), args.tree, args.run_id)
+    tier = receipt_tier(receipt)
     args.out.mkdir(parents=True, exist_ok=False)
     (args.out / 'build-completed.json').write_bytes(args.receipt.read_bytes())
     report = args.out / 'verdict.json'
@@ -100,7 +113,7 @@ def main():
     status.write_text(json.dumps(attempt, indent=2))
     started = time.monotonic()
     try:
-        code = subprocess.call([sys.executable, '-B', '-u', str(ROOT / 'bench/score_sb71.py'),
+        code = subprocess.call([sys.executable, '-B', '-u', str(ROOT / 'bench' / (tier.scorer + '.py')),
                                 '--tree', str(args.tree), '--seed', receipt['fixture_seed'],
                                 '--port', str(receipt['vendor_port']), '--json-out', str(report)])
         if code != 0:
@@ -108,8 +121,8 @@ def main():
         validate_receipt(receipt, args.tree, args.run_id)
         result = json.loads(report.read_text())
         score = result.get('score')
-        if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1 or result.get('scorerVersion') != 'sb-7.1':
-            raise ValueError('Scorer did not produce a valid SB7.1 verdict')
+        if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1 or result.get('scorerVersion') != tier.version:
+            raise ValueError(f'Scorer did not produce a valid {tier.version} verdict')
         if result.get('fixture_seed') != receipt['fixture_seed'] or result.get('probe_unavailable') or result.get('harness_missing') or result.get('status') == 'unavailable':
             raise ValueError('Scorer evidence is unavailable or belongs to another fixture')
         result.update({'agent': receipt['agent'], 'provider': receipt['provider'], 'model': receipt['model'],

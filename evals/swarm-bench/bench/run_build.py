@@ -24,6 +24,7 @@ from typing import Dict
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import isolated_tiers  # noqa: E402
 import score_build  # noqa: E402
 import vendor_service  # noqa: E402
 
@@ -32,10 +33,11 @@ def _regime():
     """sb-6 gate (--sb6 / BENCH_SB6): spec v3 + vendor_service_v2 + score_sb6. Read at CALL
     time (env-at-import would miss a sweep's per-arm env — the FEATURE_CHECKS precedent).
     Returns (scorer_module, vendor_module, default_spec_name). Default path byte-identical."""
-    if os.environ.get("BENCH_SB71"):
-        import score_sb71
+    tier = isolated_tiers.active()
+    if tier:
+        import importlib
         import vendor_service_v3
-        return score_sb71, vendor_service_v3, "spec-build-sb71.md"
+        return importlib.import_module(tier.scorer), vendor_service_v3, tier.spec
     if os.environ.get("BENCH_SB8"):
         import score_sb8
         import vendor_service_v4
@@ -124,7 +126,7 @@ def build_prompt(port: int) -> str:
     _sc, _vn, default_spec = _regime()
     spec = (Path(spec_file) if spec_file else ROOT / default_spec).read_text()
     prompt = render_public_contract(spec, port, _vn)
-    if os.environ.get('BENCH_SB71'):
+    if isolated_tiers.active():
         prompt += ('\n\nA bundled browser is available for your own tests. Read BROWSER-TESTING.md '
                    'for the runtime paths and screenshot command. It contains no private tests.\n')
     return prompt
@@ -238,7 +240,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         raise SystemExit(f"unknown entrant {entrant!r}")
 
     child_env = {**os.environ, **env}
-    if os.environ.get("BENCH_SB71"):
+    if isolated_tiers.active():
         import bench_isolation
         prefix, isolated_env = bench_isolation.prepare(workdir, GOOSE, workdir.parent, snapshot=snapshot)
         cmd = prefix + cmd
@@ -309,7 +311,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         raise RuntimeError("REFUSED: the benchmark run touched the knowledge store "
                            "(memories/skills/proposals must stay byte-identical across a scored run): "
                            + "; ".join(f"{path}@{mtime}" for path, mtime in changed[:20]))
-    if os.environ.get("BENCH_SB71"):
+    if isolated_tiers.active():
         result["usage"] = bench_isolation.usage(Path(child_env["BENCH_SB71_RUNTIME"]))
         (workdir / "model-usage.json").write_text(json.dumps(result["usage"], indent=2))
         import bench_cost
@@ -713,7 +715,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     workdir = out_root / f"{entrant}-r{rep}"
     if workdir.exists():
         raise FileExistsError(f"Benchmark tree already exists; preserve it and choose a new entrant: {workdir}")
-    snapshot = entrant_config(provider) if provider or os.environ.get("BENCH_SB71") else None
+    tier = isolated_tiers.active()
+    snapshot = entrant_config(provider) if provider or tier else None
     credentials = (cloud_env(provider, snapshot) if provider else
                    snapshot_environment(snapshot) if snapshot else load_env())
     # A MODELS entrant is a Bedrock cloud model launched without --provider (invoke()'s second arm),
@@ -786,14 +789,14 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
                 shutil.copytree(child, workdir / child.name)
             else:
                 shutil.copy2(child, workdir / child.name)
-    if os.environ.get("BENCH_SB71"):
+    if tier:
         if resume_from or seed:
-            raise RuntimeError("REFUSED: SB7.1 starts from its public starter only")
-        starter = ROOT / "sb7.1" / "starter"
+            raise RuntimeError(f"REFUSED: {tier.version} starts from its public starter only")
+        starter = ROOT / tier.starter
         shutil.copytree(starter, workdir, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
         public = {"SB7-CONTRACT.md": ROOT / "spec-build-sb7.md",
-                  "VISUAL-CONTRACT.md": ROOT / "sb7.1" / "VISUAL-CONTRACT.md"}
+                  "VISUAL-CONTRACT.md": ROOT / tier.visual_contract}
         for name, source in public.items():
             text = render_public_contract(source.read_text(), port, _regime()[1])
             (workdir / name).write_text(text)
@@ -820,7 +823,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     # kill placements (the haiku canary measured exactly that: every pack-dependent probe
     # reported "harness failure"). Same hermetic wipes as score_sb7's own CLI.
     sb8 = bool(os.environ.get("BENCH_SB8"))
-    sb7 = bool(os.environ.get("BENCH_SB7") or os.environ.get("BENCH_SB71")) and not sb8
+    sb7 = bool(os.environ.get("BENCH_SB7") or tier) and not sb8
     seeded = sb7 or sb8
     seed = None
     # REFUSE BEFORE BIND. vendor.serve() is a bare ThreadingHTTPServer: a held port is a traceback
@@ -880,7 +883,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
             raise RuntimeError("REFUSED: the session ended on a provider error, not on the model's "
                                f"finished work: {ended_on.splitlines()[0]}")
         completion_path = os.environ.get("BENCH_COMPLETION_RECEIPT")
-        if os.environ.get("BENCH_SB71") and completion_path and agent.get("exit") == 0:
+        if tier and completion_path and agent.get("exit") == 0:
             from bench_rescore import write_completion
             try:
                 run_id = os.environ.get("BENCH_RUN_ID")
@@ -888,7 +891,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
                     run_id = json.loads((workdir / ".swarm/current-run.json").read_text())["run_id"]
                 write_completion(workdir, Path(completion_path), agent, run_id=run_id,
                                  started_at=os.environ.get("BENCH_STARTED_AT"), seed=seed,
-                                 port=port, provider=provider, model=model)
+                                 port=port, provider=provider, model=model, tier=tier)
             except (ValueError, OSError, KeyError) as error:
                 print(f"Scoring retry unavailable: {error}", file=sys.stderr, flush=True)
         db = workdir / ("graded-sb8-db" if sb8 else "graded-sb7-db" if sb7 else "graded.db")
@@ -920,7 +923,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int,
     verdict = scorer.evaluate(ctx)
     verdict["scorer_seconds"] = scoring_seconds
     verdict["scoring"] = {"secs": scoring_seconds}
-    if os.environ.get("BENCH_SB71"):
+    if tier:
         verdict["starter_assisted"] = True
         verdict["input_manifest"] = manifest
     if provider:
@@ -988,6 +991,8 @@ def main() -> int:
                          "(equivalent to BENCH_SB7=1; wins over --sb6)")
     ap.add_argument("--sb8", action="store_true", help="SB-8 compact transactional 3D benchmark")
     ap.add_argument("--sb71", action="store_true", help="SB7.1 payments landscape with isolated public starter")
+    ap.add_argument("--sb72", action="store_true",
+                    help="SB7.2: SB7.1's product and starter, 3D-weighted scorer, framed and legible overview")
     args = ap.parse_args()
     if bool(args.provider) != bool(args.model):
         ap.error("--provider and --model must be supplied together")
@@ -1002,6 +1007,9 @@ def main() -> int:
         os.environ["BENCH_SB8"] = "1"
     if args.sb71:
         os.environ["BENCH_SB71"] = "1"
+    if args.sb72:
+        os.environ["BENCH_SB72"] = "1"
+    isolated_tiers.active()
 
     verdicts = []
     reps = [args.only_rep] if args.only_rep is not None else list(range(args.reps))
