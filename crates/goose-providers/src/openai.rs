@@ -1156,6 +1156,7 @@ impl Provider for OpenAiProvider {
                     elapsed,
                     Some(usage.usage),
                     0,
+                    message.id.as_deref(),
                 );
                 Ok(super::base::stream_from_single_message(message, usage))
             }?;
