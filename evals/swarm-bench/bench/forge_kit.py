@@ -15,7 +15,10 @@ Network is needed once per kit version, outside any sandbox. Every mismatch refu
 starting "REFUSED:"); nothing falls back. Cache root: $FORGE_KIT_CACHE or
 ~/Library/Application Support/Goose/benchmark/forge-kit.
 
-CLI: forge_kit.py ensure | repin | lock-sha | install-modules <workdir>
+CLI: forge_kit.py ensure | status | repin | lock-sha | install-modules <workdir>
+
+status() answers, without the network and without writing, whether ensure() would return at once: the
+desktop's Benchmark view shows it as the Forge kit's readiness before a run may launch.
 """
 from __future__ import annotations
 
@@ -166,6 +169,27 @@ def _ensure_locked(root: Path) -> dict:
             'wrapper_sha256': wrapper_sha}
 
 
+def status(root: Path | None = None) -> dict:
+    """What ensure() would still have to fetch or build, read only: [] means ready (no network needed)."""
+    root = root or cache_root()
+    lock = lock_sha256()
+    modules = root / lock[:16]
+    missing = []
+    for tree in ('app-modules', 'lint-modules'):
+        if not (modules / tree / '.complete').is_file():
+            missing.append(tree)
+    pin = json.loads((KIT_SRC / 'runtime-pin.json').read_text())
+    for name, sha_key in (('wrapper.js', 'sha256'), ('loader.js', 'loader_sha256')):
+        target = modules / 'wrapper' / name
+        if not target.is_file() or _sha(target.read_bytes()) != pin[sha_key]:
+            missing.append(f'wrapper/{name}')
+    if not (modules / 'schema' / 'manifest-schema.json').is_file():
+        missing.append('schema')
+    if not (modules / ('kit-' + code_sha256()[:16]) / 'KIT.json').is_file():
+        missing.append('kit')
+    return {'ready': not missing, 'missing': missing, 'cache': str(root), 'kit_lock_sha256': lock}
+
+
 def install_node_modules(workdir: Path, kit: dict) -> dict:
     """The workdir's node_modules as an APFS clone of the pristine app-modules tree (zero bytes copied)."""
     source = Path(kit['modules_dir']) / 'app-modules' / 'node_modules'
@@ -200,11 +224,13 @@ def repin() -> dict:
 
 
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] not in ('ensure', 'repin', 'lock-sha', 'install-modules'):
+    if not argv or argv[0] not in ('ensure', 'status', 'repin', 'lock-sha', 'install-modules'):
         print(__doc__)
         return 2
     if argv[0] == 'ensure':
         print(json.dumps(ensure(), indent=2))
+    elif argv[0] == 'status':
+        print(json.dumps(status(), indent=2))
     elif argv[0] == 'repin':
         print(json.dumps(repin(), indent=2))
     elif argv[0] == 'lock-sha':
