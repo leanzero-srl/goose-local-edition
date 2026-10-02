@@ -1,0 +1,10 @@
+{
+  "loses": [
+    "r_backfill_complete",
+    "r_pagination",
+    "k_current_apis"
+  ],
+  "critical": true,
+  "max_final": 0.699,
+  "why": "The removed /rest/api/3/search with startAt/total: the site answers 410, the scheduled run throws, the backfill never lands (critical). Backfill rows wrong caps at 0.699."
+}

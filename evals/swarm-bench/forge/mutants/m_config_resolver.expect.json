@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "k_widget_edit_bridge",
+    "u_widget_edit_config"
+  ],
+  "critical": false,
+  "max_final": 0.799,
+  "why": "The edit surface saves the board through a resolver into app storage (per widget id) and never calls the dashboards edit API, so the dashboard's own Save stores nothing and reopening edit / the stored config path are broken. Missing edit API caps at 0.799."
+}

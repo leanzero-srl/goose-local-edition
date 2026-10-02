@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "r_removals_found",
+    "r_backfill_complete"
+  ],
+  "critical": true,
+  "max_final": 0.699,
+  "why": "Reconcile reads only issues in an open sprint now, so changes of issues that have left every active sprint are never backfilled (removals missing; r_backfill_complete critical at 0.8)."
+}

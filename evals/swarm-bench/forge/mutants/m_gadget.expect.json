@@ -1,0 +1,14 @@
+{
+  "loses": [
+    "k_dashboard_widget",
+    "k_widget_edit_bridge",
+    "u_widget_loads",
+    "u_widget_numbers",
+    "u_widget_chart",
+    "u_widget_edit_config",
+    "v_widget_sizes"
+  ],
+  "critical": true,
+  "max_final": 0.799,
+  "why": "The deprecated jira:dashboardGadget instead of dashboards:widget: no dashboards widget exists, so the widget surface and its edit API earn nothing (u_widget_loads critical); missing current surface caps at 0.799."
+}

@@ -1,0 +1,17 @@
+diff --git a/static/widget/index.html b/static/widget/index.html
+index fb635df..1d6f806 100644
+--- a/static/widget/index.html
++++ b/static/widget/index.html
+@@ -4,10 +4,10 @@
+     <meta charset="utf-8" />
+     <meta name="viewport" content="width=device-width, initial-scale=1" />
+     <title>Scope Ledger widget</title>
+-    <link rel="stylesheet" href="./index.css" />
++    <link rel="stylesheet" href="/index.css" />
+   </head>
+   <body>
+     <div id="root"></div>
+-    <script src="./index.js"></script>
++    <script src="/index.js"></script>
+   </body>
+ </html>

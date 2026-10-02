@@ -55,7 +55,9 @@ const ok = (cond, msg) => {
 const eq = (a, b, msg) => ok(JSON.stringify(a) === JSON.stringify(b), `${msg}${JSON.stringify(a) === JSON.stringify(b) ? '' : `\n      got      ${JSON.stringify(a)}\n      expected ${JSON.stringify(b)}`}`);
 const fmtPoints = (n) => String(Math.round(n * 1e6) / 1e6);
 
-function serve(dir) {
+// Each resource is served under its own path prefix, as the Forge CDN does, so an absolute asset path
+// (/index.js) misses the resource and 404s.
+function serve(dir, prefix) {
   const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
   const srv = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x').pathname;
@@ -63,7 +65,12 @@ function serve(dir) {
       res.writeHead(200, { 'content-type': 'text/css' });
       return res.end(tokensCss);
     }
-    const p = path.join(dir, decodeURIComponent(u === '/' ? '/index.html' : u));
+    if (!u.startsWith(`/${prefix}/`)) {
+      res.writeHead(404);
+      return res.end();
+    }
+    const rel = u.slice(prefix.length + 1);
+    const p = path.join(dir, decodeURIComponent(rel === '/' ? '/index.html' : rel));
     if (!p.startsWith(dir) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) {
       res.writeHead(404);
       return res.end();
@@ -71,7 +78,7 @@ function serve(dir) {
     res.writeHead(200, { 'content-type': types[path.extname(p)] ?? 'application/octet-stream', 'content-security-policy': CSP });
     fs.createReadStream(p).pipe(res);
   });
-  return new Promise((ok2) => srv.listen(0, '127.0.0.1', () => ok2({ url: `http://127.0.0.1:${srv.address().port}/`, srv })));
+  return new Promise((ok2) => srv.listen(0, '127.0.0.1', () => ok2({ url: `http://127.0.0.1:${srv.address().port}/${prefix}/`, srv })));
 }
 
 // Page-side bridge: the host owns the widget edit API (functions cannot cross exposeFunction), the
@@ -124,11 +131,11 @@ async function main() {
   const { alice, bob } = site.users;
   const browser = await chromium.launch();
   const servers = {};
-  for (const r of platform.manifest.resources) servers[r.key] = await serve(path.join(APP, r.path));
+  for (const r of platform.manifest.resources) servers[r.key] = await serve(path.join(APP, r.path), `resource-${r.key}`);
 
   async function open({ resource, moduleType, moduleKey, extension, aaid = alice.accountId, theme = 'light', width = 800, height = 700, shot }) {
     const page = await browser.newPage({ viewport: { width, height } });
-    const log = { ops: [], flags: [], navigations: [], closes: 0, updates: [], saved: [], console: [] };
+    const log = { ops: [], flags: [], navigations: [], closes: 0, updates: [], saved: [], console: [], pending: 0, lastSettled: Date.now() };
     page.on('console', (m) => (m.type() === 'error' || m.type() === 'warning') && log.console.push(`${m.type()}: ${m.text()}`));
     page.on('pageerror', (e) => log.console.push(`pageerror: ${e}`));
     const context = { accountId: aaid, cloudId: 'golden', siteUrl: 'https://golden.atlassian.net', localId: `${moduleKey}-1`, moduleKey, environmentType: 'DEVELOPMENT', locale: 'en-US', timezone: 'Europe/Bucharest', theme: { colorMode: theme }, extension };
@@ -138,7 +145,13 @@ async function main() {
         case 'getContext':
           return context;
         case 'invoke':
-          return platform.resolver(moduleType, moduleKey, payload.functionKey, payload.payload, { aaid, extension });
+          log.pending += 1;
+          try {
+            return await platform.resolver(moduleType, moduleKey, payload.functionKey, payload.payload, { aaid, extension });
+          } finally {
+            log.pending -= 1;
+            log.lastSettled = Date.now();
+          }
         case 'showFlag':
           log.flags.push(payload);
           return undefined;
@@ -217,12 +230,17 @@ async function main() {
         styleAttrs: [...document.querySelectorAll('[style]')].map((e) => e.tagName),
         inlineScripts: [...document.querySelectorAll('script:not([src])')].length,
         overflowX: document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth,
+        clipped: [...document.querySelectorAll('body *')]
+          .filter((e) => !e.closest('.table-wrap') && !e.closest('.visually-hidden'))
+          .filter((e) => e.getBoundingClientRect().right > window.innerWidth + 0.5 || e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX !== 'visible')
+          .map((e) => `${e.tagName.toLowerCase()}.${e.className}`),
         bodyBg,
       };
     });
     ok(r.low.length === 0, `${label}: text contrast >= 4.5 everywhere${r.low.length ? `\n      ${r.low.slice(0, 6).join('\n      ')}` : ''}`);
     ok(r.styleElements === 0 && r.styleAttrs.length === 0 && r.inlineScripts === 0, `${label}: no <style>, style attributes or inline scripts (${r.styleElements}/${r.styleAttrs.join(',')}/${r.inlineScripts})`);
     ok(r.overflowX <= 0, `${label}: no horizontal scroll (${r.overflowX})`);
+    ok(r.clipped.length === 0, `${label}: nothing clipped or past the right edge${r.clipped.length ? ` (${r.clipped.slice(0, 5).join(', ')})` : ''}`);
     ok(r.bodyBg !== 'rgba(0, 0, 0, 0)', `${label}: paints its own background (${r.bodyBg})`);
   }
   const clean = (log, label) => ok(log.console.length === 0, `${label}: clean console${log.console.length ? `\n      ${log.console.join('\n      ')}` : ''}`);
@@ -318,7 +336,14 @@ async function main() {
       eq(await s.page.getAttribute(`tr[data-change-id="${pick.changeId}"]`, 'aria-selected'), 'true', 'clicking a row selects it');
       const comments = () => site.comments.filter((c) => c.issueId === pick.issueId).length;
       const flags = () => s.log.flags.filter((f) => f.type === 'success').length;
-      const waitIdle = () => s.page.waitForFunction(() => document.querySelector('[data-testid="post-summary"]').getAttribute('aria-busy') === 'false');
+      // Settled = no resolver call in flight for 400 ms (a second, unguarded click must be counted too).
+      const waitIdle = async () => {
+        for (;;) {
+          await s.page.waitForTimeout(100);
+          const busy = await s.page.getAttribute('[data-testid="post-summary"]', 'aria-busy');
+          if (busy === 'false' && s.log.pending === 0 && Date.now() - s.log.lastSettled >= 400) return;
+        }
+      };
       let c0 = comments();
       let f0 = flags();
       await s.page.click('[data-testid="post-summary"]');

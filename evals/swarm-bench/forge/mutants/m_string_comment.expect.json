@@ -1,0 +1,10 @@
+{
+  "loses": [
+    "b_comment_adf_as_user",
+    "u_comment_flow",
+    "b_comment_exactly_once"
+  ],
+  "critical": true,
+  "max_final": 0.899,
+  "why": "Plain-string comment body: Jira refuses it (\"Operation value must be an Atlassian Document\"), the click ends with an error flag and NO comment, so exactly-once (one comment per click) also fails (critical). \u00a713.5 names the first two rows; the third follows from the same click."
+}

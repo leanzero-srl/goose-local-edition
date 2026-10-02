@@ -1,0 +1,9 @@
+{
+  "loses": [
+    "t_reestimate_followed",
+    "u_widget_numbers",
+    "a_action_result"
+  ],
+  "critical": false,
+  "why": "One estimation field (the first board's) for every sprint: sprints of boards that estimate with another field read the wrong value, and re-estimates on that field never move the numbers. No band names wrong numbers on some boards, so no max_final is asserted."
+}

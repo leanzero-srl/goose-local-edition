@@ -1,0 +1,17 @@
+diff --git a/src/jira.js b/src/jira.js
+index e2df48f..87897ee 100644
+--- a/src/jira.js
++++ b/src/jira.js
+@@ -38,11 +38,7 @@ export async function jira(who, path, init = {}, policy = { maxWaitSeconds: Infi
+   const client = who === 'user' ? api.asUser() : api.asApp();
+   for (let attempt = 0; ; attempt += 1) {
+     const res = await client.requestJira(path, init);
+-    if (res.status !== 429) return res;
+-    const wait = retryAfterSeconds(res, attempt);
+-    if (wait > policy.maxWaitSeconds) throw new RateLimited(wait);
+-    // Strictly more than the header asks for, so "at least that long" holds on any clock granularity.
+-    await sleep(wait * 1000 + 50);
++    if (res.status !== 429 || attempt === 3) return res;
+   }
+ }
+ 

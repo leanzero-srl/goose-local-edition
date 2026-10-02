@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
-const YAML = require(path.join(__dirname, '..', '..', '..', 'forge', 'spike', 'node_modules', 'yaml'));
+const YAML = require(process.env.GOLDEN_YAML_MODULE ?? path.join(__dirname, '..', '..', '..', 'forge', 'spike', 'node_modules', 'yaml'));
 const esbuild = require('esbuild');
 
 const APP = path.join(__dirname, '..');

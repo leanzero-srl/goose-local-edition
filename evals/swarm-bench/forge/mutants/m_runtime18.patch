@@ -1,0 +1,13 @@
+diff --git a/manifest.yml b/manifest.yml
+index 390045d..9892bdd 100644
+--- a/manifest.yml
++++ b/manifest.yml
+@@ -96,7 +96,7 @@ permissions:
+ app:
+   id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000
+   runtime:
+-    name: nodejs22.x
++    name: nodejs18.x
+   storage:
+     entities:
+       - name: scope-change
