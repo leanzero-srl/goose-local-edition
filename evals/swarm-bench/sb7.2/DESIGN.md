@@ -317,6 +317,11 @@ prints 0.9999999999999999, float rounding of 0.7+0.2+0.1). Stream apply 140.9 ms
 0.6812 × 0.7172, 2.743:1, 96/96 — identical to the pre-trim reference. `contract_sha256` now names
 sb7.2/SB7-CONTRACT.md, sb7.2/VISUAL-CONTRACT.md and sb7.2/STARTER.md.
 
+Repeat on the FINAL bytes (34b466ea4, after the label-hiding restore), quiet otherwise, load 5.68 → 8.97:
+**1.000**, identical breakdown (inner 1.0, excellence 1.0, ×1.0, no unsuppressed criticals, ceiling 1.0, reference
+gate passed, exit 0); stream apply 134.6 ms; legibility 0.6812 × 0.7172, 2.743:1, 96/96; `contract_sha256` equals
+the sb7.2/release-manifest.json pins (VISUAL-CONTRACT d9f37411…, SB7-CONTRACT a434aeaf…, STARTER 58796eb6…).
+
 ### Measured but never stated — flagged, not changed
 
 `j_workflow_journey`'s payment witness compares the vendor-created payment's `amount_minor` with the value the probe
