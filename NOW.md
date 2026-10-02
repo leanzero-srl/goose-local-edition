@@ -1,5 +1,17 @@
 # NOW — what we are researching and doing, this week
 
+> **BENCHMARK THREAD (Mihai 2026-10-02: "yes please do all and make sure you've pushed to github and made a production
+> build notarized and a release cut").** Goal: frontier models (GPT-6 Astra, Fable 5.1) run SB7-class for ≤ $50 each from the
+> Benchmark view, hard, 3D-weighted. DONE on main (2026-10-01/02): real model limits (OpenRouter metadata), no max_tokens on
+> OpenRouter, Anthropic cache breakpoints fixed (OpenRouter/LiteLLM/Databricks), Bedrock token double count + cache points,
+> entrant orphan reaping, fresh scoring vendor + drag-sample race (in-app == hermetic), D1 witness candidate_unreachable,
+> transient stream resend (+ refuter fixes), provider-error ending refused. Receipts: evals/swarm-bench/sb7.1/REQUIREMENTS-AND-COST-AUDIT.md.
+> IN FLIGHT: (1) SB7.2 tier — scorer/contract/golden (3D ≈46% of points, overview legibility, contrast out of the 3D cap,
+> published E rungs, smaller contract); (2) desktop tier sb-7.2 default + history-row layout; (3) bench_cost.py exact OpenRouter
+> billed cost; (4) website catalog/page prep on a branch (NOT flipped). THEN: merge → refuter → validation run (local catalog
+> stub via LEANZERO_BENCH_PUBLISH_URL) → version bump + `just release-notarized <ver>` → tag/push → `just publish-release` →
+> install → flip leanzero.net catalog sb-7.2 current → verify rendered.
+
 > **DESKTOP UX QUEUE (Mihai 2026-09-22, in order; each lands as its own commit, verified in the running app).**
 > 0. LANDED (7927b903f + the proof commit) — Cloud Providers: no hard-coded "connection test model"; key → the provider's own model list → a chosen
 >    DEFAULT model that leads node selection (changeable per node). Rows redesigned (solid tile, state chip, default, one action).
