@@ -10,7 +10,7 @@ use super::base::{
     model_info_for_provider_model, ConfigKey, MessageStream, ModelInfo, Provider, ProviderDef,
     ProviderMetadata,
 };
-use super::openai_compatible::{handle_status, stream_openai_compat};
+use super::openai_compatible::{handle_status, stream_openai_compat_timed};
 use super::retry::ProviderRetry;
 use crate::conversation::message::Message;
 use crate::providers::formats::openrouter as openrouter_format;
@@ -373,6 +373,7 @@ impl Provider for OpenRouterProvider {
 
         let mut log = start_log(model_config, &payload)?;
 
+        let telemetry_t0 = std::time::Instant::now();
         let response = self
             .with_retry(|| async {
                 let resp = self
@@ -386,7 +387,9 @@ impl Provider for OpenRouterProvider {
                 let _ = log.error(e);
             })?;
 
-        stream_openai_compat(response, log)
+        // The telemetry line carries the generation id OpenRouter bills under, so a benchmark harness
+        // can read the provider's own bill per call (evals/swarm-bench/bench/bench_cost.py).
+        stream_openai_compat_timed(response, log, telemetry_t0, model_config.model_name.clone())
     }
 }
 
@@ -627,5 +630,88 @@ mod tests {
         let last = payload["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(last["role"], json!("user"));
         assert_eq!(last["content"], json!(turn_context));
+    }
+
+    /// The bench harness bills an OpenRouter run per generation id (bench_cost.py); that id reaches
+    /// it only through this line, for completed and dropped streams alike.
+    #[tokio::test]
+    async fn every_streamed_call_writes_its_generation_id_to_the_telemetry_file() {
+        use futures::StreamExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let gen_id = "gen-1790911486-OyqP2p7UE9dNJc1weFAo";
+        let chunk = |delta: Value, finish: Value, usage: Option<Value>| {
+            let mut c = json!({"id": gen_id, "object": "chat.completion.chunk", "created": 1,
+                               "model": "deepseek/deepseek-v4.1-flash",
+                               "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]});
+            if let Some(u) = usage {
+                c["usage"] = u;
+            }
+            format!("data: {c}\n\n")
+        };
+        let body = [
+            chunk(
+                json!({"role": "assistant", "content": "Hello"}),
+                Value::Null,
+                None,
+            ),
+            chunk(
+                json!({"content": " there"}),
+                json!("stop"),
+                Some(json!({"prompt_tokens": 2527, "completion_tokens": 89, "total_tokens": 2616})),
+            ),
+            "data: [DONE]\n\n".to_string(),
+        ]
+        .concat();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let mut provider = provider_with_listing(&models_listing());
+        provider.api_client = ApiClient::new_with_tls(
+            server.uri(),
+            AuthMethod::BearerToken("test".to_string()),
+            None,
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let telemetry = dir.path().join("telemetry.jsonl");
+        let _guard = env_lock::lock_env([(
+            "GOOSE_SWARM_TELEMETRY_FILE",
+            Some(telemetry.to_str().unwrap()),
+        )]);
+        let model = model_config("deepseek/deepseek-v4.1-flash");
+        let messages = [Message::user().with_text("hi")];
+
+        let mut stream = provider
+            .stream(&model, "system", &messages, &[])
+            .await
+            .unwrap();
+        while let Some(item) = stream.next().await {
+            item.unwrap();
+        }
+        drop(stream);
+        let mut stream = provider
+            .stream(&model, "system", &messages, &[])
+            .await
+            .unwrap();
+        stream.next().await.unwrap().unwrap();
+        drop(stream);
+
+        let lines: Vec<Value> = std::fs::read_to_string(&telemetry)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0]["response_id"], json!(gen_id));
+        assert_eq!(lines[0]["ended"], json!("completed"));
+        assert_eq!(lines[0]["prompt_tokens"], json!(2527));
+        assert_eq!(lines[1]["response_id"], json!(gen_id));
+        assert_eq!(lines[1]["ended"], json!("incomplete"));
+        assert_eq!(lines[1]["usage"], json!(false));
     }
 }
