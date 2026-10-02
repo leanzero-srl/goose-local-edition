@@ -1631,6 +1631,8 @@ PAGED = (
     (re.compile(r'^/rest/agile/1\.0/board$'), 'offset'),
     (re.compile(r'^/rest/agile/1\.0/board/[^/]+/(?:sprint|issue|backlog)$'), 'offset'),
     (re.compile(r'^/rest/agile/1\.0/sprint/[^/]+/issue$'), 'offset'),
+    # jsw.json: the software 1.0 issue lists page by nextPageToken / isLast
+    (re.compile(r'^/rest/software/1\.0/(?:sprint|board)/[^/]+/(?:issue|backlog)$'), 'token'),
     (re.compile(r'^/rest/api/(?:2|3|latest)/search$'), 'legacy'),
 )
 
