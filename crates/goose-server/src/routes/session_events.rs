@@ -607,6 +607,19 @@ pub async fn spawn_reply_task(
                             )
                             .await;
                         }
+                        Ok(Some(Ok(AgentEvent::PartialDiscarded(discarded)))) => {
+                            all_messages = goose::agents::transient_resend::conversation_without(
+                                &all_messages,
+                                &discarded,
+                            );
+                            publish(
+                                Some(task_request_id.clone()),
+                                MessageEvent::UpdateConversation {
+                                    conversation: all_messages.clone(),
+                                },
+                            )
+                            .await;
+                        }
                         Ok(Some(Ok(AgentEvent::McpNotification((notification_request_id, n))))) => {
                             publish(
                                 Some(task_request_id.clone()),

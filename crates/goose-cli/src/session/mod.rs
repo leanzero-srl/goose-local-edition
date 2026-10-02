@@ -1361,6 +1361,12 @@ impl CliSession {
                         Some(Ok(AgentEvent::HistoryReplaced(updated_conversation))) => {
                             self.messages = updated_conversation;
                         }
+                        Some(Ok(AgentEvent::PartialDiscarded(discarded))) => {
+                            self.messages = goose::agents::transient_resend::conversation_without(
+                                &self.messages,
+                                &discarded,
+                            );
+                        }
                         Some(Err(e)) => {
                             handle_agent_error(&e, is_stream_json_mode);
                             cancel_token_clone.cancel();

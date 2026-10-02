@@ -542,6 +542,13 @@ impl OrchestratorClient {
                                 response_parts.push(text);
                             }
                         }
+                        Some(Ok(AgentEvent::PartialDiscarded(discarded))) => {
+                            for gone in discarded.iter().rev().map(Message::as_concat_text) {
+                                if let Some(at) = response_parts.iter().rposition(|part| *part == gone) {
+                                    response_parts.remove(at);
+                                }
+                            }
+                        }
                         Some(Ok(_)) => {}
                         Some(Err(e)) => {
                             response_parts.push(format!("Error during agent processing: {}", e));

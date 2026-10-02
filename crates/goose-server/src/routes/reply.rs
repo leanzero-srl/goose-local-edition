@@ -343,6 +343,10 @@ pub async fn reply(
                             stream_event(MessageEvent::UpdateConversation {conversation: new_messages}, &tx, &cancel_token).await;
 
                         }
+                        Ok(Some(Ok(AgentEvent::PartialDiscarded(discarded)))) => {
+                            all_messages = goose::agents::transient_resend::conversation_without(&all_messages, &discarded);
+                            stream_event(MessageEvent::UpdateConversation {conversation: all_messages.clone()}, &tx, &cancel_token).await;
+                        }
                         Ok(Some(Ok(AgentEvent::McpNotification((request_id, n))))) => {
                             stream_event(MessageEvent::Notification{
                                 request_id: request_id.clone(),

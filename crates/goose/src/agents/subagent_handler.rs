@@ -217,6 +217,10 @@ fn get_agent_messages(params: SubagentRunParams) -> AgentMessagesFuture {
                 Ok(AgentEvent::HistoryReplaced(updated_conversation)) => {
                     conversation = updated_conversation;
                 }
+                Ok(AgentEvent::PartialDiscarded(discarded)) => {
+                    conversation =
+                        super::transient_resend::conversation_without(&conversation, &discarded);
+                }
                 Err(e) => {
                     tracing::error!("Error receiving message from subagent: {}", e);
                     break;

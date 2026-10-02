@@ -3446,6 +3446,11 @@ impl GooseAcpAgent {
                         break;
                     }
                 }
+                // The resent call's partial is not the model's answer: a stop during the resend
+                // must not store it (`settle_stopped_turn`) as words the model said.
+                Ok(crate::agents::AgentEvent::PartialDiscarded(_)) => {
+                    turn.streamed = crate::turn_outcome::StreamedReply::default();
+                }
                 Ok(crate::agents::AgentEvent::Usage(usage)) => turn.meter.on_usage(&usage),
                 Ok(crate::agents::AgentEvent::McpNotification((request_id, notification))) => {
                     if let Some(update) =

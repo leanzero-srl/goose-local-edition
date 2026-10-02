@@ -24,6 +24,7 @@ mod tool_confirmation_router;
 pub mod tool_deferral;
 mod tool_execution;
 pub mod tool_similarity;
+pub mod transient_resend;
 pub mod types;
 pub mod validate_extensions;
 

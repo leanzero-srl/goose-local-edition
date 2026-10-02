@@ -12311,7 +12311,7 @@ impl GooseAgentDispatcher {
                         }
                     }
                 }
-                Ok(AgentEvent::McpNotification(_)) => {}
+                Ok(AgentEvent::McpNotification(_)) | Ok(AgentEvent::PartialDiscarded(_)) => {}
                 Err(e) => return Err(anyhow!("agent stream error: {e}")),
             }
             }};

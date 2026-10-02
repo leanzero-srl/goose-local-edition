@@ -575,6 +575,7 @@ fn tap_agent_event(session_id: &str, event: &AgentEvent) {
         },
         AgentEvent::Usage(_) => TapEvent::Unclassified("usage"),
         AgentEvent::HistoryReplaced(_) => TapEvent::Unclassified("history_replaced"),
+        AgentEvent::PartialDiscarded(_) => TapEvent::Unclassified("partial_discarded"),
     });
 }
 

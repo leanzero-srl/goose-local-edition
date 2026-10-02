@@ -673,6 +673,9 @@ mod tests {
                     Ok(AgentEvent::HistoryReplaced(_updated_conversation)) => {
                         // We should update the conversation here, but we're not reading it
                     }
+                    Ok(AgentEvent::PartialDiscarded(discarded)) => {
+                        goose::agents::transient_resend::drop_discarded(&mut responses, &discarded)
+                    }
                     Err(e) => {
                         return Err(e);
                     }
@@ -4506,6 +4509,503 @@ mod tests {
                 inserted.contains(SUBDIR_HINT) && !inserted.contains(PROJECT_RULE),
                 "what changed is the loaded hint and nothing else: {inserted:?}"
             );
+            Ok(())
+        }
+    }
+
+    /// A provider call that fails with a transient error is resent under the provider's own retry
+    /// policy (measured 2026-10-02: SB7.1 `openrouter-cloud-01dae737` lost its run at turn 87 to one
+    /// "connection reset" mid-answer). The half answer never reaches the history, a tool call the
+    /// failed attempt ran is never run twice, and a permanent error still ends the turn.
+    mod transient_resend_tests {
+        use super::*;
+        use async_trait::async_trait;
+        use goose::agents::{AgentConfig, SessionConfig};
+        use goose::config::permission::PermissionManager;
+        use goose::config::GooseMode;
+        use goose::conversation::message::{Message, MessageContent, SystemNotificationType};
+        use goose::providers::base::{MessageStream, Provider};
+        use goose::session::session_manager::SessionType;
+        use goose::session::SessionManager;
+        use goose_providers::conversation::token_usage::ProviderUsage;
+        use goose_providers::errors::ProviderError;
+        use goose_providers::model::ModelConfig;
+        use goose_providers::retry::{RetryConfig, DEFAULT_MAX_RETRIES};
+        use rmcp::model::{CallToolRequestParams, Role, Tool};
+        use std::path::PathBuf;
+        use std::sync::Mutex as StdMutex;
+
+        type StreamItem = Result<(Option<Message>, Option<ProviderUsage>), ProviderError>;
+
+        const RESET: &str =
+            "error decoding response body: error reading a body from connection: connection reset";
+
+        fn reset() -> ProviderError {
+            ProviderError::stream_decode_error(RESET)
+        }
+
+        /// Answers call N with script N and records what each call was handed; its retry policy is
+        /// the default attempt count with no wait.
+        struct ScriptedProvider {
+            scripts: StdMutex<std::collections::VecDeque<Vec<StreamItem>>>,
+            seen: StdMutex<Vec<Vec<Message>>>,
+        }
+
+        impl ScriptedProvider {
+            fn new(scripts: Vec<Vec<StreamItem>>) -> Self {
+                Self {
+                    scripts: StdMutex::new(scripts.into()),
+                    seen: StdMutex::new(Vec::new()),
+                }
+            }
+
+            fn calls(&self) -> usize {
+                self.seen.lock().unwrap().len()
+            }
+
+            fn seen(&self, call: usize) -> Vec<Message> {
+                self.seen.lock().unwrap()[call].clone()
+            }
+        }
+
+        #[async_trait]
+        impl Provider for ScriptedProvider {
+            fn get_name(&self) -> &str {
+                "scripted"
+            }
+
+            fn retry_config(&self) -> RetryConfig {
+                RetryConfig::new(DEFAULT_MAX_RETRIES, 0, 1.0, 0)
+            }
+
+            async fn stream(
+                &self,
+                _model_config: &ModelConfig,
+                _system_prompt: &str,
+                messages: &[Message],
+                _tools: &[Tool],
+            ) -> Result<MessageStream, ProviderError> {
+                self.seen.lock().unwrap().push(messages.to_vec());
+                let script = self
+                    .scripts
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("the provider was called more often than scripted");
+                Ok(Box::pin(futures::stream::iter(script)))
+            }
+        }
+
+        fn text(chunk: &str) -> StreamItem {
+            Ok((Some(Message::assistant().with_text(chunk)), None))
+        }
+
+        /// A delta of one streamed message: a provider's chunks share the response's id.
+        fn delta(message_id: &str, chunk: &str) -> StreamItem {
+            Ok((
+                Some(Message::assistant().with_id(message_id).with_text(chunk)),
+                None,
+            ))
+        }
+
+        async fn agent_with_provider(
+            provider: Arc<dyn Provider>,
+        ) -> Result<(Arc<Agent>, String, tempfile::TempDir)> {
+            let temp_dir = tempfile::tempdir()?;
+            let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
+            let config = AgentConfig::new(
+                session_manager.clone(),
+                PermissionManager::instance(),
+                None,
+                GooseMode::Auto,
+                true,
+                GoosePlatform::GooseCli,
+            );
+            let agent = Arc::new(Agent::with_config(config));
+            let session = session_manager
+                .create_session(
+                    PathBuf::default(),
+                    "transient-resend".to_string(),
+                    SessionType::Hidden,
+                    GooseMode::default(),
+                )
+                .await?;
+            agent
+                .update_provider(provider, ModelConfig::new("mock-model"), &session.id)
+                .await?;
+            Ok((agent, session.id, temp_dir))
+        }
+
+        /// Runs one reply; returns every yielded message and the persisted history.
+        async fn run_turn(agent: &Agent, session_id: &str) -> Result<(Vec<Message>, Vec<Message>)> {
+            let reply_stream = agent
+                .reply(
+                    Message::user().with_text("build the app"),
+                    SessionConfig {
+                        id: session_id.to_string(),
+                        schedule_id: None,
+                        max_turns: Some(10),
+                        retry_config: None,
+                    },
+                    None,
+                )
+                .await?;
+            tokio::pin!(reply_stream);
+            let mut yielded = Vec::new();
+            while let Some(event) = reply_stream.next().await {
+                if let AgentEvent::Message(message) = event? {
+                    yielded.push(message);
+                }
+            }
+            let history = agent
+                .config
+                .session_manager
+                .get_session(session_id, true)
+                .await?
+                .conversation
+                .map(|c| c.messages().to_vec())
+                .unwrap_or_default();
+            Ok((yielded, history))
+        }
+
+        fn resend_notices(yielded: &[Message]) -> Vec<String> {
+            yielded
+                .iter()
+                .flat_map(|m| m.content.iter())
+                .filter_map(|c| match c {
+                    MessageContent::SystemNotification(n)
+                        if n.notification_type == SystemNotificationType::InlineMessage
+                            && n.msg.contains("Resending") =>
+                    {
+                        Some(n.msg.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// The stored assistant texts; rows stored in the same second may read back in either
+        /// order, so a turn's single answer is found by role, never as the last row.
+        fn assistant_texts(history: &[Message]) -> Vec<String> {
+            history
+                .iter()
+                .filter(|m| m.role == Role::Assistant)
+                .map(Message::as_concat_text)
+                .collect()
+        }
+
+        fn all_text(messages: &[Message]) -> String {
+            messages
+                .iter()
+                .map(Message::as_concat_text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        #[tokio::test]
+        async fn a_connection_reset_mid_answer_is_resent_and_the_turn_completes() -> Result<()> {
+            let provider = Arc::new(ScriptedProvider::new(vec![
+                vec![
+                    delta("msg_failed", "Half "),
+                    delta("msg_failed", "an ans"),
+                    Err(reset()),
+                ],
+                vec![
+                    delta("msg_resent", "The whole "),
+                    delta("msg_resent", "answer."),
+                ],
+            ]));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (yielded, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(
+                provider.calls(),
+                2,
+                "the failed call is sent exactly once more"
+            );
+            assert_eq!(
+                provider.seen(1),
+                provider.seen(0),
+                "the resend carries the same request — nothing of the failed attempt"
+            );
+
+            let notices = resend_notices(&yielded);
+            assert_eq!(notices.len(), 1, "one resend, one notice: {notices:?}");
+            assert!(
+                notices[0].contains(RESET) && notices[0].contains("attempt 1 of 3"),
+                "the notice names the error and the attempt: {:?}",
+                notices[0]
+            );
+
+            let assistant: Vec<&Message> = history
+                .iter()
+                .filter(|m| m.role == Role::Assistant)
+                .collect();
+            assert_eq!(
+                assistant.len(),
+                1,
+                "the history holds exactly one assistant message: {history:?}"
+            );
+            assert_eq!(assistant[0].as_concat_text(), "The whole answer.");
+            let all = all_text(&history);
+            assert!(
+                !all.contains("Half") && !all.contains("an ans"),
+                "the half answer was kept: {all:?}"
+            );
+            assert!(
+                !all.contains("Please resend your message"),
+                "the turn ended on the error anyway: {all:?}"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn a_tool_call_the_failed_attempt_ran_is_kept_and_never_run_twice() -> Result<()> {
+            let call = Message::assistant()
+                .with_tool_request("call_1", Ok(CallToolRequestParams::new("missing_tool")));
+            let provider = Arc::new(ScriptedProvider::new(vec![
+                vec![Ok((Some(call), None)), text("and then I wi"), Err(reset())],
+                vec![text("Done.")],
+            ]));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (yielded, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(provider.calls(), 2);
+            assert_eq!(resend_notices(&yielded).len(), 1);
+
+            let count = |messages: &[Message]| {
+                let mut requests = 0;
+                let mut responses = 0;
+                for content in messages.iter().flat_map(|m| m.content.iter()) {
+                    match content {
+                        MessageContent::ToolRequest(r) if r.id == "call_1" => requests += 1,
+                        MessageContent::ToolResponse(r) if r.id == "call_1" => responses += 1,
+                        _ => {}
+                    }
+                }
+                (requests, responses)
+            };
+            let resent = provider.seen(1);
+            assert_eq!(
+                count(&resent),
+                (1, 1),
+                "the resend carries the call it already ran, with its one result: {resent:?}"
+            );
+            assert_eq!(
+                count(&history),
+                (1, 1),
+                "the call ran once and is recorded once: {history:?}"
+            );
+            let all = all_text(&history);
+            assert!(
+                !all.contains("and then I wi"),
+                "the half answer was kept: {all:?}"
+            );
+            assert!(all.contains("Done."), "{all:?}");
+            Ok(())
+        }
+
+        /// A stream that opened and then failed before its first item is the chat's resend too (the
+        /// stream's own before-first-item retry stays the swarm's), counted and shown the same way.
+        /// A stream the provider refused to open is not: its `with_retry` already spent the policy
+        /// (`acp_engine_hold_test::any_other_503_keeps_the_three_retries` pins the four requests).
+        #[tokio::test]
+        async fn a_failure_before_the_first_byte_is_resent_with_a_notice() -> Result<()> {
+            let provider = Arc::new(ScriptedProvider::new(vec![
+                vec![Err(ProviderError::ServerError("502 Bad Gateway".into()))],
+                vec![text("Answer.")],
+            ]));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (yielded, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(provider.calls(), 2);
+            let notices = resend_notices(&yielded);
+            assert_eq!(notices.len(), 1, "{notices:?}");
+            assert!(
+                notices[0].contains("before any answer arrived")
+                    && notices[0].contains("502 Bad Gateway")
+                    && notices[0].contains("attempt 1 of 3"),
+                "{notices:?}"
+            );
+            // Rows stored in the same second may read back in either order.
+            let mut stored: Vec<String> = history.iter().map(Message::as_concat_text).collect();
+            stored.sort();
+            assert_eq!(stored, ["Answer.", "build the app"]);
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn a_permanent_error_is_not_resent() -> Result<()> {
+            let provider = Arc::new(ScriptedProvider::new(vec![vec![
+                text("Start"),
+                Err(ProviderError::Authentication("invalid api key".into())),
+            ]]));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (yielded, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(
+                provider.calls(),
+                1,
+                "an auth failure fails the same way when resent"
+            );
+            assert!(resend_notices(&yielded).is_empty());
+            assert!(
+                all_text(&history).contains("invalid api key"),
+                "the failure still ends the turn as before: {history:?}"
+            );
+            Ok(())
+        }
+
+        async fn run_turn_events(agent: &Agent, session_id: &str) -> Result<Vec<AgentEvent>> {
+            let reply_stream = agent
+                .reply(
+                    Message::user().with_text("build the app"),
+                    SessionConfig {
+                        id: session_id.to_string(),
+                        schedule_id: None,
+                        max_turns: Some(10),
+                        retry_config: None,
+                    },
+                    None,
+                )
+                .await?;
+            tokio::pin!(reply_stream);
+            let mut events = Vec::new();
+            while let Some(event) = reply_stream.next().await {
+                events.push(event?);
+            }
+            Ok(events)
+        }
+
+        /// The refuter's case: a non-streaming OpenAI completion folds every yielded text, and on
+        /// main a reset mid-answer was an error. Folded the way `openai_compat::run_turn` and its
+        /// non-streaming body do, the resend must produce the resent answer alone — not
+        /// "Now I will wri\n\nNow I will write the file." under a 200.
+        #[tokio::test]
+        async fn a_non_streaming_completion_carries_only_the_resent_answer() -> Result<()> {
+            use goose::api::openai_compat::{
+                is_provider_error_message, texts_sent_for, TextAccumulator,
+            };
+            let provider = Arc::new(ScriptedProvider::new(vec![
+                vec![
+                    delta("gen-1", "Now I will "),
+                    delta("gen-1", "wri"),
+                    Err(reset()),
+                ],
+                vec![delta("gen-2", "Now I will write the file.")],
+            ]));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let events = run_turn_events(&agent, &session_id).await?;
+
+            let mut body = TextAccumulator::default();
+            let mut discards = 0;
+            for event in &events {
+                match event {
+                    AgentEvent::Message(message) if message.role == Role::Assistant => {
+                        let text = message.as_concat_text();
+                        assert!(!is_provider_error_message(&text), "{text:?}");
+                        if !text.is_empty() {
+                            body.push(message.id.clone(), &text);
+                        }
+                    }
+                    AgentEvent::PartialDiscarded(discarded) => {
+                        discards += 1;
+                        for (id, text) in texts_sent_for(discarded) {
+                            body.retract(id, &text);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(discards, 1);
+            assert_eq!(body.finish(), "Now I will write the file.");
+            Ok(())
+        }
+
+        /// A failed call and an empty completion, alternating: each completion resets the resend
+        /// count and neither counts a turn, so before the fix the empty-turn count was reset by
+        /// every resend and the pair alternated until the provider ran out of answers.
+        #[tokio::test]
+        async fn alternating_resets_and_empty_completions_end_the_turn() -> Result<()> {
+            let provider = Arc::new(ScriptedProvider::new(
+                (0..20)
+                    .flat_map(|_| [vec![Err(reset())], Vec::new()])
+                    .collect(),
+            ));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (_, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(
+                provider.calls(),
+                8,
+                "four resets and four empty completions: the fourth empty one is past \
+                 MAX_EMPTY_TURN_RETRIES (3)"
+            );
+            assert_eq!(
+                assistant_texts(&history),
+                ["The model returned an empty response. Please resend your message to continue."]
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn exhausted_resends_end_the_turn_as_before() -> Result<()> {
+            let provider = Arc::new(ScriptedProvider::new(
+                (0..=DEFAULT_MAX_RETRIES)
+                    .map(|_| vec![text("par"), Err(reset())])
+                    .collect(),
+            ));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+
+            let (yielded, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(
+                provider.calls(),
+                DEFAULT_MAX_RETRIES + 1,
+                "the first call and every resend the policy allows"
+            );
+            let notices = resend_notices(&yielded);
+            assert_eq!(notices.len(), DEFAULT_MAX_RETRIES, "{notices:?}");
+            assert!(
+                notices[DEFAULT_MAX_RETRIES - 1].contains("attempt 3 of 3"),
+                "{notices:?}"
+            );
+            // Exactly as before the resend existed: the last attempt's partial and the failure
+            // text; the three resent attempts' partials are gone.
+            let mut ending = assistant_texts(&history);
+            ending.sort();
+            assert_eq!(ending.len(), 2, "{ending:?}");
+            assert!(
+                ending[0].ends_with("Please resend your message to try again.")
+                    && ending[1] == "par",
+                "the exhausted turn ends exactly as before: {ending:?}"
+            );
+            Ok(())
+        }
+
+        /// The swarm re-dispatches a task whose stream dropped (`is_stream_decode_interrupt`), and
+        /// its workers are the golden engine: they keep ending on the error text.
+        #[tokio::test]
+        async fn a_swarm_worker_is_not_resent() -> Result<()> {
+            let provider = Arc::new(ScriptedProvider::new(vec![vec![
+                text("Half"),
+                Err(reset()),
+            ]]));
+            let (agent, session_id, _temp_dir) = agent_with_provider(provider.clone()).await?;
+            agent.configure_swarm_worker(None);
+
+            let (yielded, history) = run_turn(&agent, &session_id).await?;
+
+            assert_eq!(provider.calls(), 1);
+            assert!(resend_notices(&yielded).is_empty());
+            let ending = assistant_texts(&history);
+            assert!(ending.iter().any(|text| text.contains(RESET)), "{ending:?}");
             Ok(())
         }
     }

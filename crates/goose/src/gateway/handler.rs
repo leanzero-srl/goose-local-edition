@@ -492,6 +492,14 @@ impl GatewayHandler {
                         "gateway stream: history replaced #{event_count}"
                     );
                 }
+                Ok(AgentEvent::PartialDiscarded(discarded)) => {
+                    let withdrawn = withdraw_discarded(&mut pending_text, &discarded);
+                    tracing::debug!(
+                        session_id,
+                        withdrawn,
+                        "gateway stream: a resent call's partial answer was withdrawn #{event_count}"
+                    );
+                }
                 Err(e) => {
                     tracing::error!(session_id, error = %e, "gateway stream: error at event #{event_count}");
                     // Stop typing indicator before sending error.
@@ -544,6 +552,34 @@ impl GatewayHandler {
     }
 }
 
+/// Takes a resent provider call's partial answer back out of the text not yet sent, as it was
+/// buffered (each message's text parts, back to back). Text a tool request already flushed is
+/// with the user and stays. Returns how many messages were withdrawn.
+fn withdraw_discarded(pending_text: &mut String, discarded: &[Message]) -> usize {
+    let mut withdrawn = 0;
+    for message in discarded.iter().rev() {
+        if message.role != rmcp::model::Role::Assistant {
+            continue;
+        }
+        let buffered: String = message
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                MessageContent::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        if buffered.is_empty() {
+            continue;
+        }
+        if let Some(kept) = pending_text.strip_suffix(&buffered) {
+            pending_text.truncate(kept.len());
+            withdrawn += 1;
+        }
+    }
+    withdrawn
+}
+
 fn gateway_working_dir(platform: &str, user_id: &str) -> PathBuf {
     Paths::config_dir()
         .join("gateway")
@@ -554,6 +590,21 @@ fn gateway_working_dir(platform: &str, user_id: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_resent_calls_partial_is_withdrawn_from_the_unsent_text_only() {
+        let mut pending = "Earlier answer. Now I will wri".to_string();
+        let discarded = vec![
+            Message::assistant().with_text("Now I will "),
+            Message::assistant().with_text("wri"),
+        ];
+        assert_eq!(withdraw_discarded(&mut pending, &discarded), 2);
+        assert_eq!(pending, "Earlier answer. ");
+
+        let mut flushed = String::new();
+        assert_eq!(withdraw_discarded(&mut flushed, &discarded), 0);
+        assert_eq!(flushed, "");
+    }
 
     #[test]
     fn defaults_when_no_overrides() {
