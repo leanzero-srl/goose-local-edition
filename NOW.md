@@ -35,6 +35,14 @@
 > **19:3x DONE:** site page (refuter killed 4 claims, fixed efb500a) pushed; catalog FLIPPED — sb-7.2 current, rendered verified.
 > NOW: mimo-v2.6-flash run (pinned Xiaomi, $1 stop) in flight; then mimo-pro, then remove the pin → gpt-6.1-sol, sonnet-5.5.
 > Relaunch the app WITHOUT LEANZERO_BENCH_PUBLISH_URL only between runs (killing the app mid-run kills the run).
+> **21:4x (owner asks, 2026-10-02 evening):** (1) mark our OpenRouter runs "Cloud baseline" — website
+> scripts/mark-cloud-baseline.mjs, Luna DONE; (2) board accordions + SEO — LIVE (20635be; Search Console steps given to owner,
+> Chrome extension not connected); (3) ALL SBs except sb-7.2 FROZEN; (4) more newest models queued:
+> ~/goose-builds/loop-state/sb72-openrouter-queue.json (≈$100 at Luna profile, owner will top up; credit $9.5);
+> (5) FORGE benchmark (forge-1.0, Atlassian Forge, offline-graded): spike f3b71f9a2, RESEARCH e4d6adcfd, DESIGN
+> 04f76a807 after 3 red-teams (25 findings applied); WP1 emulator/site/kit, WP2 scorer, WP3 golden building in parallel.
+> MiMo-flash SB7.2 run REFUSED at scoring (r_b3_sigkill_resync unavailable) — tree kept; a sweep converts every
+> entrant-caused unavailable path to charged; then 3.0.88 + Retry scoring → publish. Paid runs HELD until that lands.
 
 > **DESKTOP UX QUEUE (Mihai 2026-09-22, in order; each lands as its own commit, verified in the running app).**
 > 0. LANDED (7927b903f + the proof commit) — Cloud Providers: no hard-coded "connection test model"; key → the provider's own model list → a chosen
