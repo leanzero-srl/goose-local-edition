@@ -63,6 +63,16 @@ pub fn context_line(
     }
 }
 
+/// The `(used, window)` a [`context_line`] reports, read back from its text; `None` for the lines
+/// that report no such pair.
+pub fn used_of_window(line: &str) -> Option<(i64, i64)> {
+    let rest = line.strip_prefix("context: ")?;
+    let (used, rest) = rest.split_once(" of ")?;
+    let (window, _) = rest.split_once(" tokens used")?;
+    let number = |s: &str| s.replace(',', "").parse::<i64>().ok();
+    Some((number(used)?, number(window)?))
+}
+
 fn with_commas(n: i64) -> String {
     let digits = n.unsigned_abs().to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);

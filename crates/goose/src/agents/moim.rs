@@ -197,8 +197,8 @@ pub fn fixed_for_request(conversation: Conversation) -> Option<Conversation> {
 }
 
 /// What a block that repeats no extension context carries in its place.
-const EXTENSION_CONTEXT_UNCHANGED: &str = "<extension-context>unchanged: the most recent earlier \
-     turn-context block that lists it still holds</extension-context>";
+const EXTENSION_CONTEXT_UNCHANGED: &str =
+    "<extension-context>unchanged since the last block that listed it</extension-context>";
 
 /// A chat's block for the request about to be sent, as an agent-only message the caller appends to
 /// the history and stores — so the next request carries it unchanged and extends this one byte for
@@ -206,10 +206,13 @@ const EXTENSION_CONTEXT_UNCHANGED: &str = "<extension-context>unchanged: the mos
 /// 2026-10-02 on openai/gpt-6-luna, a block dropped from the next request left every call of a
 /// six-call tool loop at 0 cached tokens, and keeping each block in place read 1,153 → 1,938.
 ///
-/// `None` when no block is sent, and when the history already ends on one (a retried request: the
-/// block it was sent with still stands). Extension context (scratchpad, ledger, memories) is
-/// listed only when it differs from what the most recent block that listed it carried; the history
-/// keeps every block, so repeating it would only grow the conversation.
+/// `None` when no block is sent — and then the request carries the history unchanged, so it still
+/// extends the previous one. Every block stays in the history, so a new one is sent only when it
+/// says something the newest stored block does not (`says_something_new`): the person wrote, the
+/// folder or the turn budget changed, the extension context (scratchpad, ledger, memories)
+/// changed, or the context usage moved by a whole percentage point of the window. The minute
+/// alone never sends one. A retried request (the history already ends on a block) reuses the block
+/// it was sent with. Extension context that did not change is not repeated in a new block.
 pub async fn turn_context_message(
     session_id: &str,
     conversation: &Conversation,
@@ -231,14 +234,30 @@ pub async fn turn_context_message(
         return None;
     }
     let inputs = turn_context_inputs(session_id, extension_manager).await?;
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:00").to_string();
+    next_chat_block(messages, &timestamp, inputs, turns_taken, max_turns, report)
+        .map(|block| Message::user().with_text(block).agent_only())
+}
+
+/// [`turn_context_message`]'s decision, on the inputs it read: the block to keep, or `None`.
+fn next_chat_block(
+    messages: &[Message],
+    timestamp: &str,
+    inputs: TurnContextInputs,
+    turns_taken: u32,
+    max_turns: u32,
+    report: ContextReport,
+) -> Option<String> {
     let listed = extension_section(&inputs.extension_parts);
-    let unchanged = !listed.is_empty() && last_listed_extension_section(messages) == Some(listed);
-    let extension_parts = if unchanged {
+    let last_listed = last_listed_extension_section(messages);
+    let extension_changed = last_listed.as_deref() != Some(listed.as_str());
+    let extension_parts = if !extension_changed && !listed.is_empty() {
         vec![EXTENSION_CONTEXT_UNCHANGED.to_string()]
     } else {
         inputs.extension_parts
     };
-    let block = compose_moim(
+    let block = compose_moim_at(
+        timestamp,
         &inputs.working_dir,
         inputs.total_tokens,
         inputs.context_limit,
@@ -248,7 +267,68 @@ pub async fn turn_context_message(
         extension_parts,
         report,
     );
-    Some(Message::user().with_text(block).agent_only())
+    let newest = messages.iter().enumerate().rev().find_map(|(at, m)| {
+        m.is_agent_visible()
+            .then(|| {
+                m.content
+                    .iter()
+                    .rev()
+                    .filter_map(MessageContent::as_text)
+                    .find(|text| is_turn_context_text(text))
+            })
+            .flatten()
+            .map(|text| (at, text))
+    });
+    let Some((at, newest)) = newest else {
+        return Some(block);
+    };
+    let person_wrote = messages[at + 1..].iter().any(is_persons_words);
+    (person_wrote || extension_changed || says_something_new(newest, &block)).then_some(block)
+}
+
+/// A message the person wrote (or steered with) — not tool results, not goose's own context.
+fn is_persons_words(message: &Message) -> bool {
+    message.is_agent_visible()
+        && message.is_user_visible()
+        && effective_role(message) == "user"
+        && message.content.iter().any(|c| {
+            c.as_text()
+                .is_some_and(|text| !text.trim().is_empty() && !is_turn_context_text(text))
+        })
+}
+
+/// Whether `block`'s head (folder, context usage, turn budget) differs materially from `newest`'s.
+/// The minute is not compared: a block that differs only in its time adds nothing. The context
+/// usage counts only when it moved by at least one percentage point of the window (a ratio of the
+/// window, so it holds for every window size); a line that reports no such pair counts when it
+/// differs at all.
+fn says_something_new(newest: &str, block: &str) -> bool {
+    let (before, after) = (head_lines(newest), head_lines(block));
+    if before.len() != after.len() {
+        return true;
+    }
+    before.iter().zip(&after).any(|(was, is)| {
+        match (
+            crate::context_mgmt::context_line::used_of_window(was),
+            crate::context_mgmt::context_line::used_of_window(is),
+        ) {
+            (Some((used_was, _)), Some((used_is, window))) => {
+                (used_is - used_was).abs() * 100 >= window
+            }
+            _ => was != is,
+        }
+    })
+}
+
+/// The block's head lines without its time: from the opening tag to the first blank line.
+fn head_lines(block: &str) -> Vec<&str> {
+    let time = open_tag(CURRENT_TIME_TAG);
+    block
+        .lines()
+        .skip(1)
+        .take_while(|line| !line.is_empty() && *line != close_tag(TURN_CONTEXT_TAG))
+        .filter(|line| !line.starts_with(&time))
+        .collect()
 }
 
 /// The extension parts as [`compose_moim`] lays them out between the block's head and its close.
@@ -295,10 +375,34 @@ fn compose_moim(
     extension_parts: Vec<String>,
     report: ContextReport,
 ) -> String {
-    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:00");
+    compose_moim_at(
+        &chrono::Local::now().format("%Y-%m-%d %H:%M:00").to_string(),
+        working_dir,
+        total_tokens,
+        context_limit,
+        compaction_threshold,
+        turns_taken,
+        max_turns,
+        extension_parts,
+        report,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compose_moim_at(
+    timestamp: &str,
+    working_dir: &str,
+    total_tokens: Option<i32>,
+    context_limit: Option<usize>,
+    compaction_threshold: f64,
+    turns_taken: u32,
+    max_turns: u32,
+    extension_parts: Vec<String>,
+    report: ContextReport,
+) -> String {
     let mut lines = vec![
         open_tag(TURN_CONTEXT_TAG),
-        tag(CURRENT_TIME_TAG, &timestamp.to_string()),
+        tag(CURRENT_TIME_TAG, timestamp),
         tag(WORKING_DIRECTORY_TAG, working_dir),
     ];
 
@@ -741,6 +845,291 @@ mod tests {
 
         let none = vec![block(Vec::new())];
         assert_eq!(last_listed_extension_section(&none), Some(String::new()));
+    }
+
+    const REPORTED: ContextReport = ContextReport::Chat(LastCallUsage::Reported);
+
+    fn inputs(working_dir: &str, total_tokens: i32, parts: &[&str]) -> TurnContextInputs {
+        TurnContextInputs {
+            working_dir: working_dir.to_string(),
+            total_tokens: Some(total_tokens),
+            context_limit: Some(32_768),
+            compaction_threshold: 0.8,
+            extension_parts: parts.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    fn tool_step(id: &str) -> [Message; 2] {
+        [
+            Message::assistant().with_tool_request(id, Ok(CallToolRequestParams::new("shell"))),
+            Message::user().with_tool_response(
+                id,
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::Content::text("ok"),
+                ])),
+            ),
+        ]
+    }
+
+    /// A new block only when it says something the newest kept one does not. The minute alone, or
+    /// a usage move under one percentage point of the window, sends none; the person's words, the
+    /// folder, the extension context, or a whole point of usage each send one.
+    #[test]
+    fn a_new_block_only_when_something_material_changed() {
+        let scratch = "<scratchpad>\nGoal: x\n</scratchpad>\n";
+        let first = next_chat_block(
+            &[Message::user().with_text("go")],
+            "2026-10-02 10:00:00",
+            inputs("/w", 20_000, &[scratch]),
+            0,
+            0,
+            REPORTED,
+        )
+        .expect("the first request carries a block");
+        let mut history = vec![
+            Message::user().with_text("go"),
+            Message::user().with_text(&first).agent_only(),
+        ];
+        history.extend(tool_step("c1"));
+
+        let next = |history: &[Message], time: &str, dir: &str, used: i32, parts: &[&str]| {
+            next_chat_block(history, time, inputs(dir, used, parts), 0, 0, REPORTED)
+        };
+        assert_eq!(
+            next(
+                &history,
+                "2026-10-02 10:07:00",
+                "/w",
+                20_000 + 327,
+                &[scratch]
+            ),
+            None,
+            "a later minute and 327 tokens (under 1% of 32,768) say nothing new"
+        );
+        assert!(next(
+            &history,
+            "2026-10-02 10:07:00",
+            "/w",
+            20_000 + 328,
+            &[scratch]
+        )
+        .is_some());
+        assert!(next(&history, "2026-10-02 10:00:00", "/x", 20_000, &[scratch]).is_some());
+        let changed = next(
+            &history,
+            "2026-10-02 10:00:00",
+            "/w",
+            20_000,
+            &["<scratchpad>\nGoal: y\n</scratchpad>\n"],
+        )
+        .expect("the scratchpad changed");
+        assert!(changed.contains("Goal: y"), "{changed}");
+
+        let usage_only = next(&history, "2026-10-02 10:01:00", "/w", 21_000, &[scratch]).unwrap();
+        assert!(
+            usage_only.contains(EXTENSION_CONTEXT_UNCHANGED),
+            "{usage_only}"
+        );
+
+        let mut asked = history.clone();
+        asked.push(Message::user().with_text("and the tests?"));
+        assert!(
+            next(&asked, "2026-10-02 10:00:00", "/w", 20_000, &[scratch]).is_some(),
+            "the person's new words get a block"
+        );
+    }
+
+    /// The growth the kept blocks cost, measured with real formatting and the real tokenizer: a
+    /// 30-call tool loop on a 32,768-token window behind a 17,593-token static prefix (system +
+    /// tools, measured on openai/gpt-6-luna 2026-10-02), the scratchpad rewritten every fifth call,
+    /// two calls a minute. Three policies: the block on the newest request only (dropped next
+    /// request — no prefix survives), a kept block every call, and a kept block only when something
+    /// material changed. Prints the tokens the kept blocks add and the calls before the compaction
+    /// threshold (0.8 of the window); asserts the material policy keeps every request an extension
+    /// of the previous one.
+    #[tokio::test]
+    async fn kept_block_growth_over_a_thirty_call_tool_loop() {
+        let counter = crate::token_counter::create_token_counter().await.unwrap();
+        let static_prefix = 17_593usize;
+        let window = 32_768usize;
+        let threshold =
+            (window as f64 * crate::context_mgmt::DEFAULT_COMPACTION_THRESHOLD) as usize;
+        let model = goose_providers::model::ModelConfig::new("openai/gpt-6-luna");
+        let ledger = "<ledger>\nThe project ledger (.goose/ledger.md) has no entries yet. Append to \
+                      it when you learn something a later turn would otherwise rediscover.\n</ledger>\n";
+        let scratchpad = |call: usize| {
+            format!(
+                "<scratchpad>\nYour notes:\nGoal — make the parser tests pass.\nDone — {} steps.\n\
+                 Next — read src/parser.rs around line {}.\n</scratchpad>\n",
+                call / 5 * 5,
+                call / 5 * 50
+            )
+        };
+        let output = |call: usize| {
+            (0..8)
+                .map(|line| {
+                    format!(
+                        "{:>4}     let token_{call}_{line} = lexer.next_token()?; // span {}..{}\n",
+                        call * 10 + line,
+                        line * 7,
+                        line * 7 + 6
+                    )
+                })
+                .collect::<String>()
+        };
+        let request_tokens = |messages: &[Message]| -> (usize, Vec<serde_json::Value>) {
+            let fixed =
+                fixed_for_request(Conversation::new_unvalidated(messages.to_vec())).unwrap();
+            let sent = crate::agents::reply_parts::messages_for_provider(fixed.messages(), false);
+            let payload = goose_providers::formats::openai::create_request(
+                &model,
+                "",
+                sent.messages(),
+                &[],
+                &goose_providers::images::ImageFormat::OpenAi,
+                true,
+            )
+            .unwrap();
+            let formatted = payload["messages"].as_array().unwrap().clone();
+            let tokens = formatted
+                .iter()
+                .map(|m| {
+                    counter.count_tokens(m["content"].as_str().unwrap_or_default())
+                        + m["tool_calls"].as_array().map_or(0, |calls| {
+                            calls
+                                .iter()
+                                .map(|c| {
+                                    counter.count_tokens(
+                                        c["function"]["arguments"].as_str().unwrap_or_default(),
+                                    )
+                                })
+                                .sum()
+                        })
+                })
+                .sum();
+            (tokens, formatted)
+        };
+
+        #[derive(Clone, Copy, PartialEq, Debug)]
+        enum Policy {
+            Dropped,
+            EveryCall,
+            Material,
+        }
+        let mut lines = Vec::new();
+        for policy in [Policy::Dropped, Policy::EveryCall, Policy::Material] {
+            let mut history = vec![Message::user()
+                .with_text("The parser tests fail on nested blocks. Find out why and fix it.")];
+            let mut used = static_prefix as i32;
+            let mut at_30 = None;
+            let mut compaction_at = None;
+            let mut blocks_kept = 0;
+            let mut previous: Option<Vec<serde_json::Value>> = None;
+            for call in 1.. {
+                let time = format!("2026-10-02 10:{:02}:00", call / 2);
+                let parts = [scratchpad(call), ledger.to_string()];
+                let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+                let report = if call == 1 {
+                    ContextReport::Chat(LastCallUsage::NoCallYet)
+                } else {
+                    REPORTED
+                };
+                let fresh = |parts: Vec<String>| {
+                    compose_moim_at(
+                        &time,
+                        "/Users/me/code/parser",
+                        Some(used),
+                        Some(window),
+                        0.8,
+                        call as u32,
+                        0,
+                        parts,
+                        report,
+                    )
+                };
+                let all_parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+                let sent = match policy {
+                    Policy::Dropped => {
+                        let mut sent = history.clone();
+                        sent.push(Message::user().with_text(fresh(all_parts)).agent_only());
+                        sent
+                    }
+                    Policy::EveryCall => {
+                        let listed = extension_section(&all_parts);
+                        let parts = if last_listed_extension_section(&history) == Some(listed) {
+                            vec![EXTENSION_CONTEXT_UNCHANGED.to_string()]
+                        } else {
+                            all_parts
+                        };
+                        history.push(Message::user().with_text(fresh(parts)).agent_only());
+                        blocks_kept += 1;
+                        history.clone()
+                    }
+                    Policy::Material => {
+                        let mut draft = inputs("/Users/me/code/parser", used, &parts);
+                        draft.context_limit = Some(window);
+                        if let Some(block) =
+                            next_chat_block(&history, &time, draft, call as u32, 0, report)
+                        {
+                            history.push(Message::user().with_text(block).agent_only());
+                            blocks_kept += 1;
+                        }
+                        history.clone()
+                    }
+                };
+                let (tokens, formatted) = request_tokens(&sent);
+                if policy == Policy::Material {
+                    if let Some(previous) = &previous {
+                        assert_eq!(
+                            formatted[..previous.len()],
+                            previous[..],
+                            "call {call}: the request does not extend the previous one"
+                        );
+                    }
+                    previous = Some(formatted);
+                }
+                used = (static_prefix + tokens) as i32;
+                if call == 30 {
+                    at_30 = Some((tokens, blocks_kept));
+                }
+                if compaction_at.is_none() && used as usize >= threshold {
+                    compaction_at = Some(call);
+                }
+                if call >= 30 && compaction_at.is_some() {
+                    break;
+                }
+                let id = format!("c{call}");
+                history.push(Message::assistant().with_tool_request(
+                    &id,
+                    Ok(CallToolRequestParams::new("shell").with_arguments(
+                        serde_json::json!({"command": format!("sed -n {},{}p src/parser.rs", call * 10, call * 10 + 7)})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    )),
+                ));
+                history.push(Message::user().with_tool_response(
+                    &id,
+                    Ok(rmcp::model::CallToolResult::success(vec![
+                        rmcp::model::Content::text(output(call)),
+                    ])),
+                ));
+            }
+            lines.push((policy, at_30.unwrap(), compaction_at.unwrap()));
+        }
+        let base = lines[0].1 .0;
+        for (policy, (tokens, kept), compaction) in &lines {
+            println!(
+                "{policy:?}: request 30 = {tokens} conversation tokens (+{} over dropped), \
+                 {kept} blocks kept, compaction threshold ({threshold}) reached at call {compaction}",
+                tokens - base
+            );
+        }
+        let (every, material) = (lines[1].1 .0 - base, lines[2].1 .0 - base);
+        assert!(
+            material < every,
+            "material {material} vs every call {every}"
+        );
     }
 
     /// The turn-context block is produced here (`compose_moim`, in goose) but

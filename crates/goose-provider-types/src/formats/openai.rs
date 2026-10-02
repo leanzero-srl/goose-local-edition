@@ -829,7 +829,13 @@ fn locate_turn_context(messages: &[Message]) -> Option<(usize, usize)> {
             })
             .map(|bi| (mi, bi))
     })?;
-    if mi + 1 != messages.len() && messages[mi].content.len() <= 1 {
+    // Only a block placed BEFORE its message's own content (a swarm worker's, inserted ahead of the
+    // task text for this request alone) is moved to the tail. A block that ends its message is a
+    // chat's kept block: it already sits where it renders, and an older one must stay there —
+    // moving it when a request carries no new block (a compaction's summary request, a turn with
+    // nothing new to say) puts a stale block after newer messages and breaks the prefix the next
+    // request extends. The same rule holds in the Anthropic and Bedrock relocations.
+    if bi + 1 == messages[mi].content.len() {
         return None;
     }
     Some((mi, bi))
@@ -6110,13 +6116,14 @@ mod cache_prefix_stability_tests {
         .unwrap()
     }
 
-    /// The suffix names exactly the bytes the tail append wrote, in both shapes: merged into the
-    /// user's own text (the first turn) and riding as its own message (after a tool result, whose
-    /// role is `tool`); stripping it leaves the text the NEXT request renders for that message.
+    /// The suffix names exactly the bytes the tail append wrote for a swarm worker's block (placed
+    /// ahead of the task text), in both shapes: merged into the task text (the first turn) and
+    /// riding as its own message (after a tool result, whose role is `tool`); stripping it leaves
+    /// the text the NEXT request renders for that message.
     #[test]
     fn the_tail_suffix_is_exactly_what_the_append_wrote() {
         let tc = turn_context("10:00:00");
-        let merged = vec![Message::user().with_text("build the thing").with_text(&tc)];
+        let merged = vec![Message::user().with_text(&tc).with_text("build the thing")];
         let payload = request(&merged);
         let suffix = turn_context_tail_suffix(&merged, &payload).expect("merged tail");
         assert_eq!(suffix, format!("\n{tc}"));
@@ -6126,27 +6133,87 @@ mod cache_prefix_stability_tests {
             .to_string();
         assert_eq!(last.strip_suffix(suffix.as_str()), Some("build the thing"));
 
-        let tool_turn = vec![
-            Message::user().with_text("build the thing"),
-            Message::assistant().with_tool_request(
-                "call_1",
-                Ok(rmcp::model::CallToolRequestParams::new("shell")),
-            ),
-            Message::user()
-                .with_tool_response(
-                    "call_1",
-                    Ok(rmcp::model::CallToolResult::success(vec![
-                        rmcp::model::Content::text("ok"),
-                    ])),
-                )
-                .with_text(&tc),
-        ];
+        let tool_turn = tool_tail(false, &tc);
         let payload = request(&tool_turn);
         assert_eq!(turn_context_tail_suffix(&tool_turn, &payload), Some(tc));
         assert_eq!(
             payload["messages"].as_array().unwrap().last().unwrap()["role"],
             json!("user")
         );
+    }
+
+    /// The refuter's case: a request that carries NO new block — a chat compaction's summary
+    /// request (the instruction appended after the history) or a tool step with nothing new to
+    /// report — must leave every kept block where its own request put it. Moving the newest one to
+    /// the tail would put a stale block after the newer messages and break the prefix. A swarm
+    /// worker's block, placed ahead of its task text, still moves.
+    #[test]
+    fn a_kept_block_never_moves_when_the_request_carries_no_new_one() {
+        let tc = turn_context("10:00:00");
+        let kept = |tail: Message| {
+            vec![
+                Message::user().with_text("build the thing").with_text(&tc),
+                Message::assistant().with_tool_request(
+                    "call_1",
+                    Ok(rmcp::model::CallToolRequestParams::new("shell")),
+                ),
+                Message::user()
+                    .with_tool_response(
+                        "call_1",
+                        Ok(rmcp::model::CallToolResult::success(vec![
+                            rmcp::model::Content::text("ok"),
+                        ])),
+                    )
+                    .with_text(turn_context("10:01:00")),
+                tail,
+            ]
+        };
+        let instruction = "Summarize this conversation.";
+        for (label, messages) in [
+            ("compaction", kept(Message::user().with_text(instruction))),
+            (
+                "a step with nothing new",
+                kept(Message::assistant().with_tool_request(
+                    "call_2",
+                    Ok(rmcp::model::CallToolRequestParams::new("shell")),
+                )),
+            ),
+        ] {
+            let mut messages = messages;
+            if label != "compaction" {
+                messages.push(Message::user().with_tool_response(
+                    "call_2",
+                    Ok(rmcp::model::CallToolResult::success(vec![
+                        rmcp::model::Content::text("ok again"),
+                    ])),
+                ));
+            }
+            let shorter = format_messages(&messages[..3], &ImageFormat::OpenAi);
+            let out = format_messages(&messages, &ImageFormat::OpenAi);
+            assert_eq!(
+                out[..shorter.len()],
+                shorter[..],
+                "{label}: a kept block moved: {out:#?}"
+            );
+            let last = serde_json::to_string(out.last().unwrap()).unwrap();
+            assert!(!last.contains("<turn-context>"), "{label}: {last}");
+            assert_eq!(
+                turn_context_tail_suffix(&messages, &request(&messages)),
+                None
+            );
+        }
+        let compaction = format_messages(
+            &kept(Message::user().with_text(instruction)),
+            &ImageFormat::OpenAi,
+        );
+        assert_eq!(
+            compaction.last().unwrap()["content"],
+            json!(instruction),
+            "the instruction ends the summary request"
+        );
+
+        let swarm = format_messages(&tool_tail(false, &tc), &ImageFormat::OpenAi);
+        assert_eq!(swarm.last().unwrap()["content"], json!(tc));
     }
 
     fn tool_tail(tc_in_tool_message: bool, tc: &str) -> Vec<Message> {
@@ -6204,7 +6271,8 @@ mod cache_prefix_stability_tests {
         let payload = request(&tool_tail(true, &tc));
         assert_eq!(
             turn_context_tail_suffix(&tool_tail(true, &tc), &payload),
-            Some(tc.clone())
+            None,
+            "a chat's kept block is not transient"
         );
 
         let human_hosted = format_messages_with_options(
@@ -6234,8 +6302,8 @@ mod cache_prefix_stability_tests {
         .unwrap();
         assert_eq!(
             turn_context_tail_suffix(&tool_tail(true, &tc), &joined_request),
-            Some(format!("\n{tc}")),
-            "the joined block is named as the tool message's suffix"
+            None,
+            "a chat's joined block is kept, not transient"
         );
     }
 

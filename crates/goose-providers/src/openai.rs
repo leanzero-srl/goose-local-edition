@@ -150,7 +150,7 @@ pub struct OpenAiProvider {
     /// Per model: whether the endpoint's `/v1/models` entry declared
     /// `request_extensions: ["rapid_mlx_transient_tail"]`. Only answered probes are cached.
     #[serde(skip)]
-    transient_tail_cache: Arc<Mutex<HashMap<String, TransientTail>>>,
+    transient_tail_cache: Arc<Mutex<HashMap<String, bool>>>,
 }
 
 /// Builder for [`OpenAiProvider`].
@@ -469,13 +469,14 @@ impl OpenAiProvider {
         }
     }
 
-    /// Where this endpoint declared it honours `rapid_mlx_transient_tail` (the LeanZero Rapid-MLX
-    /// fork: on the last user message since v0.14.3-lz.2, on the last tool message too since
-    /// lz.6). The declaration is the engine identity: a stock Rapid-MLX or a real oMLX server
-    /// behind `OMLX_HOST` never declares it and so never receives the field.
-    async fn transient_tail(&self, model_name: &str) -> TransientTail {
+    /// Whether this endpoint declared it honours `rapid_mlx_transient_tail` (the LeanZero Rapid-MLX
+    /// fork, since v0.14.3-lz.2). The declaration is the engine identity: a stock Rapid-MLX or a
+    /// real oMLX server behind `OMLX_HOST` never declares it and so never receives the field. Only a
+    /// swarm worker's block is ever named by it: a chat keeps its blocks, so none of its is
+    /// transient.
+    async fn transient_tail(&self, model_name: &str) -> bool {
         if !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str()) {
-            return TransientTail::default();
+            return false;
         }
         if let Some(known) = self
             .transient_tail_cache
@@ -497,18 +498,11 @@ impl OpenAiProvider {
                     "transient_tail_probe_failed: the turn-context tail rides this request \
                      unmarked; the probe is retried on the next request"
                 );
-                return TransientTail::default();
+                return false;
             }
         };
-        let accepted = TransientTail {
-            on_user: declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL),
-            on_tool: declares_request_extension(
-                &json,
-                model_name,
-                RAPID_MLX_TRANSIENT_TAIL_ON_TOOL,
-            ),
-        };
-        if !accepted.on_user {
+        let accepted = declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL);
+        if !accepted {
             tracing::info!(
                 host = %sanitize_url(self.api_client.host()),
                 model = %model_name,
@@ -719,24 +713,6 @@ impl OpenAiProvider {
 /// The request field the LeanZero Rapid-MLX fork reads to snapshot a hybrid cache before the
 /// request's volatile tail (`ChatCompletionRequest.rapid_mlx_transient_tail`).
 const RAPID_MLX_TRANSIENT_TAIL: &str = "rapid_mlx_transient_tail";
-/// Declared by the fork from v0.14.3-lz.6: the tail may end the last TOOL message, so the
-/// turn-context block can ride the tool results a request ends on (Q-94) and still leave the cache
-/// snapshot before it. An engine without it ignores such a tail and snapshots after the block.
-const RAPID_MLX_TRANSIENT_TAIL_ON_TOOL: &str = "rapid_mlx_transient_tail_on_tool";
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct TransientTail {
-    on_user: bool,
-    on_tool: bool,
-}
-
-impl TransientTail {
-    /// The block joins the tool results unless the engine snapshots its cache before a tail it
-    /// finds only on the last user message.
-    fn block_joins_tool_results(self) -> bool {
-        !self.on_user || self.on_tool
-    }
-}
 
 /// Whether `/v1/models` lists `extension` in the `request_extensions` of `model_name`'s entry (or of
 /// the sole entry, the single-model server serving under another id).
@@ -1094,14 +1070,17 @@ impl Provider for OpenAiProvider {
                     tools,
                     OpenAiFormatOptions {
                         preserve_thinking_context: self.preserve_thinking_context,
-                        turn_context_joins_tool_results: transient_tail.block_joins_tool_results(),
+                        // Q-94: a chat's block rides the tool results it follows, never a user
+                        // turn of its own. It is kept in the history, so no engine needs it on a
+                        // user message to snapshot its cache before it.
+                        turn_context_joins_tool_results: true,
                         text_only_engine: false,
                     },
                 )
                 .await?;
             let mut payload = self.sanitize_request_for_compat(payload);
             self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
-            if transient_tail.on_user {
+            if transient_tail {
                 if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
                     payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
                 }
@@ -1353,9 +1332,11 @@ mod tests {
         name: &str,
         request_extensions: serde_json::Value,
     ) -> (Vec<serde_json::Value>, usize, String) {
+        // A swarm worker's request: its block placed ahead of the task text, for this request
+        // alone — the one shape whose block is transient.
         let messages = vec![Message::user()
-            .with_text("find the handler")
-            .with_text(TEST_TURN_CONTEXT)];
+            .with_text(TEST_TURN_CONTEXT)
+            .with_text("find the handler")];
         let (bodies, probes) = post_bodies_for(name, request_extensions, &messages).await;
         (bodies, probes, format!("\n{TEST_TURN_CONTEXT}"))
     }
@@ -1633,12 +1614,12 @@ mod tests {
     }
 
     /// Q-94, #1 turn 2 (sessions.db 764103/764105 → 764106): the request ends on two
-    /// propose_knowledge results and the block rides in that tool-result message. An engine
-    /// without the transient-tail extension gets it appended to the last `role: tool` message — no
-    /// trailing user turn; a declaring Rapid-MLX engine keeps the trailing user message its cache
-    /// snapshot is taken before, byte-for-byte as before.
+    /// propose_knowledge results and the chat's block rides that tool-result message. Whatever the
+    /// engine declares, the block is joined to the last `role: tool` message — no user turn holding
+    /// only goose's context — and no transient tail names it: the chat keeps it, so the next
+    /// request carries it too and a cache snapshot after it is the one that is read back.
     #[tokio::test]
-    async fn the_turn_context_joins_the_tool_results_unless_the_engine_marks_a_user_tail() {
+    async fn a_chat_block_joins_the_tool_results_and_is_never_transient() {
         use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
         let messages = vec![
             Message::user().with_text("How long can they stay on Data Center?"),
@@ -1656,51 +1637,51 @@ mod tests {
                 .with_text(TEST_TURN_CONTEXT),
         ];
 
-        let (bodies, _) = post_bodies_for("omlx", json!([]), &messages).await;
-        let sent = bodies[0]["messages"].as_array().unwrap();
-        let last = sent.last().unwrap();
-        assert_eq!(last["role"], json!("tool"), "{sent:?}");
-        assert!(last["content"]
-            .as_str()
-            .unwrap()
-            .ends_with(&format!("\n{TEST_TURN_CONTEXT}")));
-        assert_eq!(
-            sent.iter().filter(|m| m["role"] == json!("user")).count(),
-            1,
-            "no user turn besides the question: {sent:?}"
-        );
-
-        let (bodies, _) =
-            post_bodies_for("omlx", json!(["rapid_mlx_transient_tail"]), &messages).await;
-        let sent = bodies[0]["messages"].as_array().unwrap();
-        assert_eq!(sent.last().unwrap()["role"], json!("user"));
-        assert_eq!(sent.last().unwrap()["content"], json!(TEST_TURN_CONTEXT));
-        assert_eq!(
-            bodies[0][RAPID_MLX_TRANSIENT_TAIL],
-            json!(TEST_TURN_CONTEXT)
-        );
-
-        // lz.6 declares the tail on a tool message: the block joins the results AND is marked.
-        let (bodies, _) = post_bodies_for(
-            "omlx",
+        for declared in [
+            json!([]),
+            json!(["rapid_mlx_transient_tail"]),
             json!([
                 "rapid_mlx_transient_tail",
                 "rapid_mlx_transient_tail_on_tool"
             ]),
-            &messages,
+        ] {
+            let (bodies, _) = post_bodies_for("omlx", declared.clone(), &messages).await;
+            let sent = bodies[0]["messages"].as_array().unwrap();
+            let last = sent.last().unwrap();
+            assert_eq!(last["role"], json!("tool"), "{declared}: {sent:?}");
+            assert!(last["content"]
+                .as_str()
+                .unwrap()
+                .ends_with(&format!("\n{TEST_TURN_CONTEXT}")));
+            assert_eq!(
+                sent.iter().filter(|m| m["role"] == json!("user")).count(),
+                1,
+                "{declared}: no user turn besides the question: {sent:?}"
+            );
+            assert!(
+                bodies[0].get(RAPID_MLX_TRANSIENT_TAIL).is_none(),
+                "{declared}: a kept block is not transient"
+            );
+        }
+
+        let (bodies, _) = post_bodies_for(
+            "omlx",
+            json!(["rapid_mlx_transient_tail"]),
+            &[Message::user()
+                .with_text("find the handler")
+                .with_text(TEST_TURN_CONTEXT)],
         )
         .await;
-        let sent = bodies[0]["messages"].as_array().unwrap();
-        let last = sent.last().unwrap();
-        assert_eq!(last["role"], json!("tool"), "{sent:?}");
-        let joined = format!("\n{TEST_TURN_CONTEXT}");
-        assert!(last["content"].as_str().unwrap().ends_with(&joined));
-        assert_eq!(bodies[0][RAPID_MLX_TRANSIENT_TAIL], json!(joined));
+        assert!(
+            bodies[0].get(RAPID_MLX_TRANSIENT_TAIL).is_none(),
+            "a chat's block on the person's words is kept too"
+        );
     }
 
     /// Q-94 on a real engine: a chat turn's two tool steps, sent by this provider exactly as the
     /// agent loop sends them, against the engine at `OMLX_MEASURE_URL` (its `/v1/models` decides
-    /// the shape). Prints what step 2 found cached of step 1's prefix, and the shape step 1 used.
+    /// the shape). Step 2 keeps step 1's block, as the chat does. Prints what step 2 found cached
+    /// of step 1's prefix.
     /// `OMLX_MEASURE_URL=http://127.0.0.1:<port> OMLX_MEASURE_MODEL=<served id> cargo test -p
     /// goose-providers --lib openai::tests::measure_the_tool_step_prefix -- --ignored --nocapture`
     #[tokio::test]
@@ -1752,7 +1733,7 @@ mod tests {
             Message::user()
                 .with_text("Which module is the longest? Look, then answer in one line."),
             call("c1", "wc -l src/*.rs"),
-            result("c1", &listing),
+            result("c1", &listing).with_text(block("10:00:00")),
             call("c2", "head -3 src/module_399.rs"),
             result("c2", "// module 399\nfn main() {}\n").with_text(block("10:01:00")),
         ];
@@ -1771,17 +1752,8 @@ mod tests {
             }
             usages.push(last.expect("the engine reported usage"));
         }
-        let shape = if provider
-            .transient_tail(&model)
-            .await
-            .block_joins_tool_results()
-        {
-            "block joined to the tool result"
-        } else {
-            "block as its own user message"
-        };
         println!(
-            "shape: {shape}; step 1 prompt {:?} (cached {:?}); step 2 prompt {:?}, cached {:?}",
+            "step 1 prompt {:?} (cached {:?}); step 2 prompt {:?}, cached {:?}",
             usages[0].input_tokens,
             usages[0].cache_read_input_tokens,
             usages[1].input_tokens,

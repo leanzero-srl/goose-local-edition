@@ -396,12 +396,14 @@ fn relocate_turn_context_to_tail(messages: &mut [Value]) {
     let Some((mi, bi)) = source else {
         return;
     };
-    if mi != last
-        && messages[mi]
+    // A block that ends its message is a chat's kept block and stays where it was sent; only a
+    // swarm worker's, placed ahead of its message's own content, moves (openai.rs
+    // `locate_turn_context` carries the reason).
+    if bi + 1
+        == messages[mi]
             .get(CONTENT_FIELD)
             .and_then(|c| c.as_array())
             .map_or(0, |a| a.len())
-            <= 1
     {
         return;
     }
@@ -2684,6 +2686,28 @@ mod tests {
                 let newest = find_turn_context(&b[b.len() - 1..]).map(|(_, bi)| (b.len() - 1, bi));
                 assert!(newest.unwrap() > last_breakpoint(b).unwrap());
             }
+
+            // A compaction's summary request carries no new block: the kept ones stay put and the
+            // instruction ends the request.
+            let mut compaction = history(2);
+            compaction.push(Message::user().with_text("Summarize this conversation."));
+            let summary = request_with(&compaction);
+            let sent = summary["messages"].as_array().unwrap();
+            let before = requests[2]["messages"].as_array().unwrap();
+            assert_eq!(
+                without_breakpoints(&sent[..before.len()]),
+                without_breakpoints(before)
+            );
+            assert_eq!(
+                sent.last().unwrap()["content"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|b| is_turn_context_block(b))
+                    .count(),
+                0,
+                "a stale block moved after the instruction"
+            );
         }
     }
 }

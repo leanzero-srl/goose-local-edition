@@ -241,7 +241,10 @@ fn relocate_turn_context_to_tail(messages: &mut [bedrock::Message]) {
     let Some((mi, bi)) = source else {
         return;
     };
-    if mi != last && messages[mi].content.len() <= 1 {
+    // A block that ends its message is a chat's kept block and stays where it was sent; only a
+    // swarm worker's, placed ahead of its message's own content, moves (goose-provider-types
+    // openai.rs `locate_turn_context` carries the reason).
+    if bi + 1 == messages[mi].content.len() {
         return;
     }
     let block = messages[mi].content.remove(bi);

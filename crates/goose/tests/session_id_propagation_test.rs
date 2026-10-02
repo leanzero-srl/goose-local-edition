@@ -296,10 +296,14 @@ async fn the_omlx_provider_names_the_session_on_the_requests_the_split_keeps_by(
     config.base_url = format!("{}/v1/chat/completions", server.uri());
     config.env_vars = None;
     let provider = goose::providers::openai_def::from_custom_config(config, None).unwrap();
-    let messages = vec![Message::user().with_text("find the handler").with_text(
-        "<turn-context>\n<current-time>2026-09-29 12:00:00</current-time>\n\
-         <working-directory>/w</working-directory>\n</turn-context>",
-    )];
+    // A swarm worker's request (its block ahead of the task text) — the shape whose block is
+    // transient; a chat keeps its blocks and names none.
+    let messages = vec![Message::user()
+        .with_text(
+            "<turn-context>\n<current-time>2026-09-29 12:00:00</current-time>\n\
+             <working-directory>/w</working-directory>\n</turn-context>",
+        )
+        .with_text("find the handler")];
     let model_config = ModelConfig::new("served");
     let turn = || async {
         let mut stream = provider
