@@ -788,8 +788,11 @@ def _bridge_ops(surface: Dict) -> List[str]:
 @check('k_widget_edit_bridge', 'K', pre=pre_edit_rendered, needs=('ui',))
 def _(c):
     edits = [s for s in c.surfaces() if s.get('kind') == 'widget-edit' and s.get('rendered')]
-    used_api = any('getWidgetEditApi' in _bridge_ops(s) for s in edits)
     picks = (c.ui().get('edit') or {}).get('picks') or []
+    # updateConfig/onProductSave exist only on the object getWidgetEditApi returns; an app may ask for it lazily on
+    # the first pick, after the surface's first-paint snapshot (measured: golden-forge-alt).
+    used_api = any('getWidgetEditApi' in _bridge_ops(s) for s in edits) or any(
+        p.get('updateConfigCalls') or p.get('onProductSave') for p in picks)
     carried = [p for p in picks if (p.get('updateConfigCalls') or p.get('onProductSave'))
                and p.get('board') is not None and str(p.get('board')) in
                {t for t in (_leaf_text(v) for v in fo.iter_leaves(p.get('savedConfig'))) if t}]
