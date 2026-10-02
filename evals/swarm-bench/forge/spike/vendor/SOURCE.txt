@@ -1,0 +1,1 @@
+source: https://forge-node-runtime.prod-east.frontend.public.atl-paas.net/assets/wrapper.2026-09-29T01%3A54%3A45.921Z--18362--39c2e991c98cce5947fb2eaed89c1ad5bcbb91f3.js (+loader.*), fetched 2026-10-02 unauthenticated; same CDN @forge/bundler NetworkWrapperProvider uses

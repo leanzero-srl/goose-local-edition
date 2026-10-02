@@ -1,0 +1,4 @@
+node_modules/
+spike/vendor/wrapper.js
+spike/vendor/loader.js
+spike/app/static/panel/build/
