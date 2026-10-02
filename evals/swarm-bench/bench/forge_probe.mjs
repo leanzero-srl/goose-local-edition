@@ -529,12 +529,6 @@ async function finishSurface(s, meta, meaningfulSelector) {
     invokesBeforePaint: paintOps !== null ? before.filter((b) => ['invoke', 'fetchProduct'].includes(opName(b))).length : null };
   delete surface.csp;
   obs.ui.surfaces.push(surface);
-  for (const b of ops.filter((x) => opName(x) === 'invoke')) {
-    obs.ui.invokeResponses = obs.ui.invokeResponses || [];
-    obs.ui.invokeResponses.push({ surface: meta.id, functionKey: b.payload?.functionKey ?? b.functionKey ?? null,
-      response: b.result ?? b.response ?? null, threw: Boolean(b.error), undefined: b.ok !== false && b.result === undefined && 'result' in b,
-      error: b.error ? String(b.error) : null });
-  }
   return surface;
 }
 
@@ -646,6 +640,11 @@ async function probeUi(pack) {
     }
   }
   obs.ui.calls = takeCalls(emu);
+  // Every resolver invoke of the whole UI phase, including those after first paint (explain, post, sort): an invoke
+  // that throws is the defect b_invoke_contract grades (m_llm_no_refusal_path's refusal throws on a click).
+  obs.ui.invokeResponses = (emu.bridgeLog || []).filter((b) => opName(b) === 'invoke').map((b) => ({
+    surface: b.surfaceId ?? null, functionKey: b.payload?.functionKey ?? b.functionKey ?? null,
+    response: b.result ?? b.response ?? null, threw: Boolean(b.error) || b.ok === false, error: b.error ? String(b.error) : null }));
   await contactSheet();
 }
 

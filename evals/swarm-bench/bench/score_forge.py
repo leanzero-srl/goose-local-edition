@@ -2232,6 +2232,8 @@ def _(c):
 # ══ Forge LLM, Realtime and rovo:mcp (DESIGN 2006de559 / 90ca7eb72) ══════════════════════════════════
 
 REPORT_TOOL = 'report_scope'
+# site/llm.cjs SCRIPT: the probe restarts the site's script before the explain clicks, so click i meets answer i.
+EXPLAIN_SCRIPT = ('clean', 'digits', 'refusal', 'malformed', 'error')
 
 
 def _llm_entries(c: Ctx, op: Optional[str] = None) -> List[Dict]:
@@ -2382,11 +2384,13 @@ def _(c):
                                                                   str(o.hidden_count(sid, o.viewer))]))) if n else set()
     subs: Dict[str, bool] = {}
     for i, st in enumerate(ex['steps']):
-        kind = st.get('step')
+        # Graded by POSITION: an LLM call the platform refused before the script answered (an unknown model id, a
+        # sampling rule) leaves the click without its scripted answer — the clean answer never reached the page.
+        kind = EXPLAIN_SCRIPT[i] if i < len(EXPLAIN_SCRIPT) else 'clean'
         entry = st.get('llm') or {}
         label = f'{i}:{kind}'
-        if st.get('llmCalls', 0) != 1:
-            subs[f'{label}:one_llm_call'] = False
+        if st.get('llmCalls', 0) != 1 or entry.get('step') != kind:
+            subs[f'{label}:one_llm_call_answered_{kind}'] = False
             continue
         subs[f'{label}:report_scope_forced'] = _explain_request_ok(entry)
         shown_ids = {str(x) for x in st.get('idsShown') or []}
@@ -2619,7 +2623,7 @@ CHANGE_LIST_ROWS = ('u_ledger_table', 'u_ledger_sort', 's_index_order', 'u_comme
 # Rows that compare the four §1 numbers (or a value printed from them, like the comment's creep and the points
 # cell) with the oracle: wrong numbers are one defect wherever they show.
 NUMBER_ROWS = ('u_widget_chart', 'a_action_result', 'u_ledger_table', 'u_ledger_sort', 'b_comment_adf_as_user',
-               't_out_of_order', 't_reestimate_followed')
+               't_out_of_order', 't_reestimate_followed', 'u_widget_live')
 ROOT_BLOCKS = {
     'l_bundles_load': tuple(n for n, t in TIER_OF.items() if t in ('T', 'R', 'S', 'B', 'U', 'A')),
     # measured on m_old_search / m_open_sprints_only / m_storage_api: a backfill that never lands leaves every

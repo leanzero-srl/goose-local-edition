@@ -820,6 +820,15 @@ class LlmRealtimeMcpTests(Golden):
             o['ui']['explain']['steps'][2].update(errorFlags=0, sortWorksAfter=False)
         self.assertLess(self.mutate(no_refusal_path)[0]['u_llm_explain']['score'], 1)
 
+    def test_explain_is_graded_by_position_when_the_platform_refuses_the_call(self):
+        def refused(o):   # an unknown model id: every call is a 400 before the script answers (m_llm_unknown_model)
+            for st in o['ui']['explain']['steps']:
+                st.update(llm={**st['llm'], 'step': None, 'status': 400, 'response': {'code': 'INVALID_REQUEST'}},
+                          explanation='', idsShown=[], errorFlags=1, sortWorksAfter=True)
+        rows, v = self.mutate(refused)
+        self.assertLessEqual(rows['u_llm_explain']['score'], 0.6)
+        self.assertEqual(v['admission']['ceiling'], 0.899)
+
     def test_an_llm_prompt_with_hidden_data_is_the_critical_leak(self):
         def prompt(o):
             hidden = fo.Oracle(self.pack, include_live_ui=True).leak_terms('u-viewer')['keys'][0]
