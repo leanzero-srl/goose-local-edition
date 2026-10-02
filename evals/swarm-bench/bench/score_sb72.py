@@ -21,6 +21,8 @@ from pathlib import Path
 import score_sb71 as sb71
 
 base = sb71.base
+_draw_seed = sb71._draw_seed
+_port_holder = sb71._port_holder
 HERE = Path(__file__).resolve().parent
 VERSION = 'sb-7.2'
 PROBE_NAME = 'product_probe_sb72.mjs'

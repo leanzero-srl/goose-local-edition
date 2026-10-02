@@ -753,6 +753,20 @@ def stream_witness(viz):
     }
 
 
+def scene_measured_absent(viz):
+    """The app drew nothing, created no GL context and never exposed its debug surface — measured
+    repeatedly, each evaluation succeeding. A probe that then runs into its cap waited on a scene that
+    does not exist; that is the candidate's absence, not a harness failure (receipt: 3.0.87's empty-
+    starter end-to-end, viz timedOut with 0 draws, contextType None, every debug observation absent)."""
+    observations = viz.get('debugSurfaceObservations', [])
+    return (viz.get('ready', {}).get('draws') == 0
+            and 'contextType' in viz.get('contextReal', {})
+            and viz['contextReal']['contextType'] is None
+            and len(observations) >= 2
+            and all(o.get('evaluationSucceeded') is True and o.get('present') is False
+                    for o in observations))
+
+
 def observed_absence_result(name, original, ctx):
     if name in STREAM_WITNESS_ROWS:
         witness = stream_witness(ctx.probes.get('viz', {}))
@@ -762,7 +776,9 @@ def observed_absence_result(name, original, ctx):
         return base.unavail(ctx.probes['flow']['paymentWitness']['unavailable'])
     if name == 'x_m2_pair_conservation':
         return pair_conservation_result(original, ctx)
-    if name == 'r_b7_partition' and hasattr(ctx, 'sb71_partition'):
+    # A partition phase that never ran (the candidate failed before it) has no evidence to judge; the
+    # inherited check grades that from b7_result like any other unreached-by-the-candidate row.
+    if name == 'r_b7_partition' and getattr(ctx, 'sb71_partition', None) is not None:
         evidence = ctx.sb71_partition
         if not evidence or (not evidence['status_down'] and not evidence['relay_opportunity']):
             return base.unavail('partition status lacked a successful observation window covering the declared 2s relay backoff')
@@ -801,12 +817,7 @@ def observed_absence_result(name, original, ctx):
         viz = ctx.probes.get('viz', {})
         observations = viz.get('debugSurfaceObservations', [])
         signal = viz.get('sb71StreamHandshake', {}).get('signal', {})
-        if (signal.get('state') == 'app_surface_absent' and viz.get('ready', {}).get('draws') == 0
-                and 'contextType' in viz.get('contextReal', {})
-                and viz['contextReal']['contextType'] is None
-                and len(observations) >= 2
-                and all(o.get('evaluationSucceeded') is True and o.get('present') is False
-                        for o in observations)):
+        if signal.get('state') == 'app_surface_absent' and scene_measured_absent(viz):
             return base._absent('required 3D interaction: no application scene or debug surface observed',
                                 root='t_vs7dbg_truth')
     if name == 't_vs7dbg_truth':
@@ -865,7 +876,7 @@ def evaluate(ctx):
     witness = stream_witness(viz)
     if witness and 'refuse' in witness:
         raise UnavailableEvidence(ctx, raw, witness['refuse'])
-    if viz.get('timedOut') is True and 'sb71' not in viz:
+    if viz.get('timedOut') is True and 'sb71' not in viz and not scene_measured_absent(viz):
         # The cap is the harness's own budget; the visual rows would otherwise be zeroed as
         # 'not reached' and hold the run at the visible-surface band.
         raise UnavailableEvidence(ctx, raw, 'viz probe hit its hard cap before the SB7.1 visual observations')
