@@ -1,8 +1,0 @@
-{
-  "loses": [
-    "k_llm_model_current"
-  ],
-  "critical": false,
-  "max_final": 0.899,
-  "why": "A hard-coded model name copied from the docs' example, which the site lists as deprecated, instead of a model list() reports active. LLM defect band 0.899."
-}

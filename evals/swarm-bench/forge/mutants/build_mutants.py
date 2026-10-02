@@ -304,17 +304,18 @@ resolver.define('saveWidgetBoard', async ({ payload }) => {
                'rendered unfiltered: changes to issues the viewer cannot browse reach the model and the screen '
                '(critical leak).',
     },
-    'm_llm_deprecated_model': {
+    'm_llm_unknown_model': {
         'edits': [(
             'src/explain.js',
             """  const { models } = await list();
   const active = (models ?? []).filter((m) => m.status === 'active').map((m) => m.model);
   return active.find((m) => /sonnet/i.test(m)) ?? active[0] ?? null;""",
-            """  return 'claude-opus-4-6';""",
+            """  return 'claude-2.1';""",
         )],
-        'expect': {'loses': ['k_llm_model_current'], 'critical': False, 'max_final': DEFECT_CAP},
-        'why': 'A hard-coded model name copied from the docs\' example, which the site lists as deprecated, instead of '
-               'a model list() reports active. LLM defect band 0.899.',
+        'expect': {'loses': ['u_llm_explain', 'k_llm_model_current'], 'critical': False, 'max_final': DEFECT_CAP},
+        'why': 'A hard-coded model id that list() does not return: every explain call errors (error flag, no '
+               'explanation). Replaces m_llm_deprecated_model — the public models page lists no deprecated model. '
+               'LLM defect band 0.899.',
     },
     'm_llm_no_refusal_path': {
         'edits': [("src/explain.js", "  if (!call) return { ok: false, error: 'The model declined to explain this sprint.' };\n", '')],
