@@ -780,6 +780,15 @@ def observed_absence_result(name, original, ctx):
     # inherited check grades that from b7_result like any other unreached-by-the-candidate row.
     if name == 'r_b7_partition' and getattr(ctx, 'sb71_partition', None) is not None:
         evidence = ctx.sb71_partition
+        samples = evidence['samples']
+        if (not evidence['successful_reads'] and len(samples) >= 2
+                and all(sample['status'] is None for sample in samples)):
+            # Every read got no HTTP answer at all: the candidate's ledgerd was unreachable for the whole
+            # partition. The reference answers on this path, so it is the candidate's outage, charged —
+            # not a missing observation (receipt: GPT-6 Luna SB7.2, 29/29 samples status None, refused).
+            return base.g(0.0, f'ledgerd answered none of {len(samples)} outbox-status reads during the partition',
+                          'the partition behaviour is unobservable because the candidate service was unreachable',
+                          parts={'status_observations': evidence})
         if not evidence or (not evidence['status_down'] and not evidence['relay_opportunity']):
             return base.unavail('partition status lacked a successful observation window covering the declared 2s relay backoff')
         observed = copy.copy(ctx)

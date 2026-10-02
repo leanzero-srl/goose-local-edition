@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.2",
-  "sourceCommit": "eef3a90d4e5edd99c5115e764ec4cfdb5cf5f3ec",
+  "sourceCommit": "362fe0f3545f7df03686cde2deec51cc1255a510",
   "sourceCommitScope": "Benchmark implementation snapshot for SB7.2 (scorer sb-7.2): SB7.1's Meridian product, SB7 contract, starter (sb7.1/starter), fixtures and vendor with a 3D-weighted scorer (score_sb72.py wraps score_sb71.py), the framed default camera and overview legibility (product_probe_sb72.mjs = product_probe_sb71.mjs under the SB7.2 profile), public excellence rungs and a 180 ms stream-apply rung (sb72-thresholds.json), and run_build.py --sb72 through isolated_tiers.py. Release metadata and the validation receipt are added by the manifest commit.",
   "validation": {
     "status": "passed",
@@ -73,7 +73,7 @@
     "bench/score_routes.py": "d7ac1843106de505fbd74a587e4b0051c149007f3b7012bcc53f052890f0ce6e",
     "bench/score_sb6.py": "bce118750bb7b06419b2e555528a62bd3f460736313ff8ba64f9238bd8296f9f",
     "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
-    "bench/score_sb71.py": "1ed155048f736ec9c92958233893aad60570312e4a7fe7e2293cc84eddcc47bb",
+    "bench/score_sb71.py": "063fd85bc88f513faee4739a69fdeec9a1b3fe4094b47e81a731975b09ab86a8",
     "bench/score_sb72.py": "720f28ca7dffd2764647229a5592c4e6925b110ccf6003fb044056c31d944ee7",
     "bench/score_sb8.py": "852efbfbe3227c26fd7b603896e869c8d89a4f4c810945979664226fcb39a987",
     "bench/sweep.py": "3078af8d02281d3af16df40b8633af23015cf24e1db1c2668222cb0c953db4c0",

@@ -11,6 +11,12 @@
 > billed cost; (4) website catalog/page prep on a branch (NOT flipped). THEN: merge → refuter → validation run (local catalog
 > stub via LEANZERO_BENCH_PUBLISH_URL) → version bump + `just release-notarized <ver>` → tag/push → `just publish-release` →
 > install → flip leanzero.net catalog sb-7.2 current → verify rendered.
+> **2026-10-02 16:4x — LUNA STOPPED by Mihai after 3 h / 309 calls / $9.00 ("why the fuck has it been running 3 hours for a
+> flash model"). Cause from its words: an endless contract AUDIT (exact numbers, one edit per call, 16 browser tests in 189
+> edits) + zero OpenAI cache hits (goose removed the turn-context tail each turn — fixed a79067e2f, append-only blocks).
+> Approved ("ok do it"): (1) trim the SB7.2 public contract to what the scorer measures (nothing scored removed); (2) a
+> published 150-call budget via goose --max-turns + an optional BENCH_MAX_USD wallet guard, both scored-not-refused.
+> Rule: never let a paid run go past ~2× its expected calls/cost without stopping it myself. Then rebuild 3.0.87.
 > THEN (Mihai 2026-10-02: "run the benchmark on those … latest! … use web search … use openrouter … publish some scores"):
 > SB7.2 on 3.0.87 via OpenRouter, cheapest-first, credit checked between runs ($20.18 at 2026-10-02): openai/gpt-6-luna
 > (also the validation run), xiaomi/mimo-v2.6-flash, xiaomi/mimo-v2.6-pro (pin host xiaomi), openai/gpt-6.1-sol,
