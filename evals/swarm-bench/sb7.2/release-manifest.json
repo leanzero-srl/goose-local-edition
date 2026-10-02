@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "scorerVersion": "sb-7.2",
-  "sourceCommit": "2b2d9a4043bb4e408b4b23d9e87ae955229bbb36",
+  "sourceCommit": "cf6bedef364b53afdcc0c7e508bcf84293dd8d84",
   "sourceCommitScope": "Benchmark implementation snapshot for SB7.2 (scorer sb-7.2): SB7.1's Meridian product, SB7 contract, starter (sb7.1/starter), fixtures and vendor with a 3D-weighted scorer (score_sb72.py wraps score_sb71.py), the framed default camera and overview legibility (product_probe_sb72.mjs = product_probe_sb71.mjs under the SB7.2 profile), public excellence rungs and a 180 ms stream-apply rung (sb72-thresholds.json), and run_build.py --sb72 through isolated_tiers.py. Release metadata and the validation receipt are added by the manifest commit.",
   "validation": {
     "status": "passed",
@@ -73,8 +73,8 @@
     "bench/score_routes.py": "d7ac1843106de505fbd74a587e4b0051c149007f3b7012bcc53f052890f0ce6e",
     "bench/score_sb6.py": "bce118750bb7b06419b2e555528a62bd3f460736313ff8ba64f9238bd8296f9f",
     "bench/score_sb7.py": "7e3940aa794fb86fa55c4e8d5ea81421b7600aa71055c1d178ed755addc59945",
-    "bench/score_sb71.py": "8b8d8eea56cfa78914628111ec2709b5243a6236f949e71b1c4b5015f8160f77",
-    "bench/score_sb72.py": "a99058e6c4eaff283703bbac68d3bff8f2ba034cf2489d61300a6a9ed602f8fc",
+    "bench/score_sb71.py": "1ed155048f736ec9c92958233893aad60570312e4a7fe7e2293cc84eddcc47bb",
+    "bench/score_sb72.py": "720f28ca7dffd2764647229a5592c4e6925b110ccf6003fb044056c31d944ee7",
     "bench/score_sb8.py": "852efbfbe3227c26fd7b603896e869c8d89a4f4c810945979664226fcb39a987",
     "bench/sweep.py": "3078af8d02281d3af16df40b8633af23015cf24e1db1c2668222cb0c953db4c0",
     "bench/test_bench_browser.py": "3a10fd54ed7415474d6547377f942e8668d9ec118f5443dd0dac51e46cbc88c8",
@@ -106,6 +106,7 @@
     "bench/test_score_routes.py": "c6e5e2e3e6ca632f1de3671b6e68d1b321d51343a43333f4e3b84c8b04770a92",
     "bench/test_score_sb71.py": "cdc50168c03354444136a62009fd37e17f650f1474748f5d4e6abf83b05581a0",
     "bench/test_score_sb72.py": "86f0eb0e74bab9f4c1aada378e7763a66da5dcf46838c25dd96d759360cbdb23",
+    "bench/test_scorer_interface.py": "5133013ce5ba610d4574f6117010a5e1edb0547ea782e6238abd4a8101c6fd73",
     "bench/test_seed_gate.py": "c68d835938de413f74268cb5d31ea5b6b500db89961426860a2181591ba52b9a",
     "bench/test_starter_sb71.py": "9d475c3b160774ba1f486da05542043fff41912df31d59158d06266bd48bc94b",
     "bench/validate_sb8_browser_controls.py": "2edd564070cbd1515bdb3590f73bed0dee4622eb63c38f24b28b715e8428ea48",
