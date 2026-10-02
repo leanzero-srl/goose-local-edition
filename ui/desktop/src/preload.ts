@@ -1,5 +1,6 @@
 import type { BenchmarkActivity } from './benchActivity';
 import type { BenchmarkRuntimeStatus } from './benchRuntimeTypes';
+import type { ForgeKitStatus } from './benchForgeKitTypes';
 import type { CloudBenchmarkTier } from './benchTierPayload';
 import Electron, { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { Recipe } from './recipe';
@@ -168,6 +169,10 @@ type ElectronAPI = {
   benchmarkRead: () => Promise<unknown | null>;
   benchmarkRuntimeStatus: () => Promise<BenchmarkRuntimeStatus>;
   benchmarkRuntimeInstall: () => Promise<void>;
+  /** The Forge kit's readiness (forge_kit.status, read without the network) and the Forge tier's run policy. */
+  benchmarkForgeKitStatus: () => Promise<ForgeKitStatus>;
+  /** forge_kit.py ensure: npm ci from the pinned lockfiles + Atlassian's runtime wrapper by sha256. */
+  benchmarkForgeKitPrepare: () => Promise<ForgeKitStatus>;
   benchmarkRunCloud: (
     provider: string,
     model: string,
@@ -220,6 +225,7 @@ type ElectronAPI = {
     benchmarks?: Array<{
       scorerVersion: string;
       title: string;
+      family?: string;
       current: boolean;
       frozen: boolean;
       baselines: Array<{
@@ -567,6 +573,8 @@ const electronAPI: ElectronAPI = {
   benchmarkRead: () => ipcRenderer.invoke('benchmark-read'),
   benchmarkRuntimeStatus: () => ipcRenderer.invoke('benchmark-runtime-status'),
   benchmarkRuntimeInstall: () => ipcRenderer.invoke('benchmark-runtime-install'),
+  benchmarkForgeKitStatus: () => ipcRenderer.invoke('benchmark-forge-kit-status'),
+  benchmarkForgeKitPrepare: () => ipcRenderer.invoke('benchmark-forge-kit-prepare'),
   benchmarkRunCloud: (provider: string, model: string, tier: CloudBenchmarkTier) =>
     ipcRenderer.invoke('benchmark-run', 1, undefined, { provider, model, tier }),
   // Legacy 3-arg calls still arrive as (nodes, tier, sampling) — a string second argument is the

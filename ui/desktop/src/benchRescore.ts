@@ -1,10 +1,14 @@
 import type { BenchSessionRow } from './benchSessions';
-import { ISOLATED_PAYMENTS_TIERS, TIER_SCORER } from './components/benchmark/baselines';
+import {
+  ISOLATED_PAYMENTS_TIERS,
+  TIER_SCORER,
+  eraDisplayName,
+} from './components/benchmark/baselines';
 
 /** Exactly the scorer identities a completed-build receipt can carry — never an rc or a sibling. */
 const RESCORABLE: readonly string[] = ISOLATED_PAYMENTS_TIERS.map((tier) => TIER_SCORER[tier]);
 const RESCORABLE_WORDS = ISOLATED_PAYMENTS_TIERS.map((tier) =>
-  tier.toUpperCase().replace('SB-', 'SB')
+  eraDisplayName(TIER_SCORER[tier])
 ).join(' and ');
 
 export interface BuildCompletionReceipt {
@@ -29,7 +33,7 @@ export function retryScoringEligibility(
   if (!RESCORABLE.includes(row.scorerVersion))
     return {
       ready: false,
-      reason: `Only ${RESCORABLE_WORDS} runs can be rescored; this run is ${row.scorerVersion}.`,
+      reason: `Only ${RESCORABLE_WORDS} runs can be rescored; this run is ${eraDisplayName(row.scorerVersion)}.`,
     };
   if (row.outcome !== 'did_not_finish')
     return { ready: false, reason: 'This session is not awaiting a scoring retry.' };

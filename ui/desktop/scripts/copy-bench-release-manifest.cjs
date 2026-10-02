@@ -14,6 +14,16 @@ const STABLE_RELEASE = {
   probe: 'bench/product_probe_sb72.mjs',
 };
 
+// The Forge family's bundled era (benchTierPayload.ts BENCH_FAMILY_DEFAULT.forge). Its manifest pins the
+// forge payload (forge/public, starter, kit sources without module trees, site, and the bench closure
+// run_build --forge imports — release_manifest.py's `forge` family), verified the same way as SB's.
+const FORGE_RELEASE = {
+  dir: 'forge',
+  scorerVersion: 'forge-1.0',
+  spec: 'forge/public/spec-build-forge.md',
+  probe: 'bench/forge_probe.mjs',
+};
+
 function copyBenchReleaseManifest(sourceRoot, destinationRoot, release = STABLE_RELEASE) {
   const relative = `${release.dir}/release-manifest.json`;
   const bytes = fs.readFileSync(path.join(sourceRoot, relative));
@@ -47,3 +57,4 @@ function copyBenchReleaseManifest(sourceRoot, destinationRoot, release = STABLE_
 
 module.exports = copyBenchReleaseManifest;
 module.exports.STABLE_RELEASE = STABLE_RELEASE;
+module.exports.FORGE_RELEASE = FORGE_RELEASE;

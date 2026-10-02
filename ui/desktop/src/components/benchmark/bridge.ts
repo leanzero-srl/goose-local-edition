@@ -18,6 +18,8 @@ export interface CatalogBaseline {
 export interface CatalogBenchmark {
   scorerVersion: string;
   title: string;
+  /** `sb` | `forge` (forge/INTEGRATION.md); absent ⇒ SB. Read through `catalogFamily`. */
+  family?: string;
   /** The one benchmark the app can run right now. */
   current: boolean;
   /** Frozen on the site — still viewable, no longer accepting submissions. */

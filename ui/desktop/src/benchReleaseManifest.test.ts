@@ -11,8 +11,9 @@ import {
   defaultBenchmarkTier,
 } from './benchTierPayload';
 const copy = createRequire(import.meta.url)('../scripts/copy-bench-release-manifest.cjs');
-const { STABLE_RELEASE } = copy as {
+const { STABLE_RELEASE, FORGE_RELEASE } = copy as {
   STABLE_RELEASE: { dir: string; scorerVersion: string; spec: string; probe: string };
+  FORGE_RELEASE: { dir: string; scorerVersion: string; spec: string; probe: string };
 };
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
@@ -45,6 +46,14 @@ it('verifies the release the app runs by default — the sb7.2 manifest, its spe
     scorerVersion: defaultBenchmarkScorer(),
     spec: BENCH_SPEC_FILE[defaultBenchmarkTier()],
     probe: `bench/${BENCH_RENDER_PROBE[defaultBenchmarkTier()]}`,
+  });
+});
+it('verifies the Forge family the app bundles — the forge manifest, its spec and its probe', () => {
+  expect(FORGE_RELEASE).toEqual({
+    dir: 'forge',
+    scorerVersion: defaultBenchmarkScorer('forge'),
+    spec: BENCH_SPEC_FILE[defaultBenchmarkTier('forge')],
+    probe: `bench/${BENCH_RENDER_PROBE[defaultBenchmarkTier('forge')]}`,
   });
 });
 it('refuses packaging without the actual release manifest', () => {

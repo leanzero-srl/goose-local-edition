@@ -62,6 +62,27 @@ export function projectBenchScore(v: {
       ...('core_tiers' in v ? { core_tiers: v.core_tiers } : {}),
       ...('scorer_files_sha256' in v ? { scorer_files_sha256: v.scorer_files_sha256 } : {}),
       ...(v.provenance && typeof v.provenance === 'object' ? { provenance: v.provenance } : {}),
+      // Forge verdicts (score_forge.py) carry their publishability and runtime identity beside the
+      // score; kept only for that family so an SB row stores exactly what it always stored.
+      ...(v.family === 'forge'
+        ? Object.fromEntries(
+            [
+              'family',
+              'status',
+              'publishable',
+              'unpublishable_reasons',
+              'runtime',
+              'hold',
+              'dev_seed',
+              'kit_lock_sha256',
+              'wrapper_sha256',
+              'reasoning_effort',
+              'shots',
+            ]
+              .filter((key) => key in v)
+              .map((key) => [key, v[key]])
+          )
+        : {}),
     },
   };
 }

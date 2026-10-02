@@ -1,0 +1,733 @@
+{
+ "status": "scored",
+ "score": 0.799,
+ "rawScore": 0.9768,
+ "inner": 0.9833,
+ "scorerVersion": "forge-1.0-rc",
+ "scorer_version": "forge-1.0-rc",
+ "family": "forge",
+ "fixture_seed": "0123456789abcdef",
+ "dev_seed": null,
+ "critical": {
+  "floor": 0.6,
+  "multiplier": 1.0,
+  "pre_severity_score": 0.9768,
+  "rows": [],
+  "unsuppressed": []
+ },
+ "admission": {
+  "ceiling": 0.799,
+  "reasons": [
+   "current platform, complete surfaces: k_widget_edit_bridge (maximum 0.799)"
+  ],
+  "failedChecksByBand": [
+   {
+    "ceiling": 0.799,
+    "band": "current platform, complete surfaces",
+    "checks": [
+     "k_widget_edit_bridge"
+    ]
+   }
+  ]
+ },
+ "excellence": {
+  "fraction": 0.9286,
+  "e_mean": 1.0,
+  "gate": false,
+  "conditions": [
+   {
+    "name": "t_event_rows",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "r_heal_dropped",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "u_widget_numbers",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "u_ledger_table",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "b_comment_adf_as_user",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_consumer_shape",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_current_apis",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_dashboard_widget",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_entity_declared",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_rovo_skill",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "k_widget_edit_bridge",
+    "ok": false,
+    "share": 0.0
+   },
+   {
+    "name": "v_console_clean",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "v_csp_clean",
+    "ok": true,
+    "share": 1.0
+   },
+   {
+    "name": "l_lint_warnings",
+    "ok": true,
+    "share": 1.0
+   }
+  ]
+ },
+ "excellence_gate": false,
+ "tiers": {
+  "L": {
+   "mean": 1.0,
+   "checks": 6,
+   "weight": 0.08
+  },
+  "K": {
+   "mean": 0.8333,
+   "checks": 6,
+   "weight": 0.1
+  },
+  "T": {
+   "mean": 1.0,
+   "checks": 8,
+   "weight": 0.16
+  },
+  "R": {
+   "mean": 1.0,
+   "checks": 7,
+   "weight": 0.14
+  },
+  "S": {
+   "mean": 1.0,
+   "checks": 4,
+   "weight": 0.08
+  },
+  "B": {
+   "mean": 1.0,
+   "checks": 5,
+   "weight": 0.12
+  },
+  "U": {
+   "mean": 1.0,
+   "checks": 9,
+   "weight": 0.16
+  },
+  "V": {
+   "mean": 1.0,
+   "checks": 5,
+   "weight": 0.08
+  },
+  "A": {
+   "mean": 1.0,
+   "checks": 4,
+   "weight": 0.08
+  },
+  "E": {
+   "mean": 0.9286,
+   "gate": false,
+   "gate_fraction": 0.9286,
+   "weight": 0.12
+  }
+ },
+ "checks": [
+  {
+   "check": "l_deployable",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "lint: 0 errors, every stage reached",
+   "consequence": ""
+  },
+  {
+   "check": "l_bundles_load",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "5/5 functions bundle, load and export their handler",
+   "consequence": "the app does not run",
+   "parts": {
+    "failing": {}
+   }
+  },
+  {
+   "check": "l_lint_warnings",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "0 distinct lint warning(s): []",
+   "consequence": "warnings cost points, never cap",
+   "parts": {
+    "warnings": []
+   }
+  },
+  {
+   "check": "l_real_packages",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "5/5 bundles resolve @forge/* at the kit pins only",
+   "consequence": "packages outside the kit",
+   "parts": {
+    "bad": []
+   }
+  },
+  {
+   "check": "l_manifest_rules",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "6/6 manifest rules met: ",
+   "consequence": "a rule lint misses",
+   "parts": {
+    "resource_has_index_html": true,
+    "resource_not_under_src": true,
+    "no_layout_basic": true,
+    "keys_unique": true,
+    "referenced_functions_exist_and_export": true,
+    "storage_app_with_kvs": true
+   }
+  },
+  {
+   "check": "l_scopes",
+   "tier": "L",
+   "score": 1.0,
+   "detail": "scopes: missing [], extra []",
+   "consequence": "scopes beyond the calls",
+   "parts": {
+    "declared": [
+     "read:board-scope.admin:jira-software",
+     "read:board-scope:jira-software",
+     "read:issue-details:jira",
+     "read:jira-work",
+     "read:jql:jira",
+     "read:project:jira",
+     "read:sprint:jira-software",
+     "storage:app",
+     "write:jira-work"
+    ],
+    "used": [
+     "read:board-scope.admin:jira-software",
+     "read:board-scope:jira-software",
+     "read:issue-details:jira",
+     "read:jira-work",
+     "read:jql:jira",
+     "read:project:jira",
+     "read:sprint:jira-software",
+     "storage:app",
+     "write:jira-work"
+    ],
+    "missing": [],
+    "extra": [],
+    "tolerated": [
+     "read:jira-work"
+    ]
+   }
+  },
+  {
+   "check": "k_dashboard_widget",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "dashboards:widget 2/2: {'custom_ui_resource': True, 'edit_resource': True}",
+   "consequence": "widget not wired",
+   "parts": {
+    "custom_ui_resource": true,
+    "edit_resource": true
+   }
+  },
+  {
+   "check": "k_widget_edit_bridge",
+   "tier": "K",
+   "score": 0.0,
+   "detail": "the edit surface never reached getWidgetEditApi",
+   "consequence": "config never reaches the dashboard"
+  },
+  {
+   "check": "k_rovo_skill",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "rovo:skill 7/7: ",
+   "consequence": "the skill is not valid or not wired",
+   "parts": {
+    "source_dir_has_skill_md": true,
+    "name_equals_dir": true,
+    "description_50_1024": true,
+    "allowed_tools_has_action": true,
+    "dependencies_tools_is_action": true,
+    "allowed_tools_cover_dependencies": true,
+    "agent_lists_skill": true
+   }
+  },
+  {
+   "check": "k_current_apis",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "current APIs 5/5: ",
+   "consequence": "stale platform knowledge",
+   "parts": {
+    "no_api_storage": true,
+    "no_forge_ui": true,
+    "no_old_search": true,
+    "route_everywhere": true,
+    "current_runtime": true
+   }
+  },
+  {
+   "check": "k_consumer_shape",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "consumer shape 3/3",
+   "consequence": "consumer wired wrongly",
+   "parts": {
+    "function_shape": true,
+    "serves_no_resolver": true,
+    "timeout_only_on_async": true
+   }
+  },
+  {
+   "check": "k_entity_declared",
+   "tier": "K",
+   "score": 1.0,
+   "detail": "entities with a sprint-partitioned, ranged index: ['scope-change', 'scope-member']",
+   "consequence": "the ledger has no sprint index"
+  },
+  {
+   "check": "t_trigger_handoff",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "44/44 deliveries handed off correctly",
+   "consequence": "trigger does product or queue work it should not"
+  },
+  {
+   "check": "t_event_rows",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "event rows: 23/23 exact (precision 1.00, recall 1.00)",
+   "consequence": "the event path loses or invents ledger rows",
+   "parts": {
+    "tp": 23,
+    "fp": 0,
+    "expected": 23
+   }
+  },
+  {
+   "check": "t_no_double_count",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "every change holds at most one ledger row in every phase (duplicated deliveries included)",
+   "consequence": ""
+  },
+  {
+   "check": "t_out_of_order",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "permuted deliveries: 6/6 rows exact, 2/2 sprints with oracle numbers",
+   "consequence": "membership follows delivery order instead of change time"
+  },
+  {
+   "check": "t_multi_sprint_parse",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "17/17 multi-id Sprint changes recorded exactly",
+   "consequence": "the Sprint `to` list parsed as one id"
+  },
+  {
+   "check": "t_reestimate_followed",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "3/3 re-estimated sprints show the oracle numbers",
+   "consequence": "estimate changes do not move the numbers"
+  },
+  {
+   "check": "t_retry_after_honoured",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "InvocationError retryAfter 30s >= 30s",
+   "consequence": "the consumer ignores Retry-After"
+  },
+  {
+   "check": "t_no_user_in_async",
+   "tier": "T",
+   "score": 1.0,
+   "detail": "background work is asApp only",
+   "consequence": ""
+  },
+  {
+   "check": "r_backfill_complete",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "57/57 historical changes recorded exactly after the first scheduled run",
+   "consequence": "data loss \u2014 changes silently missing",
+   "parts": {
+    "missing": []
+   }
+  },
+  {
+   "check": "r_removals_found",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "13/13 removed-to-backlog changes found",
+   "consequence": "issues that left every sprint are missed"
+  },
+  {
+   "check": "r_heal_dropped",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "3/3 dropped changes healed exactly once; 0 other row(s) added",
+   "consequence": "the stream is trusted; what it missed stays missing"
+  },
+  {
+   "check": "r_pagination",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "25/25 paginated reads walked to their end",
+   "consequence": "pages silently skipped"
+  },
+  {
+   "check": "r_rate_limit",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "waited 2.1 virtual s in-invocation",
+   "consequence": "the reconcile ignores Retry-After"
+  },
+  {
+   "check": "r_as_app",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "29/29 scheduled-run Jira calls asApp",
+   "consequence": "reconcile as a user"
+  },
+  {
+   "check": "r_completes_in_timeout",
+   "tier": "R",
+   "score": 1.0,
+   "detail": "3/3 scheduled invocations inside the module timeout",
+   "consequence": "the scheduled job is killed by its timeout"
+  },
+  {
+   "check": "s_storage_scope",
+   "tier": "S",
+   "score": 1.0,
+   "detail": "KVS used, no 403 from the KVS proxy",
+   "consequence": ""
+  },
+  {
+   "check": "s_entity_index_used",
+   "tier": "S",
+   "score": 1.0,
+   "detail": "24/24 ledger reads are entity queries on the sprint index",
+   "consequence": "the ledger is scanned instead of read by its index"
+  },
+  {
+   "check": "s_index_order",
+   "tier": "S",
+   "score": 1.0,
+   "detail": "3/3 tables list changes in change-time order",
+   "consequence": "index order lost"
+  },
+  {
+   "check": "s_limits",
+   "tier": "S",
+   "score": 1.0,
+   "detail": "no KVS limit errors",
+   "consequence": ""
+  },
+  {
+   "check": "b_invoke_contract",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "20/20 invokes returned a defined, structured result",
+   "consequence": "resolver contract broken"
+  },
+  {
+   "check": "b_no_permission_leak",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "no hidden key, summary or change id reached a person",
+   "consequence": ""
+  },
+  {
+   "check": "b_hidden_count",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "9/9 hidden counts equal the oracle",
+   "consequence": "hidden counts wrong"
+  },
+  {
+   "check": "b_comment_adf_as_user",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "6/6 comments are ADF as the viewer naming key, sprint and creep",
+   "consequence": "comment body or author wrong"
+  },
+  {
+   "check": "b_comment_exactly_once",
+   "tier": "B",
+   "score": 1.0,
+   "detail": "6 click/double-click posts each ended with exactly one comment and one success flag (the 429-once fault included)",
+   "consequence": ""
+  },
+  {
+   "check": "u_widget_loads",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "8/8 configured widget views render a sprint with its numbers",
+   "consequence": "dead primary flow \u2014 no data on the dashboard"
+  },
+  {
+   "check": "u_widget_numbers",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "widget numbers: 8.00/8 views exact (sprints by startDate, four \u00a71 numbers each)",
+   "consequence": "wrong numbers on the dashboard"
+  },
+  {
+   "check": "u_widget_chart",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "8/8 charts on one linear scale within 1px",
+   "consequence": "the chart misstates the numbers"
+  },
+  {
+   "check": "u_widget_edit_config",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "edit/config 6/6: ",
+   "consequence": "the board choice does not reach the view",
+   "parts": {
+    "no_config_needs_config_only": true,
+    "pick0_view_shows_board": true,
+    "pick0_reopen_pressed": true,
+    "pick1_view_shows_board": true,
+    "pick1_reopen_pressed": true,
+    "second_instance_own_board": true
+   }
+  },
+  {
+   "check": "u_ledger_table",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "ledger tables: 3.00/3 exact (rows, cells, default order)",
+   "consequence": "the sprint ledger is wrong"
+  },
+  {
+   "check": "u_ledger_sort",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "9/9 sort toggles ordered with aria-sort",
+   "consequence": "sorting broken"
+  },
+  {
+   "check": "u_issue_router",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "3/3 issue keys open /browse/<KEY> through the Forge router",
+   "consequence": "links escape the router"
+  },
+  {
+   "check": "u_comment_flow",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "8/8 comment-flow steps right (select, success flag, forbidden error flag, modal works)",
+   "consequence": "comment flow broken"
+  },
+  {
+   "check": "u_modal_close",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "3/3 close clicks reached bridge close",
+   "consequence": "the modal cannot be closed"
+  },
+  {
+   "check": "u_not_started",
+   "tier": "U",
+   "score": 1.0,
+   "detail": "future sprint shows not-started only",
+   "consequence": "not-started state wrong"
+  },
+  {
+   "check": "v_theme_tokens",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "21/21 surfaces themed with --ds-text* at >= 4.5:1",
+   "consequence": "unreadable in one mode"
+  },
+  {
+   "check": "v_dark_mode",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "21/21 surfaces paint a --ds-surface* background in their mode",
+   "consequence": "dark mode broken"
+  },
+  {
+   "check": "v_csp_clean",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "0 CSP violation(s), 0 failed asset request(s)",
+   "consequence": "blocked by the Forge CSP"
+  },
+  {
+   "check": "v_console_clean",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "0 console/page error(s) on nominal scenarios: []",
+   "consequence": "console errors"
+  },
+  {
+   "check": "v_widget_sizes",
+   "tier": "V",
+   "score": 1.0,
+   "detail": "8/8 widget sizes without horizontal overflow, every sprint visible",
+   "consequence": "clips at some width"
+  },
+  {
+   "check": "a_action_result",
+   "tier": "A",
+   "score": 1.0,
+   "detail": "3/3 active sprints answered exactly",
+   "consequence": "the Rovo action answers wrongly"
+  },
+  {
+   "check": "a_action_errors",
+   "tier": "A",
+   "score": 1.0,
+   "detail": "2/2 bad sprintId inputs return {error} without throwing",
+   "consequence": "the action throws"
+  },
+  {
+   "check": "a_action_permissions",
+   "tier": "A",
+   "score": 1.0,
+   "detail": "6/6 per-person answers list exactly what that person may browse",
+   "consequence": "per-person visibility wrong"
+  },
+  {
+   "check": "a_skill_instructions",
+   "tier": "A",
+   "score": 1.0,
+   "detail": "SKILL.md body 3/3",
+   "consequence": "the skill does not tell the agent how to call the action",
+   "parts": {
+    "body_le_500_lines": true,
+    "names_action": true,
+    "names_sprintId": true
+   }
+  },
+  {
+   "check": "e_reconcile_economy",
+   "tier": "E",
+   "score": 1.0,
+   "detail": "backfill 11 Jira calls / optimum 9 = 1.22x",
+   "consequence": "",
+   "parts": {
+    "calls": 11,
+    "optimum": 9,
+    "ratio": 1.222
+   }
+  },
+  {
+   "check": "e_event_economy",
+   "tier": "E",
+   "score": 1.0,
+   "detail": "40 Jira calls for 30 relevant changes = 1.33 per change (optimum 1)",
+   "consequence": "",
+   "parts": {
+    "calls": 40,
+    "changes": 30
+   }
+  },
+  {
+   "check": "e_ui_round_trips",
+   "tier": "E",
+   "score": 1.0,
+   "detail": "round trips before first paint: {'widget-view': 0, 'widget-edit': 1, 'sprint-action': 1}",
+   "consequence": "",
+   "parts": {
+    "widget-view": 1.0,
+    "widget-edit": 1.0,
+    "sprint-action": 1.0
+   }
+  },
+  {
+   "check": "e_idempotent_rerun",
+   "tier": "E",
+   "score": 1.0,
+   "detail": "0 entity write(s) on a no-change run over 83 rows",
+   "consequence": ""
+  }
+ ],
+ "probe_unavailable": [],
+ "vacuous": {},
+ "harness_missing": [],
+ "hold": null,
+ "publishable": true,
+ "unpublishable_reasons": [],
+ "runtime": "wrapper",
+ "calibration": "UNCALIBRATED \u2014 rc defaults",
+ "root_causes": {},
+ "recall_trace": {
+  "status": "unavailable",
+  "weight": 0,
+  "reason": "the isolated goose session database is not captured beside the tree (DESIGN \u00a78.8)"
+ },
+ "kit_lock_sha256": "0a0b8c760fb127e629cb57d4db2c2437308ad963ceb787a5bf749c28574aea58",
+ "wrapper_sha256": "4f8170e0fb4adb6deb28e3daf2035d42438984a71a76e1a7d5f93ea419e6c45a",
+ "scorer_seconds": 48.056,
+ "shots": [
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-noconfig.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-edit-66-light.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-66-light-380x480.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-66-light-1180x480.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-66-dark-380x480.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-66-dark-1180x480.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-edit-66-dark.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-edit-170-light.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-170-light-380x480.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-170-light-1180x480.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-170-dark-380x480.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-170-dark-1180x480.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-edit-170-dark.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/widget-view-second-instance.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/sprint-action-644-light-800x600.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/sprint-action-644-dark-800x600.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/sprint-action-663-light-800x600.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/sprint-action-663-dark-800x600.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/sprint-action-745-light-800x600.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/sprint-action-745-dark-800x600.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/not-started-799.png",
+  "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/2b5af850-0385-431e-8595-058b9eb5c24b/scratchpad/freeze2/golden-forge-alt-0123456789abcdef/forge-shots/contact-sheet.png"
+ ],
+ "scorer_files_sha256": {
+  "score_forge.py": "30ca4b59989cd15fb571718f44247cfbe18c8d6c1c5c8b6a159598b2cccd19fa",
+  "forge_oracle.py": "5014e35c0764acdb11eaf2a9c62126b2dfb57b0e2e2848f228b344886f79c3eb",
+  "forge_probe.mjs": "d31fe1cd0c3bacf2551ebf06c75b4281d748c5ceaa22714dc3521c830b1ebb74",
+  "forge-thresholds.json": "8b23187c22ab15fa21f14d5db85370ba20ce69c79241bedb191abc96da159e05"
+ },
+ "spec_sha256": "33755c9a1856290488205ff685511d8dbca219aa21f6dfc62360aca2380af2e7"
+}

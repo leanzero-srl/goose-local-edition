@@ -39,9 +39,13 @@ it('offers the same retry to an SB7.2 session with its own SB7.2 receipt, never 
   // A receipt from the other payments tier proves nothing about this session.
   expect(retryScoringEligibility(sb72, receipt).ready).toBe(false);
   expect(retryScoringEligibility(row, { ...receipt, scorerVersion: 'sb-7.2' }).ready).toBe(false);
-  for (const scorerVersion of ['sb-7.2-rc', 'sb-7.0-rc', 'sb-8.0-rc'])
+  for (const [scorerVersion, shown] of [
+    ['sb-7.2-rc', 'Gauntlet 7.2 rc'],
+    ['sb-7.0-rc', 'Gauntlet 7.0 rc'],
+    ['sb-8.0-rc', 'Gauntlet 8.0 rc'],
+  ])
     expect(retryScoringEligibility({ ...row, scorerVersion }, receipt).reason).toBe(
-      `Only SB7.1 and SB7.2 runs can be rescored; this run is ${scorerVersion}.`
+      `Only Gauntlet 7.1 and Gauntlet 7.2 runs can be rescored; this run is ${shown}.`
     );
 });
 it('keeps legacy missing completion evidence explicit rather than using usage or transcript prose', () => {
