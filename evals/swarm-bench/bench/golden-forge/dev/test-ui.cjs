@@ -107,6 +107,13 @@ function pageBridge() {
           },
         });
       if (op === 'on') return Promise.resolve({ unsubscribe: () => {} });
+      if (op === 'subscribeRealtimeChannel') {
+        window.__rt = window.__rt ?? [];
+        const entry = { channel: payload.channelName, onEvent: payload.onEvent, live: true };
+        window.__rt.push(entry);
+        window.__forgeEmulatorCall('rtSubscribed', { channel: payload.channelName, isGlobal: Boolean(payload.isGlobal), token: payload.options?.token ?? null });
+        return Promise.resolve({ unsubscribe: async () => { entry.live = false; } });
+      }
       if (op === 'enableTheming') {
         const link = document.createElement('link');
         link.rel = 'stylesheet';
@@ -132,10 +139,14 @@ async function main() {
   const browser = await chromium.launch();
   const servers = {};
   for (const r of platform.manifest.resources) servers[r.key] = await serve(path.join(APP, r.path), `resource-${r.key}`);
+  const livePages = new Set();
+  platform.realtime.subscribers.push((ev) => {
+    for (const pg of livePages) pg.evaluate((e) => (window.__rt ?? []).filter((x) => x.live && x.channel === e.channel).forEach((x) => x.onEvent(e.payload)), ev).catch(() => {});
+  });
 
   async function open({ resource, moduleType, moduleKey, extension, aaid = alice.accountId, theme = 'light', width = 800, height = 700, shot }) {
     const page = await browser.newPage({ viewport: { width, height } });
-    const log = { ops: [], flags: [], navigations: [], closes: 0, updates: [], saved: [], console: [], pending: 0, lastSettled: Date.now() };
+    const log = { ops: [], flags: [], navigations: [], closes: 0, updates: [], saved: [], console: [], pending: 0, lastSettled: Date.now(), subscriptions: [], invokes: [] };
     page.on('console', (m) => (m.type() === 'error' || m.type() === 'warning') && log.console.push(`${m.type()}: ${m.text()}`));
     page.on('pageerror', (e) => log.console.push(`pageerror: ${e}`));
     const context = { accountId: aaid, cloudId: 'golden', siteUrl: 'https://golden.atlassian.net', localId: `${moduleKey}-1`, moduleKey, environmentType: 'DEVELOPMENT', locale: 'en-US', timezone: 'Europe/Bucharest', theme: { colorMode: theme }, extension };
@@ -145,6 +156,7 @@ async function main() {
         case 'getContext':
           return context;
         case 'invoke':
+          log.invokes.push({ key: payload.functionKey, at: Date.now() });
           log.pending += 1;
           try {
             return await platform.resolver(moduleType, moduleKey, payload.functionKey, payload.payload, { aaid, extension });
@@ -166,6 +178,9 @@ async function main() {
           return undefined;
         case 'hostSaved':
           log.saved.push(payload.result);
+          return undefined;
+        case 'rtSubscribed':
+          log.subscriptions.push(payload);
           return undefined;
         case 'emitReadyEvent':
         case 'initFeatureFlags':
@@ -297,6 +312,35 @@ async function main() {
     await w.page.close();
   }
 
+  // ---------- live widget: ledger rows written in the backend reach an open widget without a reload ----------
+  {
+    const w = await open({ resource: 'widget', moduleType: 'dashboards:widget', moduleKey: 'scope-widget', extension: widgetExt({ boardId: '1' }), theme: 'light', width: 380, shot: 'widget-live' });
+    livePages.add(w.page);
+    await w.page.locator('[data-testid="chart"]').waitFor();
+    await w.page.waitForTimeout(300);
+    const sub0 = w.log.subscriptions[0];
+    ok(w.log.subscriptions.length === 1 && sub0.isGlobal && sub0.token, `widget subscribes once to a global realtime channel with a token (${JSON.stringify(sub0 && { ...sub0, token: Boolean(sub0.token) })})`);
+    eq(w.log.invokes.map((i) => i.key), ['widget'], 'the widget renders and subscribes in one resolver round trip');
+    const before = await w.page.textContent('[data-sprint-id="11"] [data-metric="added"]');
+    const navs = await w.page.evaluate(() => performance.getEntriesByType('navigation').length);
+    const pick = site.issues.find((i) => i.project === 'OPS' && !i.sprints.some((x) => site.sprintById.get(x).state === 'active') && (i.fields[i.estField] ?? 0) > 0);
+    const ev = site.update(pick.key, { sprints: [...pick.sprints, 11] });
+    await platform.invoke('on-issue-updated', ev, { moduleKey: 'scope-issue-updated' });
+    await platform.drain();
+    const t = oracle(site)['11'];
+    await w.page.waitForFunction((want) => document.querySelector('[data-sprint-id="11"] [data-metric="added"]')?.textContent === want, fmtPoints(t.added), { timeout: 10000 }).catch(() => {});
+    const after = await w.page.textContent('[data-sprint-id="11"] [data-metric="added"]');
+    ok(after === fmtPoints(t.added) && after !== before, `live: added moved ${before} -> ${after} without a reload`);
+    ok((await w.page.evaluate(() => performance.getEntriesByType('navigation').length)) === navs && (await w.page.evaluate(() => document.readyState)) === 'complete', 'live: no page reload happened');
+    const n = w.log.invokes.length;
+    await w.page.waitForTimeout(4000);
+    ok(w.log.invokes.length === n, `live: no polling (${w.log.invokes.length - n} resolver calls in 4 s idle)`);
+    await w.shot();
+    clean(w.log, 'live widget');
+    livePages.delete(w.page);
+    await w.page.close();
+  }
+
   // ---------- sprint action ----------
   const sprintExt = (id, state = 'active') => ({ type: 'jira:sprintAction', sprint: { id: Number(id), state }, board: { id: 1, type: 'scrum' }, project: { id: '10000', key: 'OPS', type: 'software' }, location: 'https://golden.atlassian.net/jira/software/projects/OPS/boards/1/backlog' });
   const rowIds = (page) => page.$$eval('table[data-testid="ledger"] tbody tr[data-change-id]', (els) => els.map((e) => e.getAttribute('data-change-id')));
@@ -380,6 +424,21 @@ async function main() {
       await s.page.waitForTimeout(150);
       await waitIdle();
       ok(comments() === c0 + 1, 'post: the modal keeps working after a failure');
+      // Forge LLM explanation
+      const visIds = new Set(vis.map((c) => c.changeId));
+      await s.page.click('[data-testid="explain"]');
+      await s.page.locator('[data-testid="explanation"]').waitFor({ timeout: 10000 });
+      const exIds = await s.page.$$eval('[data-testid="explanation"] [data-change-id]', (els) => els.map((e) => e.getAttribute('data-change-id')));
+      const exText = await s.page.textContent('[data-testid="explanation"] p');
+      ok(exIds.length > 0 && exIds.every((id) => visIds.has(id)) && !/\d/.test(exText), `explain: summary without digits + ${exIds.length} visible change elements`);
+      platform.llm.script.push(() => ({ choices: [{ finish_reason: 'end_turn', message: { role: 'assistant', content: [{ type: 'text', text: 'No.' }] } }] }));
+      const ef = s.log.flags.filter((f) => f.type === 'error').length;
+      await s.page.click('[data-testid="explain"]');
+      await waitIdle();
+      ok(s.log.flags.filter((f) => f.type === 'error').length === ef + 1, 'explain: a refusal shows an error flag');
+      await s.page.click(`tr[data-change-id="${vis[0].changeId}"] td[data-col="by"]`);
+      ok((await s.page.getAttribute(`tr[data-change-id="${vis[0].changeId}"]`, 'aria-selected')) === 'true', 'explain: the modal keeps working after the error');
+      await s.shot('sprint-alice-explained');
       await s.page.click('[data-testid="close"]');
       ok(s.log.closes === 1, 'close closes the modal');
     }

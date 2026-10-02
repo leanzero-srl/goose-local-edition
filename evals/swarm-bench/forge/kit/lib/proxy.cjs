@@ -156,7 +156,9 @@ function createProxy({ siteUrl, manifest, kvs, queue, invocations, clock, log = 
           return send(502, { message: 'The benchmark harness has no internet: declared egress cannot be reached.' });
         }
         missing(`proxy route ${route}`, inv);
-        record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'unknown', provider: 'app', method: req.method, path: route, status: 501 });
+        // The whole request is kept so an unmodelled platform capability can be read off the log exactly.
+        record({ invocationId: inv.id, moduleType: inv.moduleType, moduleKey: inv.moduleKey, service: 'unknown', provider: 'app', method: req.method, path: route,
+          headers: Object.fromEntries(Object.entries(req.headers).filter(([k]) => k !== 'forge-proxy-authorization')), body: parseMaybe(raw), status: 501 });
         return send(501, { code: 'EMULATOR_NOT_MODELLED', message: `proxy route ${route}` });
       } catch (e) {
         send(500, { code: 'PROXY_CRASH', message: String(e.message) });

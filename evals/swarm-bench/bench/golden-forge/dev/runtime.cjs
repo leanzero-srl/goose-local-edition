@@ -93,8 +93,48 @@ function createKvs(manifest) {
   return { plain, entities, ops, writes, handle };
 }
 
+// Default scripted model: explains with words only and names the first three changes it was sent.
+function defaultLlmReply(req) {
+  const input = JSON.parse(req.messages.find((m) => m.role === 'user').content[0].text);
+  return {
+    choices: [
+      {
+        index: 0,
+        finish_reason: 'tool_use',
+        message: {
+          role: 'assistant',
+          content: [],
+          tool_calls: [
+            {
+              id: 'toolu_1',
+              type: 'function',
+              index: 0,
+              function: { name: 'report_scope', arguments: { summary: 'Most of the growth came from work pulled in mid-sprint.', changeIds: input.changes.slice(0, 3).map((c) => c.changeId) } },
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
 function createPlatform({ site, manifest = loadManifest() }) {
   const kvs = createKvs(manifest);
+  // Forge LLM (scripted, like the dev site's): models the list() answer, then each chat() takes the next
+  // scripted reply (a function of the request) or a default that calls report_scope.
+  const llm = {
+    models: [
+      { model: 'claude-opus-4-6', status: 'deprecated' },
+      { model: 'claude-sonnet-4-7', status: 'active' },
+      { model: 'claude-haiku-4-7', status: 'active' },
+    ],
+    script: [],
+    calls: [],
+  };
+  // Forge Realtime: signed tokens are unsigned JWT-shaped strings @forge/realtime can decode; every
+  // publish is recorded with the module type that made it. publish() (context channel) is refused from
+  // async invocations, as the realtime docs state.
+  const realtime = { published: [], signed: [], subscribers: [] };
   const queue = [];
   const queuePushes = [];
   const scopes = manifest.permissions?.scopes ?? [];
@@ -107,6 +147,32 @@ function createPlatform({ site, manifest = loadManifest() }) {
     if (target.type === 'kvs') {
       if (!scopes.includes('storage:app')) return toResponse({ status: 403, json: { code: 'SCOPE_MISSING', message: 'storage:app is not declared' } });
       return toResponse(kvs.handle(p, body));
+    }
+    if (target.type === 'llm') {
+      if (!manifest.modules.llm?.length) return toResponse({ status: 403, json: { code: 'LLM_MODULE_MISSING', message: 'no llm module in the manifest' } });
+      if ((init.method ?? 'GET').toUpperCase() === 'GET') return toResponse({ status: 200, json: { models: llm.models } });
+      const model = decodeURIComponent(p.split('/').pop());
+      llm.calls.push({ model, body, functionKey: store?.runtime?.appContext?.functionKey });
+      const next = llm.script.shift() ?? ((req) => defaultLlmReply(req));
+      const reply = next(body, model);
+      return toResponse(reply.status ? reply : { status: 200, json: reply });
+    }
+    if (target.type === 'realtime') {
+      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      if (/signRealtimeToken/.test(body.query)) {
+        const { channelName, claims, permissions } = body.variables;
+        const exp = Math.floor(Date.now() / 1000) + 3600;
+        const jwt = `${b64({ alg: 'none' })}.${b64({ channel: { name: channelName }, claims, permissions, exp })}.sig`;
+        realtime.signed.push({ channelName, claims, permissions, moduleType: store?.moduleType });
+        return toResponse({ status: 200, json: { data: { ecosystem: { signRealtimeToken: { success: true, forgeRealtimeToken: { jwt, expiresAt: exp } } } } } });
+      }
+      const v = body.variables;
+      const asyncCtx = ['consumer', 'scheduledTrigger', 'trigger'].includes(store?.moduleType);
+      if (!v.isGlobal && asyncCtx) return toResponse({ status: 200, json: { errors: [{ message: 'publish() needs a product context; use publishGlobal() in async functions' }] } });
+      const ev = { channel: v.name, payload: JSON.parse(v.payload), isGlobal: v.isGlobal, token: v.token, moduleType: store?.moduleType, at: Date.now() };
+      realtime.published.push(ev);
+      for (const s of realtime.subscribers) s(ev);
+      return toResponse({ status: 200, json: { data: { ecosystem: { publishRealtimeChannel: { eventId: String(realtime.published.length), eventTimestamp: new Date().toISOString() } } } } });
     }
     if (target.type === 'fpp' && target.remote === 'stargate' && p.startsWith('/webhook/queue/publish/')) {
       for (const e of body.payload) queue.push({ queueName: body.queueName, jobId: body.jobId, eventId: crypto.randomUUID(), body: e.body });
@@ -134,6 +200,7 @@ function createPlatform({ site, manifest = loadManifest() }) {
     if (typeof mods[file][exportName] !== 'function') throw new Error(`${fn.handler} is not exported`);
     return mods[file][exportName];
   }
+  const moduleTypeOf = (moduleKey) => Object.entries(manifest.modules).find(([, es]) => es.some((e) => e.key === moduleKey))?.[0];
   function invoke(functionKey, event, { aaid, moduleKey } = {}, context = {}) {
     const runtime = {
       appContext: { appId: 'golden', environmentId: 'dev', environmentType: 'DEVELOPMENT', appVersion: '1.0.0', invocationId: crypto.randomUUID(), installationId: 'inst', moduleKey, functionKey },
@@ -144,7 +211,7 @@ function createPlatform({ site, manifest = loadManifest() }) {
       metrics: { counter: () => ({ incr() {} }), timing: () => ({ measure: () => ({ stop() {} }) }) },
       aaid,
     };
-    return als.run({ runtime, aaid }, () => handlerFor(functionKey)(event, context));
+    return als.run({ runtime, aaid, moduleType: moduleTypeOf(moduleKey) }, () => handlerFor(functionKey)(event, context));
   }
   const fnOf = (type, key) => {
     const m = manifest.modules[type].find((x) => x.key === key);
@@ -184,7 +251,7 @@ function createPlatform({ site, manifest = loadManifest() }) {
     return deliveries;
   }
 
-  return { manifest, kvs, queue, queuePushes, build, invoke, resolver, drain, fnOf };
+  return { manifest, kvs, queue, queuePushes, build, invoke, resolver, drain, fnOf, llm, realtime };
 }
 
 module.exports = { createPlatform, loadManifest, bundle, APP };

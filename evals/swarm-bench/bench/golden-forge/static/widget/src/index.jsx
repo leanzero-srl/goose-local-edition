@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { events, view } from '@forge/bridge';
+import { events, realtime, view } from '@forge/bridge';
 import { boot, call } from '../../shared/bridge';
 import '../../shared/base.css';
 import './widget.css';
@@ -74,26 +74,89 @@ function Sprint({ sprint }) {
   );
 }
 
+function safeJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 function Widget({ initialContext }) {
   const [context, setContext] = useState(initialContext);
   const [state, setState] = useState({ phase: 'loading' });
   const boardId = context?.extension?.config?.boardId;
 
+  const [live, setLive] = useState(false);
+  const [liveError, setLiveError] = useState(null);
+  const subscription = useRef(null);
+  const shownSprints = useRef(new Set());
+  const reload = useRef(null);
+
   const load = useCallback(async () => {
     if (boardId === undefined || boardId === null || boardId === '') return setState({ phase: 'needs-config' });
     setState((s) => (s.phase === 'ready' ? s : { phase: 'loading' }));
     try {
-      const data = await call('widget', { boardId: String(boardId) });
+      // The first load also brings a realtime subscribe token, so the widget renders in one round trip.
+      const data = await call('widget', { boardId: String(boardId), withRealtime: !subscription.current });
       if (data.needsConfig) return setState({ phase: 'needs-config' });
+      shownSprints.current = new Set(data.sprints.map((s) => s.id));
       setState({ phase: 'ready', data });
+      if (data.realtime && !subscription.current) subscribe(data.realtime);
     } catch (e) {
       setState({ phase: 'error', message: e?.message ?? String(e) });
     }
   }, [boardId]);
+  reload.current = load;
+
+  // Forge Realtime: the backend announces the sprint ids whose ledger changed; the widget re-reads its
+  // numbers when one of its sprints is named. No polling. The token is renewed shortly before it expires.
+  async function subscribe(rt) {
+    subscription.current = { pending: true };
+    try {
+      const sub = await realtime.subscribeGlobal(
+        rt.channel,
+        (payload) => {
+          const body = typeof payload === 'string' ? safeJson(payload) : payload;
+          const ids = Array.isArray(body?.sprintIds) ? body.sprintIds.map(String) : [];
+          if (ids.some((id) => shownSprints.current.has(id))) reload.current();
+        },
+        { token: rt.token },
+      );
+      subscription.current = sub;
+      setLive(true);
+      const renewIn = Math.max(10_000, Number(rt.expiresAt) * 1000 - Date.now() - 60_000);
+      if (Number.isFinite(renewIn)) setTimeout(renew, renewIn);
+    } catch (e) {
+      subscription.current = null;
+      setLive(false);
+      setLiveError(e?.message ?? String(e));
+    }
+  }
+
+  async function renew() {
+    const previous = subscription.current;
+    try {
+      const rt = await call('realtimeToken');
+      subscription.current = null;
+      await previous?.unsubscribe?.();
+      await subscribe(rt);
+    } catch (e) {
+      setLive(false);
+      setLiveError(e?.message ?? String(e));
+    }
+  }
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(
+    () => () => {
+      subscription.current?.unsubscribe?.();
+    },
+    [],
+  );
 
   // The dashboard tells an open widget when its saved config changes; re-read the context then.
   useEffect(() => {
@@ -135,6 +198,8 @@ function Widget({ initialContext }) {
             ))}
           </div>
           <Chart sprints={state.data.sprints} />
+          {live && <p className="live subtle">Live — updates as the ledger changes</p>}
+          {liveError && <p className="live subtle">Live updates are off ({liveError}); reopen the dashboard to refresh.</p>}
         </>
       )}
     </div>

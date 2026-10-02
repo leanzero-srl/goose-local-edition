@@ -81,6 +81,25 @@ function Ledger({ data, context }) {
 
   const ariaSort = (col) => (sort.col === col ? sort.dir : undefined);
 
+  const [explanation, setExplanation] = useState(null);
+  const [explaining, setExplaining] = useState(false);
+  const explainInFlight = useRef(false);
+  const explain = async () => {
+    if (explainInFlight.current) return;
+    explainInFlight.current = true;
+    setExplaining(true);
+    try {
+      const res = await call('explain');
+      if (res?.ok) setExplanation(res);
+      else flag('error', 'No explanation', res?.error ?? 'Forge LLM did not answer.');
+    } catch (e) {
+      flag('error', 'No explanation', e?.message ?? String(e));
+    } finally {
+      explainInFlight.current = false;
+      setExplaining(false);
+    }
+  };
+
   return (
     <>
       <div className="metrics-host">
@@ -167,10 +186,28 @@ function Ledger({ data, context }) {
           </tbody>
         </table>
       </div>
+      {explanation && (
+        <section data-testid="explanation" className="explanation" aria-live="polite">
+          <h3>Why the scope changed</h3>
+          <p>{explanation.summary}</p>
+          {explanation.changes.length > 0 && (
+            <ul className="explained">
+              {explanation.changes.map((c) => (
+                <li key={c.changeId} data-change-id={c.changeId}>
+                  <span className={`kind kind-${c.kind}`}>{c.kind}</span> {c.issueKey}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       <div className="actions">
         <span className="subtle selection">{selectedRow ? `Selected: ${selectedRow.issueKey} (${selectedRow.kind})` : 'Select a change to comment on its issue.'}</span>
         <button type="button" data-testid="post-summary" className={`button primary${posting ? ' busy' : ''}`} aria-busy={posting ? 'true' : 'false'} onClick={post}>
           Post summary comment
+        </button>
+        <button type="button" data-testid="explain" className={`button${explaining ? ' busy' : ''}`} aria-busy={explaining ? 'true' : 'false'} onClick={explain}>
+          Explain the creep
         </button>
         <button type="button" data-testid="close" className="button" onClick={() => view.close()}>
           Close

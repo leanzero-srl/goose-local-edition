@@ -2,6 +2,7 @@ import { Queue, InvocationError, InvocationErrorCode } from '@forge/events';
 import { appClient, RetryLater, scrumBoards, boardSprints, boardEstimationField, sprintFieldId, sprintIssues, searchIssues, issueWithChangelog } from './jira';
 import { getRegistry, setRegistry, sprintMembers, sprintChanges, getMember, putMember, getChange, recordChange } from './store';
 import { issueFields, isTracked, learnSprints, rowsForIssue, sprintsTouching, memberDiffers } from './ledger';
+import { announce } from './live';
 
 const work = new Queue({ key: 'scope-ledger-work' });
 const WRITE_CHUNK = 40;
@@ -23,18 +24,20 @@ export async function onIssueUpdated(event) {
   return { queued: true };
 }
 
+// Returns the sprints whose ledger actually changed, so only those are announced.
 async function writeRows({ members, changes }) {
-  let written = 0;
+  const touched = new Set();
   for (const m of members) {
     if (memberDiffers(await getMember(m.sprintId, m.issueId), m)) {
       await putMember(m);
-      written += 1;
+      touched.add(m.sprintId);
     }
   }
   for (const c of changes) {
-    if (!(await getChange(c.sprintId, c.changeId)) && (await recordChange(c))) written += 1;
+    if (!(await getChange(c.sprintId, c.changeId)) && (await recordChange(c))) touched.add(c.sprintId);
   }
-  return written;
+  if (touched.size) await announce(touched);
+  return touched.size;
 }
 
 async function syncOneIssue(issueId) {
@@ -43,12 +46,12 @@ async function syncOneIssue(issueId) {
   if (!registry) registry = { sprintField: await sprintFieldId(jira), boards: {}, sprints: {} };
   const fields = issueFields(registry);
   let issue = await issueWithChangelog(jira, issueId, fields);
-  if (!issue) return { written: 0, reason: 'issue not found' };
+  if (!issue) return { sprintsChanged: 0, reason: 'issue not found' };
   if (await learnSprints(jira, registry, sprintsTouching(issue, registry.sprintField))) {
     await setRegistry(registry);
     if (issueFields(registry).some((f) => !fields.includes(f))) issue = await issueWithChangelog(jira, issueId, issueFields(registry));
   }
-  return { written: await writeRows(rowsForIssue(issue, registry, 'event')) };
+  return { sprintsChanged: await writeRows(rowsForIssue(issue, registry, 'event')) };
 }
 
 // consumer: every ledger write happens here.
@@ -56,7 +59,7 @@ export async function consume(event) {
   const body = (event && event.body) || {};
   try {
     if (body.kind === 'issue') return await syncOneIssue(body.issueId);
-    if (body.kind === 'write') return { written: await writeRows(body) };
+    if (body.kind === 'write') return { sprintsChanged: await writeRows(body) };
     return { ignored: body.kind || null };
   } catch (err) {
     if (err instanceof RetryLater) {

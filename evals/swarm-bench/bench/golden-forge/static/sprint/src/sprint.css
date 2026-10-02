@@ -122,3 +122,23 @@
 .button.busy {
   cursor: progress;
 }
+
+.explanation {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ds-border);
+  background-color: var(--ds-surface-raised);
+}
+
+.explanation p {
+  margin: 8px 0 0;
+}
+
+.explained {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}

@@ -120,6 +120,13 @@ async function main() {
   const moveRows = rows1.filter((r) => r.changeId === ev[2].changelog.id).map((r) => `${r.sprintId}:${r.kind}`).sort();
   eq(moveRows, ['11:removed', '12:added'], 'one changelog entry moving an issue between sprints is a removed in one and an added in the other');
 
+  const evPubs = platform.realtime.published.filter((pb) => pb.moduleType === 'consumer');
+  const evSprints = new Set(evPubs.flatMap((pb) => pb.payload.sprintIds));
+  ok(evPubs.length > 0 && evPubs.every((pb) => pb.isGlobal && pb.token), `consumer announced ledger changes with publishGlobal + token (${evPubs.length} publications)`);
+  ok(['11', '12'].every((sid) => evSprints.has(sid)), `the announced sprint ids cover the sprints the events changed (${[...evSprints].join(',')})`);
+  ok(platform.realtime.published.every((pb) => JSON.stringify(Object.keys(pb.payload)) === '["sprintIds"]' && pb.payload.sprintIds.every((x) => /^\d+$/.test(x))), 'every realtime payload carries sprint ids only');
+  ok(platform.realtime.signed.every((t) => JSON.stringify(t.claims) === JSON.stringify(platform.realtime.signed[0].claims)), 'publisher and subscriber tokens are signed with the same claims');
+
   // ---------- 3. heal: the next scheduled run records what the stream missed, then a rerun writes nothing ----------
   await platform.invoke('reconcile', {}, { moduleKey: 'scope-reconcile' });
   const rows2 = ledgerRows(platform);
@@ -130,7 +137,9 @@ async function main() {
 
   const writesBefore = platform.kvs.writes().length;
   const pushes2 = platform.queuePushes.length;
+  const pubs2 = platform.realtime.published.length;
   await platform.invoke('reconcile', {}, { moduleKey: 'scope-reconcile' });
+  ok(platform.realtime.published.length === pubs2, 'a scheduled run with nothing new announces nothing');
   ok(platform.kvs.writes().length === writesBefore && platform.queuePushes.length === pushes2, `a scheduled run with nothing new writes nothing (${platform.kvs.writes().length - writesBefore} writes)`);
 
   // redelivering an old event again changes nothing
@@ -182,7 +191,34 @@ async function main() {
   const deferred = await platform.resolver('jira:sprintAction', 'scope-sprint-ledger', 'postSummary', { changeId: target.changeId }, { aaid: bob.accountId, extension: sprintExt('11') });
   ok(deferred.rateLimited === true && deferred.retryAfter === 9 && site.comments.length === c1, 'a Retry-After longer than the resolver can wait goes back to the page, nothing posted');
 
-  // ---------- 6. scopes: every call the golden made is covered by the manifest ----------
+  // ---------- 6. Forge LLM explanation ----------
+  const explainAs = (user) => platform.resolver('jira:sprintAction', 'scope-sprint-ledger', 'explain', {}, { aaid: user.accountId, extension: sprintExt('11') });
+  const bobView = await platform.resolver('jira:sprintAction', 'scope-sprint-ledger', 'sprintLedger', {}, { aaid: bob.accountId, extension: sprintExt('11') });
+  const hiddenIds = truth['11'].changes.filter((c) => !bob.browse(site.issueById.get(c.issueId))).map((c) => c.changeId);
+  const toolReply = (args) => () => ({ choices: [{ finish_reason: 'tool_use', message: { role: 'assistant', content: [], tool_calls: [{ id: 't', type: 'function', index: 0, function: { name: 'report_scope', arguments: args } }] } }] });
+  platform.llm.script.push(toolReply({ summary: 'Work kept being pulled in after the start.', changeIds: [bobView.changes[1].changeId, hiddenIds[0], 'nope', bobView.changes[0].changeId] }));
+  let ex = await explainAs(bob);
+  const call0 = platform.llm.calls.at(-1);
+  ok(ex.ok && call0.model === 'claude-sonnet-4-7', `explain uses a model list() reports active (${call0.model})`);
+  ok(JSON.stringify(call0.body.tool_choice) === JSON.stringify({ type: 'function', function: { name: 'report_scope' } }) && call0.body.tools[0].function.name === 'report_scope', 'explain forces the report_scope tool');
+  const sent = JSON.stringify(call0.body);
+  ok(hiddenIds.length > 0 && hiddenIds.every((id) => !sent.includes(`"${id}"`)) && truth['11'].changes.filter((c) => hiddenIds.includes(c.changeId)).every((c) => !sent.includes(c.issueKey)), 'the prompt holds nothing the viewer cannot see');
+  eq(ex.changes.map((c) => c.changeId), [bobView.changes[1].changeId, bobView.changes[0].changeId], 'only returned ids that are visible changes of this sprint are kept');
+  eq(ex.summary, 'Work kept being pulled in after the start.', 'a summary without digits is shown as is');
+  platform.llm.script.push(toolReply({ summary: 'Scope grew 40% because 12 points came in.', changeIds: [] }));
+  ex = await explainAs(alice);
+  ok(ex.ok && !/40%|12 points/.test(ex.summary) && ex.summary.includes(fmtCreep(truth['11'].creep)), `a summary with digits is replaced by the ledger's own sentence ("${ex.summary}")`);
+  platform.llm.script.push(() => ({ choices: [{ finish_reason: 'end_turn', message: { role: 'assistant', content: [{ type: 'text', text: 'I cannot help with that.' }] } }] }));
+  ex = await explainAs(alice);
+  ok(ex.ok === false && typeof ex.error === 'string', 'a refusal (no tool call) is an error answer, not a throw');
+  platform.llm.script.push(toolReply({ summary: 42, changeIds: 'all' }));
+  ex = await explainAs(alice);
+  ok(ex.ok === false && typeof ex.error === 'string', 'malformed tool arguments are an error answer');
+  platform.llm.script.push(() => ({ status: 500, json: { code: 'INTERNAL', message: 'model unavailable' } }));
+  ex = await explainAs(alice);
+  ok(ex.ok === false && /LLM/.test(ex.error), 'an LLM error is an error answer');
+
+  // ---------- 7. scopes: every call the golden made is covered by the manifest ----------
   ok(!site.requests.some((r) => r.status === 401), 'no Jira call was refused for a missing scope');
   console.log(`\n${failures ? `${failures} FAILED` : 'ALL PASSED'}  (Jira requests total ${site.requests.length}, KVS ops ${platform.kvs.ops.length})`);
   process.exit(failures ? 1 : 0);

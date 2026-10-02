@@ -124,3 +124,35 @@
 .btn-subtle:hover {
   background: var(--ds-background-neutral-hovered, #091e4224);
 }
+.explanation {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--ds-border-discovery, #8270db);
+  background: var(--ds-surface-raised, #ffffff);
+}
+.explanation[hidden] {
+  display: none;
+}
+.explanation-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--ds-text-discovery, #5e4db2);
+}
+.explanation-text,
+.explanation-none {
+  margin: 0 0 8px;
+  color: var(--ds-text, #172b4d);
+}
+.explanation-changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.explanation-changes li {
+  color: var(--ds-text, #172b4d);
+  font-weight: 600;
+}

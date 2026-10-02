@@ -4,6 +4,8 @@ import { RateLimited } from './jira';
 import { loadConfig, saveConfig, discoverConfig } from './config';
 import { applyIssueEvent, estimateFieldIds, reconcileAll } from './sync';
 import { boardsView, widgetView, getSprint, personView, postSummary } from './views';
+import { announce, subscribeToken } from './realtime';
+import { explainSprint } from './explain';
 
 const QUEUE_KEY = 'scope-ledger';
 const MAX_RETRY_AFTER = 900; // @forge/events: InvocationError retryAfter is at most 900 s
@@ -35,6 +37,7 @@ export async function consumeChange(event) {
     const cfg = previous ? structuredClone(previous) : await discoverConfig(policy);
     const result = await applyIssueEvent(cfg, event.body, policy);
     await saveConfig(cfg, previous);
+    await announce(result.sprintIds);
     return result;
   } catch (e) {
     if (e instanceof RateLimited) {
@@ -59,6 +62,7 @@ export async function reconcile() {
   const cfg = await discoverConfig(policy);
   await saveConfig(cfg, previous);
   const result = await reconcileAll(cfg, policy);
+  await announce(result.sprintIds);
   console.log(`reconcile: ${Object.keys(cfg.sprints).length} active sprints, ${result.issues} issues read, ${result.rows} rows and ${result.members} memberships written`);
 }
 
@@ -91,7 +95,8 @@ resolver.define(
   rateLimitedAware(async ({ payload, context }) => {
     const boardId = payload?.boardId ?? context?.extension?.config?.boardId;
     if (boardId === undefined || boardId === null || boardId === '') return { needsConfig: true };
-    return widgetView(String(boardId), UI_POLICY);
+    const view = await widgetView(String(boardId), UI_POLICY);
+    return payload?.withRealtime ? { ...view, realtime: await subscribeToken() } : view;
   }),
 );
 
@@ -104,6 +109,18 @@ resolver.define(
     if (!sprint) return { error: `Sprint ${sprintId} was not found.` };
     if (!sprint.started) return { notStarted: true, sprint };
     return personView(sprint, UI_POLICY);
+  }),
+);
+
+resolver.define('realtimeToken', async () => subscribeToken());
+
+resolver.define(
+  'explain',
+  rateLimitedAware(async ({ context }) => {
+    const sprintId = contextSprintId(context);
+    const sprint = sprintId && (await getSprint(sprintId, UI_POLICY));
+    if (!sprint) return { ok: false, error: 'This action was opened without a known sprint.' };
+    return explainSprint(await personView(sprint, UI_POLICY));
   }),
 );
 
