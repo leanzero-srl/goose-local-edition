@@ -27,6 +27,10 @@ import vendor_service_v3 as vendor
 
 HERE = Path(__file__).resolve().parent
 VERSION = 'sb-7.1'
+# The browser probe this scorer drives; SB7.2 (score_sb72.py) swaps in its profile wrapper while it
+# gathers, so both tiers share one gather, one probe implementation and one CLI.
+PROBE_NAME = 'product_probe_sb71.mjs'
+TEMP_PREFIX = 'sb71-score-'
 VISUAL_CHECKS = {
     's_visible_surface': 'S', 's_tower_geometry': 'S', 's_currency_collar': 'S',
     'q_payment_context': 'Q', 'q_legible_presentation': 'Q',
@@ -349,7 +353,7 @@ def probe_runtime():
         pack = json.loads(path.read_text())
         pack['sb71_reserved_payment_ids'] = reserved_payment_ids(asdict(ctx.schedule), set(ctx.pack.index()))
         path.write_text(json.dumps(pack))
-    base.PROBE_SCRIPT = HERE / 'product_probe_sb71.mjs'
+    base.PROBE_SCRIPT = HERE / PROBE_NAME
     base._ReadStream = ReadStream
     base._kill = _kill_owned
     base._write_expect_pack = write_pack
@@ -932,20 +936,37 @@ def format_report(result, title=''):
     return '\n'.join(lines)
 
 
-def main():
-    p = argparse.ArgumentParser(description=__doc__)
+def reference_failures(result, ctx):
+    failures = base._reference_gate({**result, 'checks': [r for r in result['checks'] if r['check'] not in VISUAL_CHECKS]}, ctx)
+    failures += base.severity_selftest()
+    gates = result['admission']
+    if not (gates['visible'] and gates['matching'] and gates['good']
+            and gates['excellence']['visual'] and gates['excellence']['backend']):
+        failures += ['SB7.1 admission: ' + reason for reason in gates['reasons']]
+        failures += [row['check'] + ': required admission evidence incomplete'
+                     for row in result['checks']
+                     if row['check'] in (*STRUCTURE_CHECKS, *QUALITY_CHECKS, *BACKEND_EXCELLENCE)
+                     and not passed(row)]
+    failures += [r['check'] for r in result['checks'] if r['check'] in VISUAL_CHECKS and not passed(r)]
+    return failures
+
+
+def run_cli(tier, argv=None):
+    """The hermetic scorer CLI shared by SB7.1 and SB7.2: `tier` supplies gather, evaluate,
+    format_report, reference_failures, _probe_preflight, VERSION and TEMP_PREFIX."""
+    p = argparse.ArgumentParser(description=tier.__doc__)
     p.add_argument('--tree', type=Path, required=True)
     p.add_argument('--seed', required=True)
     p.add_argument('--port', type=int, default=8899)
     p.add_argument('--json-out', type=Path, required=True)
     p.add_argument('--reference', action='store_true')
-    a = p.parse_args()
+    a = p.parse_args(argv)
     if len(a.seed) != 16 or any(c not in '0123456789abcdefABCDEF' for c in a.seed):
         p.error('--seed requires 16 hexadecimal characters from the run')
-    why = _port_holder(a.port) or _probe_preflight()
+    why = _port_holder(a.port) or tier._probe_preflight()
     if why:
         raise RuntimeError('REFUSED: ' + why)
-    with tempfile.TemporaryDirectory(prefix='sb71-score-') as tmp:
+    with tempfile.TemporaryDirectory(prefix=tier.TEMP_PREFIX) as tmp:
         root = a.tree.resolve()
         # Scoring a clone preserves all prior screenshots, receipts and grading databases.
         candidate = Path(tmp) / 'candidate'
@@ -956,8 +977,8 @@ def main():
         server = vendor.serve(a.port, trace, seed=a.seed)
         unavailable = None
         try:
-            ctx = gather(candidate, a.port, Path(tmp) / 'db', trace, vendor.mark_phase, a.seed)
-            result = evaluate(ctx)
+            ctx = tier.gather(candidate, a.port, Path(tmp) / 'db', trace, vendor.mark_phase, a.seed)
+            result = tier.evaluate(ctx)
         except UnavailableEvidence as error:
             unavailable = error
             result = error.diagnostic
@@ -977,23 +998,18 @@ def main():
         if unavailable:
             print(str(unavailable))
             return 2
-        print(format_report(result, root.name))
+        print(tier.format_report(result, root.name))
         if a.reference:
-            failures = base._reference_gate({**result, 'checks': [r for r in result['checks'] if r['check'] not in VISUAL_CHECKS]}, ctx)
-            failures += base.severity_selftest()
-            gates = result['admission']
-            if not (gates['visible'] and gates['matching'] and gates['good']
-                    and gates['excellence']['visual'] and gates['excellence']['backend']):
-                failures += ['SB7.1 admission: ' + reason for reason in gates['reasons']]
-                failures += [row['check'] + ': required admission evidence incomplete'
-                             for row in result['checks']
-                             if row['check'] in (*STRUCTURE_CHECKS, *QUALITY_CHECKS, *BACKEND_EXCELLENCE)
-                             and not passed(row)]
-            failures += [r['check'] for r in result['checks'] if r['check'] in VISUAL_CHECKS and not passed(r)]
+            failures = tier.reference_failures(result, ctx)
             if failures:
                 print('REFERENCE REFUSED: ' + '; '.join(failures))
                 return 1
     return 0
+
+
+def main():
+    import sys
+    return run_cli(sys.modules[__name__])
 
 
 if __name__ == '__main__':
