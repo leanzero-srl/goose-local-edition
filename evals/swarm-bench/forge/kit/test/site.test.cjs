@@ -101,13 +101,7 @@ test('refusals: legacy v2 is harness_missing, unknown paths 404, scope mismatch 
   const noScope = await call('GET', `/rest/api/3/issue/${iss.id}`, undefined, ['storage:app']);
   assert.strictEqual(noScope.status, 401);
   assert.strictEqual(noScope.body.message, 'Unauthorized; scope does not match');
-  // The pack's comment-post fault answers the first comment POST with 429 + Retry-After (DESIGN §5.2).
-  const first = await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body: 'plain text' });
-  assert.strictEqual(first.status, 429);
-  const wait = Number(first.headers.get('retry-after'));
-  assert.ok(wait >= 1);
-  assert.strictEqual((await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body: 'plain text' })).status, 429, 'a retry inside Retry-After is refused again');
-  site.clock.advance(wait * 1000);
+  // No scripted comment-path 429 since DESIGN §17.2 E: a plain-text body is refused at once.
   const plain = await call('POST', `/rest/api/3/issue/${iss.id}/comment`, { body: 'plain text' });
   assert.strictEqual(plain.status, 400);
   assert.deepStrictEqual(plain.body, { errorMessages: [], errors: { comment: 'Comment body is not valid!' } });
@@ -207,9 +201,7 @@ test('every modelled operation answers the shape the shipped OpenAPI documents f
     const op = spec.paths[template]?.[method.toLowerCase()];
     if (!op) { problems.push(`${key}: modelled but absent from the shipped OpenAPI`); continue; }
     const url = template.replace(/\{(\w+)\}/g, (_, n) => encodeURIComponent(fill[n])) + (query[key] ? `?${query[key]}` : (op.parameters ?? []).some((p) => p.name === 'maxResults') ? '?maxResults=1' : '');
-    const r = key === 'POST /rest/api/3/issue/{issueIdOrKey}/comment'
-      ? await (async () => { let x; for (let i = 0; i < 3; i++) { x = await call(method, url, body[key]); if (x.status !== 429) break; site.clock.advance(Number(x.headers.get('retry-after')) * 1000); } return x; })()
-      : await call(method, url, body[key]);
+    const r = await call(method, url, body[key]);
     if (r.status !== 200 && r.status !== 201) { problems.push(`${key}: ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`); continue; }
     const resp = op.responses[String(r.status)]?.content?.['application/json'];
     const schema = deref(spec, resp?.schema);
@@ -254,4 +246,16 @@ test('software 1.0 issue lists page by token exactly as Jira Cloud does', () => 
   assert.deepStrictEqual(count.body, { count: all.body.issues.length });
   const agile = await call('GET', `/rest/agile/1.0/board/${scrum.id}/issue?maxResults=3`);
   assert.deepStrictEqual(Object.keys(agile.body), ['expand', 'startAt', 'maxResults', 'total', 'issues']);
+}));
+
+test('the live-UI changes stay held back: never in the delivery plan or the flush, applied only when delivered', () => withSite(async (site) => {
+  const ui = site.pack.live.filter((e) => e.delivery.liveUi).map((e) => e.changelogId);
+  assert.strictEqual(ui.length, 2);
+  const delivered = [];
+  for (let d = site.control.next(); !d.done; d = site.control.next()) delivered.push(...d.applied);
+  site.flushLive();
+  assert.ok(ui.every((id) => !site.state.st.applied.has(id)), 'neither the script nor the flush applies them');
+  assert.ok(site.pack.live.filter((e) => !e.delivery.liveUi).every((e) => site.state.st.applied.has(e.changelogId)));
+  const r = site.control.event({ changelogId: ui[0] });
+  assert.deepStrictEqual(r.applied, [ui[0]], 'delivering one applies exactly that change');
 }));

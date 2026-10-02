@@ -75,8 +75,8 @@ test('spike fixture app runs through the kit (backend, queue, unmodelled policy,
         await page.getByRole('button', { name: 'Add comment' }).click();
         await page.locator('#posted').waitFor({ timeout: 20_000 });
         const posted = await page.locator('#posted').innerText();
-        // The site's first comment POST is the scripted 429 (Retry-After 1); later posts land.
-        assert.match(posted, theme === 'light' ? /Comment status 429/ : /Comment status 201/);
+        // No scripted comment-path 429 (DESIGN §17.2 E): both posts land.
+        assert.match(posted, /Comment status 201/);
         assert.deepStrictEqual(errors, []);
         assert.deepStrictEqual(await page.evaluate(() => window.__csp ?? []), []);
         await page.close();
@@ -86,7 +86,7 @@ test('spike fixture app runs through the kit (backend, queue, unmodelled policy,
       for (const op of ['getContext', 'enableTheming', 'invoke', 'fetchProduct']) assert.ok(ops.includes(op), `bridge op ${op} observed`);
       assert.ok(fs.statSync(path.join(shots, 'panel-dark.png')).size > 1000);
       assert.strictEqual(emu.cspReports().length, 0);
-      assert.ok(site.comments.length === 1 && site.comments[0].authorId === site.pack.viewer && site.comments[0].as === 'user');
+      assert.ok(site.comments.length === 2 && site.comments.every((c) => c.authorId === site.pack.viewer && c.as === 'user'));
     } finally {
       await browser.close();
     }

@@ -58,6 +58,27 @@ function shapeProblems(p) {
   const touches = (e) => e.items[0].field === 'Sprint' && actives.some((a) => Date.parse(e.created) > Date.parse(a.startDate)
     && (ids(e.items[0].from).includes(String(a.id)) || ids(e.items[0].to).includes(String(a.id))));
   if (p.issues.length < 229 || p.issues.length > 245) out.push(`issues ${p.issues.length}`);
+  // Numeric id classes are disjoint (seed 5eed0123456789ab once had changelog ids equal to issue ids).
+  const classes = { board: p.boards.map((b) => b.id), sprint: p.sprints.map((x) => x.id), issue: p.issues.map((i) => i.id),
+    changelog: [...p.history, ...p.live].map((e) => e.changelogId), project: p.projects.map((x) => x.id), status: p.statuses.map((x) => x.id),
+    issueType: p.issueTypes.map((x) => x.id), securityLevel: [p.securityLevel.id] };
+  const owner = new Map();
+  for (const [cls, ids] of Object.entries(classes)) for (const id of ids.map(String)) {
+    if (owner.has(id) && owner.get(id) !== cls) out.push(`id ${id} is both a ${owner.get(id)} and a ${cls}`);
+    owner.set(id, cls);
+  }
+  // The live-UI slot (DESIGN §5.2, §8.7 step 8): two held-back changes for the first scrum board's active sprint.
+  const ui = p.live.filter((e) => e.delivery.liveUi);
+  const uiBoard = p.boards.find((b) => b.type === 'scrum');
+  const uiSprints = new Set(p.sprints.filter((x) => x.state === 'active' && x.originBoardId === uiBoard.id).map((x) => String(x.id)));
+  const issueOf = (e) => p.issues.find((i) => i.id === e.issueId);
+  if (ui.length !== 2) out.push(`live-UI changes ${ui.length}`);
+  if (ui.some((e) => e.delivery.slot !== null || e.delivery.duplicates.length || e.delivery.dropped)) out.push('a live-UI change is scheduled, duplicated or dropped');
+  const lastScripted = Math.max(...p.live.filter((e) => !e.delivery.liveUi).map((e) => Date.parse(e.created)));
+  if (ui.some((e) => Date.parse(e.created) <= lastScripted)) out.push('a live-UI change is not created after the scripted live changes');
+  if (ui.some((e) => issueOf(e).hiddenFrom.includes(p.viewer) || issueOf(e).projectKey !== uiBoard.projectKey)) out.push("a live-UI change is not on the widget board's visible issues");
+  if (!ui.some((e) => e.items[0].field === 'Sprint' && ids(e.items[0].to).some((x) => uiSprints.has(x)))) out.push('no live-UI change adds to the widget board\'s active sprint');
+  if (!ui.some((e) => e.items[0].fieldId === uiBoard.estimationFieldId)) out.push('no live-UI estimate change on the widget board');
   // DESIGN §17.1 19/20: sprint start dates are distinct, and no change lands exactly on a sprint start.
   const starts = p.sprints.filter((s) => s.startDate).map((s) => Date.parse(s.startDate));
   if (new Set(starts).size !== starts.length) out.push('tied sprint startDates');
@@ -69,11 +90,12 @@ function shapeProblems(p) {
   if (multi.length < 8) out.push(`carry-over multi-id issues ${multi.length}`);
   const removed = new Set(post.filter((e) => ids(e.items[0].from).some((id) => state(id) === 'active') && !ids(e.items[0].to).some((id) => state(id) !== 'closed')).map((e) => e.issueId));
   if (removed.size < 4) out.push(`removed to backlog ${removed.size}`);
-  if (p.live.length < 36 || p.live.length > 44) out.push(`live ${p.live.length}`);
+  const scripted = p.live.filter((c) => !c.delivery.liveUi);
+  if (scripted.length < 36 || scripted.length > 44) out.push(`scripted live ${scripted.length}`);
   const dups = p.live.filter((c) => c.delivery.duplicates.length).length;
   const drops = p.live.filter((c) => c.delivery.dropped).length;
   if (dups !== 4 || drops !== 3) out.push(`dups ${dups} drops ${drops}`);
-  const delivered = p.live.filter((c) => !c.delivery.dropped).sort((a, b) => a.delivery.slot - b.delivery.slot);
+  const delivered = scripted.filter((c) => !c.delivery.dropped).sort((a, b) => a.delivery.slot - b.delivery.slot);
   let swapped = 0;
   for (let i = 0; i + 1 < delivered.length; i++) {
     const [x, y] = [delivered[i], delivered[i + 1]];
@@ -112,7 +134,7 @@ function shapeProblems(p) {
     chain.set(h.issueId, h.items[0].to);
   }
   // Both scrum boards' estimation fields move during the live script.
-  for (const b of scrum) if (!p.live.some((c) => c.items[0].fieldId === b.estimationFieldId)) out.push(`no live estimate change on ${b.estimationFieldId}`);
+  for (const b of scrum) if (!scripted.some((c) => c.items[0].fieldId === b.estimationFieldId)) out.push(`no scripted live estimate change on ${b.estimationFieldId}`);
   // Changelog ids increase with creation time.
   const all = [...p.history, ...p.live];
   const byTime = all.slice().sort((x, y) => Date.parse(x.created) - Date.parse(y.created));
@@ -130,4 +152,33 @@ test('pack shapes hold on 300 seeds (DESIGN §5.2)', () => {
     if (problems.length) bad.push(`${seed}: ${problems.join('; ')}`);
   }
   assert.deepStrictEqual(bad, []);
+});
+
+// WP2's oracle accepts every pack (no PackDefect: disjoint ids, ISO instants) and the live-UI pair moves the numbers
+// of an active sprint the first scrum board's widget shows (the u_widget_live precondition), incl. seed 5eed0123456789ab.
+test("WP2's oracle: packs are valid and the live-UI changes move the widget board's numbers", { timeout: 300_000 }, () => {
+  const fs = require('fs');
+  const os = require('os');
+  const { execFileSync } = require('child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-packs-'));
+  const seeds = ['5eed0123456789ab', ...Array.from({ length: 60 }, (_, i) => crypto.createHash('sha256').update(`forge-fixture-${i}`).digest('hex').slice(0, 16))];
+  for (const seed of seeds) fs.writeFileSync(path.join(dir, `${seed}.json`), JSON.stringify(facts(seed)));
+  const out = execFileSync('python3', ['-c', `
+import sys, json, glob
+sys.path.insert(0, sys.argv[2])
+import forge_oracle as fo
+bad = []
+for f in sorted(glob.glob(sys.argv[1] + '/*.json')):
+    p = json.load(open(f))
+    try:
+        before, after = fo.Oracle(p), fo.Oracle(p, include_live_ui=True)
+    except fo.PackDefect as e:
+        bad.append(f"{p['seed']}: {e}"); continue
+    board = next(b for b in p['boards'] if b['type'] == 'scrum')
+    sids = [str(s['id']) for s in p['sprints'] if s['state'] == 'active' and s['originBoardId'] == board['id']]
+    if all(before.numbers(s) == after.numbers(s) for s in sids):
+        bad.append(f"{p['seed']}: the live-UI changes leave board {board['id']} unchanged")
+print(json.dumps(bad))`, dir, path.join(__dirname, '..', '..', '..', 'bench')], { encoding: 'utf8' });
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.deepStrictEqual(JSON.parse(out.trim().split('\n').pop()), []);
 });
