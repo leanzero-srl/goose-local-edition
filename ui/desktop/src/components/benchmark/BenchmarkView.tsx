@@ -855,16 +855,14 @@ function SessionDetail({
 
 /**
  * The Forge tier's run policy, read from the payload (bench_budget.CALL_BUDGET, isolated_tiers.FORGE10):
- * one model, the call budget, the spend limit armed when none is set, the pinned reasoning effort. A
- * number the kit status could not read is left out, never restated from memory.
+ * one model, the call budget, the pinned reasoning effort. No default spend limit exists (owner 2026-10-02);
+ * the form's "Stop a run at $" is the only stop, empty = none. A number the kit status could not read is
+ * left out, never restated from memory.
  */
 function ForgeRunPolicy({ kit }: { kit: ForgeKitStatus | null }) {
   const parts = [
     'One model',
     ...(kit?.callBudget != null ? [`${kit.callBudget}-call budget`] : []),
-    ...(kit?.walletDefaultUsd
-      ? [`stops at $${kit.walletDefaultUsd} unless you set a limit below`]
-      : []),
     ...(kit?.reasoningEffort ? [`reasoning effort ${kit.reasoningEffort}`] : []),
   ];
   return (

@@ -7,13 +7,13 @@ export type { ForgeKitStatus } from './benchForgeKitTypes';
 /**
  * Reads the kit's readiness and the Forge tier's published run policy from the payload's own Python —
  * one rule for "ready" (forge_kit.status) and one source for the numbers the view shows (the call budget,
- * the default spend limit, the pinned effort), so the app never restates a policy that lives in bench/.
+ * the pinned effort), so the app never restates a policy that lives in bench/. There is no default spend
+ * limit (owner 2026-10-02: an OpenRouter run runs until the credits go; the field in the form is the only stop).
  */
 export const FORGE_KIT_STATUS_SCRIPT = [
   'import json, forge_kit, bench_budget, isolated_tiers',
-  't = isolated_tiers.FORGE10',
   "print(json.dumps({**forge_kit.status(), 'call_budget': bench_budget.CALL_BUDGET,",
-  "                  'wallet_usd': t.wallet_usd, 'reasoning_effort': t.reasoning_effort}))",
+  "                  'reasoning_effort': isolated_tiers.FORGE10.reasoning_effort}))",
 ].join('\n');
 
 export interface ForgeKitRuntime {
@@ -71,7 +71,6 @@ export function parseForgeKitStatus(stdout: string): ForgeKitStatus {
     missing: raw.missing.map(String),
     ...(typeof raw.kit_lock_sha256 === 'string' ? { kitLockSha256: raw.kit_lock_sha256 } : {}),
     ...(typeof raw.call_budget === 'number' ? { callBudget: raw.call_budget } : {}),
-    walletDefaultUsd: typeof raw.wallet_usd === 'string' ? raw.wallet_usd : null,
     reasoningEffort: typeof raw.reasoning_effort === 'string' ? raw.reasoning_effort : null,
   };
 }

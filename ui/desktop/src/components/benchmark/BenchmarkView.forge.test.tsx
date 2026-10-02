@@ -101,7 +101,6 @@ const KIT_READY = {
   missing: [],
   kitLockSha256: '0a0b8c760fb127e629cb57d4db2c2437308ad963ceb787a5bf749c28574aea58',
   callBudget: 150,
-  walletDefaultUsd: '50',
   reasoningEffort: 'medium',
 };
 const SHOTS = [
@@ -162,7 +161,7 @@ describe('Benchmark view — the Gauntlet | Forge switch', () => {
     );
     expect(await screen.findByTestId('forge-kit-ready')).toHaveTextContent('Forge kit ready');
     expect(screen.getByTestId('forge-run-policy')).toHaveTextContent(
-      'One model · 150-call budget · stops at $50 unless you set a limit below · reasoning effort medium'
+      'One model · 150-call budget · reasoning effort medium'
     );
     // No Swarm entrant for Forge; the single-model provider, model and spend limit are the form.
     expect(screen.queryByRole('button', { name: 'Swarm' })).toBeNull();

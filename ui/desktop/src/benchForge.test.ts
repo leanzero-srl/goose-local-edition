@@ -213,17 +213,18 @@ describe('the Forge kit status', () => {
   it('reads forge_kit.status() and the tier policy from the payload, never restating them', () => {
     expect(FORGE_KIT_STATUS_SCRIPT).toContain('forge_kit.status()');
     expect(FORGE_KIT_STATUS_SCRIPT).toContain('bench_budget.CALL_BUDGET');
-    expect(FORGE_KIT_STATUS_SCRIPT).toContain('isolated_tiers.FORGE10');
+    expect(FORGE_KIT_STATUS_SCRIPT).toContain('isolated_tiers.FORGE10.reasoning_effort');
+    // No default dollar stop is read or shown (owner 2026-10-02).
+    expect(FORGE_KIT_STATUS_SCRIPT).not.toContain('wallet');
     expect(
       parseForgeKitStatus(
-        'noise\n{"ready": true, "missing": [], "kit_lock_sha256": "0a0b", "call_budget": 150, "wallet_usd": "50", "reasoning_effort": "medium"}\n'
+        'noise\n{"ready": true, "missing": [], "kit_lock_sha256": "0a0b", "call_budget": 150, "reasoning_effort": "medium"}\n'
       )
     ).toEqual({
       state: 'ready',
       missing: [],
       kitLockSha256: '0a0b',
       callBudget: 150,
-      walletDefaultUsd: '50',
       reasoningEffort: 'medium',
     });
     expect(
